@@ -1,9 +1,11 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
     Quit,
     Restart,
     Clear,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum CommandError {
     NotFound,
 }

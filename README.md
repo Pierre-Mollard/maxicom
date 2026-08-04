@@ -18,3 +18,17 @@ minicom but written in rust with my custom features.
 - [ ] History
 - [ ] timestamps
 - [ ] Integration with espressif idf.py monitor
+
+## NOTES
+
+1. Build with cargo
+
+```bash
+cargo build
+```
+
+1. Run with cargo and arguments
+
+```bash
+cargo run -- --port /dev/ttyUSB0 --baud 115200 --test coucou alkgjl df - sflj
+```

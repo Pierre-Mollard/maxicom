@@ -1,10 +1,18 @@
-use std::io;
 use std::io::ErrorKind;
+use std::{env, io};
 
 mod commands;
 
 fn main() {
-    println!("Hello, world!");
+    println!("=== maxicom ===");
+
+    let mut args = env::args();
+    let program_name = args.next();
+    println!("program name : {program_name:?}");
+
+    for arg in args {
+        println!("argument : {arg:?}");
+    }
 
     let mut running: bool = true;
     let mut input_buffer: String = String::new();
