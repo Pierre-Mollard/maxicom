@@ -17,3 +17,4 @@ minicom but written in rust with my custom features.
 - [ ] TUI
 - [ ] History
 - [ ] timestamps
+- [ ] Integration with espressif idf.py monitor
