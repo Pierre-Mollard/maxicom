@@ -12,6 +12,7 @@ minicom but written in rust with my custom features.
 
 ## TODO
 
+- [ ] Main loops and render / update system
 - [ ] Serial byte stream interpreter
 - [ ] Configuration
 - [ ] TUI
