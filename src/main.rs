@@ -1,6 +1,8 @@
 use std::io;
 use std::io::ErrorKind;
 
+mod commands;
+
 fn main() {
     println!("Hello, world!");
 
@@ -30,14 +32,23 @@ fn main() {
             break;
         }
 
-        let command = input_buffer.trim();
+        let result = commands::parse_command(&input_buffer);
+        match result {
+            Ok(commands::Command::Quit) => {
+                running = false;
+            }
 
-        if command == "quit" {
-            running = false;
-        } else if command.is_empty() {
-            continue;
-        } else {
-            println!("Unknown command: {command}");
+            Ok(commands::Command::Restart) => {
+                println!("Restart is not implemented yet.");
+            }
+
+            Ok(commands::Command::Clear) => {
+                println!("Clear is not implemented yet.");
+            }
+
+            Err(commands::CommandError::NotFound) => {
+                println!("Unknown command: {}", input_buffer.trim());
+            }
         }
     }
 
@@ -49,3 +60,4 @@ fn main() {
 // NOTE: for now treat input buffer as char, later as keystrokes
 // TODO: handle stderr stdin and stdout differently in TUI
 // TODO: update with states in mind (render, input, serial data rx)
+// TODO: event loop for keyboard_input, serial_rx, timeouts separates
