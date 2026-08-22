@@ -33,3 +33,9 @@ cargo build
 ```bash
 cargo run -- --port /dev/ttyUSB0 --baud 115200 --test coucou alkgjl df - sflj
 ```
+
+1. Run the bin utility "fake_device" for testing (target)
+
+```bash
+cargo run --bin fake_device
+```
