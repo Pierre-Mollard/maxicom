@@ -1,15 +1,15 @@
-use std::io::{self, ErrorKind};
+use serial2::SerialPort;
+use std::io::ErrorKind;
 
 fn main() {
     let mut running: bool = true;
-    let mut input_buffer: String = String::new();
+    let mut input_buffer = [0_u8; 1024];
 
-    println!("Starting");
+    let port = SerialPort::open("/dev/ttyFAKE", 115200).expect("fatal error opening fake device");
+    port.write(b"Starting").unwrap();
 
     while running {
-        input_buffer.clear();
-
-        let bytes_read: usize = match io::stdin().read_line(&mut input_buffer) {
+        let bytes_read: usize = match port.read(&mut input_buffer) {
             Ok(bytes_read) => bytes_read,
             Err(error) if error.kind() == ErrorKind::Interrupted => {
                 eprintln!("Input was Interrupted; trying again...");
@@ -20,7 +20,6 @@ fn main() {
                 break;
             }
         };
-        println!("Read #{bytes_read} characters");
 
         // hangup detection is a successful 0 char read
         // (test with Ctrl-D with empty buffer on linux)
@@ -29,11 +28,19 @@ fn main() {
             break;
         }
 
-        if input_buffer.contains("quit") {
-            println!("quitting...");
+        let received = &input_buffer[..bytes_read];
+        println!("RX {bytes_read} bytes: {received:02X?}");
+        let quit_command = b"quit";
+        let contains_quit = received
+            .windows(quit_command.len())
+            .any(|window| window == quit_command);
+
+        if contains_quit {
+            port.write(b"Quitting...").unwrap();
             running = false;
         } else {
-            println!("Echoing: {}", input_buffer);
+            port.write(b"Echoing: ").unwrap();
+            port.write(received).unwrap();
         }
     }
 
