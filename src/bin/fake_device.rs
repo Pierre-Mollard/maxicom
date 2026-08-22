@@ -5,7 +5,8 @@ fn main() {
     let mut running: bool = true;
     let mut input_buffer = [0_u8; 1024];
 
-    let port = SerialPort::open("/dev/ttyFAKE", 115200).expect("fatal error opening fake device");
+    let port =
+        SerialPort::open("/tmp/fake-device", 115200).expect("fatal error opening fake device");
     port.write(b"Starting").unwrap();
 
     while running {
@@ -28,6 +29,7 @@ fn main() {
             break;
         }
 
+        // FIXME: this only received 1byte at a time so never catch a quit
         let received = &input_buffer[..bytes_read];
         println!("RX {bytes_read} bytes: {received:02X?}");
         let quit_command = b"quit";
