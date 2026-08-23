@@ -1,20 +1,36 @@
 use std::io::Write;
 use std::io::stdout;
 
-use crate::serial::SerialConfig;
+use crate::serial::ConfigError;
 use crate::serial::SerialDevice;
 use crate::serial::SerialError;
+use crate::serial::parse_args;
 
-mod app;
 mod commands;
 mod serial;
 
 fn main() {
     println!("=== maxicom ===");
 
-    let config = SerialConfig { baudrate: 115_200 };
+    let config = match parse_args() {
+        Ok(config) => config,
+        Err(error) => {
+            match error {
+                ConfigError::MissingValue(option) => {
+                    eprintln!("Missing value for option '{option}'.")
+                }
+                ConfigError::UnknownArgument(argument) => eprintln!("Unknown argument {argument}."),
+                ConfigError::InvalidBaudRate(value) => {
+                    eprintln!("Invalid baud rate '{value}': expected an unsigned 32-bit integer.")
+                }
+            }
+            return;
+        }
+    };
 
-    let device = match SerialDevice::open("/tmp/maxicom", config) {
+    println!("Configuration: {config:#?}");
+
+    let device = match SerialDevice::open(config) {
         Ok(device) => device,
         Err(error) => {
             eprintln!("Could not open serial device: {error:?}");
