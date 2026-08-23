@@ -1,14 +1,16 @@
-use std::io::Write;
-use std::io::stdout;
 use std::process::ExitCode;
+use std::time::Duration;
 
+use crate::app::App;
 use crate::serial::SerialDevice;
 use crate::serial::SerialError;
 use crate::serial::parse_args;
 use crate::serial::print_help;
 use crate::terminal::TerminalGuard;
 
+mod app;
 mod commands;
+mod input;
 mod serial;
 mod terminal;
 
@@ -44,39 +46,64 @@ fn main() -> ExitCode {
         }
     };
 
+    // LOOP (TODO: move in app.rs)
+
     let mut running: bool = true;
     let mut input_buffer = [0_u8; 1024];
+    let mut app = App::new(100);
 
-    print!("> starting receiving:\r\n");
+    app.render();
+
     while running {
-        let bytes_read = match device.read_into(&mut input_buffer) {
-            Ok(bytes_read) => bytes_read,
+        let mut needs_render = false;
 
+        // TODO: make this async (currently blocking for 10ms)
+        match device.read_into(&mut input_buffer) {
+            Ok(0) => {}
+            Ok(bytes_read) => {
+                app.feed_rx(&input_buffer[..bytes_read]);
+                needs_render = true;
+            }
             Err(SerialError::InputClosed) => {
-                eprintln!("Serial input closed.");
                 break;
             }
-
-            Err(error) => {
-                eprintln!("Serial read failed: {error:?}");
+            Err(e) => {
+                eprintln!("Serial read error: {e:?}");
                 break;
             }
-        };
+        }
 
-        let received = &input_buffer[..bytes_read];
-        stdout().write_all(received).unwrap();
-        stdout().flush().unwrap();
+        // TODO: handle unwrap better
+        if let Some(event) = input::poll_event(Duration::from_millis(10)).unwrap() {
+            match input::handle_event(event) {
+                input::Action::InsertChar(c) => {
+                    app.append_input_char(c);
+                    needs_render = true;
+                }
+                input::Action::DeleteBack => {
+                    app.delete_last_input_char();
+                    needs_render = true;
+                }
+                input::Action::Submit => {
+                    let line = app.commit_input_line();
+                    device.write_all(line.as_bytes());
+                    device.write_all(b"\r\n");
+                    needs_render = true;
+                }
+                input::Action::Quit => {
+                    running = false;
+                }
+                input::Action::Ignore => {}
+            }
+        }
 
-        let Some(one_char) = input_buffer.first() else {
-            continue;
-        };
-        if *one_char == b'q' {
-            running = false;
+        if needs_render {
+            app.render();
         }
     }
 
-    println!("Exiting");
     guard.cleanup();
+    println!("Exiting");
 
     ExitCode::SUCCESS
 }

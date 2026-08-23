@@ -1,4 +1,4 @@
-use std::{env, io::ErrorKind};
+use std::{env, io::ErrorKind, time::Duration};
 
 use serial2::SerialPort;
 
@@ -44,26 +44,31 @@ pub enum SerialError {
 // TODO: check and handle more error types
 impl SerialDevice {
     pub fn open(config: SerialConfig) -> Result<Self, SerialError> {
-        let port =
+        let mut port =
             SerialPort::open(config.port, config.baudrate).map_err(|_| SerialError::OpenFailed)?;
+
+        port.set_read_timeout(Duration::from_millis(10))
+            .map_err(|_| SerialError::OpenFailed)?;
 
         Ok(Self { port })
     }
 
     pub fn read_into(&self, buffer: &mut [u8]) -> Result<usize, SerialError> {
-        loop {
-            match self.port.read(buffer) {
-                Ok(0) => return Err(SerialError::InputClosed),
+        match self.port.read(buffer) {
+            Ok(0) => Err(SerialError::InputClosed),
 
-                Ok(bytes_read) => return Ok(bytes_read),
+            Ok(bytes_read) => Ok(bytes_read),
 
-                Err(error) if error.kind() == ErrorKind::Interrupted => {
-                    continue;
-                }
+            Err(e) if e.kind() == ErrorKind::TimedOut || e.kind() == ErrorKind::WouldBlock => Ok(0),
 
-                Err(_) => return Err(SerialError::ReadFailed),
-            }
+            Err(e) if e.kind() == ErrorKind::Interrupted => Ok(0),
+
+            Err(_) => Err(SerialError::ReadFailed),
         }
+    }
+
+    pub fn write_all(&self, buffer: &[u8]) {
+        self.port.write_all(buffer);
     }
 }
 
