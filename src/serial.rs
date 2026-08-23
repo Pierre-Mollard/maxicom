@@ -1,7 +1,4 @@
-use std::{
-    env::{self, args},
-    io::ErrorKind,
-};
+use std::{env, io::ErrorKind};
 
 use serial2::SerialPort;
 
@@ -25,6 +22,12 @@ pub enum ConfigError {
     MissingValue(&'static str),
     InvalidBaudRate(String),
     UnknownArgument(String),
+}
+
+#[derive(Debug)]
+pub enum ParseOutcome {
+    Config(SerialConfig),
+    Help,
 }
 
 pub struct SerialDevice {
@@ -64,7 +67,7 @@ impl SerialDevice {
     }
 }
 
-pub fn parse_args() -> Result<SerialConfig, ConfigError> {
+pub fn parse_args() -> Result<ParseOutcome, ConfigError> {
     let mut config = SerialConfig::default();
     let mut args = env::args().skip(1); // skip program name
 
@@ -82,9 +85,7 @@ pub fn parse_args() -> Result<SerialConfig, ConfigError> {
             }
 
             "--help" | "-h" => {
-                return Err(ConfigError::UnknownArgument(
-                    "Usage: maxicom [--port DEVICE] [--baud RATE]".to_string(),
-                ));
+                return Ok(ParseOutcome::Help);
             }
 
             unknown => {
@@ -93,5 +94,42 @@ pub fn parse_args() -> Result<SerialConfig, ConfigError> {
         }
     }
 
-    Ok(config)
+    Ok(ParseOutcome::Config(config))
+}
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConfigError::MissingValue(option) => {
+                write!(formatter, "Missing value for option '{option}'.")
+            }
+
+            ConfigError::UnknownArgument(argument) => {
+                write!(formatter, "Unknown argument '{argument}'.")
+            }
+
+            ConfigError::InvalidBaudRate(value) => {
+                write!(
+                    formatter,
+                    "Invalid baud rate '{value}': expected an unsigned 32-bit integer."
+                )
+            }
+        }
+    }
+}
+
+pub fn print_help() {
+    println!(
+        "\
+MaxiCom — serial terminal
+
+Usage:
+  maxicom [OPTIONS]
+
+Options:
+  -p, --port <DEVICE>  Serial device path
+  -b, --baud <RATE>    Baud rate [default: 115200]
+  -h, --help           Print help
+"
+    );
 }
