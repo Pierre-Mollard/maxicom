@@ -86,7 +86,12 @@ fn main() -> ExitCode {
                 }
                 input::Action::Submit => {
                     let line = app.commit_input_line();
+
+                    // TODO: implement conf for optional local echo off by default
+                    //app.push_history(&line); // make optional
+
                     device.write_all(line.as_bytes());
+                    // TODO : make eol char configurable
                     device.write_all(b"\r\n");
                     needs_render = true;
                 }

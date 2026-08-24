@@ -51,6 +51,10 @@ impl App {
         self.partial_line.clear();
     }
 
+    pub fn push_history(&mut self, line: &str) {
+        self.local_history.push_back(line.to_string());
+    }
+
     /// Append a character to the input line.
     pub fn append_input_char(&mut self, c: char) {
         self.partial_user_line.push(c);
@@ -77,14 +81,14 @@ impl App {
         .unwrap();
 
         for line in &self.local_history {
-            writeln!(stdout, "{line}").unwrap();
+            write!(stdout, "| {line}\r\n").unwrap();
         }
 
         // TODO: make a config to wait for new line from the tty or display as it is coming
         // could be useful if the source is not emitting \n always
         if !self.partial_line.is_empty() {
             let partial = String::from_utf8_lossy(&self.partial_line);
-            write!(stdout, "{partial}\r\n").unwrap();
+            write!(stdout, "|p {partial}\r\n").unwrap();
         }
 
         write!(stdout, "> {}", self.partial_user_line).unwrap();
