@@ -10,6 +10,7 @@ use crate::terminal::TerminalGuard;
 
 mod app;
 mod commands;
+mod config;
 mod input;
 mod serial;
 mod terminal;
@@ -21,6 +22,8 @@ const EXIT_USAGE: u8 = 2;
 
 fn main() -> ExitCode {
     println!("=== MaxiCom ===");
+
+    let app_config = config::AppConfig::default();
 
     let config = match parse_args() {
         Ok(serial::ParseOutcome::Config(config)) => config,
@@ -87,12 +90,12 @@ fn main() -> ExitCode {
                 input::Action::Submit => {
                     let line = app.commit_input_line();
 
-                    // TODO: implement conf for optional local echo off by default
-                    //app.push_history(&line); // make optional
+                    if app_config.local_echo {
+                        app.push_history(&line);
+                    }
 
                     device.write_all(line.as_bytes());
-                    // TODO : make eol char configurable
-                    device.write_all(b"\r\n");
+                    device.write_all(app_config.eol_mode.as_bytes());
                     needs_render = true;
                 }
                 input::Action::Quit => {
