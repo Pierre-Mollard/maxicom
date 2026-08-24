@@ -1,3 +1,5 @@
+/// Application configuration and files
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EolMode {
     CrLf,

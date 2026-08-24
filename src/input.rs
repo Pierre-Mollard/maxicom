@@ -1,3 +1,5 @@
+/// Keyboard event polling and translation
+/// Using the 'crossterm' crate
 use std::{io, time::Duration};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};

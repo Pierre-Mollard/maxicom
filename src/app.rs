@@ -1,9 +1,13 @@
+/// State machine, updates and queue handling
+/// Mainly local functional code (core feature)
 use std::{
     collections::VecDeque,
     io::{Write, stdout},
 };
 
 use crossterm::execute;
+
+use crate::{config::AppConfig, input::Action};
 
 pub struct App {
     /// Completed lines of device output (scrollback) String because already processed
@@ -12,17 +16,26 @@ pub struct App {
     max_lines: usize,
     /// Current line being received from device output as bytes
     partial_line: Vec<u8>,
-    /// CUrrent line being typed by user as futur device input
+    /// Current line being typed by user as futur device input
     partial_user_line: String,
+    /// App config //TODO: voir si pas meilleur reuse
+    app_config: AppConfig,
+}
+
+pub enum UpdateEffect {
+    None,
+    Transmit(Vec<u8>),
+    Quit,
 }
 
 impl App {
-    pub fn new(max_lines: usize) -> Self {
+    pub fn new(app_config: AppConfig) -> Self {
         Self {
-            local_history: VecDeque::with_capacity(max_lines),
-            max_lines,
+            local_history: VecDeque::with_capacity(app_config.max_history_lines),
+            max_lines: app_config.max_history_lines,
             partial_line: Vec::new(),
             partial_user_line: String::new(),
+            app_config,
         }
     }
 
@@ -94,5 +107,32 @@ impl App {
         write!(stdout, "> {}", self.partial_user_line).unwrap();
 
         stdout.flush().unwrap();
+    }
+
+    pub fn update(&mut self, action: Action) -> UpdateEffect {
+        match action {
+            Action::InsertChar(c) => {
+                self.append_input_char(c); // NOTE: need render
+                UpdateEffect::None
+            }
+            Action::DeleteBack => {
+                self.delete_last_input_char(); // NOTE: need render
+                UpdateEffect::None
+            }
+            Action::Submit => {
+                let line = self.commit_input_line();
+
+                if self.app_config.local_echo {
+                    self.push_history(&line);
+                }
+
+                // consumming string!
+                let mut bytes = line.into_bytes();
+                bytes.extend_from_slice(self.app_config.eol_mode.as_bytes()); // NOTE: need render
+                UpdateEffect::Transmit(bytes)
+            }
+            Action::Quit => UpdateEffect::Quit,
+            Action::Ignore => UpdateEffect::None,
+        }
     }
 }

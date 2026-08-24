@@ -1,7 +1,9 @@
+/// Orchestration and init of the MaxiCom executable
 use std::process::ExitCode;
 use std::time::Duration;
 
 use crate::app::App;
+use crate::app::UpdateEffect;
 use crate::serial::SerialDevice;
 use crate::serial::SerialError;
 use crate::serial::parse_args;
@@ -9,7 +11,6 @@ use crate::serial::print_help;
 use crate::terminal::TerminalGuard;
 
 mod app;
-mod commands;
 mod config;
 mod input;
 mod serial;
@@ -53,7 +54,7 @@ fn main() -> ExitCode {
 
     let mut running: bool = true;
     let mut input_buffer = [0_u8; 1024];
-    let mut app = App::new(100);
+    let mut app = App::new(app_config);
 
     app.render();
 
@@ -78,31 +79,15 @@ fn main() -> ExitCode {
 
         // TODO: handle unwrap better
         if let Some(event) = input::poll_event(Duration::from_millis(10)).unwrap() {
-            match input::handle_event(event) {
-                input::Action::InsertChar(c) => {
-                    app.append_input_char(c);
-                    needs_render = true;
+            let action = input::handle_event(event);
+            match app.update(action) {
+                UpdateEffect::Quit => running = false,
+                UpdateEffect::Transmit(bytes) => {
+                    device.write_all(&bytes);
                 }
-                input::Action::DeleteBack => {
-                    app.delete_last_input_char();
-                    needs_render = true;
-                }
-                input::Action::Submit => {
-                    let line = app.commit_input_line();
-
-                    if app_config.local_echo {
-                        app.push_history(&line);
-                    }
-
-                    device.write_all(line.as_bytes());
-                    device.write_all(app_config.eol_mode.as_bytes());
-                    needs_render = true;
-                }
-                input::Action::Quit => {
-                    running = false;
-                }
-                input::Action::Ignore => {}
+                UpdateEffect::None => {}
             }
+            needs_render = true; // opti
         }
 
         if needs_render {

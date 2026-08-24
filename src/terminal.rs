@@ -1,3 +1,5 @@
+/// Terminal synchronisation
+/// Using the 'crossterm' crate
 use crossterm::{
     cursor::{Hide, Show},
     execute,

@@ -1,3 +1,5 @@
+/// HW I/O & Serial configuration
+/// Using the 'serial2' crate
 use std::{env, io::ErrorKind, time::Duration};
 
 use serial2::SerialPort;
