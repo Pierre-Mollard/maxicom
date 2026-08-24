@@ -69,8 +69,9 @@ impl SerialDevice {
         }
     }
 
+    // TODO: check and handle more error types
     pub fn write_all(&self, buffer: &[u8]) {
-        self.port.write_all(buffer);
+        self.port.write_all(buffer).unwrap();
     }
 }
 

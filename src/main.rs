@@ -1,3 +1,4 @@
+use std::io::stdout;
 /// Orchestration and init of the MaxiCom executable
 use std::process::ExitCode;
 use std::time::Duration;
@@ -9,12 +10,14 @@ use crate::serial::SerialError;
 use crate::serial::parse_args;
 use crate::serial::print_help;
 use crate::terminal::TerminalGuard;
+use crate::ui::render;
 
 mod app;
 mod config;
 mod input;
 mod serial;
 mod terminal;
+mod ui;
 
 const EXIT_USAGE: u8 = 2;
 // 0 -- Success
@@ -55,8 +58,9 @@ fn main() -> ExitCode {
     let mut running: bool = true;
     let mut input_buffer = [0_u8; 1024];
     let mut app = App::new(app_config);
+    let mut output = stdout();
 
-    app.render();
+    render(&app, &mut output).unwrap();
 
     while running {
         let mut needs_render = false;
@@ -91,7 +95,7 @@ fn main() -> ExitCode {
         }
 
         if needs_render {
-            app.render();
+            render(&app, &mut output).unwrap();
         }
     }
 

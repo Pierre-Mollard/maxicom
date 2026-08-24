@@ -1,11 +1,6 @@
 /// State machine, updates and queue handling
 /// Mainly local functional code (core feature)
-use std::{
-    collections::VecDeque,
-    io::{Write, stdout},
-};
-
-use crossterm::execute;
+use std::collections::VecDeque;
 
 use crate::{config::AppConfig, input::Action};
 
@@ -53,7 +48,7 @@ impl App {
         // TODO: handle different formats, right now error symbol
         let line = String::from_utf8_lossy(&self.partial_line);
 
-        let line = line.trim_end_matches(|c| c == '\r' || c == '\n');
+        let line = line.trim_end_matches(['\r', '\n']);
         self.local_history.push_back(line.to_string());
 
         // Enforce maximum scrollback size.
@@ -83,32 +78,6 @@ impl App {
         std::mem::take(&mut self.partial_user_line)
     }
 
-    pub fn render(&self) {
-        let mut stdout = stdout();
-
-        execute!(
-            stdout,
-            crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
-            crossterm::cursor::MoveTo(0, 0)
-        )
-        .unwrap();
-
-        for line in &self.local_history {
-            write!(stdout, "| {line}\r\n").unwrap();
-        }
-
-        // TODO: make a config to wait for new line from the tty or display as it is coming
-        // could be useful if the source is not emitting \n always
-        if !self.partial_line.is_empty() {
-            let partial = String::from_utf8_lossy(&self.partial_line);
-            write!(stdout, "|p {partial}\r\n").unwrap();
-        }
-
-        write!(stdout, "> {}", self.partial_user_line).unwrap();
-
-        stdout.flush().unwrap();
-    }
-
     pub fn update(&mut self, action: Action) -> UpdateEffect {
         match action {
             Action::InsertChar(c) => {
@@ -134,5 +103,25 @@ impl App {
             Action::Quit => UpdateEffect::Quit,
             Action::Ignore => UpdateEffect::None,
         }
+    }
+
+    /// Read-only slice/iterator of completed lines
+    pub fn history(&self) -> &VecDeque<String> {
+        &self.local_history
+    }
+
+    /// Read-only view of current incoming RX slice
+    pub fn partial_rx(&self) -> &[u8] {
+        &self.partial_line
+    }
+
+    /// Read-only view of user input buffer
+    pub fn input_buffer(&self) -> &str {
+        &self.partial_user_line
+    }
+
+    /// Read-only should display the recevied bytes before a full line
+    pub fn display_partial_incoming(&self) -> bool {
+        self.app_config.display_partial_rx
     }
 }

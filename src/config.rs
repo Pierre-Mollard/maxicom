@@ -24,6 +24,7 @@ pub struct AppConfig {
     pub eol_mode: EolMode,
     pub max_history_lines: usize,
     pub timestamp_lines: bool,
+    pub display_partial_rx: bool,
 }
 
 impl Default for AppConfig {
@@ -33,6 +34,7 @@ impl Default for AppConfig {
             eol_mode: EolMode::CrLf,
             max_history_lines: 1000,
             timestamp_lines: false,
+            display_partial_rx: true,
         }
     }
 }
