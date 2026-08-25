@@ -54,11 +54,11 @@ fn main() -> ExitCode {
     let mut terminal = ratatui::init();
 
     let mut running: bool = true;
-    let mut input_buffer = [0_u8; 1024];
+    let mut input_buffer = [0_u8; 4096]; // TODO: configurable
     let mut app = App::new(app_config);
 
     while running {
-        // TODO: make this async (currently blocking for 10ms)
+        // TODO: make this async with infinite delay (currently blocking for 10ms)
         match device.read_into(&mut input_buffer) {
             Ok(0) => {}
             Ok(bytes_read) => {
