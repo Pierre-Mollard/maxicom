@@ -3,20 +3,20 @@ use std::io::stdout;
 use std::process::ExitCode;
 use std::time::Duration;
 
+use ratatui::macros::ratatui_core::terminal;
+
 use crate::app::App;
 use crate::app::UpdateEffect;
 use crate::serial::SerialDevice;
 use crate::serial::SerialError;
 use crate::serial::parse_args;
 use crate::serial::print_help;
-use crate::terminal::TerminalGuard;
 use crate::ui::render;
 
 mod app;
 mod config;
 mod input;
 mod serial;
-mod terminal;
 mod ui;
 
 const EXIT_USAGE: u8 = 2;
@@ -43,8 +43,6 @@ fn main() -> ExitCode {
 
     println!("Configuration: {config:#?}");
 
-    let mut guard = TerminalGuard::enter().unwrap();
-
     let device = match SerialDevice::open(config) {
         Ok(device) => device,
         Err(error) => {
@@ -53,24 +51,18 @@ fn main() -> ExitCode {
         }
     };
 
-    // LOOP (TODO: move in app.rs)
+    let mut terminal = ratatui::init();
 
     let mut running: bool = true;
     let mut input_buffer = [0_u8; 1024];
     let mut app = App::new(app_config);
-    let mut output = stdout();
-
-    render(&app, &mut output).unwrap();
 
     while running {
-        let mut needs_render = false;
-
         // TODO: make this async (currently blocking for 10ms)
         match device.read_into(&mut input_buffer) {
             Ok(0) => {}
             Ok(bytes_read) => {
                 app.feed_rx(&input_buffer[..bytes_read]);
-                needs_render = true;
             }
             Err(SerialError::InputClosed) => {
                 break;
@@ -91,16 +83,16 @@ fn main() -> ExitCode {
                 }
                 UpdateEffect::None => {}
             }
-            needs_render = true; // opti
         }
 
-        if needs_render {
-            render(&app, &mut output).unwrap();
-        }
+        terminal
+            .draw(|frame| {
+                render(&app, frame);
+            })
+            .unwrap();
     }
 
-    guard.cleanup();
-    println!("Exiting");
+    ratatui::restore();
 
     ExitCode::SUCCESS
 }

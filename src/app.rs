@@ -81,11 +81,11 @@ impl App {
     pub fn update(&mut self, action: Action) -> UpdateEffect {
         match action {
             Action::InsertChar(c) => {
-                self.append_input_char(c); // NOTE: need render
+                self.append_input_char(c);
                 UpdateEffect::None
             }
             Action::DeleteBack => {
-                self.delete_last_input_char(); // NOTE: need render
+                self.delete_last_input_char();
                 UpdateEffect::None
             }
             Action::Submit => {
@@ -97,7 +97,7 @@ impl App {
 
                 // consumming string!
                 let mut bytes = line.into_bytes();
-                bytes.extend_from_slice(self.app_config.eol_mode.as_bytes()); // NOTE: need render
+                bytes.extend_from_slice(self.app_config.eol_mode.as_bytes());
                 UpdateEffect::Transmit(bytes)
             }
             Action::Quit => UpdateEffect::Quit,
