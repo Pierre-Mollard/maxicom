@@ -115,6 +115,21 @@ impl App {
                 bytes.extend_from_slice(self.app_config.eol_mode.as_bytes());
                 UpdateEffect::Transmit(bytes)
             }
+            Action::HistoryUp => {
+                self.history_up();
+                UpdateEffect::None
+            }
+            Action::HistoryDown => {
+                self.history_down();
+                UpdateEffect::None
+            }
+            Action::TransmitRaw(bytes) => {
+                if self.app_config.local_echo {
+                    let text = String::from_utf8_lossy(&bytes);
+                    self.push_history(&text);
+                }
+                UpdateEffect::Transmit(bytes)
+            }
             Action::Quit => UpdateEffect::Quit,
             Action::Ignore => UpdateEffect::None,
         }

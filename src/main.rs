@@ -58,6 +58,7 @@ fn main() -> ExitCode {
 
     let mut running: bool = true;
     let mut input_buffer = [0_u8; 4096]; // TODO: configurable
+    let mode = app_config.clone().input_mode; // TODO: move another way
     let mut app = App::new(app_config);
 
     while running {
@@ -78,7 +79,7 @@ fn main() -> ExitCode {
 
         // TODO: handle unwrap better
         if let Some(event) = input::poll_event(Duration::from_millis(10)).unwrap() {
-            let action = input::handle_event(event);
+            let action = input::handle_event(event, mode);
             match app.update(action) {
                 UpdateEffect::Quit => running = false,
                 UpdateEffect::Transmit(bytes) => {

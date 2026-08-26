@@ -8,18 +8,13 @@ use std::{
 const APP_DIR: &str = "maxicom";
 const CONFIG_FILE: &str = "config.toml";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum EolMode {
+    #[default]
     CrLf,
     Cr,
     Lf,
-}
-
-impl Default for EolMode {
-    fn default() -> Self {
-        Self::CrLf
-    }
 }
 
 impl EolMode {
@@ -32,6 +27,16 @@ impl EolMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum InputMode {
+    /// Line-buffered with editable prompt and history navigation
+    #[default]
+    Line,
+    /// Direct byte-by-byte passthrough (like classic Minicom/Picocom)
+    Raw,
+}
+
 /// MaxiCom UI & session settings
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -41,16 +46,18 @@ pub struct AppConfig {
     pub max_history_lines: usize,
     pub timestamp_lines: bool,
     pub display_partial_rx: bool,
+    pub input_mode: InputMode,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             local_echo: false,
-            eol_mode: EolMode::CrLf,
+            eol_mode: EolMode::default(),
             max_history_lines: 1000,
             timestamp_lines: false,
             display_partial_rx: true,
+            input_mode: InputMode::default(),
         }
     }
 }
