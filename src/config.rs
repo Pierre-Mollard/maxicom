@@ -1,6 +1,12 @@
 /// Application configuration and files
 use serde::{Deserialize, Serialize};
-use std::{fs, io, path::Path};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
+
+const APP_DIR: &str = "maxicom";
+const CONFIG_FILE: &str = "config.toml";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -50,35 +56,34 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    //pub fn load_from_file() {}
-
-    //pub fn create_default_config() {}
-
     /// Loads configuration from path, creating default file if it doesn't exist
     pub fn load_or_create_default<P: AsRef<Path>>(
         path: P,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let path = path.as_ref();
 
-        // 1. If file exists, read and deserialize
         if path.exists() {
             let content = fs::read_to_string(path)?;
             let config: AppConfig = toml::from_str(&content)?;
             return Ok(config);
         }
 
-        // 2. Otherwise, generate default config
         let default_config = AppConfig::default();
 
-        // Ensure parent directory exists (e.g. ~/.config/maxicom/)
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
 
-        // 3. Serialize and write to disk with clean TOML formatting
         let toml_string = toml::to_string_pretty(&default_config)?;
         fs::write(path, toml_string)?;
 
         Ok(default_config)
+    }
+
+    /// Load config using system configuration (like XDG or .config) on any os with crate 'dirs'
+    pub fn default_path() -> PathBuf {
+        dirs::config_dir()
+            .map(|p| p.join(APP_DIR).join(CONFIG_FILE))
+            .unwrap_or_else(|| PathBuf::from(CONFIG_FILE))
     }
 }

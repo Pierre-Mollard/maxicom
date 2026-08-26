@@ -7,6 +7,7 @@ use ratatui::macros::ratatui_core::terminal;
 
 use crate::app::App;
 use crate::app::UpdateEffect;
+use crate::config::AppConfig;
 use crate::serial::SerialDevice;
 use crate::serial::SerialError;
 use crate::serial::parse_args;
@@ -27,7 +28,9 @@ const EXIT_USAGE: u8 = 2;
 fn main() -> ExitCode {
     println!("=== MaxiCom ===");
 
-    let app_config = config::AppConfig::default();
+    // TODO: handle warning error
+    let config_path = AppConfig::default_path();
+    let app_config = AppConfig::load_or_create_default(&config_path).unwrap();
 
     let config = match parse_args() {
         Ok(serial::ParseOutcome::Config(config)) => config,
