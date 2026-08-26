@@ -7,6 +7,12 @@ use crate::{config::AppConfig, input::Action};
 pub struct App {
     /// Completed lines of device output (scrollback) String because already processed
     local_history: VecDeque<String>,
+    /// Completed lines of device input sent
+    local_send_history: VecDeque<String>,
+    /// None = active editing, Some(i) browsing #i history line
+    history_index: Option<usize>,
+    /// In-progress line when user press up
+    temp_input: String,
     /// Max line history
     max_lines: usize,
     /// Current line being received from device output as bytes
@@ -23,10 +29,14 @@ pub enum UpdateEffect {
     Quit,
 }
 
+// TODO: handle mode and different actions possible in each
 impl App {
     pub fn new(app_config: AppConfig) -> Self {
         Self {
             local_history: VecDeque::with_capacity(app_config.max_history_lines),
+            local_send_history: VecDeque::with_capacity(app_config.max_history_lines),
+            history_index: None,
+            temp_input: String::new(),
             max_lines: app_config.max_history_lines,
             partial_line: Vec::new(),
             partial_user_line: String::new(),
@@ -63,6 +73,10 @@ impl App {
         self.local_history.push_back(line.to_string());
     }
 
+    pub fn push_send_history(&mut self, line: &str) {
+        self.local_send_history.push_back(line.to_string());
+    }
+
     /// Append a character to the input line.
     pub fn append_input_char(&mut self, c: char) {
         self.partial_user_line.push(c);
@@ -73,11 +87,8 @@ impl App {
         self.partial_user_line.pop();
     }
 
-    /// Commit the current input line (move it outside of self)
-    pub fn commit_input_line(&mut self) -> String {
-        std::mem::take(&mut self.partial_user_line)
-    }
-
+    // TODO: mode just pass through where ^N or ^P or ^A etc. are sent like that and history is
+    // handled by target
     pub fn update(&mut self, action: Action) -> UpdateEffect {
         match action {
             Action::InsertChar(c) => {
@@ -89,7 +100,11 @@ impl App {
                 UpdateEffect::None
             }
             Action::Submit => {
-                let line = self.commit_input_line();
+                let line = std::mem::take(&mut self.partial_user_line);
+
+                if !line.is_empty() && self.local_send_history.back() != Some(&line) {
+                    self.local_send_history.push_back(line.clone());
+                }
 
                 if self.app_config.local_echo {
                     self.push_history(&line);
@@ -123,5 +138,42 @@ impl App {
     /// Read-only should display the recevied bytes before a full line
     pub fn display_partial_incoming(&self) -> bool {
         self.app_config.display_partial_rx
+    }
+    pub fn history_up(&mut self) {
+        if self.local_send_history.is_empty() {
+            return;
+        }
+
+        match self.history_index {
+            None => {
+                // Save what was typed before browsing history
+                self.temp_input = self.partial_user_line.clone();
+                let last = self.local_send_history.len() - 1;
+                self.history_index = Some(last);
+                self.partial_user_line = self.local_send_history[last].clone();
+            }
+            Some(i) if i > 0 => {
+                let next = i - 1;
+                self.history_index = Some(next);
+                self.partial_user_line = self.local_send_history[next].clone();
+            }
+            _ => {} // already at oldest history entry
+        }
+    }
+
+    pub fn history_down(&mut self) {
+        match self.history_index {
+            Some(i) if i + 1 < self.local_send_history.len() => {
+                let next = i + 1;
+                self.history_index = Some(next);
+                self.partial_user_line = self.local_send_history[next].clone();
+            }
+            Some(_) => {
+                // Return to what the user was typing
+                self.history_index = None;
+                self.partial_user_line = std::mem::take(&mut self.temp_input);
+            }
+            None => {} // already at live input prompt
+        }
     }
 }
