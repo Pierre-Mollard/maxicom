@@ -6,4 +6,6 @@ edition = "2024"
 [dependencies]
 crossterm = "0.29.0"
 ratatui = "0.30.2"
+serde = { version = "1.0.229", features = ["derive"] }
 serial2 = "0.2.38"
+toml = "1.1.4"
