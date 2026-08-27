@@ -37,6 +37,16 @@ pub enum InputMode {
     Raw,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum WrapMode {
+    /// Soft-wraps at window edge without trimming whitespace (Default)
+    #[default]
+    Wrap,
+    /// Truncates lines exceeding screen width (preserves table vertical alignment)
+    Truncate,
+}
+
 /// MaxiCom UI & session settings
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -47,6 +57,7 @@ pub struct AppConfig {
     pub timestamp_lines: bool,
     pub display_partial_rx: bool,
     pub input_mode: InputMode,
+    pub wrap_mode: WrapMode,
 }
 
 impl Default for AppConfig {
@@ -58,6 +69,7 @@ impl Default for AppConfig {
             timestamp_lines: false,
             display_partial_rx: true,
             input_mode: InputMode::default(),
+            wrap_mode: WrapMode::default(),
         }
     }
 }

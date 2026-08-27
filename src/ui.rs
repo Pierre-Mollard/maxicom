@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
-use crate::app::App;
+use crate::{app::App, config::WrapMode};
 
 pub fn render(app: &App, frame: &mut Frame) {
     let chunks = Layout::default()
@@ -33,13 +33,16 @@ pub fn render(app: &App, frame: &mut Frame) {
         ]));
     }
 
-    let history_paragraph = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" MaxiCom Monitor "),
-        )
-        .wrap(Wrap { trim: false });
+    let mut history_paragraph = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" MaxiCom Monitor "),
+    );
+
+    history_paragraph = match app.config().wrap_mode {
+        WrapMode::Wrap => history_paragraph.wrap(Wrap { trim: false }),
+        WrapMode::Truncate => history_paragraph,
+    };
 
     // Render history in the top chunk
     frame.render_widget(history_paragraph, chunks[0]);

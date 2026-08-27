@@ -86,10 +86,12 @@ impl App {
     pub fn update(&mut self, action: Action) -> UpdateEffect {
         match action {
             Action::InsertChar(c) => {
+                self.history_index = None;
                 self.append_input_char(c);
                 UpdateEffect::None
             }
             Action::DeleteBack => {
+                self.history_index = None;
                 self.delete_last_input_char();
                 UpdateEffect::None
             }
