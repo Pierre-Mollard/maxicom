@@ -73,10 +73,6 @@ impl App {
         self.local_history.push_back(line.to_string());
     }
 
-    pub fn push_send_history(&mut self, line: &str) {
-        self.local_send_history.push_back(line.to_string());
-    }
-
     /// Append a character to the input line.
     pub fn append_input_char(&mut self, c: char) {
         self.partial_user_line.push(c);
@@ -100,6 +96,9 @@ impl App {
             Action::Submit => {
                 let line = std::mem::take(&mut self.partial_user_line);
 
+                self.temp_input.clear();
+                self.history_index = None;
+
                 if !line.is_empty() && self.local_send_history.back() != Some(&line) {
                     self.local_send_history.push_back(line.clone());
                 }
@@ -111,6 +110,7 @@ impl App {
                 // consumming string!
                 let mut bytes = line.into_bytes();
                 bytes.extend_from_slice(self.app_config.eol_mode.as_bytes());
+
                 UpdateEffect::Transmit(bytes)
             }
             Action::HistoryUp => {
@@ -188,5 +188,10 @@ impl App {
             }
             None => {} // already at live input prompt
         }
+    }
+
+    /// Read-only accessor if outside modules need it
+    pub fn config(&self) -> &AppConfig {
+        &self.app_config
     }
 }

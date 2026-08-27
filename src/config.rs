@@ -1,7 +1,7 @@
 /// Application configuration and files
 use serde::{Deserialize, Serialize};
 use std::{
-    fs, io,
+    fs,
     path::{Path, PathBuf},
 };
 

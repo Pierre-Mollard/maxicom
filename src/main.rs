@@ -1,9 +1,6 @@
-use std::io::stdout;
 /// Orchestration and init of the MaxiCom executable
 use std::process::ExitCode;
 use std::time::Duration;
-
-use ratatui::macros::ratatui_core::terminal;
 
 use crate::app::App;
 use crate::app::UpdateEffect;
@@ -58,12 +55,11 @@ fn main() -> ExitCode {
 
     let mut running: bool = true;
     let mut input_buffer = [0_u8; 4096]; // TODO: configurable
-    let mode = app_config.clone().input_mode; // TODO: move another way
     let mut app = App::new(app_config);
 
     while running {
         // TODO: make this async with infinite delay (currently blocking for 10ms)
-        match device.read_into(&mut input_buffer) {
+        match device.read(&mut input_buffer) {
             Ok(0) => {}
             Ok(bytes_read) => {
                 app.feed_rx(&input_buffer[..bytes_read]);
@@ -77,14 +73,17 @@ fn main() -> ExitCode {
             }
         }
 
-        // TODO: handle unwrap better
-        if let Some(event) = input::poll_event(Duration::from_millis(10)).unwrap() {
-            let action = input::handle_event(event, mode);
+        if let Ok(Some(event)) = input::poll_event(Duration::from_millis(10)) {
+            let action = input::handle_event(event, app.config().input_mode);
             match app.update(action) {
                 UpdateEffect::Quit => running = false,
-                UpdateEffect::Transmit(bytes) => {
-                    device.write_all(&bytes).unwrap();
-                }
+                UpdateEffect::Transmit(bytes) => match device.write(&bytes) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        eprintln!("Serial write error: {e:?}");
+                        break;
+                    }
+                },
                 UpdateEffect::None => {}
             }
         }

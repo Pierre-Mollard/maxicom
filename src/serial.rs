@@ -128,7 +128,7 @@ impl SerialDevice {
         Ok(Self { port })
     }
 
-    pub fn read_into(&self, buffer: &mut [u8]) -> Result<usize, SerialError> {
+    pub fn read(&self, buffer: &mut [u8]) -> Result<usize, SerialError> {
         match self.port.read(buffer) {
             // 0 bytes on Unix TTY indicates EOF / disconnect
             Ok(0) => Err(SerialError::InputClosed),
@@ -143,7 +143,7 @@ impl SerialDevice {
         }
     }
 
-    pub fn write_all(&mut self, buffer: &[u8]) -> Result<(), SerialError> {
+    pub fn write(&mut self, buffer: &[u8]) -> Result<(), SerialError> {
         self.port
             .write_all(buffer)
             .map_err(|err| SerialError::WriteFailed {
