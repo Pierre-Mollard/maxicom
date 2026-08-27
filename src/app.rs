@@ -87,8 +87,6 @@ impl App {
         self.partial_user_line.pop();
     }
 
-    // TODO: mode just pass through where ^N or ^P or ^A etc. are sent like that and history is
-    // handled by target
     pub fn update(&mut self, action: Action) -> UpdateEffect {
         match action {
             Action::InsertChar(c) => {

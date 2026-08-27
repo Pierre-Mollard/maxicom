@@ -46,7 +46,7 @@ fn main() -> ExitCode {
 
     println!("Configuration: {config:#?}");
 
-    let device = match SerialDevice::open(config) {
+    let mut device = match SerialDevice::open(&config) {
         Ok(device) => device,
         Err(error) => {
             eprintln!("Could not open serial device: {error:?}");
@@ -83,7 +83,7 @@ fn main() -> ExitCode {
             match app.update(action) {
                 UpdateEffect::Quit => running = false,
                 UpdateEffect::Transmit(bytes) => {
-                    device.write_all(&bytes);
+                    device.write_all(&bytes).unwrap();
                 }
                 UpdateEffect::None => {}
             }
