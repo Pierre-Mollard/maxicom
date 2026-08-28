@@ -19,7 +19,9 @@ pub struct App {
     partial_line: Vec<u8>,
     /// Current line being typed by user as futur device input
     partial_user_line: String,
-    /// App config //TODO: voir si pas meilleur reuse
+    /// 0 = pinned to newest line (autoscroll)
+    scroll_offset: usize,
+    /// App config
     app_config: AppConfig,
 }
 
@@ -40,6 +42,7 @@ impl App {
             max_lines: app_config.max_history_lines,
             partial_line: Vec::new(),
             partial_user_line: String::new(),
+            scroll_offset: 0,
             app_config,
         }
     }
@@ -132,6 +135,18 @@ impl App {
             }
             Action::Quit => UpdateEffect::Quit,
             Action::Ignore => UpdateEffect::None,
+            Action::ScrollUp(nb) => {
+                self.scroll_up(nb);
+                UpdateEffect::None
+            }
+            Action::ScrollDown(nb) => {
+                self.scroll_down(nb);
+                UpdateEffect::None
+            }
+            Action::ScrollToBottom => {
+                self.scroll_to_bottom();
+                UpdateEffect::None
+            }
         }
     }
 
@@ -195,5 +210,22 @@ impl App {
     /// Read-only accessor if outside modules need it
     pub fn config(&self) -> &AppConfig {
         &self.app_config
+    }
+
+    pub fn scroll_up(&mut self, lines: usize) {
+        let max_scroll = self.local_history.len().saturating_sub(1);
+        self.scroll_offset = (self.scroll_offset + lines).min(max_scroll);
+    }
+
+    pub fn scroll_down(&mut self, lines: usize) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(lines);
+    }
+
+    pub fn scroll_to_bottom(&mut self) {
+        self.scroll_offset = 0;
+    }
+
+    pub fn scroll_offset(&self) -> usize {
+        self.scroll_offset
     }
 }

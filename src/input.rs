@@ -24,6 +24,10 @@ pub enum Action {
     /// History Down
     HistoryDown,
 
+    ScrollUp(usize),
+    ScrollDown(usize),
+    ScrollToBottom,
+
     // --- Raw Mode Actions ---
     TransmitRaw(Vec<u8>),
 }
@@ -76,6 +80,12 @@ fn handle_line_mode(code: KeyCode, _modifiers: KeyModifiers) -> Action {
         KeyCode::Enter => Action::Submit,
         KeyCode::Up => Action::HistoryUp,
         KeyCode::Down => Action::HistoryDown,
+
+        // TODO: check if those should work in raw mode too
+        KeyCode::PageUp => Action::ScrollUp(10),
+        KeyCode::PageDown => Action::ScrollDown(10),
+        KeyCode::End => Action::ScrollToBottom,
+
         _ => Action::Ignore,
     }
 }
