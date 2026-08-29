@@ -213,8 +213,7 @@ impl App {
     }
 
     pub fn scroll_up(&mut self, lines: usize) {
-        let max_scroll = self.local_history.len().saturating_sub(1);
-        self.scroll_offset = (self.scroll_offset + lines).min(max_scroll);
+        self.scroll_offset = self.scroll_offset.saturating_add(lines);
     }
 
     pub fn scroll_down(&mut self, lines: usize) {
@@ -223,6 +222,17 @@ impl App {
 
     pub fn scroll_to_bottom(&mut self) {
         self.scroll_offset = 0;
+    }
+
+    pub fn scroll_to_top(&mut self, visible_height: usize) {
+        self.scroll_offset = self.local_history.len().saturating_sub(visible_height);
+    }
+
+    pub fn clamp_scroll(&mut self, visible_height: usize) {
+        let max_scroll = self.local_history.len().saturating_sub(visible_height);
+        if self.scroll_offset > max_scroll {
+            self.scroll_offset = max_scroll;
+        }
     }
 
     pub fn scroll_offset(&self) -> usize {

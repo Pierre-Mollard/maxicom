@@ -10,7 +10,7 @@ use ratatui::{
 
 use crate::{app::App, config::WrapMode};
 
-pub fn render(app: &App, frame: &mut Frame) {
+pub fn render(app: &mut App, frame: &mut Frame) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(3)])
@@ -20,8 +20,13 @@ pub fn render(app: &App, frame: &mut Frame) {
     let visible_height = monitor_area.height.saturating_sub(2) as usize; // remove top/bottom borders
     let total_lines = app.history().len();
 
-    let end_idx = total_lines.saturating_sub(app.scroll_offset());
-    let start_idx = end_idx.saturating_sub(visible_height);
+    app.clamp_scroll(visible_height);
+
+    let max_scroll = total_lines.saturating_sub(visible_height);
+    let scroll_offset = app.scroll_offset().min(max_scroll);
+
+    let start_idx = max_scroll.saturating_sub(scroll_offset);
+    let end_idx = (start_idx + visible_height).min(total_lines);
 
     let mut lines: Vec<Line> = Vec::with_capacity(visible_height + 1);
 
@@ -38,7 +43,7 @@ pub fn render(app: &App, frame: &mut Frame) {
     }
 
     // Only show partial incoming bytes if the user is looking at the live bottom (scroll_offset == 0)
-    if app.scroll_offset() == 0 && app.display_partial_incoming() && !app.partial_rx().is_empty() {
+    if scroll_offset == 0 && app.display_partial_incoming() && !app.partial_rx().is_empty() {
         let partial_str = String::from_utf8_lossy(app.partial_rx());
         lines.push(Line::from(vec![
             Span::styled("|p ", Style::default().fg(Color::Yellow)),
@@ -47,8 +52,8 @@ pub fn render(app: &App, frame: &mut Frame) {
     }
 
     // TODO: adust scrollbar behavior/sensi
-    let title = if app.scroll_offset() > 0 {
-        format!(" MaxiCom Monitor [SCROLL: +{} lines] ", app.scroll_offset())
+    let title = if scroll_offset > 0 {
+        format!(" MaxiCom Monitor [SCROLL: +{} lines] ", scroll_offset)
     } else {
         " MaxiCom Monitor [LIVE] ".to_string()
     };
@@ -64,9 +69,7 @@ pub fn render(app: &App, frame: &mut Frame) {
     frame.render_widget(history_paragraph, monitor_area);
 
     if total_lines > visible_height {
-        let mut scrollbar_state = ScrollbarState::new(total_lines)
-            .position(start_idx)
-            .viewport_content_length(visible_height);
+        let mut scrollbar_state = ScrollbarState::new(max_scroll).position(start_idx);
 
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("▲"))

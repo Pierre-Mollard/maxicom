@@ -90,7 +90,7 @@ fn main() -> ExitCode {
 
         terminal
             .draw(|frame| {
-                render(&app, frame);
+                render(&mut app, frame);
             })
             .unwrap();
     }
