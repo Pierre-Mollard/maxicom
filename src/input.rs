@@ -27,6 +27,7 @@ pub enum Action {
     ScrollDown(usize),
     ScrollToBottom,
     ScrollToTop,
+    ClearHistory,
     Quit,
     Ignore,
 }
@@ -81,6 +82,14 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         match key.code {
             KeyCode::Char('a') => return Some(Action::SetPrefixMode(true)),
+            _ => return None,
+        }
+    }
+
+    // ALT SECTION
+    if key.modifiers.contains(KeyModifiers::ALT) {
+        match key.code {
+            KeyCode::Char('c') => return Some(Action::ClearHistory),
             _ => return None,
         }
     }

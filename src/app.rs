@@ -35,7 +35,6 @@ pub enum UpdateEffect {
     Quit,
 }
 
-// TODO: handle mode and different actions possible in each
 impl App {
     pub fn new(app_config: AppConfig) -> Self {
         Self {
@@ -145,6 +144,10 @@ impl App {
             }
             Action::ScrollToTop => {
                 self.scroll_to_top();
+                UpdateEffect::None
+            }
+            Action::ClearHistory => {
+                self.clear_history();
                 UpdateEffect::None
             }
             Action::SetPrefixMode(state) => {
@@ -262,5 +265,9 @@ impl App {
 
     pub fn is_prefix_active(&self) -> bool {
         self.prefix_active
+    }
+
+    pub fn clear_history(&mut self) {
+        self.local_history.clear();
     }
 }

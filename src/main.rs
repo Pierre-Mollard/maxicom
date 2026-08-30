@@ -99,9 +99,4 @@ fn main() -> ExitCode {
 
     ExitCode::SUCCESS
 }
-
-// notes and todos for way later:
-//
-// TODO: handle stderr stdin and stdout differently in TUI
-// TODO: update with states in mind (render, input, serial data rx)
-// TODO: event loop for keyboard_input, serial_rx, timeouts separates
+// TODO: handle maxicom program stderr in red special output in log
