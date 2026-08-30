@@ -51,7 +51,6 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         ]));
     }
 
-    // TODO: adust scrollbar behavior/sensi
     let title = if scroll_offset > 0 {
         format!(" MaxiCom Monitor [SCROLL: +{} lines] ", scroll_offset)
     } else {

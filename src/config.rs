@@ -30,7 +30,7 @@ impl EolMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum InputMode {
-    /// Line-buffered with editable prompt and history navigation
+    /// Line-buffered with editable prompt and history navigation (Split Rx and Tx)
     #[default]
     Line,
     /// Direct byte-by-byte passthrough (like classic Minicom/Picocom)
