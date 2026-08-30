@@ -6,7 +6,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifier
 use terminput::Encoding;
 use terminput_crossterm::to_terminput_key;
 
-use crate::config::InputMode;
+use crate::{app::App, config::InputMode};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Action {
@@ -21,7 +21,8 @@ pub enum Action {
     TransmitRaw(Vec<u8>),
 
     // System Commands (via prefix / bindings)
-    // TODO: ToggleInputMode,
+    ToggleInputMode,
+    SetPrefixMode(bool),
     ScrollUp(usize),
     ScrollDown(usize),
     ScrollToBottom,
@@ -41,48 +42,88 @@ pub fn poll_event(timeout: Duration) -> io::Result<Option<Event>> {
 }
 
 /// Pure translation: takes a crossterm Event and turns it into a typed Action
-pub fn handle_event(event: Event, mode: InputMode) -> Action {
+pub fn handle_event(event: Event, app: &App) -> Action {
     let Event::Key(key_event) = event else {
         return Action::Ignore;
     };
 
-    // ignores release events if emitted
+    // ignores release events if emitted (only processing press/repeat)
     if key_event.kind == KeyEventKind::Release {
         return Action::Ignore;
     }
 
-    // check for exit shortcuts (Ctrl-C or Ctrl-Q) TODO: handle all keybindings (special and both)
-    if mode == InputMode::Line && key_event.modifiers.contains(KeyModifiers::CONTROL) {
-        match key_event.code {
+    if let Some(action) = handle_common_keys(&key_event, app) {
+        return action;
+    }
+
+    match app.config().input_mode {
+        InputMode::Line => handle_line_mode(key_event),
+        InputMode::Raw => handle_raw_mode(key_event),
+    }
+}
+
+// Common check
+fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
+    // PREFIX SECTION
+    if app.is_prefix_active() {
+        // SUB NOT MODIFIER SECTION
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Char('Q') => return Some(Action::Quit),
+            KeyCode::Char('m') | KeyCode::Char('M') => return Some(Action::ToggleInputMode),
+            KeyCode::Char('a') => return Some(Action::TransmitRaw(vec![0x01])),
+
+            KeyCode::Esc => return Some(Action::SetPrefixMode(false)),
+            _ => return Some(Action::SetPrefixMode(false)),
+        }
+    }
+
+    // CTRL SECTION
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        match key.code {
+            KeyCode::Char('a') => return Some(Action::SetPrefixMode(true)),
+            _ => return None,
+        }
+    }
+
+    // SHIFT SECTION
+    if key.modifiers.contains(KeyModifiers::SHIFT) {
+        match key.code {
+            KeyCode::Home => return Some(Action::ScrollToTop),
+            KeyCode::End => return Some(Action::ScrollToBottom),
+            _ => return None,
+        }
+    }
+
+    // NOT MODIFIER SECTION
+    match key.code {
+        KeyCode::PageUp => Some(Action::ScrollUp(10)),
+        KeyCode::PageDown => Some(Action::ScrollDown(10)),
+        _ => None,
+    }
+}
+
+// Final check in LINE MODE
+fn handle_line_mode(key: KeyEvent) -> Action {
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        match key.code {
             KeyCode::Char('c') | KeyCode::Char('q') => return Action::Quit,
             _ => return Action::Ignore,
         }
     }
 
-    match mode {
-        InputMode::Line => handle_line_mode(key_event.code, key_event.modifiers),
-        InputMode::Raw => handle_raw_mode(key_event),
-    }
-}
-
-fn handle_line_mode(code: KeyCode, _modifiers: KeyModifiers) -> Action {
-    match code {
+    match key.code {
+        // Typing
         KeyCode::Char(c) => Action::InsertChar(c),
         KeyCode::Backspace => Action::DeleteBack,
         KeyCode::Enter => Action::Submit,
         KeyCode::Up => Action::HistoryUp,
         KeyCode::Down => Action::HistoryDown,
 
-        // TODO: check if those should work in raw mode too
-        KeyCode::PageUp => Action::ScrollUp(10),
-        KeyCode::PageDown => Action::ScrollDown(10),
-        KeyCode::End => Action::ScrollToBottom,
-        KeyCode::Home => Action::ScrollToTop,
-
         _ => Action::Ignore,
     }
 }
 
+// Final check in RAW MODE
 fn handle_raw_mode(key_event_crossterm: KeyEvent) -> Action {
     // Convert Crossterm KeyEvent -> Terminput KeyEvent
     if let Ok(key_event_terminput) = to_terminput_key(key_event_crossterm) {

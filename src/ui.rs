@@ -81,11 +81,15 @@ fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect) {
         InputMode::Raw => "RAW",
     };
 
-    let title = if scroll_offset > 0 {
+    let mut title = if scroll_offset > 0 {
         format!(" MaxiCom Monitor [{mode_str} | SCROLL: +{scroll_offset} lines] ")
     } else {
         format!(" MaxiCom Monitor [{mode_str} | LIVE] ")
     };
+
+    if app.is_prefix_active() {
+        title.push_str(" PREFIX");
+    }
 
     let mut history_paragraph =
         Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(title));

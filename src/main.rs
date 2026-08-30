@@ -74,7 +74,7 @@ fn main() -> ExitCode {
         }
 
         if let Ok(Some(event)) = input::poll_event(Duration::from_millis(10)) {
-            let action = input::handle_event(event, app.config().input_mode);
+            let action = input::handle_event(event, &app);
             match app.update(action) {
                 UpdateEffect::Quit => running = false,
                 UpdateEffect::Transmit(bytes) => match device.write(&bytes) {

@@ -2,7 +2,10 @@
 /// Mainly local functional code (core feature)
 use std::collections::VecDeque;
 
-use crate::{config::AppConfig, input::Action};
+use crate::{
+    config::{AppConfig, InputMode},
+    input::Action,
+};
 
 pub struct App {
     /// Completed lines of device output (scrollback) String because already processed
@@ -23,6 +26,7 @@ pub struct App {
     scroll_offset: usize,
     /// App config
     app_config: AppConfig,
+    prefix_active: bool,
 }
 
 pub enum UpdateEffect {
@@ -43,6 +47,7 @@ impl App {
             partial_line: Vec::new(),
             partial_user_line: String::new(),
             scroll_offset: 0,
+            prefix_active: false,
             app_config,
         }
     }
@@ -126,15 +131,6 @@ impl App {
                 self.history_down();
                 UpdateEffect::None
             }
-            Action::TransmitRaw(bytes) => {
-                if self.app_config.local_echo {
-                    let text = String::from_utf8_lossy(&bytes);
-                    self.push_history(&text);
-                }
-                UpdateEffect::Transmit(bytes)
-            }
-            Action::Quit => UpdateEffect::Quit,
-            Action::Ignore => UpdateEffect::None,
             Action::ScrollUp(nb) => {
                 self.scroll_up(nb);
                 UpdateEffect::None
@@ -151,6 +147,27 @@ impl App {
                 self.scroll_to_top();
                 UpdateEffect::None
             }
+            Action::SetPrefixMode(state) => {
+                self.prefix_active = state;
+                UpdateEffect::None
+            }
+            Action::ToggleInputMode => {
+                self.prefix_active = false;
+                self.app_config.input_mode = match self.app_config.input_mode {
+                    InputMode::Line => InputMode::Raw,
+                    InputMode::Raw => InputMode::Line,
+                };
+                UpdateEffect::None
+            }
+            Action::TransmitRaw(bytes) => {
+                if self.app_config.local_echo {
+                    let text = String::from_utf8_lossy(&bytes);
+                    self.push_history(&text);
+                }
+                UpdateEffect::Transmit(bytes)
+            }
+            Action::Quit => UpdateEffect::Quit,
+            Action::Ignore => UpdateEffect::None,
         }
     }
 
@@ -241,5 +258,9 @@ impl App {
 
     pub fn scroll_offset(&self) -> usize {
         self.scroll_offset
+    }
+
+    pub fn is_prefix_active(&self) -> bool {
+        self.prefix_active
     }
 }
