@@ -147,6 +147,10 @@ impl App {
                 self.scroll_to_bottom();
                 UpdateEffect::None
             }
+            Action::ScrollToTop => {
+                self.scroll_to_top();
+                UpdateEffect::None
+            }
         }
     }
 
@@ -224,8 +228,8 @@ impl App {
         self.scroll_offset = 0;
     }
 
-    pub fn scroll_to_top(&mut self, visible_height: usize) {
-        self.scroll_offset = self.local_history.len().saturating_sub(visible_height);
+    pub fn scroll_to_top(&mut self) {
+        self.scroll_offset = usize::MAX;
     }
 
     pub fn clamp_scroll(&mut self, visible_height: usize) {

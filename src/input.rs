@@ -25,7 +25,7 @@ pub enum Action {
     ScrollUp(usize),
     ScrollDown(usize),
     ScrollToBottom,
-    // TODO: ScrollToTop,
+    ScrollToTop,
     Quit,
     Ignore,
 }
@@ -77,6 +77,7 @@ fn handle_line_mode(code: KeyCode, _modifiers: KeyModifiers) -> Action {
         KeyCode::PageUp => Action::ScrollUp(10),
         KeyCode::PageDown => Action::ScrollDown(10),
         KeyCode::End => Action::ScrollToBottom,
+        KeyCode::Home => Action::ScrollToTop,
 
         _ => Action::Ignore,
     }
