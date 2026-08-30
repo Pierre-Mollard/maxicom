@@ -2,22 +2,46 @@
 /// Using the 'ratatui' crate
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Margin},
+    layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
 };
 
-use crate::{app::App, config::WrapMode};
+use crate::{
+    app::App,
+    config::{InputMode, WrapMode},
+};
 
 pub fn render(app: &mut App, frame: &mut Frame) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(3)])
-        .split(frame.area());
+    let screen_area = frame.area();
 
-    let monitor_area = chunks[0];
-    let visible_height = monitor_area.height.saturating_sub(2) as usize; // remove top/bottom borders
+    let (monitor_area, prompt_area): (Rect, Option<Rect>) = match app.config().input_mode {
+        InputMode::Raw => {
+            // Raw passthrough mode: monitor owns the entire window
+            (screen_area, None)
+        }
+        InputMode::Line => {
+            // Line mode: split into monitor (top) and input prompt (bottom)
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(3), Constraint::Length(3)])
+                .split(screen_area);
+
+            (chunks[0], Some(chunks[1]))
+        }
+    };
+
+    render_monitor(app, frame, monitor_area);
+
+    // 3. Render the Input Box (ONLY if in Line Mode)
+    if let Some(prompt_rect) = prompt_area {
+        render_input_prompt(app, frame, prompt_rect);
+    }
+}
+
+fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect) {
+    let visible_height = area.height.saturating_sub(2) as usize;
     let total_lines = app.history().len();
 
     app.clamp_scroll(visible_height);
@@ -36,6 +60,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         .skip(start_idx)
         .take(end_idx - start_idx)
     {
+        // TODO: custom outisde and inside (|)
         lines.push(Line::from(vec![
             Span::styled("| ", Style::default().fg(Color::DarkGray)),
             Span::raw(line.as_str()),
@@ -51,10 +76,15 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         ]));
     }
 
+    let mode_str = match app.config().input_mode {
+        InputMode::Line => "LINE",
+        InputMode::Raw => "RAW",
+    };
+
     let title = if scroll_offset > 0 {
-        format!(" MaxiCom Monitor [SCROLL: +{} lines] ", scroll_offset)
+        format!(" MaxiCom Monitor [{mode_str} | SCROLL: +{scroll_offset} lines] ")
     } else {
-        " MaxiCom Monitor [LIVE] ".to_string()
+        format!(" MaxiCom Monitor [{mode_str} | LIVE] ")
     };
 
     let mut history_paragraph =
@@ -65,7 +95,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         WrapMode::Truncate => history_paragraph,
     };
 
-    frame.render_widget(history_paragraph, monitor_area);
+    frame.render_widget(history_paragraph, area);
 
     if total_lines > visible_height {
         let mut scrollbar_state = ScrollbarState::new(max_scroll).position(start_idx);
@@ -78,14 +108,16 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 
         frame.render_stateful_widget(
             scrollbar,
-            monitor_area.inner(Margin {
+            area.inner(Margin {
                 vertical: 1,
                 horizontal: 0,
             }),
             &mut scrollbar_state,
         );
     }
+}
 
+fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect) {
     let input_text = Line::from(vec![
         Span::styled(
             "> ",
@@ -102,5 +134,10 @@ pub fn render(app: &mut App, frame: &mut Frame) {
             .title(" Transmit (TX) "),
     );
 
-    frame.render_widget(input_widget, chunks[1]);
+    frame.render_widget(input_widget, area);
+
+    // Place physical blinking cursor at the end of what the user is typing
+    let cursor_x = area.x + 3 + app.input_buffer().len() as u16;
+    let cursor_y = area.y + 1;
+    frame.set_cursor_position((cursor_x, cursor_y));
 }
