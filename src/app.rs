@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 
 use crate::{
     config::{AppConfig, InputMode, WrapMode},
-    input::Action,
+    input::{Action, AppAction, HistoryAction, LineInputAction, OverlayAction, SettingKey},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,17 +108,44 @@ impl App {
 
     pub fn update(&mut self, action: Action) -> UpdateEffect {
         match action {
-            Action::InsertChar(c) => {
+            Action::TransmitRaw(bytes) => {
+                if self.app_config.local_echo {
+                    let text = String::from_utf8_lossy(&bytes);
+                    self.push_history(&text);
+                }
+                UpdateEffect::Transmit(bytes)
+            }
+            Action::LineInput(action) => self.update_action_lineinput(action),
+            Action::History(action) => self.update_action_history(action),
+            Action::Overlay(action) => self.update_action_overlay(action),
+            Action::App(action) => self.update_action_app(action),
+            Action::Ignore => UpdateEffect::None,
+        }
+    }
+
+    fn update_action_app(&mut self, action: AppAction) -> UpdateEffect {
+        match action {
+            AppAction::SetPrefix(state) => {
+                self.prefix_active = state;
+                UpdateEffect::None
+            }
+            AppAction::Quit => UpdateEffect::Quit,
+        }
+    }
+
+    fn update_action_lineinput(&mut self, action: LineInputAction) -> UpdateEffect {
+        match action {
+            LineInputAction::InsertChar(c) => {
                 self.history_index = None;
                 self.append_input_char(c);
                 UpdateEffect::None
             }
-            Action::DeleteBack => {
+            LineInputAction::DeleteBack => {
                 self.history_index = None;
                 self.delete_last_input_char();
                 UpdateEffect::None
             }
-            Action::Submit => {
+            LineInputAction::Submit => {
                 let line = std::mem::take(&mut self.partial_user_line);
 
                 self.temp_input.clear();
@@ -138,77 +165,80 @@ impl App {
 
                 UpdateEffect::Transmit(bytes)
             }
-            Action::HistoryUp => {
+            LineInputAction::HistoryUp => {
                 self.history_up();
                 UpdateEffect::None
             }
-            Action::HistoryDown => {
+            LineInputAction::HistoryDown => {
                 self.history_down();
                 UpdateEffect::None
             }
-            Action::ScrollUp(nb) => {
+        }
+    }
+
+    fn update_action_history(&mut self, action: HistoryAction) -> UpdateEffect {
+        match action {
+            HistoryAction::ScrollUp(nb) => {
                 self.scroll_up(nb);
                 UpdateEffect::None
             }
-            Action::ScrollDown(nb) => {
+            HistoryAction::ScrollDown(nb) => {
                 self.scroll_down(nb);
                 UpdateEffect::None
             }
-            Action::ScrollToBottom => {
+            HistoryAction::ScrollToBottom => {
                 self.scroll_to_bottom();
                 UpdateEffect::None
             }
-            Action::ScrollToTop => {
+            HistoryAction::ScrollToTop => {
                 self.scroll_to_top();
                 UpdateEffect::None
             }
-            Action::ClearHistory => {
+            HistoryAction::Clear => {
                 self.clear_history();
                 UpdateEffect::None
             }
-            Action::SetPrefixMode(state) => {
-                self.prefix_active = state;
-                UpdateEffect::None
-            }
-            Action::OpenOverlay(overlay) => {
+        }
+    }
+
+    fn update_action_overlay(&mut self, action: OverlayAction) -> UpdateEffect {
+        match action {
+            OverlayAction::Open(overlay) => {
                 self.prefix_active = false;
                 self.overlay = Some(overlay);
                 UpdateEffect::None
             }
-            Action::CloseOverlay => {
+            OverlayAction::Close => {
                 self.overlay = None;
                 UpdateEffect::None
             }
-            Action::ToggleEcho => {
-                self.app_config.local_echo = !self.app_config.local_echo;
-                UpdateEffect::None
-            }
-            Action::ToggleWrap => {
-                self.app_config.wrap_mode = match self.app_config.wrap_mode {
-                    WrapMode::Wrap => WrapMode::Truncate,
-                    WrapMode::Truncate => WrapMode::Wrap,
-                };
-                UpdateEffect::None
-            }
-            Action::ToggleInputMode => {
-                self.prefix_active = false; // TODO: these prefix reset should not be linked to the
-                // actions because it will change bindings maybe later to not using prefix and some
-                // reverse
-                self.app_config.input_mode = match self.app_config.input_mode {
-                    InputMode::Line => InputMode::Raw,
-                    InputMode::Raw => InputMode::Line,
-                };
-                UpdateEffect::None
-            }
-            Action::TransmitRaw(bytes) => {
-                if self.app_config.local_echo {
-                    let text = String::from_utf8_lossy(&bytes);
-                    self.push_history(&text);
+            OverlayAction::SelectNext => UpdateEffect::None,
+            OverlayAction::SelectPrev => UpdateEffect::None,
+            OverlayAction::Confirm => UpdateEffect::None,
+            OverlayAction::ToggleSetting(setting_key) => match setting_key {
+                SettingKey::LocalEcho => {
+                    self.app_config.local_echo = !self.app_config.local_echo;
+                    UpdateEffect::None
                 }
-                UpdateEffect::Transmit(bytes)
-            }
-            Action::Quit => UpdateEffect::Quit,
-            Action::Ignore => UpdateEffect::None,
+                SettingKey::LineWrap => {
+                    self.app_config.wrap_mode = match self.app_config.wrap_mode {
+                        WrapMode::Wrap => WrapMode::Truncate,
+                        WrapMode::Truncate => WrapMode::Wrap,
+                    };
+                    UpdateEffect::None
+                }
+                SettingKey::InputMode => {
+                    // TODO: these prefix reset should not be linked to the
+                    // actions because it will change bindings maybe later to not using prefix and some
+                    // reverse
+                    self.prefix_active = false;
+                    self.app_config.input_mode = match self.app_config.input_mode {
+                        InputMode::Line => InputMode::Raw,
+                        InputMode::Raw => InputMode::Line,
+                    };
+                    UpdateEffect::None
+                }
+            },
         }
     }
 

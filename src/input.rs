@@ -11,38 +11,63 @@ use crate::{
     config::InputMode,
 };
 
-// TODO: maybe find a way to separate actions by groups?
 #[derive(Debug, PartialEq, Eq)]
 pub enum Action {
-    // --- Line Mode Actions ---
+    /// Raw bytes for Raw Mode or special cases NOTE: maybe Serial category for later if needed
+    TransmitRaw(Vec<u8>),
+    /// Text input operations only for Line Mode
+    LineInput(LineInputAction),
+    /// Receive history navigation like scrolling and searching
+    History(HistoryAction),
+    /// Popup overlay action like open, navigate, close, toggle settings
+    Overlay(OverlayAction),
+    /// Global application commands
+    App(AppAction),
+    /// Nothing happening
+    Ignore,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum AppAction {
+    SetPrefix(bool),
+    Quit,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum LineInputAction {
     InsertChar(char),
     DeleteBack,
     Submit,
     HistoryUp,
     HistoryDown,
+}
 
-    // --- Raw Mode Actions ---
-    TransmitRaw(Vec<u8>),
-
-    // System Commands (via prefix / bindings)
-    ToggleInputMode,
-    SetPrefixMode(bool),
+#[derive(Debug, PartialEq, Eq)]
+pub enum HistoryAction {
     ScrollUp(usize),
     ScrollDown(usize),
     ScrollToBottom,
     ScrollToTop,
-    ClearHistory,
-    Quit,
-    Ignore,
+    Clear,
+} // TODO: add search, navigate seach up and down, next and previous, copy also?
 
-    // Overlay Triggers
-    OpenOverlay(Overlay),
-    CloseOverlay,
-
-    // Overlay Menu Actions
-    ToggleEcho,
-    ToggleWrap,
+#[derive(Debug, PartialEq, Eq)]
+pub enum OverlayAction {
+    Open(Overlay),
+    Close,
+    SelectNext,
+    SelectPrev,
+    Confirm,
+    ToggleSetting(SettingKey),
 }
+
+// TODO: maybe this shouldnt be defined here in input.rs
+#[derive(Debug, PartialEq, Eq)]
+pub enum SettingKey {
+    LocalEcho,
+    InputMode,
+    LineWrap,
+} // TODO: add all settings
 
 /// Using crossterm's event API instead of stdin.read() to handle multi-byte ANSI sequence like
 /// arrows and page up and prefix
@@ -68,15 +93,21 @@ pub fn handle_event(event: Event, app: &App) -> Action {
     // Popup check
     if let Some(current_overlay) = app.overlay() {
         if key_event.code == KeyCode::Esc {
-            return Action::CloseOverlay;
+            return Action::Overlay(OverlayAction::Close);
         }
 
         return match current_overlay {
-            Overlay::Help => Action::CloseOverlay,
+            Overlay::Help => Action::Overlay(OverlayAction::Close),
             Overlay::Settings => match key_event.code {
-                KeyCode::Char('e') | KeyCode::Char('E') => Action::ToggleEcho,
-                KeyCode::Char('w') | KeyCode::Char('W') => Action::ToggleWrap,
-                KeyCode::Char('m') | KeyCode::Char('M') => Action::ToggleInputMode,
+                KeyCode::Char('e') | KeyCode::Char('E') => {
+                    Action::Overlay(OverlayAction::ToggleSetting(SettingKey::LocalEcho))
+                }
+                KeyCode::Char('w') | KeyCode::Char('W') => {
+                    Action::Overlay(OverlayAction::ToggleSetting(SettingKey::LineWrap))
+                }
+                KeyCode::Char('m') | KeyCode::Char('M') => {
+                    Action::Overlay(OverlayAction::ToggleSetting(SettingKey::InputMode))
+                }
                 _ => Action::Ignore,
             },
         };
@@ -98,25 +129,30 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
     if app.is_prefix_active() {
         // SUB NO MODIFIER SECTION
         match key.code {
-            KeyCode::Char('q') | KeyCode::Char('Q') => return Some(Action::Quit),
-            KeyCode::Char('m') | KeyCode::Char('M') => return Some(Action::ToggleInputMode),
+            KeyCode::Char('q') | KeyCode::Char('Q') => return Some(Action::App(AppAction::Quit)),
+            KeyCode::Char('m') | KeyCode::Char('M') => {
+                // NOTE: this is from the overlay category but could be using another alias route?
+                return Some(Action::Overlay(OverlayAction::ToggleSetting(
+                    SettingKey::InputMode,
+                )));
+            }
             KeyCode::Char('a') => return Some(Action::TransmitRaw(vec![0x01])),
             KeyCode::Char('h') | KeyCode::Char('H') => {
-                return Some(Action::OpenOverlay(Overlay::Help));
+                return Some(Action::Overlay(OverlayAction::Open(Overlay::Help)));
             }
             KeyCode::Char('s') | KeyCode::Char('S') => {
-                return Some(Action::OpenOverlay(Overlay::Settings));
+                return Some(Action::Overlay(OverlayAction::Open(Overlay::Settings)));
             }
 
-            KeyCode::Esc => return Some(Action::SetPrefixMode(false)),
-            _ => return Some(Action::SetPrefixMode(false)),
+            KeyCode::Esc => return Some(Action::App(AppAction::SetPrefix(false))),
+            _ => return Some(Action::App(AppAction::SetPrefix(false))),
         }
     }
 
     // CTRL SECTION
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         match key.code {
-            KeyCode::Char('a') => return Some(Action::SetPrefixMode(true)),
+            KeyCode::Char('a') => return Some(Action::App(AppAction::SetPrefix(true))),
             _ => return None,
         }
     }
@@ -124,7 +160,7 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
     // ALT SECTION
     if key.modifiers.contains(KeyModifiers::ALT) {
         match key.code {
-            KeyCode::Char('c') => return Some(Action::ClearHistory),
+            KeyCode::Char('c') => return Some(Action::History(HistoryAction::Clear)),
             _ => return None,
         }
     }
@@ -132,16 +168,16 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
     // SHIFT SECTION
     if key.modifiers.contains(KeyModifiers::SHIFT) {
         match key.code {
-            KeyCode::Home => return Some(Action::ScrollToTop),
-            KeyCode::End => return Some(Action::ScrollToBottom),
+            KeyCode::Home => return Some(Action::History(HistoryAction::ScrollToTop)),
+            KeyCode::End => return Some(Action::History(HistoryAction::ScrollToBottom)),
             _ => return None,
         }
     }
 
     // NOT MODIFIER SECTION
     match key.code {
-        KeyCode::PageUp => Some(Action::ScrollUp(10)),
-        KeyCode::PageDown => Some(Action::ScrollDown(10)),
+        KeyCode::PageUp => Some(Action::History(HistoryAction::ScrollUp(10))),
+        KeyCode::PageDown => Some(Action::History(HistoryAction::ScrollDown(10))),
         _ => None,
     }
 }
@@ -150,18 +186,18 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
 fn handle_line_mode(key: KeyEvent) -> Action {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         match key.code {
-            KeyCode::Char('c') | KeyCode::Char('q') => return Action::Quit,
+            KeyCode::Char('c') | KeyCode::Char('q') => return Action::App(AppAction::Quit),
             _ => return Action::Ignore,
         }
     }
 
     match key.code {
         // Typing
-        KeyCode::Char(c) => Action::InsertChar(c),
-        KeyCode::Backspace => Action::DeleteBack,
-        KeyCode::Enter => Action::Submit,
-        KeyCode::Up => Action::HistoryUp,
-        KeyCode::Down => Action::HistoryDown,
+        KeyCode::Char(c) => Action::LineInput(LineInputAction::InsertChar(c)),
+        KeyCode::Backspace => Action::LineInput(LineInputAction::DeleteBack),
+        KeyCode::Enter => Action::LineInput(LineInputAction::Submit),
+        KeyCode::Up => Action::LineInput(LineInputAction::HistoryUp),
+        KeyCode::Down => Action::LineInput(LineInputAction::HistoryDown),
 
         _ => Action::Ignore,
     }
