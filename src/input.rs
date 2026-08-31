@@ -6,8 +6,12 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifier
 use terminput::Encoding;
 use terminput_crossterm::to_terminput_key;
 
-use crate::{app::App, config::InputMode};
+use crate::{
+    app::{App, Overlay},
+    config::InputMode,
+};
 
+// TODO: maybe find a way to separate actions by groups?
 #[derive(Debug, PartialEq, Eq)]
 pub enum Action {
     // --- Line Mode Actions ---
@@ -30,6 +34,14 @@ pub enum Action {
     ClearHistory,
     Quit,
     Ignore,
+
+    // Overlay Triggers
+    OpenOverlay(Overlay),
+    CloseOverlay,
+
+    // Overlay Menu Actions
+    ToggleEcho,
+    ToggleWrap,
 }
 
 /// Using crossterm's event API instead of stdin.read() to handle multi-byte ANSI sequence like
@@ -53,6 +65,23 @@ pub fn handle_event(event: Event, app: &App) -> Action {
         return Action::Ignore;
     }
 
+    // Popup check
+    if let Some(current_overlay) = app.overlay() {
+        if key_event.code == KeyCode::Esc {
+            return Action::CloseOverlay;
+        }
+
+        return match current_overlay {
+            Overlay::Help => Action::CloseOverlay,
+            Overlay::Settings => match key_event.code {
+                KeyCode::Char('e') | KeyCode::Char('E') => Action::ToggleEcho,
+                KeyCode::Char('w') | KeyCode::Char('W') => Action::ToggleWrap,
+                KeyCode::Char('m') | KeyCode::Char('M') => Action::ToggleInputMode,
+                _ => Action::Ignore,
+            },
+        };
+    }
+
     if let Some(action) = handle_common_keys(&key_event, app) {
         return action;
     }
@@ -67,11 +96,17 @@ pub fn handle_event(event: Event, app: &App) -> Action {
 fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
     // PREFIX SECTION
     if app.is_prefix_active() {
-        // SUB NOT MODIFIER SECTION
+        // SUB NO MODIFIER SECTION
         match key.code {
             KeyCode::Char('q') | KeyCode::Char('Q') => return Some(Action::Quit),
             KeyCode::Char('m') | KeyCode::Char('M') => return Some(Action::ToggleInputMode),
             KeyCode::Char('a') => return Some(Action::TransmitRaw(vec![0x01])),
+            KeyCode::Char('h') | KeyCode::Char('H') => {
+                return Some(Action::OpenOverlay(Overlay::Help));
+            }
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                return Some(Action::OpenOverlay(Overlay::Settings));
+            }
 
             KeyCode::Esc => return Some(Action::SetPrefixMode(false)),
             _ => return Some(Action::SetPrefixMode(false)),

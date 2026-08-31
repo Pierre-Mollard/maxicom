@@ -5,11 +5,13 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
+    widgets::{
+        Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+    },
 };
 
 use crate::{
-    app::App,
+    app::{App, Overlay},
     config::{InputMode, WrapMode},
 };
 
@@ -38,8 +40,15 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     if let Some(prompt_rect) = prompt_area {
         render_input_prompt(app, frame, prompt_rect);
     }
+
+    match app.overlay() {
+        Some(Overlay::Help) => render_help_popup(frame),
+        Some(Overlay::Settings) => render_settings_popup(app, frame),
+        None => {}
+    }
 }
 
+// NOTE: AI generated, make it better
 fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect) {
     let visible_height = area.height.saturating_sub(2) as usize;
     let total_lines = app.history().len();
@@ -121,6 +130,7 @@ fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect) {
     }
 }
 
+// NOTE: AI generated, make it better
 fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect) {
     let input_text = Line::from(vec![
         Span::styled(
@@ -144,4 +154,120 @@ fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect) {
     let cursor_x = area.x + 3 + app.input_buffer().len() as u16;
     let cursor_y = area.y + 1;
     frame.set_cursor_position((cursor_x, cursor_y));
+}
+
+// NOTE: AI generated, make it better
+fn render_help_popup(frame: &mut Frame) {
+    let area = centered_rect(60, 14, frame.area());
+    frame.render_widget(Clear, area); // Blank background
+
+    let help_text = vec![
+        Line::from(Span::styled(
+            "--- MaxiCom Command Keys (Prefix: Ctrl-A) ---",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Ctrl-A H / Z  ", Style::default().fg(Color::Yellow)),
+            Span::raw(": Show this help screen"),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl-A O / S  ", Style::default().fg(Color::Yellow)),
+            Span::raw(": Open settings menu"),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl-A M      ", Style::default().fg(Color::Yellow)),
+            Span::raw(": Toggle Line / Raw mode"),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl-A Q      ", Style::default().fg(Color::Yellow)),
+            Span::raw(": Quit MaxiCom"),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "--- Navigation ---",
+            Style::default().fg(Color::Cyan),
+        )),
+        Line::from("PageUp / PageDown : Scroll serial history"),
+        Line::from("Shift + Home/End  : Jump to start / live bottom"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Press any key to close",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    let popup = Paragraph::new(help_text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Help [Keybindings] ")
+            .style(Style::default().fg(Color::White)),
+    );
+
+    frame.render_widget(popup, area);
+}
+
+// NOTE: AI generated, make it better
+fn render_settings_popup(app: &App, frame: &mut Frame) {
+    let area = centered_rect(55, 12, frame.area());
+    frame.render_widget(Clear, area);
+
+    let mode_str = match app.config().input_mode {
+        crate::config::InputMode::Line => "Line Mode",
+        crate::config::InputMode::Raw => "Raw Passthrough",
+    };
+    let wrap_str = match app.config().wrap_mode {
+        crate::config::WrapMode::Wrap => "Soft-Wrap",
+        crate::config::WrapMode::Truncate => "Truncate",
+    };
+    let echo_str = if app.config().local_echo { "ON" } else { "OFF" };
+
+    let text = vec![
+        Line::from(Span::styled(
+            "--- Configuration Dashboard ---",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("[M] ", Style::default().fg(Color::Yellow)),
+            Span::raw("Input Mode  : "),
+            Span::styled(mode_str, Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(vec![
+            Span::styled("[E] ", Style::default().fg(Color::Yellow)),
+            Span::raw("Local Echo  : "),
+            Span::styled(echo_str, Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(vec![
+            Span::styled("[W] ", Style::default().fg(Color::Yellow)),
+            Span::raw("Line Wrap   : "),
+            Span::styled(wrap_str, Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Press [Esc] to return to terminal",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    let popup = Paragraph::new(text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Settings [Toggle Hotkeys] ")
+            .style(Style::default().fg(Color::Green)),
+    );
+
+    frame.render_widget(popup, area);
+}
+
+/// Helper function to center a popup window
+fn centered_rect(percent_x: u16, height: u16, parent: Rect) -> Rect {
+    let width = (parent.width * percent_x) / 100;
+    let x = parent.x + parent.width.saturating_sub(width) / 2;
+    let y = parent.y + parent.height.saturating_sub(height) / 2;
+    Rect::new(x, y, width.min(parent.width), height.min(parent.height))
 }

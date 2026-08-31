@@ -3,9 +3,15 @@
 use std::collections::VecDeque;
 
 use crate::{
-    config::{AppConfig, InputMode},
+    config::{AppConfig, InputMode, WrapMode},
     input::Action,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Overlay {
+    Help,
+    Settings,
+}
 
 pub struct App {
     /// Completed lines of device output (scrollback) String because already processed
@@ -27,6 +33,7 @@ pub struct App {
     /// App config
     app_config: AppConfig,
     prefix_active: bool,
+    overlay: Option<Overlay>,
 }
 
 pub enum UpdateEffect {
@@ -48,7 +55,16 @@ impl App {
             scroll_offset: 0,
             prefix_active: false,
             app_config,
+            overlay: None,
         }
+    }
+
+    pub fn overlay(&self) -> Option<Overlay> {
+        self.overlay
+    }
+
+    pub fn set_overlay(&mut self, overlay: Option<Overlay>) {
+        self.overlay = overlay;
     }
 
     pub fn feed_rx(&mut self, bytes: &[u8]) {
@@ -154,8 +170,30 @@ impl App {
                 self.prefix_active = state;
                 UpdateEffect::None
             }
-            Action::ToggleInputMode => {
+            Action::OpenOverlay(overlay) => {
                 self.prefix_active = false;
+                self.overlay = Some(overlay);
+                UpdateEffect::None
+            }
+            Action::CloseOverlay => {
+                self.overlay = None;
+                UpdateEffect::None
+            }
+            Action::ToggleEcho => {
+                self.app_config.local_echo = !self.app_config.local_echo;
+                UpdateEffect::None
+            }
+            Action::ToggleWrap => {
+                self.app_config.wrap_mode = match self.app_config.wrap_mode {
+                    WrapMode::Wrap => WrapMode::Truncate,
+                    WrapMode::Truncate => WrapMode::Wrap,
+                };
+                UpdateEffect::None
+            }
+            Action::ToggleInputMode => {
+                self.prefix_active = false; // TODO: these prefix reset should not be linked to the
+                // actions because it will change bindings maybe later to not using prefix and some
+                // reverse
                 self.app_config.input_mode = match self.app_config.input_mode {
                     InputMode::Line => InputMode::Raw,
                     InputMode::Raw => InputMode::Line,
