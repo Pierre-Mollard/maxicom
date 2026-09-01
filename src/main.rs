@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 /// Orchestration and init of the MaxiCom executable
 use std::process::ExitCode;
 use std::time::Duration;
@@ -5,6 +6,7 @@ use std::time::Duration;
 use crate::app::App;
 use crate::app::UpdateEffect;
 use crate::config::AppConfig;
+use crate::logger::LogConfig;
 use crate::serial::SerialDevice;
 use crate::serial::SerialError;
 use crate::serial::parse_args;
@@ -14,6 +16,7 @@ use crate::ui::render;
 mod app;
 mod config;
 mod input;
+mod logger;
 mod serial;
 mod ui;
 
@@ -28,6 +31,12 @@ fn main() -> ExitCode {
     // TODO: handle warning error
     let config_path = AppConfig::default_path();
     let app_config = AppConfig::load_or_create_default(&config_path).unwrap();
+
+    let log_config = LogConfig {
+        enabled: true,
+        path: PathBuf::from("maxicom_test_file.log"),
+        timestamp_lines: true,
+    };
 
     let config = match parse_args() {
         Ok(serial::ParseOutcome::Config(config)) => config,
@@ -55,7 +64,7 @@ fn main() -> ExitCode {
 
     let mut running: bool = true;
     let mut input_buffer = [0_u8; 4096]; // TODO: configurable
-    let mut app = App::new(app_config);
+    let mut app = App::new(app_config, log_config);
 
     while running {
         // TODO: make this async with infinite delay (currently blocking for 10ms)

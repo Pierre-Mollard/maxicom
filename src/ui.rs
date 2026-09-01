@@ -224,6 +224,7 @@ fn render_settings_popup(app: &App, frame: &mut Frame) {
     };
     let echo_str = if app.config().local_echo { "ON" } else { "OFF" };
 
+    // TODO: add badge when recording is on
     let text = vec![
         Line::from(Span::styled(
             "--- Configuration Dashboard ---",

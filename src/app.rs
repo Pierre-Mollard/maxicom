@@ -5,6 +5,7 @@ use std::collections::VecDeque;
 use crate::{
     config::{AppConfig, InputMode, WrapMode},
     input::{Action, AppAction, HistoryAction, LineInputAction, OverlayAction, SettingKey},
+    logger::{FileLogger, LogConfig},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +35,7 @@ pub struct App {
     app_config: AppConfig,
     prefix_active: bool,
     overlay: Option<Overlay>,
+    logger: FileLogger,
 }
 
 pub enum UpdateEffect {
@@ -43,7 +45,7 @@ pub enum UpdateEffect {
 }
 
 impl App {
-    pub fn new(app_config: AppConfig) -> Self {
+    pub fn new(app_config: AppConfig, log_config: LogConfig) -> Self {
         Self {
             local_history: VecDeque::with_capacity(app_config.max_history_lines),
             local_send_history: VecDeque::with_capacity(app_config.max_history_lines),
@@ -56,7 +58,20 @@ impl App {
             prefix_active: false,
             app_config,
             overlay: None,
+            logger: FileLogger::new(log_config),
         }
+    }
+
+    pub fn toggle_logging(&mut self) {
+        if self.logger.is_active() {
+            self.logger.stop();
+        } else {
+            let _ = self.logger.start();
+        }
+    }
+
+    pub fn is_logging(&self) -> bool {
+        self.logger.is_active()
     }
 
     pub fn overlay(&self) -> Option<Overlay> {
@@ -81,8 +96,8 @@ impl App {
         // TODO: handle different formats, right now error symbol
         let line = String::from_utf8_lossy(&self.partial_line);
 
-        let line = line.trim_end_matches(['\r', '\n']);
-        self.local_history.push_back(line.to_string());
+        let line = line.trim_end_matches(['\r', '\n']).to_string();
+        self.push_history(&line);
 
         // Enforce maximum scrollback size.
         while self.local_history.len() > self.max_lines {
@@ -91,9 +106,11 @@ impl App {
 
         self.partial_line.clear();
     }
-
+    // TODO: add on/off recording with path
     pub fn push_history(&mut self, line: &str) {
-        self.local_history.push_back(line.to_string());
+        let _ = self.logger.log_line(line);
+
+        self.local_history.push_back(line.to_string()); // TODO: add limite to the Rx queue as well
     }
 
     /// Append a character to the input line.
