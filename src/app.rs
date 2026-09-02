@@ -22,16 +22,15 @@ pub struct LogEntry {
 }
 
 impl LogEntry {
-    pub fn new(text: String) -> Self {
-        Self {
-            text,
-            timestamp: Local::now(),
-        }
-    }
-
     // TODO : make format config
     pub fn formatted_time(&self) -> String {
-        self.timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+        let time = self.timestamp.format("%H:%M:%S%.3f").to_string();
+        format!("[{time}]")
+    }
+
+    pub fn formatted_time_builder(timestamp: DateTime<Local>) -> String {
+        let time = timestamp.format("%H:%M:%S%.3f").to_string();
+        format!("[{time}]")
     }
 }
 
@@ -48,6 +47,7 @@ pub struct App {
     max_lines: usize,
     /// Current line being received from device output as bytes
     partial_line: Vec<u8>,
+    partial_line_timestamp: Option<DateTime<Local>>,
     /// Current line being typed by user as futur device input
     partial_user_line: String,
     /// 0 = pinned to newest line (autoscroll)
@@ -75,6 +75,7 @@ impl App {
             max_lines: app_config.max_history_lines,
             partial_line: Vec::new(),
             partial_user_line: String::new(),
+            partial_line_timestamp: None,
             scroll_offset: 0,
             prefix_active: false,
             app_config,
@@ -103,10 +104,19 @@ impl App {
         self.overlay = overlay;
     }
 
+    pub fn partial_line_timestamp(&self) -> Option<DateTime<Local>> {
+        self.partial_line_timestamp
+    }
+
     pub fn feed_rx(&mut self, bytes: &[u8]) {
         for &b in bytes {
+            if self.partial_line.is_empty() {
+                self.partial_line_timestamp = Some(Local::now());
+            }
+
             self.partial_line.push(b);
 
+            // TODO: check if \r is handled correctly like for progress bars
             if b == b'\n' {
                 self.commit_partial_line();
             }
@@ -129,11 +139,18 @@ impl App {
     }
     // TODO: add on/off recording with path
     pub fn push_history(&mut self, line: &str) {
-        let entry = LogEntry::new(line.to_string());
+        let timestamp = self
+            .partial_line_timestamp
+            .take()
+            .unwrap_or_else(Local::now);
+        let entry = LogEntry {
+            text: line.to_string(),
+            timestamp,
+        };
 
         let _ = self.logger.log_entry(&entry);
 
-        // TODO: add limite to the Rx queue as well
+        // TODO: add limite to the Rx queue as well (check if commit partial line or here)
         self.local_history.push_back(entry);
     }
 

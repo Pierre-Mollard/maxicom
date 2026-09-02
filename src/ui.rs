@@ -11,7 +11,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{App, Overlay},
+    app::{App, LogEntry, Overlay},
     config::{InputMode, WrapMode},
 };
 
@@ -74,7 +74,7 @@ fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect) {
         let mut current_line = Vec::new();
 
         if app.config().timestamp_in_line {
-            let time_str = format!("[{}] ", entry.timestamp.format("%H:%M:%S%.3f"));
+            let time_str = entry.formatted_time();
             current_line.push(Span::styled(time_str, Style::default().fg(Color::Yellow)));
         }
 
@@ -86,10 +86,21 @@ fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect) {
     // Only show partial incoming bytes if the user is looking at the live bottom (scroll_offset == 0)
     if scroll_offset == 0 && app.display_partial_incoming() && !app.partial_rx().is_empty() {
         let partial_str = String::from_utf8_lossy(app.partial_rx());
-        lines.push(Line::from(vec![
-            Span::styled("|p ", Style::default().fg(Color::Yellow)),
-            Span::styled(partial_str, Style::default().fg(Color::Yellow)),
-        ]));
+        let mut partial_spans = Vec::new();
+
+        if app.config().timestamp_in_line
+            && let Some(partial_timestamp) = app.partial_line_timestamp()
+        {
+            let time = LogEntry::formatted_time_builder(partial_timestamp);
+            partial_spans.push(Span::styled(time, Style::default().fg(Color::Yellow)));
+        }
+
+        // Prefix with a subtle indicator or standard pipe
+        partial_spans.push(Span::styled("|p ", Style::default().fg(Color::DarkGray)));
+
+        partial_spans.push(Span::styled(partial_str, Style::default().fg(Color::White)));
+
+        lines.push(Line::from(partial_spans));
     }
 
     let mode_str = match app.config().input_mode {
