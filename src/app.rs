@@ -1,8 +1,8 @@
+use chrono::{DateTime, Local};
 /// State machine, updates and queue handling
 /// Mainly local functional code (core feature)
-use std::collections::VecDeque;
-
-use chrono::{DateTime, Local};
+use std::{collections::VecDeque, default};
+use vt100::Parser as Vt100Parser;
 
 use crate::{
     config::{AppConfig, InputMode, RxNewlineMode, WrapMode},
@@ -58,6 +58,7 @@ pub struct App {
     overlay: Option<Overlay>,
     logger: FileLogger,
     pending_carriage_return: bool,
+    pub vt100_parser: vt100::Parser,
 }
 
 pub enum UpdateEffect {
@@ -68,6 +69,7 @@ pub enum UpdateEffect {
 
 impl App {
     pub fn new(app_config: AppConfig, log_config: LogConfig) -> Self {
+        let vt100_parser = Vt100Parser::new(24, 80, 1000);
         Self {
             local_history: VecDeque::with_capacity(app_config.max_history_lines),
             local_send_history: VecDeque::with_capacity(app_config.max_history_lines),
@@ -83,8 +85,21 @@ impl App {
             overlay: None,
             logger: FileLogger::new(log_config),
             pending_carriage_return: false,
+            vt100_parser,
         }
     }
+
+    /// Access the VT100 parser
+    pub fn vt100_screen(&self) -> &vt100::Screen {
+        self.vt100_parser.screen()
+    }
+
+    /// Adjust parser grid when user resizes terminal window
+    //pub fn resize_vt100(&mut self, rows: u16, cols: u16) {
+    //TODO: handle VT100 resize
+    // Initialize default 24x80 grid with 1000 lines scrollback
+    //self.vt100_parser.set_size(rows, cols);
+    //}
 
     pub fn toggle_logging(&mut self) {
         if self.logger.is_active() {
@@ -114,6 +129,7 @@ impl App {
     // colors and convert to ratatui
 
     // TODO: handle interactive mode like VT100 (huge change)
+    // TODO: save as raw capture stream when in interactive mode
     pub fn feed_rx(&mut self, bytes: &[u8]) {
         for &b in bytes {
             if self.partial_line.is_empty() {
@@ -314,8 +330,9 @@ impl App {
                     // reverse
                     self.prefix_active = false;
                     self.app_config.input_mode = match self.app_config.input_mode {
-                        InputMode::Line => InputMode::Raw,
-                        InputMode::Raw => InputMode::Line,
+                        InputMode::Line => InputMode::Monitor,
+                        InputMode::Monitor => InputMode::Terminal,
+                        InputMode::Terminal => InputMode::Line,
                     };
                     UpdateEffect::None
                 }

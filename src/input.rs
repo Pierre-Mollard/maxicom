@@ -119,7 +119,7 @@ pub fn handle_event(event: Event, app: &App) -> Action {
 
     match app.config().input_mode {
         InputMode::Line => handle_line_mode(key_event),
-        InputMode::Raw => handle_raw_mode(key_event),
+        InputMode::Monitor | InputMode::Terminal => handle_raw_mode(key_event),
     }
 }
 

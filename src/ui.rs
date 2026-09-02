@@ -9,6 +9,7 @@ use ratatui::{
         Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
     },
 };
+use tui_term::widget::PseudoTerminal;
 
 use crate::{
     app::{App, LogEntry, Overlay},
@@ -19,7 +20,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     let screen_area = frame.area();
 
     let (monitor_area, prompt_area): (Rect, Option<Rect>) = match app.config().input_mode {
-        InputMode::Raw => {
+        InputMode::Monitor | InputMode::Terminal => {
             // Raw passthrough mode: monitor owns the entire window
             (screen_area, None)
         }
@@ -34,7 +35,19 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         }
     };
 
-    render_monitor(app, frame, monitor_area);
+    match app.config().input_mode {
+        InputMode::Terminal => {
+            // Keep vt100 internal grid dimensions synced with window size
+            //let inner_height = monitor_area.height.saturating_sub(2);
+            //let inner_width = monitor_area.width.saturating_sub(2);
+            //app.resize_vt100(inner_height, inner_width);
+
+            render_vt100_terminal(app, frame, monitor_area);
+        }
+        InputMode::Line | InputMode::Monitor => {
+            render_monitor(app, frame, monitor_area);
+        }
+    }
 
     // 3. Render the Input Box (ONLY if in Line Mode)
     if let Some(prompt_rect) = prompt_area {
@@ -46,6 +59,19 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         Some(Overlay::Settings) => render_settings_popup(app, frame),
         None => {}
     }
+}
+
+fn render_vt100_terminal(app: &App, frame: &mut Frame, area: Rect) {
+    let mut title = " MaxiCom [TERMINAL | LIVE] ".to_string();
+    if app.is_prefix_active() {
+        title.push_str(" PREFIX");
+    }
+
+    let screen = app.vt100_screen();
+    let term_widget =
+        PseudoTerminal::new(screen).block(Block::default().borders(Borders::ALL).title(title));
+
+    frame.render_widget(term_widget, area);
 }
 
 // NOTE: AI generated, make it better
@@ -105,7 +131,8 @@ fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect) {
 
     let mode_str = match app.config().input_mode {
         InputMode::Line => "LINE",
-        InputMode::Raw => "RAW",
+        InputMode::Monitor => "MONITOR",
+        InputMode::Terminal => "TERMINAL",
     };
 
     let mut title = if scroll_offset > 0 {
@@ -233,8 +260,9 @@ fn render_settings_popup(app: &App, frame: &mut Frame) {
     frame.render_widget(Clear, area);
 
     let mode_str = match app.config().input_mode {
-        crate::config::InputMode::Line => "Line Mode",
-        crate::config::InputMode::Raw => "Raw Passthrough",
+        crate::config::InputMode::Line => "Line",
+        crate::config::InputMode::Monitor => "Raw Line",
+        crate::config::InputMode::Terminal => "Raw 2D",
     };
     let wrap_str = match app.config().wrap_mode {
         crate::config::WrapMode::Wrap => "Soft-Wrap",

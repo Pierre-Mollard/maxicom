@@ -6,6 +6,7 @@ use std::time::Duration;
 use crate::app::App;
 use crate::app::UpdateEffect;
 use crate::config::AppConfig;
+use crate::config::InputMode;
 use crate::logger::LogConfig;
 use crate::serial::SerialDevice;
 use crate::serial::SerialError;
@@ -70,9 +71,14 @@ fn main() -> ExitCode {
         // TODO: make this async with infinite delay (currently blocking for 10ms)
         match device.read(&mut input_buffer) {
             Ok(0) => {}
-            Ok(bytes_read) => {
-                app.feed_rx(&input_buffer[..bytes_read]);
-            }
+            Ok(bytes_read) => match app.config().input_mode {
+                InputMode::Line | InputMode::Monitor => {
+                    app.feed_rx(&input_buffer[..bytes_read]);
+                }
+                InputMode::Terminal => {
+                    app.vt100_parser.process(&input_buffer[..bytes_read]);
+                }
+            },
             Err(SerialError::InputClosed) => {
                 break;
             }
