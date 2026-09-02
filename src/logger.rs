@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 use chrono::Local;
 
+use crate::app::LogEntry;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogConfig {
     pub enabled: bool,
@@ -56,20 +58,15 @@ impl FileLogger {
     }
 
     /// Logs a completed line of text received from the device
-    pub fn log_line(&mut self, line: &str) -> io::Result<()> {
-        let Some(file) = &mut self.file else {
-            return Ok(());
-        };
-
-        if self.config.timestamp_lines {
-            let now = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-            writeln!(file, "[{now}] {line}")?;
-        } else {
-            writeln!(file, "{line}")?;
+    pub fn log_entry(&mut self, entry: &LogEntry) -> io::Result<()> {
+        if let Some(file) = &mut self.file {
+            if self.config.timestamp_lines {
+                writeln!(file, "[{}] {}", entry.formatted_time(), entry.text)?;
+            } else {
+                writeln!(file, "{}", entry.text)?;
+            }
+            file.flush()?;
         }
-
-        // Flush immediately so crashing devices don't lose the final panic log in buffer
-        file.flush()?;
         Ok(())
     }
 

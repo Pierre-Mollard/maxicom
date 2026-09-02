@@ -2,6 +2,8 @@
 /// Mainly local functional code (core feature)
 use std::collections::VecDeque;
 
+use chrono::{DateTime, Local};
+
 use crate::{
     config::{AppConfig, InputMode, WrapMode},
     input::{Action, AppAction, HistoryAction, LineInputAction, OverlayAction, SettingKey},
@@ -14,9 +16,28 @@ pub enum Overlay {
     Settings,
 }
 
+pub struct LogEntry {
+    pub text: String,
+    pub timestamp: DateTime<Local>,
+}
+
+impl LogEntry {
+    pub fn new(text: String) -> Self {
+        Self {
+            text,
+            timestamp: Local::now(),
+        }
+    }
+
+    // TODO : make format config
+    pub fn formatted_time(&self) -> String {
+        self.timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+    }
+}
+
 pub struct App {
     /// Completed lines of device output (scrollback) String because already processed
-    local_history: VecDeque<String>,
+    local_history: VecDeque<LogEntry>,
     /// Completed lines of device input sent
     local_send_history: VecDeque<String>,
     /// None = active editing, Some(i) browsing #i history line
@@ -108,9 +129,12 @@ impl App {
     }
     // TODO: add on/off recording with path
     pub fn push_history(&mut self, line: &str) {
-        let _ = self.logger.log_line(line);
+        let entry = LogEntry::new(line.to_string());
 
-        self.local_history.push_back(line.to_string()); // TODO: add limite to the Rx queue as well
+        let _ = self.logger.log_entry(&entry);
+
+        // TODO: add limite to the Rx queue as well
+        self.local_history.push_back(entry);
     }
 
     /// Append a character to the input line.
@@ -260,7 +284,7 @@ impl App {
     }
 
     /// Read-only slice/iterator of completed lines
-    pub fn history(&self) -> &VecDeque<String> {
+    pub fn history(&self) -> &VecDeque<LogEntry> {
         &self.local_history
     }
 

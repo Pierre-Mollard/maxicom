@@ -63,17 +63,24 @@ fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect) {
 
     let mut lines: Vec<Line> = Vec::with_capacity(visible_height + 1);
 
-    for line in app
+    for entry in app
         .history()
         .iter()
         .skip(start_idx)
         .take(end_idx - start_idx)
     {
         // TODO: custom outisde and inside (|)
-        lines.push(Line::from(vec![
-            Span::styled("| ", Style::default().fg(Color::DarkGray)),
-            Span::raw(line.as_str()),
-        ]));
+
+        let mut current_line = Vec::new();
+
+        if app.config().timestamp_in_line {
+            let time_str = format!("[{}] ", entry.timestamp.format("%H:%M:%S%.3f"));
+            current_line.push(Span::styled(time_str, Style::default().fg(Color::Yellow)));
+        }
+
+        current_line.push(Span::styled("| ", Style::default().fg(Color::DarkGray)));
+        current_line.push(Span::raw(entry.text.as_str()));
+        lines.push(Line::from(current_line));
     }
 
     // Only show partial incoming bytes if the user is looking at the live bottom (scroll_offset == 0)
