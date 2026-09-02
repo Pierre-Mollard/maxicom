@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 use chrono::{DateTime, Local};
 
 use crate::{
-    config::{AppConfig, InputMode, WrapMode},
+    config::{AppConfig, InputMode, RxNewlineMode, WrapMode},
     input::{Action, AppAction, HistoryAction, LineInputAction, OverlayAction, SettingKey},
     logger::{FileLogger, LogConfig},
 };
@@ -57,6 +57,7 @@ pub struct App {
     prefix_active: bool,
     overlay: Option<Overlay>,
     logger: FileLogger,
+    pending_carriage_return: bool,
 }
 
 pub enum UpdateEffect {
@@ -81,6 +82,7 @@ impl App {
             app_config,
             overlay: None,
             logger: FileLogger::new(log_config),
+            pending_carriage_return: false,
         }
     }
 
@@ -108,17 +110,38 @@ impl App {
         self.partial_line_timestamp
     }
 
+    // TODO:  Using the `ansi-to-tui` or `ratatui::text::Line::from` ANSI helpers to save some
+    // colors and convert to ratatui
+
+    // TODO: handle interactive mode like VT100 (huge change)
     pub fn feed_rx(&mut self, bytes: &[u8]) {
         for &b in bytes {
             if self.partial_line.is_empty() {
                 self.partial_line_timestamp = Some(Local::now());
             }
 
-            self.partial_line.push(b);
-
-            // TODO: check if \r is handled correctly like for progress bars
-            if b == b'\n' {
-                self.commit_partial_line();
+            match b {
+                b'\r' => match self.app_config.rx_eol_mode {
+                    RxNewlineMode::CrLf | RxNewlineMode::Auto => {
+                        self.pending_carriage_return = true;
+                    }
+                    RxNewlineMode::LfOnly => {}
+                },
+                b'\n' => {
+                    self.pending_carriage_return = false;
+                    self.commit_partial_line();
+                }
+                0x08 | 0x7F => {
+                    self.partial_line.pop();
+                }
+                byte => {
+                    if self.pending_carriage_return {
+                        self.pending_carriage_return = false;
+                        self.partial_line.clear();
+                        self.partial_line_timestamp = Some(Local::now());
+                    }
+                    self.partial_line.push(byte);
+                }
             }
         }
     }
@@ -219,7 +242,7 @@ impl App {
 
                 // consumming string!
                 let mut bytes = line.into_bytes();
-                bytes.extend_from_slice(self.app_config.eol_mode.as_bytes());
+                bytes.extend_from_slice(self.app_config.tx_eol_mode.as_bytes());
 
                 UpdateEffect::Transmit(bytes)
             }

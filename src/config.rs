@@ -8,23 +8,33 @@ use std::{
 const APP_DIR: &str = "maxicom";
 const CONFIG_FILE: &str = "config.toml";
 
+/// Char use at the end of the line when sending in LineMode (not raw)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
-pub enum EolMode {
+pub enum TxNewlineSymbol {
     #[default]
     CrLf,
     Cr,
     Lf,
 }
 
-impl EolMode {
+impl TxNewlineSymbol {
     pub fn as_bytes(&self) -> &'static [u8] {
         match self {
-            EolMode::CrLf => b"\r\n",
-            EolMode::Cr => b"\r",
-            EolMode::Lf => b"\n",
+            TxNewlineSymbol::CrLf => b"\r\n",
+            TxNewlineSymbol::Cr => b"\r",
+            TxNewlineSymbol::Lf => b"\n",
         }
     }
+}
+
+/// In LineMode (not raw or interactive) used to define how to treat a new line
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum RxNewlineMode {
+    #[default]
+    Auto, // Splits line on \n or \r\n, handles \r as line-reset (best for embedded)
+    CrLf,   // Expects strictly \r\n
+    LfOnly, // Treats \n as newline, ignores \r
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -52,7 +62,8 @@ pub enum WrapMode {
 #[serde(default)]
 pub struct AppConfig {
     pub local_echo: bool,
-    pub eol_mode: EolMode,
+    pub tx_eol_mode: TxNewlineSymbol,
+    pub rx_eol_mode: RxNewlineMode,
     pub max_history_lines: usize,
     pub timestamp_in_file: bool,
     pub timestamp_in_line: bool,
@@ -65,7 +76,8 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             local_echo: false,
-            eol_mode: EolMode::default(),
+            tx_eol_mode: TxNewlineSymbol::default(),
+            rx_eol_mode: RxNewlineMode::default(),
             max_history_lines: 1000,
             timestamp_in_file: false,
             timestamp_in_line: true,
