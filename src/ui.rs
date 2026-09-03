@@ -37,10 +37,9 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 
     match app.config().input_mode {
         InputMode::Terminal => {
-            // Keep vt100 internal grid dimensions synced with window size
-            //let inner_height = monitor_area.height.saturating_sub(2);
-            //let inner_width = monitor_area.width.saturating_sub(2);
-            //app.resize_vt100(inner_height, inner_width);
+            let inner_height = monitor_area.height.saturating_sub(2);
+            let inner_width = monitor_area.width.saturating_sub(2);
+            app.resize_vt100(inner_height, inner_width);
 
             render_vt100_terminal(app, frame, monitor_area);
         }

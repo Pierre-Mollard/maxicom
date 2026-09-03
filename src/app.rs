@@ -59,6 +59,7 @@ pub struct App {
     logger: FileLogger,
     pending_carriage_return: bool,
     pub vt100_parser: vt100::Parser,
+    term_size: (u16, u16),
 }
 
 pub enum UpdateEffect {
@@ -86,20 +87,22 @@ impl App {
             logger: FileLogger::new(log_config),
             pending_carriage_return: false,
             vt100_parser,
+            term_size: (40, 80),
         }
     }
 
-    /// Access the VT100 parser
     pub fn vt100_screen(&self) -> &vt100::Screen {
         self.vt100_parser.screen()
     }
 
-    /// Adjust parser grid when user resizes terminal window
-    //pub fn resize_vt100(&mut self, rows: u16, cols: u16) {
-    //TODO: handle VT100 resize
-    // Initialize default 24x80 grid with 1000 lines scrollback
-    //self.vt100_parser.set_size(rows, cols);
-    //}
+    // TODO: handle resizing terminal 2D because now it is like minicom data loss...
+    // TODO: add command to enable sending the 'resize' command to a linux remote
+    pub fn resize_vt100(&mut self, rows: u16, cols: u16) {
+        if rows > 0 && cols > 0 && self.term_size != (rows, cols) {
+            self.term_size = (rows, cols);
+            self.vt100_parser.screen_mut().set_size(rows, cols);
+        }
+    }
 
     pub fn toggle_logging(&mut self) {
         if self.logger.is_active() {
