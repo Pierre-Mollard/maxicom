@@ -72,7 +72,7 @@ fn main() -> ExitCode {
         match device.read(&mut input_buffer) {
             Ok(0) => {}
             Ok(bytes_read) => match app.config().input_mode {
-                InputMode::Line | InputMode::Monitor => {
+                InputMode::Line => {
                     app.feed_rx(&input_buffer[..bytes_read]);
                 }
                 InputMode::Terminal => {

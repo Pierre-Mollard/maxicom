@@ -43,8 +43,6 @@ pub enum InputMode {
     /// Line-buffered with editable prompt and history navigation (Split Rx and Tx)
     #[default]
     Line,
-    /// Direct byte-by-byte passthrough with lines
-    Monitor,
     /// Raw on 2D screen
     Terminal,
 }

@@ -1,7 +1,7 @@
 use chrono::{DateTime, Local};
 /// State machine, updates and queue handling
 /// Mainly local functional code (core feature)
-use std::{collections::VecDeque, default};
+use std::collections::VecDeque;
 use vt100::Parser as Vt100Parser;
 
 use crate::{
@@ -330,8 +330,7 @@ impl App {
                     // reverse
                     self.prefix_active = false;
                     self.app_config.input_mode = match self.app_config.input_mode {
-                        InputMode::Line => InputMode::Monitor,
-                        InputMode::Monitor => InputMode::Terminal,
+                        InputMode::Line => InputMode::Terminal,
                         InputMode::Terminal => InputMode::Line,
                     };
                     UpdateEffect::None

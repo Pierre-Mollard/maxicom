@@ -20,7 +20,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     let screen_area = frame.area();
 
     let (monitor_area, prompt_area): (Rect, Option<Rect>) = match app.config().input_mode {
-        InputMode::Monitor | InputMode::Terminal => {
+        InputMode::Terminal => {
             // Raw passthrough mode: monitor owns the entire window
             (screen_area, None)
         }
@@ -44,7 +44,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 
             render_vt100_terminal(app, frame, monitor_area);
         }
-        InputMode::Line | InputMode::Monitor => {
+        InputMode::Line => {
             render_monitor(app, frame, monitor_area);
         }
     }
@@ -130,9 +130,8 @@ fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect) {
     }
 
     let mode_str = match app.config().input_mode {
-        InputMode::Line => "LINE",
-        InputMode::Monitor => "MONITOR",
-        InputMode::Terminal => "TERMINAL",
+        InputMode::Line => "LINE_MODE",
+        InputMode::Terminal => "TERMINAL_MODE",
     };
 
     let mut title = if scroll_offset > 0 {
@@ -260,9 +259,8 @@ fn render_settings_popup(app: &App, frame: &mut Frame) {
     frame.render_widget(Clear, area);
 
     let mode_str = match app.config().input_mode {
-        crate::config::InputMode::Line => "Line",
-        crate::config::InputMode::Monitor => "Raw Line",
-        crate::config::InputMode::Terminal => "Raw 2D",
+        crate::config::InputMode::Line => "Line Mode",
+        crate::config::InputMode::Terminal => "Terminal Mode",
     };
     let wrap_str = match app.config().wrap_mode {
         crate::config::WrapMode::Wrap => "Soft-Wrap",
