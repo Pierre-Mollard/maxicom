@@ -61,7 +61,13 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 }
 
 fn render_vt100_terminal(app: &App, frame: &mut Frame, area: Rect) {
-    let mut title = " MaxiCom [TERMINAL | LIVE] ".to_string();
+    let scroll_offset = app.vt100_parser.screen().scrollback();
+
+    let mut title = if scroll_offset > 0 {
+        format!(" MaxiCom [TERMINAL | SCROLL: +{} lines] ", scroll_offset)
+    } else {
+        " MaxiCom [TERMINAL | LIVE] ".to_string()
+    };
     if app.is_prefix_active() {
         title.push_str(" PREFIX");
     }
@@ -69,6 +75,8 @@ fn render_vt100_terminal(app: &App, frame: &mut Frame, area: Rect) {
     let screen = app.vt100_screen();
     let term_widget =
         PseudoTerminal::new(screen).block(Block::default().borders(Borders::ALL).title(title));
+
+    // TODO: add a way to count the line number history to display a scrollbar
 
     frame.render_widget(term_widget, area);
 }

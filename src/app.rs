@@ -71,6 +71,7 @@ pub enum UpdateEffect {
 impl App {
     pub fn new(app_config: AppConfig, log_config: LogConfig) -> Self {
         let vt100_parser = Vt100Parser::new(24, 80, 1000);
+        // TODO: configure size of scrollback history with vt100
         Self {
             local_history: VecDeque::with_capacity(app_config.max_history_lines),
             local_send_history: VecDeque::with_capacity(app_config.max_history_lines),
@@ -404,20 +405,33 @@ impl App {
         &self.app_config
     }
 
+    pub fn update_vt100_scroll(&mut self) {
+        if self.app_config.input_mode == InputMode::Terminal {
+            self.vt100_parser
+                .screen_mut()
+                .set_scrollback(self.scroll_offset);
+            self.scroll_offset = self.vt100_parser.screen().scrollback(); // in case clamping
+        }
+    }
+
     pub fn scroll_up(&mut self, lines: usize) {
         self.scroll_offset = self.scroll_offset.saturating_add(lines);
+        self.update_vt100_scroll();
     }
 
     pub fn scroll_down(&mut self, lines: usize) {
         self.scroll_offset = self.scroll_offset.saturating_sub(lines);
+        self.update_vt100_scroll();
     }
 
     pub fn scroll_to_bottom(&mut self) {
         self.scroll_offset = 0;
+        self.update_vt100_scroll();
     }
 
     pub fn scroll_to_top(&mut self) {
         self.scroll_offset = usize::MAX;
+        self.update_vt100_scroll();
     }
 
     pub fn clamp_scroll(&mut self, visible_height: usize) {
@@ -425,6 +439,7 @@ impl App {
         if self.scroll_offset > max_scroll {
             self.scroll_offset = max_scroll;
         }
+        self.update_vt100_scroll();
     }
 
     pub fn scroll_offset(&self) -> usize {
