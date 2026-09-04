@@ -34,8 +34,7 @@ fn main() {
         let mut count: u32 = 0;
         while run_flag.load(Ordering::Relaxed) {
             if spam_flag.load(Ordering::Relaxed) {
-                //let msg = format!("SPAM #{count}: sensor_val={}\r\n", count * 10);
-                let msg = "x"; // to check current line pre-drawing (before any \r\n)
+                let msg = format!("SPAM #{count}: sensor_val={}\r\n", count * 10);
                 if tx_port.write(msg.as_bytes()).is_err() {
                     break;
                 }
@@ -81,7 +80,6 @@ fn main() {
             .any(|window| window == askspam_command);
 
         // a serial is always (often...) echoing what it received, if not use local_echo on client
-        port.write(b"I am Echoing: ").unwrap();
         port.write(received).unwrap();
 
         if contains_quit {

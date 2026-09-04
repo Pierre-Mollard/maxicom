@@ -12,12 +12,12 @@ minicom but written in rust with my custom features.
 
 ## TODO
 
-- [ ] Main loops and render / update system
-- [ ] Serial byte stream interpreter
-- [ ] Configuration
-- [ ] TUI
-- [ ] History
-- [ ] timestamps
+- [x] Main loops and render / update system
+- [o] Serial byte stream interpreter
+- [o] Configuration
+- [o] TUI
+- [o] History
+- [o] timestamps
 - [ ] Integration with espressif idf.py monitor
 
 ## NOTES
