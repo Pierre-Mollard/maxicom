@@ -9,7 +9,6 @@ use ratatui::{
         Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
     },
 };
-use tui_term::widget::PseudoTerminal;
 
 use crate::{
     app::{App, LogEntry, Overlay},
@@ -58,8 +57,8 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 }
 
 fn render_vt100_terminal(app: &App, frame: &mut Frame, area: Rect) {
-    let scroll_offset = app.vt100_parser.screen().scrollback();
-    let pan_offset = app.pan_offset();
+    let scroll_offset = app.terminal_view.vt100_parser.screen().scrollback();
+    let pan_offset = app.terminal_view.pan_offset();
 
     let screen = app.vt100_screen();
 
@@ -97,12 +96,12 @@ fn render_vt100_terminal(app: &App, frame: &mut Frame, area: Rect) {
 // NOTE: AI generated, make it better
 fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect) {
     let visible_height = area.height.saturating_sub(2) as usize;
-    let total_lines = app.history().len();
+    let total_lines = app.line_view.history().len();
 
-    app.clamp_scroll(visible_height);
+    app.line_view.clamp_scroll(visible_height);
 
     let max_scroll = total_lines.saturating_sub(visible_height);
-    let scroll_offset = app.scroll_offset().min(max_scroll);
+    let scroll_offset = app.line_view.scroll_offset().min(max_scroll);
 
     let start_idx = max_scroll.saturating_sub(scroll_offset);
     let end_idx = (start_idx + visible_height).min(total_lines);
@@ -110,6 +109,7 @@ fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect) {
     let mut lines: Vec<Line> = Vec::with_capacity(visible_height + 1);
 
     for entry in app
+        .line_view
         .history()
         .iter()
         .skip(start_idx)
@@ -130,12 +130,15 @@ fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect) {
     }
 
     // Only show partial incoming bytes if the user is looking at the live bottom (scroll_offset == 0)
-    if scroll_offset == 0 && app.display_partial_incoming() && !app.partial_rx().is_empty() {
-        let partial_str = String::from_utf8_lossy(app.partial_rx());
+    if scroll_offset == 0
+        && app.config().display_partial_rx
+        && !app.line_view.partial_rx().is_empty()
+    {
+        let partial_str = String::from_utf8_lossy(app.line_view.partial_rx());
         let mut partial_spans = Vec::new();
 
         if app.config().timestamp_in_line
-            && let Some(partial_timestamp) = app.partial_line_timestamp()
+            && let Some(partial_timestamp) = app.line_view.partial_line_timestamp()
         {
             let time = LogEntry::formatted_time_builder(partial_timestamp);
             partial_spans.push(Span::styled(time, Style::default().fg(Color::Yellow)));
@@ -203,7 +206,7 @@ fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect) {
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(app.input_buffer()),
+        Span::raw(app.line_view.input_buffer()),
     ]);
 
     let input_widget = Paragraph::new(input_text).block(
@@ -215,7 +218,7 @@ fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(input_widget, area);
 
     // Place physical blinking cursor at the end of what the user is typing
-    let cursor_x = area.x + 3 + app.input_buffer().len() as u16;
+    let cursor_x = area.x + 3 + app.line_view.input_buffer().len() as u16;
     let cursor_y = area.y + 1;
     frame.set_cursor_position((cursor_x, cursor_y));
 }

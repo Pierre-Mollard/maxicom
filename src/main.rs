@@ -74,11 +74,14 @@ fn main() -> ExitCode {
             Ok(0) => {}
             Ok(bytes_read) => match app.config().input_mode {
                 InputMode::Line => {
-                    app.feed_rx(&input_buffer[..bytes_read]);
+                    app.line_view
+                        .feed_rx(app.config().rx_eol_mode, &input_buffer[..bytes_read]);
                 }
                 InputMode::Terminal => {
                     // TODO: save as raw capture stream when in interactive mode
-                    app.vt100_parser.process(&input_buffer[..bytes_read]);
+                    app.terminal_view
+                        .vt100_parser
+                        .process(&input_buffer[..bytes_read]);
                 }
             },
             Err(SerialError::InputClosed) => {
