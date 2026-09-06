@@ -19,6 +19,7 @@ mod config;
 mod input;
 mod logger;
 mod serial;
+mod terminal;
 mod ui;
 
 const EXIT_USAGE: u8 = 2;

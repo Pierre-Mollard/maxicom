@@ -14,6 +14,7 @@ use tui_term::widget::PseudoTerminal;
 use crate::{
     app::{App, LogEntry, Overlay},
     config::{InputMode, WrapMode},
+    terminal::MaxicomTerminal,
 };
 
 pub fn render(app: &mut App, frame: &mut Frame) {
@@ -84,7 +85,9 @@ fn render_vt100_terminal(app: &App, frame: &mut Frame, area: Rect) {
 
     let block = Block::default().borders(Borders::ALL).title(title);
 
-    let term_widget = PseudoTerminal::new(screen).block(block);
+    let term_widget = MaxicomTerminal::new(screen)
+        .block(block)
+        .x_offset(pan_offset as u16);
 
     // TODO: add a way to count the line number history to display a scrollbar
 
