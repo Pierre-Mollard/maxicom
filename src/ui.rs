@@ -37,10 +37,6 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 
     match app.config().input_mode {
         InputMode::Terminal => {
-            let inner_height = monitor_area.height.saturating_sub(2);
-            let inner_width = monitor_area.width.saturating_sub(2);
-            app.resize_vt100(inner_height, inner_width);
-
             render_vt100_terminal(app, frame, monitor_area);
         }
         InputMode::Line => {
@@ -62,19 +58,33 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 
 fn render_vt100_terminal(app: &App, frame: &mut Frame, area: Rect) {
     let scroll_offset = app.vt100_parser.screen().scrollback();
-
-    let mut title = if scroll_offset > 0 {
-        format!(" MaxiCom [TERMINAL | SCROLL: +{} lines] ", scroll_offset)
-    } else {
-        " MaxiCom [TERMINAL | LIVE] ".to_string()
-    };
-    if app.is_prefix_active() {
-        title.push_str(" PREFIX");
-    }
+    let pan_offset = app.pan_offset();
 
     let screen = app.vt100_screen();
-    let term_widget =
-        PseudoTerminal::new(screen).block(Block::default().borders(Borders::ALL).title(title));
+
+    let scroll_txt = format!(" | SCROLL +{}", scroll_offset);
+    let pan_txt = format!(" | PAN +{}", pan_offset);
+    let mut title = format!(
+        " MaxiCom [VT {}x{} | VIEW {}x{}{}{}] ",
+        screen.size().1, // columns
+        screen.size().0, // rows
+        area.width.saturating_sub(2),
+        area.height.saturating_sub(2),
+        if scroll_offset > 0 {
+            &scroll_txt
+        } else {
+            " | LIVE"
+        },
+        if pan_offset > 0 { &pan_txt } else { "" }
+    );
+
+    if app.is_prefix_active() {
+        title.push_str(" | PREFIX");
+    }
+
+    let block = Block::default().borders(Borders::ALL).title(title);
+
+    let term_widget = PseudoTerminal::new(screen).block(block);
 
     // TODO: add a way to count the line number history to display a scrollbar
 

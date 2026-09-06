@@ -76,6 +76,7 @@ fn main() -> ExitCode {
                     app.feed_rx(&input_buffer[..bytes_read]);
                 }
                 InputMode::Terminal => {
+                    // TODO: save as raw capture stream when in interactive mode
                     app.vt100_parser.process(&input_buffer[..bytes_read]);
                 }
             },

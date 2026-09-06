@@ -48,6 +48,8 @@ pub enum HistoryAction {
     ScrollDown(usize),
     ScrollToBottom,
     ScrollToTop,
+    PanLeft(usize),
+    PanRight(usize),
     Clear,
 } // TODO: add search, navigate seach up and down, next and previous, copy also?
 
@@ -144,6 +146,19 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
                 return Some(Action::Overlay(OverlayAction::Open(Overlay::Settings)));
             }
 
+            KeyCode::Up => {
+                return Some(Action::History(HistoryAction::ScrollUp(1)));
+            }
+            KeyCode::Down => {
+                return Some(Action::History(HistoryAction::ScrollDown(1)));
+            }
+            KeyCode::Right => {
+                return Some(Action::History(HistoryAction::PanRight(1)));
+            }
+            KeyCode::Left => {
+                return Some(Action::History(HistoryAction::PanLeft(1)));
+            }
+
             KeyCode::Esc => return Some(Action::App(AppAction::SetPrefix(false))),
             _ => return Some(Action::App(AppAction::SetPrefix(false))),
         }
@@ -176,6 +191,7 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
 
     // NOT MODIFIER SECTION
     match key.code {
+        // TODO: make view_height - 1 for PageUp/PageDown
         KeyCode::PageUp => Some(Action::History(HistoryAction::ScrollUp(10))),
         KeyCode::PageDown => Some(Action::History(HistoryAction::ScrollDown(10))),
         _ => None,

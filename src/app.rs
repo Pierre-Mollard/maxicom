@@ -52,6 +52,7 @@ pub struct App {
     partial_user_line: String,
     /// 0 = pinned to newest line (autoscroll)
     scroll_offset: usize,
+    pan_offset: usize,
     /// App config
     app_config: AppConfig,
     prefix_active: bool,
@@ -82,6 +83,7 @@ impl App {
             partial_user_line: String::new(),
             partial_line_timestamp: None,
             scroll_offset: 0,
+            pan_offset: 0,
             prefix_active: false,
             app_config,
             overlay: None,
@@ -98,6 +100,9 @@ impl App {
 
     // TODO: handle resizing terminal 2D because now it is like minicom data loss...
     // TODO: add command to enable sending the 'resize' command to a linux remote
+
+    // NOTE: this will change the canvas size / only do this when the remote change because data
+    // will be lost
     pub fn resize_vt100(&mut self, rows: u16, cols: u16) {
         if rows > 0 && cols > 0 && self.term_size != (rows, cols) {
             self.term_size = (rows, cols);
@@ -130,10 +135,8 @@ impl App {
     }
 
     // TODO:  Using the `ansi-to-tui` or `ratatui::text::Line::from` ANSI helpers to save some
-    // colors and convert to ratatui
+    // colors and convert to ratatui in line mode (alreay in raw/terminal)
 
-    // TODO: handle interactive mode like VT100 (huge change)
-    // TODO: save as raw capture stream when in interactive mode
     pub fn feed_rx(&mut self, bytes: &[u8]) {
         for &b in bytes {
             if self.partial_line.is_empty() {
@@ -295,6 +298,14 @@ impl App {
                 self.scroll_to_top();
                 UpdateEffect::None
             }
+            HistoryAction::PanRight(cols) => {
+                self.pan_to_right(cols);
+                UpdateEffect::None
+            }
+            HistoryAction::PanLeft(cols) => {
+                self.pan_to_left(cols);
+                UpdateEffect::None
+            }
             HistoryAction::Clear => {
                 self.clear_history();
                 UpdateEffect::None
@@ -434,12 +445,25 @@ impl App {
         self.update_vt100_scroll();
     }
 
+    // TODO: add clamping with vt size and ui size
+    pub fn pan_to_right(&mut self, cols: usize) {
+        self.pan_offset = self.pan_offset.saturating_add(cols);
+    }
+
+    pub fn pan_to_left(&mut self, cols: usize) {
+        self.pan_offset = self.pan_offset.saturating_sub(cols);
+    }
+
     pub fn clamp_scroll(&mut self, visible_height: usize) {
         let max_scroll = self.local_history.len().saturating_sub(visible_height);
         if self.scroll_offset > max_scroll {
             self.scroll_offset = max_scroll;
         }
         self.update_vt100_scroll();
+    }
+
+    pub fn pan_offset(&self) -> usize {
+        self.pan_offset
     }
 
     pub fn scroll_offset(&self) -> usize {
