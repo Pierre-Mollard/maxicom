@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 use vt100::Parser as Vt100Parser;
 
 use crate::{
-    config::{AppConfig, InputMode, RxNewlineMode, WrapMode},
+    config::{AppConfig, InputMode, RxNewlineMode, TxNewlineSymbol, WrapMode},
     input::{Action, AppAction, HistoryAction, LineInputAction, OverlayAction, SettingKey},
     logger::{FileLogger, LogConfig},
 };
@@ -14,6 +14,21 @@ use crate::{
 pub enum Overlay {
     Help,
     Settings,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ViewportSize {
+    pub cols: usize,
+    pub rows: usize,
+}
+
+impl ViewportSize {
+    pub fn new(cols: u16, rows: u16) -> Self {
+        Self {
+            cols: cols as usize,
+            rows: rows as usize,
+        }
+    }
 }
 
 pub struct LogEntry {
@@ -70,6 +85,7 @@ pub struct App {
     app_config: AppConfig,
     prefix_active: bool,
     overlay: Option<Overlay>,
+    pub viewport: ViewportSize,
     pub line_view: LineViewState,
     pub terminal_view: TerminalViewState,
 }
@@ -220,7 +236,8 @@ impl LineViewState {
 
     fn update_action_lineinput(
         &mut self,
-        app_config: &AppConfig,
+        local_echo: bool,
+        tx_eol_mode: TxNewlineSymbol,
         action: LineInputAction,
     ) -> UpdateEffect {
         match action {
@@ -244,13 +261,13 @@ impl LineViewState {
                     self.local_send_history.push_back(line.clone());
                 }
 
-                if app_config.local_echo {
+                if local_echo {
                     self.push_history(&line);
                 }
 
                 // consumming string!
                 let mut bytes = line.into_bytes();
-                bytes.extend_from_slice(app_config.tx_eol_mode.as_bytes());
+                bytes.extend_from_slice(tx_eol_mode.as_bytes());
 
                 UpdateEffect::Transmit(bytes)
             }
@@ -277,10 +294,17 @@ impl LineViewState {
         self.logger.is_active()
     }
 
-    pub fn clamp_scroll(&mut self, visible_height: usize) {
-        let max_scroll = self.local_history.len().saturating_sub(visible_height);
-        if self.scroll_from_bottom > max_scroll {
-            self.scroll_from_bottom = max_scroll;
+    // FIXME: wont work when wrap mode is enable because one line is not always one height
+    pub fn clamp_viewport(&mut self, viewport: ViewportSize, wrap: WrapMode) {
+        let max_scroll = self.local_history.len().saturating_sub(viewport.rows);
+
+        self.scroll_from_bottom = self.scroll_from_bottom.min(max_scroll);
+
+        match wrap {
+            WrapMode::Wrap => {
+                self.x_offset = 0;
+            }
+            WrapMode::Truncate => {} //TODO: clamp
         }
     }
 
@@ -303,42 +327,67 @@ impl LineViewState {
     pub fn scroll_offset(&self) -> usize {
         self.scroll_from_bottom
     }
-}
-
-impl TerminalViewState {
-    pub fn update_vt100_scroll(&mut self) {
-        self.vt100_parser
-            .screen_mut()
-            .set_scrollback(self.scrollback_offset);
-        self.scrollback_offset = self.vt100_parser.screen().scrollback(); // in case clamping
-    }
 
     pub fn pan_to_right(&mut self, cols: usize) {
-        self.pan_offset = self.pan_offset.saturating_add(cols);
+        self.x_offset = self.x_offset.saturating_add(cols);
     }
 
     pub fn pan_to_left(&mut self, cols: usize) {
-        self.pan_offset = self.pan_offset.saturating_sub(cols);
+        self.x_offset = self.x_offset.saturating_sub(cols);
+    }
+
+    pub fn x_offset(&self) -> usize {
+        self.x_offset
+    }
+}
+
+impl TerminalViewState {
+    pub fn clamp_viewport(&mut self, viewport: ViewportSize) {
+        self.clamp_scrollback();
+        self.clamp_pan(viewport.cols);
+    }
+
+    fn clamp_scrollback(&mut self) {
+        self.vt100_parser
+            .screen_mut()
+            .set_scrollback(self.scrollback_offset);
+        self.scrollback_offset = self.vt100_parser.screen().scrollback();
+    }
+
+    fn clamp_pan(&mut self, visible_cols: usize) {
+        let vt_cols = self.vt100_parser.screen().size().1 as usize;
+        let max_pan = vt_cols.saturating_sub(visible_cols);
+        self.pan_offset = self.pan_offset.min(max_pan);
     }
 
     pub fn scroll_up(&mut self, lines: usize) {
         self.scrollback_offset = self.scrollback_offset.saturating_add(lines);
-        self.update_vt100_scroll();
+        self.clamp_scrollback();
     }
 
     pub fn scroll_down(&mut self, lines: usize) {
         self.scrollback_offset = self.scrollback_offset.saturating_sub(lines);
-        self.update_vt100_scroll();
+        self.clamp_scrollback();
     }
 
     pub fn scroll_to_bottom(&mut self) {
         self.scrollback_offset = 0;
-        self.update_vt100_scroll();
+        self.clamp_scrollback();
     }
 
     pub fn scroll_to_top(&mut self) {
         self.scrollback_offset = usize::MAX;
-        self.update_vt100_scroll();
+        self.clamp_scrollback();
+    }
+
+    pub fn pan_to_right(&mut self, cols: usize, visible_cols: usize) {
+        self.pan_offset = self.pan_offset.saturating_add(cols);
+        self.clamp_pan(visible_cols);
+    }
+
+    pub fn pan_to_left(&mut self, cols: usize, visible_cols: usize) {
+        self.pan_offset = self.pan_offset.saturating_sub(cols);
+        self.clamp_pan(visible_cols);
     }
 
     pub fn pan_offset(&self) -> usize {
@@ -376,8 +425,22 @@ impl App {
             prefix_active: false,
             app_config,
             overlay: None,
+            viewport: ViewportSize::default(),
             line_view,
             terminal_view,
+        }
+    }
+
+    pub fn update_viewport(&mut self, viewport: ViewportSize) {
+        match self.app_config.input_mode {
+            InputMode::Line => {
+                self.line_view
+                    .clamp_viewport(viewport, self.config().wrap_mode);
+            }
+
+            InputMode::Terminal => {
+                self.terminal_view.clamp_viewport(viewport);
+            }
         }
     }
 
@@ -394,10 +457,6 @@ impl App {
         self.overlay
     }
 
-    pub fn set_overlay(&mut self, overlay: Option<Overlay>) {
-        self.overlay = overlay;
-    }
-
     pub fn update(&mut self, action: Action) -> UpdateEffect {
         match action {
             Action::TransmitRaw(bytes) => {
@@ -409,9 +468,11 @@ impl App {
                 }
                 UpdateEffect::Transmit(bytes)
             }
-            Action::LineInput(action) => self
-                .line_view
-                .update_action_lineinput(&self.app_config, action),
+            Action::LineInput(action) => self.line_view.update_action_lineinput(
+                self.app_config.local_echo,
+                self.app_config.tx_eol_mode,
+                action,
+            ),
             Action::History(action) => self.update_action_history(action),
             Action::Overlay(action) => self.update_action_overlay(action),
             Action::App(action) => self.update_action_app(action),
@@ -430,60 +491,50 @@ impl App {
     }
 
     fn update_action_history(&mut self, action: HistoryAction) -> UpdateEffect {
-        match action {
-            HistoryAction::ScrollUp(nb) => {
-                if self.app_config.input_mode == InputMode::Line {
-                    self.line_view.scroll_up(nb);
-                } else if self.app_config.input_mode == InputMode::Terminal {
-                    self.terminal_view.scroll_up(nb);
-                }
-                UpdateEffect::None
+        match (&self.app_config.input_mode, action) {
+            (InputMode::Line, HistoryAction::ScrollUp(lines)) => {
+                self.line_view.scroll_up(lines);
             }
-            HistoryAction::ScrollDown(nb) => {
-                if self.app_config.input_mode == InputMode::Line {
-                    self.line_view.scroll_down(nb);
-                } else if self.app_config.input_mode == InputMode::Terminal {
-                    self.terminal_view.scroll_down(nb);
-                }
-                UpdateEffect::None
+            (InputMode::Line, HistoryAction::ScrollDown(lines)) => {
+                self.line_view.scroll_down(lines);
             }
-            HistoryAction::ScrollToBottom => {
-                if self.app_config.input_mode == InputMode::Line {
-                    self.line_view.scroll_to_bottom();
-                } else if self.app_config.input_mode == InputMode::Terminal {
-                    self.terminal_view.scroll_to_bottom();
-                }
-                UpdateEffect::None
+            (InputMode::Line, HistoryAction::ScrollToBottom) => {
+                self.line_view.scroll_to_bottom();
             }
-            HistoryAction::ScrollToTop => {
-                if self.app_config.input_mode == InputMode::Line {
-                    self.line_view.scroll_to_top();
-                } else if self.app_config.input_mode == InputMode::Terminal {
-                    self.terminal_view.scroll_to_top();
-                }
-                UpdateEffect::None
+            (InputMode::Line, HistoryAction::ScrollToTop) => {
+                self.line_view.scroll_to_top();
             }
-            HistoryAction::PanRight(cols) => {
-                if self.app_config.input_mode == InputMode::Line {
-                } else if self.app_config.input_mode == InputMode::Terminal {
-                    self.terminal_view.pan_to_right(cols);
-                }
-                UpdateEffect::None
+            (InputMode::Line, HistoryAction::Clear) => {
+                self.line_view.clear_history();
             }
-            HistoryAction::PanLeft(cols) => {
-                if self.app_config.input_mode == InputMode::Line {
-                } else if self.app_config.input_mode == InputMode::Terminal {
-                    self.terminal_view.pan_to_left(cols);
-                }
-                UpdateEffect::None
+            (InputMode::Line, HistoryAction::PanLeft(cols)) => {
+                self.line_view.pan_to_left(cols);
             }
-            HistoryAction::Clear => {
-                if self.app_config.input_mode == InputMode::Line {
-                    self.line_view.clear_history();
-                }
-                UpdateEffect::None
+            (InputMode::Line, HistoryAction::PanRight(cols)) => {
+                self.line_view.pan_to_right(cols);
             }
+            (InputMode::Terminal, HistoryAction::ScrollUp(lines)) => {
+                self.terminal_view.scroll_up(lines);
+            }
+            (InputMode::Terminal, HistoryAction::ScrollDown(lines)) => {
+                self.terminal_view.scroll_down(lines);
+            }
+            (InputMode::Terminal, HistoryAction::ScrollToBottom) => {
+                self.terminal_view.scroll_to_bottom();
+            }
+            (InputMode::Terminal, HistoryAction::ScrollToTop) => {
+                self.terminal_view.scroll_to_top();
+            }
+            (InputMode::Terminal, HistoryAction::PanRight(cols)) => {
+                self.terminal_view.pan_to_right(cols, self.viewport.cols);
+            }
+            (InputMode::Terminal, HistoryAction::PanLeft(cols)) => {
+                self.terminal_view.pan_to_left(cols, self.viewport.cols);
+            }
+            (InputMode::Terminal, HistoryAction::Clear) => todo!(),
         }
+
+        UpdateEffect::None
     }
 
     fn update_action_overlay(&mut self, action: OverlayAction) -> UpdateEffect {
@@ -510,6 +561,7 @@ impl App {
                         WrapMode::Wrap => WrapMode::Truncate,
                         WrapMode::Truncate => WrapMode::Wrap,
                     };
+                    self.update_viewport(self.viewport);
                     UpdateEffect::None
                 }
                 SettingKey::InputMode => {
@@ -521,6 +573,7 @@ impl App {
                         InputMode::Line => InputMode::Terminal,
                         InputMode::Terminal => InputMode::Line,
                     };
+                    self.update_viewport(self.viewport);
                     UpdateEffect::None
                 }
             },

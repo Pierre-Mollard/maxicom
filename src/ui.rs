@@ -11,7 +11,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{App, LogEntry, Overlay},
+    app::{App, LogEntry, Overlay, ViewportSize},
     config::{InputMode, WrapMode},
     terminal::MaxicomTerminal,
 };
@@ -20,12 +20,8 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     let screen_area = frame.area();
 
     let (monitor_area, prompt_area): (Rect, Option<Rect>) = match app.config().input_mode {
-        InputMode::Terminal => {
-            // Raw passthrough mode: monitor owns the entire window
-            (screen_area, None)
-        }
+        InputMode::Terminal => (screen_area, None),
         InputMode::Line => {
-            // Line mode: split into monitor (top) and input prompt (bottom)
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Min(3), Constraint::Length(3)])
@@ -35,12 +31,16 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         }
     };
 
+    let block = monitor_block(app, &monitor_area);
+    let inner = block.inner(monitor_area);
+    app.update_viewport(ViewportSize::new(inner.width, inner.height));
+
     match app.config().input_mode {
         InputMode::Terminal => {
-            render_vt100_terminal(app, frame, monitor_area);
+            render_vt100_terminal(app, frame, monitor_area, block);
         }
         InputMode::Line => {
-            render_monitor(app, frame, monitor_area);
+            render_monitor(app, frame, monitor_area, block);
         }
     }
 
@@ -56,49 +56,81 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     }
 }
 
-fn render_vt100_terminal(app: &App, frame: &mut Frame, area: Rect) {
-    let scroll_offset = app.terminal_view.vt100_parser.screen().scrollback();
-    let pan_offset = app.terminal_view.pan_offset();
+fn monitor_block(app: &App, area: &Rect) -> Block<'static> {
+    let mode_str = match app.config().input_mode {
+        InputMode::Line => "LINE_MODE",
+        InputMode::Terminal => "TERMINAL_MODE",
+    };
 
-    let screen = app.vt100_screen();
+    match app.config().input_mode {
+        InputMode::Terminal => {
+            let scroll_offset = app.terminal_view.vt100_parser.screen().scrollback();
+            let pan_offset = app.terminal_view.pan_offset();
 
-    let scroll_txt = format!(" | SCROLL +{}", scroll_offset);
-    let pan_txt = format!(" | PAN +{}", pan_offset);
-    let mut title = format!(
-        " MaxiCom [VT {}x{} | VIEW {}x{}{}{}] ",
-        screen.size().1, // columns
-        screen.size().0, // rows
-        area.width.saturating_sub(2),
-        area.height.saturating_sub(2),
-        if scroll_offset > 0 {
-            &scroll_txt
-        } else {
-            " | LIVE"
-        },
-        if pan_offset > 0 { &pan_txt } else { "" }
-    );
+            let screen = app.vt100_screen();
 
-    if app.is_prefix_active() {
-        title.push_str(" | PREFIX");
+            let scroll_txt = format!(" | SCROLL +{}", scroll_offset);
+            let pan_txt = format!(" | PAN +{}", pan_offset);
+            let mut title = format!(
+                " MaxiCom [VT {}x{} | VIEW {}x{}{}{}] ",
+                screen.size().1, // columns
+                screen.size().0, // rows
+                area.width.saturating_sub(2),
+                area.height.saturating_sub(2),
+                if scroll_offset > 0 {
+                    &scroll_txt
+                } else {
+                    " | LIVE"
+                },
+                if pan_offset > 0 { &pan_txt } else { "" }
+            );
+
+            if app.is_prefix_active() {
+                title.push_str(" | PREFIX");
+            }
+
+            Block::default().borders(Borders::ALL).title(title)
+        }
+        InputMode::Line => {
+            let scroll_offset = app.line_view.scroll_offset();
+            let pan_offset = app.line_view.x_offset();
+
+            let scroll_txt = format!(" | SCROLL +{}", scroll_offset);
+            let pan_txt = format!(" | PAN +{}", pan_offset);
+
+            let mut title = format!(
+                " MaxiCom [VIEW {}x{}{}{}] ",
+                area.width.saturating_sub(2),
+                area.height.saturating_sub(2),
+                if scroll_offset > 0 {
+                    &scroll_txt
+                } else {
+                    " | LIVE"
+                },
+                if pan_offset > 0 { &pan_txt } else { "" }
+            );
+
+            if app.is_prefix_active() {
+                title.push_str(" PREFIX");
+            }
+            Block::default().borders(Borders::ALL).title(title)
+        }
     }
+}
 
-    let block = Block::default().borders(Borders::ALL).title(title);
-
-    let term_widget = MaxicomTerminal::new(screen)
-        .block(block)
-        .x_offset(pan_offset as u16);
+fn render_vt100_terminal(app: &App, frame: &mut Frame, area: Rect, block: Block) {
+    let term_widget = MaxicomTerminal::new(app.vt100_screen())
+        .x_offset(app.terminal_view.pan_offset as u16)
+        .block(block);
 
     // TODO: add a way to count the line number history to display a scrollbar
 
     frame.render_widget(term_widget, area);
 }
 
-// NOTE: AI generated, make it better
-fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect) {
+fn render_monitor(app: &App, frame: &mut Frame, area: Rect, block: Block) {
     let visible_height = area.height.saturating_sub(2) as usize;
     let total_lines = app.line_view.history().len();
-
-    app.line_view.clamp_scroll(visible_height);
 
     let max_scroll = total_lines.saturating_sub(visible_height);
     let scroll_offset = app.line_view.scroll_offset().min(max_scroll);
@@ -115,7 +147,7 @@ fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect) {
         .skip(start_idx)
         .take(end_idx - start_idx)
     {
-        // TODO: custom outisde and inside (|)
+        // TODO: custom outside and inside (|)
 
         let mut current_line = Vec::new();
 
@@ -152,23 +184,13 @@ fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect) {
         lines.push(Line::from(partial_spans));
     }
 
-    let mode_str = match app.config().input_mode {
-        InputMode::Line => "LINE_MODE",
-        InputMode::Terminal => "TERMINAL_MODE",
+    let line_x_offset = match app.config().wrap_mode {
+        WrapMode::Wrap => 0,
+        WrapMode::Truncate => app.line_view.x_offset(),
     };
-
-    let mut title = if scroll_offset > 0 {
-        format!(" MaxiCom Monitor [{mode_str} | SCROLL: +{scroll_offset} lines] ")
-    } else {
-        format!(" MaxiCom Monitor [{mode_str} | LIVE] ")
-    };
-
-    if app.is_prefix_active() {
-        title.push_str(" PREFIX");
-    }
-
-    let mut history_paragraph =
-        Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(title));
+    let mut history_paragraph = Paragraph::new(lines)
+        .block(block)
+        .scroll((0, line_x_offset.min(u16::MAX as usize) as u16));
 
     history_paragraph = match app.config().wrap_mode {
         WrapMode::Wrap => history_paragraph.wrap(Wrap { trim: false }),
