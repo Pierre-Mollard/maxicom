@@ -764,6 +764,7 @@ dependencies = [
  "terminput-crossterm",
  "toml",
  "tui-term",
+ "unicode-width",
  "vt100",
 ]
 

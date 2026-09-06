@@ -132,6 +132,7 @@ fn render_monitor(app: &App, frame: &mut Frame, area: Rect, block: Block) {
     let visible_height = area.height.saturating_sub(2) as usize;
     let total_lines = app.line_view.history().len();
 
+    // FIXME: the scroll is broken because in wrapped line mode 1 line != 1 cell high
     let max_scroll = total_lines.saturating_sub(visible_height);
     let scroll_offset = app.line_view.scroll_offset().min(max_scroll);
 
