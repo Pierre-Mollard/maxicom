@@ -78,10 +78,7 @@ fn main() -> ExitCode {
                         .feed_rx(app.config().rx_eol_mode, &input_buffer[..bytes_read]);
                 }
                 InputMode::Terminal => {
-                    // TODO: save as raw capture stream when in interactive mode
-                    app.terminal_view
-                        .vt100_parser
-                        .process(&input_buffer[..bytes_read]);
+                    app.terminal_view.process_rx(&input_buffer[..bytes_read]);
                 }
             },
             Err(SerialError::InputClosed) => {

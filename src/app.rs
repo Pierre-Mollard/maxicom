@@ -1,7 +1,7 @@
 use chrono::{DateTime, Local};
 /// State machine, updates and queue handling
 /// Mainly local functional code (core feature)
-use std::collections::VecDeque;
+use std::{collections::VecDeque, usize};
 use unicode_width::UnicodeWidthStr;
 use vt100::Parser as Vt100Parser;
 
@@ -81,6 +81,7 @@ pub struct TerminalViewState {
     pub vt100_parser: vt100::Parser,
     pub scrollback_offset: usize,
     pub pan_offset: usize,
+    pub max_scrollback: usize,
 }
 
 pub struct App {
@@ -342,6 +343,14 @@ impl LineViewState {
 }
 
 impl TerminalViewState {
+    pub fn process_rx(&mut self, bytes: &[u8]) {
+        // TODO: save as raw capture stream when in interactive mode
+        self.vt100_parser.process(bytes);
+        if !self.vt100_parser.screen().alternate_screen() {
+            self.refresh_max_scrollback();
+        }
+    }
+
     pub fn clamp_viewport(&mut self, viewport: ViewportSize) {
         self.clamp_scrollback();
         self.clamp_pan(viewport.cols);
@@ -393,12 +402,22 @@ impl TerminalViewState {
     pub fn pan_offset(&self) -> usize {
         self.pan_offset
     }
+
+    // HACK: there is no scrollback current len from the crate, make PR?
+    pub fn refresh_max_scrollback(&mut self) {
+        let current = self.vt100_parser.screen().scrollback();
+        self.vt100_parser.screen_mut().set_scrollback(usize::MAX);
+        self.max_scrollback = self.vt100_parser.screen().scrollback();
+        self.vt100_parser.screen_mut().set_scrollback(current);
+        self.scrollback_offset = current;
+    }
 }
 
 impl App {
     pub fn new(app_config: AppConfig, log_config: LogConfig) -> Self {
         // TODO: configure size of scrollback history with vt100
-        let vt100_parser = Vt100Parser::new(24, 80, 1000);
+        let scrollback_max_possible = 10000;
+        let vt100_parser = Vt100Parser::new(24, 80, scrollback_max_possible);
 
         let line_view = LineViewState {
             local_history: VecDeque::with_capacity(app_config.max_history_lines),
@@ -419,6 +438,7 @@ impl App {
             vt100_parser,
             scrollback_offset: 0,
             pan_offset: 0,
+            max_scrollback: scrollback_max_possible,
         };
 
         Self {
