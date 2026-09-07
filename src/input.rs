@@ -8,7 +8,7 @@ use terminput_crossterm::to_terminput_key;
 
 use crate::{
     app::{App, Overlay},
-    config::InputMode,
+    config::{InputMode, SettingKey},
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -62,14 +62,6 @@ pub enum OverlayAction {
     Confirm,
     ToggleSetting(SettingKey),
 }
-
-// TODO: maybe this shouldnt be defined here in input.rs
-#[derive(Debug, PartialEq, Eq)]
-pub enum SettingKey {
-    LocalEcho,
-    InputMode,
-    LineWrap,
-} // TODO: add all settings
 
 /// Using crossterm's event API instead of stdin.read() to handle multi-byte ANSI sequence like
 /// arrows and page up and prefix

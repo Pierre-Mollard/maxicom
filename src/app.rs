@@ -6,8 +6,8 @@ use unicode_width::UnicodeWidthStr;
 use vt100::Parser as Vt100Parser;
 
 use crate::{
-    config::{AppConfig, InputMode, RxNewlineMode, TxNewlineSymbol, WrapMode},
-    input::{Action, AppAction, HistoryAction, LineInputAction, OverlayAction, SettingKey},
+    config::{AppConfig, InputMode, RxNewlineMode, SettingKey, TxNewlineSymbol, WrapMode},
+    input::{Action, AppAction, HistoryAction, LineInputAction, OverlayAction},
     logger::{FileLogger, LogConfig},
 };
 
@@ -161,11 +161,6 @@ impl LineViewState {
         let line = line.trim_end_matches(['\r', '\n']).to_string();
         self.push_history(&line);
 
-        // Enforce maximum scrollback size.
-        while self.local_history.len() > self.max_lines {
-            self.local_history.pop_front();
-        }
-
         self.partial_line.clear();
     }
     // TODO: add on/off recording with path
@@ -181,8 +176,12 @@ impl LineViewState {
 
         let _ = self.logger.log_entry(&entry);
 
-        // TODO: add limite to the Rx queue as well (check if commit partial line or here)
         self.local_history.push_back(entry);
+
+        // Enforce maximum scrollback size.
+        while self.local_history.len() > self.max_lines {
+            self.local_history.pop_front();
+        }
     }
 
     pub fn clear_history(&mut self) {
