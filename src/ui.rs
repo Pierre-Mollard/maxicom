@@ -31,10 +31,13 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         }
     };
 
-    let block = monitor_block(app, &monitor_area);
+    let mut block = Block::default().borders(Borders::ALL);
     let inner = block.inner(monitor_area);
     app.update_viewport(ViewportSize::new(inner.width, inner.height));
 
+    let title = monitor_title(app, &monitor_area);
+
+    block = block.title(title);
     match app.config().input_mode {
         InputMode::Terminal => {
             render_vt100_terminal(app, frame, monitor_area, block);
@@ -56,12 +59,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     }
 }
 
-fn monitor_block(app: &App, area: &Rect) -> Block<'static> {
-    let mode_str = match app.config().input_mode {
-        InputMode::Line => "LINE_MODE",
-        InputMode::Terminal => "TERMINAL_MODE",
-    };
-
+fn monitor_title(app: &App, area: &Rect) -> String {
     match app.config().input_mode {
         InputMode::Terminal => {
             let scroll_offset = app.terminal_view.vt100_parser.screen().scrollback();
@@ -72,7 +70,7 @@ fn monitor_block(app: &App, area: &Rect) -> Block<'static> {
             let scroll_txt = format!(" | SCROLL +{}", scroll_offset);
             let pan_txt = format!(" | PAN +{}", pan_offset);
             let mut title = format!(
-                " MaxiCom [VT {}x{} | VIEW {}x{}{}{}] ",
+                " MaxiCom TERMINAL [VT {}x{} | VIEW {}x{}{}{}] ",
                 screen.size().1, // columns
                 screen.size().0, // rows
                 area.width.saturating_sub(2),
@@ -89,7 +87,7 @@ fn monitor_block(app: &App, area: &Rect) -> Block<'static> {
                 title.push_str(" | PREFIX");
             }
 
-            Block::default().borders(Borders::ALL).title(title)
+            title
         }
         InputMode::Line => {
             let scroll_offset = app.line_view.scroll_offset();
@@ -99,7 +97,7 @@ fn monitor_block(app: &App, area: &Rect) -> Block<'static> {
             let pan_txt = format!(" | PAN +{}", pan_offset);
 
             let mut title = format!(
-                " MaxiCom [VIEW {}x{}{}{}] ",
+                " MaxiCom LINE [VIEW {}x{}{}{}] ",
                 area.width.saturating_sub(2),
                 area.height.saturating_sub(2),
                 if scroll_offset > 0 {
@@ -113,7 +111,7 @@ fn monitor_block(app: &App, area: &Rect) -> Block<'static> {
             if app.is_prefix_active() {
                 title.push_str(" PREFIX");
             }
-            Block::default().borders(Borders::ALL).title(title)
+            title
         }
     }
 }
@@ -128,46 +126,37 @@ fn render_vt100_terminal(app: &App, frame: &mut Frame, area: Rect, block: Block)
     frame.render_widget(term_widget, area);
 }
 
-fn render_monitor(app: &App, frame: &mut Frame, area: Rect, block: Block) {
-    let visible_height = area.height.saturating_sub(2) as usize;
-    let total_lines = app.line_view.history().len();
+fn history_entry_to_line(entry: &LogEntry, timestamp_in_line: bool) -> Line<'static> {
+    let mut spans = Vec::new();
 
-    // FIXME: the scroll is broken because in wrapped line mode 1 line != 1 cell high
-    let max_scroll = total_lines.saturating_sub(visible_height);
-    let scroll_offset = app.line_view.scroll_offset().min(max_scroll);
+    if timestamp_in_line {
+        let time_str = entry.formatted_time();
+        spans.push(Span::styled(time_str, Style::default().fg(Color::Yellow)));
+    }
 
-    let start_idx = max_scroll.saturating_sub(scroll_offset);
-    let end_idx = (start_idx + visible_height).min(total_lines);
+    // TODO: custom outside and inside (|)
+    spans.push(Span::styled("| ", Style::default().fg(Color::DarkGray)));
+    spans.push(Span::raw(entry.text.clone()));
+    Line::from(spans)
+}
 
-    let mut lines: Vec<Line> = Vec::with_capacity(visible_height + 1);
+// PERF: do not rebuild everything every frame
+fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, block: Block) {
+    let timestamp_in_line = app.config().timestamp_in_line;
+    let inner = block.inner(area);
+    let content_width = inner.width as usize;
+    let content_height = inner.height as usize;
+    let wrap_mode = app.config().wrap_mode;
 
-    for entry in app
+    let mut history_lines: Vec<Line> = app
         .line_view
         .history()
         .iter()
-        .skip(start_idx)
-        .take(end_idx - start_idx)
-    {
-        // TODO: custom outside and inside (|)
+        .map(|entry| history_entry_to_line(entry, timestamp_in_line))
+        .collect();
 
-        let mut current_line = Vec::new();
-
-        if app.config().timestamp_in_line {
-            let time_str = entry.formatted_time();
-            current_line.push(Span::styled(time_str, Style::default().fg(Color::Yellow)));
-        }
-
-        current_line.push(Span::styled("| ", Style::default().fg(Color::DarkGray)));
-        current_line.push(Span::raw(entry.text.as_str()));
-        lines.push(Line::from(current_line));
-    }
-
-    // Only show partial incoming bytes if the user is looking at the live bottom (scroll_offset == 0)
-    if scroll_offset == 0
-        && app.config().display_partial_rx
-        && !app.line_view.partial_rx().is_empty()
-    {
-        let partial_str = String::from_utf8_lossy(app.line_view.partial_rx());
+    if app.config().display_partial_rx && !app.line_view.partial_rx().is_empty() {
+        let partial_str = String::from_utf8_lossy(app.line_view.partial_rx()).into_owned();
         let mut partial_spans = Vec::new();
 
         if app.config().timestamp_in_line
@@ -182,26 +171,47 @@ fn render_monitor(app: &App, frame: &mut Frame, area: Rect, block: Block) {
 
         partial_spans.push(Span::styled(partial_str, Style::default().fg(Color::White)));
 
-        lines.push(Line::from(partial_spans));
+        history_lines.push(Line::from(partial_spans));
     }
 
-    let line_x_offset = match app.config().wrap_mode {
+    let line_x_offset = match wrap_mode {
         WrapMode::Wrap => 0,
         WrapMode::Truncate => app.line_view.x_offset(),
     };
-    let mut history_paragraph = Paragraph::new(lines)
-        .block(block)
-        .scroll((0, line_x_offset.min(u16::MAX as usize) as u16));
+    let history_line_count = history_lines.len();
+    let mut history_paragraph = Paragraph::new(history_lines).block(block);
 
-    history_paragraph = match app.config().wrap_mode {
+    history_paragraph = match wrap_mode {
         WrapMode::Wrap => history_paragraph.wrap(Wrap { trim: false }),
         WrapMode::Truncate => history_paragraph,
     };
 
+    let max_pan = match wrap_mode {
+        WrapMode::Wrap => 0, //unused so no need to process
+        WrapMode::Truncate => history_paragraph.line_width().saturating_sub(content_width),
+    };
+    let total_visual_rows = match wrap_mode {
+        WrapMode::Wrap => history_paragraph.line_count(content_width as u16),
+        WrapMode::Truncate => history_line_count,
+    };
+
+    let max_scroll = total_visual_rows.saturating_sub(content_height);
+
+    app.line_view.clamp_offsets(max_scroll, max_pan, wrap_mode);
+
+    let scroll_from_bottom = app.line_view.scroll_offset();
+    let paragraph_y_offset = max_scroll.saturating_sub(scroll_from_bottom);
+
+    history_paragraph = history_paragraph.scroll((
+        paragraph_y_offset.min(u16::MAX as usize) as u16,
+        line_x_offset.min(u16::MAX as usize) as u16,
+    ));
     frame.render_widget(history_paragraph, area);
 
-    if total_lines > visible_height {
-        let mut scrollbar_state = ScrollbarState::new(max_scroll).position(start_idx);
+    if total_visual_rows > content_height {
+        let mut scrollbar_state = ScrollbarState::new(max_scroll)
+            .viewport_content_length(content_height)
+            .position(paragraph_y_offset);
 
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("▲"))

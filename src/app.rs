@@ -51,22 +51,6 @@ impl LogEntry {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct LineDisplayConfig {
-    pub wrap_mode: WrapMode,
-    pub timestamp_in_line: bool,
-    pub display_partial_rx: bool,
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct LineLayoutMetrics {
-    /// Number of visual rows after applying wrapping.
-    pub total_visual_rows: usize,
-
-    /// Widest rendered row, measured in terminal cells.
-    pub max_visual_width: usize,
-}
-
 pub struct LineViewState {
     /// Completed lines of device output (scrollback) String because already processed
     local_history: VecDeque<LogEntry>,
@@ -311,74 +295,13 @@ impl LineViewState {
         self.logger.is_active()
     }
 
-    pub fn clamp_viewport(
-        &mut self,
-        viewport: ViewportSize,
-        display: LineDisplayConfig,
-        metrics: LineLayoutMetrics,
-    ) {
-        let max_scroll = self.max_scroll(viewport, display, metrics);
-        match display.wrap_mode {
-            WrapMode::Wrap => {
-                self.x_offset = 0;
-                self.scroll_from_bottom = self.scroll_from_bottom.min(max_scroll);
-            }
-            WrapMode::Truncate => {
-                let max_pan = metrics.max_visual_width.saturating_sub(viewport.cols);
-                self.x_offset = self.x_offset.min(max_pan);
-                let max_scroll = self.local_history.len().saturating_sub(viewport.rows);
-                self.scroll_from_bottom = self.scroll_from_bottom.min(max_scroll);
-            }
-        }
-    }
+    pub fn clamp_offsets(&mut self, max_scroll: usize, max_pan: usize, wrap_mode: WrapMode) {
+        self.scroll_from_bottom = self.scroll_from_bottom.min(max_scroll);
 
-    pub fn max_scroll(
-        &self,
-        viewport: ViewportSize,
-        display: LineDisplayConfig,
-        metrics: LineLayoutMetrics,
-    ) -> usize {
-        match display.wrap_mode {
-            WrapMode::Wrap => metrics.total_visual_rows.saturating_sub(viewport.rows),
-            WrapMode::Truncate => self.local_history.len().saturating_sub(viewport.rows),
-        }
-    }
-
-    pub fn widest_line_width(&self, timestamp_in_line: bool) -> usize {
-        const PREFIX: &str = "| ";
-        let base_width = if timestamp_in_line {
-            UnicodeWidthStr::width(PREFIX) + LogEntry::TIMESTAMP_WIDTH
-        } else {
-            UnicodeWidthStr::width(PREFIX)
+        self.x_offset = match wrap_mode {
+            WrapMode::Wrap => 0,
+            WrapMode::Truncate => self.x_offset.min(max_pan),
         };
-
-        self.local_history
-            .iter()
-            .map(|entry| base_width + UnicodeWidthStr::width(entry.text.as_str()))
-            .max()
-            .unwrap_or(0)
-    }
-
-    pub fn number_of_line_wrapped(&self, timestamp_in_line: bool, viewport: ViewportSize) -> usize {
-        const PREFIX: &str = "| ";
-        let base_width = if timestamp_in_line {
-            UnicodeWidthStr::width(PREFIX) + LogEntry::TIMESTAMP_WIDTH
-        } else {
-            UnicodeWidthStr::width(PREFIX)
-        };
-        let max_width = viewport.cols;
-
-        if max_width == 0 {
-            return 0;
-        }
-
-        self.local_history
-            .iter()
-            .map(|entry| {
-                let width = UnicodeWidthStr::width(entry.text.as_str()).saturating_add(base_width);
-                width.max(1).div_ceil(max_width)
-            })
-            .sum()
     }
 
     pub fn scroll_up(&mut self, lines: usize) {
@@ -411,6 +334,10 @@ impl LineViewState {
 
     pub fn x_offset(&self) -> usize {
         self.x_offset
+    }
+
+    pub fn local_history(&self) -> &VecDeque<LogEntry> {
+        &self.local_history
     }
 }
 
@@ -507,36 +434,12 @@ impl App {
     pub fn update_viewport(&mut self, viewport: ViewportSize) {
         match self.app_config.input_mode {
             InputMode::Line => {
-                self.line_view.clamp_viewport(
-                    viewport,
-                    self.line_display_config(),
-                    self.line_display_metrics(),
-                );
+                // FIXME: not 0 how to handle data: self.line_view.clamp_viewport(viewport, 0, 0, self.app_config.wrap_mode);
             }
 
             InputMode::Terminal => {
                 self.terminal_view.clamp_viewport(viewport);
             }
-        }
-    }
-
-    pub fn line_display_config(&self) -> LineDisplayConfig {
-        LineDisplayConfig {
-            wrap_mode: self.app_config.wrap_mode,
-            timestamp_in_line: self.app_config.timestamp_in_line,
-            display_partial_rx: self.app_config.display_partial_rx,
-        }
-    }
-
-    // PERF: this is way to slow... find another way to compute and store/handle metrics
-    pub fn line_display_metrics(&self) -> LineLayoutMetrics {
-        LineLayoutMetrics {
-            total_visual_rows: self
-                .line_view
-                .number_of_line_wrapped(self.config().timestamp_in_line, self.viewport),
-            max_visual_width: self
-                .line_view
-                .widest_line_width(self.config().timestamp_in_line),
         }
     }
 
