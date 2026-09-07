@@ -186,12 +186,16 @@ fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, block: Block) {
         WrapMode::Truncate => history_paragraph,
     };
 
+    // WARN: Paragraph.line_width and .line_count are experiemental deps
     let max_pan = match wrap_mode {
         WrapMode::Wrap => 0, //unused so no need to process
         WrapMode::Truncate => history_paragraph.line_width().saturating_sub(content_width),
     };
+    let block_vertical_space = area.height.saturating_sub(inner.height) as usize;
     let total_visual_rows = match wrap_mode {
-        WrapMode::Wrap => history_paragraph.line_count(content_width as u16),
+        WrapMode::Wrap => history_paragraph
+            .line_count(content_width as u16)
+            .saturating_sub(block_vertical_space),
         WrapMode::Truncate => history_line_count,
     };
 
