@@ -116,23 +116,24 @@ fn monitor_title(app: &App, area: &Rect) -> String {
     }
 }
 
-//TODO: see if adding horizontal scrollbar for panning (and in line mode too)
-// TODO: currently content terminal scrollbar, see if, like panning, make widget one
-fn render_vt100_terminal(app: &App, frame: &mut Frame, area: Rect, block: Block) {
+// TODO: see if adding horizontal scrollbar for panning (and in line mode too)
+fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, block: Block) {
+    let inner = block.inner(area);
+    let view_height = inner.height as usize;
+
     let term_widget = MaxicomTerminal::new(app.vt100_screen())
-        .x_offset(app.terminal_view.pan_offset as u16)
+        .x_offset(app.terminal_view.pan_offset_x as u16)
+        .y_offset(app.terminal_view.pan_offset_y as u16)
         .block(block);
 
-    let max_scrollback = app.terminal_view.max_scrollback;
-    let current_from_bottom = app.vt100_screen().scrollback();
-    let content_height = app.vt100_screen().size().0 as usize;
-
     frame.render_widget(term_widget, area);
-    if max_scrollback > 0 {
-        let position_from_top = max_scrollback.saturating_sub(current_from_bottom);
 
-        let mut scrollbar_state = ScrollbarState::new(max_scrollback)
-            .viewport_content_length(content_height)
+    let max_vertical = app.terminal_view.max_vertical_scroll();
+    if max_vertical > 0 && view_height > 0 {
+        let position_from_top = max_vertical.saturating_sub(app.terminal_view.scrollback_offset);
+
+        let mut scrollbar_state = ScrollbarState::new(max_vertical)
+            .viewport_content_length(view_height)
             .position(position_from_top);
 
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)

@@ -30,6 +30,7 @@ impl Default for MaxicomCursor {
 pub struct MaxicomTerminal<'a, S> {
     screen: &'a S,
     x_offset: u16,
+    y_offset: u16,
     block: Option<Block<'a>>,
     style: Option<Style>,
     cursor: MaxicomCursor,
@@ -43,6 +44,7 @@ impl<'a, S: Screen> MaxicomTerminal<'a, S> {
         MaxicomTerminal {
             screen,
             x_offset: 0,
+            y_offset: 0,
             block: None,
             style: None,
             cursor: MaxicomCursor::default(),
@@ -74,6 +76,13 @@ impl<'a, S: Screen> MaxicomTerminal<'a, S> {
     #[must_use]
     pub const fn x_offset(mut self, x_offset: u16) -> Self {
         self.x_offset = x_offset;
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn y_offset(mut self, y_offset: u16) -> Self {
+        self.y_offset = y_offset;
         self
     }
 
@@ -127,7 +136,8 @@ fn handle<S: Screen>(term: &MaxicomTerminal<S>, area: Rect, buf: &mut Buffer) {
             }
 
             let source_col = col.saturating_add(term.x_offset);
-            if let Some(screen_cell) = screen.cell(row, source_col) {
+            let source_row = row.saturating_add(term.y_offset);
+            if let Some(screen_cell) = screen.cell(source_row, source_col) {
                 let cell = &mut buf[(buf_col, buf_row)];
                 screen_cell.apply(cell);
             }
@@ -142,13 +152,18 @@ fn handle<S: Screen>(term: &MaxicomTerminal<S>, area: Rect, buf: &mut Buffer) {
             return;
         };
 
-        if c_row >= area.height || local_col >= area.width {
+        let Some(local_row) = c_row.checked_sub(term.y_offset) else {
+            // Cursor top of viewport so not visible
+            return;
+        };
+
+        if local_row >= area.height || local_col >= area.width {
             // Cursor above or below or right of viewport so not visible
             return;
         }
 
         let dst_x = area.x + local_col;
-        let dst_y = area.y + c_row;
+        let dst_y = area.y + local_row;
         let dst = &mut buf[(dst_x, dst_y)];
 
         if let Some(source_cell) = screen.cell(c_row, c_col) {

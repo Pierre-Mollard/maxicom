@@ -81,8 +81,10 @@ pub struct LineViewState {
 pub struct TerminalViewState {
     pub vt100_parser: vt100::Parser,
     pub scrollback_offset: usize,
-    pub pan_offset: usize,
-    pub max_scrollback: usize,
+    pub pan_offset_x: usize,
+    pub pan_offset_y: usize,
+    pub max_content_scrollback: usize,
+    view_height: usize,
 }
 
 pub struct App {
@@ -358,65 +360,95 @@ impl TerminalViewState {
         }
     }
 
-    pub fn clamp_viewport(&mut self, viewport: ViewportSize) {
-        self.clamp_scrollback();
-        self.clamp_pan(viewport.cols);
+    pub fn update_viewport(&mut self, viewport: ViewportSize) {
+        self.view_height = viewport.rows;
+        self.clamp_pan_x(viewport.cols);
+        self.reconcile_both_vertical_scroll();
+    }
+
+    pub fn pan_offset(&self) -> usize {
+        self.pan_offset_x
     }
 
     // for 2D terminal mode the metrics and clamping is handled within the emulator
-    fn clamp_scrollback(&mut self) {
-        self.vt100_parser
-            .screen_mut()
-            .set_scrollback(self.scrollback_offset);
-        self.scrollback_offset = self.vt100_parser.screen().scrollback();
-    }
-
-    // for 2D terminal mode the metrics and clamping is handled within the emulator
-    fn clamp_pan(&mut self, visible_cols: usize) {
+    fn clamp_pan_x(&mut self, visible_cols: usize) {
         let vt_cols = self.vt100_parser.screen().size().1 as usize;
         let max_pan = vt_cols.saturating_sub(visible_cols);
-        self.pan_offset = self.pan_offset.min(max_pan);
+        self.pan_offset_x = self.pan_offset_x.min(max_pan);
+    }
+
+    pub fn pan_to_right(&mut self, cols: usize, visible_cols: usize) {
+        self.pan_offset_x = self.pan_offset_x.saturating_add(cols);
+        self.clamp_pan_x(visible_cols);
+    }
+
+    pub fn pan_to_left(&mut self, cols: usize, visible_cols: usize) {
+        self.pan_offset_x = self.pan_offset_x.saturating_sub(cols);
+        self.clamp_pan_x(visible_cols);
+    }
+
+    pub fn max_screen_pan_y(&self) -> usize {
+        let vt_rows = self.vt100_parser.screen().size().0 as usize;
+        vt_rows.saturating_sub(self.view_height)
+    }
+
+    pub fn max_vertical_scroll(&self) -> usize {
+        let max_pan_y = self.max_screen_pan_y();
+        if self.vt100_parser.screen().alternate_screen() {
+            max_pan_y
+        } else {
+            max_pan_y + self.max_content_scrollback
+        }
+    }
+
+    // for 2D terminal mode the metrics and clamping is handled within the emulator
+    pub fn reconcile_both_vertical_scroll(&mut self) {
+        let max_pan_y = self.max_screen_pan_y();
+        let max_total = self.max_vertical_scroll();
+
+        // clamping from last
+        self.scrollback_offset = self.scrollback_offset.min(max_total);
+
+        let (y_offset, vt_scrollback) = if self.scrollback_offset <= max_pan_y {
+            // In the active screen: pan from bottom to top
+            let y = max_pan_y - self.scrollback_offset;
+            (y as u16, 0)
+        } else {
+            // Past the active screen: camera is at top (y=0), vt100 scrolls history
+            let history_offset = self.scrollback_offset - max_pan_y;
+            (0, history_offset)
+        };
+
+        self.pan_offset_y = y_offset as usize;
+        self.vt100_parser.screen_mut().set_scrollback(vt_scrollback);
     }
 
     pub fn scroll_up(&mut self, lines: usize) {
-        self.scrollback_offset = self.scrollback_offset.saturating_add(lines);
-        self.clamp_scrollback();
+        let max = self.max_vertical_scroll();
+        self.scrollback_offset = self.scrollback_offset.saturating_add(lines).min(max);
+        self.reconcile_both_vertical_scroll();
     }
 
     pub fn scroll_down(&mut self, lines: usize) {
         self.scrollback_offset = self.scrollback_offset.saturating_sub(lines);
-        self.clamp_scrollback();
+        self.reconcile_both_vertical_scroll();
     }
 
     pub fn scroll_to_bottom(&mut self) {
         self.scrollback_offset = 0;
-        self.clamp_scrollback();
+        self.reconcile_both_vertical_scroll();
     }
 
     pub fn scroll_to_top(&mut self) {
-        self.scrollback_offset = usize::MAX;
-        self.clamp_scrollback();
-    }
-
-    pub fn pan_to_right(&mut self, cols: usize, visible_cols: usize) {
-        self.pan_offset = self.pan_offset.saturating_add(cols);
-        self.clamp_pan(visible_cols);
-    }
-
-    pub fn pan_to_left(&mut self, cols: usize, visible_cols: usize) {
-        self.pan_offset = self.pan_offset.saturating_sub(cols);
-        self.clamp_pan(visible_cols);
-    }
-
-    pub fn pan_offset(&self) -> usize {
-        self.pan_offset
+        self.scrollback_offset = self.max_vertical_scroll();
+        self.reconcile_both_vertical_scroll();
     }
 
     // HACK: there is no scrollback current len from the crate, make PR?
     pub fn refresh_max_scrollback(&mut self) {
         let current = self.vt100_parser.screen().scrollback();
         self.vt100_parser.screen_mut().set_scrollback(usize::MAX);
-        self.max_scrollback = self.vt100_parser.screen().scrollback();
+        self.max_content_scrollback = self.vt100_parser.screen().scrollback();
         self.vt100_parser.screen_mut().set_scrollback(current);
         self.scrollback_offset = current;
     }
@@ -448,8 +480,10 @@ impl App {
         let terminal_view = TerminalViewState {
             vt100_parser,
             scrollback_offset: 0,
-            pan_offset: 0,
-            max_scrollback: scrollback_max_possible,
+            pan_offset_x: 0,
+            pan_offset_y: 0,
+            view_height: 0,
+            max_content_scrollback: 0,
         };
 
         Self {
@@ -469,7 +503,7 @@ impl App {
             }
 
             InputMode::Terminal => {
-                self.terminal_view.clamp_viewport(viewport);
+                self.terminal_view.update_viewport(viewport);
             }
         }
     }
