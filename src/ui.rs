@@ -227,7 +227,7 @@ fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, block: Block) {
 
     let max_scroll = total_visual_rows.saturating_sub(content_height);
 
-    app.line_view.clamp_offsets(max_scroll, max_pan, wrap_mode);
+    app.line_view.update_limits(max_scroll, max_pan);
 
     let scroll_from_bottom = app.line_view.scroll_offset();
     let paragraph_y_offset = max_scroll.saturating_sub(scroll_from_bottom);

@@ -1,8 +1,7 @@
 use chrono::{DateTime, Local};
 /// State machine, updates and queue handling
 /// Mainly local functional code (core feature)
-use std::{collections::VecDeque, usize};
-use unicode_width::UnicodeWidthStr;
+use std::collections::VecDeque;
 use vt100::Parser as Vt100Parser;
 
 use crate::{
@@ -75,6 +74,8 @@ pub struct LineViewState {
     pub x_offset: usize,
     /// TODO: make in terminal with byte stream
     logger: FileLogger,
+    max_scroll: usize,
+    max_pan: usize,
 }
 
 pub struct TerminalViewState {
@@ -296,13 +297,19 @@ impl LineViewState {
         self.logger.is_active()
     }
 
-    pub fn clamp_offsets(&mut self, max_scroll: usize, max_pan: usize, wrap_mode: WrapMode) {
-        self.scroll_from_bottom = self.scroll_from_bottom.min(max_scroll);
-
+    pub fn clamp_wrap(&mut self, wrap_mode: WrapMode) {
+        self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll);
         self.x_offset = match wrap_mode {
             WrapMode::Wrap => 0,
-            WrapMode::Truncate => self.x_offset.min(max_pan),
+            WrapMode::Truncate => self.x_offset.min(self.max_pan),
         };
+    }
+
+    pub fn update_limits(&mut self, max_scroll: usize, max_pan: usize) {
+        self.max_scroll = max_scroll;
+        self.max_pan = max_pan;
+        self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll);
+        self.x_offset = self.x_offset.min(self.max_pan);
     }
 
     pub fn scroll_up(&mut self, lines: usize) {
@@ -356,6 +363,7 @@ impl TerminalViewState {
         self.clamp_pan(viewport.cols);
     }
 
+    // for 2D terminal mode the metrics and clamping is handled within the emulator
     fn clamp_scrollback(&mut self) {
         self.vt100_parser
             .screen_mut()
@@ -363,6 +371,7 @@ impl TerminalViewState {
         self.scrollback_offset = self.vt100_parser.screen().scrollback();
     }
 
+    // for 2D terminal mode the metrics and clamping is handled within the emulator
     fn clamp_pan(&mut self, visible_cols: usize) {
         let vt_cols = self.vt100_parser.screen().size().1 as usize;
         let max_pan = vt_cols.saturating_sub(visible_cols);
@@ -431,6 +440,8 @@ impl App {
             pending_carriage_return: false,
             scroll_from_bottom: 0,
             x_offset: 0,
+            max_scroll: 0,
+            max_pan: 0,
             logger: FileLogger::new(log_config),
         };
 
@@ -454,7 +465,7 @@ impl App {
     pub fn update_viewport(&mut self, viewport: ViewportSize) {
         match self.app_config.input_mode {
             InputMode::Line => {
-                // FIXME: not 0 how to handle data: self.line_view.clamp_viewport(viewport, 0, 0, self.app_config.wrap_mode);
+                self.line_view.clamp_wrap(self.config().wrap_mode);
             }
 
             InputMode::Terminal => {
