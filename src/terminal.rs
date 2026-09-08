@@ -3,7 +3,7 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::Style,
+    style::{Color, Style},
     widgets::{Block, Clear, Widget},
 };
 use tui_term::widget::{Cell, CursorShape, Screen};
@@ -130,16 +130,20 @@ fn handle<S: Screen>(term: &MaxicomTerminal<S>, area: Rect, buf: &mut Buffer) {
             let buf_col = col + col_start;
             let buf_row = row + row_start;
 
-            if buf_row > area_rows || buf_col > area_cols {
+            if buf_row >= area_rows || buf_col >= area_cols {
                 // Skip writing outside the area
                 continue;
             }
 
             let source_col = col.saturating_add(term.x_offset);
             let source_row = row.saturating_add(term.y_offset);
+            let cell = &mut buf[(buf_col, buf_row)];
             if let Some(screen_cell) = screen.cell(source_row, source_col) {
-                let cell = &mut buf[(buf_col, buf_row)];
                 screen_cell.apply(cell);
+            } else {
+                // Outside the terminal canvas (viewer area padding)
+                cell.set_symbol("░"); // TODO: choose custom char or disable in conf
+                cell.set_style(Style::default().fg(Color::DarkGray));
             }
         }
     }
