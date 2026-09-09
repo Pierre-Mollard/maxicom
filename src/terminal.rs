@@ -34,6 +34,7 @@ pub struct MaxicomTerminal<'a, S> {
     block: Option<Block<'a>>,
     style: Option<Style>,
     cursor: MaxicomCursor,
+    empty_filling_char: &'a str,
 }
 
 impl<'a, S: Screen> MaxicomTerminal<'a, S> {
@@ -48,6 +49,7 @@ impl<'a, S: Screen> MaxicomTerminal<'a, S> {
             block: None,
             style: None,
             cursor: MaxicomCursor::default(),
+            empty_filling_char: " ",
         }
     }
 
@@ -83,6 +85,12 @@ impl<'a, S: Screen> MaxicomTerminal<'a, S> {
     #[must_use]
     pub const fn y_offset(mut self, y_offset: u16) -> Self {
         self.y_offset = y_offset;
+        self
+    }
+
+    #[inline]
+    pub const fn filling_char(mut self, char: &'a str) -> Self {
+        self.empty_filling_char = char;
         self
     }
 
@@ -142,7 +150,7 @@ fn handle<S: Screen>(term: &MaxicomTerminal<S>, area: Rect, buf: &mut Buffer) {
                 screen_cell.apply(cell);
             } else {
                 // Outside the terminal canvas (viewer area padding)
-                cell.set_symbol("░"); // TODO: choose custom char or disable in conf
+                cell.set_symbol(term.empty_filling_char);
                 cell.set_style(Style::default().fg(Color::DarkGray));
             }
         }

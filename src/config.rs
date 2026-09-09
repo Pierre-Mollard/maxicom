@@ -70,6 +70,7 @@ pub struct AppConfig {
     pub display_partial_rx: bool,
     pub input_mode: InputMode,
     pub wrap_mode: WrapMode,
+    pub empty_fill_char: String,
 }
 
 impl Default for AppConfig {
@@ -84,6 +85,7 @@ impl Default for AppConfig {
             display_partial_rx: true,
             input_mode: InputMode::default(),
             wrap_mode: WrapMode::default(),
+            empty_fill_char: String::from("░"),
         }
     }
 }
