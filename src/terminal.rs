@@ -178,6 +178,7 @@ fn handle<S: Screen>(term: &MaxicomTerminal<S>, area: Rect, buf: &mut Buffer) {
         let dst_y = area.y + local_row;
         let dst = &mut buf[(dst_x, dst_y)];
 
+        // TODO: make the code below better and work when terminal is not focused
         if let Some(source_cell) = screen.cell(c_row, c_col) {
             if source_cell.has_contents() {
                 dst.set_style(term.cursor.overlay_style);

@@ -71,6 +71,7 @@ pub struct AppConfig {
     pub input_mode: InputMode,
     pub wrap_mode: WrapMode,
     pub empty_fill_char: String,
+    pub unfocused_cusor: String,
 }
 
 impl Default for AppConfig {
@@ -86,6 +87,7 @@ impl Default for AppConfig {
             input_mode: InputMode::default(),
             wrap_mode: WrapMode::default(),
             empty_fill_char: String::from("░"),
+            unfocused_cusor: String::from("▯"),
         }
     }
 }

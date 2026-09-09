@@ -152,6 +152,20 @@ fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, block: Bl
             &mut scrollbar_state,
         );
     }
+
+    // Cusor
+    if !app.vt100_screen().hide_cursor() {
+        let (c_row, c_col) = app.vt100_screen().cursor_position();
+
+        let local_col = c_col.checked_sub(app.terminal_view.pan_offset_x as u16);
+        let local_row = c_row.checked_sub(app.terminal_view.pan_offset_y as u16);
+
+        if let (Some(col), Some(row)) = (local_col, local_row) {
+            if col < inner.width && row < inner.height {
+                frame.set_cursor_position((inner.x + col, inner.y + row));
+            }
+        }
+    }
 }
 
 fn history_entry_to_line(entry: &LogEntry, timestamp_in_line: bool) -> Line<'static> {
