@@ -75,7 +75,7 @@ fn monitor_title(app: &App, area: &Rect) -> String {
 
     let (scroll_offset, pan_offset) = match app.config().input_mode {
         InputMode::Terminal => {
-            let screen = app.vt100_screen();
+            let screen = app.terminal_mode.vt100_screen();
             let _ = write!(
                 title,
                 " MaxiCom TERMINAL [VT {}x{} | VIEW {}x{}",
@@ -85,7 +85,7 @@ fn monitor_title(app: &App, area: &Rect) -> String {
                 area.height.saturating_sub(2),
             );
             (
-                app.terminal_mode.vt100_parser.screen().scrollback(),
+                app.terminal_mode.vt100_screen().scrollback(),
                 app.terminal_mode.pan_offset(),
             )
         }
@@ -191,9 +191,9 @@ fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, block: Bl
     let inner = block.inner(area);
     let view_height = inner.height as usize;
 
-    let term_widget = MaxicomTerminal::new(app.vt100_screen())
-        .x_offset(app.terminal_mode.pan_offset_x as u16)
-        .y_offset(app.terminal_mode.pan_offset_y as u16)
+    let term_widget = MaxicomTerminal::new(app.terminal_mode.vt100_screen())
+        .x_offset(app.terminal_mode.pan_offset_x() as u16)
+        .y_offset(app.terminal_mode.pan_offset_y() as u16)
         .block(block)
         .filling_char(&app.config().empty_fill_char);
 
@@ -201,7 +201,7 @@ fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, block: Bl
 
     let max_vertical = app.terminal_mode.max_vertical_scroll();
     if max_vertical > 0 && view_height > 0 {
-        let position_from_top = max_vertical.saturating_sub(app.terminal_mode.scrollback_offset);
+        let position_from_top = max_vertical.saturating_sub(app.terminal_mode.scrollback_offset());
 
         let mut scrollbar_state = ScrollbarState::new(max_vertical)
             .viewport_content_length(view_height)
@@ -224,16 +224,17 @@ fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, block: Bl
     }
 
     // Cusor
-    if !app.vt100_screen().hide_cursor() {
-        let (c_row, c_col) = app.vt100_screen().cursor_position();
+    if !app.terminal_mode.vt100_screen().hide_cursor() {
+        let (c_row, c_col) = app.terminal_mode.vt100_screen().cursor_position();
 
-        let local_col = c_col.checked_sub(app.terminal_mode.pan_offset_x as u16);
-        let local_row = c_row.checked_sub(app.terminal_mode.pan_offset_y as u16);
+        let local_col = c_col.checked_sub(app.terminal_mode.pan_offset_x() as u16);
+        let local_row = c_row.checked_sub(app.terminal_mode.pan_offset_y() as u16);
 
-        if let (Some(col), Some(row)) = (local_col, local_row) {
-            if col < inner.width && row < inner.height {
-                frame.set_cursor_position((inner.x + col, inner.y + row));
-            }
+        if let (Some(col), Some(row)) = (local_col, local_row)
+            && col < inner.width
+            && row < inner.height
+        {
+            frame.set_cursor_position((inner.x + col, inner.y + row));
         }
     }
 }

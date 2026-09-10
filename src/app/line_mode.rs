@@ -45,9 +45,9 @@ pub struct LineMode {
     /// Waiting to receive carriage return
     pending_carriage_return: bool,
     /// Number of visual lines above newest output
-    pub scroll_from_bottom: usize,
+    scroll_from_bottom: usize,
     /// Offset to display when lines are not wrapped
-    pub x_offset: usize,
+    x_offset: usize,
     /// TODO: make in terminal with byte stream
     logger: FileLogger,
     max_scroll: usize,
@@ -160,16 +160,19 @@ impl LineMode {
     }
 
     /// Read-only slice/iterator of completed lines
+    #[inline]
     pub fn history(&self) -> &VecDeque<LogEntry> {
         &self.local_history
     }
 
     /// Read-only view of current incoming RX slice
+    #[inline]
     pub fn partial_rx(&self) -> &[u8] {
         &self.partial_line
     }
 
     /// Read-only view of user input buffer
+    #[inline]
     pub fn input_buffer(&self) -> &str {
         &self.partial_user_line
     }
@@ -303,10 +306,6 @@ impl LineMode {
         self.scroll_from_bottom = usize::MAX;
     }
 
-    pub fn scroll_offset(&self) -> usize {
-        self.scroll_from_bottom
-    }
-
     pub fn pan_to_right(&mut self, cols: usize) {
         self.x_offset = self.x_offset.saturating_add(cols);
         self.pan_right_explored_amount = self.pan_right_explored_amount.max(self.x_offset);
@@ -316,6 +315,12 @@ impl LineMode {
         self.x_offset = self.x_offset.saturating_sub(cols);
     }
 
+    #[inline]
+    pub fn scroll_offset(&self) -> usize {
+        self.scroll_from_bottom
+    }
+
+    #[inline]
     pub fn x_offset(&self) -> usize {
         self.x_offset
     }

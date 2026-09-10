@@ -1,12 +1,11 @@
 /// State machine, updates and queue handling
 /// Mainly local functional code (core feature)
-use std::collections::VecDeque;
 use vt100::Parser as Vt100Parser;
 
 use crate::{
     config::{AppConfig, InputMode, SettingKey, WrapMode},
     input::{Action, AppAction, HistoryAction, OverlayAction},
-    logger::{FileLogger, LogConfig},
+    logger::LogConfig,
     types::{Overlay, ViewportSize},
 };
 
@@ -60,10 +59,6 @@ impl App {
                 self.terminal_mode.update_viewport(viewport);
             }
         }
-    }
-
-    pub fn vt100_screen(&self) -> &vt100::Screen {
-        self.terminal_mode.vt100_parser.screen()
     }
 
     // TODO: handle resizing terminal 2D because now it is like minicom data loss...

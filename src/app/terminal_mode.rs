@@ -3,11 +3,11 @@ use vt100::Parser;
 use crate::app::ViewportSize;
 
 pub struct TerminalMode {
-    pub vt100_parser: Parser,
-    pub scrollback_offset: usize,
-    pub pan_offset_x: usize,
-    pub pan_offset_y: usize,
-    pub max_content_scrollback: usize,
+    vt100_parser: Parser,
+    scrollback_offset: usize,
+    pan_offset_x: usize,
+    pan_offset_y: usize,
+    max_content_scrollback: usize,
     view_height: usize,
     max_pan: usize,
 }
@@ -39,8 +39,29 @@ impl TerminalMode {
         self.reconcile_both_vertical_scroll();
     }
 
+    #[inline]
+    pub fn vt100_screen(&self) -> &vt100::Screen {
+        self.vt100_parser.screen()
+    }
+
+    #[inline]
     pub fn pan_offset(&self) -> usize {
         self.pan_offset_x
+    }
+
+    #[inline]
+    pub fn pan_offset_x(&self) -> usize {
+        self.pan_offset_x
+    }
+
+    #[inline]
+    pub fn pan_offset_y(&self) -> usize {
+        self.pan_offset_y
+    }
+
+    #[inline]
+    pub fn scrollback_offset(&self) -> usize {
+        self.scrollback_offset
     }
 
     // for 2D terminal mode the metrics and clamping is handled within the emulator
