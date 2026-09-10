@@ -20,6 +20,7 @@ mod input;
 mod logger;
 mod serial;
 mod terminal;
+mod types;
 mod ui;
 
 const EXIT_USAGE: u8 = 2;
@@ -74,11 +75,11 @@ fn main() -> ExitCode {
             Ok(0) => {}
             Ok(bytes_read) => match app.config().input_mode {
                 InputMode::Line => {
-                    app.line_view
+                    app.line_mode
                         .feed_rx(app.config().rx_eol_mode, &input_buffer[..bytes_read]);
                 }
                 InputMode::Terminal => {
-                    app.terminal_view.process_rx(&input_buffer[..bytes_read]);
+                    app.terminal_mode.process_rx(&input_buffer[..bytes_read]);
                 }
             },
             Err(SerialError::InputClosed) => {

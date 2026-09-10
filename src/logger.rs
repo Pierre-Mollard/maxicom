@@ -2,9 +2,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-use chrono::Local;
-
-use crate::app::LogEntry;
+//TODO: move this module around when adding terminal stream saving feature
+use crate::app::line_mode::LogEntry; // this is ugly deps i find
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogConfig {

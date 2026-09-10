@@ -13,10 +13,14 @@ use ratatui::{
 use std::fmt::Write;
 
 use crate::{
-    app::{App, LogEntry, Overlay, ViewportSize},
+    app::App,
     config::{InputMode, WrapMode},
     terminal::MaxicomTerminal,
+    types::{Overlay, ViewportSize},
 };
+
+//TODO: move this module around when adding terminal stream saving feature
+use crate::app::line_mode::LogEntry; // this is ugly deps i find
 
 pub fn render(app: &mut App, frame: &mut Frame) {
     let screen_area = frame.area();
@@ -81,8 +85,8 @@ fn monitor_title(app: &App, area: &Rect) -> String {
                 area.height.saturating_sub(2),
             );
             (
-                app.terminal_view.vt100_parser.screen().scrollback(),
-                app.terminal_view.pan_offset(),
+                app.terminal_mode.vt100_parser.screen().scrollback(),
+                app.terminal_mode.pan_offset(),
             )
         }
         InputMode::Line => {
@@ -92,7 +96,7 @@ fn monitor_title(app: &App, area: &Rect) -> String {
                 area.width.saturating_sub(2),
                 area.height.saturating_sub(2),
             );
-            (app.line_view.scroll_offset(), app.line_view.x_offset())
+            (app.line_mode.scroll_offset(), app.line_mode.x_offset())
         }
     };
 
@@ -126,7 +130,7 @@ fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
 
     match app.config().input_mode {
         InputMode::Terminal => {
-            if let Some(pan_left_possible) = app.terminal_view.can_pan_left() {
+            if let Some(pan_left_possible) = app.terminal_mode.can_pan_left() {
                 titles.push(
                     Line::from(vec![
                         Span::styled(" ◀ (", arrow_style),
@@ -136,7 +140,7 @@ fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
                     .left_aligned(),
                 );
             }
-            if let Some(pan_right_possible) = app.terminal_view.can_pan_right() {
+            if let Some(pan_right_possible) = app.terminal_mode.can_pan_right() {
                 titles.push(
                     Line::from(vec![
                         Span::styled("(", arrow_style),
@@ -148,7 +152,7 @@ fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
             }
         }
         InputMode::Line => {
-            if let Some(pan_left_possible) = app.line_view.can_pan_left() {
+            if let Some(pan_left_possible) = app.line_mode.can_pan_left() {
                 titles.push(
                     Line::from(vec![
                         Span::styled(" ◀ (", arrow_style),
@@ -158,11 +162,11 @@ fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
                     .left_aligned(),
                 );
             }
-            if let Some((pan_right_possible, pan_explored)) = app.line_view.can_pan_right()
+            if let Some((pan_right_possible, pan_explored)) = app.line_mode.can_pan_right()
                 && pan_right_possible > 0
             {
                 let to_discover_alert =
-                    if pan_right_possible > pan_explored.saturating_sub(app.line_view.x_offset()) {
+                    if pan_right_possible > pan_explored.saturating_sub(app.line_mode.x_offset()) {
                         "!"
                     } else {
                         ""
@@ -188,16 +192,16 @@ fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, block: Bl
     let view_height = inner.height as usize;
 
     let term_widget = MaxicomTerminal::new(app.vt100_screen())
-        .x_offset(app.terminal_view.pan_offset_x as u16)
-        .y_offset(app.terminal_view.pan_offset_y as u16)
+        .x_offset(app.terminal_mode.pan_offset_x as u16)
+        .y_offset(app.terminal_mode.pan_offset_y as u16)
         .block(block)
         .filling_char(&app.config().empty_fill_char);
 
     frame.render_widget(term_widget, area);
 
-    let max_vertical = app.terminal_view.max_vertical_scroll();
+    let max_vertical = app.terminal_mode.max_vertical_scroll();
     if max_vertical > 0 && view_height > 0 {
-        let position_from_top = max_vertical.saturating_sub(app.terminal_view.scrollback_offset);
+        let position_from_top = max_vertical.saturating_sub(app.terminal_mode.scrollback_offset);
 
         let mut scrollbar_state = ScrollbarState::new(max_vertical)
             .viewport_content_length(view_height)
@@ -223,8 +227,8 @@ fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, block: Bl
     if !app.vt100_screen().hide_cursor() {
         let (c_row, c_col) = app.vt100_screen().cursor_position();
 
-        let local_col = c_col.checked_sub(app.terminal_view.pan_offset_x as u16);
-        let local_row = c_row.checked_sub(app.terminal_view.pan_offset_y as u16);
+        let local_col = c_col.checked_sub(app.terminal_mode.pan_offset_x as u16);
+        let local_row = c_row.checked_sub(app.terminal_mode.pan_offset_y as u16);
 
         if let (Some(col), Some(row)) = (local_col, local_row) {
             if col < inner.width && row < inner.height {
@@ -257,18 +261,18 @@ fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, block: Block) {
     let wrap_mode = app.config().wrap_mode;
 
     let mut history_lines: Vec<Line> = app
-        .line_view
+        .line_mode
         .history()
         .iter()
         .map(|entry| history_entry_to_line(entry, timestamp_in_line))
         .collect();
 
-    if app.config().display_partial_rx && !app.line_view.partial_rx().is_empty() {
-        let partial_str = String::from_utf8_lossy(app.line_view.partial_rx()).into_owned();
+    if app.config().display_partial_rx && !app.line_mode.partial_rx().is_empty() {
+        let partial_str = String::from_utf8_lossy(app.line_mode.partial_rx()).into_owned();
         let mut partial_spans = Vec::new();
 
         if app.config().timestamp_in_line
-            && let Some(partial_timestamp) = app.line_view.partial_line_timestamp()
+            && let Some(partial_timestamp) = app.line_mode.partial_line_timestamp()
         {
             let time = LogEntry::formatted_time_builder(partial_timestamp);
             partial_spans.push(Span::styled(time, Style::default().fg(Color::Yellow)));
@@ -284,7 +288,7 @@ fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, block: Block) {
 
     let line_x_offset = match wrap_mode {
         WrapMode::Wrap => 0,
-        WrapMode::Truncate => app.line_view.x_offset(),
+        WrapMode::Truncate => app.line_mode.x_offset(),
     };
     let history_line_count = history_lines.len();
     let mut history_paragraph = Paragraph::new(history_lines).block(block);
@@ -309,9 +313,9 @@ fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, block: Block) {
 
     let max_scroll = total_visual_rows.saturating_sub(content_height);
 
-    app.line_view.update_limits(max_scroll, max_pan);
+    app.line_mode.update_limits(max_scroll, max_pan);
 
-    let scroll_from_bottom = app.line_view.scroll_offset();
+    let scroll_from_bottom = app.line_mode.scroll_offset();
     let paragraph_y_offset = max_scroll.saturating_sub(scroll_from_bottom);
 
     history_paragraph = history_paragraph.scroll((
@@ -351,7 +355,7 @@ fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect) {
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(app.line_view.input_buffer()),
+        Span::raw(app.line_mode.input_buffer()),
     ]);
 
     let input_widget = Paragraph::new(input_text).block(
@@ -363,7 +367,7 @@ fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(input_widget, area);
 
     // Place physical blinking cursor at the end of what the user is typing
-    let cursor_x = area.x + 3 + app.line_view.input_buffer().len() as u16;
+    let cursor_x = area.x + 3 + app.line_mode.input_buffer().len() as u16;
     let cursor_y = area.y + 1;
     frame.set_cursor_position((cursor_x, cursor_y));
 }

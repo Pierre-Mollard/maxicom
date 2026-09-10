@@ -7,8 +7,9 @@ use terminput::Encoding;
 use terminput_crossterm::to_terminput_key;
 
 use crate::{
-    app::{App, Overlay},
+    app::App,
     config::{InputMode, SettingKey},
+    types::Overlay,
 };
 
 #[derive(Debug, PartialEq, Eq)]
