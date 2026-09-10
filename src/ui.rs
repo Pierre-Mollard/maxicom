@@ -10,6 +10,8 @@ use ratatui::{
     },
 };
 
+use std::fmt::Write;
+
 use crate::{
     app::{App, LogEntry, Overlay, ViewportSize},
     config::{InputMode, WrapMode},
@@ -65,60 +67,55 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 }
 
 fn monitor_title(app: &App, area: &Rect) -> String {
-    match app.config().input_mode {
+    let mut title = String::with_capacity(80);
+
+    let (scroll_offset, pan_offset) = match app.config().input_mode {
         InputMode::Terminal => {
-            let scroll_offset = app.terminal_view.vt100_parser.screen().scrollback();
-            let pan_offset = app.terminal_view.pan_offset();
-
             let screen = app.vt100_screen();
-
-            let scroll_txt = format!(" | SCROLL +{}", scroll_offset);
-            let pan_txt = format!(" | PAN +{}", pan_offset);
-            let mut title = format!(
-                " MaxiCom TERMINAL [VT {}x{} | VIEW {}x{}{}{}] ",
-                screen.size().1, // columns
-                screen.size().0, // rows
+            let _ = write!(
+                title,
+                " MaxiCom TERMINAL [VT {}x{} | VIEW {}x{}",
+                screen.size().1,
+                screen.size().0,
                 area.width.saturating_sub(2),
                 area.height.saturating_sub(2),
-                if scroll_offset > 0 {
-                    &scroll_txt
-                } else {
-                    " | LIVE"
-                },
-                if pan_offset > 0 { &pan_txt } else { "" }
             );
-
-            if app.is_prefix_active() {
-                title.push_str(" | PREFIX");
-            }
-
-            title
+            (
+                app.terminal_view.vt100_parser.screen().scrollback(),
+                app.terminal_view.pan_offset(),
+            )
         }
         InputMode::Line => {
-            let scroll_offset = app.line_view.scroll_offset();
-            let pan_offset = app.line_view.x_offset();
-
-            let scroll_txt = format!(" | SCROLL +{}", scroll_offset);
-            let pan_txt = format!(" | PAN +{}", pan_offset);
-
-            let mut title = format!(
-                " MaxiCom LINE [VIEW {}x{}{}{}] ",
+            let _ = write!(
+                title,
+                " MaxiCom LINE [VIEW {}x{}",
                 area.width.saturating_sub(2),
                 area.height.saturating_sub(2),
-                if scroll_offset > 0 {
-                    &scroll_txt
-                } else {
-                    " | LIVE"
-                },
-                if pan_offset > 0 { &pan_txt } else { "" }
             );
-
-            if app.is_prefix_active() {
-                title.push_str(" PREFIX");
-            }
-            title
+            (app.line_view.scroll_offset(), app.line_view.x_offset())
         }
+    };
+
+    // Append scroll state
+    if scroll_offset > 0 {
+        let _ = write!(title, " | SCROLL +{scroll_offset}");
+    } else {
+        title.push_str(" | LIVE");
     }
+
+    // Append pan state
+    if pan_offset > 0 {
+        let _ = write!(title, " | PAN +{pan_offset}");
+    }
+
+    title.push(']');
+
+    if app.is_prefix_active() {
+        title.push_str(" | PREFIX");
+    }
+
+    title.push(' ');
+    title
 }
 
 fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
@@ -131,19 +128,21 @@ fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
         InputMode::Terminal => {
             if let Some(pan_left_possible) = app.terminal_view.can_pan_left() {
                 titles.push(
-                    Line::from(Span::styled(
-                        format!(" ◀ ({pan_left_possible})"),
-                        arrow_style,
-                    ))
+                    Line::from(vec![
+                        Span::styled(" ◀ (", arrow_style),
+                        Span::styled(pan_left_possible.to_string(), arrow_style),
+                        Span::styled(")", arrow_style),
+                    ])
                     .left_aligned(),
                 );
             }
             if let Some(pan_right_possible) = app.terminal_view.can_pan_right() {
                 titles.push(
-                    Line::from(Span::styled(
-                        format!("({pan_right_possible}) ▶ "),
-                        arrow_style,
-                    ))
+                    Line::from(vec![
+                        Span::styled("(", arrow_style),
+                        Span::styled(pan_right_possible.to_string(), arrow_style),
+                        Span::styled(") ▶ ", arrow_style),
+                    ])
                     .right_aligned(),
                 );
             }
@@ -151,10 +150,11 @@ fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
         InputMode::Line => {
             if let Some(pan_left_possible) = app.line_view.can_pan_left() {
                 titles.push(
-                    Line::from(Span::styled(
-                        format!(" ◀ ({pan_left_possible})"),
-                        arrow_style,
-                    ))
+                    Line::from(vec![
+                        Span::styled(" ◀ (", arrow_style),
+                        Span::styled(pan_left_possible.to_string(), arrow_style),
+                        Span::styled(")", arrow_style),
+                    ])
                     .left_aligned(),
                 );
             }
@@ -163,15 +163,17 @@ fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
             {
                 let to_discover_alert =
                     if pan_right_possible > pan_explored.saturating_sub(app.line_view.x_offset()) {
-                        String::from("!")
+                        "!"
                     } else {
-                        String::from("")
+                        ""
                     };
                 titles.push(
-                    Line::from(Span::styled(
-                        format!("{}({}) ▶ ", to_discover_alert, pan_right_possible),
-                        arrow_style,
-                    ))
+                    Line::from(vec![
+                        Span::styled(to_discover_alert, arrow_style),
+                        Span::styled("(", arrow_style),
+                        Span::styled(pan_right_possible.to_string(), arrow_style),
+                        Span::styled(") ▶ ", arrow_style),
+                    ])
                     .right_aligned(),
                 );
             }
