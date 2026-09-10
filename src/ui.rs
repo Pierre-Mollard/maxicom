@@ -38,7 +38,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     let title = monitor_title(app, &monitor_area);
     block = block.title(title);
 
-    let bottom_titles = monitor_bottom_title(app, &monitor_area);
+    let bottom_titles = monitor_bottom_title(app);
     block = bottom_titles
         .into_iter()
         .fold(block, |b, t| b.title_bottom(t));
@@ -121,14 +121,33 @@ fn monitor_title(app: &App, area: &Rect) -> String {
     }
 }
 
-fn monitor_bottom_title<'a>(app: &App, area: &Rect) -> Vec<Line<'a>> {
+fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
     let mut titles = Vec::with_capacity(2);
     let arrow_style = Style::default()
         .fg(Color::Yellow)
         .add_modifier(Modifier::BOLD);
 
     match app.config().input_mode {
-        InputMode::Terminal => {}
+        InputMode::Terminal => {
+            if let Some(pan_left_possible) = app.terminal_view.can_pan_left() {
+                titles.push(
+                    Line::from(Span::styled(
+                        format!(" ◀ ({pan_left_possible})"),
+                        arrow_style,
+                    ))
+                    .left_aligned(),
+                );
+            }
+            if let Some(pan_right_possible) = app.terminal_view.can_pan_right() {
+                titles.push(
+                    Line::from(Span::styled(
+                        format!("({pan_right_possible}) ▶ "),
+                        arrow_style,
+                    ))
+                    .right_aligned(),
+                );
+            }
+        }
         InputMode::Line => {
             if let Some(pan_left_possible) = app.line_view.can_pan_left() {
                 titles.push(
@@ -139,18 +158,21 @@ fn monitor_bottom_title<'a>(app: &App, area: &Rect) -> Vec<Line<'a>> {
                     .left_aligned(),
                 );
             }
-            if let Some((pan_right_possible, pan_explored)) = app.line_view.can_pan_right() {
-                let to_discover_alert = if pan_right_possible > pan_explored {
-                    String::from("!")
-                } else {
-                    String::from("")
-                };
+            if let Some((pan_right_possible, pan_explored)) = app.line_view.can_pan_right()
+                && pan_right_possible > 0
+            {
+                let to_discover_alert =
+                    if pan_right_possible > pan_explored.saturating_sub(app.line_view.x_offset()) {
+                        String::from("!")
+                    } else {
+                        String::from("")
+                    };
                 titles.push(
                     Line::from(Span::styled(
                         format!("{}({}) ▶ ", to_discover_alert, pan_right_possible),
                         arrow_style,
                     ))
-                    .left_aligned(),
+                    .right_aligned(),
                 );
             }
         }

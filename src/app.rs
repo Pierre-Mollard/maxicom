@@ -86,6 +86,7 @@ pub struct TerminalViewState {
     pub pan_offset_y: usize,
     pub max_content_scrollback: usize,
     view_height: usize,
+    max_pan: usize,
 }
 
 pub struct App {
@@ -337,7 +338,7 @@ impl LineViewState {
 
     pub fn pan_to_right(&mut self, cols: usize) {
         self.x_offset = self.x_offset.saturating_add(cols);
-        self.pan_right_explored_amount = self.x_offset;
+        self.pan_right_explored_amount = self.pan_right_explored_amount.max(self.x_offset);
     }
 
     pub fn pan_to_left(&mut self, cols: usize) {
@@ -352,14 +353,19 @@ impl LineViewState {
         &self.local_history
     }
 
+    /// Return Some(pan possible, max pan explored since start)
     pub fn can_pan_right(&self) -> Option<(usize, usize)> {
         if self.max_pan > 0 {
-            Some((self.max_pan, self.pan_right_explored_amount))
+            Some((
+                self.max_pan.saturating_sub(self.x_offset),
+                self.pan_right_explored_amount,
+            ))
         } else {
             None
         }
     }
 
+    /// Return Some(pan possible)
     pub fn can_pan_left(&self) -> Option<usize> {
         if self.x_offset > 0 {
             Some(self.x_offset)
@@ -391,8 +397,8 @@ impl TerminalViewState {
     // for 2D terminal mode the metrics and clamping is handled within the emulator
     fn clamp_pan_x(&mut self, visible_cols: usize) {
         let vt_cols = self.vt100_parser.screen().size().1 as usize;
-        let max_pan = vt_cols.saturating_sub(visible_cols);
-        self.pan_offset_x = self.pan_offset_x.min(max_pan);
+        self.max_pan = vt_cols.saturating_sub(visible_cols);
+        self.pan_offset_x = self.pan_offset_x.min(self.max_pan);
     }
 
     pub fn pan_to_right(&mut self, cols: usize, visible_cols: usize) {
@@ -462,6 +468,24 @@ impl TerminalViewState {
         self.reconcile_both_vertical_scroll();
     }
 
+    /// Return Some(pan possible, max pan explored since start)
+    pub fn can_pan_right(&self) -> Option<usize> {
+        if self.max_pan.saturating_sub(self.pan_offset_x) > 0 {
+            Some(self.max_pan.saturating_sub(self.pan_offset_x))
+        } else {
+            None
+        }
+    }
+
+    /// Return Some(pan possible)
+    pub fn can_pan_left(&self) -> Option<usize> {
+        if self.pan_offset_x > 0 {
+            Some(self.pan_offset_x)
+        } else {
+            None
+        }
+    }
+
     // HACK: there is no scrollback current len from the crate, make PR?
     pub fn refresh_max_scrollback(&mut self) {
         let current = self.vt100_parser.screen().scrollback();
@@ -503,6 +527,7 @@ impl App {
             pan_offset_y: 0,
             view_height: 0,
             max_content_scrollback: 0,
+            max_pan: 0,
         };
 
         Self {
