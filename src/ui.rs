@@ -36,8 +36,13 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     app.update_viewport(ViewportSize::new(inner.width, inner.height));
 
     let title = monitor_title(app, &monitor_area);
-
     block = block.title(title);
+
+    let bottom_titles = monitor_bottom_title(app, &monitor_area);
+    block = bottom_titles
+        .into_iter()
+        .fold(block, |b, t| b.title_bottom(t));
+
     match app.config().input_mode {
         InputMode::Terminal => {
             render_vt100_terminal(app, frame, monitor_area, block);
@@ -114,6 +119,43 @@ fn monitor_title(app: &App, area: &Rect) -> String {
             title
         }
     }
+}
+
+fn monitor_bottom_title<'a>(app: &App, area: &Rect) -> Vec<Line<'a>> {
+    let mut titles = Vec::with_capacity(2);
+    let arrow_style = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
+
+    match app.config().input_mode {
+        InputMode::Terminal => {}
+        InputMode::Line => {
+            if let Some(pan_left_possible) = app.line_view.can_pan_left() {
+                titles.push(
+                    Line::from(Span::styled(
+                        format!(" ◀ ({pan_left_possible})"),
+                        arrow_style,
+                    ))
+                    .left_aligned(),
+                );
+            }
+            if let Some((pan_right_possible, pan_explored)) = app.line_view.can_pan_right() {
+                let to_discover_alert = if pan_right_possible > pan_explored {
+                    String::from("!")
+                } else {
+                    String::from("")
+                };
+                titles.push(
+                    Line::from(Span::styled(
+                        format!("{}({}) ▶ ", to_discover_alert, pan_right_possible),
+                        arrow_style,
+                    ))
+                    .left_aligned(),
+                );
+            }
+        }
+    }
+    titles
 }
 
 // TODO: see if adding horizontal scrollbar for panning (and in line mode too)

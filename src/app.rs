@@ -76,6 +76,7 @@ pub struct LineViewState {
     logger: FileLogger,
     max_scroll: usize,
     max_pan: usize,
+    pan_right_explored_amount: usize,
 }
 
 pub struct TerminalViewState {
@@ -336,6 +337,7 @@ impl LineViewState {
 
     pub fn pan_to_right(&mut self, cols: usize) {
         self.x_offset = self.x_offset.saturating_add(cols);
+        self.pan_right_explored_amount = self.x_offset;
     }
 
     pub fn pan_to_left(&mut self, cols: usize) {
@@ -348,6 +350,22 @@ impl LineViewState {
 
     pub fn local_history(&self) -> &VecDeque<LogEntry> {
         &self.local_history
+    }
+
+    pub fn can_pan_right(&self) -> Option<(usize, usize)> {
+        if self.max_pan > 0 {
+            Some((self.max_pan, self.pan_right_explored_amount))
+        } else {
+            None
+        }
+    }
+
+    pub fn can_pan_left(&self) -> Option<usize> {
+        if self.x_offset > 0 {
+            Some(self.x_offset)
+        } else {
+            None
+        }
     }
 }
 
@@ -475,6 +493,7 @@ impl App {
             max_scroll: 0,
             max_pan: 0,
             logger: FileLogger::new(log_config),
+            pan_right_explored_amount: 0,
         };
 
         let terminal_view = TerminalViewState {
