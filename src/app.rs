@@ -1,3 +1,4 @@
+use tui_input::backend::crossterm::EventHandler;
 /// State machine, updates and queue handling
 /// Mainly local functional code (core feature)
 use vt100::Parser as Vt100Parser;
@@ -6,7 +7,7 @@ use crate::{
     config::{AppConfig, InputMode, SettingKey, WrapMode},
     input::{Action, AppAction, HistoryAction, OverlayAction},
     logger::LogConfig,
-    types::{Overlay, ViewportSize},
+    types::{Overlay, ResizeField, ViewportSize},
 };
 
 pub mod line_mode;
@@ -61,13 +62,16 @@ impl App {
         }
     }
 
-    // TODO: handle resizing terminal 2D because now it is like minicom data loss...
     // TODO: add command to enable sending the 'resize' command to a linux remote
     // NOTE: this will change the canvas size / only do this when the remote change because data
     // will be lost
 
-    pub fn overlay(&self) -> Option<Overlay> {
-        self.overlay
+    pub fn overlay(&self) -> Option<&Overlay> {
+        self.overlay.as_ref()
+    }
+
+    pub fn overlay_mut(&mut self) -> Option<&mut Overlay> {
+        self.overlay.as_mut()
     }
 
     pub fn update(&mut self, action: Action) -> UpdateEffect {
@@ -150,6 +154,7 @@ impl App {
         UpdateEffect::None
     }
 
+    // TODO: when more popups types, move to submodule
     fn update_action_overlay(&mut self, action: OverlayAction) -> UpdateEffect {
         match action {
             OverlayAction::Open(overlay) => {
@@ -161,9 +166,39 @@ impl App {
                 self.overlay = None;
                 UpdateEffect::None
             }
-            OverlayAction::SelectNext => UpdateEffect::None,
+            OverlayAction::SelectNext => {
+                if let Some(Overlay::TerminalSize(dialog)) = &mut self.overlay {
+                    dialog.active_field = match dialog.active_field {
+                        ResizeField::Rows => ResizeField::Cols,
+                        ResizeField::Cols => ResizeField::Rows,
+                    };
+                }
+                UpdateEffect::None
+            }
+            OverlayAction::ForwardKey(key) => {
+                if let Some(Overlay::TerminalSize(dialog)) = &mut self.overlay {
+                    let active = match dialog.active_field {
+                        ResizeField::Rows => &mut dialog.rows_input,
+                        ResizeField::Cols => &mut dialog.cols_input,
+                    };
+                    active.handle_event(&crossterm::event::Event::Key(key));
+                }
+                UpdateEffect::None
+            }
+            OverlayAction::Confirm => {
+                if let Some(Overlay::TerminalSize(dialog)) = &self.overlay {
+                    let rows = dialog.rows_input.value().parse::<u16>();
+                    let cols = dialog.cols_input.value().parse::<u16>();
+                    if let (Ok(r), Ok(c)) = (rows, cols) {
+                        if r > 0 && c > 0 {
+                            self.terminal_mode.set_vt100_size(r, c);
+                        }
+                    }
+                }
+                self.overlay = None; // Close popup on submit
+                UpdateEffect::None
+            }
             OverlayAction::SelectPrev => UpdateEffect::None,
-            OverlayAction::Confirm => UpdateEffect::None,
             OverlayAction::ToggleSetting(setting_key) => match setting_key {
                 SettingKey::LocalEcho => {
                     self.app_config.local_echo = !self.app_config.local_echo;

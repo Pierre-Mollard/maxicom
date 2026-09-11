@@ -1,9 +1,12 @@
+use tui_input::Input;
+
 /// Module to reduce inter modules exchange or something
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum Overlay {
     Help,
     Settings,
+    TerminalSize(ResizeDialog),
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -17,6 +20,29 @@ impl ViewportSize {
         Self {
             cols: cols as usize,
             rows: rows as usize,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResizeField {
+    Rows,
+    Cols,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResizeDialog {
+    pub rows_input: Input,
+    pub cols_input: Input,
+    pub active_field: ResizeField,
+}
+
+impl ResizeDialog {
+    pub fn new(current_rows: u16, current_cols: u16) -> Self {
+        Self {
+            rows_input: Input::new(current_rows.to_string()),
+            cols_input: Input::new(current_cols.to_string()),
+            active_field: ResizeField::Rows,
         }
     }
 }

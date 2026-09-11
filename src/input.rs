@@ -9,10 +9,10 @@ use terminput_crossterm::to_terminput_key;
 use crate::{
     app::App,
     config::{InputMode, SettingKey},
-    types::Overlay,
+    types::{Overlay, ResizeDialog},
 };
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum Action {
     /// Raw bytes for Raw Mode or special cases NOTE: maybe Serial category for later if needed
     TransmitRaw(Vec<u8>),
@@ -54,13 +54,14 @@ pub enum HistoryAction {
     Clear,
 } // TODO: add search, navigate seach up and down, next and previous, copy also?
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum OverlayAction {
     Open(Overlay),
     Close,
     SelectNext,
     SelectPrev,
     Confirm,
+    ForwardKey(KeyEvent),
     ToggleSetting(SettingKey),
 }
 
@@ -105,6 +106,12 @@ pub fn handle_event(event: Event, app: &App) -> Action {
                 }
                 _ => Action::Ignore,
             },
+            Overlay::TerminalSize(_) => match key_event.code {
+                KeyCode::Esc => Action::Overlay(OverlayAction::Close),
+                KeyCode::Tab => Action::Overlay(OverlayAction::SelectNext),
+                KeyCode::Enter => Action::Overlay(OverlayAction::Confirm),
+                _ => Action::Overlay(OverlayAction::ForwardKey(key_event)),
+            },
         };
     }
 
@@ -137,6 +144,13 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
             }
             KeyCode::Char('s') | KeyCode::Char('S') => {
                 return Some(Action::Overlay(OverlayAction::Open(Overlay::Settings)));
+            }
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                let (rows, cols) = app.terminal_mode.get_vt100_size();
+                let dialog = ResizeDialog::new(rows, cols);
+                return Some(Action::Overlay(OverlayAction::Open(Overlay::TerminalSize(
+                    dialog,
+                ))));
             }
 
             KeyCode::Up => {

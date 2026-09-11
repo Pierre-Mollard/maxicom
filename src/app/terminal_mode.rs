@@ -164,4 +164,12 @@ impl TerminalMode {
         self.vt100_parser.screen_mut().set_scrollback(current);
         self.scrollback_offset = current;
     }
+
+    pub fn set_vt100_size(&mut self, rows: u16, cols: u16) {
+        self.vt100_parser.screen_mut().set_size(rows, cols);
+    }
+
+    pub fn get_vt100_size(&self) -> (u16, u16) {
+        self.vt100_parser.screen().size()
+    }
 }
