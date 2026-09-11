@@ -400,6 +400,24 @@ fn render_help_popup(frame: &mut Frame) {
             Span::raw(": Toggle Line / Raw mode"),
         ]),
         Line::from(vec![
+            Span::styled("Ctrl-A V", Style::default().fg(Color::Yellow)),
+            Span::raw(": Auto set local emulator terminal size"),
+        ]),
+        Line::from(vec![Span::styled(
+            "WARNING: may loose data history current of screen",
+            Style::default().fg(Color::Red),
+        )])
+        .right_aligned(),
+        Line::from(vec![
+            Span::styled("Ctrl-A T", Style::default().fg(Color::Yellow)),
+            Span::raw(": Auto set remote bash terminal size"),
+        ]),
+        Line::from(vec![Span::styled(
+            "WARNING: remote must be BASH SHELL",
+            Style::default().fg(Color::Red),
+        )])
+        .right_aligned(),
+        Line::from(vec![
             Span::styled("Ctrl-A Q      ", Style::default().fg(Color::Yellow)),
             Span::raw(": Quit MaxiCom"),
         ]),

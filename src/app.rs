@@ -90,6 +90,7 @@ impl App {
                 self.app_config.tx_eol_mode,
                 action,
             ),
+            Action::Terminal(action) => self.terminal_mode.update_action_terminal(action),
             Action::History(action) => self.update_action_history(action),
             Action::Overlay(action) => self.update_action_overlay(action),
             Action::App(action) => self.update_action_app(action),

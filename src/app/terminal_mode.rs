@@ -1,6 +1,9 @@
 use vt100::Parser;
 
-use crate::app::ViewportSize;
+use crate::{
+    app::{UpdateEffect, ViewportSize},
+    input::TerminalAction,
+};
 
 pub struct TerminalMode {
     vt100_parser: Parser,
@@ -9,6 +12,7 @@ pub struct TerminalMode {
     pan_offset_y: usize,
     max_content_scrollback: usize,
     view_height: usize,
+    view_width: usize,
     max_pan: usize,
 }
 
@@ -20,6 +24,7 @@ impl TerminalMode {
             pan_offset_x: 0,
             pan_offset_y: 0,
             view_height: 0,
+            view_width: 0,
             max_content_scrollback: 0,
             max_pan: 0,
         }
@@ -35,6 +40,7 @@ impl TerminalMode {
 
     pub fn update_viewport(&mut self, viewport: ViewportSize) {
         self.view_height = viewport.rows;
+        self.view_width = viewport.cols;
         self.clamp_pan_x(viewport.cols);
         self.reconcile_both_vertical_scroll();
     }
@@ -169,7 +175,23 @@ impl TerminalMode {
         self.vt100_parser.screen_mut().set_size(rows, cols);
     }
 
+    /// Return (rows, cols)
     pub fn get_vt100_size(&self) -> (u16, u16) {
         self.vt100_parser.screen().size()
+    }
+
+    pub fn update_action_terminal(&mut self, action: TerminalAction) -> UpdateEffect {
+        match action {
+            TerminalAction::AutoResizeRemoteToViewer => {
+                let (rows, cols) = self.get_vt100_size();
+                let cmd =
+                    format!("stty rows {rows} cols {cols}; export LINES={rows} COLUMNS={cols}\n");
+                UpdateEffect::Transmit(cmd.into_bytes())
+            }
+            TerminalAction::AutoResizeEmulatorToViewer => {
+                self.set_vt100_size(self.view_height as u16, self.view_width as u16);
+                UpdateEffect::None
+            }
+        }
     }
 }

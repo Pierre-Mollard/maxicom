@@ -18,6 +18,8 @@ pub enum Action {
     TransmitRaw(Vec<u8>),
     /// Text input operations only for Line Mode
     LineInput(LineInputAction),
+    /// Terminal operations for Terminal Mode
+    Terminal(TerminalAction),
     /// Receive history navigation like scrolling and searching
     History(HistoryAction),
     /// Popup overlay action like open, navigate, close, toggle settings
@@ -41,6 +43,12 @@ pub enum LineInputAction {
     Submit,
     HistoryUp,
     HistoryDown,
+}
+
+#[derive(Debug)]
+pub enum TerminalAction {
+    AutoResizeRemoteToViewer,
+    AutoResizeEmulatorToViewer,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -151,6 +159,12 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
                 return Some(Action::Overlay(OverlayAction::Open(Overlay::TerminalSize(
                     dialog,
                 ))));
+            }
+            KeyCode::Char('t') | KeyCode::Char('T') => {
+                return Some(Action::Terminal(TerminalAction::AutoResizeRemoteToViewer));
+            }
+            KeyCode::Char('v') | KeyCode::Char('V') => {
+                return Some(Action::Terminal(TerminalAction::AutoResizeEmulatorToViewer));
             }
 
             KeyCode::Up => {
