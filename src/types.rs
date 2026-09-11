@@ -46,3 +46,11 @@ impl ResizeDialog {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusTarget {
+    Terminal,
+    LineInput,
+    LineHistory,
+    Overlay,
+}

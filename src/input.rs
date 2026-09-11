@@ -33,6 +33,7 @@ pub enum Action {
 #[derive(Debug, PartialEq, Eq)]
 pub enum AppAction {
     SetPrefix(bool),
+    FocusGained(bool),
     Quit,
 }
 
@@ -85,6 +86,18 @@ pub fn poll_event(timeout: Duration) -> io::Result<Option<Event>> {
 
 /// Pure translation: takes a crossterm Event and turns it into a typed Action
 pub fn handle_event(event: Event, app: &App) -> Action {
+    // non key events
+    match event {
+        crossterm::event::Event::FocusGained => {
+            return Action::App(AppAction::FocusGained(true));
+        }
+        crossterm::event::Event::FocusLost => {
+            return Action::App(AppAction::FocusGained(false));
+        }
+        _ => {}
+    }
+
+    // key event from here
     let Event::Key(key_event) = event else {
         return Action::Ignore;
     };

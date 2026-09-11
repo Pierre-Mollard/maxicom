@@ -3,6 +3,10 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
+use crossterm::event::DisableFocusChange;
+use crossterm::event::EnableFocusChange;
+use crossterm::execute;
+
 use crate::app::App;
 use crate::app::UpdateEffect;
 use crate::config::AppConfig;
@@ -64,6 +68,7 @@ fn main() -> ExitCode {
     };
 
     let mut terminal = ratatui::init();
+    _ = execute!(std::io::stdout(), EnableFocusChange);
 
     let mut running: bool = true;
     let mut input_buffer = [0_u8; 4096]; // TODO: configurable
@@ -113,6 +118,7 @@ fn main() -> ExitCode {
             .unwrap();
     }
 
+    _ = crossterm::execute!(std::io::stdout(), DisableFocusChange);
     ratatui::restore();
 
     ExitCode::SUCCESS

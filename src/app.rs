@@ -7,7 +7,7 @@ use crate::{
     config::{AppConfig, InputMode, SettingKey, WrapMode},
     input::{Action, AppAction, HistoryAction, OverlayAction},
     logger::LogConfig,
-    types::{Overlay, ResizeField, ViewportSize},
+    types::{FocusTarget, Overlay, ResizeField, ViewportSize},
 };
 
 pub mod line_mode;
@@ -23,6 +23,7 @@ pub struct App {
     pub viewport: ViewportSize,
     pub line_mode: LineMode,
     pub terminal_mode: TerminalMode,
+    pub is_window_focused: bool,
 }
 
 pub enum UpdateEffect {
@@ -47,6 +48,7 @@ impl App {
             viewport: ViewportSize::default(),
             line_mode: line_view,
             terminal_mode: terminal_view,
+            is_window_focused: true,
         }
     }
 
@@ -102,6 +104,10 @@ impl App {
         match action {
             AppAction::SetPrefix(state) => {
                 self.prefix_active = state;
+                UpdateEffect::None
+            }
+            AppAction::FocusGained(is_focused) => {
+                self.is_window_focused = is_focused;
                 UpdateEffect::None
             }
             AppAction::Quit => UpdateEffect::Quit,
@@ -236,5 +242,24 @@ impl App {
 
     pub fn is_prefix_active(&self) -> bool {
         self.prefix_active
+    }
+
+    pub fn focus_target(&self) -> FocusTarget {
+        if self.overlay.is_some() {
+            return FocusTarget::Overlay;
+        }
+
+        match self.config().input_mode {
+            InputMode::Terminal => FocusTarget::Terminal,
+            InputMode::Line => {
+                // TODO: when browsing/searching, FocusTarget::LineHistory will be added
+                FocusTarget::LineInput
+            }
+        }
+    }
+
+    #[inline]
+    pub fn is_app_focused(&self) -> bool {
+        self.is_window_focused
     }
 }

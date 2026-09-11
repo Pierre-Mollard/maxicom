@@ -3,10 +3,10 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     widgets::{Block, Clear, Widget},
 };
-use tui_term::widget::{Cell, CursorShape, Screen};
+use tui_term::widget::{Cell, Screen};
 
 #[derive(Debug, Clone)]
 pub struct MaxicomCursor {
@@ -35,6 +35,7 @@ pub struct MaxicomTerminal<'a, S> {
     style: Option<Style>,
     cursor: MaxicomCursor,
     empty_filling_char: &'a str,
+    focused: bool,
 }
 
 impl<'a, S: Screen> MaxicomTerminal<'a, S> {
@@ -50,6 +51,7 @@ impl<'a, S: Screen> MaxicomTerminal<'a, S> {
             style: None,
             cursor: MaxicomCursor::default(),
             empty_filling_char: " ",
+            focused: true,
         }
     }
 
@@ -91,6 +93,12 @@ impl<'a, S: Screen> MaxicomTerminal<'a, S> {
     #[inline]
     pub const fn filling_char(mut self, char: &'a str) -> Self {
         self.empty_filling_char = char;
+        self
+    }
+
+    #[inline]
+    pub const fn focused(mut self, focused: bool) -> Self {
+        self.focused = focused;
         self
     }
 
@@ -156,7 +164,8 @@ fn handle<S: Screen>(term: &MaxicomTerminal<S>, area: Rect, buf: &mut Buffer) {
         }
     }
 
-    if !screen.hide_cursor() && term.cursor.show {
+    // fake cursor when not focused
+    if !term.focused && !screen.hide_cursor() && term.cursor.show {
         let (c_row, c_col) = screen.cursor_position();
 
         let Some(local_col) = c_col.checked_sub(term.x_offset) else {
@@ -178,22 +187,13 @@ fn handle<S: Screen>(term: &MaxicomTerminal<S>, area: Rect, buf: &mut Buffer) {
         let dst_y = area.y + local_row;
         let dst = &mut buf[(dst_x, dst_y)];
 
-        // TODO: make the code below better and work when terminal is not focused
+        // TODO: maybe changed the fake cursor style based on config
         if let Some(source_cell) = screen.cell(c_row, c_col) {
             if source_cell.has_contents() {
-                dst.set_style(term.cursor.overlay_style);
+                dst.set_style(Style::default().add_modifier(Modifier::REVERSED));
             } else {
-                let shape = screen.cursor_shape();
-                let symbol = match shape {
-                    CursorShape::Default => term.cursor.symbol,
-                    CursorShape::BlinkingBlock | CursorShape::SteadyBlock => "█",
-                    CursorShape::BlinkingUnderline | CursorShape::SteadyUnderline => "▁",
-                    CursorShape::BlinkingBar | CursorShape::SteadyBar => "▏",
-                    _ => "?",
-                };
-                //let style = term.cursor.style; private....
-                dst.set_symbol(symbol);
-                dst.set_style(term.cursor.style);
+                dst.set_symbol("█");
+                dst.set_style(Style::default().fg(Color::DarkGray));
             }
         }
     }

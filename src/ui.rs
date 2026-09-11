@@ -16,7 +16,7 @@ use crate::{
     app::App,
     config::{InputMode, WrapMode},
     terminal::MaxicomTerminal,
-    types::{Overlay, ResizeDialog, ResizeField, ViewportSize},
+    types::{FocusTarget, Overlay, ResizeDialog, ResizeField, ViewportSize},
 };
 
 //TODO: move this module around when adding terminal stream saving feature
@@ -25,19 +25,25 @@ use crate::app::line_mode::LogEntry; // this is ugly deps i find
 pub fn render(app: &mut App, frame: &mut Frame) {
     let screen_area = frame.area();
 
-    let (monitor_area, prompt_area): (Rect, Option<Rect>) = match app.config().input_mode {
-        InputMode::Terminal => (screen_area, None),
-        InputMode::Line => {
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(3), Constraint::Length(3)])
-                .split(screen_area);
+    let (monitor_area, prompt_area, focus_target): (Rect, Option<Rect>, FocusTarget) =
+        match app.config().input_mode {
+            InputMode::Terminal => (screen_area, None, FocusTarget::Terminal),
+            InputMode::Line => {
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Min(3), Constraint::Length(3)])
+                    .split(screen_area);
 
-            (chunks[0], Some(chunks[1]))
-        }
-    };
+                (chunks[0], Some(chunks[1]), FocusTarget::LineInput)
+            }
+        };
 
-    let mut block = Block::default().borders(Borders::ALL);
+    let focus = app.focus_target();
+    let border_style = border_style_for(focus_target, focus, app.is_app_focused());
+
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style);
     let inner = block.inner(monitor_area);
     app.update_viewport(ViewportSize::new(inner.width, inner.height));
 
@@ -64,9 +70,9 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     }
 
     match app.overlay() {
-        Some(Overlay::Help) => render_help_popup(frame),
+        Some(Overlay::Help) => render_help_popup(app, frame),
         Some(Overlay::Settings) => render_settings_popup(app, frame),
-        Some(Overlay::TerminalSize(dialog)) => render_resize_popup(dialog, frame),
+        Some(Overlay::TerminalSize(dialog)) => render_resize_popup(app, dialog, frame),
         None => {}
     }
 }
@@ -187,15 +193,17 @@ fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
     titles
 }
 
-// TODO: see if adding horizontal scrollbar for panning (and in line mode too)
 fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, block: Block) {
     let inner = block.inner(area);
     let view_height = inner.height as usize;
+    let focus = app.focus_target();
+    let is_terminal_focused = focus == FocusTarget::Terminal;
 
     let term_widget = MaxicomTerminal::new(app.terminal_mode.vt100_screen())
         .x_offset(app.terminal_mode.pan_offset_x() as u16)
         .y_offset(app.terminal_mode.pan_offset_y() as u16)
         .block(block)
+        .focused(is_terminal_focused && app.is_app_focused())
         .filling_char(&app.config().empty_fill_char);
 
     frame.render_widget(term_widget, area);
@@ -225,7 +233,7 @@ fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, block: Bl
     }
 
     // Cusor
-    if !app.terminal_mode.vt100_screen().hide_cursor() {
+    if is_terminal_focused && !app.terminal_mode.vt100_screen().hide_cursor() {
         let (c_row, c_col) = app.terminal_mode.vt100_screen().cursor_position();
 
         let local_col = c_col.checked_sub(app.terminal_mode.pan_offset_x() as u16);
@@ -375,7 +383,7 @@ fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect) {
 }
 
 // NOTE: AI generated, make it better
-fn render_help_popup(frame: &mut Frame) {
+fn render_help_popup(app: &App, frame: &mut Frame) {
     let area = centered_rect(60, 14, frame.area());
     frame.render_widget(Clear, area); // Blank background
 
@@ -438,6 +446,11 @@ fn render_help_popup(frame: &mut Frame) {
     let popup = Paragraph::new(help_text).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_style(border_style_for(
+                FocusTarget::Overlay,
+                app.focus_target(),
+                app.is_app_focused(),
+            ))
             .title(" Help [Keybindings] ")
             .style(Style::default().fg(Color::White)),
     );
@@ -494,6 +507,11 @@ fn render_settings_popup(app: &App, frame: &mut Frame) {
     let popup = Paragraph::new(text).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_style(border_style_for(
+                FocusTarget::Overlay,
+                app.focus_target(),
+                app.is_app_focused(),
+            ))
             .title(" Settings [Toggle Hotkeys] ")
             .style(Style::default().fg(Color::Green)),
     );
@@ -502,7 +520,7 @@ fn render_settings_popup(app: &App, frame: &mut Frame) {
 }
 
 // NOTE: AI generated, make it better
-pub fn render_resize_popup(dialog: &ResizeDialog, frame: &mut Frame) {
+pub fn render_resize_popup(app: &App, dialog: &ResizeDialog, frame: &mut Frame) {
     let area = centered_rect(52, 11, frame.area());
     frame.render_widget(Clear, area);
 
@@ -573,6 +591,11 @@ pub fn render_resize_popup(dialog: &ResizeDialog, frame: &mut Frame) {
     let popup = Paragraph::new(text).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_style(border_style_for(
+                FocusTarget::Overlay,
+                app.focus_target(),
+                app.is_app_focused(),
+            ))
             .title(" Resize VT100 Screen ")
             .border_style(Style::default().fg(Color::Cyan)),
     );
@@ -598,4 +621,17 @@ fn centered_rect(percent_x: u16, height: u16, parent: Rect) -> Rect {
     let x = parent.x + parent.width.saturating_sub(width) / 2;
     let y = parent.y + parent.height.saturating_sub(height) / 2;
     Rect::new(x, y, width.min(parent.width), height.min(parent.height))
+}
+
+/// Helper function to get standard borders
+pub fn border_style_for(target: FocusTarget, current: FocusTarget, app_focused: bool) -> Style {
+    if !app_focused {
+        Style::default().fg(Color::DarkGray)
+    } else if target == current {
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    }
 }
