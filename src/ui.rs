@@ -16,7 +16,7 @@ use crate::{
     app::App,
     config::{InputMode, WrapMode},
     terminal::MaxicomTerminal,
-    types::{FocusTarget, Overlay, ResizeDialog, ResizeField, ViewportSize},
+    types::{ErrorDialog, FocusTarget, Overlay, ResizeDialog, ResizeField, ViewportSize},
 };
 
 //TODO: move this module around when adding terminal stream saving feature
@@ -74,6 +74,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         Some(Overlay::Settings) => render_settings_popup(app, frame),
         Some(Overlay::TerminalSize(dialog)) => render_resize_popup(app, dialog, frame),
         Some(Overlay::DeviceDisconnected(port)) => render_disconnected_popup(port, frame),
+        Some(Overlay::Error(err)) => render_error_popup(err, frame),
         None => {}
     }
 }
@@ -644,6 +645,47 @@ fn render_disconnected_popup(port: &str, frame: &mut Frame) {
         .block(
             Block::bordered()
                 .title(" Connection Lost ")
+                .border_style(Style::default().fg(Color::Red)),
+        );
+
+    frame.render_widget(popup, area);
+}
+
+pub fn render_error_popup(err: &ErrorDialog, frame: &mut Frame) {
+    let area = centered_rect(58, 10, frame.area());
+    frame.render_widget(Clear, area);
+
+    let mut lines = vec![
+        Line::from(Span::styled(
+            format!("⚠  {}  ⚠", err.title),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            &err.summary,
+            Style::default().fg(Color::White),
+        )),
+    ];
+
+    if let Some(ref details) = err.details {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("Cause: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(details, Style::default().fg(Color::Yellow)),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Press [Esc] or [Enter] to dismiss",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let popup = Paragraph::new(lines)
+        .alignment(ratatui::layout::Alignment::Center)
+        .block(
+            Block::bordered()
+                .title(format!(" {} ", err.title))
                 .border_style(Style::default().fg(Color::Red)),
         );
 

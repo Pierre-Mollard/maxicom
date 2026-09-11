@@ -8,6 +8,7 @@ pub enum Overlay {
     Settings,
     TerminalSize(ResizeDialog),
     DeviceDisconnected(String),
+    Error(ErrorDialog),
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -54,4 +55,26 @@ pub enum FocusTarget {
     LineInput,
     LineHistory,
     Overlay,
+}
+
+#[derive(Debug, Clone)]
+pub struct ErrorDialog {
+    pub title: &'static str,
+    pub summary: String,
+    pub details: Option<String>,
+}
+
+impl ErrorDialog {
+    pub fn new(title: &'static str, summary: impl Into<String>) -> Self {
+        Self {
+            title,
+            summary: summary.into(),
+            details: None,
+        }
+    }
+
+    pub fn with_details(mut self, details: impl ToString) -> Self {
+        self.details = Some(details.to_string());
+        self
+    }
 }

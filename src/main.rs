@@ -16,6 +16,7 @@ use crate::serial::SerialDevice;
 use crate::serial::SerialError;
 use crate::serial::parse_args;
 use crate::serial::print_help;
+use crate::types::ErrorDialog;
 use crate::types::Overlay;
 use crate::ui::render;
 
@@ -60,7 +61,7 @@ fn main() -> ExitCode {
 
     println!("Configuration: {config:#?}");
 
-    // TODO: handle all error case and display popups/retries
+    // TODO: handle all error case and display popups/retries (ConfigFailed & OpenFailed)
     let mut device = match SerialDevice::open(&config) {
         Ok(device) => Some(device),
         Err(error) => {
@@ -83,7 +84,6 @@ fn main() -> ExitCode {
     let mut last_reconnect_attempt = std::time::Instant::now();
 
     while running {
-        // TODO: make this async with infinite delay (currently blocking for 10ms)
         if let Some(ref mut dev) = device {
             match dev.read(&mut input_buffer) {
                 Ok(0) => {}
@@ -100,7 +100,12 @@ fn main() -> ExitCode {
                     device = None; // Drops closed handle
                     app.open_overlay(Overlay::DeviceDisconnected(config.port.clone()));
                 }
-                // TODO: handle all serial error with show info/details on UI
+                Err(SerialError::ReadFailed(e)) => {
+                    app.open_overlay(Overlay::Error(
+                        ErrorDialog::new("Serial Read Error", "Could not read from device buffer")
+                            .with_details(e),
+                    ));
+                }
                 Err(e) => {
                     eprintln!("Serial read error: {e:?}");
                     break;
@@ -123,12 +128,16 @@ fn main() -> ExitCode {
             match app.update(action) {
                 UpdateEffect::Quit => running = false,
                 UpdateEffect::Transmit(bytes) => {
-                    if let Some(ref mut dev) = device {
-                        if let Err(e) = dev.write(&bytes) {
-                            eprintln!("Write failed, device disconnected: {e:?}");
-                            device = None;
-                            app.open_overlay(Overlay::DeviceDisconnected(config.port.clone()));
-                        }
+                    if let Some(ref mut dev) = device
+                        && let Err(e) = dev.write(&bytes)
+                    {
+                        app.open_overlay(Overlay::Error(
+                            ErrorDialog::new(
+                                "Serial Write Failed",
+                                "Failed to transmit bytes to serial port",
+                            )
+                            .with_details(e),
+                        ));
                     }
                 }
                 UpdateEffect::None => {}

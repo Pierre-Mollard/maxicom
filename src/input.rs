@@ -152,6 +152,11 @@ pub fn handle_event(event: Event, app: &App) -> Action {
                     _ => Action::Ignore,
                 }
             }
+            Overlay::Error(_) => match key_event.code {
+                KeyCode::Esc => Action::Overlay(OverlayAction::Close),
+                KeyCode::Enter => Action::Overlay(OverlayAction::Close),
+                _ => Action::Ignore,
+            },
         };
     }
 
