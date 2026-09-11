@@ -7,6 +7,7 @@ pub enum Overlay {
     Help,
     Settings,
     TerminalSize(ResizeDialog),
+    DeviceDisconnected(String),
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

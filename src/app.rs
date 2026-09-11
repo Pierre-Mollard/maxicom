@@ -76,6 +76,14 @@ impl App {
         self.overlay.as_mut()
     }
 
+    pub fn open_overlay(&mut self, overlay: Overlay) {
+        self.overlay = Some(overlay);
+    }
+
+    pub fn close_overlay(&mut self) {
+        self.overlay = None;
+    }
+
     pub fn update(&mut self, action: Action) -> UpdateEffect {
         match action {
             Action::TransmitRaw(bytes) => {

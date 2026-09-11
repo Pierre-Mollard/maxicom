@@ -16,6 +16,7 @@ use crate::serial::SerialDevice;
 use crate::serial::SerialError;
 use crate::serial::parse_args;
 use crate::serial::print_help;
+use crate::types::Overlay;
 use crate::ui::render;
 
 mod app;
@@ -59,11 +60,12 @@ fn main() -> ExitCode {
 
     println!("Configuration: {config:#?}");
 
+    // TODO: handle all error case and display popups/retries
     let mut device = match SerialDevice::open(&config) {
-        Ok(device) => device,
+        Ok(device) => Some(device),
         Err(error) => {
             eprintln!("Could not open serial device: {error:?}");
-            return ExitCode::FAILURE;
+            None
         }
     };
 
@@ -74,25 +76,45 @@ fn main() -> ExitCode {
     let mut input_buffer = [0_u8; 4096]; // TODO: configurable
     let mut app = App::new(app_config, log_config);
 
+    if device.is_none() {
+        app.open_overlay(Overlay::DeviceDisconnected(config.port.clone()));
+    }
+
+    let mut last_reconnect_attempt = std::time::Instant::now();
+
     while running {
         // TODO: make this async with infinite delay (currently blocking for 10ms)
-        match device.read(&mut input_buffer) {
-            Ok(0) => {}
-            Ok(bytes_read) => match app.config().input_mode {
-                InputMode::Line => {
-                    app.line_mode
-                        .feed_rx(app.config().rx_eol_mode, &input_buffer[..bytes_read]);
+        if let Some(ref mut dev) = device {
+            match dev.read(&mut input_buffer) {
+                Ok(0) => {}
+                Ok(bytes_read) => match app.config().input_mode {
+                    InputMode::Line => {
+                        app.line_mode
+                            .feed_rx(app.config().rx_eol_mode, &input_buffer[..bytes_read]);
+                    }
+                    InputMode::Terminal => {
+                        app.terminal_mode.process_rx(&input_buffer[..bytes_read]);
+                    }
+                },
+                Err(SerialError::InputClosed) => {
+                    device = None; // Drops closed handle
+                    app.open_overlay(Overlay::DeviceDisconnected(config.port.clone()));
                 }
-                InputMode::Terminal => {
-                    app.terminal_mode.process_rx(&input_buffer[..bytes_read]);
+                // TODO: handle all serial error with show info/details on UI
+                Err(e) => {
+                    eprintln!("Serial read error: {e:?}");
+                    break;
                 }
-            },
-            Err(SerialError::InputClosed) => {
-                break;
             }
-            Err(e) => {
-                eprintln!("Serial read error: {e:?}");
-                break;
+        } else {
+            if last_reconnect_attempt.elapsed() >= Duration::from_millis(500) {
+                last_reconnect_attempt = std::time::Instant::now();
+                if let Ok(new_dev) = SerialDevice::open(&config) {
+                    device = Some(new_dev);
+                    if let Some(Overlay::DeviceDisconnected(_)) = app.overlay() {
+                        app.close_overlay();
+                    }
+                }
             }
         }
 
@@ -100,13 +122,15 @@ fn main() -> ExitCode {
             let action = input::handle_event(event, &app);
             match app.update(action) {
                 UpdateEffect::Quit => running = false,
-                UpdateEffect::Transmit(bytes) => match device.write(&bytes) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        eprintln!("Serial write error: {e:?}");
-                        break;
+                UpdateEffect::Transmit(bytes) => {
+                    if let Some(ref mut dev) = device {
+                        if let Err(e) = dev.write(&bytes) {
+                            eprintln!("Write failed, device disconnected: {e:?}");
+                            device = None;
+                            app.open_overlay(Overlay::DeviceDisconnected(config.port.clone()));
+                        }
                     }
-                },
+                }
                 UpdateEffect::None => {}
             }
         }

@@ -109,13 +109,16 @@ pub fn handle_event(event: Event, app: &App) -> Action {
 
     // Popup check
     if let Some(current_overlay) = app.overlay() {
-        if key_event.code == KeyCode::Esc {
-            return Action::Overlay(OverlayAction::Close);
-        }
+        // NOTE: cannot generalize ESC because of disconnect and errors (todo) popups
+        //
+        //        if key_event.code == KeyCode::Esc && current_overlay != Overlay::DeviceDisconnected(_) {
+        //           return Action::Overlay(OverlayAction::Close);
+        //      }
 
         return match current_overlay {
             Overlay::Help => Action::Overlay(OverlayAction::Close),
             Overlay::Settings => match key_event.code {
+                KeyCode::Esc => Action::Overlay(OverlayAction::Close),
                 KeyCode::Char('e') | KeyCode::Char('E') => {
                     Action::Overlay(OverlayAction::ToggleSetting(SettingKey::LocalEcho))
                 }
@@ -133,6 +136,22 @@ pub fn handle_event(event: Event, app: &App) -> Action {
                 KeyCode::Enter => Action::Overlay(OverlayAction::Confirm),
                 _ => Action::Overlay(OverlayAction::ForwardKey(key_event)),
             },
+            Overlay::DeviceDisconnected(_) => {
+                if key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                    match key_event.code {
+                        KeyCode::Char('c') | KeyCode::Char('C') => {
+                            return Action::App(AppAction::Quit);
+                        }
+                        _ => (),
+                    }
+                }
+
+                match key_event.code {
+                    KeyCode::Esc => Action::App(AppAction::Quit),
+                    KeyCode::Enter => Action::App(AppAction::Quit),
+                    _ => Action::Ignore,
+                }
+            }
         };
     }
 

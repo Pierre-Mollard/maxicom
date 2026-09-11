@@ -73,6 +73,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         Some(Overlay::Help) => render_help_popup(app, frame),
         Some(Overlay::Settings) => render_settings_popup(app, frame),
         Some(Overlay::TerminalSize(dialog)) => render_resize_popup(app, dialog, frame),
+        Some(Overlay::DeviceDisconnected(port)) => render_disconnected_popup(port, frame),
         None => {}
     }
 }
@@ -613,6 +614,40 @@ pub fn render_resize_popup(app: &App, dialog: &ResizeDialog, frame: &mut Frame) 
     let cursor_y = area.y + line_y_offset;
 
     frame.set_cursor_position((cursor_x, cursor_y));
+}
+
+fn render_disconnected_popup(port: &str, frame: &mut Frame) {
+    let area = centered_rect(54, 9, frame.area());
+    frame.render_widget(Clear, area);
+
+    let text = vec![
+        Line::from(Span::styled(
+            "⚠ SERIAL DEVICE DISCONNECTED ⚠",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("Device "),
+            Span::styled(port, Style::default().fg(Color::Yellow)),
+            Span::raw(" was closed or unplugged."),
+        ]),
+        Line::from("Waiting for port to reconnect..."),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Press [ESC] or [ENTER] or [Ctrl+C] to quit",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    let popup = Paragraph::new(text)
+        .alignment(ratatui::layout::Alignment::Center)
+        .block(
+            Block::bordered()
+                .title(" Connection Lost ")
+                .border_style(Style::default().fg(Color::Red)),
+        );
+
+    frame.render_widget(popup, area);
 }
 
 /// Helper function to center a popup window
