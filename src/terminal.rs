@@ -1,5 +1,5 @@
 /// Terminal widget custom from term-ui
-// TODO: show symbol/detection when new content arrived in pan area (and scroll area) if not live
+// TODO: show symbol/detection when new content arrived i scroll area if not live
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -187,12 +187,11 @@ fn handle<S: Screen>(term: &MaxicomTerminal<S>, area: Rect, buf: &mut Buffer) {
         let dst_y = area.y + local_row;
         let dst = &mut buf[(dst_x, dst_y)];
 
-        // TODO: maybe changed the fake cursor style based on config
         if let Some(source_cell) = screen.cell(c_row, c_col) {
             if source_cell.has_contents() {
                 dst.set_style(Style::default().add_modifier(Modifier::REVERSED));
             } else {
-                dst.set_symbol("█");
+                dst.set_symbol(term.cursor.symbol);
                 dst.set_style(Style::default().fg(Color::DarkGray));
             }
         }
