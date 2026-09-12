@@ -1,3 +1,4 @@
+use std::io::ErrorKind;
 use std::path::PathBuf;
 /// Orchestration and init of the MaxiCom executable
 use std::process::ExitCode;
@@ -37,7 +38,7 @@ const EXIT_USAGE: u8 = 2;
 fn main() -> ExitCode {
     println!("=== MaxiCom ===");
 
-    // TODO: handle warning error
+    // TODO: handle warning error and ? returns
     let config_path = AppConfig::default_path();
     let app_config = AppConfig::load_or_create_default(&config_path).unwrap();
 
@@ -61,12 +62,66 @@ fn main() -> ExitCode {
 
     println!("Configuration: {config:#?}");
 
-    // TODO: handle all error case and display popups/retries (ConfigFailed & OpenFailed)
     let mut device = match SerialDevice::open(&config) {
-        Ok(device) => Some(device),
-        Err(error) => {
-            eprintln!("Could not open serial device: {error:?}");
+        Ok(dev) => Some(dev),
+        Err(SerialError::OpenFailed { ref source, .. }) if source.kind() == ErrorKind::NotFound => {
             None
+        }
+        Err(SerialError::InputClosed) => None,
+        Err(SerialError::OpenFailed {
+            ref port,
+            ref source,
+            ..
+        }) if source.kind() == ErrorKind::PermissionDenied => {
+            eprintln!("maxicom: permission denied opening serial port '{port}'");
+            return ExitCode::FAILURE;
+        }
+
+        Err(SerialError::OpenFailed {
+            ref port,
+            ref source,
+            ..
+        }) if source.kind() == ErrorKind::ResourceBusy => {
+            eprintln!("maxicom: serial port '{port}' is busy (already in use)");
+            return ExitCode::FAILURE;
+        }
+
+        Err(SerialError::OpenFailed {
+            ref port,
+            baudrate,
+            ref source,
+        }) => {
+            eprintln!("maxicom: failed to open '{port}' at {baudrate} baud: {source}");
+            if let Some(code) = source.raw_os_error() {
+                eprintln!("OS errno: {code}");
+            }
+            return ExitCode::FAILURE;
+        }
+        Err(SerialError::ConfigFailed(ref source)) => {
+            eprintln!(
+                "maxicom: failed to configure UART settings for '{}'",
+                config.port
+            );
+            eprintln!();
+            eprintln!("Driver Error: {source}");
+            return ExitCode::FAILURE;
+        }
+        Err(SerialError::ReadFailed(ref source)) => {
+            eprintln!(
+                "maxicom: unexpected read error while probing '{}': {source}",
+                config.port
+            );
+            return ExitCode::FAILURE;
+        }
+        Err(SerialError::WriteFailed {
+            bytes_attempted,
+            ref source,
+        }) => {
+            eprintln!(
+                "maxicom: failed to send probe bytes ({bytes_attempted} attempted) to '{}': {source}",
+                config.port
+            );
+            return ExitCode::FAILURE;
         }
     };
 
