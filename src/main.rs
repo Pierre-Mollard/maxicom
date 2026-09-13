@@ -1,12 +1,14 @@
+use std::io;
 use std::io::ErrorKind;
+use std::io::stdout;
 use std::path::PathBuf;
-/// Orchestration and init of the MaxiCom executable
 use std::process::ExitCode;
 use std::time::Duration;
 
 use crossterm::event::DisableFocusChange;
 use crossterm::event::EnableFocusChange;
 use crossterm::execute;
+use ratatui::DefaultTerminal;
 
 use crate::app::App;
 use crate::app::UpdateEffect;
@@ -30,17 +32,55 @@ mod terminal;
 mod types;
 mod ui;
 
-const EXIT_USAGE: u8 = 2;
 // 0 -- Success
 // 1 -- General failure
 // 2 -- Invalid argument
+const EXIT_USAGE: u8 = 2;
 
+pub struct TerminalGuard {
+    pub terminal: DefaultTerminal,
+}
+
+impl TerminalGuard {
+    pub fn init() -> io::Result<Self> {
+        let terminal = ratatui::try_init()?;
+        execute!(stdout(), EnableFocusChange)?;
+        Ok(Self { terminal })
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = execute!(stdout(), DisableFocusChange);
+        ratatui::restore();
+    }
+}
+
+// TODO: handle maxicom program stderr in red special output in log
 fn main() -> ExitCode {
-    println!("=== MaxiCom ===");
+    match run() {
+        Ok(code) => code,
+        Err(err) => {
+            // Because TerminalGuard dropped BEFORE this point,
+            // stderr is back to standard terminal mode and readable!
+            eprintln!("maxicom: fatal error: {err}");
+            ExitCode::FAILURE
+        }
+    }
+}
 
-    // TODO: handle warning error and ? returns
+fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let config_path = AppConfig::default_path();
-    let app_config = AppConfig::load_or_create_default(&config_path).unwrap();
+    let app_config = match AppConfig::load_or_create_default(&config_path) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!(
+                "maxicom: failed to load config at {}: {e}",
+                config_path.display()
+            );
+            return Ok(ExitCode::FAILURE);
+        }
+    };
 
     let log_config = LogConfig {
         enabled: true,
@@ -52,11 +92,11 @@ fn main() -> ExitCode {
         Ok(serial::ParseOutcome::Config(config)) => config,
         Ok(serial::ParseOutcome::Help) => {
             print_help();
-            return ExitCode::SUCCESS;
+            return Ok(ExitCode::SUCCESS);
         }
         Err(error) => {
             eprintln!("Argument error: {error}");
-            return ExitCode::from(EXIT_USAGE);
+            return Ok(ExitCode::from(EXIT_USAGE));
         }
     };
 
@@ -74,7 +114,7 @@ fn main() -> ExitCode {
             ..
         }) if source.kind() == ErrorKind::PermissionDenied => {
             eprintln!("maxicom: permission denied opening serial port '{port}'");
-            return ExitCode::FAILURE;
+            return Ok(ExitCode::FAILURE);
         }
 
         Err(SerialError::OpenFailed {
@@ -83,7 +123,7 @@ fn main() -> ExitCode {
             ..
         }) if source.kind() == ErrorKind::ResourceBusy => {
             eprintln!("maxicom: serial port '{port}' is busy (already in use)");
-            return ExitCode::FAILURE;
+            return Ok(ExitCode::FAILURE);
         }
 
         Err(SerialError::OpenFailed {
@@ -95,7 +135,7 @@ fn main() -> ExitCode {
             if let Some(code) = source.raw_os_error() {
                 eprintln!("OS errno: {code}");
             }
-            return ExitCode::FAILURE;
+            return Ok(ExitCode::FAILURE);
         }
         Err(SerialError::ConfigFailed(ref source)) => {
             eprintln!(
@@ -104,14 +144,14 @@ fn main() -> ExitCode {
             );
             eprintln!();
             eprintln!("Driver Error: {source}");
-            return ExitCode::FAILURE;
+            return Ok(ExitCode::FAILURE);
         }
         Err(SerialError::ReadFailed(ref source)) => {
             eprintln!(
                 "maxicom: unexpected read error while probing '{}': {source}",
                 config.port
             );
-            return ExitCode::FAILURE;
+            return Ok(ExitCode::FAILURE);
         }
         Err(SerialError::WriteFailed {
             bytes_attempted,
@@ -121,12 +161,11 @@ fn main() -> ExitCode {
                 "maxicom: failed to send probe bytes ({bytes_attempted} attempted) to '{}': {source}",
                 config.port
             );
-            return ExitCode::FAILURE;
+            return Ok(ExitCode::FAILURE);
         }
     };
 
-    let mut terminal = ratatui::init();
-    _ = execute!(std::io::stdout(), EnableFocusChange);
+    let mut guard = TerminalGuard::init()?;
 
     let mut running: bool = true;
     let mut input_buffer = [0_u8; 4096]; // TODO: configurable
@@ -199,16 +238,10 @@ fn main() -> ExitCode {
             }
         }
 
-        terminal
-            .draw(|frame| {
-                render(&mut app, frame);
-            })
-            .unwrap();
+        guard.terminal.draw(|frame| {
+            render(&mut app, frame);
+        })?;
     }
 
-    _ = crossterm::execute!(std::io::stdout(), DisableFocusChange);
-    ratatui::restore();
-
-    ExitCode::SUCCESS
+    Ok(ExitCode::SUCCESS)
 }
-// TODO: handle maxicom program stderr in red special output in log
