@@ -1,3 +1,6 @@
+use std::collections::VecDeque;
+
+use chrono::{DateTime, Local};
 use vt100::Parser;
 
 use crate::{
@@ -14,11 +17,15 @@ pub struct TerminalMode {
     view_height: usize,
     view_width: usize,
     max_pan: usize,
+    max_history_lines: usize,
+    pub line_timestamps: VecDeque<DateTime<Local>>,
 }
 
 impl TerminalMode {
-    pub fn new(vt100_parser: Parser) -> Self {
-        TerminalMode {
+    pub fn new(max_history_lines: usize, rows: u16, cols: u16) -> Self {
+        let vt100_parser = Parser::new(rows, cols, max_history_lines);
+
+        let mut mode = TerminalMode {
             vt100_parser,
             scrollback_offset: 0,
             pan_offset_x: 0,
@@ -27,13 +34,35 @@ impl TerminalMode {
             view_width: 0,
             max_content_scrollback: 0,
             max_pan: 0,
+            max_history_lines,
+            line_timestamps: VecDeque::with_capacity(max_history_lines),
+        };
+
+        let initial_rows = mode.vt100_parser.screen().size().0 as usize;
+        for _ in 0..initial_rows {
+            mode.line_timestamps.push_back(Local::now());
         }
+        mode
     }
 
     pub fn process_rx(&mut self, bytes: &[u8]) {
         // TODO: save as raw capture stream when in interactive mode
+
+        let is_alternate = self.vt100_parser.screen().alternate_screen();
+
+        if !is_alternate {
+            for &b in bytes {
+                if b == b'\n' {
+                    if self.line_timestamps.len() >= self.max_history_lines {
+                        self.line_timestamps.pop_front();
+                    }
+                    self.line_timestamps.push_back(Local::now());
+                }
+            }
+        }
+
         self.vt100_parser.process(bytes);
-        if !self.vt100_parser.screen().alternate_screen() {
+        if !is_alternate {
             self.refresh_max_scrollback();
         }
     }

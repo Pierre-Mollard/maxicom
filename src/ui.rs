@@ -44,8 +44,21 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     let mut block = Block::default()
         .borders(Borders::ALL)
         .border_style(border_style);
-    let inner = block.inner(monitor_area);
-    app.update_viewport(ViewportSize::new(inner.width, inner.height));
+
+    let inner_area = block.inner(monitor_area);
+
+    let (gutter_area, terminal_area) = match app.config().input_mode {
+        InputMode::Terminal if app.config().timestamp_in_line => {
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Length(13), Constraint::Min(0)]) // 12 chars + 1 space/separator
+                .split(inner_area);
+            (Some(chunks[0]), chunks[1])
+        }
+        _ => (None, inner_area),
+    };
+
+    app.update_viewport(ViewportSize::new(terminal_area.width, terminal_area.height));
 
     let title = monitor_title(app, &monitor_area);
     block = block.title(title);
@@ -55,12 +68,17 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         .into_iter()
         .fold(block, |b, t| b.title_bottom(t));
 
+    frame.render_widget(block, monitor_area);
+
     match app.config().input_mode {
         InputMode::Terminal => {
-            render_vt100_terminal(app, frame, monitor_area, block);
+            if let Some(g_area) = gutter_area {
+                render_timestamp_gutter(app, frame, g_area);
+            }
+            render_vt100_terminal(app, frame, terminal_area, monitor_area);
         }
         InputMode::Line => {
-            render_monitor(app, frame, monitor_area, block);
+            render_monitor(app, frame, inner_area, monitor_area);
         }
     }
 
@@ -195,16 +213,15 @@ fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
     titles
 }
 
-fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, block: Block) {
-    let inner = block.inner(area);
-    let view_height = inner.height as usize;
+fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, outer_area: Rect) {
+    let view_height = area.height as usize;
     let focus = app.focus_target();
     let is_terminal_focused = focus == FocusTarget::Terminal;
+
     // TODO: make the cursor config with its style
     let term_widget = MaxicomTerminal::new(app.terminal_mode.vt100_screen())
         .x_offset(app.terminal_mode.pan_offset_x() as u16)
         .y_offset(app.terminal_mode.pan_offset_y() as u16)
-        .block(block)
         .focused(is_terminal_focused && app.is_app_focused())
         .filling_char(&app.config().empty_fill_char);
 
@@ -224,14 +241,14 @@ fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, block: Bl
             .track_symbol(Some("│"))
             .thumb_symbol("█");
 
-        frame.render_stateful_widget(
-            scrollbar,
-            area.inner(Margin {
-                vertical: 1,
-                horizontal: 0,
-            }),
-            &mut scrollbar_state,
-        );
+        let scrollbar_area = Rect {
+            x: outer_area.x + outer_area.width.saturating_sub(1),
+            y: outer_area.y + 1,
+            width: 1,
+            height: outer_area.height.saturating_sub(2),
+        };
+
+        frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
     }
 
     // Cusor
@@ -242,12 +259,48 @@ fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, block: Bl
         let local_row = c_row.checked_sub(app.terminal_mode.pan_offset_y() as u16);
 
         if let (Some(col), Some(row)) = (local_col, local_row)
-            && col < inner.width
-            && row < inner.height
+            && col < area.width
+            && row < area.height
         {
-            frame.set_cursor_position((inner.x + col, inner.y + row));
+            frame.set_cursor_position((area.x + col, area.y + row));
         }
     }
+}
+
+fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect) {
+    let view_height = app.terminal_mode.vt100_screen().size().0 as usize;
+    if view_height == 0 {
+        return;
+    }
+
+    let scroll_offset = app.terminal_mode.scrollback_offset();
+    let total_lines = app.terminal_mode.line_timestamps.len();
+    let end_idx = total_lines.saturating_sub(scroll_offset);
+    let start_idx = end_idx.saturating_sub(view_height);
+
+    let mut lines = Vec::with_capacity(view_height);
+
+    // TODO: layout timestamp not aligned
+    // TODO: panning broke
+
+    for row in 0..view_height {
+        let ts_idx = start_idx + row;
+        if ts_idx < end_idx
+            && let Some(ts) = app.terminal_mode.line_timestamps.get(ts_idx)
+        {
+            let formatted = ts.format("%H:%M:%S%.3f").to_string();
+            lines.push(Line::from(Span::styled(
+                formatted,
+                Style::default().fg(Color::DarkGray),
+            )));
+        } else {
+            // Empty placeholder for lines where no data has arrived yet
+            lines.push(Line::raw("            "));
+        }
+    }
+
+    let gutter = Paragraph::new(lines);
+    frame.render_widget(gutter, area);
 }
 
 fn history_entry_to_line(entry: &LogEntry, timestamp_in_line: bool) -> Line<'static> {
@@ -264,13 +317,13 @@ fn history_entry_to_line(entry: &LogEntry, timestamp_in_line: bool) -> Line<'sta
     Line::from(spans)
 }
 
-// PERF: do not rebuild everything every frame
-fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, block: Block) {
+fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, outer_area: Rect) {
     let timestamp_in_line = app.config().timestamp_in_line;
-    let inner = block.inner(area);
-    let content_width = inner.width as usize;
-    let content_height = inner.height as usize;
+    let content_width = area.width as usize;
+    let content_height = area.height as usize;
     let wrap_mode = app.config().wrap_mode;
+
+    app.update_viewport(ViewportSize::new(area.width, area.height));
 
     let mut history_lines: Vec<Line> = app
         .line_mode
@@ -303,7 +356,7 @@ fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, block: Block) {
         WrapMode::Truncate => app.line_mode.x_offset(),
     };
     let history_line_count = history_lines.len();
-    let mut history_paragraph = Paragraph::new(history_lines).block(block);
+    let mut history_paragraph = Paragraph::new(history_lines);
 
     history_paragraph = match wrap_mode {
         WrapMode::Wrap => history_paragraph.wrap(Wrap { trim: false }),
@@ -315,11 +368,8 @@ fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, block: Block) {
         WrapMode::Wrap => 0, //unused so no need to process
         WrapMode::Truncate => history_paragraph.line_width().saturating_sub(content_width),
     };
-    let block_vertical_space = area.height.saturating_sub(inner.height) as usize;
     let total_visual_rows = match wrap_mode {
-        WrapMode::Wrap => history_paragraph
-            .line_count(content_width as u16)
-            .saturating_sub(block_vertical_space),
+        WrapMode::Wrap => history_paragraph.line_count(content_width as u16),
         WrapMode::Truncate => history_line_count,
     };
 
@@ -347,14 +397,14 @@ fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, block: Block) {
             .track_symbol(Some("│"))
             .thumb_symbol("█");
 
-        frame.render_stateful_widget(
-            scrollbar,
-            area.inner(Margin {
-                vertical: 1,
-                horizontal: 0,
-            }),
-            &mut scrollbar_state,
-        );
+        let scrollbar_area = Rect {
+            x: outer_area.x + outer_area.width.saturating_sub(1),
+            y: outer_area.y + 1,
+            width: 1,
+            height: outer_area.height.saturating_sub(2),
+        };
+
+        frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
     }
 }
 

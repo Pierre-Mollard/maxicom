@@ -1,7 +1,4 @@
 use tui_input::backend::crossterm::EventHandler;
-/// State machine, updates and queue handling
-/// Mainly local functional code (core feature)
-use vt100::Parser as Vt100Parser;
 
 use crate::{
     config::{AppConfig, InputMode, SettingKey, WrapMode},
@@ -34,15 +31,12 @@ pub enum UpdateEffect {
 
 impl App {
     pub fn new(app_config: AppConfig, log_config: LogConfig) -> Self {
-        let scrollback_max_possible = app_config.terminal_history_size;
-        let vt100_parser = Vt100Parser::new(
+        let line_view = LineMode::new(app_config.max_history_lines, log_config);
+        let terminal_view = TerminalMode::new(
+            app_config.max_history_lines,
             app_config.terminal_rows,
             app_config.terminal_cols,
-            scrollback_max_possible,
         );
-
-        let line_view = LineMode::new(app_config.max_history_lines, log_config);
-        let terminal_view = TerminalMode::new(vt100_parser);
 
         Self {
             prefix_active: false,
