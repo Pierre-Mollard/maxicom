@@ -72,6 +72,9 @@ pub struct AppConfig {
     pub wrap_mode: WrapMode,
     pub empty_fill_char: String,
     pub unfocused_cusor: String,
+    pub terminal_history_size: usize,
+    pub terminal_rows: u16,
+    pub terminal_cols: u16,
 }
 
 impl Default for AppConfig {
@@ -88,6 +91,9 @@ impl Default for AppConfig {
             wrap_mode: WrapMode::default(),
             empty_fill_char: String::from("░"),
             unfocused_cusor: String::from("▯"),
+            terminal_history_size: 5000,
+            terminal_rows: 24,
+            terminal_cols: 80,
         }
     }
 }

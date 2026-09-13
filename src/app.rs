@@ -34,9 +34,12 @@ pub enum UpdateEffect {
 
 impl App {
     pub fn new(app_config: AppConfig, log_config: LogConfig) -> Self {
-        // TODO: configure size of scrollback history with vt100
-        let scrollback_max_possible = 10000;
-        let vt100_parser = Vt100Parser::new(24, 80, scrollback_max_possible);
+        let scrollback_max_possible = app_config.terminal_history_size;
+        let vt100_parser = Vt100Parser::new(
+            app_config.terminal_rows,
+            app_config.terminal_cols,
+            scrollback_max_possible,
+        );
 
         let line_view = LineMode::new(app_config.max_history_lines, log_config);
         let terminal_view = TerminalMode::new(vt100_parser);
@@ -64,10 +67,6 @@ impl App {
             }
         }
     }
-
-    // TODO: add command to enable sending the 'resize' command to a linux remote
-    // NOTE: this will change the canvas size / only do this when the remote change because data
-    // will be lost
 
     pub fn overlay(&self) -> Option<&Overlay> {
         self.overlay.as_ref()
