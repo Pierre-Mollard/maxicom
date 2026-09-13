@@ -6,6 +6,7 @@ use crate::{
     config::{RxNewlineMode, TxNewlineSymbol, WrapMode},
     input::LineInputAction,
     logger::{FileLogger, LogConfig},
+    types::ViewportSize,
 };
 
 pub struct LogEntry {
@@ -53,6 +54,8 @@ pub struct LineMode {
     max_scroll: usize,
     max_pan: usize,
     pan_right_explored_amount: usize,
+    view_height: usize,
+    view_width: usize,
 }
 
 impl LineMode {
@@ -73,6 +76,8 @@ impl LineMode {
             max_pan: 0,
             logger: FileLogger::new(log_config),
             pan_right_explored_amount: 0,
+            view_width: 0,
+            view_height: 0,
         }
     }
 
@@ -275,7 +280,9 @@ impl LineMode {
         self.logger.is_active()
     }
 
-    pub fn clamp_wrap(&mut self, wrap_mode: WrapMode) {
+    pub fn update_viewport(&mut self, wrap_mode: WrapMode, viewport: ViewportSize) {
+        self.view_height = viewport.rows;
+        self.view_width = viewport.cols;
         self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll);
         self.x_offset = match wrap_mode {
             WrapMode::Wrap => 0,
@@ -296,6 +303,18 @@ impl LineMode {
 
     pub fn scroll_down(&mut self, lines: usize) {
         self.scroll_from_bottom = self.scroll_from_bottom.saturating_sub(lines);
+    }
+
+    pub fn scroll_up_page(&mut self) {
+        self.scroll_from_bottom = self
+            .scroll_from_bottom
+            .saturating_add(self.view_height.saturating_sub(1));
+    }
+
+    pub fn scroll_down_page(&mut self) {
+        self.scroll_from_bottom = self
+            .scroll_from_bottom
+            .saturating_sub(self.view_height.saturating_sub(1));
     }
 
     pub fn scroll_to_bottom(&mut self) {

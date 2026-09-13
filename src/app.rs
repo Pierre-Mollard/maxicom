@@ -55,7 +55,8 @@ impl App {
     pub fn update_viewport(&mut self, viewport: ViewportSize) {
         match self.app_config.input_mode {
             InputMode::Line => {
-                self.line_mode.clamp_wrap(self.config().wrap_mode);
+                self.line_mode
+                    .update_viewport(self.config().wrap_mode, viewport);
             }
 
             InputMode::Terminal => {
@@ -130,6 +131,12 @@ impl App {
             (InputMode::Line, HistoryAction::ScrollDown(lines)) => {
                 self.line_mode.scroll_down(lines);
             }
+            (InputMode::Line, HistoryAction::ScrollUpPage) => {
+                self.line_mode.scroll_up_page();
+            }
+            (InputMode::Line, HistoryAction::ScrollDownPage) => {
+                self.line_mode.scroll_down_page();
+            }
             (InputMode::Line, HistoryAction::ScrollToBottom) => {
                 self.line_mode.scroll_to_bottom();
             }
@@ -150,6 +157,12 @@ impl App {
             }
             (InputMode::Terminal, HistoryAction::ScrollDown(lines)) => {
                 self.terminal_mode.scroll_down(lines);
+            }
+            (InputMode::Terminal, HistoryAction::ScrollUpPage) => {
+                self.terminal_mode.scroll_up_page();
+            }
+            (InputMode::Terminal, HistoryAction::ScrollDownPage) => {
+                self.terminal_mode.scroll_down_page();
             }
             (InputMode::Terminal, HistoryAction::ScrollToBottom) => {
                 self.terminal_mode.scroll_to_bottom();

@@ -56,6 +56,8 @@ pub enum TerminalAction {
 pub enum HistoryAction {
     ScrollUp(usize),
     ScrollDown(usize),
+    ScrollUpPage,
+    ScrollDownPage,
     ScrollToBottom,
     ScrollToTop,
     PanLeft(usize),
@@ -249,9 +251,8 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
 
     // NOT MODIFIER SECTION
     match key.code {
-        // TODO: make view_height - 1 for PageUp/PageDown
-        KeyCode::PageUp => Some(Action::History(HistoryAction::ScrollUp(10))),
-        KeyCode::PageDown => Some(Action::History(HistoryAction::ScrollDown(10))),
+        KeyCode::PageUp => Some(Action::History(HistoryAction::ScrollUpPage)),
+        KeyCode::PageDown => Some(Action::History(HistoryAction::ScrollDownPage)),
         _ => None,
     }
 }

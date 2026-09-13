@@ -134,6 +134,14 @@ impl TerminalMode {
         self.reconcile_both_vertical_scroll();
     }
 
+    pub fn scroll_up_page(&mut self) {
+        self.scroll_up(self.view_height.saturating_sub(1));
+    }
+
+    pub fn scroll_down_page(&mut self) {
+        self.scroll_down(self.view_height.saturating_sub(1));
+    }
+
     pub fn scroll_to_bottom(&mut self) {
         self.scrollback_offset = 0;
         self.reconcile_both_vertical_scroll();
