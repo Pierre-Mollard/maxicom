@@ -252,9 +252,12 @@ fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, outer_are
     }
 
     // Cusor
-    if is_terminal_focused && !app.terminal_mode.vt100_screen().hide_cursor() {
-        let (c_row, c_col) = app.terminal_mode.vt100_screen().cursor_position();
-        // TODO: cursor position is wrong when partial scroll
+    let screen = app.terminal_mode.vt100_screen();
+    let is_scrolled_into_history = screen.scrollback() > 0;
+
+    if is_terminal_focused && !screen.hide_cursor() && !is_scrolled_into_history {
+        let (c_row, c_col) = screen.cursor_position();
+
         let local_col = c_col.checked_sub(app.terminal_mode.pan_offset_x() as u16);
         let local_row = c_row.checked_sub(app.terminal_mode.pan_offset_y() as u16);
 
