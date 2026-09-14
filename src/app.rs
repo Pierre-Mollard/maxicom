@@ -245,6 +245,10 @@ impl App {
                     self.update_viewport(self.viewport);
                     UpdateEffect::None
                 }
+                SettingKey::DisplayTimestamp => {
+                    self.app_config.timestamp_in_line = !self.app_config.timestamp_in_line;
+                    UpdateEffect::None
+                }
             },
         }
     }

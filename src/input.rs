@@ -130,6 +130,9 @@ pub fn handle_event(event: Event, app: &App) -> Action {
                 KeyCode::Char('m') | KeyCode::Char('M') => {
                     Action::Overlay(OverlayAction::ToggleSetting(SettingKey::InputMode))
                 }
+                KeyCode::Char('t') | KeyCode::Char('T') => {
+                    Action::Overlay(OverlayAction::ToggleSetting(SettingKey::DisplayTimestamp))
+                }
                 _ => Action::Ignore,
             },
             Overlay::TerminalSize(_) => match key_event.code {

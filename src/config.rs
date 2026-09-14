@@ -137,4 +137,5 @@ pub enum SettingKey {
     LocalEcho,
     InputMode,
     LineWrap,
+    DisplayTimestamp,
 } // TODO: add all settings

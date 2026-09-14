@@ -535,6 +535,11 @@ fn render_settings_popup(app: &App, frame: &mut Frame) {
         crate::config::WrapMode::Truncate => "Truncate",
     };
     let echo_str = if app.config().local_echo { "ON" } else { "OFF" };
+    let timestamp_str = if app.config().timestamp_in_line {
+        "ON"
+    } else {
+        "OFF"
+    };
 
     // TODO: add badge when recording is on
     let text = vec![
@@ -559,6 +564,11 @@ fn render_settings_popup(app: &App, frame: &mut Frame) {
             Span::styled("[W] ", Style::default().fg(Color::Yellow)),
             Span::raw("Line Wrap   : "),
             Span::styled(wrap_str, Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(vec![
+            Span::styled("[T] ", Style::default().fg(Color::Yellow)),
+            Span::raw("Timestamps  : "),
+            Span::styled(timestamp_str, Style::default().fg(Color::Cyan)),
         ]),
         Line::from(""),
         Line::from(Span::styled(
