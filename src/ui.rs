@@ -254,7 +254,7 @@ fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, outer_are
     // Cusor
     if is_terminal_focused && !app.terminal_mode.vt100_screen().hide_cursor() {
         let (c_row, c_col) = app.terminal_mode.vt100_screen().cursor_position();
-
+        // TODO: cursor position is wrong when partial scroll
         let local_col = c_col.checked_sub(app.terminal_mode.pan_offset_x() as u16);
         let local_row = c_row.checked_sub(app.terminal_mode.pan_offset_y() as u16);
 
@@ -268,34 +268,45 @@ fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, outer_are
 }
 
 fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect) {
-    let view_height = app.terminal_mode.vt100_screen().size().0 as usize;
-    if view_height == 0 {
+    let screen = app.terminal_mode.vt100_screen();
+    let vt_rows = screen.size().0 as usize;
+    let pan_y = app.terminal_mode.pan_offset_y();
+
+    let remaining_vt_rows = vt_rows.saturating_sub(pan_y);
+
+    let rows_to_draw = (area.height as usize).min(remaining_vt_rows);
+    if rows_to_draw == 0 {
         return;
     }
 
-    let scroll_offset = app.terminal_mode.scrollback_offset();
-    let total_lines = app.terminal_mode.line_timestamps.len();
-    let end_idx = total_lines.saturating_sub(scroll_offset);
-    let start_idx = end_idx.saturating_sub(view_height);
+    let vt_scrollback = screen.scrollback();
+    let total_timeline = app.terminal_mode.total_timeline_len();
 
-    let mut lines = Vec::with_capacity(view_height);
+    let end_idx = total_timeline.saturating_sub(vt_scrollback);
+    let start_idx = end_idx.saturating_sub(vt_rows);
 
-    // TODO: layout timestamp not aligned
-    // TODO: panning broke
+    let mut lines = Vec::with_capacity(rows_to_draw);
 
-    for row in 0..view_height {
-        let ts_idx = start_idx + row;
-        if ts_idx < end_idx
-            && let Some(ts) = app.terminal_mode.line_timestamps.get(ts_idx)
-        {
-            let formatted = ts.format("%H:%M:%S%.3f").to_string();
-            lines.push(Line::from(Span::styled(
-                formatted,
-                Style::default().fg(Color::DarkGray),
-            )));
+    for row in 0..rows_to_draw {
+        let source_row = row + pan_y;
+        let global_ts_idx = start_idx + source_row;
+
+        let maybe_ts = if global_ts_idx < end_idx {
+            app.terminal_mode.get_timeline_timestamp(global_ts_idx)
         } else {
-            // Empty placeholder for lines where no data has arrived yet
-            lines.push(Line::raw("            "));
+            None
+        };
+
+        let row_has_text = app.terminal_mode.row_has_content(source_row as u16);
+
+        if row_has_text && let Some(ts) = maybe_ts {
+            let formatted = ts.format("%H:%M:%S%.3f").to_string();
+            lines.push(Line::from(vec![
+                Span::styled(formatted, Style::default().fg(Color::DarkGray)),
+                Span::styled("│", Style::default().fg(Color::DarkGray)),
+            ]));
+        } else {
+            lines.push(Line::raw("            │"));
         }
     }
 

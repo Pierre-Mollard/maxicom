@@ -18,14 +18,16 @@ pub struct TerminalMode {
     view_width: usize,
     max_pan: usize,
     max_history_lines: usize,
-    pub line_timestamps: VecDeque<DateTime<Local>>,
+
+    pub history_timestamps: VecDeque<DateTime<Local>>,
+    pub screen_timestamps: Vec<Option<DateTime<Local>>>,
 }
 
 impl TerminalMode {
     pub fn new(max_history_lines: usize, rows: u16, cols: u16) -> Self {
         let vt100_parser = Parser::new(rows, cols, max_history_lines);
 
-        let mut mode = TerminalMode {
+        TerminalMode {
             vt100_parser,
             scrollback_offset: 0,
             pan_offset_x: 0,
@@ -35,33 +37,52 @@ impl TerminalMode {
             max_content_scrollback: 0,
             max_pan: 0,
             max_history_lines,
-            line_timestamps: VecDeque::with_capacity(max_history_lines),
-        };
-
-        let initial_rows = mode.vt100_parser.screen().size().0 as usize;
-        for _ in 0..initial_rows {
-            mode.line_timestamps.push_back(Local::now());
+            history_timestamps: VecDeque::with_capacity(max_history_lines),
+            screen_timestamps: vec![None; rows as usize],
         }
-        mode
     }
 
     pub fn process_rx(&mut self, bytes: &[u8]) {
         // TODO: save as raw capture stream when in interactive mode
 
         let is_alternate = self.vt100_parser.screen().alternate_screen();
+        let vt_rows = self.vt100_parser.screen().size().0 as usize;
 
         if !is_alternate {
             for &b in bytes {
                 if b == b'\n' {
-                    if self.line_timestamps.len() >= self.max_history_lines {
-                        self.line_timestamps.pop_front();
+                    let (cursor_row, _) = self.vt100_parser.screen().cursor_position();
+
+                    if (cursor_row as usize) >= vt_rows.saturating_sub(1) {
+                        // Bottom of screen
+                        if let Some(top_ts) = self.screen_timestamps.first().copied().flatten() {
+                            if self.history_timestamps.len() >= self.max_history_lines {
+                                self.history_timestamps.pop_front();
+                            }
+                            self.history_timestamps.push_back(top_ts);
+                        }
+                        self.screen_timestamps.remove(0);
+                        self.screen_timestamps.push(Some(Local::now()));
+                    } else {
+                        // In the middle of screen
+                        let next_row = (cursor_row as usize) + 1;
+                        if next_row < self.screen_timestamps.len() {
+                            self.screen_timestamps[next_row] = Some(Local::now());
+                        }
                     }
-                    self.line_timestamps.push_back(Local::now());
                 }
             }
         }
 
         self.vt100_parser.process(bytes);
+
+        let (r, _) = self.vt100_parser.screen().cursor_position();
+        if let Some(slot) = self.screen_timestamps.get_mut(r as usize)
+            && slot.is_none()
+        {
+            *slot = Some(Local::now());
+        }
+
         if !is_alternate {
             self.refresh_max_scrollback();
         }
@@ -72,6 +93,33 @@ impl TerminalMode {
         self.view_width = viewport.cols;
         self.clamp_pan_x(viewport.cols);
         self.reconcile_both_vertical_scroll();
+    }
+
+    pub fn row_has_content(&self, row: u16) -> bool {
+        let screen = self.vt100_parser.screen();
+        let cols = screen.size().1;
+        for c in 0..cols {
+            if let Some(cell) = screen.cell(row, c)
+                && cell.has_contents()
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn total_timeline_len(&self) -> usize {
+        self.history_timestamps.len() + self.screen_timestamps.len()
+    }
+
+    pub fn get_timeline_timestamp(&self, global_idx: usize) -> Option<DateTime<Local>> {
+        let history_len = self.history_timestamps.len();
+        if global_idx < history_len {
+            self.history_timestamps.get(global_idx).copied()
+        } else {
+            let screen_idx = global_idx - history_len;
+            self.screen_timestamps.get(screen_idx).copied().flatten()
+        }
     }
 
     #[inline]
