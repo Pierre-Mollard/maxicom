@@ -49,7 +49,6 @@ pub struct LineMode {
     scroll_from_bottom: usize,
     /// Offset to display when lines are not wrapped
     x_offset: usize,
-    /// TODO: make in terminal with byte stream
     logger: FileLogger,
     max_scroll: usize,
     max_pan: usize,
@@ -59,7 +58,7 @@ pub struct LineMode {
 }
 
 impl LineMode {
-    pub fn new(max_history_lines: usize, log_config: LogConfig) -> Self {
+    pub fn new(max_history_lines: usize, log_config: &LogConfig) -> Self {
         LineMode {
             local_history: VecDeque::with_capacity(max_history_lines),
             local_send_history: VecDeque::with_capacity(max_history_lines),
@@ -74,7 +73,7 @@ impl LineMode {
             x_offset: 0,
             max_scroll: 0,
             max_pan: 0,
-            logger: FileLogger::new(log_config),
+            logger: FileLogger::new(log_config.to_owned()),
             pan_right_explored_amount: 0,
             view_width: 0,
             view_height: 0,

@@ -478,7 +478,7 @@ fn render_help_popup(app: &App, frame: &mut Frame) {
             Span::raw(": Auto set local emulator terminal size"),
         ]),
         Line::from(vec![Span::styled(
-            "WARNING: may loose data history current of screen",
+            "May loose data history current of screen",
             Style::default().fg(Color::Red),
         )])
         .right_aligned(),
@@ -487,7 +487,7 @@ fn render_help_popup(app: &App, frame: &mut Frame) {
             Span::raw(": Auto set remote bash terminal size"),
         ]),
         Line::from(vec![Span::styled(
-            "WARNING: remote must be BASH SHELL",
+            "Remote must be BASH SHELL",
             Style::default().fg(Color::Red),
         )])
         .right_aligned(),

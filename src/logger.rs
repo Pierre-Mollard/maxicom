@@ -71,6 +71,7 @@ impl FileLogger {
 
     /// Logs raw binary bytes (for hex dump / raw logging)
     pub fn log_raw_bytes(&mut self, bytes: &[u8]) -> io::Result<()> {
+        // TODO: use these and use another file format, add screenshot
         if let Some(file) = &mut self.file {
             file.write_all(bytes)?;
             file.flush()?;

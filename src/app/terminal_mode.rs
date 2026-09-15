@@ -6,10 +6,12 @@ use vt100::Parser;
 use crate::{
     app::{UpdateEffect, ViewportSize},
     input::TerminalAction,
+    logger::{FileLogger, LogConfig},
 };
 
 pub struct TerminalMode {
     vt100_parser: Parser,
+    logger: FileLogger,
     scrollback_offset: usize,
     pan_offset_x: usize,
     pan_offset_y: usize,
@@ -24,11 +26,12 @@ pub struct TerminalMode {
 }
 
 impl TerminalMode {
-    pub fn new(max_history_lines: usize, rows: u16, cols: u16) -> Self {
+    pub fn new(max_history_lines: usize, rows: u16, cols: u16, log_config: &LogConfig) -> Self {
         let vt100_parser = Parser::new(rows, cols, max_history_lines);
 
         TerminalMode {
             vt100_parser,
+            logger: FileLogger::new(log_config.to_owned()),
             scrollback_offset: 0,
             pan_offset_x: 0,
             pan_offset_y: 0,
