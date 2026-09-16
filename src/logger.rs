@@ -39,7 +39,7 @@ impl LineLogger {
 
     pub fn log_entry(&mut self, entry: &LogEntry) -> io::Result<()> {
         if let Some(file) = &mut self.file {
-            if self.config.timestamp_lines {
+            if self.config.timestamp {
                 writeln!(file, "[{}] {}", entry.formatted_time(), entry.text)?;
             } else {
                 writeln!(file, "{}", entry.text)?;

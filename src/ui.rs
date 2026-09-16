@@ -45,7 +45,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     let inner_area = block.inner(monitor_area);
 
     let (gutter_area, terminal_area) = match app.config().input_mode {
-        InputMode::Terminal if app.config().timestamp_in_line => {
+        InputMode::Terminal if app.config().display_live_timestamp => {
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Length(13), Constraint::Min(0)]) // 12 chars + 1 space/separator
@@ -220,7 +220,7 @@ fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, outer_are
         .x_offset(app.terminal_mode.pan_offset_x() as u16)
         .y_offset(app.terminal_mode.pan_offset_y() as u16)
         .focused(is_terminal_focused && app.is_app_focused())
-        .filling_char(&app.config().empty_fill_char);
+        .filling_char(&app.config().terminal_mode.empty_fill_char);
 
     frame.render_widget(term_widget, area);
 
@@ -329,10 +329,10 @@ fn history_entry_to_line(entry: &LogEntry, timestamp_in_line: bool) -> Line<'sta
 }
 
 fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, outer_area: Rect) {
-    let timestamp_in_line = app.config().timestamp_in_line;
+    let timestamp_in_line = app.config().display_live_timestamp;
     let content_width = area.width as usize;
     let content_height = area.height as usize;
-    let wrap_mode = app.config().wrap_mode;
+    let wrap_mode = app.config().line_mode.wrap_mode;
 
     app.update_viewport(ViewportSize::new(area.width, area.height));
 
@@ -343,11 +343,11 @@ fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, outer_area: Rect
         .map(|entry| history_entry_to_line(entry, timestamp_in_line))
         .collect();
 
-    if app.config().display_partial_rx && !app.line_mode.partial_rx().is_empty() {
+    if app.config().line_mode.display_partial_rx && !app.line_mode.partial_rx().is_empty() {
         let partial_str = String::from_utf8_lossy(app.line_mode.partial_rx()).into_owned();
         let mut partial_spans = Vec::new();
 
-        if app.config().timestamp_in_line
+        if app.config().display_live_timestamp
             && let Some(partial_timestamp) = app.line_mode.partial_line_timestamp()
         {
             let time = LogEntry::formatted_time_builder(partial_timestamp);
@@ -530,12 +530,12 @@ fn render_settings_popup(app: &App, frame: &mut Frame) {
         crate::config::InputMode::Line => "Line Mode",
         crate::config::InputMode::Terminal => "Terminal Mode",
     };
-    let wrap_str = match app.config().wrap_mode {
+    let wrap_str = match app.config().line_mode.wrap_mode {
         crate::config::WrapMode::Wrap => "Soft-Wrap",
         crate::config::WrapMode::Truncate => "Truncate",
     };
     let echo_str = if app.config().local_echo { "ON" } else { "OFF" };
-    let timestamp_str = if app.config().timestamp_in_line {
+    let timestamp_str = if app.config().display_live_timestamp {
         "ON"
     } else {
         "OFF"

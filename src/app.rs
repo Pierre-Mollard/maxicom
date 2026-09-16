@@ -31,14 +31,14 @@ pub enum UpdateEffect {
 
 impl App {
     pub fn new(app_config: AppConfig) -> Self {
-        let line_logger = LineLogger::new(app_config.logging.line_mode.to_owned());
-        let terminal_logger = TerminalLogger::new(app_config.logging.terminal_mode.to_owned());
+        let line_logger = LineLogger::new(app_config.line_mode.logging.to_owned());
+        let terminal_logger = TerminalLogger::new(app_config.terminal_mode.logging.to_owned());
 
-        let line_view = LineMode::new(app_config.max_history_lines, line_logger);
+        let line_view = LineMode::new(app_config.line_mode.max_history_lines, line_logger);
         let terminal_view = TerminalMode::new(
-            app_config.max_history_lines,
-            app_config.terminal_rows,
-            app_config.terminal_cols,
+            app_config.terminal_mode.history_size,
+            app_config.terminal_mode.rows,
+            app_config.terminal_mode.cols,
             terminal_logger,
         );
 
@@ -57,7 +57,7 @@ impl App {
         match self.app_config.input_mode {
             InputMode::Line => {
                 self.line_mode
-                    .update_viewport(self.config().wrap_mode, viewport);
+                    .update_viewport(self.config().line_mode.wrap_mode, viewport);
             }
 
             InputMode::Terminal => {
@@ -95,7 +95,7 @@ impl App {
             }
             Action::LineInput(action) => self.line_mode.update_action_lineinput(
                 self.app_config.local_echo,
-                self.app_config.tx_eol_mode,
+                self.app_config.line_mode.tx_eol,
                 action,
             ),
             Action::Terminal(action) => self.terminal_mode.update_action_terminal(action),
@@ -230,7 +230,8 @@ impl App {
                     UpdateEffect::None
                 }
                 SettingKey::LineWrap => {
-                    self.app_config.wrap_mode = match self.app_config.wrap_mode {
+                    self.app_config.line_mode.wrap_mode = match self.app_config.line_mode.wrap_mode
+                    {
                         WrapMode::Wrap => WrapMode::Truncate,
                         WrapMode::Truncate => WrapMode::Wrap,
                     };
@@ -250,7 +251,8 @@ impl App {
                     UpdateEffect::None
                 }
                 SettingKey::DisplayTimestamp => {
-                    self.app_config.timestamp_in_line = !self.app_config.timestamp_in_line;
+                    self.app_config.display_live_timestamp =
+                        !self.app_config.display_live_timestamp;
                     UpdateEffect::None
                 }
             },

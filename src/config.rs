@@ -62,7 +62,7 @@ pub enum WrapMode {
 pub struct LineLogConfig {
     pub enabled: bool,
     pub path: PathBuf,
-    pub timestamp_lines: bool,
+    pub timestamp: bool,
 }
 
 impl Default for LineLogConfig {
@@ -70,7 +70,31 @@ impl Default for LineLogConfig {
         Self {
             enabled: false,
             path: PathBuf::from("maxicom_lines.log"),
-            timestamp_lines: true,
+            timestamp: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LineModeConfig {
+    pub tx_eol: TxNewlineSymbol,
+    pub rx_eol: RxNewlineMode,
+    pub wrap_mode: WrapMode,
+    pub max_history_lines: usize,
+    pub display_partial_rx: bool,
+    pub logging: LineLogConfig,
+}
+
+impl Default for LineModeConfig {
+    fn default() -> Self {
+        Self {
+            tx_eol: TxNewlineSymbol::default(),
+            rx_eol: RxNewlineMode::default(),
+            wrap_mode: WrapMode::default(),
+            max_history_lines: 1000,
+            display_partial_rx: true,
+            logging: LineLogConfig::default(),
         }
     }
 }
@@ -91,6 +115,28 @@ impl Default for TerminalLogConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TerminalModeConfig {
+    pub rows: u16,
+    pub cols: u16,
+    pub history_size: usize,
+    pub empty_fill_char: String,
+    pub logging: TerminalLogConfig,
+}
+
+impl Default for TerminalModeConfig {
+    fn default() -> Self {
+        Self {
+            rows: 24,
+            cols: 80,
+            history_size: 5000,
+            empty_fill_char: String::from("░"),
+            logging: TerminalLogConfig::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppLogConfig {
     pub line_mode: LineLogConfig,
@@ -102,38 +148,22 @@ pub struct AppLogConfig {
 #[serde(default)]
 pub struct AppConfig {
     pub local_echo: bool,
-    pub tx_eol_mode: TxNewlineSymbol,
-    pub rx_eol_mode: RxNewlineMode,
-    pub max_history_lines: usize,
-    pub timestamp_in_line: bool,
-    pub display_partial_rx: bool,
     pub input_mode: InputMode,
-    pub wrap_mode: WrapMode,
-    pub empty_fill_char: String,
     pub unfocused_cusor: String,
-    pub terminal_history_size: usize,
-    pub terminal_rows: u16,
-    pub terminal_cols: u16,
-    pub logging: AppLogConfig,
+    pub display_live_timestamp: bool,
+    pub line_mode: LineModeConfig,
+    pub terminal_mode: TerminalModeConfig,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             local_echo: false,
-            tx_eol_mode: TxNewlineSymbol::default(),
-            rx_eol_mode: RxNewlineMode::default(),
-            max_history_lines: 1000,
-            timestamp_in_line: true,
-            display_partial_rx: true,
             input_mode: InputMode::default(),
-            wrap_mode: WrapMode::default(),
-            empty_fill_char: String::from("░"),
             unfocused_cusor: String::from("▯"),
-            terminal_history_size: 5000,
-            terminal_rows: 24,
-            terminal_cols: 80,
-            logging: AppLogConfig::default(),
+            display_live_timestamp: true,
+            line_mode: LineModeConfig::default(),
+            terminal_mode: TerminalModeConfig::default(),
         }
     }
 }
