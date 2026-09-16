@@ -58,6 +58,7 @@ pub enum WrapMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LineLogConfig {
     pub enabled: bool,
     pub path: PathBuf,
@@ -75,6 +76,7 @@ impl Default for LineLogConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TerminalLogConfig {
     pub enabled: bool,
     pub path: PathBuf,
@@ -103,7 +105,6 @@ pub struct AppConfig {
     pub tx_eol_mode: TxNewlineSymbol,
     pub rx_eol_mode: RxNewlineMode,
     pub max_history_lines: usize,
-    pub timestamp_in_file: bool,
     pub timestamp_in_line: bool,
     pub display_partial_rx: bool,
     pub input_mode: InputMode,
@@ -123,7 +124,6 @@ impl Default for AppConfig {
             tx_eol_mode: TxNewlineSymbol::default(),
             rx_eol_mode: RxNewlineMode::default(),
             max_history_lines: 1000,
-            timestamp_in_file: false,
             timestamp_in_line: true,
             display_partial_rx: true,
             input_mode: InputMode::default(),
