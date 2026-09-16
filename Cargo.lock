@@ -785,6 +785,7 @@ dependencies = [
  "chrono",
  "crossterm 0.29.0",
  "dirs",
+ "libc",
  "ratatui",
  "serde",
  "serial2",

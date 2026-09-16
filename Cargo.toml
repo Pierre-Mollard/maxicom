@@ -8,6 +8,7 @@ ansi-to-tui = "8.0.1"
 chrono = "0.4.45"
 crossterm = "0.29.0"
 dirs = "6.0.0"
+libc = "0.2.189"
 ratatui = { version = "0.30.2", features = ["unstable-rendered-line-info", "serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serial2 = "0.2.38"

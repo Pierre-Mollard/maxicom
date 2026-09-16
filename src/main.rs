@@ -100,59 +100,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             None
         }
         Err(SerialError::InputClosed) => None,
-        Err(SerialError::OpenFailed {
-            ref port,
-            ref source,
-            ..
-        }) if source.kind() == ErrorKind::PermissionDenied => {
-            eprintln!("maxicom: permission denied opening serial port '{port}'");
-            return Ok(ExitCode::FAILURE);
-        }
-
-        Err(SerialError::OpenFailed {
-            ref port,
-            ref source,
-            ..
-        }) if source.kind() == ErrorKind::ResourceBusy => {
-            eprintln!("maxicom: serial port '{port}' is busy (already in use)");
-            return Ok(ExitCode::FAILURE);
-        }
-
-        Err(SerialError::OpenFailed {
-            ref port,
-            baudrate,
-            ref source,
-        }) => {
-            eprintln!("maxicom: failed to open '{port}' at {baudrate} baud: {source}");
-            if let Some(code) = source.raw_os_error() {
-                eprintln!("OS errno: {code}");
-            }
-            return Ok(ExitCode::FAILURE);
-        }
-        Err(SerialError::ConfigFailed(ref source)) => {
-            eprintln!(
-                "maxicom: failed to configure UART settings for '{}'",
-                config.port
-            );
-            eprintln!();
-            eprintln!("Driver Error: {source}");
-            return Ok(ExitCode::FAILURE);
-        }
-        Err(SerialError::ReadFailed(ref source)) => {
-            eprintln!(
-                "maxicom: unexpected read error while probing '{}': {source}",
-                config.port
-            );
-            return Ok(ExitCode::FAILURE);
-        }
-        Err(SerialError::WriteFailed {
-            bytes_attempted,
-            ref source,
-        }) => {
-            eprintln!(
-                "maxicom: failed to send probe bytes ({bytes_attempted} attempted) to '{}': {source}",
-                config.port
-            );
+        Err(err) => {
+            eprintln!("maxicom: {err}"); // Display is implemented in serial.rs
             return Ok(ExitCode::FAILURE);
         }
     };

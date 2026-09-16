@@ -63,7 +63,6 @@ pub enum SerialError {
     },
 }
 
-// 1. User-facing formatting (used by println!("{}", err))
 impl fmt::Display for SerialError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -71,12 +70,23 @@ impl fmt::Display for SerialError {
                 port,
                 baudrate,
                 source,
-            } => {
-                write!(
-                    f,
-                    "failed to open serial port '{port}' at {baudrate} baud: {source}"
-                )
-            }
+            } => match source.kind() {
+                ErrorKind::PermissionDenied => {
+                    write!(f, "permission denied opening serial port '{port}'")
+                }
+                ErrorKind::ResourceBusy => {
+                    write!(
+                        f,
+                        "serial port '{port}' is busy (already in use by another application)"
+                    )
+                }
+                _ => {
+                    write!(
+                        f,
+                        "failed to open serial port '{port}' at {baudrate} baud: {source}"
+                    )
+                }
+            },
             Self::ConfigFailed(source) => {
                 write!(f, "failed to configure port settings: {source}")
             }
@@ -121,6 +131,24 @@ impl SerialDevice {
                 source: err,
             }
         })?;
+
+        // Platform-specific exclusivity lock
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            let fd = port.as_raw_fd();
+
+            // TIOCEXCL tells the kernel to return EBUSY for any following open()
+            let res = unsafe { libc::ioctl(fd, libc::TIOCEXCL) };
+            if res < 0 {
+                let err = std::io::Error::last_os_error();
+                return Err(SerialError::OpenFailed {
+                    port: config.port.clone(),
+                    baudrate: config.baudrate,
+                    source: err,
+                });
+            }
+        }
 
         port.set_read_timeout(Duration::from_millis(10))
             .map_err(SerialError::ConfigFailed)?;
@@ -181,6 +209,18 @@ pub fn parse_args() -> Result<ParseOutcome, ConfigError> {
     }
 
     Ok(ParseOutcome::Config(config))
+}
+
+#[cfg(unix)]
+impl Drop for SerialDevice {
+    fn drop(&mut self) {
+        use std::os::unix::io::AsRawFd;
+        let fd = self.port.as_raw_fd();
+        // Clear exclusive mode
+        unsafe {
+            libc::ioctl(fd, libc::TIOCNXCL);
+        }
+    }
 }
 
 impl std::fmt::Display for ConfigError {
