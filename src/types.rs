@@ -1,6 +1,24 @@
+/// Module to reduce inter modules exchange or something
+use chrono::{DateTime, Local};
 use tui_input::Input;
 
-/// Module to reduce inter modules exchange or something
+pub struct LogEntry {
+    pub text: String,
+    pub timestamp: DateTime<Local>,
+}
+
+impl LogEntry {
+    const FORMAT: &'static str = "%H:%M:%S%.3f";
+
+    // TODO : make format config
+    pub fn formatted_time(&self) -> String {
+        format!("[{}]", self.timestamp.format(Self::FORMAT))
+    }
+
+    pub fn formatted_time_builder(timestamp: DateTime<Local>) -> String {
+        format!("[{}]", timestamp.format(Self::FORMAT))
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum Overlay {

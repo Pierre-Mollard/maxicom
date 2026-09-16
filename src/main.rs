@@ -1,7 +1,6 @@
 use std::io;
 use std::io::ErrorKind;
 use std::io::stdout;
-use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -14,7 +13,6 @@ use crate::app::App;
 use crate::app::UpdateEffect;
 use crate::config::AppConfig;
 use crate::config::InputMode;
-use crate::logger::LogConfig;
 use crate::serial::SerialDevice;
 use crate::serial::SerialError;
 use crate::serial::parse_args;
@@ -80,12 +78,6 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             );
             return Ok(ExitCode::FAILURE);
         }
-    };
-
-    let log_config = LogConfig {
-        enabled: true,
-        path: PathBuf::from("maxicom_test_file.log"),
-        timestamp_lines: true,
     };
 
     let config = match parse_args() {
@@ -169,7 +161,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
     let mut running: bool = true;
     let mut input_buffer = [0_u8; 4096]; // TODO: configurable
-    let mut app = App::new(app_config, log_config);
+    let mut app = App::new(app_config);
 
     if device.is_none() {
         app.open_overlay(Overlay::DeviceDisconnected(config.port.clone()));

@@ -2,7 +2,7 @@
 /// Using the 'ratatui' crate
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Margin, Rect},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
@@ -16,11 +16,8 @@ use crate::{
     app::App,
     config::{InputMode, WrapMode},
     terminal::MaxicomTerminal,
-    types::{ErrorDialog, FocusTarget, Overlay, ResizeDialog, ResizeField, ViewportSize},
+    types::{ErrorDialog, FocusTarget, LogEntry, Overlay, ResizeDialog, ResizeField, ViewportSize},
 };
-
-//TODO: move this module around when adding terminal stream saving feature
-use crate::app::line_mode::LogEntry; // this is ugly deps i find
 
 pub fn render(app: &mut App, frame: &mut Frame) {
     let screen_area = frame.area();

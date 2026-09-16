@@ -3,7 +3,7 @@ use tui_input::backend::crossterm::EventHandler;
 use crate::{
     config::{AppConfig, InputMode, SettingKey, WrapMode},
     input::{Action, AppAction, HistoryAction, OverlayAction},
-    logger::{FileLogger, LogConfig},
+    logger::{LineLogger, TerminalLogger},
     types::{FocusTarget, Overlay, ResizeField, ViewportSize},
 };
 
@@ -17,7 +17,6 @@ pub struct App {
     app_config: AppConfig,
     prefix_active: bool,
     overlay: Option<Overlay>,
-    logger: FileLogger,
     pub viewport: ViewportSize,
     pub line_mode: LineMode,
     pub terminal_mode: TerminalMode,
@@ -31,19 +30,21 @@ pub enum UpdateEffect {
 }
 
 impl App {
-    pub fn new(app_config: AppConfig, log_config: LogConfig) -> Self {
-        let line_view = LineMode::new(app_config.max_history_lines, &log_config);
+    pub fn new(app_config: AppConfig) -> Self {
+        let line_logger = LineLogger::new(app_config.logging.line_mode.to_owned());
+        let terminal_logger = TerminalLogger::new(app_config.logging.terminal_mode.to_owned());
+
+        let line_view = LineMode::new(app_config.max_history_lines, line_logger);
         let terminal_view = TerminalMode::new(
             app_config.max_history_lines,
             app_config.terminal_rows,
             app_config.terminal_cols,
-            &log_config,
+            terminal_logger,
         );
 
         Self {
             prefix_active: false,
             app_config,
-            logger: FileLogger::new(log_config),
             overlay: None,
             viewport: ViewportSize::default(),
             line_mode: line_view,

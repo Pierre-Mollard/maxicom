@@ -57,6 +57,44 @@ pub enum WrapMode {
     Truncate,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineLogConfig {
+    pub enabled: bool,
+    pub path: PathBuf,
+    pub timestamp_lines: bool,
+}
+
+impl Default for LineLogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: PathBuf::from("maxicom_lines.log"),
+            timestamp_lines: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalLogConfig {
+    pub enabled: bool,
+    pub path: PathBuf,
+}
+
+impl Default for TerminalLogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: PathBuf::from("maxicom_terminal.raw"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppLogConfig {
+    pub line_mode: LineLogConfig,
+    pub terminal_mode: TerminalLogConfig,
+}
+
 /// MaxiCom UI & session settings
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -75,6 +113,7 @@ pub struct AppConfig {
     pub terminal_history_size: usize,
     pub terminal_rows: u16,
     pub terminal_cols: u16,
+    pub logging: AppLogConfig,
 }
 
 impl Default for AppConfig {
@@ -94,6 +133,7 @@ impl Default for AppConfig {
             terminal_history_size: 5000,
             terminal_rows: 24,
             terminal_cols: 80,
+            logging: AppLogConfig::default(),
         }
     }
 }

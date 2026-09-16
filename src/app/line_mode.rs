@@ -5,27 +5,9 @@ use crate::{
     app::UpdateEffect,
     config::{RxNewlineMode, TxNewlineSymbol, WrapMode},
     input::LineInputAction,
-    logger::{FileLogger, LogConfig},
-    types::ViewportSize,
+    logger::LineLogger,
+    types::{LogEntry, ViewportSize},
 };
-
-pub struct LogEntry {
-    pub text: String,
-    pub timestamp: DateTime<Local>,
-}
-
-impl LogEntry {
-    const FORMAT: &'static str = "%H:%M:%S%.3f";
-
-    // TODO : make format config
-    pub fn formatted_time(&self) -> String {
-        format!("[{}]", self.timestamp.format(Self::FORMAT))
-    }
-
-    pub fn formatted_time_builder(timestamp: DateTime<Local>) -> String {
-        format!("[{}]", timestamp.format(Self::FORMAT))
-    }
-}
 
 pub struct LineMode {
     /// Completed lines of device output (scrollback) String because already processed
@@ -49,7 +31,7 @@ pub struct LineMode {
     scroll_from_bottom: usize,
     /// Offset to display when lines are not wrapped
     x_offset: usize,
-    logger: FileLogger,
+    logger: LineLogger,
     max_scroll: usize,
     max_pan: usize,
     pan_right_explored_amount: usize,
@@ -58,7 +40,7 @@ pub struct LineMode {
 }
 
 impl LineMode {
-    pub fn new(max_history_lines: usize, log_config: &LogConfig) -> Self {
+    pub fn new(max_history_lines: usize, logger: LineLogger) -> Self {
         LineMode {
             local_history: VecDeque::with_capacity(max_history_lines),
             local_send_history: VecDeque::with_capacity(max_history_lines),
@@ -73,7 +55,7 @@ impl LineMode {
             x_offset: 0,
             max_scroll: 0,
             max_pan: 0,
-            logger: FileLogger::new(log_config.to_owned()),
+            logger,
             pan_right_explored_amount: 0,
             view_width: 0,
             view_height: 0,
