@@ -15,7 +15,7 @@ use std::fmt::Write;
 use crate::{
     app::App,
     config::{InputMode, WrapMode},
-    terminal::MaxicomTerminal,
+    terminal::{MaxicomCursor, MaxicomTerminal},
     types::{ErrorDialog, FocusTarget, LogEntry, Overlay, ResizeDialog, ResizeField, ViewportSize},
 };
 
@@ -79,7 +79,6 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         }
     }
 
-    // 3. Render the Input Box (ONLY if in Line Mode)
     if let Some(prompt_rect) = prompt_area {
         render_input_prompt(app, frame, prompt_rect);
     }
@@ -214,12 +213,13 @@ fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, outer_are
     let view_height = area.height as usize;
     let focus = app.focus_target();
     let is_terminal_focused = focus == FocusTarget::Terminal;
+    let cursor = MaxicomCursor::from_config(&app.config().terminal_mode.cursor);
 
-    // TODO: make the cursor config with its style
     let term_widget = MaxicomTerminal::new(app.terminal_mode.vt100_screen())
         .x_offset(app.terminal_mode.pan_offset_x() as u16)
         .y_offset(app.terminal_mode.pan_offset_y() as u16)
         .focused(is_terminal_focused && app.is_app_focused())
+        .cursor(cursor)
         .filling_char(&app.config().terminal_mode.empty_fill_char);
 
     frame.render_widget(term_widget, area);

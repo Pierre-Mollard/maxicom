@@ -46,8 +46,6 @@ impl TerminalMode {
     }
 
     pub fn process_rx(&mut self, bytes: &[u8]) {
-        // TODO: save as raw capture stream when in interactive mode
-
         let is_alternate = self.vt100_parser.screen().alternate_screen();
         let vt_rows = self.vt100_parser.screen().size().0 as usize;
 

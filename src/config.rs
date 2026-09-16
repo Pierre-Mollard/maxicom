@@ -1,3 +1,4 @@
+use ratatui::style::{Color, Modifier, Style};
 /// Application configuration and files
 use serde::{Deserialize, Serialize};
 use std::{
@@ -117,11 +118,30 @@ impl Default for TerminalLogConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+pub struct CursorConfig {
+    pub unfocused_glyph: String,
+    pub unfocused_style: Style,
+    pub focused_style: Style,
+}
+
+impl Default for CursorConfig {
+    fn default() -> Self {
+        Self {
+            unfocused_glyph: String::from("▯"),
+            unfocused_style: Style::default().fg(Color::DarkGray),
+            focused_style: Style::default().add_modifier(Modifier::REVERSED),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TerminalModeConfig {
     pub rows: u16,
     pub cols: u16,
     pub history_size: usize,
     pub empty_fill_char: String,
+    pub cursor: CursorConfig,
     pub logging: TerminalLogConfig,
 }
 
@@ -131,16 +151,11 @@ impl Default for TerminalModeConfig {
             rows: 24,
             cols: 80,
             history_size: 5000,
+            cursor: CursorConfig::default(),
             empty_fill_char: String::from("░"),
             logging: TerminalLogConfig::default(),
         }
     }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AppLogConfig {
-    pub line_mode: LineLogConfig,
-    pub terminal_mode: TerminalLogConfig,
 }
 
 /// MaxiCom UI & session settings
@@ -149,7 +164,6 @@ pub struct AppLogConfig {
 pub struct AppConfig {
     pub local_echo: bool,
     pub input_mode: InputMode,
-    pub unfocused_cusor: String,
     pub display_live_timestamp: bool,
     pub line_mode: LineModeConfig,
     pub terminal_mode: TerminalModeConfig,
@@ -160,7 +174,6 @@ impl Default for AppConfig {
         Self {
             local_echo: false,
             input_mode: InputMode::default(),
-            unfocused_cusor: String::from("▯"),
             display_live_timestamp: true,
             line_mode: LineModeConfig::default(),
             terminal_mode: TerminalModeConfig::default(),

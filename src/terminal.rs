@@ -3,26 +3,39 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Color, Style},
     widgets::{Block, Clear, Widget},
 };
 use tui_term::widget::{Cell, Screen};
 
+use crate::config::CursorConfig;
+
 #[derive(Debug, Clone)]
 pub struct MaxicomCursor {
     pub show: bool,
-    pub symbol: &'static str,
-    pub style: Style,
-    pub overlay_style: Style,
+    pub unfocused_symbol: String,
+    pub unfocused_style: Style,
+    pub focused_style: Style,
 }
 
 impl Default for MaxicomCursor {
     fn default() -> Self {
         Self {
             show: true,
-            symbol: "█",
-            style: Style::default(),
-            overlay_style: Style::default(),
+            unfocused_symbol: String::from("█"),
+            unfocused_style: Style::default(),
+            focused_style: Style::default(),
+        }
+    }
+}
+
+impl MaxicomCursor {
+    pub fn from_config(config: &CursorConfig) -> Self {
+        Self {
+            show: true,
+            unfocused_symbol: config.unfocused_glyph.clone(),
+            unfocused_style: config.unfocused_style,
+            focused_style: config.focused_style,
         }
     }
 }
@@ -189,10 +202,10 @@ fn handle<S: Screen>(term: &MaxicomTerminal<S>, area: Rect, buf: &mut Buffer) {
 
         if let Some(source_cell) = screen.cell(c_row, c_col) {
             if source_cell.has_contents() {
-                dst.set_style(Style::default().add_modifier(Modifier::REVERSED));
+                dst.set_style(term.cursor.focused_style);
             } else {
-                dst.set_symbol(term.cursor.symbol);
-                dst.set_style(Style::default().fg(Color::DarkGray));
+                dst.set_symbol(&term.cursor.unfocused_symbol);
+                dst.set_style(term.cursor.unfocused_style);
             }
         }
     }
