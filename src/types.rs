@@ -96,3 +96,12 @@ impl ErrorDialog {
         self
     }
 }
+
+/// All settings types
+#[derive(Debug, PartialEq, Eq)]
+pub enum SettingKey {
+    LocalEcho,
+    InputMode,
+    LineWrap,
+    DisplayTimestamp,
+} // TODO: add all settings

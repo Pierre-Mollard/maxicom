@@ -1,10 +1,10 @@
 use tui_input::backend::crossterm::EventHandler;
 
 use crate::{
-    config::{AppConfig, InputMode, SettingKey, WrapMode},
+    config::{AppConfig, InputMode, WrapMode},
     input::{Action, AppAction, HistoryAction, OverlayAction},
     logger::{LineLogger, TerminalLogger},
-    types::{FocusTarget, Overlay, ResizeField, ViewportSize},
+    types::{FocusTarget, Overlay, ResizeField, SettingKey, ViewportSize},
 };
 
 pub mod line_mode;
@@ -214,10 +214,11 @@ impl App {
                 if let Some(Overlay::TerminalSize(dialog)) = &self.overlay {
                     let rows = dialog.rows_input.value().parse::<u16>();
                     let cols = dialog.cols_input.value().parse::<u16>();
-                    if let (Ok(r), Ok(c)) = (rows, cols) {
-                        if r > 0 && c > 0 {
-                            self.terminal_mode.set_vt100_size(r, c);
-                        }
+                    if let (Ok(r), Ok(c)) = (rows, cols)
+                        && r > 0
+                        && c > 0
+                    {
+                        self.terminal_mode.set_vt100_size(r, c);
                     }
                 }
                 self.overlay = None; // Close popup on submit

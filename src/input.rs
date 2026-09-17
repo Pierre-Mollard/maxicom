@@ -8,8 +8,8 @@ use terminput_crossterm::to_terminput_key;
 
 use crate::{
     app::App,
-    config::{InputMode, SettingKey},
-    types::{Overlay, ResizeDialog},
+    config::InputMode,
+    types::{Overlay, ResizeDialog, SettingKey},
 };
 
 #[derive(Debug)]
