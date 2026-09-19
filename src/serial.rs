@@ -193,6 +193,11 @@ pub enum SerialError {
     },
     /// Failed to configure port options (read timeout, termios flags)
     ConfigFailed(io::Error),
+    ReconfigureFailed {
+        summary: String,
+        rejected_fields: Vec<String>,
+        source: io::Error,
+    },
     /// Port was closed on the other side or USB unplugged (EOF on read)
     InputClosed,
     /// Unexpected error while reading bytes
@@ -231,6 +236,22 @@ impl fmt::Display for SerialError {
             Self::ConfigFailed(source) => {
                 write!(f, "failed to configure port settings: {source}")
             }
+            Self::ReconfigureFailed {
+                summary,
+                rejected_fields,
+                source,
+            } => {
+                if !rejected_fields.is_empty() {
+                    write!(
+                        f,
+                        "Hardware driver rejected: {}.\n\
+                         Requested [{summary}], but device kept previous attributes.",
+                        rejected_fields.join(", ")
+                    )
+                } else {
+                    write!(f, "Driver error applying [{summary}]: {source}")
+                }
+            }
             Self::InputClosed => {
                 write!(f, "serial device input closed (EOF / cable unplugged)")
             }
@@ -256,6 +277,7 @@ impl Error for SerialError {
         match self {
             Self::OpenFailed { source, .. } => Some(source),
             Self::ConfigFailed(source) => Some(source),
+            Self::ReconfigureFailed { source, .. } => Some(source),
             Self::ReadFailed(source) => Some(source),
             Self::WriteFailed { source, .. } => Some(source),
             Self::InputClosed => None,
@@ -299,24 +321,66 @@ impl SerialDevice {
         Ok(dev)
     }
 
-    // TODO: make it accessible for user
     pub fn reconfigure(&mut self, config: &SerialConfig) -> Result<(), SerialError> {
+        let summary = format!(
+            "{} baud, {:?}, {:?} parity, {:?} stop, {:?} flow",
+            config.baudrate, config.char_size, config.parity, config.stop_bits, config.flow_control
+        );
         let mut settings = self
             .port
             .get_configuration()
             .map_err(SerialError::ConfigFailed)?;
+
         settings.set_raw();
         settings
             .set_baud_rate(config.baudrate)
-            .map_err(SerialError::ConfigFailed)?;
+            .map_err(|e| SerialError::ReconfigureFailed {
+                summary: summary.clone(),
+                rejected_fields: vec![format!("Baud rate {}", config.baudrate)],
+                source: e,
+            })?;
+
         settings.set_char_size(config.char_size.into());
         settings.set_stop_bits(config.stop_bits.into());
         settings.set_parity(config.parity.into());
         settings.set_flow_control(config.flow_control.into());
 
-        self.port
-            .set_configuration(&settings)
-            .map_err(SerialError::ConfigFailed)
+        if let Err(err) = self.port.set_configuration(&settings) {
+            // Read back what the hardware actually kept to find the culprit!
+            let mut rejected = Vec::new();
+
+            if let Ok(actual) = self.port.get_configuration() {
+                let expected_char_size: serial2::CharSize = config.char_size.into();
+                let expected_stop_bits: serial2::StopBits = config.stop_bits.into();
+                let expected_parity: serial2::Parity = config.parity.into();
+                let expected_flow: serial2::FlowControl = config.flow_control.into();
+
+                if actual.get_char_size().ok() != Some(expected_char_size) {
+                    rejected.push(format!("Data bits ({:?})", config.char_size));
+                }
+                if actual.get_stop_bits().ok() != Some(expected_stop_bits) {
+                    rejected.push(format!("Stop bits ({:?})", config.stop_bits));
+                }
+                if actual.get_parity().ok() != Some(expected_parity) {
+                    rejected.push(format!("Parity ({:?})", config.parity));
+                }
+                if actual.get_flow_control().ok() != Some(expected_flow) {
+                    rejected.push(format!("Flow control ({:?})", config.flow_control));
+                }
+            }
+
+            if rejected.is_empty() {
+                rejected.push("Unsupported configuration combination".to_string());
+            }
+
+            return Err(SerialError::ReconfigureFailed {
+                summary,
+                rejected_fields: rejected,
+                source: err,
+            });
+        }
+
+        Ok(())
     }
 
     pub fn read(&self, buffer: &mut [u8]) -> Result<usize, SerialError> {

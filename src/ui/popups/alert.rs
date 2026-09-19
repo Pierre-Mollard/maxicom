@@ -2,7 +2,7 @@ use ratatui::{
     Frame,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Clear, Paragraph},
+    widgets::{Block, Clear, Paragraph, Wrap},
 };
 
 use crate::{types::ErrorDialog, ui::common::centered_rect};
@@ -73,6 +73,7 @@ pub fn render_error_popup(err: &ErrorDialog, frame: &mut Frame) {
 
     let popup = Paragraph::new(lines)
         .alignment(ratatui::layout::Alignment::Center)
+        .wrap(Wrap { trim: true })
         .block(
             Block::bordered()
                 .title(format!(" {} ", err.title))

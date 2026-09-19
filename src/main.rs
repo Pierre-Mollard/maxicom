@@ -54,7 +54,6 @@ impl Drop for TerminalGuard {
     }
 }
 
-// TODO: handle maxicom program stderr in red special output in log
 fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
@@ -180,7 +179,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         if let Err(e) = dev.reconfigure(&serial_config) {
                             app.open_overlay(Overlay::Error(
                                 ErrorDialog::new(
-                                    "Serial Reconfigure Failed",
+                                    "Serial Conf Rejected",
                                     "Failed to reconfigure serial",
                                 )
                                 .with_details(e),
