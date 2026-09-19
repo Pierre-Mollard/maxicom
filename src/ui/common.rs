@@ -14,6 +14,9 @@ pub fn monitor_title(app: &App, area: &Rect) -> String {
     let (scroll_offset, pan_offset) = match app.config().input_mode {
         InputMode::Terminal => {
             let screen = app.terminal_mode.vt100_screen();
+            if app.terminal_mode.is_new_content_missed() {
+                let _ = write!(title, "!");
+            }
             let _ = write!(
                 title,
                 " MaxiCom TERMINAL [VT {}x{} | VIEW {}x{}",
@@ -28,6 +31,9 @@ pub fn monitor_title(app: &App, area: &Rect) -> String {
             )
         }
         InputMode::Line => {
+            if app.line_mode.is_new_content_missed() {
+                let _ = write!(title, "!");
+            }
             let _ = write!(
                 title,
                 " MaxiCom LINE [VIEW {}x{}",

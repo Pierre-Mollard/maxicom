@@ -20,6 +20,7 @@ pub struct TerminalMode {
     view_width: usize,
     max_pan: usize,
     max_history_lines: usize,
+    new_content_missed: bool,
 
     pub history_timestamps: VecDeque<DateTime<Local>>,
     pub screen_timestamps: Vec<Option<DateTime<Local>>>,
@@ -40,6 +41,7 @@ impl TerminalMode {
             max_content_scrollback: 0,
             max_pan: 0,
             max_history_lines,
+            new_content_missed: false,
             history_timestamps: VecDeque::with_capacity(max_history_lines),
             screen_timestamps: vec![None; rows as usize],
         }
@@ -73,6 +75,10 @@ impl TerminalMode {
                     }
                 }
             }
+        }
+
+        if self.scrollback_offset > 0 {
+            self.new_content_missed = true;
         }
 
         let _ = self.logger.log_raw_bytes(bytes);
@@ -211,6 +217,10 @@ impl TerminalMode {
     pub fn scroll_down(&mut self, lines: usize) {
         self.scrollback_offset = self.scrollback_offset.saturating_sub(lines);
         self.reconcile_both_vertical_scroll();
+
+        if self.scrollback_offset == 0 {
+            self.new_content_missed = false;
+        }
     }
 
     pub fn scroll_up_page(&mut self) {
@@ -265,6 +275,10 @@ impl TerminalMode {
     /// Return (rows, cols)
     pub fn get_vt100_size(&self) -> (u16, u16) {
         self.vt100_parser.screen().size()
+    }
+
+    pub fn is_new_content_missed(&self) -> bool {
+        self.new_content_missed
     }
 
     pub fn update_action_terminal(&mut self, action: TerminalAction) -> UpdateEffect {

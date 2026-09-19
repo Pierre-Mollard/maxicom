@@ -31,6 +31,7 @@ pub struct LineMode {
     scroll_from_bottom: usize,
     /// Offset to display when lines are not wrapped
     x_offset: usize,
+    new_content_missed: bool,
     logger: LineLogger,
     max_scroll: usize,
     max_pan: usize,
@@ -55,6 +56,7 @@ impl LineMode {
             x_offset: 0,
             max_scroll: 0,
             max_pan: 0,
+            new_content_missed: false,
             logger,
             pan_right_explored_amount: 0,
             view_width: 0,
@@ -124,6 +126,10 @@ impl LineMode {
         let _ = self.logger.log_entry(&entry);
 
         self.local_history.push_back(entry);
+
+        if self.scroll_offset() > 0 {
+            self.new_content_missed = true;
+        }
 
         // Enforce maximum scrollback size.
         while self.local_history.len() > self.max_lines {
@@ -284,6 +290,9 @@ impl LineMode {
 
     pub fn scroll_down(&mut self, lines: usize) {
         self.scroll_from_bottom = self.scroll_from_bottom.saturating_sub(lines);
+        if self.scroll_offset() == 0 {
+            self.new_content_missed = false;
+        }
     }
 
     pub fn scroll_up_page(&mut self) {
@@ -348,5 +357,9 @@ impl LineMode {
         } else {
             None
         }
+    }
+
+    pub fn is_new_content_missed(&self) -> bool {
+        self.new_content_missed
     }
 }
