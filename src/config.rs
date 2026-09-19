@@ -8,6 +8,34 @@ use std::{
 
 const APP_DIR: &str = "maxicom";
 const CONFIG_FILE: &str = "config.toml";
+pub const MIN_RX_BUF_SIZE: usize = 512;
+pub const MAX_RX_BUF_SIZE: usize = 65_536;
+
+#[derive(Debug)]
+pub enum ConfigValidationError {
+    ZeroDimensions,
+    InvalidBufferSize {
+        actual: usize,
+        min: usize,
+        max: usize,
+    },
+}
+
+impl std::fmt::Display for ConfigValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ZeroDimensions => write!(f, "terminal rows and cols must be greater than 0"),
+            Self::InvalidBufferSize { actual, min, max } => {
+                write!(
+                    f,
+                    "rx_buffer_size {actual} is out of bounds (allowed range: {min}..={max} bytes)"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for ConfigValidationError {}
 
 /// Char use at the end of the line when sending in LineMode (not raw)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -164,6 +192,7 @@ impl Default for TerminalModeConfig {
 pub struct AppConfig {
     pub local_echo: bool,
     pub input_mode: InputMode,
+    pub rx_buffer_size: usize,
     pub display_live_timestamp: bool,
     pub line_mode: LineModeConfig,
     pub terminal_mode: TerminalModeConfig,
@@ -173,6 +202,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             local_echo: false,
+            rx_buffer_size: 4096,
             input_mode: InputMode::default(),
             display_live_timestamp: true,
             line_mode: LineModeConfig::default(),
@@ -191,6 +221,7 @@ impl AppConfig {
         if path.exists() {
             let content = fs::read_to_string(path)?;
             let config: AppConfig = toml::from_str(&content)?;
+            config.validate()?;
             return Ok(config);
         }
 
@@ -211,5 +242,21 @@ impl AppConfig {
         dirs::config_dir()
             .map(|p| p.join(APP_DIR).join(CONFIG_FILE))
             .unwrap_or_else(|| PathBuf::from(CONFIG_FILE))
+    }
+
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
+        if self.terminal_mode.rows == 0 || self.terminal_mode.cols == 0 {
+            return Err(ConfigValidationError::ZeroDimensions);
+        }
+
+        if self.rx_buffer_size < MIN_RX_BUF_SIZE || self.rx_buffer_size > MAX_RX_BUF_SIZE {
+            return Err(ConfigValidationError::InvalidBufferSize {
+                actual: self.rx_buffer_size,
+                min: MIN_RX_BUF_SIZE,
+                max: MAX_RX_BUF_SIZE,
+            });
+        }
+
+        Ok(())
     }
 }

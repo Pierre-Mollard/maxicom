@@ -91,8 +91,6 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
     };
 
-    println!("Configuration: {config:#?}");
-
     let mut device = match SerialDevice::open(&config) {
         Ok(dev) => Some(dev),
         Err(SerialError::OpenFailed { ref source, .. }) if source.kind() == ErrorKind::NotFound => {
@@ -108,7 +106,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut guard = TerminalGuard::init()?;
 
     let mut running: bool = true;
-    let mut input_buffer = [0_u8; 4096]; // TODO: configurable
+    let buffer_size = app_config.rx_buffer_size;
+    let mut input_buffer = vec![0u8; buffer_size];
     let mut app = App::new(app_config, config);
 
     if device.is_none() {

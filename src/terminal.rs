@@ -1,5 +1,4 @@
 /// Terminal widget custom from term-ui
-// TODO: show symbol/detection when new content arrived i scroll area if not live
 use ratatui::{
     buffer::Buffer,
     layout::Rect,

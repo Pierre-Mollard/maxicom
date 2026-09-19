@@ -112,7 +112,7 @@ pub fn handle_event(event: Event, app: &App) -> Action {
 
     match app.config().input_mode {
         InputMode::Line => handle_line_mode(key_event),
-        InputMode::Terminal => handle_raw_mode(key_event),
+        InputMode::Terminal => handle_terminal_mode(key_event),
     }
 }
 
@@ -222,13 +222,12 @@ fn handle_line_mode(key: KeyEvent) -> Action {
 }
 
 // Final check in RAW MODE
-fn handle_raw_mode(key_event_crossterm: KeyEvent) -> Action {
+fn handle_terminal_mode(key_event_crossterm: KeyEvent) -> Action {
     // Convert Crossterm KeyEvent -> Terminput KeyEvent
     if let Ok(key_event_terminput) = to_terminput_key(key_event_crossterm) {
         let event_terminput = terminput::Event::Key(key_event_terminput);
         let mut buf = [0u8; 32];
 
-        // TODO: handle other encoding
         if let Ok(len) = event_terminput.encode(&mut buf, Encoding::Xterm) {
             return Action::TransmitRaw(buf[..len].to_vec());
         }
