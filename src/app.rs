@@ -4,6 +4,7 @@ use crate::{
     config::{AppConfig, InputMode, WrapMode},
     input::{Action, AppAction, HistoryAction, OverlayAction},
     logger::{LineLogger, TerminalLogger},
+    serial::SerialConfig,
     types::{FocusTarget, Overlay, ResizeField, SettingKey, ViewportSize},
 };
 
@@ -15,6 +16,7 @@ pub use terminal_mode::TerminalMode;
 
 pub struct App {
     app_config: AppConfig,
+    pub serial_config: SerialConfig,
     prefix_active: bool,
     overlay: Option<Overlay>,
     pub viewport: ViewportSize,
@@ -26,11 +28,12 @@ pub struct App {
 pub enum UpdateEffect {
     None,
     Transmit(Vec<u8>),
+    Reconfigure(SerialConfig),
     Quit,
 }
 
 impl App {
-    pub fn new(app_config: AppConfig) -> Self {
+    pub fn new(app_config: AppConfig, serial_config: SerialConfig) -> Self {
         let line_logger = LineLogger::new(app_config.line_mode.logging.to_owned());
         let terminal_logger = TerminalLogger::new(app_config.terminal_mode.logging.to_owned());
 
@@ -45,6 +48,7 @@ impl App {
         Self {
             prefix_active: false,
             app_config,
+            serial_config,
             overlay: None,
             viewport: ViewportSize::default(),
             line_mode: line_view,
@@ -198,6 +202,27 @@ impl App {
                         ResizeField::Cols => ResizeField::Rows,
                     };
                 }
+                if let Some(Overlay::SerialSettings(dialog)) = &mut self.overlay {
+                    dialog.selected_field = dialog.selected_field.next();
+                }
+                UpdateEffect::None
+            }
+            OverlayAction::SelectPrev => {
+                if let Some(Overlay::SerialSettings(dialog)) = &mut self.overlay {
+                    dialog.selected_field = dialog.selected_field.prev();
+                }
+                UpdateEffect::None
+            }
+            OverlayAction::SelectPrevValue => {
+                if let Some(Overlay::SerialSettings(dialog)) = &mut self.overlay {
+                    dialog.cycle_prev();
+                }
+                UpdateEffect::None
+            }
+            OverlayAction::SelectNextValue => {
+                if let Some(Overlay::SerialSettings(dialog)) = &mut self.overlay {
+                    dialog.cycle_next();
+                }
                 UpdateEffect::None
             }
             OverlayAction::ForwardKey(key) => {
@@ -222,6 +247,10 @@ impl App {
                     }
                 }
                 self.overlay = None; // Close popup on submit
+
+                if let Some(Overlay::SerialSettings(dialog)) = &self.overlay {
+                    return UpdateEffect::Reconfigure(dialog.to_config());
+                }
                 UpdateEffect::None
             }
             OverlayAction::SelectPrev => UpdateEffect::None,

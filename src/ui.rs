@@ -21,6 +21,7 @@ use crate::{
         popups::{
             alert::{render_disconnected_popup, render_error_popup},
             help::render_help_popup,
+            reconfigure::render_reconfigure_popup,
             resize::render_resize_popup,
             settings::render_settings_popup,
         },
@@ -96,6 +97,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         Some(Overlay::Help) => render_help_popup(app, frame),
         Some(Overlay::Settings) => render_settings_popup(app, frame),
         Some(Overlay::TerminalSize(dialog)) => render_resize_popup(app, dialog, frame),
+        Some(Overlay::SerialSettings(dialog)) => render_reconfigure_popup(dialog, frame),
         Some(Overlay::DeviceDisconnected(port)) => render_disconnected_popup(port, frame),
         Some(Overlay::Error(err)) => render_error_popup(err, frame),
         None => {}

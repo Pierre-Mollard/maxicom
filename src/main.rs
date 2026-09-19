@@ -110,10 +110,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
     let mut running: bool = true;
     let mut input_buffer = [0_u8; 4096]; // TODO: configurable
-    let mut app = App::new(app_config);
+    let mut app = App::new(app_config, config);
 
     if device.is_none() {
-        app.open_overlay(Overlay::DeviceDisconnected(config.port.clone()));
+        app.open_overlay(Overlay::DeviceDisconnected(app.serial_config.port.clone()));
     }
 
     let mut last_reconnect_attempt = std::time::Instant::now();
@@ -133,7 +133,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 },
                 Err(SerialError::InputClosed) => {
                     device = None; // Drops closed handle
-                    app.open_overlay(Overlay::DeviceDisconnected(config.port.clone()));
+                    app.open_overlay(Overlay::DeviceDisconnected(app.serial_config.port.clone()));
                 }
                 Err(SerialError::ReadFailed(e)) => {
                     app.open_overlay(Overlay::Error(
@@ -149,7 +149,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         } else {
             if last_reconnect_attempt.elapsed() >= Duration::from_millis(500) {
                 last_reconnect_attempt = std::time::Instant::now();
-                if let Ok(new_dev) = SerialDevice::open(&config) {
+                if let Ok(new_dev) = SerialDevice::open(&app.serial_config) {
                     device = Some(new_dev);
                     if let Some(Overlay::DeviceDisconnected(_)) = app.overlay() {
                         app.close_overlay();
@@ -173,6 +173,12 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                             )
                             .with_details(e),
                         ));
+                    }
+                }
+                UpdateEffect::Reconfigure(serial_config) => {
+                    if let Some(ref mut dev) = device {
+                        dev.reconfigure(&serial_config);
+                        app.serial_config = serial_config;
                     }
                 }
                 UpdateEffect::None => {}

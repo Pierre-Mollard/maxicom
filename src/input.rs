@@ -9,7 +9,8 @@ use terminput_crossterm::to_terminput_key;
 use crate::{
     app::App,
     config::InputMode,
-    types::{Overlay, ResizeDialog, SettingKey},
+    serial::SerialConfig,
+    types::{Overlay, ResizeDialog, SerialConfigDialog, SettingKey},
 };
 
 #[derive(Debug)]
@@ -71,6 +72,8 @@ pub enum OverlayAction {
     Close,
     SelectNext,
     SelectPrev,
+    SelectNextValue,
+    SelectPrevValue,
     Confirm,
     ForwardKey(KeyEvent),
     ToggleSetting(SettingKey),
@@ -141,6 +144,16 @@ pub fn handle_event(event: Event, app: &App) -> Action {
                 KeyCode::Enter => Action::Overlay(OverlayAction::Confirm),
                 _ => Action::Overlay(OverlayAction::ForwardKey(key_event)),
             },
+            Overlay::SerialSettings(_) => match key_event.code {
+                KeyCode::Esc => Action::Overlay(OverlayAction::Close),
+                KeyCode::Tab => Action::Overlay(OverlayAction::SelectNext),
+                KeyCode::Down => Action::Overlay(OverlayAction::SelectNext),
+                KeyCode::Up => Action::Overlay(OverlayAction::SelectPrev),
+                KeyCode::Right => Action::Overlay(OverlayAction::SelectNextValue),
+                KeyCode::Left => Action::Overlay(OverlayAction::SelectPrevValue),
+                KeyCode::Enter => Action::Overlay(OverlayAction::Confirm),
+                _ => Action::Overlay(OverlayAction::ForwardKey(key_event)),
+            },
             Overlay::DeviceDisconnected(_) => {
                 if key_event.modifiers.contains(KeyModifiers::CONTROL) {
                     match key_event.code {
@@ -207,6 +220,11 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
             }
             KeyCode::Char('v') | KeyCode::Char('V') => {
                 return Some(Action::Terminal(TerminalAction::AutoResizeEmulatorToViewer));
+            }
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                return Some(Action::Overlay(OverlayAction::Open(
+                    Overlay::SerialSettings(SerialConfigDialog::new(&app.serial_config)),
+                )));
             }
 
             KeyCode::Up => {
