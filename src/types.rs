@@ -1,8 +1,12 @@
 /// Module to reduce inter modules exchange or something
 use chrono::{DateTime, Local};
-use tui_input::Input;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use tui_input::{Input, backend::crossterm::EventHandler};
 
-use crate::serial::{CharSize, FlowControl, Parity, SerialConfig, StopBits};
+use crate::{
+    app::UpdateEffect,
+    serial::{CharSize, FlowControl, Parity, SerialConfig, StopBits},
+};
 
 pub struct LogEntry {
     pub text: String,
@@ -30,6 +34,53 @@ pub enum Overlay {
     SerialSettings(SerialConfigDialog),
     DeviceDisconnected(String),
     Error(ErrorDialog),
+}
+
+pub enum OverlayResponse {
+    Handled,
+    Close,
+    ToggleSetting(SettingKey),
+    ResizeTerminal { rows: u16, cols: u16 },
+    ReconfigureSerial(SerialConfig),
+    Quit,
+}
+
+impl Overlay {
+    pub fn handle_key(&mut self, key: KeyEvent) -> OverlayResponse {
+        match self {
+            Overlay::Help => match key.code {
+                KeyCode::Esc | KeyCode::Enter => OverlayResponse::Close,
+                _ => OverlayResponse::Handled,
+            },
+            Overlay::Settings => match key.code {
+                KeyCode::Esc => OverlayResponse::Close,
+                KeyCode::Char('e' | 'E') => OverlayResponse::ToggleSetting(SettingKey::LocalEcho),
+                KeyCode::Char('w' | 'W') => OverlayResponse::ToggleSetting(SettingKey::LineWrap),
+                KeyCode::Char('m' | 'M') => OverlayResponse::ToggleSetting(SettingKey::InputMode),
+                KeyCode::Char('t' | 'T') => {
+                    OverlayResponse::ToggleSetting(SettingKey::DisplayTimestamp)
+                }
+                _ => OverlayResponse::Handled,
+            },
+            Overlay::TerminalSize(dialog) => dialog.handle_key(key),
+            Overlay::SerialSettings(dialog) => dialog.handle_key(key),
+            Overlay::DeviceDisconnected(_) => {
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(key.code, KeyCode::Char('c' | 'C'))
+                {
+                    OverlayResponse::Quit
+                } else if matches!(key.code, KeyCode::Esc | KeyCode::Enter) {
+                    OverlayResponse::Quit
+                } else {
+                    OverlayResponse::Handled
+                }
+            }
+            Overlay::Error(_) => match key.code {
+                KeyCode::Esc | KeyCode::Enter => OverlayResponse::Close,
+                _ => OverlayResponse::Handled,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -66,6 +117,39 @@ impl ResizeDialog {
             rows_input: Input::new(current_rows.to_string()),
             cols_input: Input::new(current_cols.to_string()),
             active_field: ResizeField::Rows,
+        }
+    }
+
+    pub fn handle_key(&mut self, key: KeyEvent) -> OverlayResponse {
+        match key.code {
+            KeyCode::Esc => OverlayResponse::Close,
+            KeyCode::Tab => {
+                self.active_field = match self.active_field {
+                    ResizeField::Rows => ResizeField::Cols,
+                    ResizeField::Cols => ResizeField::Rows,
+                };
+                OverlayResponse::Handled
+            }
+            KeyCode::Enter => {
+                let rows = self.rows_input.value().parse::<u16>();
+                let cols = self.cols_input.value().parse::<u16>();
+                if let (Ok(r), Ok(c)) = (rows, cols)
+                    && r > 0
+                    && c > 0
+                {
+                    OverlayResponse::ResizeTerminal { rows: r, cols: c }
+                } else {
+                    OverlayResponse::Close
+                }
+            }
+            _ => {
+                let input = match self.active_field {
+                    ResizeField::Rows => &mut self.rows_input,
+                    ResizeField::Cols => &mut self.cols_input,
+                };
+                input.handle_event(&crossterm::event::Event::Key(key));
+                OverlayResponse::Handled
+            }
         }
     }
 }
@@ -210,6 +294,33 @@ impl SerialConfigDialog {
         let mut final_cfg = self.config.clone();
         final_cfg.port = self.port_input.value().to_string();
         final_cfg
+    }
+
+    pub fn handle_key(&mut self, key: KeyEvent) -> OverlayResponse {
+        match key.code {
+            KeyCode::Esc => OverlayResponse::Close,
+            KeyCode::Tab | KeyCode::Down => {
+                self.selected_field = self.selected_field.next();
+                OverlayResponse::Handled
+            }
+            KeyCode::Up => {
+                self.selected_field = self.selected_field.prev();
+                OverlayResponse::Handled
+            }
+            KeyCode::Right | KeyCode::Char(' ') => {
+                self.cycle_next();
+                OverlayResponse::Handled
+            }
+            KeyCode::Left => {
+                self.cycle_prev();
+                OverlayResponse::Handled
+            }
+            KeyCode::Enter => {
+                let new_cfg = self.to_config();
+                OverlayResponse::ReconfigureSerial(new_cfg)
+            }
+            _ => OverlayResponse::Handled,
+        }
     }
 }
 

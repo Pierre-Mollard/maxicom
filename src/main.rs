@@ -177,8 +177,17 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 }
                 UpdateEffect::Reconfigure(serial_config) => {
                     if let Some(ref mut dev) = device {
-                        dev.reconfigure(&serial_config);
-                        app.serial_config = serial_config;
+                        if let Err(e) = dev.reconfigure(&serial_config) {
+                            app.open_overlay(Overlay::Error(
+                                ErrorDialog::new(
+                                    "Serial Reconfigure Failed",
+                                    "Failed to reconfigure serial",
+                                )
+                                .with_details(e),
+                            ));
+                        } else {
+                            app.serial_config = serial_config;
+                        }
                     }
                 }
                 UpdateEffect::None => {}

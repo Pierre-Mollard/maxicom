@@ -9,7 +9,6 @@ use terminput_crossterm::to_terminput_key;
 use crate::{
     app::App,
     config::InputMode,
-    serial::SerialConfig,
     types::{Overlay, ResizeDialog, SerialConfigDialog, SettingKey},
 };
 
@@ -23,8 +22,10 @@ pub enum Action {
     Terminal(TerminalAction),
     /// Receive history navigation like scrolling and searching
     History(HistoryAction),
-    /// Popup overlay action like open, navigate, close, toggle settings
-    Overlay(OverlayAction),
+    /// Open popup
+    OpenOverlay(Overlay),
+    /// Popup overlay action forwarding
+    OverlayKey(KeyEvent),
     /// Global application commands
     App(AppAction),
     /// Nothing happening
@@ -35,6 +36,7 @@ pub enum Action {
 pub enum AppAction {
     SetPrefix(bool),
     FocusGained(bool),
+    ToggleSetting(SettingKey),
     Quit,
 }
 
@@ -65,19 +67,6 @@ pub enum HistoryAction {
     PanRight(usize),
     Clear,
 } // TODO: add search, navigate seach up and down, next and previous, copy also?
-
-#[derive(Debug)]
-pub enum OverlayAction {
-    Open(Overlay),
-    Close,
-    SelectNext,
-    SelectPrev,
-    SelectNextValue,
-    SelectPrevValue,
-    Confirm,
-    ForwardKey(KeyEvent),
-    ToggleSetting(SettingKey),
-}
 
 /// Using crossterm's event API instead of stdin.read() to handle multi-byte ANSI sequence like
 /// arrows and page up and prefix
@@ -113,69 +102,8 @@ pub fn handle_event(event: Event, app: &App) -> Action {
     }
 
     // Popup check
-    if let Some(current_overlay) = app.overlay() {
-        // NOTE: cannot generalize ESC because of disconnect and errors (todo) popups
-        //
-        //        if key_event.code == KeyCode::Esc && current_overlay != Overlay::DeviceDisconnected(_) {
-        //           return Action::Overlay(OverlayAction::Close);
-        //      }
-
-        return match current_overlay {
-            Overlay::Help => Action::Overlay(OverlayAction::Close),
-            Overlay::Settings => match key_event.code {
-                KeyCode::Esc => Action::Overlay(OverlayAction::Close),
-                KeyCode::Char('e') | KeyCode::Char('E') => {
-                    Action::Overlay(OverlayAction::ToggleSetting(SettingKey::LocalEcho))
-                }
-                KeyCode::Char('w') | KeyCode::Char('W') => {
-                    Action::Overlay(OverlayAction::ToggleSetting(SettingKey::LineWrap))
-                }
-                KeyCode::Char('m') | KeyCode::Char('M') => {
-                    Action::Overlay(OverlayAction::ToggleSetting(SettingKey::InputMode))
-                }
-                KeyCode::Char('t') | KeyCode::Char('T') => {
-                    Action::Overlay(OverlayAction::ToggleSetting(SettingKey::DisplayTimestamp))
-                }
-                _ => Action::Ignore,
-            },
-            Overlay::TerminalSize(_) => match key_event.code {
-                KeyCode::Esc => Action::Overlay(OverlayAction::Close),
-                KeyCode::Tab => Action::Overlay(OverlayAction::SelectNext),
-                KeyCode::Enter => Action::Overlay(OverlayAction::Confirm),
-                _ => Action::Overlay(OverlayAction::ForwardKey(key_event)),
-            },
-            Overlay::SerialSettings(_) => match key_event.code {
-                KeyCode::Esc => Action::Overlay(OverlayAction::Close),
-                KeyCode::Tab => Action::Overlay(OverlayAction::SelectNext),
-                KeyCode::Down => Action::Overlay(OverlayAction::SelectNext),
-                KeyCode::Up => Action::Overlay(OverlayAction::SelectPrev),
-                KeyCode::Right => Action::Overlay(OverlayAction::SelectNextValue),
-                KeyCode::Left => Action::Overlay(OverlayAction::SelectPrevValue),
-                KeyCode::Enter => Action::Overlay(OverlayAction::Confirm),
-                _ => Action::Overlay(OverlayAction::ForwardKey(key_event)),
-            },
-            Overlay::DeviceDisconnected(_) => {
-                if key_event.modifiers.contains(KeyModifiers::CONTROL) {
-                    match key_event.code {
-                        KeyCode::Char('c') | KeyCode::Char('C') => {
-                            return Action::App(AppAction::Quit);
-                        }
-                        _ => (),
-                    }
-                }
-
-                match key_event.code {
-                    KeyCode::Esc => Action::App(AppAction::Quit),
-                    KeyCode::Enter => Action::App(AppAction::Quit),
-                    _ => Action::Ignore,
-                }
-            }
-            Overlay::Error(_) => match key_event.code {
-                KeyCode::Esc => Action::Overlay(OverlayAction::Close),
-                KeyCode::Enter => Action::Overlay(OverlayAction::Close),
-                _ => Action::Ignore,
-            },
-        };
+    if app.overlay().is_some() {
+        return Action::OverlayKey(key_event);
     }
 
     if let Some(action) = handle_common_keys(&key_event, app) {
@@ -196,24 +124,19 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
         match key.code {
             KeyCode::Char('q') | KeyCode::Char('Q') => return Some(Action::App(AppAction::Quit)),
             KeyCode::Char('m') | KeyCode::Char('M') => {
-                // NOTE: this is from the overlay category but could be using another alias route?
-                return Some(Action::Overlay(OverlayAction::ToggleSetting(
-                    SettingKey::InputMode,
-                )));
+                return Some(Action::App(AppAction::ToggleSetting(SettingKey::InputMode)));
             }
             KeyCode::Char('a') => return Some(Action::TransmitRaw(vec![0x01])),
             KeyCode::Char('h') | KeyCode::Char('H') => {
-                return Some(Action::Overlay(OverlayAction::Open(Overlay::Help)));
+                return Some(Action::OpenOverlay(Overlay::Help));
             }
             KeyCode::Char('s') | KeyCode::Char('S') => {
-                return Some(Action::Overlay(OverlayAction::Open(Overlay::Settings)));
+                return Some(Action::OpenOverlay(Overlay::Settings));
             }
             KeyCode::Char('r') | KeyCode::Char('R') => {
                 let (rows, cols) = app.terminal_mode.get_vt100_size();
                 let dialog = ResizeDialog::new(rows, cols);
-                return Some(Action::Overlay(OverlayAction::Open(Overlay::TerminalSize(
-                    dialog,
-                ))));
+                return Some(Action::OpenOverlay(Overlay::TerminalSize(dialog)));
             }
             KeyCode::Char('t') | KeyCode::Char('T') => {
                 return Some(Action::Terminal(TerminalAction::AutoResizeRemoteToViewer));
@@ -222,9 +145,8 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
                 return Some(Action::Terminal(TerminalAction::AutoResizeEmulatorToViewer));
             }
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                return Some(Action::Overlay(OverlayAction::Open(
-                    Overlay::SerialSettings(SerialConfigDialog::new(&app.serial_config)),
-                )));
+                let dialog = SerialConfigDialog::new(&app.serial_config);
+                return Some(Action::OpenOverlay(Overlay::SerialSettings(dialog)));
             }
 
             KeyCode::Up => {

@@ -1,11 +1,9 @@
-use tui_input::backend::crossterm::EventHandler;
-
 use crate::{
     config::{AppConfig, InputMode, WrapMode},
-    input::{Action, AppAction, HistoryAction, OverlayAction},
+    input::{Action, AppAction, HistoryAction},
     logger::{LineLogger, TerminalLogger},
     serial::SerialConfig,
-    types::{FocusTarget, Overlay, ResizeField, SettingKey, ViewportSize},
+    types::{FocusTarget, Overlay, OverlayResponse, SettingKey, ViewportSize},
 };
 
 pub mod line_mode;
@@ -25,6 +23,7 @@ pub struct App {
     pub is_window_focused: bool,
 }
 
+// Effects outside which can only be handled by main
 pub enum UpdateEffect {
     None,
     Transmit(Vec<u8>),
@@ -104,9 +103,40 @@ impl App {
             ),
             Action::Terminal(action) => self.terminal_mode.update_action_terminal(action),
             Action::History(action) => self.update_action_history(action),
-            Action::Overlay(action) => self.update_action_overlay(action),
             Action::App(action) => self.update_action_app(action),
             Action::Ignore => UpdateEffect::None,
+            Action::OpenOverlay(overlay) => {
+                self.overlay = Some(overlay);
+                UpdateEffect::None
+            }
+            Action::OverlayKey(key) => {
+                if let Some(mut overlay) = self.overlay.take() {
+                    let response = overlay.handle_key(key);
+                    match response {
+                        OverlayResponse::Handled => {
+                            self.overlay = Some(overlay); // overlay taken, so give back
+                            UpdateEffect::None
+                        }
+                        OverlayResponse::Close => UpdateEffect::None,
+                        OverlayResponse::Quit => UpdateEffect::Quit,
+                        OverlayResponse::ToggleSetting(key) => {
+                            self.toggle_setting(key);
+                            self.overlay = Some(overlay);
+                            UpdateEffect::None
+                        }
+                        OverlayResponse::ResizeTerminal { rows, cols } => {
+                            self.terminal_mode.set_vt100_size(rows, cols);
+                            UpdateEffect::None
+                        }
+                        OverlayResponse::ReconfigureSerial(new_cfg) => {
+                            self.serial_config = new_cfg.clone();
+                            UpdateEffect::Reconfigure(new_cfg)
+                        }
+                    }
+                } else {
+                    UpdateEffect::None
+                }
+            }
         }
     }
 
@@ -118,6 +148,10 @@ impl App {
             }
             AppAction::FocusGained(is_focused) => {
                 self.is_window_focused = is_focused;
+                UpdateEffect::None
+            }
+            AppAction::ToggleSetting(setting) => {
+                self.toggle_setting(setting);
                 UpdateEffect::None
             }
             AppAction::Quit => UpdateEffect::Quit,
@@ -183,109 +217,28 @@ impl App {
         UpdateEffect::None
     }
 
-    // TODO: when more popups types, move to submodule
-    fn update_action_overlay(&mut self, action: OverlayAction) -> UpdateEffect {
-        match action {
-            OverlayAction::Open(overlay) => {
-                self.prefix_active = false;
-                self.overlay = Some(overlay);
-                UpdateEffect::None
+    fn toggle_setting(&mut self, key: SettingKey) {
+        match key {
+            SettingKey::LocalEcho => {
+                self.app_config.local_echo = !self.app_config.local_echo;
             }
-            OverlayAction::Close => {
-                self.overlay = None;
-                UpdateEffect::None
+            SettingKey::LineWrap => {
+                self.app_config.line_mode.wrap_mode = match self.app_config.line_mode.wrap_mode {
+                    WrapMode::Wrap => WrapMode::Truncate,
+                    WrapMode::Truncate => WrapMode::Wrap,
+                };
+                self.update_viewport(self.viewport);
             }
-            OverlayAction::SelectNext => {
-                if let Some(Overlay::TerminalSize(dialog)) = &mut self.overlay {
-                    dialog.active_field = match dialog.active_field {
-                        ResizeField::Rows => ResizeField::Cols,
-                        ResizeField::Cols => ResizeField::Rows,
-                    };
-                }
-                if let Some(Overlay::SerialSettings(dialog)) = &mut self.overlay {
-                    dialog.selected_field = dialog.selected_field.next();
-                }
-                UpdateEffect::None
+            SettingKey::InputMode => {
+                self.app_config.input_mode = match self.app_config.input_mode {
+                    InputMode::Line => InputMode::Terminal,
+                    InputMode::Terminal => InputMode::Line,
+                };
+                self.update_viewport(self.viewport);
             }
-            OverlayAction::SelectPrev => {
-                if let Some(Overlay::SerialSettings(dialog)) = &mut self.overlay {
-                    dialog.selected_field = dialog.selected_field.prev();
-                }
-                UpdateEffect::None
+            SettingKey::DisplayTimestamp => {
+                self.app_config.display_live_timestamp = !self.app_config.display_live_timestamp;
             }
-            OverlayAction::SelectPrevValue => {
-                if let Some(Overlay::SerialSettings(dialog)) = &mut self.overlay {
-                    dialog.cycle_prev();
-                }
-                UpdateEffect::None
-            }
-            OverlayAction::SelectNextValue => {
-                if let Some(Overlay::SerialSettings(dialog)) = &mut self.overlay {
-                    dialog.cycle_next();
-                }
-                UpdateEffect::None
-            }
-            OverlayAction::ForwardKey(key) => {
-                if let Some(Overlay::TerminalSize(dialog)) = &mut self.overlay {
-                    let active = match dialog.active_field {
-                        ResizeField::Rows => &mut dialog.rows_input,
-                        ResizeField::Cols => &mut dialog.cols_input,
-                    };
-                    active.handle_event(&crossterm::event::Event::Key(key));
-                }
-                UpdateEffect::None
-            }
-            OverlayAction::Confirm => {
-                if let Some(Overlay::TerminalSize(dialog)) = &self.overlay {
-                    let rows = dialog.rows_input.value().parse::<u16>();
-                    let cols = dialog.cols_input.value().parse::<u16>();
-                    if let (Ok(r), Ok(c)) = (rows, cols)
-                        && r > 0
-                        && c > 0
-                    {
-                        self.terminal_mode.set_vt100_size(r, c);
-                    }
-                }
-                self.overlay = None; // Close popup on submit
-
-                if let Some(Overlay::SerialSettings(dialog)) = &self.overlay {
-                    return UpdateEffect::Reconfigure(dialog.to_config());
-                }
-                UpdateEffect::None
-            }
-            OverlayAction::SelectPrev => UpdateEffect::None,
-            OverlayAction::ToggleSetting(setting_key) => match setting_key {
-                SettingKey::LocalEcho => {
-                    self.app_config.local_echo = !self.app_config.local_echo;
-                    UpdateEffect::None
-                }
-                SettingKey::LineWrap => {
-                    self.app_config.line_mode.wrap_mode = match self.app_config.line_mode.wrap_mode
-                    {
-                        WrapMode::Wrap => WrapMode::Truncate,
-                        WrapMode::Truncate => WrapMode::Wrap,
-                    };
-                    self.update_viewport(self.viewport);
-                    UpdateEffect::None
-                }
-                SettingKey::InputMode => {
-                    // TODO: these prefix reset should not be linked to the
-                    // actions because it will change bindings maybe later to not using prefix and some
-                    // reverse
-                    self.prefix_active = false;
-                    self.app_config.input_mode = match self.app_config.input_mode {
-                        InputMode::Line => InputMode::Terminal,
-                        InputMode::Terminal => InputMode::Line,
-                    };
-                    self.update_viewport(self.viewport);
-                    UpdateEffect::None
-                }
-                SettingKey::DisplayTimestamp => {
-                    self.app_config.display_live_timestamp =
-                        !self.app_config.display_live_timestamp;
-                    UpdateEffect::None
-                }
-            },
         }
     }
 
