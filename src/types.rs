@@ -1,12 +1,11 @@
+use std::path::PathBuf;
+
 /// Module to reduce inter modules exchange or something
 use chrono::{DateTime, Local};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tui_input::{Input, backend::crossterm::EventHandler};
 
-use crate::{
-    app::UpdateEffect,
-    serial::{CharSize, FlowControl, Parity, SerialConfig, StopBits},
-};
+use crate::serial::{CharSize, FlowControl, Parity, SerialConfig, StopBits};
 
 pub struct LogEntry {
     pub text: String,
@@ -32,6 +31,7 @@ pub enum Overlay {
     Settings,
     TerminalSize(ResizeDialog),
     SerialSettings(SerialConfigDialog),
+    FilePath(FilePathDialog),
     DeviceDisconnected(String),
     Error(ErrorDialog),
 }
@@ -42,6 +42,7 @@ pub enum OverlayResponse {
     ToggleSetting(SettingKey),
     ResizeTerminal { rows: u16, cols: u16 },
     ReconfigureSerial(SerialConfig),
+    StartCapture(PathBuf),
     Quit,
 }
 
@@ -64,6 +65,7 @@ impl Overlay {
             },
             Overlay::TerminalSize(dialog) => dialog.handle_key(key),
             Overlay::SerialSettings(dialog) => dialog.handle_key(key),
+            Overlay::FilePath(dialog) => dialog.handle_key(key),
             Overlay::DeviceDisconnected(_) => {
                 if key.modifiers.contains(KeyModifiers::CONTROL)
                     && matches!(key.code, KeyCode::Char('c' | 'C'))
@@ -148,6 +150,38 @@ impl ResizeDialog {
                     ResizeField::Cols => &mut self.cols_input,
                 };
                 input.handle_event(&crossterm::event::Event::Key(key));
+                OverlayResponse::Handled
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FilePathDialog {
+    pub file_input: Input,
+}
+
+impl FilePathDialog {
+    pub fn new(prefilled_name: &str) -> Self {
+        Self {
+            file_input: Input::new(prefilled_name.to_string()),
+        }
+    }
+
+    pub fn handle_key(&mut self, key: KeyEvent) -> OverlayResponse {
+        match key.code {
+            KeyCode::Esc => OverlayResponse::Close,
+            KeyCode::Enter => {
+                let raw = self.file_input.value().trim();
+                if raw.is_empty() {
+                    OverlayResponse::Close
+                } else {
+                    OverlayResponse::StartCapture(PathBuf::from(raw))
+                }
+            }
+            _ => {
+                self.file_input
+                    .handle_event(&crossterm::event::Event::Key(key));
                 OverlayResponse::Handled
             }
         }

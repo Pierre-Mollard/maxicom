@@ -15,7 +15,10 @@ pub fn monitor_title(app: &App, area: &Rect) -> String {
         InputMode::Terminal => {
             let screen = app.terminal_mode.vt100_screen();
             if app.terminal_mode.is_new_content_missed() {
-                let _ = write!(title, "!");
+                let _ = write!(title, "! ");
+            }
+            if app.terminal_mode.is_logging() {
+                let _ = write!(title, "● REC ");
             }
             let _ = write!(
                 title,
@@ -32,7 +35,10 @@ pub fn monitor_title(app: &App, area: &Rect) -> String {
         }
         InputMode::Line => {
             if app.line_mode.is_new_content_missed() {
-                let _ = write!(title, "!");
+                let _ = write!(title, "! ");
+            }
+            if app.line_mode.is_logging() {
+                let _ = write!(title, "● REC ");
             }
             let _ = write!(
                 title,

@@ -37,6 +37,7 @@ pub enum AppAction {
     SetPrefix(bool),
     FocusGained(bool),
     ToggleSetting(SettingKey),
+    ToggleLogging,
     Quit,
 }
 
@@ -132,6 +133,9 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
             }
             KeyCode::Char('s') | KeyCode::Char('S') => {
                 return Some(Action::OpenOverlay(Overlay::Settings));
+            }
+            KeyCode::Char('l') | KeyCode::Char('L') => {
+                return Some(Action::App(AppAction::ToggleLogging));
             }
             KeyCode::Char('r') | KeyCode::Char('R') => {
                 let (rows, cols) = app.terminal_mode.get_vt100_size();

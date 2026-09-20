@@ -2,6 +2,7 @@ use crate::config::{LineLogConfig, TerminalLogConfig};
 use crate::types::LogEntry;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
+use std::path::PathBuf;
 
 pub struct LineLogger {
     config: LineLogConfig,
@@ -18,23 +19,33 @@ impl LineLogger {
     }
 
     pub fn start(&mut self) -> io::Result<()> {
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.config.path)?;
+        let path = self.config.path.clone();
+        self.start_with_path(path)
+    }
+
+    pub fn start_with_path(&mut self, path: PathBuf) -> io::Result<()> {
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
 
         self.file = Some(file);
+        self.config.path = path;
         self.config.enabled = true;
         Ok(())
     }
 
     pub fn stop(&mut self) {
+        if let Some(mut file) = self.file.take() {
+            let _ = file.flush();
+        }
         self.file = None;
         self.config.enabled = false;
     }
 
     pub fn is_active(&self) -> bool {
         self.file.is_some()
+    }
+
+    pub fn active_path(&self) -> &PathBuf {
+        &self.config.path
     }
 
     pub fn log_entry(&mut self, entry: &LogEntry) -> io::Result<()> {
@@ -47,6 +58,14 @@ impl LineLogger {
             file.flush()?;
         }
         Ok(())
+    }
+}
+
+impl Drop for LineLogger {
+    fn drop(&mut self) {
+        if self.is_active() {
+            self.stop();
+        }
     }
 }
 
@@ -65,17 +84,23 @@ impl TerminalLogger {
     }
 
     pub fn start(&mut self) -> io::Result<()> {
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.config.path)?;
+        let path = self.config.path.clone();
+        self.start_with_path(path)
+    }
+
+    pub fn start_with_path(&mut self, path: PathBuf) -> io::Result<()> {
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
 
         self.file = Some(file);
+        self.config.path = path;
         self.config.enabled = true;
         Ok(())
     }
 
     pub fn stop(&mut self) {
+        if let Some(mut file) = self.file.take() {
+            let _ = file.flush();
+        }
         self.file = None;
         self.config.enabled = false;
     }
@@ -84,11 +109,23 @@ impl TerminalLogger {
         self.file.is_some()
     }
 
+    pub fn active_path(&self) -> &PathBuf {
+        &self.config.path
+    }
+
     pub fn log_raw_bytes(&mut self, bytes: &[u8]) -> io::Result<()> {
         if let Some(file) = &mut self.file {
             file.write_all(bytes)?;
             file.flush()?;
         }
         Ok(())
+    }
+}
+
+impl Drop for TerminalLogger {
+    fn drop(&mut self) {
+        if self.is_active() {
+            self.stop();
+        }
     }
 }

@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, io, path::PathBuf};
 
 use chrono::{DateTime, Local};
 use vt100::Parser;
@@ -297,5 +297,21 @@ impl TerminalMode {
                 UpdateEffect::None
             }
         }
+    }
+
+    pub fn start_logging(&mut self, path: PathBuf) -> io::Result<()> {
+        self.logger.start_with_path(path)
+    }
+
+    pub fn stop_logging(&mut self) {
+        self.logger.stop();
+    }
+
+    pub fn is_logging(&self) -> bool {
+        self.logger.is_active()
+    }
+
+    pub fn logger_active_path(&self) -> &PathBuf {
+        self.logger.active_path()
     }
 }

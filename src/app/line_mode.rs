@@ -1,5 +1,5 @@
 use chrono::{DateTime, Local};
-use std::collections::VecDeque;
+use std::{collections::VecDeque, io, path::PathBuf};
 
 use crate::{
     app::UpdateEffect,
@@ -253,16 +253,20 @@ impl LineMode {
         }
     }
 
-    pub fn toggle_logging(&mut self) {
-        if self.logger.is_active() {
-            self.logger.stop();
-        } else {
-            let _ = self.logger.start();
-        }
+    pub fn start_logging(&mut self, path: PathBuf) -> io::Result<()> {
+        self.logger.start_with_path(path)
+    }
+
+    pub fn stop_logging(&mut self) {
+        self.logger.stop();
     }
 
     pub fn is_logging(&self) -> bool {
         self.logger.is_active()
+    }
+
+    pub fn logger_active_path(&self) -> &PathBuf {
+        self.logger.active_path()
     }
 
     pub fn update_viewport(&mut self, wrap_mode: WrapMode, viewport: ViewportSize) {

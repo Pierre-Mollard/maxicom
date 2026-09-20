@@ -3,7 +3,10 @@ use crate::{
     input::{Action, AppAction, HistoryAction},
     logger::{LineLogger, TerminalLogger},
     serial::SerialConfig,
-    types::{FocusTarget, Overlay, OverlayResponse, SettingKey, ViewportSize},
+    types::{
+        ErrorDialog, FilePathDialog, FocusTarget, Overlay, OverlayResponse, SettingKey,
+        ViewportSize,
+    },
 };
 
 pub mod line_mode;
@@ -132,6 +135,23 @@ impl App {
                             self.serial_config = new_cfg.clone();
                             UpdateEffect::Reconfigure(new_cfg)
                         }
+                        OverlayResponse::StartCapture(path) => {
+                            let result = match self.app_config.input_mode {
+                                InputMode::Line => self.line_mode.start_logging(path),
+                                InputMode::Terminal => self.terminal_mode.start_logging(path),
+                            };
+
+                            if let Err(e) = result {
+                                self.open_overlay(Overlay::Error(
+                                    ErrorDialog::new(
+                                        "Capture Failed",
+                                        "Could not open file for writing",
+                                    )
+                                    .with_details(e),
+                                ));
+                            }
+                            UpdateEffect::None
+                        }
                     }
                 } else {
                     UpdateEffect::None
@@ -152,6 +172,10 @@ impl App {
             }
             AppAction::ToggleSetting(setting) => {
                 self.toggle_setting(setting);
+                UpdateEffect::None
+            }
+            AppAction::ToggleLogging => {
+                self.toggle_logging();
                 UpdateEffect::None
             }
             AppAction::Quit => UpdateEffect::Quit,
@@ -238,6 +262,28 @@ impl App {
             }
             SettingKey::DisplayTimestamp => {
                 self.app_config.display_live_timestamp = !self.app_config.display_live_timestamp;
+            }
+        }
+    }
+
+    fn toggle_logging(&mut self) {
+        if self.app_config.input_mode == InputMode::Line {
+            if self.line_mode.is_logging() {
+                self.line_mode.stop_logging();
+                // TODO: display notification
+            } else {
+                self.open_overlay(Overlay::FilePath(FilePathDialog::new(
+                    &self.line_mode.logger_active_path().to_string_lossy(),
+                )));
+            }
+        } else {
+            if self.terminal_mode.is_logging() {
+                self.terminal_mode.stop_logging();
+                // TODO: display notification
+            } else {
+                self.open_overlay(Overlay::FilePath(FilePathDialog::new(
+                    &self.terminal_mode.logger_active_path().to_string_lossy(),
+                )));
             }
         }
     }
