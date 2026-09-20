@@ -68,9 +68,6 @@ impl LineMode {
         self.partial_line_timestamp
     }
 
-    // TODO:  Using the `ansi-to-tui` or `ratatui::text::Line::from` ANSI helpers to save some
-    // colors and convert to ratatui in line mode (alreay in raw/terminal)
-
     pub fn feed_rx(&mut self, rx_eol_mode: RxNewlineMode, encoding: TextEncoding, bytes: &[u8]) {
         for &b in bytes {
             if self.partial_line.is_empty() {

@@ -31,7 +31,6 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame) {
         "OFF"
     };
 
-    // TODO: add badge when recording is on
     let text = vec![
         Line::from(Span::styled(
             "--- Configuration Dashboard ---",

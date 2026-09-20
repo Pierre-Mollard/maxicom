@@ -1,7 +1,10 @@
+use std::time::Duration;
+
 use crate::{
     config::{AppConfig, InputMode, WrapMode},
     input::{Action, AppAction, HistoryAction},
     logger::{LineLogger, TerminalLogger},
+    notification::{NotificationManager, ToastLevel},
     serial::SerialConfig,
     types::{
         ErrorDialog, FilePathDialog, FocusTarget, Overlay, OverlayResponse, SettingKey,
@@ -20,6 +23,7 @@ pub struct App {
     pub serial_config: SerialConfig,
     prefix_active: bool,
     overlay: Option<Overlay>,
+    pub notifications: NotificationManager,
     pub viewport: ViewportSize,
     pub line_mode: LineMode,
     pub terminal_mode: TerminalMode,
@@ -52,6 +56,7 @@ impl App {
             app_config,
             serial_config,
             overlay: None,
+            notifications: NotificationManager::new(),
             viewport: ViewportSize::default(),
             line_mode: line_view,
             terminal_mode: terminal_view,
@@ -76,10 +81,6 @@ impl App {
         self.overlay.as_ref()
     }
 
-    pub fn overlay_mut(&mut self) -> Option<&mut Overlay> {
-        self.overlay.as_mut()
-    }
-
     pub fn open_overlay(&mut self, overlay: Overlay) {
         self.overlay = Some(overlay);
     }
@@ -89,7 +90,7 @@ impl App {
     }
 
     pub fn update(&mut self, action: Action) -> UpdateEffect {
-        match action {
+        let effect = match action {
             Action::TransmitRaw(bytes) => {
                 if self.app_config.local_echo {
                     let text = String::from_utf8_lossy(&bytes);
@@ -141,14 +142,19 @@ impl App {
                                 InputMode::Terminal => self.terminal_mode.start_logging(path),
                             };
 
-                            if let Err(e) = result {
-                                self.open_overlay(Overlay::Error(
-                                    ErrorDialog::new(
-                                        "Capture Failed",
-                                        "Could not open file for writing",
-                                    )
-                                    .with_details(e),
-                                ));
+                            match result {
+                                Ok(_) => {
+                                    self.notify_success("Started recording");
+                                }
+                                Err(e) => {
+                                    self.open_overlay(Overlay::Error(
+                                        ErrorDialog::new(
+                                            "Capture Failed",
+                                            "Could not open file for writing",
+                                        )
+                                        .with_details(e),
+                                    ));
+                                }
                             }
                             UpdateEffect::None
                         }
@@ -157,7 +163,10 @@ impl App {
                     UpdateEffect::None
                 }
             }
-        }
+        };
+
+        self.notifications.tick();
+        effect
     }
 
     fn update_action_app(&mut self, action: AppAction) -> UpdateEffect {
@@ -267,24 +276,31 @@ impl App {
     }
 
     fn toggle_logging(&mut self) {
-        if self.app_config.input_mode == InputMode::Line {
-            if self.line_mode.is_logging() {
-                self.line_mode.stop_logging();
-                // TODO: display notification
-            } else {
-                self.open_overlay(Overlay::FilePath(FilePathDialog::new(
-                    &self.line_mode.logger_active_path().to_string_lossy(),
-                )));
+        let (is_logging, active_path) = match self.app_config.input_mode {
+            InputMode::Line => (
+                self.line_mode.is_logging(),
+                self.line_mode
+                    .logger_active_path()
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            InputMode::Terminal => (
+                self.terminal_mode.is_logging(),
+                self.terminal_mode
+                    .logger_active_path()
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+        };
+
+        if is_logging {
+            match self.app_config.input_mode {
+                InputMode::Line => self.line_mode.stop_logging(),
+                InputMode::Terminal => self.terminal_mode.stop_logging(),
             }
+            self.notify_info("Logging stopped");
         } else {
-            if self.terminal_mode.is_logging() {
-                self.terminal_mode.stop_logging();
-                // TODO: display notification
-            } else {
-                self.open_overlay(Overlay::FilePath(FilePathDialog::new(
-                    &self.terminal_mode.logger_active_path().to_string_lossy(),
-                )));
-            }
+            self.open_overlay(Overlay::FilePath(FilePathDialog::new(&active_path)));
         }
     }
 
@@ -314,5 +330,25 @@ impl App {
     #[inline]
     pub fn is_app_focused(&self) -> bool {
         self.is_window_focused
+    }
+
+    pub fn notify_info(&mut self, msg: impl Into<String>) {
+        self.notifications
+            .push(msg, ToastLevel::Info, Duration::from_secs(3));
+    }
+
+    pub fn notify_success(&mut self, msg: impl Into<String>) {
+        self.notifications
+            .push(msg, ToastLevel::Success, std::time::Duration::from_secs(3));
+    }
+
+    pub fn notify_warn(&mut self, msg: impl Into<String>) {
+        self.notifications
+            .push(msg, ToastLevel::Warn, std::time::Duration::from_secs(4));
+    }
+
+    pub fn notify_error(&mut self, msg: impl Into<String>) {
+        self.notifications
+            .push(msg, ToastLevel::Error, std::time::Duration::from_secs(5));
     }
 }

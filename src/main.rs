@@ -25,6 +25,7 @@ mod app;
 mod config;
 mod input;
 mod logger;
+mod notification;
 mod serial;
 mod terminal;
 mod types;
@@ -136,6 +137,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 Err(SerialError::InputClosed) => {
                     device = None; // Drops closed handle
                     app.open_overlay(Overlay::DeviceDisconnected(app.serial_config.port.clone()));
+                    app.notify_warn("Device Lost");
                 }
                 Err(SerialError::ReadFailed(e)) => {
                     app.open_overlay(Overlay::Error(
@@ -145,6 +147,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 }
                 Err(e) => {
                     eprintln!("Serial read error: {e:?}");
+                    app.notify_error("Serial read error unkown");
                     break;
                 }
             }

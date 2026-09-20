@@ -22,6 +22,7 @@ use crate::{
             alert::{render_disconnected_popup, render_error_popup},
             filepath::render_filepath_popup,
             help::render_help_popup,
+            notifications::render_notifications,
             reconfigure::render_reconfigure_popup,
             resize::render_resize_popup,
             settings::render_settings_popup,
@@ -93,6 +94,8 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     if let Some(prompt_rect) = prompt_area {
         render_input_prompt(app, frame, prompt_rect);
     }
+
+    render_notifications(&app.notifications, frame);
 
     match app.overlay() {
         Some(Overlay::Help) => render_help_popup(app, frame),
