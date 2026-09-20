@@ -2,6 +2,7 @@ use ratatui::style::{Color, Modifier, Style};
 /// Application configuration and files
 use serde::{Deserialize, Serialize};
 use std::{
+    borrow::Cow,
     fs,
     path::{Path, PathBuf},
 };
@@ -70,6 +71,20 @@ impl TextEncoding {
             Self::Cp437 => {
                 // Maps 0x80..0xFF to Unicode box drawing & symbols
                 decode_cp437(bytes)
+            }
+        }
+    }
+
+    pub fn to_utf8_bytes<'a>(self, bytes: &'a [u8]) -> Cow<'a, [u8]> {
+        match self {
+            Self::Utf8 | Self::Ascii => Cow::Borrowed(bytes),
+            Self::Cp437 => {
+                let utf8_string = decode_cp437(bytes);
+                Cow::Owned(utf8_string.into_bytes())
+            }
+            Self::Latin1 => {
+                let utf8_string: String = bytes.iter().map(|&b| b as char).collect();
+                Cow::Owned(utf8_string.into_bytes())
             }
         }
     }
@@ -178,7 +193,6 @@ impl Default for LineLogConfig {
 pub struct LineModeConfig {
     pub tx_eol: TxNewlineSymbol,
     pub rx_eol: RxNewlineMode,
-    pub encoding: TextEncoding,
     pub wrap_mode: WrapMode,
     pub max_history_lines: usize,
     pub display_partial_rx: bool,
@@ -190,7 +204,6 @@ impl Default for LineModeConfig {
         Self {
             tx_eol: TxNewlineSymbol::default(),
             rx_eol: RxNewlineMode::default(),
-            encoding: TextEncoding::default(),
             wrap_mode: WrapMode::default(),
             max_history_lines: 1000,
             display_partial_rx: true,
@@ -262,6 +275,7 @@ impl Default for TerminalModeConfig {
 #[serde(default)]
 pub struct AppConfig {
     pub local_echo: bool,
+    pub encoding: TextEncoding,
     pub input_mode: InputMode,
     pub rx_buffer_size: usize,
     pub display_live_timestamp: bool,
@@ -273,6 +287,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             local_echo: false,
+            encoding: TextEncoding::default(),
             rx_buffer_size: 4096,
             input_mode: InputMode::default(),
             display_live_timestamp: true,

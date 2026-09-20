@@ -5,6 +5,7 @@ use vt100::Parser;
 
 use crate::{
     app::{UpdateEffect, ViewportSize},
+    config::TextEncoding,
     input::TerminalAction,
     logger::TerminalLogger,
 };
@@ -47,12 +48,14 @@ impl TerminalMode {
         }
     }
 
-    pub fn process_rx(&mut self, bytes: &[u8]) {
+    pub fn process_rx(&mut self, encoding: TextEncoding, raw_bytes: &[u8]) {
         let is_alternate = self.vt100_parser.screen().alternate_screen();
         let vt_rows = self.vt100_parser.screen().size().0 as usize;
 
+        let _ = self.logger.log_raw_bytes(raw_bytes);
+
         if !is_alternate {
-            for &b in bytes {
+            for &b in raw_bytes {
                 if b == b'\n' {
                     let (cursor_row, _) = self.vt100_parser.screen().cursor_position();
 
@@ -81,8 +84,8 @@ impl TerminalMode {
             self.new_content_missed = true;
         }
 
-        let _ = self.logger.log_raw_bytes(bytes);
-        self.vt100_parser.process(bytes);
+        let utf8_bytes = encoding.to_utf8_bytes(raw_bytes);
+        self.vt100_parser.process(&utf8_bytes);
 
         let (r, _) = self.vt100_parser.screen().cursor_position();
         if let Some(slot) = self.screen_timestamps.get_mut(r as usize)

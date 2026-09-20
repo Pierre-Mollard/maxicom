@@ -124,12 +124,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     InputMode::Line => {
                         app.line_mode.feed_rx(
                             app.config().line_mode.rx_eol,
-                            app.config().line_mode.encoding,
+                            app.config().encoding,
                             &input_buffer[..bytes_read],
                         );
                     }
                     InputMode::Terminal => {
-                        app.terminal_mode.process_rx(&input_buffer[..bytes_read]);
+                        app.terminal_mode
+                            .process_rx(app.config().encoding, &input_buffer[..bytes_read]);
                     }
                 },
                 Err(SerialError::InputClosed) => {
