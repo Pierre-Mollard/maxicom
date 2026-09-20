@@ -10,7 +10,8 @@ use ratatui::{
 use crate::{
     app::App,
     config::{LineDisplayMode, WrapMode},
-    types::ViewportSize,
+    types::{FocusTarget, ViewportSize},
+    ui::common::border_style_for,
 };
 
 use crate::types::LogEntry;
@@ -29,6 +30,7 @@ fn trim_trailing_incomplete_ansi(text: &str) -> &str {
     text
 }
 
+// TODO: highlight search elements and current index
 pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'static>> {
     match mode {
         LineDisplayMode::Pretty => {
@@ -194,9 +196,15 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect) {
         Span::raw(app.line_mode.input_buffer()),
     ]);
 
+    let border_style = border_style_for(
+        app.focus_target(),
+        FocusTarget::LineInput,
+        app.is_app_focused(),
+    );
     let input_widget = Paragraph::new(input_text).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_style(border_style)
             .title(" Transmit (TX) "),
     );
 

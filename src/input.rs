@@ -48,6 +48,9 @@ pub enum LineInputAction {
     Submit,
     HistoryUp,
     HistoryDown,
+    ToggleSearch,
+    SearchNext,
+    SearchPrevious,
 }
 
 #[derive(Debug)]
@@ -67,7 +70,7 @@ pub enum HistoryAction {
     PanLeft(usize),
     PanRight(usize),
     Clear,
-} // TODO: add search, navigate seach up and down, next and previous, copy also?
+} // TODO: add selection and copy
 
 /// Using crossterm's event API instead of stdin.read() to handle multi-byte ANSI sequence like
 /// arrows and page up and prefix
@@ -209,6 +212,9 @@ fn handle_line_mode(key: KeyEvent) -> Action {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         match key.code {
             KeyCode::Char('c') | KeyCode::Char('q') => return Action::App(AppAction::Quit),
+            KeyCode::Char('f') | KeyCode::Char('F') => {
+                return Action::LineInput(LineInputAction::ToggleSearch);
+            }
             _ => return Action::Ignore,
         }
     }
@@ -220,6 +226,9 @@ fn handle_line_mode(key: KeyEvent) -> Action {
         KeyCode::Enter => Action::LineInput(LineInputAction::Submit),
         KeyCode::Up => Action::LineInput(LineInputAction::HistoryUp),
         KeyCode::Down => Action::LineInput(LineInputAction::HistoryDown),
+        //TODO: move cursor when prompt mode
+        KeyCode::Left => Action::LineInput(LineInputAction::SearchPrevious),
+        KeyCode::Right => Action::LineInput(LineInputAction::SearchNext),
 
         _ => Action::Ignore,
     }

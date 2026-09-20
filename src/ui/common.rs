@@ -131,6 +131,30 @@ pub fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
                     .right_aligned(),
                 );
             }
+
+            if app.line_mode.is_search_mode() {
+                let match_count = app.line_mode.search_match_count();
+                let current_pos = if match_count > 0 {
+                    app.line_mode.search_match_current() + 1
+                } else {
+                    0
+                };
+
+                titles.push(Line::from(vec![
+                    Span::styled(
+                        " SEARCH: ",
+                        Style::default().bg(Color::Blue).fg(Color::White),
+                    ),
+                    Span::styled(
+                        format!(" {} ", app.line_mode.search_query()),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Span::styled(
+                        format!("({}/{}) [ <-/->, Esc: Exit ] ", current_pos, match_count),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]))
+            }
         }
     }
     titles

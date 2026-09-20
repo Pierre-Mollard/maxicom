@@ -43,7 +43,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
                     .constraints([Constraint::Min(3), Constraint::Length(3)])
                     .split(screen_area);
 
-                (chunks[0], Some(chunks[1]), FocusTarget::LineInput)
+                (chunks[0], Some(chunks[1]), FocusTarget::LineHistory)
             }
         };
 
