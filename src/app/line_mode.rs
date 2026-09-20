@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 
 use crate::{
     app::UpdateEffect,
-    config::{RxNewlineMode, TxNewlineSymbol, WrapMode},
+    config::{RxNewlineMode, TextEncoding, TxNewlineSymbol, WrapMode},
     input::LineInputAction,
     logger::LineLogger,
     types::{LogEntry, ViewportSize},
@@ -71,7 +71,7 @@ impl LineMode {
     // TODO:  Using the `ansi-to-tui` or `ratatui::text::Line::from` ANSI helpers to save some
     // colors and convert to ratatui in line mode (alreay in raw/terminal)
 
-    pub fn feed_rx(&mut self, rx_eol_mode: RxNewlineMode, bytes: &[u8]) {
+    pub fn feed_rx(&mut self, rx_eol_mode: RxNewlineMode, encoding: TextEncoding, bytes: &[u8]) {
         for &b in bytes {
             if self.partial_line.is_empty() {
                 self.partial_line_timestamp = Some(Local::now());
@@ -86,7 +86,7 @@ impl LineMode {
                 },
                 b'\n' => {
                     self.pending_carriage_return = false;
-                    self.commit_partial_line();
+                    self.commit_partial_line(encoding);
                 }
                 0x08 | 0x7F => {
                     self.partial_line.pop();
@@ -103,15 +103,13 @@ impl LineMode {
         }
     }
 
-    fn commit_partial_line(&mut self) {
-        // TODO: handle different formats, right now error symbol
-        let line = String::from_utf8_lossy(&self.partial_line);
-
-        let line = line.trim_end_matches(['\r', '\n']).to_string();
-        self.push_history(&line);
-
+    fn commit_partial_line(&mut self, encoding: TextEncoding) {
+        let line = encoding.decode(&self.partial_line);
+        let trimmed = line.trim_end_matches(['\r', '\n']).to_string();
+        self.push_history(&trimmed);
         self.partial_line.clear();
     }
+
     // TODO: add on/off recording with path
     pub fn push_history(&mut self, line: &str) {
         let timestamp = self

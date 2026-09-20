@@ -37,6 +37,75 @@ impl std::fmt::Display for ConfigValidationError {
 
 impl std::error::Error for ConfigValidationError {}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextEncoding {
+    #[default]
+    Utf8,
+    Ascii,
+    Cp437,  // IBM / DOS / Box drawing
+    Latin1, // ISO-8859-1
+}
+
+impl TextEncoding {
+    /// Decodes raw serial bytes into a valid UTF-8 Rust String
+    /// (Invalid with U+FFFD for utf8 / ascii)
+    pub fn decode(&self, bytes: &[u8]) -> String {
+        match self {
+            Self::Utf8 => String::from_utf8_lossy(bytes).into_owned(),
+            Self::Ascii => bytes
+                .iter()
+                .map(|&b| {
+                    if (0x20..=0x7E).contains(&b) || b == b'\r' || b == b'\n' || b == b'\t' {
+                        b as char
+                    } else {
+                        '\u{FFFD}'
+                    }
+                })
+                .collect(),
+            Self::Latin1 => {
+                // ISO-8859-1 maps directly 1:1 to Unicode
+                bytes.iter().map(|&b| b as char).collect()
+            }
+            Self::Cp437 => {
+                // Maps 0x80..0xFF to Unicode box drawing & symbols
+                decode_cp437(bytes)
+            }
+        }
+    }
+}
+
+const CP437_HIGH_TABLE: [char; 128] = [
+    // 0x80 - 0x8F
+    'Ç', 'ü', 'é', 'â', 'ä', 'à', 'å', 'ç', 'ê', 'ë', 'è', 'ï', 'î', 'ì', 'Ä', 'Å',
+    // 0x90 - 0x9F
+    'É', 'æ', 'Æ', 'ô', 'ö', 'ò', 'û', 'ù', 'ÿ', 'Ö', 'Ü', '¢', '£', '¥', '₧', 'ƒ',
+    // 0xA0 - 0xAF
+    'á', 'í', 'ó', 'ú', 'ñ', 'Ñ', 'ª', 'º', '¿', '⌐', '¬', '½', '¼', '¡', '«', '»',
+    // 0xB0 - 0xBF (Blocks & single borders)
+    '░', '▒', '▓', '│', '┤', '╡', '╢', '╖', '╕', '╣', '║', '╗', '╝', '╜', '╛', '┐',
+    // 0xC0 - 0xCF (Corners & intersections)
+    '└', '┴', '┬', '├', '─', '┼', '╞', '╟', '╚', '╔', '╩', '╦', '╠', '═', '╬', '╧',
+    // 0xD0 - 0xDF (Double borders & solid blocks)
+    '╨', '╤', '╥', '╙', '╘', '╒', '╓', '╫', '╪', '┘', '┌', '█', '▄', '▌', '▐', '▀',
+    // 0xE0 - 0xEF (Greek & math)
+    'α', 'ß', 'Γ', 'π', 'Σ', 'σ', 'µ', 'τ', 'Φ', 'Θ', 'Ω', 'δ', '∞', 'φ', 'ε', '∩',
+    // 0xF0 - 0xFF (Math & symbols)
+    '≡', '±', '≥', '≤', '⌠', '⌡', '÷', '≈', '°', '∙', '·', '√', 'ⁿ', '²', '■', '\u{00A0}',
+];
+
+pub fn decode_cp437(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len());
+    for &b in bytes {
+        if b < 0x80 {
+            out.push(b as char);
+        } else {
+            out.push(CP437_HIGH_TABLE[(b - 0x80) as usize]);
+        }
+    }
+    out
+}
+
 /// Char use at the end of the line when sending in LineMode (not raw)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -109,6 +178,7 @@ impl Default for LineLogConfig {
 pub struct LineModeConfig {
     pub tx_eol: TxNewlineSymbol,
     pub rx_eol: RxNewlineMode,
+    pub encoding: TextEncoding,
     pub wrap_mode: WrapMode,
     pub max_history_lines: usize,
     pub display_partial_rx: bool,
@@ -120,6 +190,7 @@ impl Default for LineModeConfig {
         Self {
             tx_eol: TxNewlineSymbol::default(),
             rx_eol: RxNewlineMode::default(),
+            encoding: TextEncoding::default(),
             wrap_mode: WrapMode::default(),
             max_history_lines: 1000,
             display_partial_rx: true,
