@@ -1,3 +1,4 @@
+use ansi_to_tui::IntoText;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -6,22 +7,80 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
 };
 
-use crate::{app::App, config::WrapMode, types::ViewportSize};
+use crate::{
+    app::App,
+    config::{LineDisplayMode, WrapMode},
+    types::ViewportSize,
+};
 
 use crate::types::LogEntry;
 
-pub fn history_entry_to_line(entry: &LogEntry, timestamp_in_line: bool) -> Line<'static> {
-    let mut spans = Vec::new();
+fn trim_trailing_incomplete_ansi(text: &str) -> &str {
+    if let Some(esc_idx) = text.rfind('\x1b') {
+        let tail = &text[esc_idx..];
+        let is_finished = tail
+            .chars()
+            .skip(1)
+            .any(|c| c.is_ascii_alphabetic() || ('@'..='~').contains(&c));
+        if !is_finished {
+            return &text[..esc_idx];
+        }
+    }
+    text
+}
+
+pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'static>> {
+    match mode {
+        LineDisplayMode::Pretty => {
+            let displayable = trim_trailing_incomplete_ansi(text);
+            if let Ok(parsed) = displayable.as_bytes().into_text()
+                && let Some(first_line) = parsed.lines.into_iter().next()
+            {
+                return first_line.spans;
+            }
+            // Fallback
+            vec![Span::raw(displayable.to_string())]
+        }
+
+        LineDisplayMode::Clean => {
+            let clean_text = strip_ansi_escapes::strip_str(text);
+            vec![Span::raw(clean_text)]
+        }
+
+        LineDisplayMode::Raw => {
+            let mut raw = String::new();
+            for ch in text.chars() {
+                match ch {
+                    '\x1b' => raw.push_str("^["),
+                    '\r' => raw.push_str("\\r"),
+                    '\t' => raw.push_str("    "),
+                    c if c.is_control() => raw.push_str(&format!("\\x{:02X}", c as u32)),
+                    c => raw.push(c),
+                }
+            }
+            vec![Span::styled(raw, Style::default().fg(Color::White))]
+        }
+    }
+}
+
+pub fn history_entry_to_line(
+    entry: &LogEntry,
+    timestamp_in_line: bool,
+    mode: LineDisplayMode,
+) -> Line<'static> {
+    let mut prefix_spans = Vec::new();
 
     if timestamp_in_line {
         let time_str = entry.formatted_time();
-        spans.push(Span::styled(time_str, Style::default().fg(Color::Yellow)));
+        prefix_spans.push(Span::styled(time_str, Style::default().fg(Color::Yellow)));
     }
 
     // TODO: custom outside and inside (|)
-    spans.push(Span::styled("| ", Style::default().fg(Color::DarkGray)));
-    spans.push(Span::raw(entry.text.clone()));
-    Line::from(spans)
+    prefix_spans.push(Span::styled("| ", Style::default().fg(Color::DarkGray)));
+
+    prefix_spans.extend(format_line_content(&entry.text, mode));
+
+    Line::from(prefix_spans)
 }
 
 pub fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, outer_area: Rect) {
@@ -36,11 +95,19 @@ pub fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, outer_area: 
         .line_mode
         .history()
         .iter()
-        .map(|entry| history_entry_to_line(entry, timestamp_in_line))
+        .map(|entry| {
+            history_entry_to_line(
+                entry,
+                timestamp_in_line,
+                app.config().line_mode.display_mode,
+            )
+        })
         .collect();
 
     if app.config().line_mode.display_partial_rx && !app.line_mode.partial_rx().is_empty() {
-        let partial_str = String::from_utf8_lossy(app.line_mode.partial_rx()).into_owned();
+        let display_mode = app.config().line_mode.display_mode;
+        let partial_raw = String::from_utf8_lossy(app.line_mode.partial_rx());
+
         let mut partial_spans = Vec::new();
 
         if app.config().display_live_timestamp
@@ -53,7 +120,7 @@ pub fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, outer_area: 
         // Prefix with a subtle indicator or standard pipe
         partial_spans.push(Span::styled("|p ", Style::default().fg(Color::DarkGray)));
 
-        partial_spans.push(Span::styled(partial_str, Style::default().fg(Color::White)));
+        partial_spans.extend(format_line_content(&partial_raw, display_mode));
 
         history_lines.push(Line::from(partial_spans));
     }

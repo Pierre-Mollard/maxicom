@@ -110,7 +110,6 @@ impl LineMode {
         self.partial_line.clear();
     }
 
-    // TODO: add on/off recording with path
     pub fn push_history(&mut self, line: &str) {
         let timestamp = self
             .partial_line_timestamp

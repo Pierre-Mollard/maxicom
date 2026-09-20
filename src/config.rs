@@ -40,6 +40,15 @@ impl std::error::Error for ConfigValidationError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+pub enum LineDisplayMode {
+    #[default]
+    Pretty,
+    Clean,
+    Raw,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum TextEncoding {
     #[default]
     Utf8,
@@ -193,6 +202,7 @@ impl Default for LineLogConfig {
 pub struct LineModeConfig {
     pub tx_eol: TxNewlineSymbol,
     pub rx_eol: RxNewlineMode,
+    pub display_mode: LineDisplayMode,
     pub wrap_mode: WrapMode,
     pub max_history_lines: usize,
     pub display_partial_rx: bool,
@@ -204,6 +214,7 @@ impl Default for LineModeConfig {
         Self {
             tx_eol: TxNewlineSymbol::default(),
             rx_eol: RxNewlineMode::default(),
+            display_mode: LineDisplayMode::default(),
             wrap_mode: WrapMode::default(),
             max_history_lines: 1000,
             display_partial_rx: true,
