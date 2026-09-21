@@ -51,6 +51,7 @@ pub enum LineInputAction {
     ToggleSearch,
     SearchNext,
     SearchPrevious,
+    HandleKey(KeyEvent),
 }
 
 #[derive(Debug)]
@@ -115,7 +116,7 @@ pub fn handle_event(event: Event, app: &App) -> Action {
     }
 
     match app.config().input_mode {
-        InputMode::Line => handle_line_mode(key_event),
+        InputMode::Line => handle_line_mode(key_event, app.line_mode.search().active),
         InputMode::Terminal => handle_terminal_mode(key_event),
     }
 }
@@ -208,7 +209,7 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
 }
 
 // Final check in LINE MODE
-fn handle_line_mode(key: KeyEvent) -> Action {
+fn handle_line_mode(key: KeyEvent, is_search_active: bool) -> Action {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         match key.code {
             KeyCode::Char('c') | KeyCode::Char('q') => return Action::App(AppAction::Quit),
@@ -220,17 +221,14 @@ fn handle_line_mode(key: KeyEvent) -> Action {
     }
 
     match key.code {
-        // Typing
-        KeyCode::Char(c) => Action::LineInput(LineInputAction::InsertChar(c)),
-        KeyCode::Backspace => Action::LineInput(LineInputAction::DeleteBack),
         KeyCode::Enter => Action::LineInput(LineInputAction::Submit),
         KeyCode::Up => Action::LineInput(LineInputAction::HistoryUp),
         KeyCode::Down => Action::LineInput(LineInputAction::HistoryDown),
-        //TODO: move cursor when prompt mode
-        KeyCode::Left => Action::LineInput(LineInputAction::SearchPrevious),
-        KeyCode::Right => Action::LineInput(LineInputAction::SearchNext),
-
-        _ => Action::Ignore,
+        KeyCode::Char(c) if is_search_active => Action::LineInput(LineInputAction::InsertChar(c)),
+        KeyCode::Backspace if is_search_active => Action::LineInput(LineInputAction::DeleteBack),
+        KeyCode::Left if is_search_active => Action::LineInput(LineInputAction::SearchPrevious),
+        KeyCode::Right if is_search_active => Action::LineInput(LineInputAction::SearchNext),
+        _ => Action::LineInput(LineInputAction::HandleKey(key)),
     }
 }
 

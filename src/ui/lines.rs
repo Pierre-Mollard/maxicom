@@ -30,7 +30,6 @@ fn trim_trailing_incomplete_ansi(text: &str) -> &str {
     text
 }
 
-// TODO: highlight search elements and current index
 pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'static>> {
     match mode {
         LineDisplayMode::Pretty => {
@@ -239,16 +238,22 @@ pub fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, outer_area: 
     }
 }
 
-// NOTE: AI generated, make it better
 pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect) {
+    let input = app.line_mode.input();
+    let prompt_prefix = "> ";
+    let prefix_width = prompt_prefix.len() as u16;
+    let inner_width = (area.width.saturating_sub(2 + prefix_width)) as usize;
+
+    let scroll = input.visual_scroll(inner_width);
+
     let input_text = Line::from(vec![
         Span::styled(
-            "> ",
+            prompt_prefix,
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(app.line_mode.input_buffer()),
+        Span::raw(input.value()),
     ]);
 
     let border_style = border_style_for(
@@ -256,7 +261,8 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect) {
         FocusTarget::LineInput,
         app.is_app_focused(),
     );
-    let input_widget = Paragraph::new(input_text).block(
+
+    let input_widget = Paragraph::new(input_text).scroll((0, scroll as u16)).block(
         Block::default()
             .borders(Borders::ALL)
             .border_style(border_style)
@@ -265,8 +271,9 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect) {
 
     frame.render_widget(input_widget, area);
 
-    // Place physical blinking cursor at the end of what the user is typing
-    let cursor_x = area.x + 3 + app.line_mode.input_buffer().len() as u16;
+    let cursor_x =
+        area.x + 1 + prefix_width + (input.visual_cursor().saturating_sub(scroll)) as u16;
     let cursor_y = area.y + 1;
+
     frame.set_cursor_position((cursor_x, cursor_y));
 }

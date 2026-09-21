@@ -1,5 +1,6 @@
 use chrono::{DateTime, Local};
 use std::{collections::VecDeque, io, path::PathBuf};
+use tui_input::{Input, backend::crossterm::EventHandler};
 
 use crate::{
     app::UpdateEffect,
@@ -17,14 +18,14 @@ pub struct LineMode {
     /// None = active editing, Some(i) browsing #i history line
     history_index: Option<usize>,
     /// In-progress line when user press up
-    temp_input: String,
+    temp_input: Input,
     /// Max line history
     max_lines: usize,
     /// Current line being received from device output as bytes
     partial_line: Vec<u8>,
     partial_line_timestamp: Option<DateTime<Local>>,
     /// Current line being typed by user as futur device input
-    partial_user_line: String,
+    user_input: Input,
     /// Waiting to receive carriage return
     pending_carriage_return: bool,
     /// Number of visual lines above newest output
@@ -48,10 +49,10 @@ impl LineMode {
             local_history: VecDeque::with_capacity(max_history_lines),
             local_send_history: VecDeque::with_capacity(max_history_lines),
             history_index: None,
-            temp_input: String::new(),
+            temp_input: Input::default(),
             max_lines: max_history_lines,
             partial_line: Vec::new(),
-            partial_user_line: String::new(),
+            user_input: Input::default(),
             partial_line_timestamp: None,
             pending_carriage_return: false,
             scroll_from_bottom: 0,
@@ -65,6 +66,16 @@ impl LineMode {
             view_height: 0,
             search_state,
         }
+    }
+
+    #[inline]
+    pub fn input_buffer(&self) -> &str {
+        self.user_input.value()
+    }
+
+    #[inline]
+    pub fn input(&self) -> &Input {
+        &self.user_input
     }
 
     pub fn partial_line_timestamp(&self) -> Option<DateTime<Local>> {
@@ -138,16 +149,6 @@ impl LineMode {
         self.local_history.clear();
     }
 
-    /// Append a character to the input line.
-    pub fn append_input_char(&mut self, c: char) {
-        self.partial_user_line.push(c);
-    }
-
-    /// Remove the last character from the input line.
-    pub fn delete_last_input_char(&mut self) {
-        self.partial_user_line.pop();
-    }
-
     /// Read-only slice/iterator of completed lines
     #[inline]
     pub fn history(&self) -> &VecDeque<LogEntry> {
@@ -160,12 +161,6 @@ impl LineMode {
         &self.partial_line
     }
 
-    /// Read-only view of user input buffer
-    #[inline]
-    pub fn input_buffer(&self) -> &str {
-        &self.partial_user_line
-    }
-
     pub fn history_up(&mut self) {
         if self.local_send_history.is_empty() {
             return;
@@ -173,18 +168,19 @@ impl LineMode {
 
         match self.history_index {
             None => {
-                // Save what was typed before browsing history
-                self.temp_input = self.partial_user_line.clone();
+                self.temp_input = self.user_input.clone();
                 let last = self.local_send_history.len() - 1;
                 self.history_index = Some(last);
-                self.partial_user_line = self.local_send_history[last].clone();
+                let text = self.local_send_history[last].clone();
+                self.user_input = Input::new(text);
             }
             Some(i) if i > 0 => {
                 let next = i - 1;
                 self.history_index = Some(next);
-                self.partial_user_line = self.local_send_history[next].clone();
+                let text = self.local_send_history[next].clone();
+                self.user_input = Input::new(text);
             }
-            _ => {} // already at oldest history entry
+            _ => {}
         }
     }
 
@@ -193,14 +189,14 @@ impl LineMode {
             Some(i) if i + 1 < self.local_send_history.len() => {
                 let next = i + 1;
                 self.history_index = Some(next);
-                self.partial_user_line = self.local_send_history[next].clone();
+                let text = self.local_send_history[next].clone();
+                self.user_input = Input::new(text);
             }
             Some(_) => {
-                // Return to what the user was typing
                 self.history_index = None;
-                self.partial_user_line = std::mem::take(&mut self.temp_input);
+                self.user_input = std::mem::take(&mut self.temp_input);
             }
-            None => {} // already at live input prompt
+            None => {}
         }
     }
 
@@ -226,9 +222,6 @@ impl LineMode {
                         self.search_state.current_match = 0;
                         self.search_state.target_jump_index = Some(first_match_idx.line_idx);
                     }
-                } else {
-                    self.history_index = None;
-                    self.append_input_char(c);
                 }
                 UpdateEffect::None
             }
@@ -236,9 +229,6 @@ impl LineMode {
                 if self.search_state.active {
                     self.search_state.query.pop();
                     self.search_state.update_matches(&self.local_history);
-                } else {
-                    self.history_index = None;
-                    self.delete_last_input_char();
                 }
                 UpdateEffect::None
             }
@@ -259,21 +249,21 @@ impl LineMode {
                 UpdateEffect::None
             }
             LineInputAction::Submit => {
-                let line = std::mem::take(&mut self.partial_user_line);
-
-                self.temp_input.clear();
+                let text = self.user_input.value().to_string();
+                self.user_input.reset();
+                self.temp_input.reset();
                 self.history_index = None;
 
-                if !line.is_empty() && self.local_send_history.back() != Some(&line) {
-                    self.local_send_history.push_back(line.clone());
+                if !text.is_empty() && self.local_send_history.back() != Some(&text) {
+                    self.local_send_history.push_back(text.clone());
                 }
 
                 if local_echo {
-                    self.push_history(&line);
+                    self.push_history(&text);
                 }
 
                 // consumming string!
-                let mut bytes = line.into_bytes();
+                let mut bytes = text.into_bytes();
                 bytes.extend_from_slice(tx_eol_mode.as_bytes());
 
                 UpdateEffect::Transmit(bytes)
@@ -284,6 +274,15 @@ impl LineMode {
             }
             LineInputAction::HistoryDown => {
                 self.history_down();
+                UpdateEffect::None
+            }
+            // TODO: input prompt handle emac/vi shortcuts + clear when out history
+            LineInputAction::HandleKey(key_event) => {
+                if !self.search_state.active {
+                    self.history_index = None;
+                    self.user_input
+                        .handle_event(&crossterm::event::Event::Key(key_event));
+                }
                 UpdateEffect::None
             }
         }
