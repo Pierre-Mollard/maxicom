@@ -222,9 +222,9 @@ impl LineMode {
                 if self.search_state.active {
                     self.search_state.query.push(c);
                     self.search_state.update_matches(&self.local_history);
-                    if let Some(&first_match_idx) = self.search_state.match_indices.first() {
+                    if let Some(&first_match_idx) = self.search_state.matches.first() {
                         self.search_state.current_match = 0;
-                        self.search_state.target_jump_index = Some(first_match_idx);
+                        self.search_state.target_jump_index = Some(first_match_idx.line_idx);
                     }
                 } else {
                     self.history_index = None;
@@ -412,61 +412,71 @@ impl LineMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SearchMatch {
+    pub line_idx: usize,
+    pub occurrence_in_line: usize,
+}
+
 #[derive(Default)]
 pub struct SearchState {
     pub active: bool,
     pub query: String,
-    pub match_indices: Vec<usize>,
+    pub matches: Vec<SearchMatch>,
     pub current_match: usize,
     pub target_jump_index: Option<usize>,
 }
 
 impl SearchState {
     pub fn update_matches(&mut self, history: &VecDeque<LogEntry>) {
-        self.match_indices.clear();
+        self.matches.clear();
         if self.query.is_empty() {
             self.current_match = 0;
             return;
         }
 
         let q = self.query.to_lowercase();
-        for (idx, entry) in history.iter().enumerate() {
-            if entry.text.to_lowercase().contains(&q) {
-                self.match_indices.push(idx);
+        for (line_idx, entry) in history.iter().enumerate() {
+            let line_lower = entry.text.to_lowercase();
+            for (occurrence, _) in line_lower.match_indices(&q).enumerate() {
+                self.matches.push(SearchMatch {
+                    line_idx,
+                    occurrence_in_line: occurrence,
+                });
             }
         }
 
-        if self.current_match >= self.match_indices.len() {
-            self.current_match = self.match_indices.len().saturating_sub(1);
+        if self.current_match >= self.matches.len() {
+            self.current_match = self.matches.len().saturating_sub(1);
         }
     }
 
     pub fn next_match(&mut self) -> Option<usize> {
-        if self.match_indices.is_empty() {
+        if self.matches.is_empty() {
             return None;
         }
-        self.current_match = (self.current_match + 1) % self.match_indices.len();
-        Some(self.match_indices[self.current_match])
+        self.current_match = (self.current_match + 1) % self.matches.len();
+        Some(self.matches[self.current_match].line_idx)
     }
 
     pub fn prev_match(&mut self) -> Option<usize> {
-        if self.match_indices.is_empty() {
+        if self.matches.is_empty() {
             return None;
         }
         if self.current_match == 0 {
-            self.current_match = self.match_indices.len().saturating_sub(1);
+            self.current_match = self.matches.len().saturating_sub(1);
         } else {
             self.current_match -= 1;
         }
-        Some(self.match_indices[self.current_match])
+        Some(self.matches[self.current_match].line_idx)
     }
 
     pub fn matches_count(&self) -> usize {
-        self.match_indices.len()
+        self.matches.len()
     }
 
     pub fn current_match_display(&self) -> usize {
-        if self.match_indices.is_empty() {
+        if self.matches.is_empty() {
             0
         } else {
             self.current_match + 1
@@ -478,5 +488,14 @@ impl SearchState {
         if !active {
             self.target_jump_index = None;
         }
+    }
+
+    pub fn active_occurrence_for_line(&self, line_idx: usize) -> Option<usize> {
+        if let Some(m) = self.matches.get(self.current_match) {
+            if m.line_idx == line_idx {
+                return Some(m.occurrence_in_line);
+            }
+        }
+        None
     }
 }

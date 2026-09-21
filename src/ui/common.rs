@@ -176,3 +176,67 @@ pub fn border_style_for(target: FocusTarget, current: FocusTarget, app_focused: 
         Style::default().fg(Color::DarkGray)
     }
 }
+
+pub fn apply_search_highlight(
+    spans: Vec<Span<'static>>,
+    query: &str,
+    active_occurrence: Option<usize>,
+) -> Vec<Span<'static>> {
+    if query.is_empty() {
+        return spans;
+    }
+
+    let query_lower = query.to_lowercase();
+    let query_len = query.len();
+    let mut out_spans = Vec::new();
+    let mut current_occurrence_counter = 0;
+
+    let normal_match_style = Style::default().fg(Color::Black).bg(Color::Yellow);
+
+    let active_match_style = Style::default()
+        .fg(Color::Black)
+        .bg(Color::Rgb(255, 140, 0))
+        .add_modifier(Modifier::BOLD);
+
+    for span in spans {
+        let text = span.content.as_ref();
+        let text_lower = text.to_lowercase();
+
+        if !text_lower.contains(&query_lower) {
+            out_spans.push(span);
+            continue;
+        }
+
+        let mut last_idx = 0;
+        for (match_start, _) in text_lower.match_indices(&query_lower) {
+            let match_end = match_start + query_len;
+
+            if match_start > last_idx {
+                out_spans.push(Span::styled(
+                    text[last_idx..match_start].to_string(),
+                    span.style,
+                ));
+            }
+
+            let style_to_apply = if Some(current_occurrence_counter) == active_occurrence {
+                active_match_style
+            } else {
+                normal_match_style
+            };
+
+            out_spans.push(Span::styled(
+                text[match_start..match_end].to_string(),
+                span.style.patch(style_to_apply),
+            ));
+
+            current_occurrence_counter += 1;
+            last_idx = match_end;
+        }
+
+        if last_idx < text.len() {
+            out_spans.push(Span::styled(text[last_idx..].to_string(), span.style));
+        }
+    }
+
+    out_spans
+}

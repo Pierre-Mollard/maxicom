@@ -11,7 +11,7 @@ use crate::{
     app::App,
     config::{LineDisplayMode, WrapMode},
     types::{FocusTarget, ViewportSize},
-    ui::common::border_style_for,
+    ui::common::{apply_search_highlight, border_style_for},
 };
 
 use crate::types::LogEntry;
@@ -69,6 +69,8 @@ pub fn history_entry_to_line(
     entry: &LogEntry,
     timestamp_in_line: bool,
     mode: LineDisplayMode,
+    search_query: &str,
+    active_occurrence: Option<usize>,
 ) -> Line<'static> {
     let mut prefix_spans = Vec::new();
 
@@ -80,8 +82,15 @@ pub fn history_entry_to_line(
     // TODO: custom outside and inside (|)
     prefix_spans.push(Span::styled("| ", Style::default().fg(Color::DarkGray)));
 
-    prefix_spans.extend(format_line_content(&entry.text, mode));
+    let content_spans = format_line_content(&entry.text, mode);
 
+    if search_query.is_empty() {
+        prefix_spans.extend(content_spans);
+        return Line::from(prefix_spans);
+    }
+
+    let highlighted_spans = apply_search_highlight(content_spans, search_query, active_occurrence);
+    prefix_spans.extend(highlighted_spans);
     Line::from(prefix_spans)
 }
 
@@ -90,21 +99,40 @@ pub fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, outer_area: 
     let content_width = area.width as usize;
     let content_height = area.height as usize;
     let wrap_mode = app.config().line_mode.wrap_mode;
+    let display_mode = app.config().line_mode.display_mode;
 
     app.update_viewport(ViewportSize::new(area.width, area.height));
 
-    let mut history_lines: Vec<Line> = app
-        .line_mode
-        .history()
-        .iter()
-        .map(|entry| {
-            history_entry_to_line(
-                entry,
-                timestamp_in_line,
-                app.config().line_mode.display_mode,
-            )
-        })
-        .collect();
+    let is_search_active = app.line_mode.search().active;
+    let search_query = if is_search_active {
+        app.line_mode.search().query.as_str()
+    } else {
+        ""
+    };
+
+    let mut history_lines: Vec<Line> = if is_search_active {
+        app.line_mode
+            .history()
+            .iter()
+            .enumerate()
+            .map(|(idx, entry)| {
+                let active_occ = app.line_mode.search().active_occurrence_for_line(idx);
+                history_entry_to_line(
+                    entry,
+                    timestamp_in_line,
+                    display_mode,
+                    search_query,
+                    active_occ,
+                )
+            })
+            .collect()
+    } else {
+        app.line_mode
+            .history()
+            .iter()
+            .map(|entry| history_entry_to_line(entry, timestamp_in_line, display_mode, "", None))
+            .collect()
+    };
 
     if app.config().line_mode.display_partial_rx && !app.line_mode.partial_rx().is_empty() {
         let display_mode = app.config().line_mode.display_mode;
@@ -146,6 +174,7 @@ pub fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, outer_area: 
 
     app.line_mode.update_limits(max_scroll, max_pan);
 
+    // PERF: Visual row calculation for word-wrapped text when search-jump
     if let Some(target_idx) = app.line_mode.search_mut().target_jump_index.take()
         && target_idx < history_lines.len()
     {
