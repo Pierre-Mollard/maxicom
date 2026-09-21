@@ -104,7 +104,7 @@ pub fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, outer_area: 
 
     let is_search_active = app.line_mode.search().active;
     let search_query = if is_search_active {
-        app.line_mode.search().query.as_str()
+        app.line_mode.search().query_str()
     } else {
         ""
     };
@@ -236,6 +236,17 @@ pub fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, outer_area: 
 
         frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
     }
+
+    if app.line_mode.search().active {
+        let visual_cursor = app.line_mode.search().query.visual_cursor() as u16;
+
+        // outer_area.x + 1 (left border) + " SEARCH: " (9) + 1 (space) + visual_cursor
+        let cursor_x = outer_area.x + 1 + 9 + 1 + visual_cursor;
+        // Bottom border line of the monitor outer box
+        let cursor_y = outer_area.y + outer_area.height.saturating_sub(1);
+
+        frame.set_cursor_position((cursor_x, cursor_y));
+    }
 }
 
 pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect) {
@@ -271,9 +282,11 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect) {
 
     frame.render_widget(input_widget, area);
 
-    let cursor_x =
-        area.x + 1 + prefix_width + (input.visual_cursor().saturating_sub(scroll)) as u16;
-    let cursor_y = area.y + 1;
+    if !app.line_mode.search().active {
+        let cursor_x =
+            area.x + 1 + prefix_width + (input.visual_cursor().saturating_sub(scroll)) as u16;
+        let cursor_y = area.y + 1;
 
-    frame.set_cursor_position((cursor_x, cursor_y));
+        frame.set_cursor_position((cursor_x, cursor_y));
+    }
 }

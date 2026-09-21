@@ -43,8 +43,6 @@ pub enum AppAction {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LineInputAction {
-    InsertChar(char),
-    DeleteBack,
     Submit,
     HistoryUp,
     HistoryDown,
@@ -216,6 +214,12 @@ fn handle_line_mode(key: KeyEvent, is_search_active: bool) -> Action {
             KeyCode::Char('f') | KeyCode::Char('F') => {
                 return Action::LineInput(LineInputAction::ToggleSearch);
             }
+            KeyCode::Char('p') if is_search_active => {
+                return Action::LineInput(LineInputAction::SearchPrevious);
+            }
+            KeyCode::Char('n') if is_search_active => {
+                return Action::LineInput(LineInputAction::SearchNext);
+            }
             _ => return Action::Ignore,
         }
     }
@@ -224,10 +228,6 @@ fn handle_line_mode(key: KeyEvent, is_search_active: bool) -> Action {
         KeyCode::Enter => Action::LineInput(LineInputAction::Submit),
         KeyCode::Up => Action::LineInput(LineInputAction::HistoryUp),
         KeyCode::Down => Action::LineInput(LineInputAction::HistoryDown),
-        KeyCode::Char(c) if is_search_active => Action::LineInput(LineInputAction::InsertChar(c)),
-        KeyCode::Backspace if is_search_active => Action::LineInput(LineInputAction::DeleteBack),
-        KeyCode::Left if is_search_active => Action::LineInput(LineInputAction::SearchPrevious),
-        KeyCode::Right if is_search_active => Action::LineInput(LineInputAction::SearchNext),
         _ => Action::LineInput(LineInputAction::HandleKey(key)),
     }
 }

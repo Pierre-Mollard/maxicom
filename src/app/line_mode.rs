@@ -214,24 +214,6 @@ impl LineMode {
                 }
                 UpdateEffect::None
             }
-            LineInputAction::InsertChar(c) => {
-                if self.search_state.active {
-                    self.search_state.query.push(c);
-                    self.search_state.update_matches(&self.local_history);
-                    if let Some(&first_match_idx) = self.search_state.matches.first() {
-                        self.search_state.current_match = 0;
-                        self.search_state.target_jump_index = Some(first_match_idx.line_idx);
-                    }
-                }
-                UpdateEffect::None
-            }
-            LineInputAction::DeleteBack => {
-                if self.search_state.active {
-                    self.search_state.query.pop();
-                    self.search_state.update_matches(&self.local_history);
-                }
-                UpdateEffect::None
-            }
             LineInputAction::SearchPrevious => {
                 if self.search_state.active
                     && let Some(target_entry_idx) = self.search_state.prev_match()
@@ -282,6 +264,15 @@ impl LineMode {
                     self.history_index = None;
                     self.user_input
                         .handle_event(&crossterm::event::Event::Key(key_event));
+                } else {
+                    self.search_state
+                        .query
+                        .handle_event(&crossterm::event::Event::Key(key_event));
+                    self.search_state.update_matches(&self.local_history);
+                    if let Some(&first_match_idx) = self.search_state.matches.first() {
+                        self.search_state.current_match = 0;
+                        self.search_state.target_jump_index = Some(first_match_idx.line_idx);
+                    }
                 }
                 UpdateEffect::None
             }
@@ -420,7 +411,7 @@ pub struct SearchMatch {
 #[derive(Default)]
 pub struct SearchState {
     pub active: bool,
-    pub query: String,
+    pub query: Input,
     pub matches: Vec<SearchMatch>,
     pub current_match: usize,
     pub target_jump_index: Option<usize>,
@@ -429,12 +420,12 @@ pub struct SearchState {
 impl SearchState {
     pub fn update_matches(&mut self, history: &VecDeque<LogEntry>) {
         self.matches.clear();
-        if self.query.is_empty() {
+        if self.query_str().is_empty() {
             self.current_match = 0;
             return;
         }
 
-        let q = self.query.to_lowercase();
+        let q = self.query_str().to_lowercase();
         for (line_idx, entry) in history.iter().enumerate() {
             let line_lower = entry.text.to_lowercase();
             for (occurrence, _) in line_lower.match_indices(&q).enumerate() {
@@ -496,5 +487,10 @@ impl SearchState {
             }
         }
         None
+    }
+
+    #[inline]
+    pub fn query_str(&self) -> &str {
+        self.query.value()
     }
 }
