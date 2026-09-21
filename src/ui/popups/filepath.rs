@@ -32,7 +32,7 @@ pub fn render_filepath_popup(app: &App, dialog: &FilePathDialog, frame: &mut Fra
         Line::from(vec![
             Span::styled(" ▶ ", style),
             Span::raw("File    : "),
-            Span::styled(format!("{path_str}"), style),
+            Span::styled(path_str, style),
             Span::styled(" [type filepath]", Style::default().fg(Color::DarkGray)),
         ]),
         Line::from(""),

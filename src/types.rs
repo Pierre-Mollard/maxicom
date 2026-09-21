@@ -69,9 +69,8 @@ impl Overlay {
             Overlay::DeviceDisconnected(_) => {
                 if key.modifiers.contains(KeyModifiers::CONTROL)
                     && matches!(key.code, KeyCode::Char('c' | 'C'))
+                    || matches!(key.code, KeyCode::Esc | KeyCode::Enter)
                 {
-                    OverlayResponse::Quit
-                } else if matches!(key.code, KeyCode::Esc | KeyCode::Enter) {
                     OverlayResponse::Quit
                 } else {
                     OverlayResponse::Handled

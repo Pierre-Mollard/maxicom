@@ -69,11 +69,6 @@ impl LineMode {
     }
 
     #[inline]
-    pub fn input_buffer(&self) -> &str {
-        self.user_input.value()
-    }
-
-    #[inline]
     pub fn input(&self) -> &Input {
         &self.user_input
     }
@@ -481,10 +476,10 @@ impl SearchState {
     }
 
     pub fn active_occurrence_for_line(&self, line_idx: usize) -> Option<usize> {
-        if let Some(m) = self.matches.get(self.current_match) {
-            if m.line_idx == line_idx {
-                return Some(m.occurrence_in_line);
-            }
+        if let Some(m) = self.matches.get(self.current_match)
+            && m.line_idx == line_idx
+        {
+            return Some(m.occurrence_in_line);
         }
         None
     }
