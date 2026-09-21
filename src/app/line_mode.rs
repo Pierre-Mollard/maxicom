@@ -212,8 +212,8 @@ impl LineMode {
     ) -> UpdateEffect {
         match action {
             LineInputAction::ToggleSearch => {
-                self.toggle_search_mode(!self.is_search_mode());
-                if self.is_search_mode() {
+                self.search_state.toggle(!self.search_state.active);
+                if self.search_state.active {
                     self.search_state.update_matches(&self.local_history);
                 }
                 UpdateEffect::None
@@ -224,7 +224,7 @@ impl LineMode {
                     self.search_state.update_matches(&self.local_history);
                     if let Some(&first_match_idx) = self.search_state.match_indices.first() {
                         self.search_state.current_match = 0;
-                        self.scroll_to_history_index(first_match_idx);
+                        self.search_state.target_jump_index = Some(first_match_idx);
                     }
                 } else {
                     self.history_index = None;
@@ -244,17 +244,17 @@ impl LineMode {
             }
             LineInputAction::SearchPrevious => {
                 if self.search_state.active
-                    && let Some(history_line_id) = self.search_state.prev_match()
+                    && let Some(target_entry_idx) = self.search_state.prev_match()
                 {
-                    self.scroll_to_history_index(history_line_id);
+                    self.search_state.target_jump_index = Some(target_entry_idx);
                 }
                 UpdateEffect::None
             }
             LineInputAction::SearchNext => {
                 if self.search_state.active
-                    && let Some(history_line_id) = self.search_state.next_match()
+                    && let Some(target_entry_idx) = self.search_state.next_match()
                 {
-                    self.scroll_to_history_index(history_line_id);
+                    self.search_state.target_jump_index = Some(target_entry_idx);
                 }
                 UpdateEffect::None
             }
@@ -322,25 +322,8 @@ impl LineMode {
         self.x_offset = self.x_offset.min(self.max_pan);
     }
 
-    pub fn scroll_to_history_index(&mut self, target_id: usize) {
-        let total_lines = self.local_history.len();
-        let height = self.view_height;
-
-        if total_lines == 0 || target_id >= total_lines {
-            return;
-        }
-
-        if total_lines <= height {
-            self.scroll_from_bottom = 0;
-            return;
-        }
-        // FIXME: there is a offset of about 1 page in height
-        let lines_from_bottom = (total_lines - 1).saturating_sub(target_id);
-
-        let half_screen = self.view_height / 2;
-        let centered_scroll = lines_from_bottom.saturating_sub(half_screen);
-
-        self.scroll_from_bottom = centered_scroll.min(self.max_scroll);
+    pub fn scroll_to(&mut self, lines: usize) {
+        self.scroll_from_bottom = lines;
     }
 
     pub fn scroll_up(&mut self, lines: usize) {
@@ -418,24 +401,14 @@ impl LineMode {
         self.new_content_missed
     }
 
-    pub fn is_search_mode(&self) -> bool {
-        self.search_state.active
+    #[inline]
+    pub fn search(&self) -> &SearchState {
+        &self.search_state
     }
 
-    pub fn toggle_search_mode(&mut self, state: bool) {
-        self.search_state.active = state;
-    }
-
-    pub fn search_match_count(&self) -> usize {
-        self.search_state.match_indices.len()
-    }
-
-    pub fn search_match_current(&self) -> usize {
-        self.search_state.current_match
-    }
-
-    pub fn search_query(&self) -> &str {
-        &self.search_state.query
+    #[inline]
+    pub fn search_mut(&mut self) -> &mut SearchState {
+        &mut self.search_state
     }
 }
 
@@ -445,6 +418,7 @@ pub struct SearchState {
     pub query: String,
     pub match_indices: Vec<usize>,
     pub current_match: usize,
+    pub target_jump_index: Option<usize>,
 }
 
 impl SearchState {
@@ -485,5 +459,24 @@ impl SearchState {
             self.current_match -= 1;
         }
         Some(self.match_indices[self.current_match])
+    }
+
+    pub fn matches_count(&self) -> usize {
+        self.match_indices.len()
+    }
+
+    pub fn current_match_display(&self) -> usize {
+        if self.match_indices.is_empty() {
+            0
+        } else {
+            self.current_match + 1
+        }
+    }
+
+    pub fn toggle(&mut self, active: bool) {
+        self.active = active;
+        if !active {
+            self.target_jump_index = None;
+        }
     }
 }

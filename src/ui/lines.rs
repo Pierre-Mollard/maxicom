@@ -119,20 +119,13 @@ pub fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, outer_area: 
             partial_spans.push(Span::styled(time, Style::default().fg(Color::Yellow)));
         }
 
-        // Prefix with a subtle indicator or standard pipe
         partial_spans.push(Span::styled("|p ", Style::default().fg(Color::DarkGray)));
-
         partial_spans.extend(format_line_content(&partial_raw, display_mode));
-
         history_lines.push(Line::from(partial_spans));
     }
 
-    let line_x_offset = match wrap_mode {
-        WrapMode::Wrap => 0,
-        WrapMode::Truncate => app.line_mode.x_offset(),
-    };
     let history_line_count = history_lines.len();
-    let mut history_paragraph = Paragraph::new(history_lines);
+    let mut history_paragraph = Paragraph::new(&history_lines[..]);
 
     history_paragraph = match wrap_mode {
         WrapMode::Wrap => history_paragraph.wrap(Wrap { trim: false }),
@@ -153,8 +146,41 @@ pub fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, outer_area: 
 
     app.line_mode.update_limits(max_scroll, max_pan);
 
+    if let Some(target_idx) = app.line_mode.search_mut().target_jump_index.take()
+        && target_idx < history_lines.len()
+    {
+        let target_visual_row: usize = match wrap_mode {
+            WrapMode::Truncate => target_idx,
+            WrapMode::Wrap => {
+                let w = (content_width as u16).max(1);
+                history_lines
+                    .iter()
+                    .take(target_idx)
+                    .map(|line| {
+                        Paragraph::new(vec![line.clone()])
+                            .wrap(Wrap { trim: false })
+                            .line_count(w)
+                            .max(1)
+                    })
+                    .sum()
+            }
+        };
+
+        let rows_from_bottom = total_visual_rows
+            .saturating_sub(1)
+            .saturating_sub(target_visual_row);
+        let half_screen = content_height / 2;
+        let centered_scroll = rows_from_bottom.saturating_sub(half_screen);
+
+        app.line_mode.scroll_to(centered_scroll.min(max_scroll));
+    }
+
     let scroll_from_bottom = app.line_mode.scroll_offset();
     let paragraph_y_offset = max_scroll.saturating_sub(scroll_from_bottom);
+    let line_x_offset = match wrap_mode {
+        WrapMode::Wrap => 0,
+        WrapMode::Truncate => app.line_mode.x_offset(),
+    };
 
     history_paragraph = history_paragraph.scroll((
         paragraph_y_offset.min(u16::MAX as usize) as u16,

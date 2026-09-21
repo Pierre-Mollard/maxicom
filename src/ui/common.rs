@@ -132,13 +132,9 @@ pub fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
                 );
             }
 
-            if app.line_mode.is_search_mode() {
-                let match_count = app.line_mode.search_match_count();
-                let current_pos = if match_count > 0 {
-                    app.line_mode.search_match_current() + 1
-                } else {
-                    0
-                };
+            if app.line_mode.search().active {
+                let match_count = app.line_mode.search().matches_count();
+                let current_pos = app.line_mode.search().current_match_display();
 
                 titles.push(Line::from(vec![
                     Span::styled(
@@ -146,7 +142,7 @@ pub fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
                         Style::default().bg(Color::Blue).fg(Color::White),
                     ),
                     Span::styled(
-                        format!(" {} ", app.line_mode.search_query()),
+                        format!(" {} ", app.line_mode.search().query),
                         Style::default().fg(Color::Yellow),
                     ),
                     Span::styled(
