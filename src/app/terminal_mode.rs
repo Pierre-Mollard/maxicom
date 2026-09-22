@@ -251,6 +251,27 @@ impl TerminalMode {
         self.reconcile_both_vertical_scroll();
     }
 
+    pub fn scroll_to_target_line(&mut self, target_line_idx: usize, view_height: usize) {
+        let (grid_rows, _) = self.get_vt100_size();
+        let max_sb = self.max_content_scrollback;
+        let total_world_lines = max_sb + (grid_rows as usize);
+
+        if total_world_lines == 0 || target_line_idx >= total_world_lines {
+            return;
+        }
+
+        let lines_from_bottom = (total_world_lines - 1).saturating_sub(target_line_idx);
+
+        let effective_height = (grid_rows as usize).min(view_height);
+        let half_canvas = effective_height / 2;
+
+        let target_scrollback_offset = lines_from_bottom.saturating_sub(half_canvas);
+
+        let max_total = self.max_vertical_scroll();
+        self.scrollback_offset = target_scrollback_offset.min(max_total);
+        self.reconcile_both_vertical_scroll();
+    }
+
     /// Return Some(pan possible, max pan explored since start)
     pub fn can_pan_right(&self) -> Option<usize> {
         if self.max_pan.saturating_sub(self.pan_offset_x) > 0 {
@@ -287,6 +308,36 @@ impl TerminalMode {
         self.vt100_parser.screen().size()
     }
 
+    pub fn get_max_scrollback(&self) -> usize {
+        self.max_content_scrollback
+    }
+
+    pub fn all_text_lines(&mut self) -> Vec<String> {
+        let max_sb = self.max_content_scrollback;
+        let (rows, cols) = self.get_vt100_size();
+        let current_sb = self.vt100_parser.screen().scrollback();
+
+        let mut lines = Vec::with_capacity(max_sb + rows as usize);
+
+        let mut sb = max_sb;
+        while sb > 0 {
+            self.vt100_parser.screen_mut().set_scrollback(sb);
+            if let Some(first_row) = self.vt100_parser.screen().rows(0, cols).next() {
+                lines.push(first_row);
+            }
+            sb -= 1;
+        }
+
+        self.vt100_parser.screen_mut().set_scrollback(0);
+        for row in self.vt100_parser.screen().rows(0, cols) {
+            lines.push(row);
+        }
+
+        self.vt100_parser.screen_mut().set_scrollback(current_sb);
+
+        lines
+    }
+
     pub fn is_new_content_missed(&self) -> bool {
         self.new_content_missed
     }
@@ -307,8 +358,8 @@ impl TerminalMode {
     }
 
     pub fn update_search_matches(&mut self) {
-        // FIXME:
-        //self.search_state.update_matches(&self.local_history);
+        let text = self.all_text_lines();
+        self.search_state.update_matches_from_strings(&text);
     }
 
     pub fn handle_input_search(&mut self, key_event: KeyEvent) {

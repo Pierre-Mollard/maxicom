@@ -18,6 +18,11 @@ pub fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, outer
     let is_terminal_focused = focus == FocusTarget::Terminal;
     let cursor = MaxicomCursor::from_config(&app.config().terminal_mode.cursor);
 
+    if let Some(target_idx) = app.terminal_mode.search_mut().target_jump_index.take() {
+        app.terminal_mode
+            .scroll_to_target_line(target_idx, view_height);
+    }
+
     let term_widget = MaxicomTerminal::new(app.terminal_mode.vt100_screen())
         .x_offset(app.terminal_mode.pan_offset_x() as u16)
         .y_offset(app.terminal_mode.pan_offset_y() as u16)
@@ -26,6 +31,96 @@ pub fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, outer
         .filling_char(&app.config().terminal_mode.empty_fill_char);
 
     frame.render_widget(term_widget, area);
+
+    if app.terminal_mode.search().active && !app.terminal_mode.search().query_str().is_empty() {
+        let (grid_rows, cols) = app.terminal_mode.get_vt100_size();
+        let max_sb = app.terminal_mode.get_max_scrollback();
+        let current_sb = app.terminal_mode.vt100_screen().scrollback();
+        let pan_x = app.terminal_mode.pan_offset_x();
+        let pan_y = app.terminal_mode.pan_offset_y();
+
+        let query = app.terminal_mode.search().query_str();
+        let q_lower = query.to_lowercase();
+        // Number of characters (columns)
+        let query_char_count = query.chars().count();
+
+        let normal_match_bg = Color::Yellow;
+        let active_match_bg = Color::Rgb(255, 140, 0); // Orange
+        let highlight_fg = Color::Black;
+
+        let active_match_idx = app.terminal_mode.search().current_match;
+
+        for (idx, search_match) in app.terminal_mode.search().matches.iter().enumerate() {
+            let top_visible_world_line = if current_sb > 0 {
+                max_sb.saturating_sub(current_sb)
+            } else {
+                max_sb
+            };
+
+            if search_match.line_idx < top_visible_world_line {
+                continue;
+            }
+            let emulator_row = search_match.line_idx - top_visible_world_line;
+            if emulator_row >= grid_rows as usize {
+                continue;
+            }
+
+            if emulator_row < pan_y {
+                continue;
+            }
+            let viewer_row = emulator_row - pan_y;
+            if viewer_row >= area.height as usize {
+                continue;
+            }
+
+            let row_text = app
+                .terminal_mode
+                .vt100_screen()
+                .rows(0, cols)
+                .nth(emulator_row)
+                .unwrap_or_default();
+
+            let row_lower = row_text.to_lowercase();
+
+            if let Some((byte_start, _)) = row_lower
+                .match_indices(&q_lower)
+                .nth(search_match.occurrence_in_line)
+            {
+                let char_col_start = row_text[..byte_start].chars().count();
+
+                if char_col_start + query_char_count <= pan_x {
+                    continue;
+                }
+
+                let is_active = idx == active_match_idx;
+                let bg_color = if is_active {
+                    active_match_bg
+                } else {
+                    normal_match_bg
+                };
+
+                let buf = frame.buffer_mut();
+
+                for c in 0..query_char_count {
+                    let world_col = char_col_start + c;
+                    if world_col < pan_x {
+                        continue;
+                    }
+                    let viewer_col = world_col - pan_x;
+                    if viewer_col >= area.width as usize {
+                        break;
+                    }
+
+                    let buf_x = area.x + viewer_col as u16;
+                    let buf_y = area.y + viewer_row as u16;
+
+                    let cell = &mut buf[(buf_x, buf_y)];
+                    cell.set_bg(bg_color);
+                    cell.set_fg(highlight_fg);
+                }
+            }
+        }
+    }
 
     let max_vertical = app.terminal_mode.max_vertical_scroll();
     if max_vertical > 0 && view_height > 0 {

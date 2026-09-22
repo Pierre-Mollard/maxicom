@@ -278,16 +278,16 @@ impl App {
             }
             (InputMode::Terminal, HistoryAction::SearchPrevious) => {
                 if self.terminal_mode.search().active
-                    && let Some(target_entry_idx) = self.terminal_mode.search_mut().prev_match()
+                    && let Some(target_line_idx) = self.terminal_mode.search_mut().prev_match()
                 {
-                    self.terminal_mode.search_mut().target_jump_index = Some(target_entry_idx);
+                    self.terminal_mode.search_mut().target_jump_index = Some(target_line_idx);
                 }
             }
             (InputMode::Terminal, HistoryAction::SearchNext) => {
                 if self.terminal_mode.search().active
-                    && let Some(target_entry_idx) = self.terminal_mode.search_mut().next_match()
+                    && let Some(target_line_idx) = self.terminal_mode.search_mut().next_match()
                 {
-                    self.terminal_mode.search_mut().target_jump_index = Some(target_entry_idx);
+                    self.terminal_mode.search_mut().target_jump_index = Some(target_line_idx);
                 }
             }
             (InputMode::Terminal, HistoryAction::HandleKey(key_event)) => {

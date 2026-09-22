@@ -243,7 +243,8 @@ impl LineMode {
     }
 
     pub fn update_search_matches(&mut self) {
-        self.search_state.update_matches(&self.local_history);
+        self.search_state
+            .update_matches_from_entries(&self.local_history);
     }
 
     pub fn handle_input_search(&mut self, key_event: KeyEvent) {

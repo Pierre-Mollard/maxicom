@@ -21,7 +21,7 @@ pub struct SearchState {
 }
 
 impl SearchState {
-    pub fn update_matches(&mut self, history: &VecDeque<LogEntry>) {
+    pub fn update_matches_from_entries(&mut self, history: &VecDeque<LogEntry>) {
         self.matches.clear();
         if self.query_str().is_empty() {
             self.current_match = 0;
@@ -31,6 +31,30 @@ impl SearchState {
         let q = self.query_str().to_lowercase();
         for (line_idx, entry) in history.iter().enumerate() {
             let line_lower = entry.text.to_lowercase();
+            for (occurrence, _) in line_lower.match_indices(&q).enumerate() {
+                self.matches.push(SearchMatch {
+                    line_idx,
+                    occurrence_in_line: occurrence,
+                });
+            }
+        }
+
+        if self.current_match >= self.matches.len() {
+            self.current_match = self.matches.len().saturating_sub(1);
+        }
+    }
+
+    pub fn update_matches_from_strings(&mut self, all_lines: &Vec<String>) {
+        self.matches.clear();
+        if self.query_str().is_empty() {
+            self.current_match = 0;
+            return;
+        }
+
+        let q = self.query_str().to_lowercase();
+
+        for (line_idx, line_text) in all_lines.iter().enumerate() {
+            let line_lower = line_text.to_lowercase();
             for (occurrence, _) in line_lower.match_indices(&q).enumerate() {
                 self.matches.push(SearchMatch {
                     line_idx,
