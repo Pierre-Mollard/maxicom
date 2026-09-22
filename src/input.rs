@@ -46,9 +46,6 @@ pub enum LineInputAction {
     Submit,
     HistoryUp,
     HistoryDown,
-    ToggleSearch,
-    SearchNext,
-    SearchPrevious,
     HandleKey(KeyEvent),
 }
 
@@ -69,6 +66,10 @@ pub enum HistoryAction {
     PanLeft(usize),
     PanRight(usize),
     Clear,
+    ToggleSearch,
+    SearchNext,
+    SearchPrevious,
+    HandleKey(KeyEvent),
 } // TODO: add selection and copy
 
 /// Using crossterm's event API instead of stdin.read() to handle multi-byte ANSI sequence like
@@ -114,13 +115,19 @@ pub fn handle_event(event: Event, app: &App) -> Action {
     }
 
     match app.config().input_mode {
-        InputMode::Line => handle_line_mode(key_event, app.line_mode.search().active),
+        InputMode::Line => handle_line_mode(key_event),
         InputMode::Terminal => handle_terminal_mode(key_event),
     }
 }
 
 // Common check
 fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
+    // TODO: cleanup and refactor a bit HistoryAction for search in both mode
+    let is_search_active = match app.config().input_mode {
+        InputMode::Line => app.line_mode.search().active,
+        InputMode::Terminal => app.terminal_mode.search().active,
+    };
+
     // PREFIX SECTION
     if app.is_prefix_active() {
         // SUB NO MODIFIER SECTION
@@ -130,6 +137,13 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
                 return Some(Action::App(AppAction::ToggleSetting(SettingKey::InputMode)));
             }
             KeyCode::Char('a') => {
+                // in search both mode, execute "Go to start of line"
+                if is_search_active {
+                    return Some(Action::History(HistoryAction::HandleKey(KeyEvent::new(
+                        KeyCode::Home,
+                        KeyModifiers::NONE,
+                    ))));
+                }
                 // in line mode, execute "Go to start of line"
                 if app.config().input_mode == InputMode::Line {
                     return Some(Action::LineInput(LineInputAction::HandleKey(
@@ -186,6 +200,16 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         match key.code {
             KeyCode::Char('a') => return Some(Action::App(AppAction::SetPrefix(true))),
+            KeyCode::Char('f') | KeyCode::Char('F') => {
+                return Some(Action::History(HistoryAction::ToggleSearch));
+            }
+            KeyCode::Char('p') if is_search_active => {
+                return Some(Action::History(HistoryAction::SearchPrevious));
+            }
+            KeyCode::Char('n') if is_search_active => {
+                return Some(Action::History(HistoryAction::SearchNext));
+            }
+            _ if is_search_active => return Some(Action::History(HistoryAction::HandleKey(*key))),
             _ => return None,
         }
     }
@@ -194,6 +218,7 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
     if key.modifiers.contains(KeyModifiers::ALT) {
         match key.code {
             KeyCode::Char('c') => return Some(Action::History(HistoryAction::Clear)),
+            _ if is_search_active => return Some(Action::History(HistoryAction::HandleKey(*key))),
             _ => return None,
         }
     }
@@ -203,6 +228,7 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
         match key.code {
             KeyCode::Home => return Some(Action::History(HistoryAction::ScrollToTop)),
             KeyCode::End => return Some(Action::History(HistoryAction::ScrollToBottom)),
+            _ if is_search_active => return Some(Action::History(HistoryAction::HandleKey(*key))),
             _ => return None,
         }
     }
@@ -211,32 +237,24 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
     match key.code {
         KeyCode::PageUp => Some(Action::History(HistoryAction::ScrollUpPage)),
         KeyCode::PageDown => Some(Action::History(HistoryAction::ScrollDownPage)),
+        KeyCode::Enter if is_search_active => Some(Action::History(HistoryAction::SearchNext)),
+        KeyCode::Esc if is_search_active => Some(Action::History(HistoryAction::ToggleSearch)),
+        _ if is_search_active => Some(Action::History(HistoryAction::HandleKey(*key))),
         _ => None,
     }
 }
 
 // Final check in LINE MODE
-fn handle_line_mode(key: KeyEvent, is_search_active: bool) -> Action {
+fn handle_line_mode(key: KeyEvent) -> Action {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         match key.code {
             KeyCode::Char('c') | KeyCode::Char('q') => return Action::App(AppAction::Quit),
-            KeyCode::Char('f') | KeyCode::Char('F') => {
-                return Action::LineInput(LineInputAction::ToggleSearch);
-            }
-            KeyCode::Char('p') if is_search_active => {
-                return Action::LineInput(LineInputAction::SearchPrevious);
-            }
-            KeyCode::Char('n') if is_search_active => {
-                return Action::LineInput(LineInputAction::SearchNext);
-            }
             _ => return Action::LineInput(LineInputAction::HandleKey(key)),
         }
     }
 
     match key.code {
-        KeyCode::Enter if !is_search_active => Action::LineInput(LineInputAction::Submit),
-        KeyCode::Enter if is_search_active => Action::LineInput(LineInputAction::SearchNext),
-        KeyCode::Esc if is_search_active => Action::LineInput(LineInputAction::ToggleSearch),
+        KeyCode::Enter => Action::LineInput(LineInputAction::Submit),
         KeyCode::Up => Action::LineInput(LineInputAction::HistoryUp),
         KeyCode::Down => Action::LineInput(LineInputAction::HistoryDown),
         _ => Action::LineInput(LineInputAction::HandleKey(key)),

@@ -1,10 +1,14 @@
 use std::{collections::VecDeque, io, path::PathBuf};
 
 use chrono::{DateTime, Local};
+use crossterm::event::KeyEvent;
 use vt100::Parser;
 
 use crate::{
-    app::{UpdateEffect, ViewportSize},
+    app::{
+        UpdateEffect, ViewportSize,
+        search::{SearchState, dispatch_input_key},
+    },
     config::TextEncoding,
     input::TerminalAction,
     logger::TerminalLogger,
@@ -22,6 +26,7 @@ pub struct TerminalMode {
     max_pan: usize,
     max_history_lines: usize,
     new_content_missed: bool,
+    search_state: SearchState,
 
     pub history_timestamps: VecDeque<DateTime<Local>>,
     pub screen_timestamps: Vec<Option<DateTime<Local>>>,
@@ -30,6 +35,7 @@ pub struct TerminalMode {
 impl TerminalMode {
     pub fn new(max_history_lines: usize, rows: u16, cols: u16, logger: TerminalLogger) -> Self {
         let vt100_parser = Parser::new(rows, cols, max_history_lines);
+        let search_state = SearchState::default();
 
         TerminalMode {
             vt100_parser,
@@ -43,6 +49,7 @@ impl TerminalMode {
             max_pan: 0,
             max_history_lines,
             new_content_missed: false,
+            search_state,
             history_timestamps: VecDeque::with_capacity(max_history_lines),
             screen_timestamps: vec![None; rows as usize],
         }
@@ -299,6 +306,20 @@ impl TerminalMode {
         }
     }
 
+    pub fn update_search_matches(&mut self) {
+        // FIXME:
+        //self.search_state.update_matches(&self.local_history);
+    }
+
+    pub fn handle_input_search(&mut self, key_event: KeyEvent) {
+        dispatch_input_key(&mut self.search_state.query, key_event);
+        self.update_search_matches();
+        if let Some(&first_match_idx) = self.search_state.matches.first() {
+            self.search_state.current_match = 0;
+            self.search_state.target_jump_index = Some(first_match_idx.line_idx);
+        }
+    }
+
     pub fn start_logging(&mut self, path: PathBuf) -> io::Result<()> {
         self.logger.start_with_path(path)
     }
@@ -313,5 +334,15 @@ impl TerminalMode {
 
     pub fn logger_active_path(&self) -> &PathBuf {
         self.logger.active_path()
+    }
+
+    #[inline]
+    pub fn search(&self) -> &SearchState {
+        &self.search_state
+    }
+
+    #[inline]
+    pub fn search_mut(&mut self) -> &mut SearchState {
+        &mut self.search_state
     }
 }

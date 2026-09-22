@@ -100,6 +100,26 @@ pub fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
                     .right_aligned(),
                 );
             }
+
+            if app.terminal_mode.search().active {
+                let match_count = app.terminal_mode.search().matches_count();
+                let current_pos = app.terminal_mode.search().current_match_display();
+
+                titles.push(Line::from(vec![
+                    Span::styled(
+                        " SEARCH: ",
+                        Style::default().bg(Color::Blue).fg(Color::White),
+                    ),
+                    Span::styled(
+                        format!(" {} ", app.terminal_mode.search().query),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Span::styled(
+                        format!("({}/{}) [ <-/->, Esc: Exit ] ", current_pos, match_count),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]))
+            }
         }
         InputMode::Line => {
             if let Some(pan_left_possible) = app.line_mode.can_pan_left() {

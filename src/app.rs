@@ -13,6 +13,7 @@ use crate::{
 };
 
 pub mod line_mode;
+pub mod search;
 pub mod terminal_mode;
 
 pub use line_mode::LineMode;
@@ -220,6 +221,31 @@ impl App {
             (InputMode::Line, HistoryAction::PanRight(cols)) => {
                 self.line_mode.pan_to_right(cols);
             }
+            (InputMode::Line, HistoryAction::ToggleSearch) => {
+                self.line_mode.search_mut().toggle_itself();
+                if self.line_mode.search().active {
+                    self.line_mode.update_search_matches();
+                }
+            }
+            (InputMode::Line, HistoryAction::SearchPrevious) => {
+                if self.line_mode.search().active
+                    && let Some(target_entry_idx) = self.line_mode.search_mut().prev_match()
+                {
+                    self.line_mode.search_mut().target_jump_index = Some(target_entry_idx);
+                }
+            }
+            (InputMode::Line, HistoryAction::SearchNext) => {
+                if self.line_mode.search().active
+                    && let Some(target_entry_idx) = self.line_mode.search_mut().next_match()
+                {
+                    self.line_mode.search_mut().target_jump_index = Some(target_entry_idx);
+                }
+            }
+            (InputMode::Line, HistoryAction::HandleKey(key_event)) => {
+                if self.line_mode.search().active {
+                    self.line_mode.handle_input_search(key_event);
+                }
+            }
             (InputMode::Terminal, HistoryAction::ScrollUp(lines)) => {
                 self.terminal_mode.scroll_up(lines);
             }
@@ -243,6 +269,31 @@ impl App {
             }
             (InputMode::Terminal, HistoryAction::PanLeft(cols)) => {
                 self.terminal_mode.pan_to_left(cols, self.viewport.cols);
+            }
+            (InputMode::Terminal, HistoryAction::ToggleSearch) => {
+                self.terminal_mode.search_mut().toggle_itself();
+                if self.terminal_mode.search().active {
+                    self.terminal_mode.update_search_matches();
+                }
+            }
+            (InputMode::Terminal, HistoryAction::SearchPrevious) => {
+                if self.terminal_mode.search().active
+                    && let Some(target_entry_idx) = self.terminal_mode.search_mut().prev_match()
+                {
+                    self.terminal_mode.search_mut().target_jump_index = Some(target_entry_idx);
+                }
+            }
+            (InputMode::Terminal, HistoryAction::SearchNext) => {
+                if self.terminal_mode.search().active
+                    && let Some(target_entry_idx) = self.terminal_mode.search_mut().next_match()
+                {
+                    self.terminal_mode.search_mut().target_jump_index = Some(target_entry_idx);
+                }
+            }
+            (InputMode::Terminal, HistoryAction::HandleKey(key_event)) => {
+                if self.terminal_mode.search().active {
+                    self.terminal_mode.handle_input_search(key_event);
+                }
             }
             (InputMode::Terminal, HistoryAction::Clear) => todo!(),
         }

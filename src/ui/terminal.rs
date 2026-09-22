@@ -55,7 +55,11 @@ pub fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, outer
     let screen = app.terminal_mode.vt100_screen();
     let is_scrolled_into_history = screen.scrollback() > 0;
 
-    if is_terminal_focused && !screen.hide_cursor() && !is_scrolled_into_history {
+    if !app.terminal_mode.search().active
+        && is_terminal_focused
+        && !screen.hide_cursor()
+        && !is_scrolled_into_history
+    {
         let (c_row, c_col) = screen.cursor_position();
 
         let local_col = c_col.checked_sub(app.terminal_mode.pan_offset_x() as u16);
@@ -67,6 +71,17 @@ pub fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, outer
         {
             frame.set_cursor_position((area.x + col, area.y + row));
         }
+    }
+
+    if app.terminal_mode.search().active {
+        let visual_cursor = app.terminal_mode.search().query.visual_cursor() as u16;
+
+        // outer_area.x + 1 (left border) + " SEARCH: " (9) + 1 (space) + visual_cursor
+        let cursor_x = outer_area.x + 1 + 9 + 1 + visual_cursor;
+        // Bottom border line of the monitor outer box
+        let cursor_y = outer_area.y + outer_area.height.saturating_sub(1);
+
+        frame.set_cursor_position((cursor_x, cursor_y));
     }
 }
 
