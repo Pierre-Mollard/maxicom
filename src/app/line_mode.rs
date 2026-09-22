@@ -1,6 +1,7 @@
 use chrono::{DateTime, Local};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::{collections::VecDeque, io, path::PathBuf};
-use tui_input::{Input, backend::crossterm::EventHandler};
+use tui_input::{Input, InputRequest, backend::crossterm::EventHandler};
 
 use crate::{
     app::UpdateEffect,
@@ -253,16 +254,12 @@ impl LineMode {
                 self.history_down();
                 UpdateEffect::None
             }
-            // TODO: input prompt handle emac/vi shortcuts + clear when out history
             LineInputAction::HandleKey(key_event) => {
                 if !self.search_state.active {
                     self.history_index = None;
-                    self.user_input
-                        .handle_event(&crossterm::event::Event::Key(key_event));
+                    dispatch_input_key(&mut self.user_input, key_event);
                 } else {
-                    self.search_state
-                        .query
-                        .handle_event(&crossterm::event::Event::Key(key_event));
+                    dispatch_input_key(&mut self.search_state.query, key_event);
                     self.search_state.update_matches(&self.local_history);
                     if let Some(&first_match_idx) = self.search_state.matches.first() {
                         self.search_state.current_match = 0;
@@ -488,4 +485,63 @@ impl SearchState {
     pub fn query_str(&self) -> &str {
         self.query.value()
     }
+}
+
+// TODO: implement a vim motion mode (and generalize for any Input in project?)
+fn dispatch_input_key(input: &mut Input, key: KeyEvent) {
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        match key.code {
+            KeyCode::Char('e') => {
+                input.handle(InputRequest::GoToEnd);
+                return;
+            }
+            KeyCode::Char('u') => {
+                input.reset();
+                return;
+            }
+            KeyCode::Char('w') => {
+                input.handle(InputRequest::DeletePrevWord);
+                return;
+            }
+            KeyCode::Char('d') => {
+                input.handle(InputRequest::DeleteNextChar);
+                return;
+            }
+            KeyCode::Char('k') => {
+                let cursor = input.cursor();
+                let text = input.value()[..cursor].to_string();
+                *input = Input::new(text).with_cursor(cursor);
+                return;
+            }
+            KeyCode::Left => {
+                input.handle(InputRequest::GoToPrevWord);
+                return;
+            }
+            KeyCode::Right => {
+                input.handle(InputRequest::GoToNextWord);
+                return;
+            }
+            _ => {}
+        }
+    }
+
+    if key.modifiers.contains(KeyModifiers::ALT) {
+        match key.code {
+            KeyCode::Char('b') | KeyCode::Left => {
+                input.handle(InputRequest::GoToPrevWord);
+                return;
+            }
+            KeyCode::Char('f') | KeyCode::Right => {
+                input.handle(InputRequest::GoToNextWord);
+                return;
+            }
+            KeyCode::Backspace | KeyCode::Char('d') => {
+                input.handle(InputRequest::DeleteNextWord);
+                return;
+            }
+            _ => {}
+        }
+    }
+
+    input.handle_event(&crossterm::event::Event::Key(key));
 }

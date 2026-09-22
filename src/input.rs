@@ -129,7 +129,16 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
             KeyCode::Char('m') | KeyCode::Char('M') => {
                 return Some(Action::App(AppAction::ToggleSetting(SettingKey::InputMode)));
             }
-            KeyCode::Char('a') => return Some(Action::TransmitRaw(vec![0x01])),
+            KeyCode::Char('a') => {
+                // in line mode, execute "Go to start of line"
+                if app.config().input_mode == InputMode::Line {
+                    return Some(Action::LineInput(LineInputAction::HandleKey(
+                        KeyEvent::new(KeyCode::Home, KeyModifiers::NONE),
+                    )));
+                } else {
+                    return Some(Action::TransmitRaw(vec![0x01]));
+                }
+            }
             KeyCode::Char('h') | KeyCode::Char('H') => {
                 return Some(Action::OpenOverlay(Overlay::Help));
             }
@@ -220,12 +229,14 @@ fn handle_line_mode(key: KeyEvent, is_search_active: bool) -> Action {
             KeyCode::Char('n') if is_search_active => {
                 return Action::LineInput(LineInputAction::SearchNext);
             }
-            _ => return Action::Ignore,
+            _ => return Action::LineInput(LineInputAction::HandleKey(key)),
         }
     }
 
     match key.code {
-        KeyCode::Enter => Action::LineInput(LineInputAction::Submit),
+        KeyCode::Enter if !is_search_active => Action::LineInput(LineInputAction::Submit),
+        KeyCode::Enter if is_search_active => Action::LineInput(LineInputAction::SearchNext),
+        KeyCode::Esc if is_search_active => Action::LineInput(LineInputAction::ToggleSearch),
         KeyCode::Up => Action::LineInput(LineInputAction::HistoryUp),
         KeyCode::Down => Action::LineInput(LineInputAction::HistoryDown),
         _ => Action::LineInput(LineInputAction::HandleKey(key)),
