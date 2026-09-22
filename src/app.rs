@@ -109,7 +109,7 @@ impl App {
             ),
             Action::Terminal(action) => self.terminal_mode.update_action_terminal(action),
             Action::History(action) => self.update_action_history(action),
-            Action::CopyMode(action) => todo!(), // TODO: implement copy mode actions
+            Action::CopyMode(action) => self.update_action_copy_mode(action),
             Action::App(action) => self.update_action_app(action),
             Action::Ignore => UpdateEffect::None,
             Action::OpenOverlay(overlay) => {
@@ -192,6 +192,32 @@ impl App {
             }
             AppAction::Quit => UpdateEffect::Quit,
         }
+    }
+
+    fn update_action_copy_mode(&mut self, action: CopyModeAction) -> UpdateEffect {
+        self.prefix_active = false;
+
+        let yanked_text = match self.app_config.input_mode {
+            InputMode::Line => self.line_mode.handle_copy_action(action),
+            InputMode::Terminal => self.terminal_mode.handle_copy_action(action),
+        };
+
+        // If text was yanked, copy it to the OS clipboard and toast
+        /* TODO: add yank
+        *
+        if let Some(text) = yanked_text {
+            match copy_to_system_clipboard(&text) {
+                Ok(()) => {
+                    let char_count = text.chars().count();
+                    self.notify_success(format!("Copied {char_count} chars to clipboard"));
+                }
+                Err(err) => {
+                    self.notify_error(format!("Clipboard error: {err}"));
+                }
+            }
+        }
+        */
+        UpdateEffect::None
     }
 
     fn update_action_history(&mut self, action: HistoryAction) -> UpdateEffect {

@@ -10,7 +10,7 @@ use crate::{
         selection::CopyModeState,
     },
     config::{RxNewlineMode, TextEncoding, TxNewlineSymbol, WrapMode},
-    input::LineInputAction,
+    input::{CopyModeAction, LineInputAction},
     logger::LineLogger,
     types::{LogEntry, ViewportSize},
 };
@@ -243,6 +243,148 @@ impl LineMode {
                 dispatch_input_key(&mut self.user_input, key_event);
                 UpdateEffect::None
             }
+        }
+    }
+
+    pub fn handle_copy_action(&mut self, action: CopyModeAction) -> Option<String> {
+        let total_visual_rows = self.max_scroll + self.view_height;
+        let content_width = self.view_width;
+
+        if total_visual_rows == 0 {
+            if action == CopyModeAction::Exit {
+                self.copy_state.exit();
+            }
+            return None;
+        }
+
+        let max_row = total_visual_rows.saturating_sub(1);
+        let max_col = content_width.saturating_sub(1);
+
+        match action {
+            CopyModeAction::Enter => {
+                let current_top = self.max_scroll.saturating_sub(self.scroll_from_bottom);
+                let current_bottom =
+                    (current_top + self.view_height.saturating_sub(1)).min(max_row);
+                self.copy_state.enter(current_bottom);
+                return None;
+            }
+            CopyModeAction::Exit => {
+                self.copy_state.exit();
+                return None;
+            }
+            CopyModeAction::MoveUp => {
+                self.copy_state.cursor.row = self.copy_state.cursor.row.saturating_sub(1);
+                self.keep_copy_cursor_in_view();
+            }
+            CopyModeAction::MoveDown => {
+                self.copy_state.cursor.row = (self.copy_state.cursor.row + 1).min(max_row);
+                self.keep_copy_cursor_in_view();
+            }
+            CopyModeAction::MoveLeft => {
+                self.copy_state.cursor.col = self.copy_state.cursor.col.saturating_sub(1);
+            }
+            CopyModeAction::MoveRight => {
+                self.copy_state.cursor.col = (self.copy_state.cursor.col + 1).min(max_col);
+            }
+            CopyModeAction::PageUp => {
+                let jump = self.view_height.saturating_sub(1);
+                self.copy_state.cursor.row = self.copy_state.cursor.row.saturating_sub(jump);
+                self.keep_copy_cursor_in_view();
+            }
+            CopyModeAction::PageDown => {
+                let jump = self.view_height.saturating_sub(1);
+                self.copy_state.cursor.row = (self.copy_state.cursor.row + jump).min(max_row);
+                self.keep_copy_cursor_in_view();
+            }
+            CopyModeAction::StartOfLine => {
+                self.copy_state.cursor.col = 0;
+            }
+            CopyModeAction::EndOfLine => {
+                self.copy_state.cursor.col = max_col;
+            }
+            CopyModeAction::ToggleSelection => {
+                self.copy_state.toggle_selection();
+            }
+            CopyModeAction::Yank => {
+                // TODO: yank
+            }
+        }
+        None
+    }
+
+    fn keep_copy_cursor_in_view(&mut self) {
+        let cursor_row = self.copy_state.cursor.row;
+        let view_h = self.view_height;
+        let current_top = self.max_scroll.saturating_sub(self.scroll_from_bottom);
+        let current_bottom = current_top + view_h.saturating_sub(1);
+
+        if cursor_row < current_top {
+            // Cursor moved above top -> scroll up
+            let diff = current_top - cursor_row;
+            self.scroll_up(diff);
+        } else if cursor_row > current_bottom {
+            // Cursor moved below bottom -> scroll down
+            let diff = cursor_row - current_bottom;
+            self.scroll_down(diff);
+        }
+    }
+
+    // TODO: for yank check this AI generated code
+    pub fn extract_selected_from_buffer(
+        &self,
+        buf: &ratatui::buffer::Buffer,
+        area: ratatui::layout::Rect,
+        paragraph_y_offset: usize,
+        line_x_offset: usize,
+    ) -> Option<String> {
+        let (start, end) = self.copy_state.normalized_selection()?;
+        let mut out = String::new();
+
+        for visual_row in start.row..=end.row {
+            // Check if this visual row is currently on screen
+            if visual_row < paragraph_y_offset {
+                continue;
+            }
+            let viewer_row = visual_row - paragraph_y_offset;
+            if viewer_row >= area.height as usize {
+                break;
+            }
+
+            let col_start = if visual_row == start.row {
+                start.col
+            } else {
+                0
+            };
+            let col_end = if visual_row == end.row {
+                end.col
+            } else {
+                area.width as usize
+            };
+
+            let mut line_chars = String::new();
+            for visual_col in col_start..=col_end {
+                if visual_col < line_x_offset {
+                    continue;
+                }
+                let viewer_col = visual_col - line_x_offset;
+                if viewer_col >= area.width as usize {
+                    break;
+                }
+
+                let cell = &buf[(area.x + viewer_col as u16, area.y + viewer_row as u16)];
+                line_chars.push_str(cell.symbol());
+            }
+
+            out.push_str(line_chars.trim_end());
+            if visual_row != end.row {
+                out.push('\n');
+            }
+        }
+
+        if out.trim().is_empty() {
+            None
+        } else {
+            Some(out)
         }
     }
 

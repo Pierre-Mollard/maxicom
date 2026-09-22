@@ -75,6 +75,7 @@ pub enum HistoryAction {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum CopyModeAction {
+    Enter,
     MoveUp,
     MoveDown,
     MoveLeft,
@@ -126,12 +127,12 @@ pub fn handle_event(event: Event, app: &App) -> Action {
         return Action::OverlayKey(key_event);
     }
 
-    if let Some(action) = handle_common_keys(&key_event, app) {
-        return action;
-    }
-
     if app.is_copy_mode_active() {
         return handle_copy_mode_keys(key_event);
+    }
+
+    if let Some(action) = handle_common_keys(&key_event, app) {
+        return action;
     }
 
     match app.config().input_mode {
@@ -198,7 +199,7 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
                 return Some(Action::OpenOverlay(Overlay::SerialSettings(dialog)));
             }
             KeyCode::Char('[') => {
-                return Some(Action::CopyMode(CopyModeAction::ToggleSelection));
+                return Some(Action::CopyMode(CopyModeAction::Enter));
             }
 
             KeyCode::Up => {

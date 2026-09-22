@@ -216,6 +216,54 @@ pub fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, outer_area: 
     ));
     frame.render_widget(history_paragraph, area);
 
+    // TODO: set real cursor (blinking) position to the navigation (terminal mode too)
+
+    // selection
+    if app.line_mode.copy_state().active {
+        let copy_state = app.line_mode.copy_state();
+        let cursor = copy_state.cursor;
+        let buf = frame.buffer_mut();
+
+        // selection area
+        if copy_state.selection_anchor.is_some() {
+            let select_bg = Color::Rgb(40, 80, 150);
+            let select_fg = Color::White;
+
+            for r in 0..area.height as usize {
+                let visual_row = paragraph_y_offset + r;
+                if visual_row >= total_visual_rows {
+                    break;
+                }
+
+                for c in 0..area.width as usize {
+                    let visual_col = line_x_offset + c;
+                    if copy_state.is_selected(visual_row, visual_col) {
+                        let cell = &mut buf[(area.x + c as u16, area.y + r as u16)];
+                        cell.set_bg(select_bg);
+                        cell.set_fg(select_fg);
+                    }
+                }
+            }
+        }
+
+        // selector cursor
+        if cursor.row >= paragraph_y_offset {
+            let viewer_row = cursor.row - paragraph_y_offset;
+            if viewer_row < area.height as usize && cursor.col >= line_x_offset {
+                let viewer_col = cursor.col - line_x_offset;
+                if viewer_col < area.width as usize {
+                    let screen_x = area.x + viewer_col as u16;
+                    let screen_y = area.y + viewer_row as u16;
+
+                    buf[(screen_x, screen_y)]
+                        .set_style(Style::default().add_modifier(Modifier::REVERSED));
+                    frame.set_cursor_position((screen_x, screen_y));
+                }
+            }
+        }
+    }
+
+    // scrollbar
     if total_visual_rows > content_height {
         let mut scrollbar_state = ScrollbarState::new(max_scroll)
             .viewport_content_length(content_height)
@@ -237,6 +285,7 @@ pub fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, outer_area: 
         frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
     }
 
+    // search
     if app.line_mode.search().active {
         let visual_cursor = app.line_mode.search().query.visual_cursor() as u16;
 
@@ -282,7 +331,7 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect) {
 
     frame.render_widget(input_widget, area);
 
-    if !app.line_mode.search().active {
+    if !app.line_mode.search().active && !app.line_mode.search().active {
         let cursor_x =
             area.x + 1 + prefix_width + (input.visual_cursor().saturating_sub(scroll)) as u16;
         let cursor_y = area.y + 1;

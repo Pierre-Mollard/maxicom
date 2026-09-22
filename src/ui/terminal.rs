@@ -1,7 +1,7 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
@@ -32,31 +32,28 @@ pub fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, outer
 
     frame.render_widget(term_widget, area);
 
-    if app.terminal_mode.search().active && !app.terminal_mode.search().query_str().is_empty() {
-        let (grid_rows, cols) = app.terminal_mode.get_vt100_size();
-        let max_sb = app.terminal_mode.get_max_scrollback();
-        let current_sb = app.terminal_mode.vt100_screen().scrollback();
-        let pan_x = app.terminal_mode.pan_offset_x();
-        let pan_y = app.terminal_mode.pan_offset_y();
+    let (grid_rows, cols) = app.terminal_mode.get_vt100_size();
+    let max_sb = app.terminal_mode.get_max_scrollback();
+    let current_sb = app.terminal_mode.vt100_screen().scrollback();
+    let pan_x = app.terminal_mode.pan_offset_x();
+    let pan_y = app.terminal_mode.pan_offset_y();
+    let top_visible_world_line = if current_sb > 0 {
+        max_sb.saturating_sub(current_sb)
+    } else {
+        max_sb
+    };
 
+    if app.terminal_mode.search().active && !app.terminal_mode.search().query_str().is_empty() {
         let query = app.terminal_mode.search().query_str();
         let q_lower = query.to_lowercase();
-        // Number of characters (columns)
         let query_char_count = query.chars().count();
 
         let normal_match_bg = Color::Yellow;
-        let active_match_bg = Color::Rgb(255, 140, 0); // Orange
+        let active_match_bg = Color::Rgb(255, 140, 0);
         let highlight_fg = Color::Black;
-
         let active_match_idx = app.terminal_mode.search().current_match;
 
         for (idx, search_match) in app.terminal_mode.search().matches.iter().enumerate() {
-            let top_visible_world_line = if current_sb > 0 {
-                max_sb.saturating_sub(current_sb)
-            } else {
-                max_sb
-            };
-
             if search_match.line_idx < top_visible_world_line {
                 continue;
             }
@@ -122,6 +119,56 @@ pub fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, outer
         }
     }
 
+    // selection
+    if app.terminal_mode.copy_state().active {
+        let copy_state = app.terminal_mode.copy_state();
+        let cursor = copy_state.cursor;
+        let buf = frame.buffer_mut();
+
+        // selection area
+        if copy_state.selection_anchor.is_some() {
+            let select_bg = Color::Rgb(40, 80, 150);
+            let select_fg = Color::White;
+
+            for r in 0..area.height as usize {
+                let emulator_row = r + pan_y;
+                if emulator_row >= grid_rows as usize {
+                    break;
+                }
+                let world_row = top_visible_world_line + emulator_row;
+
+                for c in 0..area.width as usize {
+                    let world_col = c + pan_x;
+                    if copy_state.is_selected(world_row, world_col) {
+                        let cell = &mut buf[(area.x + c as u16, area.y + r as u16)];
+                        cell.set_bg(select_bg);
+                        cell.set_fg(select_fg);
+                    }
+                }
+            }
+        }
+
+        // selector cursor
+        if cursor.row >= top_visible_world_line {
+            let emulator_row = cursor.row - top_visible_world_line;
+            if emulator_row >= pan_y {
+                let viewer_row = emulator_row - pan_y;
+                if viewer_row < area.height as usize && cursor.col >= pan_x {
+                    let viewer_col = cursor.col - pan_x;
+                    if viewer_col < area.width as usize {
+                        let screen_x = area.x + viewer_col as u16;
+                        let screen_y = area.y + viewer_row as u16;
+
+                        buf[(screen_x, screen_y)]
+                            .set_style(Style::default().add_modifier(Modifier::REVERSED));
+                        frame.set_cursor_position((screen_x, screen_y));
+                    }
+                }
+            }
+        }
+    }
+
+    // scrollbar
     let max_vertical = app.terminal_mode.max_vertical_scroll();
     if max_vertical > 0 && view_height > 0 {
         let position_from_top = max_vertical.saturating_sub(app.terminal_mode.scrollback_offset());
@@ -150,7 +197,8 @@ pub fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, outer
     let screen = app.terminal_mode.vt100_screen();
     let is_scrolled_into_history = screen.scrollback() > 0;
 
-    if !app.terminal_mode.search().active
+    if !app.terminal_mode.copy_state().active
+        && !app.terminal_mode.search().active
         && is_terminal_focused
         && !screen.hide_cursor()
         && !is_scrolled_into_history
@@ -168,6 +216,7 @@ pub fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, outer
         }
     }
 
+    // Search
     if app.terminal_mode.search().active {
         let visual_cursor = app.terminal_mode.search().query.visual_cursor() as u16;
 

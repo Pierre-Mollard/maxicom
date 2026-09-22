@@ -11,7 +11,7 @@ use crate::{
         selection::CopyModeState,
     },
     config::TextEncoding,
-    input::TerminalAction,
+    input::{CopyModeAction, TerminalAction},
     logger::TerminalLogger,
 };
 
@@ -359,6 +359,149 @@ impl TerminalMode {
                 UpdateEffect::None
             }
         }
+    }
+
+    pub fn handle_copy_action(&mut self, action: CopyModeAction) -> Option<String> {
+        let (grid_rows, cols) = self.get_vt100_size();
+        let total_world_rows = self.max_content_scrollback + (grid_rows as usize);
+
+        if total_world_rows == 0 {
+            if action == CopyModeAction::Exit {
+                self.copy_state.exit();
+            }
+            return None;
+        }
+
+        let max_row = total_world_rows.saturating_sub(1);
+        let max_col = (cols as usize).saturating_sub(1);
+
+        match action {
+            CopyModeAction::Enter => {
+                let current_sb = self.vt100_screen().scrollback();
+                let top_visible = if current_sb > 0 {
+                    self.max_content_scrollback.saturating_sub(current_sb)
+                } else {
+                    self.max_content_scrollback
+                };
+                let effective_height = (grid_rows as usize).min(self.view_height);
+                let bottom_visible =
+                    (top_visible + effective_height.saturating_sub(1)).min(max_row);
+
+                self.copy_state.enter(bottom_visible);
+                return None;
+            }
+
+            CopyModeAction::Exit => {
+                self.copy_state.exit();
+                return None;
+            }
+
+            CopyModeAction::MoveUp => {
+                self.copy_state.cursor.row = self.copy_state.cursor.row.saturating_sub(1);
+                self.keep_terminal_copy_cursor_in_view();
+            }
+
+            CopyModeAction::MoveDown => {
+                self.copy_state.cursor.row = (self.copy_state.cursor.row + 1).min(max_row);
+                self.keep_terminal_copy_cursor_in_view();
+            }
+
+            CopyModeAction::MoveLeft => {
+                self.copy_state.cursor.col = self.copy_state.cursor.col.saturating_sub(1);
+            }
+
+            CopyModeAction::MoveRight => {
+                self.copy_state.cursor.col = (self.copy_state.cursor.col + 1).min(max_col);
+            }
+
+            CopyModeAction::PageUp => {
+                let jump = self.view_height.saturating_sub(1);
+                self.copy_state.cursor.row = self.copy_state.cursor.row.saturating_sub(jump);
+                self.keep_terminal_copy_cursor_in_view();
+            }
+
+            CopyModeAction::PageDown => {
+                let jump = self.view_height.saturating_sub(1);
+                self.copy_state.cursor.row = (self.copy_state.cursor.row + jump).min(max_row);
+                self.keep_terminal_copy_cursor_in_view();
+            }
+
+            CopyModeAction::StartOfLine => {
+                self.copy_state.cursor.col = 0;
+            }
+
+            CopyModeAction::EndOfLine => {
+                let all_lines = self.all_text_lines();
+                if let Some(line) = all_lines.get(self.copy_state.cursor.row) {
+                    self.copy_state.cursor.col = line.trim_end().chars().count().min(max_col);
+                }
+            }
+
+            CopyModeAction::ToggleSelection => {
+                self.copy_state.toggle_selection();
+            }
+
+            CopyModeAction::Yank => {
+                let selected = self.extract_selected_text();
+                self.copy_state.exit();
+                return selected;
+            }
+        }
+
+        None
+    }
+
+    fn keep_terminal_copy_cursor_in_view(&mut self) {
+        let cursor_row = self.copy_state.cursor.row;
+        let view_h = self.view_height;
+        let (grid_rows, _) = self.get_vt100_size();
+        let current_sb = self.vt100_screen().scrollback();
+
+        let top_visible = if current_sb > 0 {
+            self.max_content_scrollback.saturating_sub(current_sb)
+        } else {
+            self.max_content_scrollback
+        };
+        let effective_h = (grid_rows as usize).min(view_h);
+        let bottom_visible = top_visible + effective_h.saturating_sub(1);
+
+        if cursor_row < top_visible || cursor_row > bottom_visible {
+            self.scroll_to_target_line(cursor_row, view_h);
+        }
+    }
+
+    fn extract_selected_text(&mut self) -> Option<String> {
+        let (start, end) = self.copy_state.normalized_selection()?;
+        let all_lines = self.all_text_lines();
+        let mut out = String::new();
+
+        for row_idx in start.row..=end.row {
+            let Some(line_str) = all_lines.get(row_idx) else {
+                continue;
+            };
+            let chars: Vec<char> = line_str.chars().collect();
+            let len = chars.len();
+
+            let col_start = if row_idx == start.row {
+                start.col.min(len)
+            } else {
+                0
+            };
+            let col_end = if row_idx == end.row {
+                (end.col + 1).min(len)
+            } else {
+                len
+            };
+
+            if col_start < col_end {
+                out.extend(&chars[col_start..col_end]);
+            }
+            if row_idx != end.row {
+                out.push('\n');
+            }
+        }
+
+        if out.is_empty() { None } else { Some(out) }
     }
 
     pub fn update_search_matches(&mut self) {

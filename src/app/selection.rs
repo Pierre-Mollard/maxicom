@@ -1,22 +1,22 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct CursorPosition {
-    pub line_idx: usize,
-    pub col_idx: usize,
+pub struct VisualPosition {
+    pub row: usize,
+    pub col: usize,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct CopyModeState {
     pub active: bool,
-    pub cursor: CursorPosition,
-    pub selection_anchor: Option<CursorPosition>,
+    pub cursor: VisualPosition,
+    pub selection_anchor: Option<VisualPosition>,
 }
 
 impl CopyModeState {
-    pub fn enter(&mut self, current_bottom_line: usize) {
+    pub fn enter(&mut self, current_bottom_row: usize) {
         self.active = true;
-        self.cursor = CursorPosition {
-            line_idx: current_bottom_line,
-            col_idx: 0,
+        self.cursor = VisualPosition {
+            row: current_bottom_row,
+            col: 0,
         };
         self.selection_anchor = None;
     }
@@ -34,14 +34,33 @@ impl CopyModeState {
         }
     }
 
-    pub fn current_selection(&self) -> Option<(CursorPosition, CursorPosition)> {
+    pub fn normalized_selection(&self) -> Option<(VisualPosition, VisualPosition)> {
         let anchor = self.selection_anchor?;
-        if anchor.line_idx < self.cursor.line_idx
-            || (anchor.line_idx == self.cursor.line_idx && anchor.col_idx <= self.cursor.col_idx)
+        if anchor.row < self.cursor.row
+            || (anchor.row == self.cursor.row && anchor.col <= self.cursor.col)
         {
             Some((anchor, self.cursor))
         } else {
             Some((self.cursor, anchor))
         }
+    }
+
+    pub fn is_selected(&self, row: usize, col: usize) -> bool {
+        let Some((start, end)) = self.normalized_selection() else {
+            return false;
+        };
+        if row < start.row || row > end.row {
+            return false;
+        }
+        if start.row == end.row {
+            return col >= start.col && col <= end.col;
+        }
+        if row == start.row {
+            return col >= start.col;
+        }
+        if row == end.row {
+            return col <= end.col;
+        }
+        true
     }
 }
