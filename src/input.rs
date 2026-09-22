@@ -22,6 +22,7 @@ pub enum Action {
     Terminal(TerminalAction),
     /// Receive history navigation like scrolling and searching
     History(HistoryAction),
+    CopyMode(CopyModeAction),
     /// Open popup
     OpenOverlay(Overlay),
     /// Popup overlay action forwarding
@@ -70,7 +71,22 @@ pub enum HistoryAction {
     SearchNext,
     SearchPrevious,
     HandleKey(KeyEvent),
-} // TODO: add selection and copy
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum CopyModeAction {
+    MoveUp,
+    MoveDown,
+    MoveLeft,
+    MoveRight,
+    PageUp,
+    PageDown,
+    StartOfLine,
+    EndOfLine,
+    ToggleSelection,
+    Yank,
+    Exit,
+}
 
 /// Using crossterm's event API instead of stdin.read() to handle multi-byte ANSI sequence like
 /// arrows and page up and prefix
@@ -112,6 +128,10 @@ pub fn handle_event(event: Event, app: &App) -> Action {
 
     if let Some(action) = handle_common_keys(&key_event, app) {
         return action;
+    }
+
+    if app.is_copy_mode_active() {
+        return handle_copy_mode_keys(key_event);
     }
 
     match app.config().input_mode {
@@ -177,6 +197,9 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
                 let dialog = SerialConfigDialog::new(&app.serial_config);
                 return Some(Action::OpenOverlay(Overlay::SerialSettings(dialog)));
             }
+            KeyCode::Char('[') => {
+                return Some(Action::CopyMode(CopyModeAction::ToggleSelection));
+            }
 
             KeyCode::Up => {
                 return Some(Action::History(HistoryAction::ScrollUp(1)));
@@ -241,6 +264,29 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
         KeyCode::Esc if is_search_active => Some(Action::History(HistoryAction::ToggleSearch)),
         _ if is_search_active => Some(Action::History(HistoryAction::HandleKey(*key))),
         _ => None,
+    }
+}
+
+fn handle_copy_mode_keys(key: KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => Action::CopyMode(CopyModeAction::MoveUp),
+        KeyCode::Down | KeyCode::Char('j') => Action::CopyMode(CopyModeAction::MoveDown),
+        KeyCode::Left | KeyCode::Char('h') => Action::CopyMode(CopyModeAction::MoveLeft),
+        KeyCode::Right | KeyCode::Char('l') => Action::CopyMode(CopyModeAction::MoveRight),
+        KeyCode::PageUp => Action::CopyMode(CopyModeAction::PageUp),
+        KeyCode::PageDown => Action::CopyMode(CopyModeAction::PageDown),
+        KeyCode::Home | KeyCode::Char('0') => Action::CopyMode(CopyModeAction::StartOfLine),
+        KeyCode::End | KeyCode::Char('$') => Action::CopyMode(CopyModeAction::EndOfLine),
+
+        KeyCode::Char(' ') | KeyCode::Char('v') => {
+            Action::CopyMode(CopyModeAction::ToggleSelection)
+        }
+
+        KeyCode::Enter | KeyCode::Char('y') => Action::CopyMode(CopyModeAction::Yank),
+
+        KeyCode::Esc | KeyCode::Char('q') => Action::CopyMode(CopyModeAction::Exit),
+
+        _ => Action::Ignore,
     }
 }
 

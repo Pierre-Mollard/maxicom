@@ -8,6 +8,7 @@ use crate::{
     app::{
         UpdateEffect, ViewportSize,
         search::{SearchState, dispatch_input_key},
+        selection::CopyModeState,
     },
     config::TextEncoding,
     input::TerminalAction,
@@ -27,6 +28,7 @@ pub struct TerminalMode {
     max_history_lines: usize,
     new_content_missed: bool,
     search_state: SearchState,
+    copy_state: CopyModeState,
 
     pub history_timestamps: VecDeque<DateTime<Local>>,
     pub screen_timestamps: Vec<Option<DateTime<Local>>>,
@@ -36,6 +38,7 @@ impl TerminalMode {
     pub fn new(max_history_lines: usize, rows: u16, cols: u16, logger: TerminalLogger) -> Self {
         let vt100_parser = Parser::new(rows, cols, max_history_lines);
         let search_state = SearchState::default();
+        let copy_state = CopyModeState::default();
 
         TerminalMode {
             vt100_parser,
@@ -50,6 +53,7 @@ impl TerminalMode {
             max_history_lines,
             new_content_missed: false,
             search_state,
+            copy_state,
             history_timestamps: VecDeque::with_capacity(max_history_lines),
             screen_timestamps: vec![None; rows as usize],
         }
@@ -395,5 +399,15 @@ impl TerminalMode {
     #[inline]
     pub fn search_mut(&mut self) -> &mut SearchState {
         &mut self.search_state
+    }
+
+    #[inline]
+    pub fn copy_state(&self) -> &CopyModeState {
+        &self.copy_state
+    }
+
+    #[inline]
+    pub fn copy_state_mut(&mut self) -> &mut CopyModeState {
+        &mut self.copy_state
     }
 }

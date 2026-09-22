@@ -7,6 +7,7 @@ use crate::{
     app::{
         UpdateEffect,
         search::{SearchState, dispatch_input_key},
+        selection::CopyModeState,
     },
     config::{RxNewlineMode, TextEncoding, TxNewlineSymbol, WrapMode},
     input::LineInputAction,
@@ -44,11 +45,13 @@ pub struct LineMode {
     view_height: usize,
     view_width: usize,
     search_state: SearchState,
+    copy_state: CopyModeState,
 }
 
 impl LineMode {
     pub fn new(max_history_lines: usize, logger: LineLogger) -> Self {
         let search_state = SearchState::default();
+        let copy_state = CopyModeState::default();
         LineMode {
             local_history: VecDeque::with_capacity(max_history_lines),
             local_send_history: VecDeque::with_capacity(max_history_lines),
@@ -69,6 +72,7 @@ impl LineMode {
             view_width: 0,
             view_height: 0,
             search_state,
+            copy_state,
         }
     }
 
@@ -376,5 +380,15 @@ impl LineMode {
     #[inline]
     pub fn search_mut(&mut self) -> &mut SearchState {
         &mut self.search_state
+    }
+
+    #[inline]
+    pub fn copy_state(&self) -> &CopyModeState {
+        &self.copy_state
+    }
+
+    #[inline]
+    pub fn copy_state_mut(&mut self) -> &mut CopyModeState {
+        &mut self.copy_state
     }
 }

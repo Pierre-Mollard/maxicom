@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::{
     config::{AppConfig, InputMode, WrapMode},
-    input::{Action, AppAction, HistoryAction},
+    input::{Action, AppAction, CopyModeAction, HistoryAction},
     logger::{LineLogger, TerminalLogger},
     notification::{NotificationManager, ToastLevel},
     serial::SerialConfig,
@@ -14,6 +14,7 @@ use crate::{
 
 pub mod line_mode;
 pub mod search;
+pub mod selection;
 pub mod terminal_mode;
 
 pub use line_mode::LineMode;
@@ -108,6 +109,7 @@ impl App {
             ),
             Action::Terminal(action) => self.terminal_mode.update_action_terminal(action),
             Action::History(action) => self.update_action_history(action),
+            Action::CopyMode(action) => todo!(), // TODO: implement copy mode actions
             Action::App(action) => self.update_action_app(action),
             Action::Ignore => UpdateEffect::None,
             Action::OpenOverlay(overlay) => {
@@ -384,6 +386,14 @@ impl App {
     #[inline]
     pub fn is_app_focused(&self) -> bool {
         self.is_window_focused
+    }
+
+    #[inline]
+    pub fn is_copy_mode_active(&self) -> bool {
+        match self.app_config.input_mode {
+            InputMode::Line => self.line_mode.copy_state().active,
+            InputMode::Terminal => self.terminal_mode.copy_state().active,
+        }
     }
 
     pub fn notify_info(&mut self, msg: impl Into<String>) {
