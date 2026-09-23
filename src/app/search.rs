@@ -44,7 +44,7 @@ impl SearchState {
         }
     }
 
-    pub fn update_matches_from_strings(&mut self, all_lines: &Vec<String>) {
+    pub fn update_matches_from_strings(&mut self, all_lines: &[String]) {
         self.matches.clear();
         if self.query_str().is_empty() {
             self.current_match = 0;

@@ -528,9 +528,4 @@ impl LineMode {
     pub fn copy_state(&self) -> &CopyModeState {
         &self.copy_state
     }
-
-    #[inline]
-    pub fn copy_state_mut(&mut self) -> &mut CopyModeState {
-        &mut self.copy_state
-    }
 }
