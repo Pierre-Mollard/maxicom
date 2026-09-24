@@ -9,6 +9,7 @@ pub struct CopyModeState {
     pub active: bool,
     pub cursor: VisualPosition,
     pub selection_anchor: Option<VisualPosition>,
+    pub pending_yank: bool,
 }
 
 impl CopyModeState {
@@ -62,5 +63,62 @@ impl CopyModeState {
             return col <= end.col;
         }
         true
+    }
+
+    pub fn extract_selected_from_buffer(
+        &self,
+        buf: &ratatui::buffer::Buffer,
+        area: ratatui::layout::Rect,
+        paragraph_y_offset: usize,
+        line_x_offset: usize,
+    ) -> Option<String> {
+        let (start, end) = self.normalized_selection()?;
+        let mut out = String::new();
+
+        for visual_row in start.row..=end.row {
+            if visual_row < paragraph_y_offset {
+                continue;
+            }
+            let viewer_row = visual_row - paragraph_y_offset;
+            if viewer_row >= area.height as usize {
+                break;
+            }
+
+            let col_start = if visual_row == start.row {
+                start.col
+            } else {
+                0
+            };
+            let col_end = if visual_row == end.row {
+                end.col
+            } else {
+                area.width as usize
+            };
+
+            let mut line_chars = String::new();
+            for visual_col in col_start..=col_end {
+                if visual_col < line_x_offset {
+                    continue;
+                }
+                let viewer_col = visual_col - line_x_offset;
+                if viewer_col >= area.width as usize {
+                    break;
+                }
+
+                let cell = &buf[(area.x + viewer_col as u16, area.y + viewer_row as u16)];
+                line_chars.push_str(cell.symbol());
+            }
+
+            out.push_str(line_chars.trim_end());
+            if visual_row != end.row {
+                out.push('\n');
+            }
+        }
+
+        if out.trim().is_empty() {
+            None
+        } else {
+            Some(out)
+        }
     }
 }

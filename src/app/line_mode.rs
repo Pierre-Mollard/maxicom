@@ -306,7 +306,7 @@ impl LineMode {
                 self.copy_state.toggle_selection();
             }
             CopyModeAction::Yank => {
-                // TODO: yank
+                self.copy_state.pending_yank = true;
             }
         }
         None
@@ -326,65 +326,6 @@ impl LineMode {
             // Cursor moved below bottom -> scroll down
             let diff = cursor_row - current_bottom;
             self.scroll_down(diff);
-        }
-    }
-
-    // TODO: for yank check this AI generated code
-    pub fn extract_selected_from_buffer(
-        &self,
-        buf: &ratatui::buffer::Buffer,
-        area: ratatui::layout::Rect,
-        paragraph_y_offset: usize,
-        line_x_offset: usize,
-    ) -> Option<String> {
-        let (start, end) = self.copy_state.normalized_selection()?;
-        let mut out = String::new();
-
-        for visual_row in start.row..=end.row {
-            // Check if this visual row is currently on screen
-            if visual_row < paragraph_y_offset {
-                continue;
-            }
-            let viewer_row = visual_row - paragraph_y_offset;
-            if viewer_row >= area.height as usize {
-                break;
-            }
-
-            let col_start = if visual_row == start.row {
-                start.col
-            } else {
-                0
-            };
-            let col_end = if visual_row == end.row {
-                end.col
-            } else {
-                area.width as usize
-            };
-
-            let mut line_chars = String::new();
-            for visual_col in col_start..=col_end {
-                if visual_col < line_x_offset {
-                    continue;
-                }
-                let viewer_col = visual_col - line_x_offset;
-                if viewer_col >= area.width as usize {
-                    break;
-                }
-
-                let cell = &buf[(area.x + viewer_col as u16, area.y + viewer_row as u16)];
-                line_chars.push_str(cell.symbol());
-            }
-
-            out.push_str(line_chars.trim_end());
-            if visual_row != end.row {
-                out.push('\n');
-            }
-        }
-
-        if out.trim().is_empty() {
-            None
-        } else {
-            Some(out)
         }
     }
 
@@ -527,5 +468,10 @@ impl LineMode {
     #[inline]
     pub fn copy_state(&self) -> &CopyModeState {
         &self.copy_state
+    }
+
+    #[inline]
+    pub fn copy_state_mut(&mut self) -> &mut CopyModeState {
+        &mut self.copy_state
     }
 }

@@ -11,6 +11,7 @@ use ratatui::DefaultTerminal;
 
 use crate::app::App;
 use crate::app::UpdateEffect;
+use crate::app::search::copy_via_osc52;
 use crate::config::AppConfig;
 use crate::config::InputMode;
 use crate::serial::SerialDevice;
@@ -19,6 +20,7 @@ use crate::serial::parse_args;
 use crate::serial::print_help;
 use crate::types::ErrorDialog;
 use crate::types::Overlay;
+use crate::ui::PostRenderEffect;
 use crate::ui::render;
 
 mod app;
@@ -195,14 +197,32 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         }
                     }
                 }
+                UpdateEffect::CopyToClipboard(text) => {
+                    execute_clipboard_copy(&mut app, &text);
+                }
                 UpdateEffect::None => {}
             }
         }
 
+        let mut post_render_effect = PostRenderEffect::None;
         guard.terminal.draw(|frame| {
-            render(&mut app, frame);
+            post_render_effect = render(&mut app, frame);
         })?;
+
+        match post_render_effect {
+            PostRenderEffect::None => (),
+            PostRenderEffect::CopyToClipboard(text) => execute_clipboard_copy(&mut app, &text),
+        }
     }
 
     Ok(ExitCode::SUCCESS)
+}
+
+fn execute_clipboard_copy(app: &mut App, text: &str) {
+    if let Err(e) = copy_via_osc52(text) {
+        app.notify_error(format!("Clipboard error: {e}"));
+    } else {
+        let count = text.chars().count();
+        app.notify_success(format!("Copied {count} chars to clipboard"));
+    }
 }

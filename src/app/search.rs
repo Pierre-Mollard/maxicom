@@ -184,3 +184,37 @@ pub fn dispatch_input_key(input: &mut Input, key: KeyEvent) {
 
     input.handle_event(&crossterm::event::Event::Key(key));
 }
+
+use std::io::{self, Write};
+
+/// Copies text to the host system clipboard via ANSI OSC 52 escape code.
+pub fn copy_via_osc52(text: &str) -> io::Result<()> {
+    // simple standard base64 encoding (RFC 4648)
+    const B64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes = text.as_bytes();
+    let mut encoded = String::with_capacity((bytes.len() + 2) / 3 * 4);
+
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = chunk.get(1).copied().unwrap_or(0);
+        let b2 = chunk.get(2).copied().unwrap_or(0);
+
+        encoded.push(B64_CHARS[(b0 >> 2) as usize] as char);
+        encoded.push(B64_CHARS[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize] as char);
+        if chunk.len() > 1 {
+            encoded.push(B64_CHARS[(((b1 & 0x0F) << 2) | (b2 >> 6)) as usize] as char);
+        } else {
+            encoded.push('=');
+        }
+        if chunk.len() > 2 {
+            encoded.push(B64_CHARS[(b2 & 0x3F) as usize] as char);
+        } else {
+            encoded.push('=');
+        }
+    }
+
+    // write \x1b]52;c;<base64>\x07 to stdout
+    let mut stdout = io::stdout();
+    write!(stdout, "\x1b]52;c;{encoded}\x07")?;
+    stdout.flush()
+}

@@ -11,7 +11,10 @@ use crate::{
     app::App,
     config::{LineDisplayMode, WrapMode},
     types::{FocusTarget, ViewportSize},
-    ui::common::{apply_search_highlight, border_style_for},
+    ui::{
+        PostRenderEffect,
+        common::{apply_search_highlight, border_style_for},
+    },
 };
 
 use crate::types::LogEntry;
@@ -93,12 +96,18 @@ pub fn history_entry_to_line(
     Line::from(prefix_spans)
 }
 
-pub fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, outer_area: Rect) {
+pub fn render_monitor(
+    app: &mut App,
+    frame: &mut Frame,
+    area: Rect,
+    outer_area: Rect,
+) -> PostRenderEffect {
     let timestamp_in_line = app.config().display_live_timestamp;
     let content_width = area.width as usize;
     let content_height = area.height as usize;
     let wrap_mode = app.config().line_mode.wrap_mode;
     let display_mode = app.config().line_mode.display_mode;
+    let mut post_effect = PostRenderEffect::None;
 
     app.update_viewport(ViewportSize::new(area.width, area.height));
 
@@ -220,9 +229,24 @@ pub fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, outer_area: 
 
     // selection
     if app.line_mode.copy_state().active {
-        let copy_state = app.line_mode.copy_state();
+        let copy_state = app.line_mode.copy_state_mut();
         let cursor = copy_state.cursor;
         let buf = frame.buffer_mut();
+
+        // yank request
+        if copy_state.pending_yank {
+            let yanked_text = copy_state.extract_selected_from_buffer(
+                buf,
+                area,
+                paragraph_y_offset,
+                line_x_offset,
+            );
+
+            if let Some(text) = yanked_text {
+                post_effect = PostRenderEffect::CopyToClipboard(text);
+                copy_state.exit();
+            }
+        }
 
         // selection area
         if copy_state.selection_anchor.is_some() {
@@ -296,6 +320,8 @@ pub fn render_monitor(app: &mut App, frame: &mut Frame, area: Rect, outer_area: 
 
         frame.set_cursor_position((cursor_x, cursor_y));
     }
+
+    post_effect
 }
 
 pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect) {

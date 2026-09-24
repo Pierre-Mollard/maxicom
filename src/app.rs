@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use crate::{
+    app::search::copy_via_osc52,
     config::{AppConfig, InputMode, WrapMode},
     input::{Action, AppAction, CopyModeAction, HistoryAction},
     logger::{LineLogger, TerminalLogger},
@@ -37,6 +38,7 @@ pub enum UpdateEffect {
     None,
     Transmit(Vec<u8>),
     Reconfigure(SerialConfig),
+    CopyToClipboard(String),
     Quit,
 }
 
@@ -197,26 +199,18 @@ impl App {
     fn update_action_copy_mode(&mut self, action: CopyModeAction) -> UpdateEffect {
         self.prefix_active = false;
 
-        let yanked_text = match self.app_config.input_mode {
-            InputMode::Line => self.line_mode.handle_copy_action(action),
-            InputMode::Terminal => self.terminal_mode.handle_copy_action(action),
-        };
-
-        // If text was yanked, copy it to the OS clipboard and toast
-        /* TODO: add yank
-        *
-        if let Some(text) = yanked_text {
-            match copy_to_system_clipboard(&text) {
-                Ok(()) => {
-                    let char_count = text.chars().count();
-                    self.notify_success(format!("Copied {char_count} chars to clipboard"));
-                }
-                Err(err) => {
-                    self.notify_error(format!("Clipboard error: {err}"));
+        match self.app_config.input_mode {
+            InputMode::Terminal => {
+                if let Some(text) = self.terminal_mode.handle_copy_action(action) {
+                    return UpdateEffect::CopyToClipboard(text);
                 }
             }
+            InputMode::Line => {
+                // line mode is a deferred copy (rendering pass needed)
+                self.line_mode.handle_copy_action(action);
+            }
         }
-        */
+
         UpdateEffect::None
     }
 

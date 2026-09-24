@@ -31,7 +31,13 @@ use crate::{
     },
 };
 
-pub fn render(app: &mut App, frame: &mut Frame) {
+#[derive(Debug, PartialEq, Eq)]
+pub enum PostRenderEffect {
+    None,
+    CopyToClipboard(String),
+}
+
+pub fn render(app: &mut App, frame: &mut Frame) -> PostRenderEffect {
     let screen_area = frame.area();
 
     let (monitor_area, prompt_area, focus_target): (Rect, Option<Rect>, FocusTarget) =
@@ -79,6 +85,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 
     frame.render_widget(block, monitor_area);
 
+    let mut render_effect = PostRenderEffect::None;
     match app.config().input_mode {
         InputMode::Terminal => {
             if let Some(g_area) = gutter_area {
@@ -87,7 +94,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
             render_vt100_terminal(app, frame, terminal_area, monitor_area);
         }
         InputMode::Line => {
-            render_monitor(app, frame, inner_area, monitor_area);
+            render_effect = render_monitor(app, frame, inner_area, monitor_area);
         }
     }
 
@@ -107,4 +114,6 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         Some(Overlay::Error(err)) => render_error_popup(err, frame),
         None => {}
     }
+
+    render_effect
 }
