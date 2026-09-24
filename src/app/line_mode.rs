@@ -246,6 +246,8 @@ impl LineMode {
         }
     }
 
+    // TODO: in line mode copy is only on visible text.... (and cursor is not spawning at latest
+    // receive position)
     pub fn handle_copy_action(&mut self, action: CopyModeAction) -> Option<String> {
         let total_visual_rows = self.max_scroll + self.view_height;
         let content_width = self.view_width;
@@ -258,14 +260,17 @@ impl LineMode {
         }
 
         let max_row = total_visual_rows.saturating_sub(1);
-        let max_col = content_width.saturating_sub(1);
+        let max_col = content_width + self.max_pan;
 
         match action {
             CopyModeAction::Enter => {
                 let current_top = self.max_scroll.saturating_sub(self.scroll_from_bottom);
                 let current_bottom =
                     (current_top + self.view_height.saturating_sub(1)).min(max_row);
-                self.copy_state.enter(current_bottom);
+
+                self.copy_state.enter_at(current_bottom, 0);
+
+                self.keep_copy_cursor_in_view();
                 return None;
             }
             CopyModeAction::Exit => {
@@ -282,9 +287,11 @@ impl LineMode {
             }
             CopyModeAction::MoveLeft => {
                 self.copy_state.cursor.col = self.copy_state.cursor.col.saturating_sub(1);
+                self.keep_copy_cursor_in_view();
             }
             CopyModeAction::MoveRight => {
                 self.copy_state.cursor.col = (self.copy_state.cursor.col + 1).min(max_col);
+                self.keep_copy_cursor_in_view();
             }
             CopyModeAction::PageUp => {
                 let jump = self.view_height.saturating_sub(1);
@@ -314,18 +321,29 @@ impl LineMode {
 
     fn keep_copy_cursor_in_view(&mut self) {
         let cursor_row = self.copy_state.cursor.row;
+        let cursor_col = self.copy_state.cursor.col;
         let view_h = self.view_height;
+        let view_w = self.view_width;
+
         let current_top = self.max_scroll.saturating_sub(self.scroll_from_bottom);
         let current_bottom = current_top + view_h.saturating_sub(1);
 
         if cursor_row < current_top {
-            // Cursor moved above top -> scroll up
             let diff = current_top - cursor_row;
             self.scroll_up(diff);
         } else if cursor_row > current_bottom {
-            // Cursor moved below bottom -> scroll down
             let diff = cursor_row - current_bottom;
             self.scroll_down(diff);
+        }
+
+        if view_w > 0 && self.max_pan > 0 {
+            if cursor_col < self.x_offset {
+                self.x_offset = cursor_col;
+            } else if cursor_col >= self.x_offset + view_w {
+                self.x_offset = (cursor_col + 1).saturating_sub(view_w).min(self.max_pan);
+            }
+        } else {
+            self.x_offset = 0;
         }
     }
 

@@ -225,8 +225,6 @@ pub fn render_monitor(
     ));
     frame.render_widget(history_paragraph, area);
 
-    // TODO: set real cursor (blinking) position to the navigation (terminal mode too)
-
     // selection
     if app.line_mode.copy_state().active {
         let copy_state = app.line_mode.copy_state_mut();
@@ -357,7 +355,7 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect) {
 
     frame.render_widget(input_widget, area);
 
-    if !app.line_mode.search().active && !app.line_mode.search().active {
+    if !app.line_mode.search().active && !app.line_mode.copy_state().active {
         let cursor_x =
             area.x + 1 + prefix_width + (input.visual_cursor().saturating_sub(scroll)) as u16;
         let cursor_y = area.y + 1;
