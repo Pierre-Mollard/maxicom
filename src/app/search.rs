@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::io::{self, Write};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tui_input::{Input, InputRequest, backend::crossterm::EventHandler};
@@ -185,14 +186,12 @@ pub fn dispatch_input_key(input: &mut Input, key: KeyEvent) {
     input.handle_event(&crossterm::event::Event::Key(key));
 }
 
-use std::io::{self, Write};
-
 /// Copies text to the host system clipboard via ANSI OSC 52 escape code.
 pub fn copy_via_osc52(text: &str) -> io::Result<()> {
     // simple standard base64 encoding (RFC 4648)
     const B64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let bytes = text.as_bytes();
-    let mut encoded = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
 
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0];

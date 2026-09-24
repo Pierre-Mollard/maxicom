@@ -35,6 +35,12 @@ impl CopyModeState {
         }
     }
 
+    pub fn enter_at(&mut self, row: usize, col: usize) {
+        self.active = true;
+        self.cursor = VisualPosition { row, col };
+        self.selection_anchor = None;
+    }
+
     pub fn normalized_selection(&self) -> Option<(VisualPosition, VisualPosition)> {
         let anchor = self.selection_anchor?;
         if anchor.row < self.cursor.row

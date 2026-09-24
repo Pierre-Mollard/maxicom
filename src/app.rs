@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use crate::{
-    app::search::copy_via_osc52,
     config::{AppConfig, InputMode, WrapMode},
     input::{Action, AppAction, CopyModeAction, HistoryAction},
     logger::{LineLogger, TerminalLogger},

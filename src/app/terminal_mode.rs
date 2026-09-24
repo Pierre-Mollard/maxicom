@@ -377,17 +377,15 @@ impl TerminalMode {
 
         match action {
             CopyModeAction::Enter => {
-                let current_sb = self.vt100_screen().scrollback();
-                let top_visible = if current_sb > 0 {
-                    self.max_content_scrollback.saturating_sub(current_sb)
-                } else {
-                    self.max_content_scrollback
-                };
-                let effective_height = (grid_rows as usize).min(self.view_height);
-                let bottom_visible =
-                    (top_visible + effective_height.saturating_sub(1)).min(max_row);
+                let max_sb = self.max_content_scrollback;
+                let (c_row, c_col) = self.vt100_screen().cursor_position();
 
-                self.copy_state.enter(bottom_visible);
+                let cursor_world_row = max_sb + (c_row as usize);
+                let cursor_world_col = c_col as usize;
+
+                self.copy_state.enter_at(cursor_world_row, cursor_world_col);
+
+                self.keep_terminal_copy_cursor_in_view();
                 return None;
             }
 
@@ -453,10 +451,12 @@ impl TerminalMode {
 
     fn keep_terminal_copy_cursor_in_view(&mut self) {
         let cursor_row = self.copy_state.cursor.row;
+        let cursor_col = self.copy_state.cursor.col;
         let view_h = self.view_height;
-        let (grid_rows, _) = self.get_vt100_size();
-        let current_sb = self.vt100_screen().scrollback();
+        let view_w = self.view_width; // or passed-in visible columns width
+        let (grid_rows, grid_cols) = self.get_vt100_size();
 
+        let current_sb = self.vt100_screen().scrollback();
         let top_visible = if current_sb > 0 {
             self.max_content_scrollback.saturating_sub(current_sb)
         } else {
@@ -467,6 +467,18 @@ impl TerminalMode {
 
         if cursor_row < top_visible || cursor_row > bottom_visible {
             self.scroll_to_target_line(cursor_row, view_h);
+        }
+
+        if view_w > 0 && (grid_cols as usize) > view_w {
+            let max_pan_x = (grid_cols as usize).saturating_sub(view_w);
+
+            if cursor_col < self.pan_offset_x {
+                self.pan_offset_x = cursor_col;
+            } else if cursor_col >= self.pan_offset_x + view_w {
+                self.pan_offset_x = (cursor_col + 1).saturating_sub(view_w).min(max_pan_x);
+            }
+        } else {
+            self.pan_offset_x = 0;
         }
     }
 
