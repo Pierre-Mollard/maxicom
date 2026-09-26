@@ -10,7 +10,7 @@ use crate::{
         search::{SearchState, dispatch_input_key},
         selection::CopyModeState,
     },
-    config::TextEncoding,
+    config::{TerminalDimensionMode, TextEncoding},
     input::{CopyModeAction, TerminalAction},
     logger::TerminalLogger,
 };
@@ -110,9 +110,52 @@ impl TerminalMode {
         }
     }
 
-    pub fn update_viewport(&mut self, viewport: ViewportSize) {
+    pub fn update_viewport(
+        &mut self,
+        viewport: ViewportSize,
+        dim_mode: TerminalDimensionMode,
+        conf_rows: u16,
+        conf_cols: u16,
+    ) {
         self.view_height = viewport.rows;
         self.view_width = viewport.cols;
+
+        let avail_h = viewport.rows as u16;
+        let avail_w = viewport.cols as u16;
+
+        if avail_h > 0 && avail_w > 0 {
+            let (cur_rows, cur_cols) = self.get_vt100_size();
+
+            match dim_mode {
+                TerminalDimensionMode::GrowOnly => {
+                    let target_rows = cur_rows.max(avail_h);
+                    let target_cols = cur_cols.max(avail_w);
+                    if (target_rows, target_cols) != (cur_rows, cur_cols) {
+                        self.set_vt100_size(target_rows, target_cols);
+                    }
+                }
+                TerminalDimensionMode::FixedCols => {
+                    let target_rows = avail_h;
+                    let target_cols = conf_cols;
+                    if (target_rows, target_cols) != (cur_rows, cur_cols) {
+                        self.set_vt100_size(target_rows, target_cols);
+                    }
+                }
+
+                TerminalDimensionMode::MatchView => {
+                    if (avail_h, avail_w) != (cur_rows, cur_cols) {
+                        self.set_vt100_size(avail_h, avail_w);
+                    }
+                }
+
+                TerminalDimensionMode::Fixed => {
+                    if (conf_rows, conf_cols) != (cur_rows, cur_cols) {
+                        self.set_vt100_size(conf_rows, conf_cols);
+                    }
+                }
+            }
+        }
+
         self.clamp_pan_x(viewport.cols);
         self.reconcile_both_vertical_scroll();
     }
@@ -304,7 +347,15 @@ impl TerminalMode {
     }
 
     pub fn set_vt100_size(&mut self, rows: u16, cols: u16) {
+        let (old_rows, old_cols) = self.vt100_parser.screen().size();
+        if (old_rows, old_cols) == (rows, cols) || rows == 0 || cols == 0 {
+            return;
+        }
+
         self.vt100_parser.screen_mut().set_size(rows, cols);
+
+        let new_rows = rows as usize;
+        self.screen_timestamps.resize(new_rows, None);
     }
 
     /// Return (rows, cols)

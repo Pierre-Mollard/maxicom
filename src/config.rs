@@ -166,6 +166,15 @@ pub enum RxNewlineMode {
     LfOnly, // Treats \n as newline, ignores \r
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalDimensionMode {
+    GrowOnly,
+    FixedCols,
+    MatchView,
+    Fixed,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum InputMode {
@@ -269,6 +278,7 @@ impl Default for CursorConfig {
 pub struct TerminalModeConfig {
     pub rows: u16,
     pub cols: u16,
+    pub dimension_mode: TerminalDimensionMode,
     pub history_size: usize,
     pub empty_fill_char: String,
     pub cursor: CursorConfig,
@@ -280,6 +290,7 @@ impl Default for TerminalModeConfig {
         Self {
             rows: 24,
             cols: 80,
+            dimension_mode: TerminalDimensionMode::GrowOnly,
             history_size: 5000,
             cursor: CursorConfig::default(),
             empty_fill_char: String::from("░"),

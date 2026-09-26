@@ -75,7 +75,12 @@ impl App {
             }
 
             InputMode::Terminal => {
-                self.terminal_mode.update_viewport(viewport);
+                self.terminal_mode.update_viewport(
+                    viewport,
+                    self.config().terminal_mode.dimension_mode,
+                    self.config().terminal_mode.rows,
+                    self.config().terminal_mode.cols,
+                );
             }
         }
     }
@@ -135,6 +140,8 @@ impl App {
                             UpdateEffect::None
                         }
                         OverlayResponse::ResizeTerminal { rows, cols } => {
+                            self.app_config.terminal_mode.cols = cols;
+                            self.app_config.terminal_mode.rows = rows;
                             self.terminal_mode.set_vt100_size(rows, cols);
                             UpdateEffect::None
                         }
@@ -378,9 +385,14 @@ impl App {
         }
     }
 
-    /// Read-only accessor if outside modules need it
+    #[inline]
     pub fn config(&self) -> &AppConfig {
         &self.app_config
+    }
+
+    #[inline]
+    pub fn config_mut(&mut self) -> &mut AppConfig {
+        &mut self.app_config
     }
 
     pub fn is_prefix_active(&self) -> bool {
