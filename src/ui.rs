@@ -62,11 +62,21 @@ pub fn render(app: &mut App, frame: &mut Frame) -> PostRenderEffect {
 
     let inner_area = block.inner(monitor_area);
 
+    let sample_ts = chrono::Local::now();
+    let ts_width = sample_ts
+        .format(&app.config().timestamp_format)
+        .to_string()
+        .chars()
+        .count();
+
     let (gutter_area, terminal_area) = match app.config().input_mode {
         InputMode::Terminal if app.config().display_live_timestamp => {
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([Constraint::Length(13), Constraint::Min(0)]) // 12 chars + 1 space/separator
+                .constraints([
+                    Constraint::Length(ts_width.saturating_add(1) as u16),
+                    Constraint::Min(0),
+                ])
                 .split(inner_area);
             (Some(chunks[0]), chunks[1])
         }

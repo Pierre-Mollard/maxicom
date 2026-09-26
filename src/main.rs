@@ -128,6 +128,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         app.line_mode.feed_rx(
                             app.config().line_mode.rx_eol,
                             app.config().encoding,
+                            &app.config().timestamp_format.to_string(),
                             &input_buffer[..bytes_read],
                         );
                     }

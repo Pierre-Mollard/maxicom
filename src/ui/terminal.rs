@@ -248,6 +248,12 @@ pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect) {
     let start_idx = end_idx.saturating_sub(vt_rows);
 
     let mut lines = Vec::with_capacity(rows_to_draw);
+    let sample_ts = chrono::Local::now();
+    let ts_width = sample_ts
+        .format(&app.config().timestamp_format)
+        .to_string()
+        .chars()
+        .count();
 
     for row in 0..rows_to_draw {
         let source_row = row + pan_y;
@@ -262,13 +268,17 @@ pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect) {
         let row_has_text = app.terminal_mode.row_has_content(source_row as u16);
 
         if row_has_text && let Some(ts) = maybe_ts {
-            let formatted = ts.format("%H:%M:%S%.3f").to_string();
+            let formatted = ts.format(&app.config().timestamp_format).to_string();
             lines.push(Line::from(vec![
-                Span::styled(formatted, Style::default().fg(Color::DarkGray)),
-                Span::styled("│", Style::default().fg(Color::DarkGray)),
+                Span::styled(formatted, Style::default().fg(Color::Gray)),
+                Span::styled("│", Style::default().fg(Color::Gray)),
             ]));
         } else {
-            lines.push(Line::raw("            │"));
+            let spaces = " ".repeat(ts_width);
+            lines.push(Line::from(vec![
+                Span::raw(spaces),
+                Span::styled("│", Style::default().fg(Color::DarkGray)),
+            ]));
         }
     }
 

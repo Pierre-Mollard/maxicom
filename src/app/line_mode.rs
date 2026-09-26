@@ -85,7 +85,13 @@ impl LineMode {
         self.partial_line_timestamp
     }
 
-    pub fn feed_rx(&mut self, rx_eol_mode: RxNewlineMode, encoding: TextEncoding, bytes: &[u8]) {
+    pub fn feed_rx(
+        &mut self,
+        rx_eol_mode: RxNewlineMode,
+        encoding: TextEncoding,
+        timestamp_f: &str,
+        bytes: &[u8],
+    ) {
         for &b in bytes {
             if self.partial_line.is_empty() {
                 self.partial_line_timestamp = Some(Local::now());
@@ -100,7 +106,7 @@ impl LineMode {
                 },
                 b'\n' => {
                     self.pending_carriage_return = false;
-                    self.commit_partial_line(encoding);
+                    self.commit_partial_line(encoding, timestamp_f);
                 }
                 0x08 | 0x7F => {
                     self.partial_line.pop();
@@ -117,14 +123,14 @@ impl LineMode {
         }
     }
 
-    fn commit_partial_line(&mut self, encoding: TextEncoding) {
+    fn commit_partial_line(&mut self, encoding: TextEncoding, timestamp_f: &str) {
         let line = encoding.decode(&self.partial_line);
         let trimmed = line.trim_end_matches(['\r', '\n']).to_string();
-        self.push_history(&trimmed);
+        self.push_history(&trimmed, timestamp_f);
         self.partial_line.clear();
     }
 
-    pub fn push_history(&mut self, line: &str) {
+    pub fn push_history(&mut self, line: &str, timestamp_f: &str) {
         let timestamp = self
             .partial_line_timestamp
             .take()
@@ -134,7 +140,7 @@ impl LineMode {
             timestamp,
         };
 
-        let _ = self.logger.log_entry(&entry);
+        let _ = self.logger.log_entry(&entry, timestamp_f);
 
         self.local_history.push_back(entry);
 
@@ -207,6 +213,7 @@ impl LineMode {
         &mut self,
         local_echo: bool,
         tx_eol_mode: TxNewlineSymbol,
+        timestamp_f: &str,
         action: LineInputAction,
     ) -> UpdateEffect {
         match action {
@@ -221,7 +228,7 @@ impl LineMode {
                 }
 
                 if local_echo {
-                    self.push_history(&text);
+                    self.push_history(&text, timestamp_f);
                 }
 
                 // consumming string!

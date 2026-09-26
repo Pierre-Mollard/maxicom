@@ -48,10 +48,15 @@ impl LineLogger {
         &self.config.path
     }
 
-    pub fn log_entry(&mut self, entry: &LogEntry) -> io::Result<()> {
+    pub fn log_entry(&mut self, entry: &LogEntry, timestamp_format: &str) -> io::Result<()> {
         if let Some(file) = &mut self.file {
             if self.config.timestamp {
-                writeln!(file, "[{}] {}", entry.formatted_time(), entry.text)?;
+                writeln!(
+                    file,
+                    "[{}] {}",
+                    entry.timestamp.format(timestamp_format),
+                    entry.text
+                )?;
             } else {
                 writeln!(file, "{}", entry.text)?;
             }

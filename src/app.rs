@@ -98,7 +98,8 @@ impl App {
                 if self.app_config.local_echo {
                     let text = String::from_utf8_lossy(&bytes);
                     if self.app_config.input_mode == InputMode::Line {
-                        self.line_mode.push_history(&text);
+                        self.line_mode
+                            .push_history(&text, &self.app_config.timestamp_format);
                     }
                 }
                 UpdateEffect::Transmit(bytes)
@@ -106,6 +107,7 @@ impl App {
             Action::LineInput(action) => self.line_mode.update_action_lineinput(
                 self.app_config.local_echo,
                 self.app_config.line_mode.tx_eol,
+                &self.app_config.timestamp_format,
                 action,
             ),
             Action::Terminal(action) => self.terminal_mode.update_action_terminal(action),

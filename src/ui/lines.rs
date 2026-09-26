@@ -71,14 +71,16 @@ pub fn history_entry_to_line(
     entry: &LogEntry,
     timestamp_in_line: bool,
     mode: LineDisplayMode,
+    timestamp_f: &str,
     search_query: &str,
     active_occurrence: Option<usize>,
 ) -> Line<'static> {
     let mut prefix_spans = Vec::new();
 
     if timestamp_in_line {
-        let time_str = entry.formatted_time();
-        prefix_spans.push(Span::styled(time_str, Style::default().fg(Color::Yellow)));
+        let time = entry.timestamp.format(timestamp_f);
+        let label = format!("[{time}]");
+        prefix_spans.push(Span::styled(label, Style::default().fg(Color::Yellow)));
     }
 
     // TODO: custom outside and inside (|)
@@ -129,6 +131,7 @@ pub fn render_monitor(
                     entry,
                     timestamp_in_line,
                     display_mode,
+                    &app.config().timestamp_format,
                     search_query,
                     active_occ,
                 )
@@ -138,7 +141,16 @@ pub fn render_monitor(
         app.line_mode
             .history()
             .iter()
-            .map(|entry| history_entry_to_line(entry, timestamp_in_line, display_mode, "", None))
+            .map(|entry| {
+                history_entry_to_line(
+                    entry,
+                    timestamp_in_line,
+                    display_mode,
+                    &app.config().timestamp_format,
+                    "",
+                    None,
+                )
+            })
             .collect()
     };
 
@@ -151,8 +163,9 @@ pub fn render_monitor(
         if app.config().display_live_timestamp
             && let Some(partial_timestamp) = app.line_mode.partial_line_timestamp()
         {
-            let time = LogEntry::formatted_time_builder(partial_timestamp);
-            partial_spans.push(Span::styled(time, Style::default().fg(Color::Yellow)));
+            let time = partial_timestamp.format(&app.config().timestamp_format);
+            let label = format!("[{time}]");
+            partial_spans.push(Span::styled(label, Style::default().fg(Color::Yellow)));
         }
 
         partial_spans.push(Span::styled("|p ", Style::default().fg(Color::DarkGray)));

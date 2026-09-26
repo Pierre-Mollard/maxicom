@@ -1,3 +1,4 @@
+use chrono::format::StrftimeItems;
 use ratatui::style::{Color, Modifier, Style};
 /// Application configuration and files
 use serde::{Deserialize, Serialize};
@@ -20,6 +21,9 @@ pub enum ConfigValidationError {
         min: usize,
         max: usize,
     },
+    InvalidTimestampFormat {
+        err: String,
+    },
 }
 
 impl std::fmt::Display for ConfigValidationError {
@@ -31,6 +35,9 @@ impl std::fmt::Display for ConfigValidationError {
                     f,
                     "rx_buffer_size {actual} is out of bounds (allowed range: {min}..={max} bytes)"
                 )
+            }
+            Self::InvalidTimestampFormat { err } => {
+                write!(f, "invalid timestamp format: {err}")
             }
         }
     }
@@ -290,6 +297,7 @@ pub struct AppConfig {
     pub input_mode: InputMode,
     pub rx_buffer_size: usize,
     pub display_live_timestamp: bool,
+    pub timestamp_format: String,
     pub line_mode: LineModeConfig,
     pub terminal_mode: TerminalModeConfig,
 }
@@ -302,6 +310,7 @@ impl Default for AppConfig {
             rx_buffer_size: 4096,
             input_mode: InputMode::default(),
             display_live_timestamp: true,
+            timestamp_format: String::from("%H:%M:%S%.3f"),
             line_mode: LineModeConfig::default(),
             terminal_mode: TerminalModeConfig::default(),
         }
@@ -353,6 +362,18 @@ impl AppConfig {
                 max: MAX_RX_BUF_SIZE,
             });
         }
+
+        if self.timestamp_format.is_empty() {
+            return Err(ConfigValidationError::InvalidTimestampFormat {
+                err: "cannot be empty".to_owned(),
+            });
+        }
+
+        if let Err(err) = StrftimeItems::new(&self.timestamp_format).parse() {
+            return Err(ConfigValidationError::InvalidTimestampFormat {
+                err: err.to_string(),
+            });
+        };
 
         Ok(())
     }
