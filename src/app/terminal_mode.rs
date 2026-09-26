@@ -400,13 +400,16 @@ impl TerminalMode {
     pub fn update_action_terminal(&mut self, action: TerminalAction) -> UpdateEffect {
         match action {
             TerminalAction::AutoResizeRemoteToViewer => {
-                let (rows, cols) = self.get_vt100_size();
+                let rows = self.view_height as u16;
+                let cols = self.view_width as u16;
                 let cmd =
                     format!("stty rows {rows} cols {cols}; export LINES={rows} COLUMNS={cols}\n");
                 UpdateEffect::Transmit(cmd.into_bytes())
             }
             TerminalAction::AutoResizeEmulatorToViewer => {
                 self.set_vt100_size(self.view_height as u16, self.view_width as u16);
+                self.pan_offset_x = 0;
+                self.max_pan = 0;
                 UpdateEffect::None
             }
         }

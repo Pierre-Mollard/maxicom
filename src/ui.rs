@@ -71,12 +71,10 @@ pub fn render(app: &mut App, frame: &mut Frame) -> PostRenderEffect {
 
     let (gutter_area, terminal_area) = match app.config().input_mode {
         InputMode::Terminal if app.config().display_live_timestamp => {
+            let gutter_width = (ts_width.saturating_add(1) as u16).min(inner_area.width);
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Length(ts_width.saturating_add(1) as u16),
-                    Constraint::Min(0),
-                ])
+                .constraints([Constraint::Length(gutter_width), Constraint::Min(0)])
                 .split(inner_area);
             (Some(chunks[0]), chunks[1])
         }
