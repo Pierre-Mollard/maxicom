@@ -13,15 +13,6 @@ pub struct CopyModeState {
 }
 
 impl CopyModeState {
-    pub fn enter(&mut self, current_bottom_row: usize) {
-        self.active = true;
-        self.cursor = VisualPosition {
-            row: current_bottom_row,
-            col: 0,
-        };
-        self.selection_anchor = None;
-    }
-
     pub fn exit(&mut self) {
         self.active = false;
         self.selection_anchor = None;

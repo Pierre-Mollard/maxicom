@@ -390,11 +390,6 @@ impl App {
         &self.app_config
     }
 
-    #[inline]
-    pub fn config_mut(&mut self) -> &mut AppConfig {
-        &mut self.app_config
-    }
-
     pub fn is_prefix_active(&self) -> bool {
         self.prefix_active
     }
