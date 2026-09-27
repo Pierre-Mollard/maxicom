@@ -25,7 +25,9 @@ pub fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
 
     let mut spans = vec![
         Span::styled(format!(" {} ", port_str), highlight_style),
+        Span::styled("│", dim_style),
         Span::styled(format!(" {} baud ", baud), bar_style),
+        Span::styled(format!(" {} ", app.serial_config), bar_style),
         Span::styled("│", dim_style),
     ];
 

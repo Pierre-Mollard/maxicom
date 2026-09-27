@@ -3,7 +3,7 @@
 use std::{
     env,
     error::Error,
-    fmt,
+    fmt::{self, Display, Write},
     io::{self, ErrorKind},
     str::FromStr,
     time::Duration,
@@ -153,6 +153,30 @@ pub struct SerialConfig {
     pub flow_control: FlowControl,
 }
 
+impl SerialConfig {
+    fn compact_notation(&self) -> [char; 3] {
+        let d = match self.char_size {
+            CharSize::Bits5 => '5',
+            CharSize::Bits6 => '6',
+            CharSize::Bits7 => '7',
+            CharSize::Bits8 => '8',
+        };
+
+        let p = match self.parity {
+            Parity::None => 'N',
+            Parity::Odd => 'O',
+            Parity::Even => 'E',
+        };
+
+        let s = match self.stop_bits {
+            StopBits::One => '1',
+            StopBits::Two => '2',
+        };
+
+        [d, p, s]
+    }
+}
+
 impl Default for SerialConfig {
     fn default() -> Self {
         Self {
@@ -163,6 +187,15 @@ impl Default for SerialConfig {
             parity: Parity::None,
             flow_control: FlowControl::None,
         }
+    }
+}
+
+impl Display for SerialConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let compact_bytes = self.compact_notation();
+        f.write_char(compact_bytes[0])?;
+        f.write_char(compact_bytes[1])?;
+        f.write_char(compact_bytes[2])
     }
 }
 
