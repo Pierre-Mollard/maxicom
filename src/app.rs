@@ -409,7 +409,7 @@ impl App {
         match self.config().input_mode {
             InputMode::Terminal => FocusTarget::Terminal,
             InputMode::Line => {
-                if self.line_mode.search().active {
+                if self.line_mode.search().active || self.line_mode.copy_state().active {
                     FocusTarget::LineHistory
                 } else {
                     FocusTarget::LineInput

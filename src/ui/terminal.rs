@@ -159,8 +159,10 @@ pub fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, outer
                         let screen_x = area.x + viewer_col as u16;
                         let screen_y = area.y + viewer_row as u16;
 
-                        buf[(screen_x, screen_y)]
-                            .set_style(Style::default().add_modifier(Modifier::REVERSED));
+                        if !app.is_app_focused() {
+                            buf[(screen_x, screen_y)]
+                                .set_style(Style::default().add_modifier(Modifier::REVERSED));
+                        }
                         frame.set_cursor_position((screen_x, screen_y));
                     }
                 }
@@ -212,7 +214,14 @@ pub fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, outer
             && col < area.width
             && row < area.height
         {
-            frame.set_cursor_position((area.x + col, area.y + row));
+            let cursor_x = area.x + col;
+            let cursor_y = area.y + row;
+            if !app.is_app_focused() {
+                let buf = frame.buffer_mut();
+                buf[(cursor_x, cursor_y)]
+                    .set_style(Style::default().add_modifier(Modifier::REVERSED));
+            }
+            frame.set_cursor_position((cursor_x, cursor_y));
         }
     }
 
@@ -225,6 +234,10 @@ pub fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, outer
         // Bottom border line of the monitor outer box
         let cursor_y = outer_area.y + outer_area.height.saturating_sub(1);
 
+        if !app.is_app_focused() {
+            let buf = frame.buffer_mut();
+            buf[(cursor_x, cursor_y)].set_style(Style::default().add_modifier(Modifier::REVERSED));
+        }
         frame.set_cursor_position((cursor_x, cursor_y));
     }
 }
