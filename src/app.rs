@@ -394,6 +394,13 @@ impl App {
         self.prefix_active
     }
 
+    pub fn is_logging_active(&self) -> bool {
+        match self.config().input_mode {
+            InputMode::Line => self.line_mode.is_logging(),
+            InputMode::Terminal => self.terminal_mode.is_logging(),
+        }
+    }
+
     pub fn focus_target(&self) -> FocusTarget {
         if self.overlay.is_some() {
             return FocusTarget::Overlay;

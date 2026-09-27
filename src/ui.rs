@@ -3,6 +3,7 @@
 pub mod common;
 pub mod lines;
 pub mod popups;
+pub mod status_bar;
 pub mod terminal;
 
 use ratatui::{
@@ -27,6 +28,7 @@ use crate::{
             resize::render_resize_popup,
             settings::render_settings_popup,
         },
+        status_bar::render_status_bar,
         terminal::{render_timestamp_gutter, render_vt100_terminal},
     },
 };
@@ -40,18 +42,36 @@ pub enum PostRenderEffect {
 pub fn render(app: &mut App, frame: &mut Frame) -> PostRenderEffect {
     let screen_area = frame.area();
 
-    let (monitor_area, prompt_area, focus_target): (Rect, Option<Rect>, FocusTarget) =
-        match app.config().input_mode {
-            InputMode::Terminal => (screen_area, None, FocusTarget::Terminal),
-            InputMode::Line => {
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Min(3), Constraint::Length(3)])
-                    .split(screen_area);
-
-                (chunks[0], Some(chunks[1]), FocusTarget::LineHistory)
-            }
-        };
+    let (monitor_area, prompt_area, status_bar_area, focus_target): (
+        Rect,
+        Option<Rect>,
+        Rect,
+        FocusTarget,
+    ) = match app.config().input_mode {
+        InputMode::Terminal => {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(3), Constraint::Length(1)])
+                .split(screen_area);
+            (chunks[0], None, chunks[1], FocusTarget::Terminal)
+        }
+        InputMode::Line => {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(3),
+                    Constraint::Length(3),
+                    Constraint::Length(1),
+                ])
+                .split(screen_area);
+            (
+                chunks[0],
+                Some(chunks[1]),
+                chunks[2],
+                FocusTarget::LineHistory,
+            )
+        }
+    };
 
     let focus = app.focus_target();
     let border_style = border_style_for(focus_target, focus, app.is_app_focused());
@@ -105,6 +125,8 @@ pub fn render(app: &mut App, frame: &mut Frame) -> PostRenderEffect {
             render_effect = render_monitor(app, frame, inner_area, monitor_area);
         }
     }
+
+    render_status_bar(app, frame, status_bar_area);
 
     if let Some(prompt_rect) = prompt_area {
         render_input_prompt(app, frame, prompt_rect);
