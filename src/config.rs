@@ -8,11 +8,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::theme::ThemeConfig;
+use crate::{keybindings::KeyBindingsConfig, theme::ThemeConfig};
 
 const APP_DIR: &str = "maxicom";
 const CONFIG_FILE: &str = "config.toml";
 const THEME_FILE: &str = "theme.toml";
+const KEYMAP_FILE: &str = "keymap.toml";
+
 pub const MIN_RX_BUF_SIZE: usize = 512;
 pub const MAX_RX_BUF_SIZE: usize = 65_536;
 
@@ -315,6 +317,7 @@ pub struct AppConfig {
     pub line_mode: LineModeConfig,
     pub terminal_mode: TerminalModeConfig,
     pub theme_path: Option<PathBuf>,
+    pub keybindings_path: Option<PathBuf>,
 }
 
 impl Default for AppConfig {
@@ -329,18 +332,26 @@ impl Default for AppConfig {
             line_mode: LineModeConfig::default(),
             terminal_mode: TerminalModeConfig::default(),
             theme_path: None,
+            keybindings_path: None,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct LoadedConfig {
+    pub app: AppConfig,
+    pub theme: ThemeConfig,
+    pub keybindings: KeyBindingsConfig,
 }
 
 impl AppConfig {
     /// Loads configuration from path, creating default file if it doesn't exist
     pub fn load_or_create_default<P: AsRef<Path>>(
         path: P,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Result<LoadedConfig, Box<dyn std::error::Error>> {
         let path = path.as_ref();
 
-        let config = if path.exists() {
+        let app_config = if path.exists() {
             let content = fs::read_to_string(path)?;
             let config: AppConfig = toml::from_str(&content)?;
             config.validate()?;
@@ -358,10 +369,17 @@ impl AppConfig {
             default_config
         };
 
-        let theme_file_to_check = config.active_theme_path();
-        let _ = ThemeConfig::load_or_create_default(theme_file_to_check)?;
+        let theme_path = app_config.active_theme_path();
+        let theme = ThemeConfig::load_or_create_default(theme_path)?;
 
-        Ok(config)
+        let keybindings_path = app_config.active_keybindings_path();
+        let keybindings = KeyBindingsConfig::load_or_create_default(keybindings_path)?;
+
+        Ok(LoadedConfig {
+            app: app_config,
+            theme,
+            keybindings,
+        })
     }
 
     /// Load config using system configuration (like XDG or .config) on any os with crate 'dirs'
@@ -377,10 +395,22 @@ impl AppConfig {
             .unwrap_or_else(|| PathBuf::from(THEME_FILE))
     }
 
+    pub fn default_keybindings_path() -> PathBuf {
+        dirs::config_dir()
+            .map(|p| p.join(APP_DIR).join(KEYMAP_FILE))
+            .unwrap_or_else(|| PathBuf::from(KEYMAP_FILE))
+    }
+
     pub fn active_theme_path(&self) -> PathBuf {
         self.theme_path
             .clone()
             .unwrap_or_else(Self::default_theme_path)
+    }
+
+    pub fn active_keybindings_path(&self) -> PathBuf {
+        self.keybindings_path
+            .clone()
+            .unwrap_or_else(Self::default_keybindings_path)
     }
 
     pub fn validate(&self) -> Result<(), ConfigValidationError> {

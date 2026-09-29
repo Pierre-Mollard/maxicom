@@ -26,6 +26,7 @@ use crate::ui::render;
 mod app;
 mod config;
 mod input;
+mod keybindings;
 mod logger;
 mod notification;
 mod serial;
@@ -72,7 +73,7 @@ fn main() -> ExitCode {
 
 fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let config_path = AppConfig::default_config_path();
-    let app_config = match AppConfig::load_or_create_default(&config_path) {
+    let configs = match AppConfig::load_or_create_default(&config_path) {
         Ok(cfg) => cfg,
         Err(e) => {
             eprintln!(
@@ -82,8 +83,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             return Ok(ExitCode::FAILURE);
         }
     };
+    let app_config = configs.app;
 
-    let config = match parse_args() {
+    let console_args = match parse_args() {
         Ok(serial::ParseOutcome::Config(config)) => config,
         Ok(serial::ParseOutcome::Help) => {
             print_help();
@@ -95,7 +97,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
     };
 
-    let mut device = match SerialDevice::open(&config) {
+    let mut device = match SerialDevice::open(&console_args) {
         Ok(dev) => Some(dev),
         Err(SerialError::OpenFailed { ref source, .. }) if source.kind() == ErrorKind::NotFound => {
             None
@@ -112,7 +114,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut running: bool = true;
     let buffer_size = app_config.rx_buffer_size;
     let mut input_buffer = vec![0u8; buffer_size];
-    let mut app = App::new(app_config, config);
+    let mut app = App::new(app_config, configs.theme, configs.keybindings, console_args);
 
     if device.is_none() {
         app.open_overlay(Overlay::DeviceDisconnected(app.serial_config.port.clone()));

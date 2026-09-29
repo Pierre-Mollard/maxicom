@@ -3,9 +3,11 @@ use std::time::Duration;
 use crate::{
     config::{AppConfig, InputMode, WrapMode},
     input::{Action, AppAction, CopyModeAction, HistoryAction},
+    keybindings::{self, KeyBindingsConfig},
     logger::{LineLogger, TerminalLogger},
     notification::{NotificationManager, ToastLevel},
     serial::SerialConfig,
+    theme::ThemeConfig,
     types::{
         ErrorDialog, FilePathDialog, FocusTarget, Overlay, OverlayResponse, SettingKey,
         ViewportSize,
@@ -22,6 +24,8 @@ pub use terminal_mode::TerminalMode;
 
 pub struct App {
     app_config: AppConfig,
+    theme: ThemeConfig,
+    keybindings: KeyBindingsConfig,
     pub serial_config: SerialConfig,
     prefix_active: bool,
     overlay: Option<Overlay>,
@@ -42,7 +46,12 @@ pub enum UpdateEffect {
 }
 
 impl App {
-    pub fn new(app_config: AppConfig, serial_config: SerialConfig) -> Self {
+    pub fn new(
+        app_config: AppConfig,
+        theme: ThemeConfig,
+        keybindings: KeyBindingsConfig,
+        serial_config: SerialConfig,
+    ) -> Self {
         let line_logger = LineLogger::new(app_config.line_mode.logging.to_owned());
         let terminal_logger = TerminalLogger::new(app_config.terminal_mode.logging.to_owned());
 
@@ -57,6 +66,8 @@ impl App {
         Self {
             prefix_active: false,
             app_config,
+            theme,
+            keybindings,
             serial_config,
             overlay: None,
             notifications: NotificationManager::new(),
