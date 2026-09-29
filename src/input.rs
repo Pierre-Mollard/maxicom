@@ -1,6 +1,6 @@
 /// Keyboard event polling and translation
 /// Using the 'crossterm' crate
-use std::{io, time::Duration};
+use std::{io, str::FromStr, time::Duration};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use terminput::Encoding;
@@ -9,8 +9,20 @@ use terminput_crossterm::to_terminput_key;
 use crate::{
     app::App,
     config::InputMode,
+    keybindings::KeyPattern,
     types::{Overlay, ResizeDialog, SerialConfigDialog, SettingKey},
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownActionError(pub String);
+
+impl std::fmt::Display for UnknownActionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown action '{}'", self.0)
+    }
+}
+
+impl std::error::Error for UnknownActionError {}
 
 #[derive(Debug)]
 pub enum Action {
@@ -89,6 +101,58 @@ pub enum CopyModeAction {
     Exit,
 }
 
+// TODO: impl fromString / Display to actions for parsing (those below are fake for now)
+impl FromStr for Action {
+    type Err = UnknownActionError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "quit" => Ok(Action::App(AppAction::Quit)),
+            "help" => Ok(Action::OpenOverlay(Overlay::Help)),
+            "settings" => Ok(Action::OpenOverlay(Overlay::Settings)),
+            "toggle_logging" => Ok(Action::App(AppAction::ToggleLogging)),
+            "enter_copy_mode" => Ok(Action::CopyMode(CopyModeAction::Enter)),
+            "enter_search" => Ok(Action::History(HistoryAction::ToggleSearch)),
+            "auto_resize_remote" => Ok(Action::Terminal(TerminalAction::AutoResizeRemoteToViewer)),
+            "auto_resize_emulator" => {
+                Ok(Action::Terminal(TerminalAction::AutoResizeEmulatorToViewer))
+            }
+            "scroll_page_up" => Ok(Action::History(HistoryAction::ScrollUpPage)),
+            "scroll_page_down" => Ok(Action::History(HistoryAction::ScrollDownPage)),
+            "scroll_to_top" => Ok(Action::History(HistoryAction::ScrollToTop)),
+            "scroll_to_bottom" => Ok(Action::History(HistoryAction::ScrollToBottom)),
+            other => Err(UnknownActionError(other.to_string())),
+        }
+    }
+
+    //pub const fn as_str(&self) -> &'static str {
+    //match self {
+    //Action::App(_) => "action",
+    //}
+    //}
+}
+
+impl FromStr for CopyModeAction {
+    type Err = UnknownActionError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "exit" => Ok(CopyModeAction::Exit),
+            "yank" => Ok(CopyModeAction::Yank),
+            "toggle_selection" => Ok(CopyModeAction::ToggleSelection),
+            "move_left" => Ok(CopyModeAction::MoveLeft),
+            "move_right" => Ok(CopyModeAction::MoveRight),
+            "move_up" => Ok(CopyModeAction::MoveUp),
+            "move_down" => Ok(CopyModeAction::MoveDown),
+            "page_up" => Ok(CopyModeAction::PageUp),
+            "page_down" => Ok(CopyModeAction::PageDown),
+            "start_of_line" => Ok(CopyModeAction::StartOfLine),
+            "end_of_line" => Ok(CopyModeAction::EndOfLine),
+            other => Err(UnknownActionError(other.to_string())),
+        }
+    }
+}
+
 /// Using crossterm's event API instead of stdin.read() to handle multi-byte ANSI sequence like
 /// arrows and page up and prefix
 pub fn poll_event(timeout: Duration) -> io::Result<Option<Event>> {
@@ -126,6 +190,10 @@ pub fn handle_event(event: Event, app: &App) -> Action {
     if app.overlay().is_some() {
         return Action::OverlayKey(key_event);
     }
+
+    let pattern = KeyPattern::from_event(&key_event);
+    let resolver = &app.key_resolver;
+    // TODO: use resolver for generalized config inputs
 
     if app.is_copy_mode_active() {
         return handle_copy_mode_keys(key_event);

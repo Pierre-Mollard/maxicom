@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::{
     config::{AppConfig, InputMode, WrapMode},
     input::{Action, AppAction, CopyModeAction, HistoryAction},
-    keybindings::{self, KeyBindingsConfig},
+    keybindings::KeyResolver,
     logger::{LineLogger, TerminalLogger},
     notification::{NotificationManager, ToastLevel},
     serial::SerialConfig,
@@ -24,8 +24,8 @@ pub use terminal_mode::TerminalMode;
 
 pub struct App {
     app_config: AppConfig,
-    theme: ThemeConfig,
-    keybindings: KeyBindingsConfig,
+    pub theme: ThemeConfig,
+    pub key_resolver: KeyResolver,
     pub serial_config: SerialConfig,
     prefix_active: bool,
     overlay: Option<Overlay>,
@@ -49,7 +49,7 @@ impl App {
     pub fn new(
         app_config: AppConfig,
         theme: ThemeConfig,
-        keybindings: KeyBindingsConfig,
+        key_resolver: KeyResolver,
         serial_config: SerialConfig,
     ) -> Self {
         let line_logger = LineLogger::new(app_config.line_mode.logging.to_owned());
@@ -67,7 +67,7 @@ impl App {
             prefix_active: false,
             app_config,
             theme,
-            keybindings,
+            key_resolver,
             serial_config,
             overlay: None,
             notifications: NotificationManager::new(),

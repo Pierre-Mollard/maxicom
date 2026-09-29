@@ -14,6 +14,7 @@ use crate::app::UpdateEffect;
 use crate::app::search::copy_via_osc52;
 use crate::config::AppConfig;
 use crate::config::InputMode;
+use crate::keybindings::KeyResolver;
 use crate::serial::SerialDevice;
 use crate::serial::SerialError;
 use crate::serial::parse_args;
@@ -85,6 +86,17 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     };
     let app_config = configs.app;
 
+    let key_resolver = match KeyResolver::try_new(&configs.keybindings) {
+        Ok(resolver) => resolver,
+        Err(e) => {
+            eprintln!(
+                "maxicom: invalid keymap file {}: {e}",
+                app_config.active_keybindings_path().display()
+            );
+            return Ok(ExitCode::FAILURE);
+        }
+    };
+
     let console_args = match parse_args() {
         Ok(serial::ParseOutcome::Config(config)) => config,
         Ok(serial::ParseOutcome::Help) => {
@@ -114,7 +126,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut running: bool = true;
     let buffer_size = app_config.rx_buffer_size;
     let mut input_buffer = vec![0u8; buffer_size];
-    let mut app = App::new(app_config, configs.theme, configs.keybindings, console_args);
+    let mut app = App::new(app_config, configs.theme, key_resolver, console_args);
 
     if device.is_none() {
         app.open_overlay(Overlay::DeviceDisconnected(app.serial_config.port.clone()));

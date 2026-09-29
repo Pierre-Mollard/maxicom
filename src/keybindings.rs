@@ -1,9 +1,189 @@
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     fs,
-    path::{Path, PathBuf},
+    path::Path,
+    str::FromStr,
 };
+
+use crate::input::{Action, CopyModeAction};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct KeyPattern {
+    pub code: KeyCode,
+    pub modifiers: KeyModifiers,
+}
+
+impl KeyPattern {
+    pub fn from_event(ev: &KeyEvent) -> Self {
+        let (code, modifiers) = match ev.code {
+            KeyCode::Char(c) if c.is_ascii_uppercase() => (
+                KeyCode::Char(c.to_ascii_lowercase()),
+                ev.modifiers - KeyModifiers::SHIFT,
+            ),
+            KeyCode::Char(c) => (KeyCode::Char(c.to_ascii_lowercase()), ev.modifiers),
+            other => (other, ev.modifiers),
+        };
+
+        Self { code, modifiers }
+    }
+}
+
+impl FromStr for KeyPattern {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut modifiers = KeyModifiers::NONE;
+        let mut code = None;
+
+        for part in s.split('-') {
+            match part.to_ascii_lowercase().as_str() {
+                "ctrl" | "control" => modifiers.insert(KeyModifiers::CONTROL),
+                "alt" => modifiers.insert(KeyModifiers::ALT),
+                "shift" => modifiers.insert(KeyModifiers::SHIFT),
+                "enter" | "return" => code = Some(KeyCode::Enter),
+                "esc" | "escape" => code = Some(KeyCode::Esc),
+                "backspace" => code = Some(KeyCode::Backspace),
+                "tab" => code = Some(KeyCode::Tab),
+                "space" => code = Some(KeyCode::Char(' ')),
+                "up" => code = Some(KeyCode::Up),
+                "down" => code = Some(KeyCode::Down),
+                "left" => code = Some(KeyCode::Left),
+                "right" => code = Some(KeyCode::Right),
+                "pageup" => code = Some(KeyCode::PageUp),
+                "pagedown" => code = Some(KeyCode::PageDown),
+                "home" => code = Some(KeyCode::Home),
+                "end" => code = Some(KeyCode::End),
+                f if f.starts_with('f') && f.len() > 1 => {
+                    let num = f[1..].parse::<u8>().map_err(|_| "Invalid F-key")?;
+                    code = Some(KeyCode::F(num));
+                }
+                c if c.chars().count() == 1 => {
+                    let ch = c.chars().next().unwrap().to_ascii_lowercase();
+                    code = Some(KeyCode::Char(ch));
+                }
+                other => return Err(format!("Unknown key sequence: {other}")),
+            }
+        }
+
+        let code = code.ok_or_else(|| "Missing key code".to_string())?;
+        Ok(Self { code, modifiers })
+    }
+}
+
+pub struct KeyResolver {
+    pub prefix: KeyPattern,
+    pub direct: HashMap<KeyPattern, Action>,
+    pub prefix_actions: HashMap<KeyPattern, Action>,
+    pub copy_mode: HashMap<KeyPattern, CopyModeAction>,
+    // TODO: see how to categorize all of those action (user impact)
+}
+
+#[derive(Debug)]
+pub enum KeymapError {
+    InvalidKey {
+        section: &'static str,
+        key: String,
+        reason: String,
+    },
+    InvalidAction {
+        section: &'static str,
+        action: String,
+    },
+}
+
+impl std::fmt::Display for KeymapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            KeymapError::InvalidKey {
+                section,
+                key,
+                reason,
+            } => {
+                write!(f, "in [{section}]: invalid key '{key}': {reason}")
+            }
+            KeymapError::InvalidAction { section, action } => {
+                write!(f, "in [{section}]: unknown action '{action}'")
+            }
+        }
+    }
+}
+
+impl std::error::Error for KeymapError {}
+
+impl KeyResolver {
+    pub fn try_new(config: &KeyBindingsConfig) -> Result<Self, KeymapError> {
+        let prefix = config
+            .prefix
+            .parse()
+            .map_err(|err| KeymapError::InvalidKey {
+                section: "root",
+                key: config.prefix.clone(),
+                reason: err,
+            })?;
+
+        let mut direct = HashMap::new();
+        for (k, action_str) in &config.direct {
+            let pat = k.parse().map_err(|err| KeymapError::InvalidKey {
+                section: "direct",
+                key: k.clone(),
+                reason: err,
+            })?;
+            let act: Action = action_str.parse().map_err(|_| KeymapError::InvalidAction {
+                section: "direct",
+                action: action_str.clone(),
+            })?;
+            direct.insert(pat, act);
+        }
+
+        let mut prefix_actions = HashMap::new();
+        for (k, action_str) in &config.prefix_actions {
+            let pat = k.parse().map_err(|err| KeymapError::InvalidKey {
+                section: "prefix_actions",
+                key: k.clone(),
+                reason: err,
+            })?;
+            let act: Action = action_str.parse().map_err(|_| KeymapError::InvalidAction {
+                section: "prefix_actions",
+                action: action_str.clone(),
+            })?;
+            prefix_actions.insert(pat, act);
+        }
+
+        let mut copy_mode = HashMap::new();
+        for (k, action_str) in &config.copy_mode {
+            let pat = k.parse().map_err(|err| KeymapError::InvalidKey {
+                section: "copy_mode",
+                key: k.clone(),
+                reason: err,
+            })?;
+            let act: CopyModeAction =
+                action_str.parse().map_err(|_| KeymapError::InvalidAction {
+                    section: "copy_mode",
+                    action: action_str.clone(),
+                })?;
+            copy_mode.insert(pat, act);
+        }
+
+        Ok(Self {
+            prefix,
+            direct,
+            prefix_actions,
+            copy_mode,
+        })
+    }
+}
+
+macro_rules! btreemap {
+    ($( $key:expr => $val:expr ),* $(,)?) => {{
+        let mut map = std::collections::BTreeMap::new();
+        $(
+            map.insert($key.to_string(), $val.to_string());
+        )*
+        map
+    }};
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -17,37 +197,39 @@ pub struct KeyBindingsConfig {
 
 impl Default for KeyBindingsConfig {
     fn default() -> Self {
-        let mut direct = BTreeMap::new();
-        direct.insert("ctrl-q".to_string(), "quit".to_string());
-        direct.insert("pageup".to_string(), "scroll_page_up".to_string());
-        direct.insert("pagedown".to_string(), "scroll_page_down".to_string());
+        let direct = btreemap! {
+            "ctrl-q"   => "quit",
+            "pageup"   => "scroll_page_up",
+            "pagedown" => "scroll_page_down",
+        };
 
-        let mut prefix_actions = BTreeMap::new();
-        prefix_actions.insert("z".to_string(), "help".to_string());
-        prefix_actions.insert("q".to_string(), "quit".to_string());
-        prefix_actions.insert("x".to_string(), "quit".to_string());
-        prefix_actions.insert("s".to_string(), "settings".to_string());
-        prefix_actions.insert("l".to_string(), "toggle_logging".to_string());
-        prefix_actions.insert("[".to_string(), "enter_copy_mode".to_string());
-        prefix_actions.insert("/".to_string(), "enter_search".to_string());
-        prefix_actions.insert("r".to_string(), "auto_resize_remote".to_string());
-        prefix_actions.insert("b".to_string(), "send_break".to_string());
+        let prefix_actions = btreemap! {
+            "z" => "help",
+            "q" => "quit",
+            "x" => "quit",
+            "s" => "settings",
+            "l" => "toggle_logging",
+            "[" => "enter_copy_mode",
+            "/" => "enter_search",
+            "r" => "auto_resize_remote",
+        };
 
-        let mut copy_mode = BTreeMap::new();
-        copy_mode.insert("q".to_string(), "exit".to_string());
-        copy_mode.insert("esc".to_string(), "exit".to_string());
-        copy_mode.insert("v".to_string(), "toggle_selection".to_string());
-        copy_mode.insert("y".to_string(), "yank".to_string());
-        copy_mode.insert("h".to_string(), "move_left".to_string());
-        copy_mode.insert("left".to_string(), "move_left".to_string());
-        copy_mode.insert("j".to_string(), "move_down".to_string());
-        copy_mode.insert("down".to_string(), "move_down".to_string());
-        copy_mode.insert("k".to_string(), "move_up".to_string());
-        copy_mode.insert("up".to_string(), "move_up".to_string());
-        copy_mode.insert("l".to_string(), "move_right".to_string());
-        copy_mode.insert("right".to_string(), "move_right".to_string());
-        copy_mode.insert("0".to_string(), "start_of_line".to_string());
-        copy_mode.insert("$".to_string(), "end_of_line".to_string());
+        let copy_mode = btreemap! {
+            "q"     => "exit",
+            "esc"   => "exit",
+            "v"     => "toggle_selection",
+            "y"     => "yank",
+            "h"     => "move_left",
+            "left"  => "move_left",
+            "j"     => "move_down",
+            "down"  => "move_down",
+            "k"     => "move_up",
+            "up"    => "move_up",
+            "l"     => "move_right",
+            "right" => "move_right",
+            "0"     => "start_of_line",
+            "$"     => "end_of_line",
+        };
 
         Self {
             prefix: "ctrl-a".to_string(),
