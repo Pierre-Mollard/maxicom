@@ -24,6 +24,75 @@ impl std::fmt::Display for UnknownActionError {
 
 impl std::error::Error for UnknownActionError {}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeyBindingAction {
+    Quit,
+    Help,
+    Settings,
+    SerialSettings,
+    ResizeDialog,
+    ToggleLogging,
+    ToggleInputMode,
+
+    ScrollUp,
+    ScrollDown,
+    ScrollPageUp,
+    ScrollPageDown,
+    ScrollToTop,
+    ScrollToBottom,
+    ClearHistory,
+    ToggleSearch,
+    SearchNext,
+    SearchPrevious,
+
+    AutoResizeRemote,
+    AutoResizeEmulator,
+
+    EnterCopyMode,
+}
+
+impl KeyBindingAction {
+    pub fn to_action(&self, app: &App) -> Action {
+        match self {
+            KeyBindingAction::Quit => Action::App(AppAction::Quit),
+            KeyBindingAction::Help => Action::OpenOverlay(Overlay::Help),
+            KeyBindingAction::Settings => Action::OpenOverlay(Overlay::Settings),
+            KeyBindingAction::SerialSettings => {
+                let dialog = SerialConfigDialog::new(&app.serial_config);
+                Action::OpenOverlay(Overlay::SerialSettings(dialog))
+            }
+            KeyBindingAction::ResizeDialog => {
+                let (r, c) = app.terminal_mode.get_vt100_size();
+                Action::OpenOverlay(Overlay::TerminalSize(ResizeDialog::new(r, c)))
+            }
+            KeyBindingAction::ToggleLogging => Action::App(AppAction::ToggleLogging),
+            KeyBindingAction::ToggleInputMode => {
+                Action::App(AppAction::ToggleSetting(SettingKey::InputMode))
+            }
+
+            KeyBindingAction::ScrollUp => Action::History(HistoryAction::ScrollUp(1)),
+            KeyBindingAction::ScrollDown => Action::History(HistoryAction::ScrollDown(1)),
+            KeyBindingAction::ScrollPageUp => Action::History(HistoryAction::ScrollUpPage),
+            KeyBindingAction::ScrollPageDown => Action::History(HistoryAction::ScrollDownPage),
+            KeyBindingAction::ScrollToTop => Action::History(HistoryAction::ScrollToTop),
+            KeyBindingAction::ScrollToBottom => Action::History(HistoryAction::ScrollToBottom),
+            KeyBindingAction::ClearHistory => Action::History(HistoryAction::Clear),
+            KeyBindingAction::ToggleSearch => Action::History(HistoryAction::ToggleSearch),
+            KeyBindingAction::SearchNext => Action::History(HistoryAction::SearchNext),
+            KeyBindingAction::SearchPrevious => Action::History(HistoryAction::SearchPrevious),
+
+            KeyBindingAction::AutoResizeRemote => {
+                Action::Terminal(TerminalAction::AutoResizeRemoteToViewer)
+            }
+            KeyBindingAction::AutoResizeEmulator => {
+                Action::Terminal(TerminalAction::AutoResizeEmulatorToViewer)
+            }
+
+            KeyBindingAction::EnterCopyMode => Action::CopyMode(CopyModeAction::Enter),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum Action {
     /// Raw bytes for Raw Mode or special cases NOTE: maybe Serial category for later if needed
