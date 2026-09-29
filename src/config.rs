@@ -8,8 +8,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::theme::ThemeConfig;
+
 const APP_DIR: &str = "maxicom";
 const CONFIG_FILE: &str = "config.toml";
+const THEME_FILE: &str = "theme.toml";
 pub const MIN_RX_BUF_SIZE: usize = 512;
 pub const MAX_RX_BUF_SIZE: usize = 65_536;
 
@@ -311,6 +314,7 @@ pub struct AppConfig {
     pub timestamp_format: String,
     pub line_mode: LineModeConfig,
     pub terminal_mode: TerminalModeConfig,
+    pub theme_path: Option<PathBuf>,
 }
 
 impl Default for AppConfig {
@@ -324,6 +328,7 @@ impl Default for AppConfig {
             timestamp_format: String::from("%H:%M:%S%.3f"),
             line_mode: LineModeConfig::default(),
             terminal_mode: TerminalModeConfig::default(),
+            theme_path: None,
         }
     }
 }
@@ -335,30 +340,47 @@ impl AppConfig {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let path = path.as_ref();
 
-        if path.exists() {
+        let config = if path.exists() {
             let content = fs::read_to_string(path)?;
             let config: AppConfig = toml::from_str(&content)?;
             config.validate()?;
-            return Ok(config);
-        }
+            config
+        } else {
+            let default_config = AppConfig::default();
 
-        let default_config = AppConfig::default();
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
 
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+            let toml_string = toml::to_string_pretty(&default_config)?;
+            fs::write(path, toml_string)?;
 
-        let toml_string = toml::to_string_pretty(&default_config)?;
-        fs::write(path, toml_string)?;
+            default_config
+        };
 
-        Ok(default_config)
+        let theme_file_to_check = config.active_theme_path();
+        let _ = ThemeConfig::load_or_create_default(theme_file_to_check)?;
+
+        Ok(config)
     }
 
     /// Load config using system configuration (like XDG or .config) on any os with crate 'dirs'
-    pub fn default_path() -> PathBuf {
+    pub fn default_config_path() -> PathBuf {
         dirs::config_dir()
             .map(|p| p.join(APP_DIR).join(CONFIG_FILE))
             .unwrap_or_else(|| PathBuf::from(CONFIG_FILE))
+    }
+
+    pub fn default_theme_path() -> PathBuf {
+        dirs::config_dir()
+            .map(|p| p.join(APP_DIR).join(THEME_FILE))
+            .unwrap_or_else(|| PathBuf::from(THEME_FILE))
+    }
+
+    pub fn active_theme_path(&self) -> PathBuf {
+        self.theme_path
+            .clone()
+            .unwrap_or_else(Self::default_theme_path)
     }
 
     pub fn validate(&self) -> Result<(), ConfigValidationError> {

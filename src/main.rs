@@ -30,6 +30,7 @@ mod logger;
 mod notification;
 mod serial;
 mod terminal;
+mod theme;
 mod types;
 mod ui;
 
@@ -70,7 +71,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
-    let config_path = AppConfig::default_path();
+    let config_path = AppConfig::default_config_path();
     let app_config = match AppConfig::load_or_create_default(&config_path) {
         Ok(cfg) => cfg,
         Err(e) => {
