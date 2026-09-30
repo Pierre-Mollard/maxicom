@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::{
     config::{AppConfig, InputMode, WrapMode},
-    input::{Action, AppAction, CopyModeAction, HistoryAction, SearchAction},
+    input::{Action, AppAction, CopyModeAction, HistoryAction, SearchModeAction},
     keybindings::KeyResolver,
     logger::{LineLogger, TerminalLogger},
     notification::{NotificationManager, ToastLevel},
@@ -261,7 +261,7 @@ impl App {
         UpdateEffect::None
     }
 
-    fn update_action_search_mode(&mut self, action: SearchAction) -> UpdateEffect {
+    fn update_action_search_mode(&mut self, action: SearchModeAction) -> UpdateEffect {
         self.prefix_active = false;
 
         match self.app_config.input_mode {

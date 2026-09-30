@@ -10,7 +10,7 @@ use crate::{
         selection::CopyModeState,
     },
     config::{RxNewlineMode, TextEncoding, TxNewlineSymbol, WrapMode},
-    input::{CopyModeAction, LineInputAction, SearchAction},
+    input::{CopyModeAction, LineInputAction, SearchModeAction},
     logger::LineLogger,
     types::{LogEntry, ViewportSize},
 };
@@ -363,33 +363,33 @@ impl LineMode {
             .update_matches_from_entries(&self.local_history);
     }
 
-    pub fn handle_search_action(&mut self, action: SearchAction) {
+    pub fn handle_search_action(&mut self, action: SearchModeAction) {
         match action {
-            SearchAction::Start => {
+            SearchModeAction::Start => {
                 self.search_state.toggle_itself();
                 if self.search_state.active {
                     self.update_search_matches();
                 }
             }
-            SearchAction::Next => {
+            SearchModeAction::Next => {
                 if self.search_state.active
                     && let Some(target_line_idx) = self.search_state.next_match()
                 {
                     self.search_state.target_jump_index = Some(target_line_idx);
                 }
             }
-            SearchAction::Previous => {
+            SearchModeAction::Previous => {
                 if self.search_state.active
                     && let Some(target_line_idx) = self.search_state.prev_match()
                 {
                     self.search_state.target_jump_index = Some(target_line_idx);
                 }
             }
-            SearchAction::Cancel => {
+            SearchModeAction::Cancel => {
                 self.search_state.toggle(false);
             }
-            SearchAction::Confirm => todo!(),
-            SearchAction::HandleKey(key_event) => {
+            SearchModeAction::Confirm => todo!(),
+            SearchModeAction::HandleKey(key_event) => {
                 if self.search_state.active {
                     self.handle_input_search(key_event);
                 }

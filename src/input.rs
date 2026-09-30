@@ -10,7 +10,7 @@ use crate::{
     app::{App, InputContext},
     keybindings::{
         KeyBindingAction, KeyBindingCopyAction, KeyBindingLineAction, KeyBindingSearchAction,
-        KeyPattern,
+        KeyBindingTerminalAction, KeyPattern,
     },
     types::{Overlay, ResizeDialog, SerialConfigDialog, SettingKey},
 };
@@ -23,7 +23,7 @@ pub enum Action {
     Terminal(TerminalAction),
     History(HistoryAction),
     CopyMode(CopyModeAction),
-    Search(SearchAction),
+    Search(SearchModeAction),
     OverlayKey(KeyEvent),
     Ignore,
 }
@@ -47,8 +47,6 @@ pub enum LineInputAction {
     HandleKey(KeyEvent),
 }
 
-// TODO: handle those action with keybindings in a terminal mode without break the terminal
-// forwarding
 #[derive(Debug)]
 pub enum TerminalAction {
     AutoResizeRemoteToViewer,
@@ -69,7 +67,7 @@ pub enum HistoryAction {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum SearchAction {
+pub enum SearchModeAction {
     Start,
     Next,
     Previous,
@@ -166,7 +164,7 @@ pub fn handle_event(event: Event, app: &App) -> Action {
             if let Some(search_action_binding) = resolver.search_actions.get(&pattern) {
                 search_action_binding.to_action()
             } else {
-                Action::Search(SearchAction::HandleKey(key_event))
+                Action::Search(SearchModeAction::HandleKey(key_event))
             }
         }
         InputContext::LineInput => {
@@ -181,6 +179,8 @@ pub fn handle_event(event: Event, app: &App) -> Action {
         InputContext::Terminal => {
             if let Some(action_binding) = resolver.direct_actions.get(&pattern) {
                 action_binding.to_action(app)
+            } else if let Some(term_action_binding) = resolver.terminal_actions.get(&pattern) {
+                term_action_binding.to_action()
             } else {
                 handle_terminal_mode(key_event)
             }
@@ -226,7 +226,7 @@ impl KeyBindingAction {
             KeyBindingAction::PageDown => Action::History(HistoryAction::ScrollDownPage),
 
             KeyBindingAction::EnterCopyMode => Action::CopyMode(CopyModeAction::Enter),
-            KeyBindingAction::EnterSearch => Action::Search(SearchAction::Start),
+            KeyBindingAction::EnterSearch => Action::Search(SearchModeAction::Start),
             KeyBindingAction::ClearHistory => Action::History(HistoryAction::Clear),
             KeyBindingAction::ExitPrefix => Action::App(AppAction::SetPrefix(false)),
         }
@@ -240,6 +240,19 @@ impl KeyBindingLineAction {
             Self::HistoryPrev => Action::LineInput(LineInputAction::HistoryUp),
             Self::HistoryNext => Action::LineInput(LineInputAction::HistoryDown),
             Self::ClearLine => Action::LineInput(LineInputAction::ClearLine),
+            Self::Quit => Action::App(AppAction::Quit),
+        }
+    }
+}
+
+impl KeyBindingTerminalAction {
+    pub fn to_action(self) -> Action {
+        match self {
+            Self::AutoResizeRemote => Action::Terminal(TerminalAction::AutoResizeRemoteToViewer),
+            Self::AutoResizeEmulator => {
+                Action::Terminal(TerminalAction::AutoResizeEmulatorToViewer)
+            }
+            Self::Quit => Action::App(AppAction::Quit),
         }
     }
 }
@@ -247,10 +260,10 @@ impl KeyBindingLineAction {
 impl KeyBindingSearchAction {
     pub fn to_action(self) -> Action {
         match self {
-            Self::Next => Action::Search(SearchAction::Next),
-            Self::Previous => Action::Search(SearchAction::Previous),
-            Self::Cancel => Action::Search(SearchAction::Cancel),
-            Self::Confirm => Action::Search(SearchAction::Confirm),
+            Self::Next => Action::Search(SearchModeAction::Next),
+            Self::Previous => Action::Search(SearchModeAction::Previous),
+            Self::Cancel => Action::Search(SearchModeAction::Cancel),
+            Self::Confirm => Action::Search(SearchModeAction::Confirm),
         }
     }
 }
@@ -273,7 +286,7 @@ impl KeyBindingCopyAction {
     }
 }
 
-// Final check in RAW MODE
+/// forward everything to the remote through serial
 fn handle_terminal_mode(key_event_crossterm: KeyEvent) -> Action {
     // Convert Crossterm KeyEvent -> Terminput KeyEvent
     if let Ok(key_event_terminput) = to_terminput_key(key_event_crossterm) {

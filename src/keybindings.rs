@@ -109,6 +109,7 @@ pub enum KeyBindingLineAction {
     HistoryPrev,
     HistoryNext,
     ClearLine,
+    Quit,
 }
 
 impl std::str::FromStr for KeyBindingLineAction {
@@ -120,6 +121,7 @@ impl std::str::FromStr for KeyBindingLineAction {
             "history_prev" => Ok(Self::HistoryPrev),
             "history_next" => Ok(Self::HistoryNext),
             "clear_line" => Ok(Self::ClearLine),
+            "quit" => Ok(Self::Quit),
             other => Err(UnknownActionError(other.to_string())),
         }
     }
@@ -132,6 +134,38 @@ impl std::fmt::Display for KeyBindingLineAction {
             Self::HistoryPrev => "history_prev",
             Self::HistoryNext => "history_next",
             Self::ClearLine => "clear_line",
+            Self::Quit => "quit",
+        };
+        write!(f, "{s}")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeyBindingTerminalAction {
+    AutoResizeRemote,
+    AutoResizeEmulator,
+    Quit,
+}
+
+impl std::str::FromStr for KeyBindingTerminalAction {
+    type Err = UnknownActionError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "auto_resize_remote" => Ok(Self::AutoResizeRemote),
+            "auto_resize_emulator" => Ok(Self::AutoResizeEmulator),
+            "quit" => Ok(Self::Quit),
+            other => Err(UnknownActionError(other.to_string())),
+        }
+    }
+}
+
+impl std::fmt::Display for KeyBindingTerminalAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::AutoResizeRemote => "auto_resize_remote",
+            Self::AutoResizeEmulator => "auto_resize_emulator",
+            Self::Quit => "quit",
         };
         write!(f, "{s}")
     }
@@ -359,6 +393,7 @@ pub struct KeyResolver {
     pub prefix_actions: HashMap<KeyPattern, KeyBindingAction>,
     pub direct_actions: HashMap<KeyPattern, KeyBindingAction>,
     pub line_actions: HashMap<KeyPattern, KeyBindingLineAction>,
+    pub terminal_actions: HashMap<KeyPattern, KeyBindingTerminalAction>,
     pub search_actions: HashMap<KeyPattern, KeyBindingSearchAction>,
     pub copy_actions: HashMap<KeyPattern, KeyBindingCopyAction>,
 }
@@ -451,6 +486,21 @@ impl KeyResolver {
             line_actions.insert(pat, act);
         }
 
+        let mut terminal_actions = HashMap::new();
+        for (k, action_str) in &config.terminal_mode {
+            let pat = k.parse().map_err(|err| KeymapError::InvalidKey {
+                section: "terminal_mode",
+                key: k.clone(),
+                reason: err,
+            })?;
+            let act: KeyBindingTerminalAction =
+                action_str.parse().map_err(|_| KeymapError::InvalidAction {
+                    section: "terminal_mode",
+                    action: action_str.clone(),
+                })?;
+            terminal_actions.insert(pat, act);
+        }
+
         let mut search_actions = HashMap::new();
         for (k, action_str) in &config.search_mode {
             let pat = k.parse().map_err(|err| KeymapError::InvalidKey {
@@ -486,6 +536,7 @@ impl KeyResolver {
             prefix_actions,
             direct_actions,
             line_actions,
+            terminal_actions,
             search_actions,
             copy_actions,
         })
@@ -510,6 +561,7 @@ pub struct KeyBindingsConfig {
     pub direct_actions: BTreeMap<String, String>,
     pub prefix_actions: BTreeMap<String, String>,
     pub line_mode: BTreeMap<String, String>,
+    pub terminal_mode: BTreeMap<String, String>,
     pub search_mode: BTreeMap<String, String>,
     pub copy_mode: BTreeMap<String, String>,
 }
@@ -551,8 +603,14 @@ impl Default for KeyBindingsConfig {
             "enter"  => KeyBindingLineAction::Submit,
             "up"     => KeyBindingLineAction::HistoryPrev,
             "down"   => KeyBindingLineAction::HistoryNext,
-            "ctrl-c" => KeyBindingLineAction::ClearLine,
+            "ctrl-c" => KeyBindingLineAction::Quit,
             "ctrl-u" => KeyBindingLineAction::ClearLine,
+        };
+
+        let terminal_mode = default_bindings! {
+            "alt-r" => KeyBindingTerminalAction::AutoResizeRemote,
+            "alt-v" => KeyBindingTerminalAction::AutoResizeEmulator,
+            "alt-q" => KeyBindingTerminalAction::Quit,
         };
 
         let search_mode = default_bindings! {
@@ -588,6 +646,7 @@ impl Default for KeyBindingsConfig {
             direct_actions,
             prefix_actions,
             line_mode,
+            terminal_mode,
             search_mode,
             copy_mode,
         }
