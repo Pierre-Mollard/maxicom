@@ -19,7 +19,7 @@ impl std::fmt::Display for UnknownActionError {
 impl std::error::Error for UnknownActionError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum KeyBindingPrefixAction {
+pub enum KeyBindingAction {
     Quit,
     ToggleInputMode,
     Help,
@@ -33,38 +33,48 @@ pub enum KeyBindingPrefixAction {
     EnterSearch,
     ScrollUp,
     ScrollDown,
+    ScrollToBottom,
+    ScrollToTop,
+    PageUp,
+    PageDown,
     PanRight,
     PanLeft,
+    ClearHistory,
     ExitPrefix,
 }
 
-impl FromStr for KeyBindingPrefixAction {
+impl FromStr for KeyBindingAction {
     type Err = UnknownActionError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "quit" => Ok(KeyBindingPrefixAction::Quit),
-            "toggle_input_mode" => Ok(KeyBindingPrefixAction::ToggleInputMode),
-            "help" => Ok(KeyBindingPrefixAction::Help),
-            "settings" => Ok(KeyBindingPrefixAction::Settings),
-            "toggle_logging" => Ok(KeyBindingPrefixAction::ToggleLogging),
-            "resize_dialog" => Ok(KeyBindingPrefixAction::ResizeDialog),
-            "auto_resize_remote" => Ok(KeyBindingPrefixAction::AutoResizeRemote),
-            "auto_resize_emulator" => Ok(KeyBindingPrefixAction::AutoResizeEmulator),
-            "serial_settings" => Ok(KeyBindingPrefixAction::SerialSettings),
-            "enter_copy_mode" => Ok(KeyBindingPrefixAction::EnterCopyMode),
-            "enter_search" => Ok(KeyBindingPrefixAction::EnterSearch),
-            "scroll_up" => Ok(KeyBindingPrefixAction::ScrollUp),
-            "scroll_down" => Ok(KeyBindingPrefixAction::ScrollDown),
-            "pan_right" => Ok(KeyBindingPrefixAction::PanRight),
-            "pan_left" => Ok(KeyBindingPrefixAction::PanLeft),
-            "exit_prefix" => Ok(KeyBindingPrefixAction::ExitPrefix),
+            "quit" => Ok(KeyBindingAction::Quit),
+            "toggle_input_mode" => Ok(KeyBindingAction::ToggleInputMode),
+            "help" => Ok(KeyBindingAction::Help),
+            "settings" => Ok(KeyBindingAction::Settings),
+            "toggle_logging" => Ok(KeyBindingAction::ToggleLogging),
+            "resize_dialog" => Ok(KeyBindingAction::ResizeDialog),
+            "auto_resize_remote" => Ok(KeyBindingAction::AutoResizeRemote),
+            "auto_resize_emulator" => Ok(KeyBindingAction::AutoResizeEmulator),
+            "serial_settings" => Ok(KeyBindingAction::SerialSettings),
+            "enter_copy_mode" => Ok(KeyBindingAction::EnterCopyMode),
+            "enter_search" => Ok(KeyBindingAction::EnterSearch),
+            "scroll_up" => Ok(KeyBindingAction::ScrollUp),
+            "scroll_down" => Ok(KeyBindingAction::ScrollDown),
+            "scroll_to_bottom" => Ok(KeyBindingAction::ScrollToBottom),
+            "scroll_to_top" => Ok(KeyBindingAction::ScrollToTop),
+            "page_up" => Ok(KeyBindingAction::PageUp),
+            "page_down" => Ok(KeyBindingAction::PageDown),
+            "pan_right" => Ok(KeyBindingAction::PanRight),
+            "pan_left" => Ok(KeyBindingAction::PanLeft),
+            "clear_history" => Ok(KeyBindingAction::ClearHistory),
+            "exit_prefix" => Ok(KeyBindingAction::ExitPrefix),
             other => Err(UnknownActionError(other.to_string())),
         }
     }
 }
 
-impl std::fmt::Display for KeyBindingPrefixAction {
+impl std::fmt::Display for KeyBindingAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
             Self::Quit => "quit",
@@ -80,8 +90,13 @@ impl std::fmt::Display for KeyBindingPrefixAction {
             Self::EnterSearch => "enter_search",
             Self::ScrollUp => "scroll_up",
             Self::ScrollDown => "scroll_down",
+            Self::ScrollToBottom => "scroll_to_bottom",
+            Self::ScrollToTop => "scroll_to_top",
+            Self::PageUp => "page_up",
+            Self::PageDown => "page_down",
             Self::PanRight => "pan_right",
             Self::PanLeft => "pan_left",
+            Self::ClearHistory => "clear_history",
             Self::ExitPrefix => "exit_prefix",
         };
         write!(f, "{s}")
@@ -307,7 +322,8 @@ impl FromStr for KeyPattern {
 
 pub struct KeyResolver {
     pub prefix: KeyPattern,
-    pub prefix_actions: HashMap<KeyPattern, KeyBindingPrefixAction>,
+    pub prefix_actions: HashMap<KeyPattern, KeyBindingAction>,
+    pub direct_actions: HashMap<KeyPattern, KeyBindingAction>,
     pub search_actions: HashMap<KeyPattern, KeyBindingSearchAction>,
     pub copy_actions: HashMap<KeyPattern, KeyBindingCopyAction>,
 }
@@ -362,12 +378,27 @@ impl KeyResolver {
                 key: k.clone(),
                 reason: err,
             })?;
-            let act: KeyBindingPrefixAction =
+            let act: KeyBindingAction =
                 action_str.parse().map_err(|_| KeymapError::InvalidAction {
                     section: "prefix_actions",
                     action: action_str.clone(),
                 })?;
             prefix_actions.insert(pat, act);
+        }
+
+        let mut direct_actions = HashMap::new();
+        for (k, action_str) in &config.direct_actions {
+            let pat = k.parse().map_err(|err| KeymapError::InvalidKey {
+                section: "direct_actions",
+                key: k.clone(),
+                reason: err,
+            })?;
+            let act: KeyBindingAction =
+                action_str.parse().map_err(|_| KeymapError::InvalidAction {
+                    section: "direct_actions",
+                    action: action_str.clone(),
+                })?;
+            direct_actions.insert(pat, act);
         }
 
         let mut search_actions = HashMap::new();
@@ -403,6 +434,7 @@ impl KeyResolver {
         Ok(Self {
             prefix,
             prefix_actions,
+            direct_actions,
             search_actions,
             copy_actions,
         })
@@ -419,22 +451,12 @@ macro_rules! default_bindings {
     }};
 }
 
-macro_rules! btreemap {
-    ($( $key:expr => $val:expr ),* $(,)?) => {{
-        let mut map = std::collections::BTreeMap::new();
-        $(
-            map.insert($key.to_string(), $val.to_string());
-        )*
-        map
-    }};
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct KeyBindingsConfig {
     pub prefix: String,
 
-    pub direct: BTreeMap<String, String>,
+    pub direct_actions: BTreeMap<String, String>,
     pub prefix_actions: BTreeMap<String, String>,
     pub search_mode: BTreeMap<String, String>,
     pub copy_mode: BTreeMap<String, String>,
@@ -442,31 +464,35 @@ pub struct KeyBindingsConfig {
 
 impl Default for KeyBindingsConfig {
     fn default() -> Self {
-        let direct = btreemap! {
-            "ctrl-q"   => "quit",
-            "ctrl-f"   => "enter-search",
-            "pageup"   => "scroll_page_up",
-            "pagedown" => "scroll_page_down",
+        let direct_actions = default_bindings! {
+            "ctrl-q"     => KeyBindingAction::Quit,
+            "ctrl-c"     => KeyBindingAction::Quit,
+            "ctrl-f"     => KeyBindingAction::EnterSearch,
+            "ctrl-d"     => KeyBindingAction::ClearHistory,
+            "pageup"     => KeyBindingAction::PageUp,
+            "pagedown"   => KeyBindingAction::PageDown,
+            "shift-home" => KeyBindingAction::ScrollToTop,
+            "shift-end"  => KeyBindingAction::ScrollToBottom,
         };
 
         let prefix_actions = default_bindings! {
-            "q"     => KeyBindingPrefixAction::Quit,
-            "x"     => KeyBindingPrefixAction::Quit,
-            "m"     => KeyBindingPrefixAction::ToggleInputMode,
-            "z"     => KeyBindingPrefixAction::Help,
-            "s"     => KeyBindingPrefixAction::Settings,
-            "l"     => KeyBindingPrefixAction::ToggleLogging,
-            "r"     => KeyBindingPrefixAction::ResizeDialog,
-            "v"     => KeyBindingPrefixAction::AutoResizeRemote,
-            "t"     => KeyBindingPrefixAction::AutoResizeEmulator,
-            "d"     => KeyBindingPrefixAction::SerialSettings,
-            "up"    => KeyBindingPrefixAction::ScrollUp,
-            "down"  => KeyBindingPrefixAction::ScrollDown,
-            "left"  => KeyBindingPrefixAction::PanLeft,
-            "right" => KeyBindingPrefixAction::PanRight,
-            "["     => KeyBindingPrefixAction::EnterCopyMode,
-            "/"     => KeyBindingPrefixAction::EnterSearch,
-            "a"     => KeyBindingPrefixAction::ExitPrefix,
+            "q"     => KeyBindingAction::Quit,
+            "x"     => KeyBindingAction::Quit,
+            "m"     => KeyBindingAction::ToggleInputMode,
+            "z"     => KeyBindingAction::Help,
+            "s"     => KeyBindingAction::Settings,
+            "l"     => KeyBindingAction::ToggleLogging,
+            "r"     => KeyBindingAction::ResizeDialog,
+            "v"     => KeyBindingAction::AutoResizeRemote,
+            "t"     => KeyBindingAction::AutoResizeEmulator,
+            "d"     => KeyBindingAction::SerialSettings,
+            "up"    => KeyBindingAction::ScrollUp,
+            "down"  => KeyBindingAction::ScrollDown,
+            "left"  => KeyBindingAction::PanLeft,
+            "right" => KeyBindingAction::PanRight,
+            "["     => KeyBindingAction::EnterCopyMode,
+            "/"     => KeyBindingAction::EnterSearch,
+            "a"     => KeyBindingAction::ExitPrefix,
         };
 
         let search_mode = default_bindings! {
@@ -499,7 +525,7 @@ impl Default for KeyBindingsConfig {
 
         Self {
             prefix: "ctrl-a".to_string(),
-            direct,
+            direct_actions,
             prefix_actions,
             search_mode,
             copy_mode,
