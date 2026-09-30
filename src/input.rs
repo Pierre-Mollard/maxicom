@@ -8,7 +8,10 @@ use terminput_crossterm::to_terminput_key;
 
 use crate::{
     app::{App, InputContext},
-    keybindings::{KeyBindingAction, KeyBindingCopyAction, KeyBindingSearchAction, KeyPattern},
+    keybindings::{
+        KeyBindingAction, KeyBindingCopyAction, KeyBindingLineAction, KeyBindingSearchAction,
+        KeyPattern,
+    },
     types::{Overlay, ResizeDialog, SerialConfigDialog, SettingKey},
 };
 
@@ -44,6 +47,8 @@ pub enum LineInputAction {
     HandleKey(KeyEvent),
 }
 
+// TODO: handle those action with keybindings in a terminal mode without break the terminal
+// forwarding
 #[derive(Debug)]
 pub enum TerminalAction {
     AutoResizeRemoteToViewer,
@@ -167,8 +172,10 @@ pub fn handle_event(event: Event, app: &App) -> Action {
         InputContext::LineInput => {
             if let Some(action_binding) = resolver.direct_actions.get(&pattern) {
                 action_binding.to_action(app)
+            } else if let Some(line_action_binding) = resolver.line_actions.get(&pattern) {
+                line_action_binding.to_action()
             } else {
-                handle_line_mode(key_event)
+                Action::LineInput(LineInputAction::HandleKey(key_event))
             }
         }
         InputContext::Terminal => {
@@ -226,6 +233,17 @@ impl KeyBindingAction {
     }
 }
 
+impl KeyBindingLineAction {
+    pub fn to_action(self) -> Action {
+        match self {
+            Self::Submit => Action::LineInput(LineInputAction::Submit),
+            Self::HistoryPrev => Action::LineInput(LineInputAction::HistoryUp),
+            Self::HistoryNext => Action::LineInput(LineInputAction::HistoryDown),
+            Self::ClearLine => Action::LineInput(LineInputAction::ClearLine),
+        }
+    }
+}
+
 impl KeyBindingSearchAction {
     pub fn to_action(self) -> Action {
         match self {
@@ -252,23 +270,6 @@ impl KeyBindingCopyAction {
             Self::Yank => Action::CopyMode(CopyModeAction::Yank),
             Self::Exit => Action::CopyMode(CopyModeAction::Exit),
         }
-    }
-}
-
-// Final check in LINE MODE
-fn handle_line_mode(key: KeyEvent) -> Action {
-    if key.modifiers.contains(KeyModifiers::CONTROL) {
-        match key.code {
-            KeyCode::Char('c') | KeyCode::Char('q') => return Action::App(AppAction::Quit),
-            _ => return Action::LineInput(LineInputAction::HandleKey(key)),
-        }
-    }
-
-    match key.code {
-        KeyCode::Enter => Action::LineInput(LineInputAction::Submit),
-        KeyCode::Up => Action::LineInput(LineInputAction::HistoryUp),
-        KeyCode::Down => Action::LineInput(LineInputAction::HistoryDown),
-        _ => Action::LineInput(LineInputAction::HandleKey(key)),
     }
 }
 

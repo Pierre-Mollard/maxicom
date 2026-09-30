@@ -104,6 +104,40 @@ impl std::fmt::Display for KeyBindingAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeyBindingLineAction {
+    Submit,
+    HistoryPrev,
+    HistoryNext,
+    ClearLine,
+}
+
+impl std::str::FromStr for KeyBindingLineAction {
+    type Err = UnknownActionError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "submit" => Ok(Self::Submit),
+            "history_prev" => Ok(Self::HistoryPrev),
+            "history_next" => Ok(Self::HistoryNext),
+            "clear_line" => Ok(Self::ClearLine),
+            other => Err(UnknownActionError(other.to_string())),
+        }
+    }
+}
+
+impl std::fmt::Display for KeyBindingLineAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Submit => "submit",
+            Self::HistoryPrev => "history_prev",
+            Self::HistoryNext => "history_next",
+            Self::ClearLine => "clear_line",
+        };
+        write!(f, "{s}")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyBindingSearchAction {
     Next,
     Previous,
@@ -324,6 +358,7 @@ pub struct KeyResolver {
     pub prefix: KeyPattern,
     pub prefix_actions: HashMap<KeyPattern, KeyBindingAction>,
     pub direct_actions: HashMap<KeyPattern, KeyBindingAction>,
+    pub line_actions: HashMap<KeyPattern, KeyBindingLineAction>,
     pub search_actions: HashMap<KeyPattern, KeyBindingSearchAction>,
     pub copy_actions: HashMap<KeyPattern, KeyBindingCopyAction>,
 }
@@ -401,6 +436,21 @@ impl KeyResolver {
             direct_actions.insert(pat, act);
         }
 
+        let mut line_actions = HashMap::new();
+        for (k, action_str) in &config.line_mode {
+            let pat = k.parse().map_err(|err| KeymapError::InvalidKey {
+                section: "line_mode",
+                key: k.clone(),
+                reason: err,
+            })?;
+            let act: KeyBindingLineAction =
+                action_str.parse().map_err(|_| KeymapError::InvalidAction {
+                    section: "line_mode",
+                    action: action_str.clone(),
+                })?;
+            line_actions.insert(pat, act);
+        }
+
         let mut search_actions = HashMap::new();
         for (k, action_str) in &config.search_mode {
             let pat = k.parse().map_err(|err| KeymapError::InvalidKey {
@@ -435,6 +485,7 @@ impl KeyResolver {
             prefix,
             prefix_actions,
             direct_actions,
+            line_actions,
             search_actions,
             copy_actions,
         })
@@ -458,6 +509,7 @@ pub struct KeyBindingsConfig {
 
     pub direct_actions: BTreeMap<String, String>,
     pub prefix_actions: BTreeMap<String, String>,
+    pub line_mode: BTreeMap<String, String>,
     pub search_mode: BTreeMap<String, String>,
     pub copy_mode: BTreeMap<String, String>,
 }
@@ -495,6 +547,14 @@ impl Default for KeyBindingsConfig {
             "a"     => KeyBindingAction::ExitPrefix,
         };
 
+        let line_mode = default_bindings! {
+            "enter"  => KeyBindingLineAction::Submit,
+            "up"     => KeyBindingLineAction::HistoryPrev,
+            "down"   => KeyBindingLineAction::HistoryNext,
+            "ctrl-c" => KeyBindingLineAction::ClearLine,
+            "ctrl-u" => KeyBindingLineAction::ClearLine,
+        };
+
         let search_mode = default_bindings! {
             "ctrl-n"     => KeyBindingSearchAction::Next,
             "ctrl-p"     => KeyBindingSearchAction::Previous,
@@ -527,6 +587,7 @@ impl Default for KeyBindingsConfig {
             prefix: "ctrl-a".to_string(),
             direct_actions,
             prefix_actions,
+            line_mode,
             search_mode,
             copy_mode,
         }
