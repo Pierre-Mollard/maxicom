@@ -7,7 +7,83 @@ use std::{
     str::FromStr,
 };
 
-use crate::input::{Action, CopyModeAction};
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownActionError(pub String);
+
+impl std::fmt::Display for UnknownActionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown action '{}'", self.0)
+    }
+}
+
+impl std::error::Error for UnknownActionError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeyBindingPrefixAction {
+    Quit,
+    ToggleInputMode,
+    Help,
+    Settings,
+    ToggleLogging,
+    ResizeDialog,
+    AutoResizeRemote,
+    AutoResizeEmulator,
+    SerialSettings,
+    EnterCopyMode,
+    ScrollUp,
+    ScrollDown,
+    PanRight,
+    PanLeft,
+    ExitPrefix,
+}
+
+impl FromStr for KeyBindingPrefixAction {
+    type Err = UnknownActionError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "quit" => Ok(KeyBindingPrefixAction::Quit),
+            "toggle_input_mode" => Ok(KeyBindingPrefixAction::ToggleInputMode),
+            "help" => Ok(KeyBindingPrefixAction::Help),
+            "settings" => Ok(KeyBindingPrefixAction::Settings),
+            "toggle_logging" => Ok(KeyBindingPrefixAction::ToggleLogging),
+            "resize_dialog" => Ok(KeyBindingPrefixAction::ResizeDialog),
+            "auto_resize_remote" => Ok(KeyBindingPrefixAction::AutoResizeRemote),
+            "auto_resize_emulator" => Ok(KeyBindingPrefixAction::AutoResizeEmulator),
+            "serial_settings" => Ok(KeyBindingPrefixAction::SerialSettings),
+            "enter_copy_mode" => Ok(KeyBindingPrefixAction::EnterCopyMode),
+            "scroll_up" => Ok(KeyBindingPrefixAction::ScrollUp),
+            "scroll_down" => Ok(KeyBindingPrefixAction::ScrollDown),
+            "pan_right" => Ok(KeyBindingPrefixAction::PanRight),
+            "pan_left" => Ok(KeyBindingPrefixAction::PanLeft),
+            "exit_prefix" => Ok(KeyBindingPrefixAction::ExitPrefix),
+            other => Err(UnknownActionError(other.to_string())),
+        }
+    }
+}
+
+impl std::fmt::Display for KeyBindingPrefixAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Quit => "quit",
+            Self::ToggleInputMode => "toggle_input_mode",
+            Self::Help => "help",
+            Self::Settings => "settings",
+            Self::ToggleLogging => "toggle_logging",
+            Self::ResizeDialog => "resize_dialog",
+            Self::AutoResizeRemote => "auto_resize_remote",
+            Self::AutoResizeEmulator => "auto_resize_emulator",
+            Self::SerialSettings => "serial_settings",
+            Self::EnterCopyMode => "enter_copy_mode",
+            Self::ScrollUp => "scroll_up",
+            Self::ScrollDown => "scroll_down",
+            Self::PanRight => "pan_right",
+            Self::PanLeft => "pan_left",
+            Self::ExitPrefix => "exit_prefix",
+        };
+        write!(f, "{s}")
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KeyPattern {
@@ -74,10 +150,7 @@ impl FromStr for KeyPattern {
 
 pub struct KeyResolver {
     pub prefix: KeyPattern,
-    pub direct: HashMap<KeyPattern, Action>,
-    pub prefix_actions: HashMap<KeyPattern, Action>,
-    pub copy_mode: HashMap<KeyPattern, CopyModeAction>,
-    // TODO: see how to categorize all of those action (user impact)
+    pub prefix_actions: HashMap<KeyPattern, KeyBindingPrefixAction>,
 }
 
 #[derive(Debug)]
@@ -123,20 +196,6 @@ impl KeyResolver {
                 reason: err,
             })?;
 
-        let mut direct = HashMap::new();
-        for (k, action_str) in &config.direct {
-            let pat = k.parse().map_err(|err| KeymapError::InvalidKey {
-                section: "direct",
-                key: k.clone(),
-                reason: err,
-            })?;
-            let act: Action = action_str.parse().map_err(|_| KeymapError::InvalidAction {
-                section: "direct",
-                action: action_str.clone(),
-            })?;
-            direct.insert(pat, act);
-        }
-
         let mut prefix_actions = HashMap::new();
         for (k, action_str) in &config.prefix_actions {
             let pat = k.parse().map_err(|err| KeymapError::InvalidKey {
@@ -144,35 +203,29 @@ impl KeyResolver {
                 key: k.clone(),
                 reason: err,
             })?;
-            let act: Action = action_str.parse().map_err(|_| KeymapError::InvalidAction {
-                section: "prefix_actions",
-                action: action_str.clone(),
-            })?;
-            prefix_actions.insert(pat, act);
-        }
-
-        let mut copy_mode = HashMap::new();
-        for (k, action_str) in &config.copy_mode {
-            let pat = k.parse().map_err(|err| KeymapError::InvalidKey {
-                section: "copy_mode",
-                key: k.clone(),
-                reason: err,
-            })?;
-            let act: CopyModeAction =
+            let act: KeyBindingPrefixAction =
                 action_str.parse().map_err(|_| KeymapError::InvalidAction {
-                    section: "copy_mode",
+                    section: "prefix_actions",
                     action: action_str.clone(),
                 })?;
-            copy_mode.insert(pat, act);
+            prefix_actions.insert(pat, act);
         }
 
         Ok(Self {
             prefix,
-            direct,
             prefix_actions,
-            copy_mode,
         })
     }
+}
+
+macro_rules! default_bindings {
+    ($( $key:expr => $action:expr ),* $(,)?) => {{
+        let mut map = std::collections::BTreeMap::new();
+        $(
+            map.insert($key.to_string(), $action.to_string());
+        )*
+        map
+    }};
 }
 
 macro_rules! btreemap {
@@ -203,15 +256,23 @@ impl Default for KeyBindingsConfig {
             "pagedown" => "scroll_page_down",
         };
 
-        let prefix_actions = btreemap! {
-            "z" => "help",
-            "q" => "quit",
-            "x" => "quit",
-            "s" => "settings",
-            "l" => "toggle_logging",
-            "[" => "enter_copy_mode",
-            "/" => "enter_search",
-            "r" => "auto_resize_remote",
+        let prefix_actions = default_bindings! {
+            "q"     => KeyBindingPrefixAction::Quit,
+            "x"     => KeyBindingPrefixAction::Quit,
+            "m"     => KeyBindingPrefixAction::ToggleInputMode,
+            "z"     => KeyBindingPrefixAction::Help,
+            "s"     => KeyBindingPrefixAction::Settings,
+            "l"     => KeyBindingPrefixAction::ToggleLogging,
+            "r"     => KeyBindingPrefixAction::ResizeDialog,
+            "v"     => KeyBindingPrefixAction::AutoResizeRemote,
+            "t"     => KeyBindingPrefixAction::AutoResizeEmulator,
+            "d"     => KeyBindingPrefixAction::SerialSettings,
+            "up"    => KeyBindingPrefixAction::ScrollUp,
+            "down"  => KeyBindingPrefixAction::ScrollDown,
+            "left"  => KeyBindingPrefixAction::PanLeft,
+            "right" => KeyBindingPrefixAction::PanRight,
+            "["     => KeyBindingPrefixAction::EnterCopyMode,
+            "a"     => KeyBindingPrefixAction::ExitPrefix,
         };
 
         let copy_mode = btreemap! {

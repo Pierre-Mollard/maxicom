@@ -1,116 +1,28 @@
 /// Keyboard event polling and translation
 /// Using the 'crossterm' crate
-use std::{io, str::FromStr, time::Duration};
+use std::{io, time::Duration};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use terminput::Encoding;
 use terminput_crossterm::to_terminput_key;
 
 use crate::{
-    app::App,
+    app::{App, InputContext},
     config::InputMode,
-    keybindings::KeyPattern,
+    keybindings::{KeyBindingPrefixAction, KeyPattern},
     types::{Overlay, ResizeDialog, SerialConfigDialog, SettingKey},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnknownActionError(pub String);
-
-impl std::fmt::Display for UnknownActionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "unknown action '{}'", self.0)
-    }
-}
-
-impl std::error::Error for UnknownActionError {}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum KeyBindingAction {
-    Quit,
-    Help,
-    Settings,
-    SerialSettings,
-    ResizeDialog,
-    ToggleLogging,
-    ToggleInputMode,
-
-    ScrollUp,
-    ScrollDown,
-    ScrollPageUp,
-    ScrollPageDown,
-    ScrollToTop,
-    ScrollToBottom,
-    ClearHistory,
-    ToggleSearch,
-    SearchNext,
-    SearchPrevious,
-
-    AutoResizeRemote,
-    AutoResizeEmulator,
-
-    EnterCopyMode,
-}
-
-impl KeyBindingAction {
-    pub fn to_action(&self, app: &App) -> Action {
-        match self {
-            KeyBindingAction::Quit => Action::App(AppAction::Quit),
-            KeyBindingAction::Help => Action::OpenOverlay(Overlay::Help),
-            KeyBindingAction::Settings => Action::OpenOverlay(Overlay::Settings),
-            KeyBindingAction::SerialSettings => {
-                let dialog = SerialConfigDialog::new(&app.serial_config);
-                Action::OpenOverlay(Overlay::SerialSettings(dialog))
-            }
-            KeyBindingAction::ResizeDialog => {
-                let (r, c) = app.terminal_mode.get_vt100_size();
-                Action::OpenOverlay(Overlay::TerminalSize(ResizeDialog::new(r, c)))
-            }
-            KeyBindingAction::ToggleLogging => Action::App(AppAction::ToggleLogging),
-            KeyBindingAction::ToggleInputMode => {
-                Action::App(AppAction::ToggleSetting(SettingKey::InputMode))
-            }
-
-            KeyBindingAction::ScrollUp => Action::History(HistoryAction::ScrollUp(1)),
-            KeyBindingAction::ScrollDown => Action::History(HistoryAction::ScrollDown(1)),
-            KeyBindingAction::ScrollPageUp => Action::History(HistoryAction::ScrollUpPage),
-            KeyBindingAction::ScrollPageDown => Action::History(HistoryAction::ScrollDownPage),
-            KeyBindingAction::ScrollToTop => Action::History(HistoryAction::ScrollToTop),
-            KeyBindingAction::ScrollToBottom => Action::History(HistoryAction::ScrollToBottom),
-            KeyBindingAction::ClearHistory => Action::History(HistoryAction::Clear),
-            KeyBindingAction::ToggleSearch => Action::History(HistoryAction::ToggleSearch),
-            KeyBindingAction::SearchNext => Action::History(HistoryAction::SearchNext),
-            KeyBindingAction::SearchPrevious => Action::History(HistoryAction::SearchPrevious),
-
-            KeyBindingAction::AutoResizeRemote => {
-                Action::Terminal(TerminalAction::AutoResizeRemoteToViewer)
-            }
-            KeyBindingAction::AutoResizeEmulator => {
-                Action::Terminal(TerminalAction::AutoResizeEmulatorToViewer)
-            }
-
-            KeyBindingAction::EnterCopyMode => Action::CopyMode(CopyModeAction::Enter),
-        }
-    }
-}
-
 #[derive(Debug)]
 pub enum Action {
-    /// Raw bytes for Raw Mode or special cases NOTE: maybe Serial category for later if needed
     TransmitRaw(Vec<u8>),
-    /// Text input operations only for Line Mode
     LineInput(LineInputAction),
-    /// Terminal operations for Terminal Mode
     Terminal(TerminalAction),
-    /// Receive history navigation like scrolling and searching
     History(HistoryAction),
     CopyMode(CopyModeAction),
-    /// Open popup
     OpenOverlay(Overlay),
-    /// Popup overlay action forwarding
     OverlayKey(KeyEvent),
-    /// Global application commands
     App(AppAction),
-    /// Nothing happening
     Ignore,
 }
 
@@ -170,58 +82,6 @@ pub enum CopyModeAction {
     Exit,
 }
 
-// TODO: impl fromString / Display to actions for parsing (those below are fake for now)
-impl FromStr for Action {
-    type Err = UnknownActionError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "quit" => Ok(Action::App(AppAction::Quit)),
-            "help" => Ok(Action::OpenOverlay(Overlay::Help)),
-            "settings" => Ok(Action::OpenOverlay(Overlay::Settings)),
-            "toggle_logging" => Ok(Action::App(AppAction::ToggleLogging)),
-            "enter_copy_mode" => Ok(Action::CopyMode(CopyModeAction::Enter)),
-            "enter_search" => Ok(Action::History(HistoryAction::ToggleSearch)),
-            "auto_resize_remote" => Ok(Action::Terminal(TerminalAction::AutoResizeRemoteToViewer)),
-            "auto_resize_emulator" => {
-                Ok(Action::Terminal(TerminalAction::AutoResizeEmulatorToViewer))
-            }
-            "scroll_page_up" => Ok(Action::History(HistoryAction::ScrollUpPage)),
-            "scroll_page_down" => Ok(Action::History(HistoryAction::ScrollDownPage)),
-            "scroll_to_top" => Ok(Action::History(HistoryAction::ScrollToTop)),
-            "scroll_to_bottom" => Ok(Action::History(HistoryAction::ScrollToBottom)),
-            other => Err(UnknownActionError(other.to_string())),
-        }
-    }
-
-    //pub const fn as_str(&self) -> &'static str {
-    //match self {
-    //Action::App(_) => "action",
-    //}
-    //}
-}
-
-impl FromStr for CopyModeAction {
-    type Err = UnknownActionError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "exit" => Ok(CopyModeAction::Exit),
-            "yank" => Ok(CopyModeAction::Yank),
-            "toggle_selection" => Ok(CopyModeAction::ToggleSelection),
-            "move_left" => Ok(CopyModeAction::MoveLeft),
-            "move_right" => Ok(CopyModeAction::MoveRight),
-            "move_up" => Ok(CopyModeAction::MoveUp),
-            "move_down" => Ok(CopyModeAction::MoveDown),
-            "page_up" => Ok(CopyModeAction::PageUp),
-            "page_down" => Ok(CopyModeAction::PageDown),
-            "start_of_line" => Ok(CopyModeAction::StartOfLine),
-            "end_of_line" => Ok(CopyModeAction::EndOfLine),
-            other => Err(UnknownActionError(other.to_string())),
-        }
-    }
-}
-
 /// Using crossterm's event API instead of stdin.read() to handle multi-byte ANSI sequence like
 /// arrows and page up and prefix
 pub fn poll_event(timeout: Duration) -> io::Result<Option<Event>> {
@@ -255,26 +115,84 @@ pub fn handle_event(event: Event, app: &App) -> Action {
         return Action::Ignore;
     }
 
-    // Popup check
-    if app.overlay().is_some() {
-        return Action::OverlayKey(key_event);
-    }
-
     let pattern = KeyPattern::from_event(&key_event);
     let resolver = &app.key_resolver;
-    // TODO: use resolver for generalized config inputs
 
-    if app.is_copy_mode_active() {
-        return handle_copy_mode_keys(key_event);
+    if pattern == resolver.prefix && app.input_context() != InputContext::Prefix {
+        return Action::App(AppAction::SetPrefix(true));
     }
 
-    if let Some(action) = handle_common_keys(&key_event, app) {
-        return action;
+    match app.input_context() {
+        InputContext::Overlay => Action::OverlayKey(key_event),
+        InputContext::Prefix => {
+            if pattern == resolver.prefix {
+                return Action::TransmitRaw(vec![0x01]);
+            }
+            if let Some(prefix_action_binding) = resolver.prefix_actions.get(&pattern) {
+                prefix_action_binding.to_action(app)
+            } else {
+                Action::App(AppAction::SetPrefix(false))
+            }
+        }
+        InputContext::CopyMode => handle_copy_mode_keys(key_event),
+        InputContext::Search => {
+            // TODO: make a search mode section
+            if let Some(action) = handle_common_keys(&key_event, app) {
+                action
+            } else {
+                Action::Ignore
+            }
+        }
+        InputContext::LineInput => {
+            // TODO: better handling of common and line/terminal modes
+            if let Some(action) = handle_common_keys(&key_event, app) {
+                return action;
+            }
+            handle_line_mode(key_event)
+        }
+        InputContext::Terminal => {
+            if let Some(action) = handle_common_keys(&key_event, app) {
+                return action;
+            }
+            handle_terminal_mode(key_event)
+        }
     }
+}
 
-    match app.config().input_mode {
-        InputMode::Line => handle_line_mode(key_event),
-        InputMode::Terminal => handle_terminal_mode(key_event),
+impl KeyBindingPrefixAction {
+    pub fn to_action(self, app: &App) -> Action {
+        match self {
+            KeyBindingPrefixAction::Quit => Action::App(AppAction::Quit),
+            KeyBindingPrefixAction::ToggleInputMode => {
+                Action::App(AppAction::ToggleSetting(SettingKey::InputMode))
+            }
+            KeyBindingPrefixAction::Help => Action::OpenOverlay(Overlay::Help),
+            KeyBindingPrefixAction::Settings => Action::OpenOverlay(Overlay::Settings),
+            KeyBindingPrefixAction::ToggleLogging => Action::App(AppAction::ToggleLogging),
+            KeyBindingPrefixAction::ResizeDialog => {
+                let (r, c) = app.terminal_mode.get_vt100_size();
+                Action::OpenOverlay(Overlay::TerminalSize(ResizeDialog::new(r, c)))
+            }
+
+            KeyBindingPrefixAction::AutoResizeRemote => {
+                Action::Terminal(TerminalAction::AutoResizeRemoteToViewer)
+            }
+            KeyBindingPrefixAction::AutoResizeEmulator => {
+                Action::Terminal(TerminalAction::AutoResizeEmulatorToViewer)
+            }
+            KeyBindingPrefixAction::SerialSettings => {
+                let dialog = SerialConfigDialog::new(&app.serial_config);
+                Action::OpenOverlay(Overlay::SerialSettings(dialog))
+            }
+
+            KeyBindingPrefixAction::ScrollUp => Action::History(HistoryAction::ScrollUp(1)),
+            KeyBindingPrefixAction::ScrollDown => Action::History(HistoryAction::ScrollDown(1)),
+            KeyBindingPrefixAction::PanLeft => Action::History(HistoryAction::PanLeft(1)),
+            KeyBindingPrefixAction::PanRight => Action::History(HistoryAction::PanRight(1)),
+
+            KeyBindingPrefixAction::EnterCopyMode => Action::CopyMode(CopyModeAction::Enter),
+            KeyBindingPrefixAction::ExitPrefix => Action::App(AppAction::SetPrefix(false)),
+        }
     }
 }
 

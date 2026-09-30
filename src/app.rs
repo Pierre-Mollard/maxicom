@@ -22,6 +22,16 @@ pub mod terminal_mode;
 pub use line_mode::LineMode;
 pub use terminal_mode::TerminalMode;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputContext {
+    Overlay,
+    Prefix,
+    CopyMode,
+    Search,
+    LineInput,
+    Terminal,
+}
+
 pub struct App {
     app_config: AppConfig,
     pub theme: ThemeConfig,
@@ -92,6 +102,23 @@ impl App {
                     self.config().terminal_mode.rows,
                     self.config().terminal_mode.cols,
                 );
+            }
+        }
+    }
+
+    pub fn input_context(&self) -> InputContext {
+        if self.overlay().is_some() {
+            InputContext::Overlay
+        } else if self.is_prefix_active() {
+            InputContext::Prefix
+        } else if self.is_copy_mode_active() {
+            InputContext::CopyMode
+        } else if self.is_search_active() {
+            InputContext::Search
+        } else {
+            match self.config().input_mode {
+                InputMode::Line => InputContext::LineInput,
+                InputMode::Terminal => InputContext::Terminal,
             }
         }
     }
@@ -439,6 +466,14 @@ impl App {
         match self.app_config.input_mode {
             InputMode::Line => self.line_mode.copy_state().active,
             InputMode::Terminal => self.terminal_mode.copy_state().active,
+        }
+    }
+
+    #[inline]
+    pub fn is_search_active(&self) -> bool {
+        match self.app_config.input_mode {
+            InputMode::Line => self.line_mode.search().active,
+            InputMode::Terminal => self.terminal_mode.search().active,
         }
     }
 
