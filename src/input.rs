@@ -15,23 +15,24 @@ use crate::{
 
 #[derive(Debug)]
 pub enum Action {
+    App(AppAction),
     TransmitRaw(Vec<u8>),
     LineInput(LineInputAction),
     Terminal(TerminalAction),
     History(HistoryAction),
     CopyMode(CopyModeAction),
-    OpenOverlay(Overlay),
+    Search(SearchAction),
     OverlayKey(KeyEvent),
-    App(AppAction),
     Ignore,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum AppAction {
     SetPrefix(bool),
     FocusGained(bool),
     ToggleSetting(SettingKey),
     ToggleLogging,
+    OpenOverlay(Overlay),
     Quit,
 }
 
@@ -40,6 +41,7 @@ pub enum LineInputAction {
     Submit,
     HistoryUp,
     HistoryDown,
+    ClearLine,
     HandleKey(KeyEvent),
 }
 
@@ -60,9 +62,15 @@ pub enum HistoryAction {
     PanLeft(usize),
     PanRight(usize),
     Clear,
-    ToggleSearch,
-    SearchNext,
-    SearchPrevious,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum SearchAction {
+    Start,
+    Next,
+    Previous,
+    Cancel,
+    Confirm,
     HandleKey(KeyEvent),
 }
 
@@ -77,7 +85,7 @@ pub enum CopyModeAction {
     PageDown,
     StartOfLine,
     EndOfLine,
-    ToggleSelection,
+    Select,
     Yank,
     Exit,
 }
@@ -166,12 +174,16 @@ impl KeyBindingPrefixAction {
             KeyBindingPrefixAction::ToggleInputMode => {
                 Action::App(AppAction::ToggleSetting(SettingKey::InputMode))
             }
-            KeyBindingPrefixAction::Help => Action::OpenOverlay(Overlay::Help),
-            KeyBindingPrefixAction::Settings => Action::OpenOverlay(Overlay::Settings),
+            KeyBindingPrefixAction::Help => Action::App(AppAction::OpenOverlay(Overlay::Help)),
+            KeyBindingPrefixAction::Settings => {
+                Action::App(AppAction::OpenOverlay(Overlay::Settings))
+            }
             KeyBindingPrefixAction::ToggleLogging => Action::App(AppAction::ToggleLogging),
             KeyBindingPrefixAction::ResizeDialog => {
                 let (r, c) = app.terminal_mode.get_vt100_size();
-                Action::OpenOverlay(Overlay::TerminalSize(ResizeDialog::new(r, c)))
+                Action::App(AppAction::OpenOverlay(Overlay::TerminalSize(
+                    ResizeDialog::new(r, c),
+                )))
             }
 
             KeyBindingPrefixAction::AutoResizeRemote => {
@@ -182,7 +194,7 @@ impl KeyBindingPrefixAction {
             }
             KeyBindingPrefixAction::SerialSettings => {
                 let dialog = SerialConfigDialog::new(&app.serial_config);
-                Action::OpenOverlay(Overlay::SerialSettings(dialog))
+                Action::App(AppAction::OpenOverlay(Overlay::SerialSettings(dialog)))
             }
 
             KeyBindingPrefixAction::ScrollUp => Action::History(HistoryAction::ScrollUp(1)),
@@ -198,7 +210,6 @@ impl KeyBindingPrefixAction {
 
 // Common check
 fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
-    // TODO: cleanup and refactor a bit HistoryAction for search in both mode
     let is_search_active = match app.config().input_mode {
         InputMode::Line => app.line_mode.search().active,
         InputMode::Terminal => app.terminal_mode.search().active,
@@ -215,7 +226,7 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
             KeyCode::Char('a') => {
                 // in search both mode, execute "Go to start of line"
                 if is_search_active {
-                    return Some(Action::History(HistoryAction::HandleKey(KeyEvent::new(
+                    return Some(Action::Search(SearchAction::HandleKey(KeyEvent::new(
                         KeyCode::Home,
                         KeyModifiers::NONE,
                     ))));
@@ -230,10 +241,10 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
                 }
             }
             KeyCode::Char('h') | KeyCode::Char('H') => {
-                return Some(Action::OpenOverlay(Overlay::Help));
+                return Some(Action::App(AppAction::OpenOverlay(Overlay::Help)));
             }
             KeyCode::Char('s') | KeyCode::Char('S') => {
-                return Some(Action::OpenOverlay(Overlay::Settings));
+                return Some(Action::App(AppAction::OpenOverlay(Overlay::Settings)));
             }
             KeyCode::Char('l') | KeyCode::Char('L') => {
                 return Some(Action::App(AppAction::ToggleLogging));
@@ -241,7 +252,9 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
             KeyCode::Char('r') | KeyCode::Char('R') => {
                 let (rows, cols) = app.terminal_mode.get_vt100_size();
                 let dialog = ResizeDialog::new(rows, cols);
-                return Some(Action::OpenOverlay(Overlay::TerminalSize(dialog)));
+                return Some(Action::App(AppAction::OpenOverlay(Overlay::TerminalSize(
+                    dialog,
+                ))));
             }
             KeyCode::Char('t') | KeyCode::Char('T') => {
                 return Some(Action::Terminal(TerminalAction::AutoResizeRemoteToViewer));
@@ -251,7 +264,9 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
             }
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 let dialog = SerialConfigDialog::new(&app.serial_config);
-                return Some(Action::OpenOverlay(Overlay::SerialSettings(dialog)));
+                return Some(Action::App(AppAction::OpenOverlay(
+                    Overlay::SerialSettings(dialog),
+                )));
             }
             KeyCode::Char('[') => {
                 return Some(Action::CopyMode(CopyModeAction::Enter));
@@ -280,15 +295,15 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
         match key.code {
             KeyCode::Char('a') => return Some(Action::App(AppAction::SetPrefix(true))),
             KeyCode::Char('f') | KeyCode::Char('F') => {
-                return Some(Action::History(HistoryAction::ToggleSearch));
+                return Some(Action::Search(SearchAction::Start));
             }
             KeyCode::Char('p') if is_search_active => {
-                return Some(Action::History(HistoryAction::SearchPrevious));
+                return Some(Action::Search(SearchAction::Previous));
             }
             KeyCode::Char('n') if is_search_active => {
-                return Some(Action::History(HistoryAction::SearchNext));
+                return Some(Action::Search(SearchAction::Next));
             }
-            _ if is_search_active => return Some(Action::History(HistoryAction::HandleKey(*key))),
+            _ if is_search_active => return Some(Action::Search(SearchAction::HandleKey(*key))),
             _ => return None,
         }
     }
@@ -297,7 +312,7 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
     if key.modifiers.contains(KeyModifiers::ALT) {
         match key.code {
             KeyCode::Char('c') => return Some(Action::History(HistoryAction::Clear)),
-            _ if is_search_active => return Some(Action::History(HistoryAction::HandleKey(*key))),
+            _ if is_search_active => return Some(Action::Search(SearchAction::HandleKey(*key))),
             _ => return None,
         }
     }
@@ -307,7 +322,7 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
         match key.code {
             KeyCode::Home => return Some(Action::History(HistoryAction::ScrollToTop)),
             KeyCode::End => return Some(Action::History(HistoryAction::ScrollToBottom)),
-            _ if is_search_active => return Some(Action::History(HistoryAction::HandleKey(*key))),
+            _ if is_search_active => return Some(Action::Search(SearchAction::HandleKey(*key))),
             _ => return None,
         }
     }
@@ -316,9 +331,9 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
     match key.code {
         KeyCode::PageUp => Some(Action::History(HistoryAction::ScrollUpPage)),
         KeyCode::PageDown => Some(Action::History(HistoryAction::ScrollDownPage)),
-        KeyCode::Enter if is_search_active => Some(Action::History(HistoryAction::SearchNext)),
-        KeyCode::Esc if is_search_active => Some(Action::History(HistoryAction::ToggleSearch)),
-        _ if is_search_active => Some(Action::History(HistoryAction::HandleKey(*key))),
+        KeyCode::Enter if is_search_active => Some(Action::Search(SearchAction::Next)),
+        KeyCode::Esc if is_search_active => Some(Action::Search(SearchAction::Start)),
+        _ if is_search_active => Some(Action::Search(SearchAction::HandleKey(*key))),
         _ => None,
     }
 }
@@ -334,9 +349,7 @@ fn handle_copy_mode_keys(key: KeyEvent) -> Action {
         KeyCode::Home | KeyCode::Char('0') => Action::CopyMode(CopyModeAction::StartOfLine),
         KeyCode::End | KeyCode::Char('$') => Action::CopyMode(CopyModeAction::EndOfLine),
 
-        KeyCode::Char(' ') | KeyCode::Char('v') => {
-            Action::CopyMode(CopyModeAction::ToggleSelection)
-        }
+        KeyCode::Char(' ') | KeyCode::Char('v') => Action::CopyMode(CopyModeAction::Select),
 
         KeyCode::Enter | KeyCode::Char('y') => Action::CopyMode(CopyModeAction::Yank),
 

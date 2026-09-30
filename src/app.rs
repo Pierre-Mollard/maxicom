@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::{
     config::{AppConfig, InputMode, WrapMode},
-    input::{Action, AppAction, CopyModeAction, HistoryAction},
+    input::{Action, AppAction, CopyModeAction, HistoryAction, SearchAction},
     keybindings::KeyResolver,
     logger::{LineLogger, TerminalLogger},
     notification::{NotificationManager, ToastLevel},
@@ -137,6 +137,7 @@ impl App {
 
     pub fn update(&mut self, action: Action) -> UpdateEffect {
         let effect = match action {
+            Action::App(action) => self.update_action_app(action),
             Action::TransmitRaw(bytes) => {
                 if self.app_config.local_echo {
                     let text = String::from_utf8_lossy(&bytes);
@@ -156,12 +157,7 @@ impl App {
             Action::Terminal(action) => self.terminal_mode.update_action_terminal(action),
             Action::History(action) => self.update_action_history(action),
             Action::CopyMode(action) => self.update_action_copy_mode(action),
-            Action::App(action) => self.update_action_app(action),
-            Action::Ignore => UpdateEffect::None,
-            Action::OpenOverlay(overlay) => {
-                self.overlay = Some(overlay);
-                UpdateEffect::None
-            }
+            Action::Search(action) => self.update_action_search_mode(action),
             Action::OverlayKey(key) => {
                 if let Some(mut overlay) = self.overlay.take() {
                     let response = overlay.handle_key(key);
@@ -214,6 +210,7 @@ impl App {
                     UpdateEffect::None
                 }
             }
+            Action::Ignore => UpdateEffect::None,
         };
 
         self.notifications.tick();
@@ -238,6 +235,10 @@ impl App {
                 self.toggle_logging();
                 UpdateEffect::None
             }
+            AppAction::OpenOverlay(overlay) => {
+                self.overlay = Some(overlay);
+                UpdateEffect::None
+            }
             AppAction::Quit => UpdateEffect::Quit,
         }
     }
@@ -254,6 +255,21 @@ impl App {
             InputMode::Line => {
                 // line mode is a deferred copy (rendering pass needed)
                 self.line_mode.handle_copy_action(action);
+            }
+        }
+
+        UpdateEffect::None
+    }
+
+    fn update_action_search_mode(&mut self, action: SearchAction) -> UpdateEffect {
+        self.prefix_active = false;
+
+        match self.app_config.input_mode {
+            InputMode::Terminal => {
+                self.terminal_mode.handle_search_action(action);
+            }
+            InputMode::Line => {
+                self.line_mode.handle_search_action(action);
             }
         }
 
@@ -289,31 +305,6 @@ impl App {
             (InputMode::Line, HistoryAction::PanRight(cols)) => {
                 self.line_mode.pan_to_right(cols);
             }
-            (InputMode::Line, HistoryAction::ToggleSearch) => {
-                self.line_mode.search_mut().toggle_itself();
-                if self.line_mode.search().active {
-                    self.line_mode.update_search_matches();
-                }
-            }
-            (InputMode::Line, HistoryAction::SearchPrevious) => {
-                if self.line_mode.search().active
-                    && let Some(target_entry_idx) = self.line_mode.search_mut().prev_match()
-                {
-                    self.line_mode.search_mut().target_jump_index = Some(target_entry_idx);
-                }
-            }
-            (InputMode::Line, HistoryAction::SearchNext) => {
-                if self.line_mode.search().active
-                    && let Some(target_entry_idx) = self.line_mode.search_mut().next_match()
-                {
-                    self.line_mode.search_mut().target_jump_index = Some(target_entry_idx);
-                }
-            }
-            (InputMode::Line, HistoryAction::HandleKey(key_event)) => {
-                if self.line_mode.search().active {
-                    self.line_mode.handle_input_search(key_event);
-                }
-            }
             (InputMode::Terminal, HistoryAction::ScrollUp(lines)) => {
                 self.terminal_mode.scroll_up(lines);
             }
@@ -337,31 +328,6 @@ impl App {
             }
             (InputMode::Terminal, HistoryAction::PanLeft(cols)) => {
                 self.terminal_mode.pan_to_left(cols, self.viewport.cols);
-            }
-            (InputMode::Terminal, HistoryAction::ToggleSearch) => {
-                self.terminal_mode.search_mut().toggle_itself();
-                if self.terminal_mode.search().active {
-                    self.terminal_mode.update_search_matches();
-                }
-            }
-            (InputMode::Terminal, HistoryAction::SearchPrevious) => {
-                if self.terminal_mode.search().active
-                    && let Some(target_line_idx) = self.terminal_mode.search_mut().prev_match()
-                {
-                    self.terminal_mode.search_mut().target_jump_index = Some(target_line_idx);
-                }
-            }
-            (InputMode::Terminal, HistoryAction::SearchNext) => {
-                if self.terminal_mode.search().active
-                    && let Some(target_line_idx) = self.terminal_mode.search_mut().next_match()
-                {
-                    self.terminal_mode.search_mut().target_jump_index = Some(target_line_idx);
-                }
-            }
-            (InputMode::Terminal, HistoryAction::HandleKey(key_event)) => {
-                if self.terminal_mode.search().active {
-                    self.terminal_mode.handle_input_search(key_event);
-                }
             }
             (InputMode::Terminal, HistoryAction::Clear) => todo!(),
         }

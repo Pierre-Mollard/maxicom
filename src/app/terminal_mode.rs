@@ -11,7 +11,7 @@ use crate::{
         selection::CopyModeState,
     },
     config::{TerminalDimensionMode, TextEncoding},
-    input::{CopyModeAction, TerminalAction},
+    input::{CopyModeAction, SearchAction, TerminalAction},
     logger::TerminalLogger,
 };
 
@@ -414,6 +414,37 @@ impl TerminalMode {
             }
         }
     }
+    pub fn handle_search_action(&mut self, action: SearchAction) {
+        match action {
+            SearchAction::Start => {
+                self.search_state.toggle_itself();
+                if self.search_state.active {
+                    self.update_search_matches();
+                }
+            }
+            SearchAction::Next => {
+                if self.search_state.active
+                    && let Some(target_line_idx) = self.search_state.next_match()
+                {
+                    self.search_state.target_jump_index = Some(target_line_idx);
+                }
+            }
+            SearchAction::Previous => {
+                if self.search_state.active
+                    && let Some(target_line_idx) = self.search_state.prev_match()
+                {
+                    self.search_state.target_jump_index = Some(target_line_idx);
+                }
+            }
+            SearchAction::Cancel => todo!(),
+            SearchAction::Confirm => todo!(),
+            SearchAction::HandleKey(key_event) => {
+                if self.search_state.active {
+                    self.handle_input_search(key_event);
+                }
+            }
+        }
+    }
 
     pub fn handle_copy_action(&mut self, action: CopyModeAction) -> Option<String> {
         let (grid_rows, cols) = self.get_vt100_size();
@@ -489,7 +520,7 @@ impl TerminalMode {
                 }
             }
 
-            CopyModeAction::ToggleSelection => {
+            CopyModeAction::Select => {
                 self.copy_state.toggle_selection();
             }
 

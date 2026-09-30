@@ -10,7 +10,7 @@ use crate::{
         selection::CopyModeState,
     },
     config::{RxNewlineMode, TextEncoding, TxNewlineSymbol, WrapMode},
-    input::{CopyModeAction, LineInputAction},
+    input::{CopyModeAction, LineInputAction, SearchAction},
     logger::LineLogger,
     types::{LogEntry, ViewportSize},
 };
@@ -245,6 +245,10 @@ impl LineMode {
                 self.history_down();
                 UpdateEffect::None
             }
+            LineInputAction::ClearLine => {
+                self.user_input.reset();
+                UpdateEffect::None
+            }
             LineInputAction::HandleKey(key_event) => {
                 self.history_index = None;
                 dispatch_input_key(&mut self.user_input, key_event);
@@ -316,7 +320,7 @@ impl LineMode {
             CopyModeAction::EndOfLine => {
                 self.copy_state.cursor.col = max_col;
             }
-            CopyModeAction::ToggleSelection => {
+            CopyModeAction::Select => {
                 self.copy_state.toggle_selection();
             }
             CopyModeAction::Yank => {
@@ -357,6 +361,38 @@ impl LineMode {
     pub fn update_search_matches(&mut self) {
         self.search_state
             .update_matches_from_entries(&self.local_history);
+    }
+
+    pub fn handle_search_action(&mut self, action: SearchAction) {
+        match action {
+            SearchAction::Start => {
+                self.search_state.toggle_itself();
+                if self.search_state.active {
+                    self.update_search_matches();
+                }
+            }
+            SearchAction::Next => {
+                if self.search_state.active
+                    && let Some(target_line_idx) = self.search_state.next_match()
+                {
+                    self.search_state.target_jump_index = Some(target_line_idx);
+                }
+            }
+            SearchAction::Previous => {
+                if self.search_state.active
+                    && let Some(target_line_idx) = self.search_state.prev_match()
+                {
+                    self.search_state.target_jump_index = Some(target_line_idx);
+                }
+            }
+            SearchAction::Cancel => todo!(),
+            SearchAction::Confirm => todo!(),
+            SearchAction::HandleKey(key_event) => {
+                if self.search_state.active {
+                    self.handle_input_search(key_event);
+                }
+            }
+        }
     }
 
     pub fn handle_input_search(&mut self, key_event: KeyEvent) {
