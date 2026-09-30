@@ -9,7 +9,7 @@ use terminput_crossterm::to_terminput_key;
 use crate::{
     app::{App, InputContext},
     config::InputMode,
-    keybindings::{KeyBindingPrefixAction, KeyPattern},
+    keybindings::{KeyBindingPrefixAction, KeyBindingSearchAction, KeyPattern},
     types::{Overlay, ResizeDialog, SerialConfigDialog, SettingKey},
 };
 
@@ -134,7 +134,16 @@ pub fn handle_event(event: Event, app: &App) -> Action {
         InputContext::Overlay => Action::OverlayKey(key_event),
         InputContext::Prefix => {
             if pattern == resolver.prefix {
-                return Action::TransmitRaw(vec![0x01]);
+                let raw_byte = match resolver.prefix.code {
+                    KeyCode::Char(c)
+                        if resolver.prefix.modifiers.contains(KeyModifiers::CONTROL) =>
+                    {
+                        (c as u8).to_ascii_lowercase() - b'a' + 1
+                    }
+                    KeyCode::Char(c) => c as u8,
+                    _ => 0x01,
+                };
+                return Action::TransmitRaw(vec![raw_byte]);
             }
             if let Some(prefix_action_binding) = resolver.prefix_actions.get(&pattern) {
                 prefix_action_binding.to_action(app)
@@ -144,11 +153,10 @@ pub fn handle_event(event: Event, app: &App) -> Action {
         }
         InputContext::CopyMode => handle_copy_mode_keys(key_event),
         InputContext::Search => {
-            // TODO: make a search mode section
-            if let Some(action) = handle_common_keys(&key_event, app) {
-                action
+            if let Some(search_action_binding) = resolver.search_actions.get(&pattern) {
+                search_action_binding.to_action()
             } else {
-                Action::Ignore
+                Action::Search(SearchAction::HandleKey(key_event))
             }
         }
         InputContext::LineInput => {
@@ -203,7 +211,19 @@ impl KeyBindingPrefixAction {
             KeyBindingPrefixAction::PanRight => Action::History(HistoryAction::PanRight(1)),
 
             KeyBindingPrefixAction::EnterCopyMode => Action::CopyMode(CopyModeAction::Enter),
+            KeyBindingPrefixAction::EnterSearch => Action::Search(SearchAction::Start),
             KeyBindingPrefixAction::ExitPrefix => Action::App(AppAction::SetPrefix(false)),
+        }
+    }
+}
+
+impl KeyBindingSearchAction {
+    pub fn to_action(self) -> Action {
+        match self {
+            Self::Next => Action::Search(SearchAction::Next),
+            Self::Previous => Action::Search(SearchAction::Previous),
+            Self::Cancel => Action::Search(SearchAction::Cancel),
+            Self::Confirm => Action::Search(SearchAction::Confirm),
         }
     }
 }

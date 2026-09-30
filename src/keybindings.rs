@@ -30,6 +30,7 @@ pub enum KeyBindingPrefixAction {
     AutoResizeEmulator,
     SerialSettings,
     EnterCopyMode,
+    EnterSearch,
     ScrollUp,
     ScrollDown,
     PanRight,
@@ -52,6 +53,7 @@ impl FromStr for KeyBindingPrefixAction {
             "auto_resize_emulator" => Ok(KeyBindingPrefixAction::AutoResizeEmulator),
             "serial_settings" => Ok(KeyBindingPrefixAction::SerialSettings),
             "enter_copy_mode" => Ok(KeyBindingPrefixAction::EnterCopyMode),
+            "enter_search" => Ok(KeyBindingPrefixAction::EnterSearch),
             "scroll_up" => Ok(KeyBindingPrefixAction::ScrollUp),
             "scroll_down" => Ok(KeyBindingPrefixAction::ScrollDown),
             "pan_right" => Ok(KeyBindingPrefixAction::PanRight),
@@ -75,11 +77,46 @@ impl std::fmt::Display for KeyBindingPrefixAction {
             Self::AutoResizeEmulator => "auto_resize_emulator",
             Self::SerialSettings => "serial_settings",
             Self::EnterCopyMode => "enter_copy_mode",
+            Self::EnterSearch => "enter_search",
             Self::ScrollUp => "scroll_up",
             Self::ScrollDown => "scroll_down",
             Self::PanRight => "pan_right",
             Self::PanLeft => "pan_left",
             Self::ExitPrefix => "exit_prefix",
+        };
+        write!(f, "{s}")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeyBindingSearchAction {
+    Next,
+    Previous,
+    Cancel,
+    Confirm,
+}
+
+impl std::str::FromStr for KeyBindingSearchAction {
+    type Err = UnknownActionError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "next" => Ok(Self::Next),
+            "previous" => Ok(Self::Previous),
+            "cancel" => Ok(Self::Cancel),
+            "confirm" => Ok(Self::Confirm),
+            other => Err(UnknownActionError(other.to_string())),
+        }
+    }
+}
+
+impl std::fmt::Display for KeyBindingSearchAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Next => "next",
+            Self::Previous => "previous",
+            Self::Cancel => "cancel",
+            Self::Confirm => "confirm",
         };
         write!(f, "{s}")
     }
@@ -96,9 +133,9 @@ impl KeyPattern {
         let (code, modifiers) = match ev.code {
             KeyCode::Char(c) if c.is_ascii_uppercase() => (
                 KeyCode::Char(c.to_ascii_lowercase()),
-                ev.modifiers - KeyModifiers::SHIFT,
+                ev.modifiers | KeyModifiers::SHIFT,
             ),
-            KeyCode::Char(c) => (KeyCode::Char(c.to_ascii_lowercase()), ev.modifiers),
+            KeyCode::Char(c) => (KeyCode::Char(c), ev.modifiers - KeyModifiers::SHIFT),
             other => (other, ev.modifiers),
         };
 
@@ -114,33 +151,98 @@ impl FromStr for KeyPattern {
         let mut code = None;
 
         for part in s.split('-') {
+            // Special keys (no case)
             match part.to_ascii_lowercase().as_str() {
-                "ctrl" | "control" => modifiers.insert(KeyModifiers::CONTROL),
-                "alt" => modifiers.insert(KeyModifiers::ALT),
-                "shift" => modifiers.insert(KeyModifiers::SHIFT),
-                "enter" | "return" => code = Some(KeyCode::Enter),
-                "esc" | "escape" => code = Some(KeyCode::Esc),
-                "backspace" => code = Some(KeyCode::Backspace),
-                "tab" => code = Some(KeyCode::Tab),
-                "space" => code = Some(KeyCode::Char(' ')),
-                "up" => code = Some(KeyCode::Up),
-                "down" => code = Some(KeyCode::Down),
-                "left" => code = Some(KeyCode::Left),
-                "right" => code = Some(KeyCode::Right),
-                "pageup" => code = Some(KeyCode::PageUp),
-                "pagedown" => code = Some(KeyCode::PageDown),
-                "home" => code = Some(KeyCode::Home),
-                "end" => code = Some(KeyCode::End),
-                f if f.starts_with('f') && f.len() > 1 => {
-                    let num = f[1..].parse::<u8>().map_err(|_| "Invalid F-key")?;
-                    code = Some(KeyCode::F(num));
+                "ctrl" | "control" => {
+                    modifiers.insert(KeyModifiers::CONTROL);
+                    continue;
                 }
-                c if c.chars().count() == 1 => {
-                    let ch = c.chars().next().unwrap().to_ascii_lowercase();
+                "alt" => {
+                    modifiers.insert(KeyModifiers::ALT);
+                    continue;
+                }
+                "shift" => {
+                    modifiers.insert(KeyModifiers::SHIFT);
+                    continue;
+                }
+                "enter" | "return" => {
+                    code = Some(KeyCode::Enter);
+                    continue;
+                }
+                "esc" | "escape" => {
+                    code = Some(KeyCode::Esc);
+                    continue;
+                }
+                "backspace" => {
+                    code = Some(KeyCode::Backspace);
+                    continue;
+                }
+                "tab" => {
+                    code = Some(KeyCode::Tab);
+                    continue;
+                }
+                "space" => {
+                    code = Some(KeyCode::Char(' '));
+                    continue;
+                }
+                "up" => {
+                    code = Some(KeyCode::Up);
+                    continue;
+                }
+                "down" => {
+                    code = Some(KeyCode::Down);
+                    continue;
+                }
+                "left" => {
+                    code = Some(KeyCode::Left);
+                    continue;
+                }
+                "right" => {
+                    code = Some(KeyCode::Right);
+                    continue;
+                }
+                "pageup" => {
+                    code = Some(KeyCode::PageUp);
+                    continue;
+                }
+                "pagedown" => {
+                    code = Some(KeyCode::PageDown);
+                    continue;
+                }
+                "home" => {
+                    code = Some(KeyCode::Home);
+                    continue;
+                }
+                "end" => {
+                    code = Some(KeyCode::End);
+                    continue;
+                }
+                _ => {}
+            }
+
+            // function keys f1..f12 (no case)
+            let lower = part.to_ascii_lowercase();
+            if lower.starts_with('f')
+                && lower.len() > 1
+                && let Ok(num) = lower[1..].parse::<u8>()
+            {
+                code = Some(KeyCode::F(num));
+                continue;
+            }
+
+            // single char original case
+            if part.chars().count() == 1 {
+                let ch = part.chars().next().unwrap();
+                if ch.is_ascii_uppercase() {
+                    modifiers.insert(KeyModifiers::SHIFT);
+                    code = Some(KeyCode::Char(ch.to_ascii_lowercase()));
+                } else {
                     code = Some(KeyCode::Char(ch));
                 }
-                other => return Err(format!("Unknown key sequence: {other}")),
+                continue;
             }
+
+            return Err(format!("Unknown key sequence: {part}"));
         }
 
         let code = code.ok_or_else(|| "Missing key code".to_string())?;
@@ -151,6 +253,7 @@ impl FromStr for KeyPattern {
 pub struct KeyResolver {
     pub prefix: KeyPattern,
     pub prefix_actions: HashMap<KeyPattern, KeyBindingPrefixAction>,
+    pub search_actions: HashMap<KeyPattern, KeyBindingSearchAction>,
 }
 
 #[derive(Debug)]
@@ -211,9 +314,25 @@ impl KeyResolver {
             prefix_actions.insert(pat, act);
         }
 
+        let mut search_actions = HashMap::new();
+        for (k, action_str) in &config.search_mode {
+            let pat = k.parse().map_err(|err| KeymapError::InvalidKey {
+                section: "search_mode",
+                key: k.clone(),
+                reason: err,
+            })?;
+            let act: KeyBindingSearchAction =
+                action_str.parse().map_err(|_| KeymapError::InvalidAction {
+                    section: "search_mode",
+                    action: action_str.clone(),
+                })?;
+            search_actions.insert(pat, act);
+        }
+
         Ok(Self {
             prefix,
             prefix_actions,
+            search_actions,
         })
     }
 }
@@ -245,6 +364,7 @@ pub struct KeyBindingsConfig {
 
     pub direct: BTreeMap<String, String>,
     pub prefix_actions: BTreeMap<String, String>,
+    pub search_mode: BTreeMap<String, String>,
     pub copy_mode: BTreeMap<String, String>,
 }
 
@@ -252,6 +372,7 @@ impl Default for KeyBindingsConfig {
     fn default() -> Self {
         let direct = btreemap! {
             "ctrl-q"   => "quit",
+            "ctrl-f"   => "enter-search",
             "pageup"   => "scroll_page_up",
             "pagedown" => "scroll_page_down",
         };
@@ -272,7 +393,15 @@ impl Default for KeyBindingsConfig {
             "left"  => KeyBindingPrefixAction::PanLeft,
             "right" => KeyBindingPrefixAction::PanRight,
             "["     => KeyBindingPrefixAction::EnterCopyMode,
+            "/"     => KeyBindingPrefixAction::EnterSearch,
             "a"     => KeyBindingPrefixAction::ExitPrefix,
+        };
+
+        let search_mode = default_bindings! {
+            "ctrl-n"     => KeyBindingSearchAction::Next,
+            "ctrl-p"     => KeyBindingSearchAction::Previous,
+            "esc"        => KeyBindingSearchAction::Cancel,
+            "enter"      => KeyBindingSearchAction::Confirm,
         };
 
         let copy_mode = btreemap! {
@@ -296,6 +425,7 @@ impl Default for KeyBindingsConfig {
             prefix: "ctrl-a".to_string(),
             direct,
             prefix_actions,
+            search_mode,
             copy_mode,
         }
     }

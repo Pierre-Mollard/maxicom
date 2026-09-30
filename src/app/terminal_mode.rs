@@ -436,7 +436,9 @@ impl TerminalMode {
                     self.search_state.target_jump_index = Some(target_line_idx);
                 }
             }
-            SearchAction::Cancel => todo!(),
+            SearchAction::Cancel => {
+                self.search_state.toggle(false);
+            }
             SearchAction::Confirm => todo!(),
             SearchAction::HandleKey(key_event) => {
                 if self.search_state.active {
