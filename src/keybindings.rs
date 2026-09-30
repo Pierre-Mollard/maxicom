@@ -123,6 +123,61 @@ impl std::fmt::Display for KeyBindingSearchAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeyBindingCopyAction {
+    Up,
+    Down,
+    Left,
+    Right,
+    PageUp,
+    PageDown,
+    StartOfLine,
+    EndOfLine,
+    Select,
+    Yank,
+    Exit,
+}
+
+impl std::str::FromStr for KeyBindingCopyAction {
+    type Err = UnknownActionError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "up" => Ok(Self::Up),
+            "down" => Ok(Self::Down),
+            "left" => Ok(Self::Left),
+            "right" => Ok(Self::Right),
+            "page_up" => Ok(Self::PageUp),
+            "page_down" => Ok(Self::PageDown),
+            "start_of_line" => Ok(Self::StartOfLine),
+            "end_of_line" => Ok(Self::EndOfLine),
+            "select" => Ok(Self::Select),
+            "yank" => Ok(Self::Yank),
+            "exit" => Ok(Self::Exit),
+            other => Err(UnknownActionError(other.to_string())),
+        }
+    }
+}
+
+impl std::fmt::Display for KeyBindingCopyAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Up => "up",
+            Self::Down => "down",
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::PageUp => "page_up",
+            Self::PageDown => "page_down",
+            Self::StartOfLine => "start_of_line",
+            Self::EndOfLine => "end_of_line",
+            Self::Select => "select",
+            Self::Yank => "yank",
+            Self::Exit => "exit",
+        };
+        write!(f, "{s}")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KeyPattern {
     pub code: KeyCode,
     pub modifiers: KeyModifiers,
@@ -254,6 +309,7 @@ pub struct KeyResolver {
     pub prefix: KeyPattern,
     pub prefix_actions: HashMap<KeyPattern, KeyBindingPrefixAction>,
     pub search_actions: HashMap<KeyPattern, KeyBindingSearchAction>,
+    pub copy_actions: HashMap<KeyPattern, KeyBindingCopyAction>,
 }
 
 #[derive(Debug)]
@@ -329,10 +385,26 @@ impl KeyResolver {
             search_actions.insert(pat, act);
         }
 
+        let mut copy_actions = HashMap::new();
+        for (k, action_str) in &config.copy_mode {
+            let pat = k.parse().map_err(|err| KeymapError::InvalidKey {
+                section: "copy_mode",
+                key: k.clone(),
+                reason: err,
+            })?;
+            let act: KeyBindingCopyAction =
+                action_str.parse().map_err(|_| KeymapError::InvalidAction {
+                    section: "copy_mode",
+                    action: action_str.clone(),
+                })?;
+            copy_actions.insert(pat, act);
+        }
+
         Ok(Self {
             prefix,
             prefix_actions,
             search_actions,
+            copy_actions,
         })
     }
 }
@@ -404,21 +476,25 @@ impl Default for KeyBindingsConfig {
             "enter"      => KeyBindingSearchAction::Confirm,
         };
 
-        let copy_mode = btreemap! {
-            "q"     => "exit",
-            "esc"   => "exit",
-            "v"     => "toggle_selection",
-            "y"     => "yank",
-            "h"     => "move_left",
-            "left"  => "move_left",
-            "j"     => "move_down",
-            "down"  => "move_down",
-            "k"     => "move_up",
-            "up"    => "move_up",
-            "l"     => "move_right",
-            "right" => "move_right",
-            "0"     => "start_of_line",
-            "$"     => "end_of_line",
+        let copy_mode = default_bindings! {
+            "k"         => KeyBindingCopyAction::Up,
+            "up"        => KeyBindingCopyAction::Up,
+            "j"         => KeyBindingCopyAction::Down,
+            "down"      => KeyBindingCopyAction::Down,
+            "h"         => KeyBindingCopyAction::Left,
+            "left"      => KeyBindingCopyAction::Left,
+            "l"         => KeyBindingCopyAction::Right,
+            "right"     => KeyBindingCopyAction::Right,
+            "pageup"    => KeyBindingCopyAction::PageUp,
+            "pagedown"  => KeyBindingCopyAction::PageDown,
+            "0"         => KeyBindingCopyAction::StartOfLine,
+            "$"         => KeyBindingCopyAction::EndOfLine,
+            "v"         => KeyBindingCopyAction::Select,
+            "space"     => KeyBindingCopyAction::Select,
+            "y"         => KeyBindingCopyAction::Yank,
+            "enter"     => KeyBindingCopyAction::Yank,
+            "q"         => KeyBindingCopyAction::Exit,
+            "esc"       => KeyBindingCopyAction::Exit,
         };
 
         Self {

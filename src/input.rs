@@ -9,7 +9,9 @@ use terminput_crossterm::to_terminput_key;
 use crate::{
     app::{App, InputContext},
     config::InputMode,
-    keybindings::{KeyBindingPrefixAction, KeyBindingSearchAction, KeyPattern},
+    keybindings::{
+        KeyBindingCopyAction, KeyBindingPrefixAction, KeyBindingSearchAction, KeyPattern,
+    },
     types::{Overlay, ResizeDialog, SerialConfigDialog, SettingKey},
 };
 
@@ -151,7 +153,13 @@ pub fn handle_event(event: Event, app: &App) -> Action {
                 Action::App(AppAction::SetPrefix(false))
             }
         }
-        InputContext::CopyMode => handle_copy_mode_keys(key_event),
+        InputContext::CopyMode => {
+            if let Some(copy_action_binding) = resolver.copy_actions.get(&pattern) {
+                copy_action_binding.to_action()
+            } else {
+                Action::Ignore
+            }
+        }
         InputContext::Search => {
             if let Some(search_action_binding) = resolver.search_actions.get(&pattern) {
                 search_action_binding.to_action()
@@ -224,6 +232,24 @@ impl KeyBindingSearchAction {
             Self::Previous => Action::Search(SearchAction::Previous),
             Self::Cancel => Action::Search(SearchAction::Cancel),
             Self::Confirm => Action::Search(SearchAction::Confirm),
+        }
+    }
+}
+
+impl KeyBindingCopyAction {
+    pub fn to_action(self) -> Action {
+        match self {
+            Self::Up => Action::CopyMode(CopyModeAction::MoveUp),
+            Self::Down => Action::CopyMode(CopyModeAction::MoveDown),
+            Self::Left => Action::CopyMode(CopyModeAction::MoveLeft),
+            Self::Right => Action::CopyMode(CopyModeAction::MoveRight),
+            Self::PageUp => Action::CopyMode(CopyModeAction::PageUp),
+            Self::PageDown => Action::CopyMode(CopyModeAction::PageDown),
+            Self::StartOfLine => Action::CopyMode(CopyModeAction::StartOfLine),
+            Self::EndOfLine => Action::CopyMode(CopyModeAction::EndOfLine),
+            Self::Select => Action::CopyMode(CopyModeAction::Select),
+            Self::Yank => Action::CopyMode(CopyModeAction::Yank),
+            Self::Exit => Action::CopyMode(CopyModeAction::Exit),
         }
     }
 }
@@ -355,27 +381,6 @@ fn handle_common_keys(key: &KeyEvent, app: &App) -> Option<Action> {
         KeyCode::Esc if is_search_active => Some(Action::Search(SearchAction::Start)),
         _ if is_search_active => Some(Action::Search(SearchAction::HandleKey(*key))),
         _ => None,
-    }
-}
-
-fn handle_copy_mode_keys(key: KeyEvent) -> Action {
-    match key.code {
-        KeyCode::Up | KeyCode::Char('k') => Action::CopyMode(CopyModeAction::MoveUp),
-        KeyCode::Down | KeyCode::Char('j') => Action::CopyMode(CopyModeAction::MoveDown),
-        KeyCode::Left | KeyCode::Char('h') => Action::CopyMode(CopyModeAction::MoveLeft),
-        KeyCode::Right | KeyCode::Char('l') => Action::CopyMode(CopyModeAction::MoveRight),
-        KeyCode::PageUp => Action::CopyMode(CopyModeAction::PageUp),
-        KeyCode::PageDown => Action::CopyMode(CopyModeAction::PageDown),
-        KeyCode::Home | KeyCode::Char('0') => Action::CopyMode(CopyModeAction::StartOfLine),
-        KeyCode::End | KeyCode::Char('$') => Action::CopyMode(CopyModeAction::EndOfLine),
-
-        KeyCode::Char(' ') | KeyCode::Char('v') => Action::CopyMode(CopyModeAction::Select),
-
-        KeyCode::Enter | KeyCode::Char('y') => Action::CopyMode(CopyModeAction::Yank),
-
-        KeyCode::Esc | KeyCode::Char('q') => Action::CopyMode(CopyModeAction::Exit),
-
-        _ => Action::Ignore,
     }
 }
 
