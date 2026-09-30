@@ -279,6 +279,37 @@ impl KeyPattern {
 
         Self { code, modifiers }
     }
+
+    pub fn to_raw_bytes(self) -> Vec<u8> {
+        if self.modifiers.contains(KeyModifiers::CONTROL) {
+            match self.code {
+                KeyCode::Char(' ') | KeyCode::Char('@') => vec![0x00],
+
+                KeyCode::Char(c) if c.is_ascii_alphabetic() => {
+                    let byte = c.to_ascii_uppercase() as u8;
+                    vec![byte & 0x1F]
+                }
+
+                KeyCode::Char('[') => vec![0x1B],
+                KeyCode::Char('\\') => vec![0x1C],
+                KeyCode::Char(']') => vec![0x1D],
+                KeyCode::Char('^') => vec![0x1E],
+                KeyCode::Char('_') => vec![0x1F],
+                KeyCode::Char('?') => vec![0x7F],
+
+                _ => Vec::new(),
+            }
+        } else {
+            match self.code {
+                KeyCode::Char(c) => c.to_string().into_bytes(),
+                KeyCode::Enter => vec![b'\r'],
+                KeyCode::Tab => vec![b'\t'],
+                KeyCode::Backspace => vec![0x08],
+                KeyCode::Esc => vec![0x1B],
+                _ => Vec::new(),
+            }
+        }
+    }
 }
 
 impl FromStr for KeyPattern {

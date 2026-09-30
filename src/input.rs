@@ -2,7 +2,7 @@
 /// Using the 'crossterm' crate
 use std::{io, time::Duration};
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
 use terminput::Encoding;
 use terminput_crossterm::to_terminput_key;
 
@@ -136,16 +136,11 @@ pub fn handle_event(event: Event, app: &App) -> Action {
         InputContext::Overlay => Action::OverlayKey(key_event),
         InputContext::Prefix => {
             if pattern == resolver.prefix {
-                let raw_byte = match resolver.prefix.code {
-                    KeyCode::Char(c)
-                        if resolver.prefix.modifiers.contains(KeyModifiers::CONTROL) =>
-                    {
-                        (c as u8).to_ascii_lowercase() - b'a' + 1
-                    }
-                    KeyCode::Char(c) => c as u8,
-                    _ => 0x01,
-                };
-                return Action::TransmitRaw(vec![raw_byte]);
+                let bytes = resolver.prefix.to_raw_bytes();
+                if !bytes.is_empty() {
+                    return Action::TransmitRaw(bytes);
+                }
+                return Action::App(AppAction::SetPrefix(false));
             }
             if let Some(prefix_action_binding) = resolver.prefix_actions.get(&pattern) {
                 prefix_action_binding.to_action(app)
