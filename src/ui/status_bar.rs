@@ -6,10 +6,10 @@ use ratatui::{
     widgets::Paragraph,
 };
 
-use crate::{app::App, config::InputMode};
+use crate::{app::App, config::InputMode, theme::ThemeConfig};
 
-pub fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
-    let bar_style = Style::default().bg(Color::Rgb(30, 35, 45)).fg(Color::White);
+pub fn render_status_bar(app: &App, frame: &mut Frame, area: Rect, theme: &ThemeConfig) {
+    let bar_style = Style::default().bg(theme.status_bar_bg).fg(Color::White);
     let highlight_style = Style::default()
         .bg(Color::Rgb(50, 70, 110))
         .fg(Color::Yellow)

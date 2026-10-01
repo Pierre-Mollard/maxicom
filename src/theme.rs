@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct ThemeConfig {
     pub border: Color,
+    pub timestamp_line: Color,
     pub timestamp: Color,
+    pub timestamp_bg: Color,
     pub selection_bg: Color,
     pub status_bar_bg: Color,
 }
@@ -16,7 +18,9 @@ impl Default for ThemeConfig {
     fn default() -> Self {
         Self {
             border: Color::Cyan,
-            timestamp: Color::DarkGray,
+            timestamp_line: Color::Yellow,
+            timestamp: Color::Gray,
+            timestamp_bg: Color::DarkGray,
             selection_bg: Color::Rgb(0x28, 0x50, 0x96),
             status_bar_bg: Color::Rgb(0x1e, 0x23, 0x2d),
         }

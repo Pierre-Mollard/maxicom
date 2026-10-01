@@ -75,7 +75,7 @@ pub fn render(app: &mut App, theme: &ThemeConfig, frame: &mut Frame) -> PostRend
     };
 
     let focus = app.focus_target();
-    let border_style = border_style_for(focus_target, focus, app.is_app_focused(), &theme);
+    let border_style = border_style_for(focus_target, focus, app.is_app_focused(), theme);
 
     let mut block = Block::default()
         .borders(Borders::ALL)
@@ -118,16 +118,16 @@ pub fn render(app: &mut App, theme: &ThemeConfig, frame: &mut Frame) -> PostRend
     match app.config().input_mode {
         InputMode::Terminal => {
             if let Some(g_area) = gutter_area {
-                render_timestamp_gutter(app, frame, g_area);
+                render_timestamp_gutter(app, frame, g_area, theme);
             }
-            render_vt100_terminal(app, frame, terminal_area, monitor_area);
+            render_vt100_terminal(app, frame, terminal_area, monitor_area, theme);
         }
         InputMode::Line => {
-            render_effect = render_monitor(app, frame, inner_area, monitor_area);
+            render_effect = render_monitor(app, frame, inner_area, monitor_area, theme);
         }
     }
 
-    render_status_bar(app, frame, status_bar_area);
+    render_status_bar(app, frame, status_bar_area, theme);
 
     if let Some(prompt_rect) = prompt_area {
         render_input_prompt(app, frame, prompt_rect, theme);

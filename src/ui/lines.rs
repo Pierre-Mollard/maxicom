@@ -75,13 +75,17 @@ pub fn history_entry_to_line(
     timestamp_f: &str,
     search_query: &str,
     active_occurrence: Option<usize>,
+    theme: &ThemeConfig,
 ) -> Line<'static> {
     let mut prefix_spans = Vec::new();
 
     if timestamp_in_line {
         let time = entry.timestamp.format(timestamp_f);
         let label = format!("[{time}]");
-        prefix_spans.push(Span::styled(label, Style::default().fg(Color::Yellow)));
+        prefix_spans.push(Span::styled(
+            label,
+            Style::default().fg(theme.timestamp_line),
+        ));
     }
 
     // TODO: custom outside and inside (|)
@@ -104,6 +108,7 @@ pub fn render_monitor(
     frame: &mut Frame,
     area: Rect,
     outer_area: Rect,
+    theme: &ThemeConfig,
 ) -> PostRenderEffect {
     let timestamp_in_line = app.config().display_live_timestamp;
     let content_width = area.width as usize;
@@ -135,6 +140,7 @@ pub fn render_monitor(
                     &app.config().timestamp_format,
                     search_query,
                     active_occ,
+                    theme,
                 )
             })
             .collect()
@@ -150,6 +156,7 @@ pub fn render_monitor(
                     &app.config().timestamp_format,
                     "",
                     None,
+                    theme,
                 )
             })
             .collect()
@@ -166,7 +173,10 @@ pub fn render_monitor(
         {
             let time = partial_timestamp.format(&app.config().timestamp_format);
             let label = format!("[{time}]");
-            partial_spans.push(Span::styled(label, Style::default().fg(Color::Yellow)));
+            partial_spans.push(Span::styled(
+                label,
+                Style::default().fg(theme.timestamp_line),
+            ));
         }
 
         partial_spans.push(Span::styled("|p ", Style::default().fg(Color::DarkGray)));
@@ -262,7 +272,7 @@ pub fn render_monitor(
 
         // selection area
         if copy_state.selection_anchor.is_some() {
-            let select_bg = Color::Rgb(40, 80, 150);
+            let select_bg = theme.selection_bg;
             let select_fg = Color::White;
 
             for r in 0..area.height as usize {

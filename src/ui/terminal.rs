@@ -9,10 +9,17 @@ use ratatui::{
 use crate::{
     app::App,
     terminal::{MaxicomCursor, MaxicomTerminal},
+    theme::ThemeConfig,
     types::FocusTarget,
 };
 
-pub fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, outer_area: Rect) {
+pub fn render_vt100_terminal(
+    app: &mut App,
+    frame: &mut Frame,
+    area: Rect,
+    outer_area: Rect,
+    theme: &ThemeConfig,
+) {
     let view_height = area.height as usize;
     let focus = app.focus_target();
     let is_terminal_focused = focus == FocusTarget::Terminal;
@@ -127,7 +134,7 @@ pub fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, outer
 
         // selection area
         if copy_state.selection_anchor.is_some() {
-            let select_bg = Color::Rgb(40, 80, 150);
+            let select_bg = theme.selection_bg;
             let select_fg = Color::White;
 
             for r in 0..area.height as usize {
@@ -242,7 +249,7 @@ pub fn render_vt100_terminal(app: &mut App, frame: &mut Frame, area: Rect, outer
     }
 }
 
-pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect) {
+pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect, theme: &ThemeConfig) {
     let screen = app.terminal_mode.vt100_screen();
     let vt_rows = screen.size().0 as usize;
     let pan_y = app.terminal_mode.pan_offset_y();
@@ -283,14 +290,14 @@ pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect) {
         if row_has_text && let Some(ts) = maybe_ts {
             let formatted = ts.format(&app.config().timestamp_format).to_string();
             lines.push(Line::from(vec![
-                Span::styled(formatted, Style::default().fg(Color::Gray)),
-                Span::styled("│", Style::default().fg(Color::Gray)),
+                Span::styled(formatted, Style::default().fg(theme.timestamp)),
+                Span::styled("│", Style::default().fg(theme.timestamp)),
             ]));
         } else {
             let spaces = " ".repeat(ts_width);
             lines.push(Line::from(vec![
                 Span::raw(spaces),
-                Span::styled("│", Style::default().fg(Color::DarkGray)),
+                Span::styled("│", Style::default().fg(theme.timestamp_bg)),
             ]));
         }
     }
