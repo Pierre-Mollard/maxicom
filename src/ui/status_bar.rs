@@ -8,8 +8,7 @@ use ratatui::{
 
 use crate::{
     app::App,
-    config::{InputMode, StatusBarConfig},
-    theme::ThemeConfig,
+    configs::{InputMode, StatusBarConfig, ThemeConfig},
 };
 
 impl StatusBarConfig {

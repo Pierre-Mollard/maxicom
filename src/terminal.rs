@@ -7,7 +7,7 @@ use ratatui::{
 };
 use tui_term::widget::{Cell, Screen};
 
-use crate::config::CursorConfig;
+use crate::configs::CursorConfig;
 
 #[derive(Debug, Clone)]
 pub struct MaxicomCursor {

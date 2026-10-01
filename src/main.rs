@@ -12,9 +12,9 @@ use ratatui::DefaultTerminal;
 use crate::app::App;
 use crate::app::UpdateEffect;
 use crate::app::search::copy_via_osc52;
-use crate::config::AppConfig;
-use crate::config::InputMode;
-use crate::keybindings::KeyResolver;
+use crate::configs::AppConfig;
+use crate::configs::InputMode;
+use crate::configs::KeyResolver;
 use crate::serial::SerialDevice;
 use crate::serial::SerialError;
 use crate::serial::parse_args;
@@ -25,14 +25,12 @@ use crate::ui::PostRenderEffect;
 use crate::ui::render;
 
 mod app;
-mod config;
+mod configs;
 mod input;
-mod keybindings;
 mod logger;
 mod notification;
 mod serial;
 mod terminal;
-mod theme;
 mod types;
 mod ui;
 
@@ -75,25 +73,19 @@ fn main() -> ExitCode {
 fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let config_path = AppConfig::default_config_path();
     let configs = match AppConfig::load_or_create_default(&config_path) {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            eprintln!("maxicom: {e}",);
+        Ok(c) => c,
+        Err(err) => {
+            eprintln!("maxicom: {err}");
             return Ok(ExitCode::FAILURE);
         }
     };
-    let app_config = configs.app;
-    let theme = configs.theme;
 
-    let key_resolver = match KeyResolver::try_new(&configs.keybindings) {
-        Ok(resolver) => resolver,
-        Err(e) => {
-            eprintln!(
-                "maxicom: invalid keymap file {}: {e}",
-                app_config.active_keybindings_path().display()
-            );
-            return Ok(ExitCode::FAILURE);
-        }
-    };
+    let settings = configs.settings;
+    let theme = configs.theme;
+    let keybindings = configs.keybindings;
+
+    let key_resolver = KeyResolver::try_new(&keybindings)
+        .expect("keybindings were already validated during config loading");
 
     let console_args = match parse_args() {
         Ok(serial::ParseOutcome::Config(config)) => config,
@@ -122,9 +114,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut guard = TerminalGuard::init()?;
 
     let mut running: bool = true;
-    let buffer_size = app_config.rx_buffer_size;
+    let buffer_size = settings.rx_buffer_size;
     let mut input_buffer = vec![0u8; buffer_size];
-    let mut app = App::new(app_config, key_resolver, console_args);
+    let mut app = App::new(settings, key_resolver, console_args);
 
     if device.is_none() {
         app.open_overlay(Overlay::DeviceDisconnected(app.serial_config.port.clone()));

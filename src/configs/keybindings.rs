@@ -720,7 +720,7 @@ impl KeyBindingsConfig {
         let toml_string =
             toml::to_string_pretty(&default_keymap).map_err(|err| KeymapFileError::Io {
                 path: path.to_path_buf(),
-                source: std::io::Error::new(std::io::ErrorKind::Other, err.to_string()),
+                source: std::io::Error::other(err.to_string()),
             })?;
 
         fs::write(path, toml_string).map_err(|err| KeymapFileError::Io {

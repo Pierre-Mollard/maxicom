@@ -14,8 +14,7 @@ use ratatui::{
 
 use crate::{
     app::App,
-    config::InputMode,
-    theme::ThemeConfig,
+    configs::{InputMode, ThemeConfig},
     types::{FocusTarget, Overlay, ViewportSize},
     ui::{
         common::{border_style_for, monitor_bottom_title, monitor_title},
@@ -77,7 +76,7 @@ pub fn render(app: &mut App, theme: &ThemeConfig, frame: &mut Frame) -> PostRend
     let focus = app.focus_target();
     let border_style = border_style_for(focus_target, focus, app.is_app_focused(), theme);
 
-    // TODO: disable borders in prompt for line mode and move scrollbar content
+    // TODO: disable borders in prompt for line mode and move scrollbar content (and titles)
     let mut block = Block::default();
     if app.config().ui.show_borders {
         block = block.borders(Borders::ALL).border_style(border_style);

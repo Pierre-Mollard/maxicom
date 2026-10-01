@@ -1,22 +1,12 @@
-use chrono::format::StrftimeItems;
-use ratatui::style::{Color, Modifier, Style};
-/// Application configuration and files
-use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     fs,
     path::{Path, PathBuf},
 };
 
-use crate::{
-    keybindings::{KeyBindingsConfig, KeymapFileError},
-    theme::{ThemeConfig, ThemeError},
-};
-
-const APP_DIR: &str = "maxicom";
-const CONFIG_FILE: &str = "config.toml";
-const THEME_FILE: &str = "theme.toml";
-const KEYMAP_FILE: &str = "keymap.toml";
+use chrono::format::strftime::StrftimeItems;
+use ratatui::style::{Color, Modifier, Style};
+use serde::{Deserialize, Serialize};
 
 pub const MIN_RX_BUF_SIZE: usize = 512;
 pub const MAX_RX_BUF_SIZE: usize = 65_536;
@@ -36,13 +26,11 @@ pub enum TextEncoding {
     #[default]
     Utf8,
     Ascii,
-    Cp437,  // IBM / DOS / Box drawing
-    Latin1, // ISO-8859-1
+    Cp437,
+    Latin1,
 }
 
 impl TextEncoding {
-    /// Decodes raw serial bytes into a valid UTF-8 Rust String
-    /// (Invalid with U+FFFD for utf8 / ascii)
     pub fn decode(&self, bytes: &[u8]) -> String {
         match self {
             Self::Utf8 => String::from_utf8_lossy(bytes).into_owned(),
@@ -56,14 +44,8 @@ impl TextEncoding {
                     }
                 })
                 .collect(),
-            Self::Latin1 => {
-                // ISO-8859-1 maps directly 1:1 to Unicode
-                bytes.iter().map(|&b| b as char).collect()
-            }
-            Self::Cp437 => {
-                // Maps 0x80..0xFF to Unicode box drawing & symbols
-                decode_cp437(bytes)
-            }
+            Self::Latin1 => bytes.iter().map(|&b| b as char).collect(),
+            Self::Cp437 => decode_cp437(bytes),
         }
     }
 
@@ -83,22 +65,13 @@ impl TextEncoding {
 }
 
 const CP437_HIGH_TABLE: [char; 128] = [
-    // 0x80 - 0x8F
-    'Ç', 'ü', 'é', 'â', 'ä', 'à', 'å', 'ç', 'ê', 'ë', 'è', 'ï', 'î', 'ì', 'Ä', 'Å',
-    // 0x90 - 0x9F
-    'É', 'æ', 'Æ', 'ô', 'ö', 'ò', 'û', 'ù', 'ÿ', 'Ö', 'Ü', '¢', '£', '¥', '₧', 'ƒ',
-    // 0xA0 - 0xAF
-    'á', 'í', 'ó', 'ú', 'ñ', 'Ñ', 'ª', 'º', '¿', '⌐', '¬', '½', '¼', '¡', '«', '»',
-    // 0xB0 - 0xBF (Blocks & single borders)
-    '░', '▒', '▓', '│', '┤', '╡', '╢', '╖', '╕', '╣', '║', '╗', '╝', '╜', '╛', '┐',
-    // 0xC0 - 0xCF (Corners & intersections)
-    '└', '┴', '┬', '├', '─', '┼', '╞', '╟', '╚', '╔', '╩', '╦', '╠', '═', '╬', '╧',
-    // 0xD0 - 0xDF (Double borders & solid blocks)
-    '╨', '╤', '╥', '╙', '╘', '╒', '╓', '╫', '╪', '┘', '┌', '█', '▄', '▌', '▐', '▀',
-    // 0xE0 - 0xEF (Greek & math)
-    'α', 'ß', 'Γ', 'π', 'Σ', 'σ', 'µ', 'τ', 'Φ', 'Θ', 'Ω', 'δ', '∞', 'φ', 'ε', '∩',
-    // 0xF0 - 0xFF (Math & symbols)
-    '≡', '±', '≥', '≤', '⌠', '⌡', '÷', '≈', '°', '∙', '·', '√', 'ⁿ', '²', '■', '\u{00A0}',
+    'Ç', 'ü', 'é', 'â', 'ä', 'à', 'å', 'ç', 'ê', 'ë', 'è', 'ï', 'î', 'ì', 'Ä', 'Å', 'É', 'æ', 'Æ',
+    'ô', 'ö', 'ò', 'û', 'ù', 'ÿ', 'Ö', 'Ü', '¢', '£', '¥', '₧', 'ƒ', 'á', 'í', 'ó', 'ú', 'ñ', 'Ñ',
+    'ª', 'º', '¿', '⌐', '¬', '½', '¼', '¡', '«', '»', '░', '▒', '▓', '│', '┤', '╡', '╢', '╖', '╕',
+    '╣', '║', '╗', '╝', '╜', '╛', '┐', '└', '┴', '┬', '├', '─', '┼', '╞', '╟', '╚', '╔', '╩', '╦',
+    '╠', '═', '╬', '╧', '╨', '╤', '╥', '╙', '╘', '╒', '╓', '╫', '╪', '┘', '┌', '█', '▄', '▌', '▐',
+    '▀', 'α', 'ß', 'Γ', 'π', 'Σ', 'σ', 'µ', 'τ', 'Φ', 'Θ', 'Ω', 'δ', '∞', 'φ', 'ε', '∩', '≡', '±',
+    '≥', '≤', '⌠', '⌡', '÷', '≈', '°', '∙', '·', '√', 'ⁿ', '²', '■', '\u{00A0}',
 ];
 
 pub fn decode_cp437(bytes: &[u8]) -> String {
@@ -113,7 +86,6 @@ pub fn decode_cp437(bytes: &[u8]) -> String {
     out
 }
 
-/// Char use at the end of the line when sending in LineMode (not raw)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum TxNewlineSymbol {
@@ -133,13 +105,12 @@ impl TxNewlineSymbol {
     }
 }
 
-/// In LineMode (not raw or interactive) used to define how to treat a new line
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum RxNewlineMode {
     #[default]
-    Auto, // Splits line on \n or \r\n, handles \r as line-reset (best for embedded)
-    CrLf,   // Expects strictly \r\n
-    LfOnly, // Treats \n as newline, ignores \r
+    Auto,
+    CrLf,
+    LfOnly,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -154,20 +125,16 @@ pub enum TerminalDimensionMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum InputMode {
-    /// Line-buffered with editable prompt and history navigation (Split Rx and Tx)
     #[default]
     Line,
-    /// Raw on 2D screen
     Terminal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum WrapMode {
-    /// Soft-wraps at window edge without trimming whitespace (Default)
     #[default]
     Wrap,
-    /// Truncates lines exceeding screen width (preserves table vertical alignment)
     Truncate,
 }
 
@@ -338,7 +305,7 @@ impl UiConfig {
 /// MaxiCom UI & session settings
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct AppConfig {
+pub struct SettingsConfig {
     pub local_echo: bool,
     pub encoding: TextEncoding,
     pub input_mode: InputMode,
@@ -352,7 +319,7 @@ pub struct AppConfig {
     pub ui: UiConfig,
 }
 
-impl Default for AppConfig {
+impl Default for SettingsConfig {
     fn default() -> Self {
         Self {
             local_echo: false,
@@ -370,42 +337,43 @@ impl Default for AppConfig {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct LoadedConfig {
-    pub app: AppConfig,
-    pub theme: ThemeConfig,
-    pub keybindings: KeyBindingsConfig,
-}
-
-impl AppConfig {
+impl SettingsConfig {
     /// Loads configuration from path, creating default file if it doesn't exist
-    pub fn load_or_create_default<P: AsRef<Path>>(path: P) -> Result<LoadedConfig, ConfigsError> {
+    pub fn load_or_create_default<P: AsRef<Path>>(path: P) -> Result<Self, SettingsError> {
         let path = path.as_ref();
 
         let app_config = if path.exists() {
-            let content = fs::read_to_string(path).map_err(|e| ConfigsError::AppIo {
+            let content = fs::read_to_string(path).map_err(|e| SettingsError::Io {
                 path: path.to_path_buf(),
                 source: e,
             })?;
-            let config: AppConfig =
-                toml::from_str(&content).map_err(|e| ConfigsError::ConfigParse {
+            let config: SettingsConfig =
+                toml::from_str(&content).map_err(|e| SettingsError::Parse {
                     path: path.to_path_buf(),
                     source: e,
                 })?;
-            config.validate().map_err(ConfigsError::Validation)?;
+            config.validate().map_err(|err| SettingsError::Validation {
+                path: path.to_path_buf(),
+                source: err,
+            })?;
             config
         } else {
-            let default_config = AppConfig::default();
+            let default_config = SettingsConfig::default();
 
             if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).map_err(|e| ConfigsError::AppIo {
+                fs::create_dir_all(parent).map_err(|e| SettingsError::Io {
                     path: parent.to_path_buf(),
                     source: e,
                 })?;
             }
 
-            let toml_string = toml::to_string_pretty(&default_config).unwrap();
-            fs::write(path, toml_string).map_err(|e| ConfigsError::AppIo {
+            let toml_string =
+                toml::to_string_pretty(&default_config).map_err(|e| SettingsError::Io {
+                    path: path.to_path_buf(),
+                    source: std::io::Error::other(e.to_string()),
+                })?;
+
+            fs::write(path, toml_string).map_err(|e| SettingsError::Io {
                 path: path.to_path_buf(),
                 source: e,
             })?;
@@ -413,50 +381,7 @@ impl AppConfig {
             default_config
         };
 
-        let theme_path = app_config.active_theme_path();
-        let theme =
-            ThemeConfig::load_or_create_default(&theme_path).map_err(ConfigsError::Theme)?;
-
-        let keybindings_path = app_config.active_keybindings_path();
-        let keybindings = KeyBindingsConfig::load_or_create_default(&keybindings_path)
-            .map_err(ConfigsError::Keymap)?;
-
-        Ok(LoadedConfig {
-            app: app_config,
-            theme,
-            keybindings,
-        })
-    }
-
-    /// Load config using system configuration (like XDG or .config) on any os with crate 'dirs'
-    pub fn default_config_path() -> PathBuf {
-        dirs::config_dir()
-            .map(|p| p.join(APP_DIR).join(CONFIG_FILE))
-            .unwrap_or_else(|| PathBuf::from(CONFIG_FILE))
-    }
-
-    pub fn default_theme_path() -> PathBuf {
-        dirs::config_dir()
-            .map(|p| p.join(APP_DIR).join(THEME_FILE))
-            .unwrap_or_else(|| PathBuf::from(THEME_FILE))
-    }
-
-    pub fn default_keybindings_path() -> PathBuf {
-        dirs::config_dir()
-            .map(|p| p.join(APP_DIR).join(KEYMAP_FILE))
-            .unwrap_or_else(|| PathBuf::from(KEYMAP_FILE))
-    }
-
-    pub fn active_theme_path(&self) -> PathBuf {
-        self.theme_path
-            .clone()
-            .unwrap_or_else(Self::default_theme_path)
-    }
-
-    pub fn active_keybindings_path(&self) -> PathBuf {
-        self.keybindings_path
-            .clone()
-            .unwrap_or_else(Self::default_keybindings_path)
+        Ok(app_config)
     }
 
     pub fn validate(&self) -> Result<(), ConfigValidationError> {
@@ -474,7 +399,7 @@ impl AppConfig {
 
         if self.timestamp_format.is_empty() {
             return Err(ConfigValidationError::InvalidTimestampFormat {
-                err: "cannot be empty".to_owned(),
+                err: "format cannot be empty".to_owned(),
             });
         }
 
@@ -517,7 +442,7 @@ impl std::fmt::Display for ConfigValidationError {
                 )
             }
             Self::InvalidTimestampFormat { err } => {
-                write!(f, "invalid timestamp format: {err}")
+                write!(f, "invalid log/gutter timestamp format: {err}")
             }
             Self::InvalidStatusBarTimeFormat { err } => {
                 write!(f, "invalid status bar time_format: {err}")
@@ -529,38 +454,55 @@ impl std::fmt::Display for ConfigValidationError {
 impl std::error::Error for ConfigValidationError {}
 
 #[derive(Debug)]
-pub enum ConfigsError {
-    AppIo {
+pub enum SettingsError {
+    Io {
         path: PathBuf,
         source: std::io::Error,
     },
-    ConfigParse {
+    Parse {
         path: PathBuf,
         source: toml::de::Error,
     },
-    Validation(ConfigValidationError),
-    Theme(ThemeError),
-    Keymap(KeymapFileError),
+    Validation {
+        path: PathBuf,
+        source: ConfigValidationError,
+    },
 }
 
-impl std::fmt::Display for ConfigsError {
+impl std::fmt::Display for SettingsError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::AppIo { path, source } => {
-                write!(f, "failed to read config at '{}': {source}", path.display())
-            }
-            Self::ConfigParse { path, source } => {
+            Self::Io { path, source } => {
                 write!(
                     f,
-                    "invalid config syntax in '{}':\n{source}",
+                    "failed to read settings at '{}': {source}",
                     path.display()
                 )
             }
-            Self::Validation(err) => write!(f, "configuration validation error: {err}"),
-            Self::Theme(err) => write!(f, "{err}"),
-            Self::Keymap(err) => write!(f, "{err}"),
+            Self::Parse { path, source } => {
+                write!(
+                    f,
+                    "invalid settings syntax in '{}':\n{source}",
+                    path.display()
+                )
+            }
+            Self::Validation { path, source } => {
+                write!(
+                    f,
+                    "settings validation failed for '{}': {source}",
+                    path.display()
+                )
+            }
         }
     }
 }
 
-impl std::error::Error for ConfigsError {}
+impl std::error::Error for SettingsError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io { source, .. } => Some(source),
+            Self::Parse { source, .. } => Some(source),
+            Self::Validation { source, .. } => Some(source),
+        }
+    }
+}

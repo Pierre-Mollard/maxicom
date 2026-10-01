@@ -10,7 +10,7 @@ use crate::{
         search::{SearchState, dispatch_input_key},
         selection::CopyModeState,
     },
-    config::{TerminalDimensionMode, TextEncoding},
+    configs::{TerminalDimensionMode, TextEncoding},
     input::{CopyModeAction, SearchModeAction, TerminalAction},
     logger::TerminalLogger,
 };

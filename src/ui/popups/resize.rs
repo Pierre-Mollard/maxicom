@@ -7,7 +7,7 @@ use ratatui::{
 
 use crate::{
     app::App,
-    theme::ThemeConfig,
+    configs::ThemeConfig,
     types::{FocusTarget, ResizeDialog, ResizeField},
     ui::common::{border_style_for, centered_rect},
 };

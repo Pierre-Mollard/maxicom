@@ -8,8 +8,7 @@ use std::fmt::Write;
 
 use crate::{
     app::App,
-    config::InputMode,
-    theme::{self, ThemeConfig},
+    configs::{InputMode, ThemeConfig},
     types::FocusTarget,
 };
 

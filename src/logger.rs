@@ -1,4 +1,4 @@
-use crate::config::{LineLogConfig, TerminalLogConfig};
+use crate::configs::{LineLogConfig, TerminalLogConfig};
 use crate::types::LogEntry;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};

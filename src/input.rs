@@ -8,7 +8,7 @@ use terminput_crossterm::to_terminput_key;
 
 use crate::{
     app::{App, InputContext},
-    keybindings::{
+    configs::{
         KeyBindingAction, KeyBindingCopyAction, KeyBindingLineAction, KeyBindingSearchAction,
         KeyBindingTerminalAction, KeyPattern,
     },

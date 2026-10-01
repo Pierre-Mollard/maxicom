@@ -9,8 +9,7 @@ use ratatui::{
 
 use crate::{
     app::App,
-    config::{LineDisplayMode, WrapMode},
-    theme::ThemeConfig,
+    configs::{LineDisplayMode, ThemeConfig, WrapMode},
     types::{FocusTarget, ViewportSize},
     ui::{
         PostRenderEffect,

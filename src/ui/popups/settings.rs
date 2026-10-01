@@ -7,7 +7,7 @@ use ratatui::{
 
 use crate::{
     app::App,
-    theme::ThemeConfig,
+    configs::ThemeConfig,
     types::FocusTarget,
     ui::common::{border_style_for, centered_rect},
 };
@@ -18,12 +18,12 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
     frame.render_widget(Clear, area);
 
     let mode_str = match app.config().input_mode {
-        crate::config::InputMode::Line => "Line Mode",
-        crate::config::InputMode::Terminal => "Terminal Mode",
+        crate::configs::InputMode::Line => "Line Mode",
+        crate::configs::InputMode::Terminal => "Terminal Mode",
     };
     let wrap_str = match app.config().line_mode.wrap_mode {
-        crate::config::WrapMode::Wrap => "Soft-Wrap",
-        crate::config::WrapMode::Truncate => "Truncate",
+        crate::configs::WrapMode::Wrap => "Soft-Wrap",
+        crate::configs::WrapMode::Truncate => "Truncate",
     };
     let echo_str = if app.config().local_echo { "ON" } else { "OFF" };
     let timestamp_str = if app.config().display_live_timestamp {

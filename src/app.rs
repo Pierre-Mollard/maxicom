@@ -1,9 +1,8 @@
 use std::time::Duration;
 
 use crate::{
-    config::{AppConfig, InputMode, WrapMode},
+    configs::{InputMode, KeyResolver, SettingsConfig, WrapMode},
     input::{Action, AppAction, CopyModeAction, HistoryAction, SearchModeAction},
-    keybindings::KeyResolver,
     logger::{LineLogger, TerminalLogger},
     notification::{NotificationManager, ToastLevel},
     serial::SerialConfig,
@@ -32,7 +31,7 @@ pub enum InputContext {
 }
 
 pub struct App {
-    app_config: AppConfig,
+    app_config: SettingsConfig,
     pub key_resolver: KeyResolver,
     pub serial_config: SerialConfig,
     prefix_active: bool,
@@ -55,7 +54,7 @@ pub enum UpdateEffect {
 
 impl App {
     pub fn new(
-        app_config: AppConfig,
+        app_config: SettingsConfig,
         key_resolver: KeyResolver,
         serial_config: SerialConfig,
     ) -> Self {
@@ -386,7 +385,7 @@ impl App {
     }
 
     #[inline]
-    pub fn config(&self) -> &AppConfig {
+    pub fn config(&self) -> &SettingsConfig {
         &self.app_config
     }
 

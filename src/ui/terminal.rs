@@ -8,8 +8,8 @@ use ratatui::{
 
 use crate::{
     app::App,
+    configs::ThemeConfig,
     terminal::{MaxicomCursor, MaxicomTerminal},
-    theme::ThemeConfig,
     types::FocusTarget,
 };
 

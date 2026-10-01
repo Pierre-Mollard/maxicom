@@ -9,7 +9,7 @@ use crate::{
         search::{SearchState, dispatch_input_key},
         selection::CopyModeState,
     },
-    config::{RxNewlineMode, TextEncoding, TxNewlineSymbol, WrapMode},
+    configs::{RxNewlineMode, TextEncoding, TxNewlineSymbol, WrapMode},
     input::{CopyModeAction, LineInputAction, SearchModeAction},
     logger::LineLogger,
     types::{LogEntry, ViewportSize},
