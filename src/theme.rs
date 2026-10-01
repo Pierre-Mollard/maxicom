@@ -27,8 +27,6 @@ impl Default for ThemeConfig {
     }
 }
 
-// TODO: handle theme parsing errors like keybindings or config
-
 impl ThemeConfig {
     pub fn load_or_create_default<P: AsRef<Path>>(
         path: P,

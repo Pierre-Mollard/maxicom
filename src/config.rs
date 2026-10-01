@@ -304,6 +304,42 @@ impl Default for TerminalModeConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StatusBarConfig {
+    pub left: String,
+    pub right: String,
+    pub time_format: String,
+}
+
+impl Default for StatusBarConfig {
+    fn default() -> Self {
+        Self {
+            left: String::from("{rec}[{mode}] {port} | {baud} | {framing} "),
+            right: String::from(" RX: {rx_bytes} | TX: {tx_bytes} | {time} "),
+            time_format: String::from("%H:%M:%S"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiConfig {
+    pub show_borders: bool,
+    pub show_status_bar: bool,
+    pub status_bar: StatusBarConfig,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            show_borders: true,
+            show_status_bar: true,
+            status_bar: StatusBarConfig::default(),
+        }
+    }
+}
+
 /// MaxiCom UI & session settings
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -318,6 +354,7 @@ pub struct AppConfig {
     pub terminal_mode: TerminalModeConfig,
     pub theme_path: Option<PathBuf>,
     pub keybindings_path: Option<PathBuf>,
+    pub ui: UiConfig,
 }
 
 impl Default for AppConfig {
@@ -333,6 +370,7 @@ impl Default for AppConfig {
             terminal_mode: TerminalModeConfig::default(),
             theme_path: None,
             keybindings_path: None,
+            ui: UiConfig::default(),
         }
     }
 }

@@ -3,58 +3,68 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Block, Paragraph},
 };
 
-use crate::{app::App, config::InputMode, theme::ThemeConfig};
+use crate::{
+    app::App,
+    config::{InputMode, StatusBarConfig},
+    theme::ThemeConfig,
+};
+
+impl StatusBarConfig {
+    pub fn format_template(&self, template: &str, app: &App) -> String {
+        let now = chrono::Local::now().format(&self.time_format).to_string();
+        let port = &app.serial_config.port;
+        let baud = app.serial_config.baudrate.to_string();
+        let framing = app.serial_config.to_string();
+        let mode = match app.config().input_mode {
+            InputMode::Terminal => "TERM",
+            InputMode::Line => "LINE",
+        };
+        let rec = if app.is_logging_active() {
+            " REC "
+        } else {
+            ""
+        };
+
+        // TODO: implement RX/TX stats
+        // let rx_bytes = app.stats.rx_bytes.to_string();
+        // let tx_bytes = app.stats.tx_bytes.to_string();
+        let rx_bytes = "XXX";
+        let tx_bytes = "XXX";
+
+        template
+            .replace("{rec}", rec)
+            .replace("{mode}", mode)
+            .replace("{port}", port)
+            .replace("{baud}", &baud)
+            .replace("{framing}", &framing)
+            .replace("{rx_bytes}", &rx_bytes)
+            .replace("{tx_bytes}", &tx_bytes)
+            .replace("{time}", &now)
+    }
+}
 
 pub fn render_status_bar(app: &App, frame: &mut Frame, area: Rect, theme: &ThemeConfig) {
-    let bar_style = Style::default().bg(theme.status_bar_bg).fg(Color::White);
-    let highlight_style = Style::default()
-        .bg(Color::Rgb(50, 70, 110))
-        .fg(Color::Yellow)
-        .add_modifier(Modifier::BOLD);
-    let alert_style = Style::default()
-        .bg(Color::Red)
-        .fg(Color::White)
-        .add_modifier(Modifier::BOLD);
-    let dim_style = Style::default().fg(Color::DarkGray);
-
-    let port_str = &app.serial_config.port;
-    let baud = app.serial_config.baudrate;
-
-    let mut spans = vec![
-        Span::styled(format!(" {} ", port_str), highlight_style),
-        Span::styled("│", dim_style),
-        Span::styled(format!(" {} baud ", baud), bar_style),
-        Span::styled(format!(" {} ", app.serial_config), bar_style),
-        Span::styled("│", dim_style),
-    ];
-
-    let mode_str = match app.config().input_mode {
-        InputMode::Terminal => " TERMINAL ",
-        InputMode::Line => " LINE ",
-    };
-    spans.push(Span::styled(mode_str, Style::default().fg(Color::Cyan)));
-    spans.push(Span::styled("│", dim_style));
-
-    if app.is_logging_active() {
-        spans.push(Span::styled(" REC ", alert_style));
-        spans.push(Span::styled("│", dim_style));
+    if !app.config().ui.show_status_bar {
+        return;
     }
 
-    let current_len: usize = spans.iter().map(|s| s.content.chars().count()).sum();
-    let right_text = "Press Ctrl-A Z for help ";
-    let right_len = right_text.chars().count();
+    // TODO: implement center? and inline style
 
-    let total_width = area.width as usize;
-    let padding_count = total_width.saturating_sub(current_len + right_len);
+    let sb_cfg = &app.config().ui.status_bar;
+    let left_text = sb_cfg.format_template(&sb_cfg.left, app);
+    let right_text = sb_cfg.format_template(&sb_cfg.right, app);
 
-    spans.push(Span::raw(" ".repeat(padding_count)));
-    spans.push(Span::styled(right_text, Style::default().fg(Color::Gray)));
+    let bar_style = Style::default().bg(theme.status_bar_bg).fg(Color::White);
+    frame.render_widget(Block::default().style(bar_style), area);
 
-    let status_line = Line::from(spans);
-    let status_widget = Paragraph::new(status_line).style(bar_style);
+    let left_paragraph = Paragraph::new(left_text).style(bar_style);
+    frame.render_widget(left_paragraph, area);
 
-    frame.render_widget(status_widget, area);
+    let right_paragraph = Paragraph::new(right_text)
+        .alignment(ratatui::layout::Alignment::Right)
+        .style(bar_style);
+    frame.render_widget(right_paragraph, area);
 }

@@ -77,9 +77,12 @@ pub fn render(app: &mut App, theme: &ThemeConfig, frame: &mut Frame) -> PostRend
     let focus = app.focus_target();
     let border_style = border_style_for(focus_target, focus, app.is_app_focused(), theme);
 
-    let mut block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(border_style);
+    let mut block = Block::default();
+    if app.config().ui.show_borders {
+        block = block.borders(Borders::ALL).border_style(border_style);
+    } else {
+        block = block.borders(Borders::NONE);
+    }
 
     let inner_area = block.inner(monitor_area);
 
@@ -127,7 +130,9 @@ pub fn render(app: &mut App, theme: &ThemeConfig, frame: &mut Frame) -> PostRend
         }
     }
 
-    render_status_bar(app, frame, status_bar_area, theme);
+    if app.config().ui.show_status_bar {
+        render_status_bar(app, frame, status_bar_area, theme);
+    }
 
     if let Some(prompt_rect) = prompt_area {
         render_input_prompt(app, frame, prompt_rect, theme);
