@@ -31,7 +31,7 @@ pub enum InputContext {
 }
 
 pub struct App {
-    app_config: SettingsConfig,
+    settings: SettingsConfig,
     pub key_resolver: KeyResolver,
     pub serial_config: SerialConfig,
     prefix_active: bool,
@@ -54,24 +54,24 @@ pub enum UpdateEffect {
 
 impl App {
     pub fn new(
-        app_config: SettingsConfig,
+        settings: SettingsConfig,
         key_resolver: KeyResolver,
         serial_config: SerialConfig,
     ) -> Self {
-        let line_logger = LineLogger::new(app_config.line_mode.logging.to_owned());
-        let terminal_logger = TerminalLogger::new(app_config.terminal_mode.logging.to_owned());
+        let line_logger = LineLogger::new(settings.line_mode.logging.to_owned());
+        let terminal_logger = TerminalLogger::new(settings.terminal_mode.logging.to_owned());
 
-        let line_view = LineMode::new(app_config.line_mode.max_history_lines, line_logger);
+        let line_view = LineMode::new(settings.line_mode.max_history_lines, line_logger);
         let terminal_view = TerminalMode::new(
-            app_config.terminal_mode.history_size,
-            app_config.terminal_mode.rows,
-            app_config.terminal_mode.cols,
+            settings.terminal_mode.history_size,
+            settings.terminal_mode.rows,
+            settings.terminal_mode.cols,
             terminal_logger,
         );
 
         Self {
             prefix_active: false,
-            app_config,
+            settings,
             key_resolver,
             serial_config,
             overlay: None,
@@ -84,18 +84,18 @@ impl App {
     }
 
     pub fn update_viewport(&mut self, viewport: ViewportSize) {
-        match self.app_config.input_mode {
+        match self.settings.input_mode {
             InputMode::Line => {
                 self.line_mode
-                    .update_viewport(self.config().line_mode.wrap_mode, viewport);
+                    .update_viewport(self.settings().line_mode.wrap_mode, viewport);
             }
 
             InputMode::Terminal => {
                 self.terminal_mode.update_viewport(
                     viewport,
-                    self.config().terminal_mode.dimension_mode,
-                    self.config().terminal_mode.rows,
-                    self.config().terminal_mode.cols,
+                    self.settings().terminal_mode.dimension_mode,
+                    self.settings().terminal_mode.rows,
+                    self.settings().terminal_mode.cols,
                 );
             }
         }
@@ -111,7 +111,7 @@ impl App {
         } else if self.is_search_active() {
             InputContext::Search
         } else {
-            match self.config().input_mode {
+            match self.settings().input_mode {
                 InputMode::Line => InputContext::LineInput,
                 InputMode::Terminal => InputContext::Terminal,
             }
@@ -134,19 +134,19 @@ impl App {
         let effect = match action {
             Action::App(action) => self.update_action_app(action),
             Action::TransmitRaw(bytes) => {
-                if self.app_config.local_echo {
+                if self.settings.local_echo {
                     let text = String::from_utf8_lossy(&bytes);
-                    if self.app_config.input_mode == InputMode::Line {
+                    if self.settings.input_mode == InputMode::Line {
                         self.line_mode
-                            .push_history(&text, &self.app_config.timestamp_format);
+                            .push_history(&text, &self.settings.timestamp_format);
                     }
                 }
                 UpdateEffect::Transmit(bytes)
             }
             Action::LineInput(action) => self.line_mode.update_action_lineinput(
-                self.app_config.local_echo,
-                self.app_config.line_mode.tx_eol,
-                &self.app_config.timestamp_format,
+                self.settings.local_echo,
+                self.settings.line_mode.tx_eol,
+                &self.settings.timestamp_format,
                 action,
             ),
             Action::Terminal(action) => self.terminal_mode.update_action_terminal(action),
@@ -169,8 +169,8 @@ impl App {
                             UpdateEffect::None
                         }
                         OverlayResponse::ResizeTerminal { rows, cols } => {
-                            self.app_config.terminal_mode.cols = cols;
-                            self.app_config.terminal_mode.rows = rows;
+                            self.settings.terminal_mode.cols = cols;
+                            self.settings.terminal_mode.rows = rows;
                             self.terminal_mode.set_vt100_size(rows, cols);
                             UpdateEffect::None
                         }
@@ -179,7 +179,7 @@ impl App {
                             UpdateEffect::Reconfigure(new_cfg)
                         }
                         OverlayResponse::StartCapture(path) => {
-                            let result = match self.app_config.input_mode {
+                            let result = match self.settings.input_mode {
                                 InputMode::Line => self.line_mode.start_logging(path),
                                 InputMode::Terminal => self.terminal_mode.start_logging(path),
                             };
@@ -241,7 +241,7 @@ impl App {
     fn update_action_copy_mode(&mut self, action: CopyModeAction) -> UpdateEffect {
         self.prefix_active = false;
 
-        match self.app_config.input_mode {
+        match self.settings.input_mode {
             InputMode::Terminal => {
                 if let Some(text) = self.terminal_mode.handle_copy_action(action) {
                     return UpdateEffect::CopyToClipboard(text);
@@ -259,7 +259,7 @@ impl App {
     fn update_action_search_mode(&mut self, action: SearchModeAction) -> UpdateEffect {
         self.prefix_active = false;
 
-        match self.app_config.input_mode {
+        match self.settings.input_mode {
             InputMode::Terminal => {
                 self.terminal_mode.handle_search_action(action);
             }
@@ -272,7 +272,7 @@ impl App {
     }
 
     fn update_action_history(&mut self, action: HistoryAction) -> UpdateEffect {
-        match (&self.app_config.input_mode, action) {
+        match (&self.settings.input_mode, action) {
             (InputMode::Line, HistoryAction::ScrollUp(lines)) => {
                 self.line_mode.scroll_up(lines);
             }
@@ -333,30 +333,30 @@ impl App {
     fn toggle_setting(&mut self, key: SettingKey) {
         match key {
             SettingKey::LocalEcho => {
-                self.app_config.local_echo = !self.app_config.local_echo;
+                self.settings.local_echo = !self.settings.local_echo;
             }
             SettingKey::LineWrap => {
-                self.app_config.line_mode.wrap_mode = match self.app_config.line_mode.wrap_mode {
+                self.settings.line_mode.wrap_mode = match self.settings.line_mode.wrap_mode {
                     WrapMode::Wrap => WrapMode::Truncate,
                     WrapMode::Truncate => WrapMode::Wrap,
                 };
                 self.update_viewport(self.viewport);
             }
             SettingKey::InputMode => {
-                self.app_config.input_mode = match self.app_config.input_mode {
+                self.settings.input_mode = match self.settings.input_mode {
                     InputMode::Line => InputMode::Terminal,
                     InputMode::Terminal => InputMode::Line,
                 };
                 self.update_viewport(self.viewport);
             }
             SettingKey::DisplayTimestamp => {
-                self.app_config.display_live_timestamp = !self.app_config.display_live_timestamp;
+                self.settings.display_live_timestamp = !self.settings.display_live_timestamp;
             }
         }
     }
 
     fn toggle_logging(&mut self) {
-        let (is_logging, active_path) = match self.app_config.input_mode {
+        let (is_logging, active_path) = match self.settings.input_mode {
             InputMode::Line => (
                 self.line_mode.is_logging(),
                 self.line_mode
@@ -374,7 +374,7 @@ impl App {
         };
 
         if is_logging {
-            match self.app_config.input_mode {
+            match self.settings.input_mode {
                 InputMode::Line => self.line_mode.stop_logging(),
                 InputMode::Terminal => self.terminal_mode.stop_logging(),
             }
@@ -385,8 +385,8 @@ impl App {
     }
 
     #[inline]
-    pub fn config(&self) -> &SettingsConfig {
-        &self.app_config
+    pub fn settings(&self) -> &SettingsConfig {
+        &self.settings
     }
 
     pub fn is_prefix_active(&self) -> bool {
@@ -394,7 +394,7 @@ impl App {
     }
 
     pub fn is_logging_active(&self) -> bool {
-        match self.config().input_mode {
+        match self.settings().input_mode {
             InputMode::Line => self.line_mode.is_logging(),
             InputMode::Terminal => self.terminal_mode.is_logging(),
         }
@@ -405,7 +405,7 @@ impl App {
             return FocusTarget::Overlay;
         }
 
-        match self.config().input_mode {
+        match self.settings().input_mode {
             InputMode::Terminal => FocusTarget::Terminal,
             InputMode::Line => {
                 if self.line_mode.search().active || self.line_mode.copy_state().active {
@@ -424,7 +424,7 @@ impl App {
 
     #[inline]
     pub fn is_copy_mode_active(&self) -> bool {
-        match self.app_config.input_mode {
+        match self.settings.input_mode {
             InputMode::Line => self.line_mode.copy_state().active,
             InputMode::Terminal => self.terminal_mode.copy_state().active,
         }
@@ -432,7 +432,7 @@ impl App {
 
     #[inline]
     pub fn is_search_active(&self) -> bool {
-        match self.app_config.input_mode {
+        match self.settings.input_mode {
             InputMode::Line => self.line_mode.search().active,
             InputMode::Terminal => self.terminal_mode.search().active,
         }

@@ -109,11 +109,11 @@ pub fn render_monitor(
     outer_area: Rect,
     theme: &ThemeConfig,
 ) -> PostRenderEffect {
-    let timestamp_in_line = app.config().display_live_timestamp;
+    let timestamp_in_line = app.settings().display_live_timestamp;
     let content_width = area.width as usize;
     let content_height = area.height as usize;
-    let wrap_mode = app.config().line_mode.wrap_mode;
-    let display_mode = app.config().line_mode.display_mode;
+    let wrap_mode = app.settings().line_mode.wrap_mode;
+    let display_mode = app.settings().line_mode.display_mode;
     let mut post_effect = PostRenderEffect::None;
 
     app.update_viewport(ViewportSize::new(area.width, area.height));
@@ -136,7 +136,7 @@ pub fn render_monitor(
                     entry,
                     timestamp_in_line,
                     display_mode,
-                    &app.config().timestamp_format,
+                    &app.settings().timestamp_format,
                     search_query,
                     active_occ,
                     theme,
@@ -152,7 +152,7 @@ pub fn render_monitor(
                     entry,
                     timestamp_in_line,
                     display_mode,
-                    &app.config().timestamp_format,
+                    &app.settings().timestamp_format,
                     "",
                     None,
                     theme,
@@ -161,16 +161,16 @@ pub fn render_monitor(
             .collect()
     };
 
-    if app.config().line_mode.display_partial_rx && !app.line_mode.partial_rx().is_empty() {
-        let display_mode = app.config().line_mode.display_mode;
+    if app.settings().line_mode.display_partial_rx && !app.line_mode.partial_rx().is_empty() {
+        let display_mode = app.settings().line_mode.display_mode;
         let partial_raw = String::from_utf8_lossy(app.line_mode.partial_rx());
 
         let mut partial_spans = Vec::new();
 
-        if app.config().display_live_timestamp
+        if app.settings().display_live_timestamp
             && let Some(partial_timestamp) = app.line_mode.partial_line_timestamp()
         {
-            let time = partial_timestamp.format(&app.config().timestamp_format);
+            let time = partial_timestamp.format(&app.settings().timestamp_format);
             let label = format!("[{time}]");
             partial_spans.push(Span::styled(
                 label,

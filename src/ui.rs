@@ -47,7 +47,7 @@ pub fn render(app: &mut App, theme: &ThemeConfig, frame: &mut Frame) -> PostRend
         Option<Rect>,
         Rect,
         FocusTarget,
-    ) = match app.config().input_mode {
+    ) = match app.settings().input_mode {
         InputMode::Terminal => {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
@@ -78,7 +78,7 @@ pub fn render(app: &mut App, theme: &ThemeConfig, frame: &mut Frame) -> PostRend
 
     // TODO: disable borders in prompt for line mode and move scrollbar content (and titles)
     let mut block = Block::default();
-    if app.config().ui.show_borders {
+    if app.settings().ui.show_borders {
         block = block.borders(Borders::ALL).border_style(border_style);
     } else {
         block = block.borders(Borders::NONE);
@@ -88,13 +88,13 @@ pub fn render(app: &mut App, theme: &ThemeConfig, frame: &mut Frame) -> PostRend
 
     let sample_ts = chrono::Local::now();
     let ts_width = sample_ts
-        .format(&app.config().timestamp_format)
+        .format(&app.settings().timestamp_format)
         .to_string()
         .chars()
         .count();
 
-    let (gutter_area, terminal_area) = match app.config().input_mode {
-        InputMode::Terminal if app.config().display_live_timestamp => {
+    let (gutter_area, terminal_area) = match app.settings().input_mode {
+        InputMode::Terminal if app.settings().display_live_timestamp => {
             let gutter_width = (ts_width.saturating_add(1) as u16).min(inner_area.width);
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
@@ -118,7 +118,7 @@ pub fn render(app: &mut App, theme: &ThemeConfig, frame: &mut Frame) -> PostRend
     frame.render_widget(block, monitor_area);
 
     let mut render_effect = PostRenderEffect::None;
-    match app.config().input_mode {
+    match app.settings().input_mode {
         InputMode::Terminal => {
             if let Some(g_area) = gutter_area {
                 render_timestamp_gutter(app, frame, g_area, theme);
@@ -130,7 +130,7 @@ pub fn render(app: &mut App, theme: &ThemeConfig, frame: &mut Frame) -> PostRend
         }
     }
 
-    if app.config().ui.show_status_bar {
+    if app.settings().ui.show_status_bar {
         render_status_bar(app, frame, status_bar_area, theme);
     }
 

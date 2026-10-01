@@ -17,16 +17,20 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
     let area = centered_rect(55, 12, frame.area());
     frame.render_widget(Clear, area);
 
-    let mode_str = match app.config().input_mode {
+    let mode_str = match app.settings().input_mode {
         crate::configs::InputMode::Line => "Line Mode",
         crate::configs::InputMode::Terminal => "Terminal Mode",
     };
-    let wrap_str = match app.config().line_mode.wrap_mode {
+    let wrap_str = match app.settings().line_mode.wrap_mode {
         crate::configs::WrapMode::Wrap => "Soft-Wrap",
         crate::configs::WrapMode::Truncate => "Truncate",
     };
-    let echo_str = if app.config().local_echo { "ON" } else { "OFF" };
-    let timestamp_str = if app.config().display_live_timestamp {
+    let echo_str = if app.settings().local_echo {
+        "ON"
+    } else {
+        "OFF"
+    };
+    let timestamp_str = if app.settings().display_live_timestamp {
         "ON"
     } else {
         "OFF"

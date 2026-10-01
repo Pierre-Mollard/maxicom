@@ -17,7 +17,7 @@ impl StatusBarConfig {
         let port = &app.serial_config.port;
         let baud = app.serial_config.baudrate.to_string();
         let framing = app.serial_config.to_string();
-        let mode = match app.config().input_mode {
+        let mode = match app.settings().input_mode {
             InputMode::Terminal => "TERM",
             InputMode::Line => "LINE",
         };
@@ -46,13 +46,13 @@ impl StatusBarConfig {
 }
 
 pub fn render_status_bar(app: &App, frame: &mut Frame, area: Rect, theme: &ThemeConfig) {
-    if !app.config().ui.show_status_bar {
+    if !app.settings().ui.show_status_bar {
         return;
     }
 
     // TODO: implement center? and inline style
 
-    let sb_cfg = &app.config().ui.status_bar;
+    let sb_cfg = &app.settings().ui.status_bar;
     let left_text = sb_cfg.format_template(&sb_cfg.left, app);
     let right_text = sb_cfg.format_template(&sb_cfg.right, app);
 

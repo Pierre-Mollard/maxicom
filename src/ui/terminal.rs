@@ -23,7 +23,7 @@ pub fn render_vt100_terminal(
     let view_height = area.height as usize;
     let focus = app.focus_target();
     let is_terminal_focused = focus == FocusTarget::Terminal;
-    let cursor = MaxicomCursor::from_config(&app.config().terminal_mode.cursor);
+    let cursor = MaxicomCursor::from_config(&app.settings().terminal_mode.cursor);
 
     if let Some(target_idx) = app.terminal_mode.search_mut().target_jump_index.take() {
         app.terminal_mode
@@ -35,7 +35,7 @@ pub fn render_vt100_terminal(
         .y_offset(app.terminal_mode.pan_offset_y() as u16)
         .focused(is_terminal_focused && app.is_app_focused())
         .cursor(cursor)
-        .filling_char(&app.config().terminal_mode.empty_fill_char);
+        .filling_char(&app.settings().terminal_mode.empty_fill_char);
 
     frame.render_widget(term_widget, area);
 
@@ -270,7 +270,7 @@ pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect, theme: 
     let mut lines = Vec::with_capacity(rows_to_draw);
     let sample_ts = chrono::Local::now();
     let ts_width = sample_ts
-        .format(&app.config().timestamp_format)
+        .format(&app.settings().timestamp_format)
         .to_string()
         .chars()
         .count();
@@ -288,7 +288,7 @@ pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect, theme: 
         let row_has_text = app.terminal_mode.row_has_content(source_row as u16);
 
         if row_has_text && let Some(ts) = maybe_ts {
-            let formatted = ts.format(&app.config().timestamp_format).to_string();
+            let formatted = ts.format(&app.settings().timestamp_format).to_string();
             lines.push(Line::from(vec![
                 Span::styled(formatted, Style::default().fg(theme.timestamp)),
                 Span::styled("│", Style::default().fg(theme.timestamp)),

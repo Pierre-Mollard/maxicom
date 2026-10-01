@@ -128,18 +128,18 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         if let Some(ref mut dev) = device {
             match dev.read(&mut input_buffer) {
                 Ok(0) => {}
-                Ok(bytes_read) => match app.config().input_mode {
+                Ok(bytes_read) => match app.settings().input_mode {
                     InputMode::Line => {
                         app.line_mode.feed_rx(
-                            app.config().line_mode.rx_eol,
-                            app.config().encoding,
-                            &app.config().timestamp_format.to_string(),
+                            app.settings().line_mode.rx_eol,
+                            app.settings().encoding,
+                            &app.settings().timestamp_format.to_string(),
                             &input_buffer[..bytes_read],
                         );
                     }
                     InputMode::Terminal => {
                         app.terminal_mode
-                            .process_rx(app.config().encoding, &input_buffer[..bytes_read]);
+                            .process_rx(app.settings().encoding, &input_buffer[..bytes_read]);
                     }
                 },
                 Err(SerialError::InputClosed) => {

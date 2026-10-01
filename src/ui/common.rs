@@ -15,7 +15,7 @@ use crate::{
 pub fn monitor_title(app: &App, area: &Rect) -> String {
     let mut title = String::with_capacity(80);
 
-    let (scroll_offset, pan_offset) = match app.config().input_mode {
+    let (scroll_offset, pan_offset) = match app.settings().input_mode {
         InputMode::Terminal => {
             let screen = app.terminal_mode.vt100_screen();
             if app.terminal_mode.is_new_content_missed() {
@@ -82,7 +82,7 @@ pub fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
         .fg(Color::Yellow)
         .add_modifier(Modifier::BOLD);
 
-    match app.config().input_mode {
+    match app.settings().input_mode {
         InputMode::Terminal => {
             if let Some(pan_left_possible) = app.terminal_mode.can_pan_left() {
                 titles.push(
