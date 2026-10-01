@@ -77,10 +77,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let configs = match AppConfig::load_or_create_default(&config_path) {
         Ok(cfg) => cfg,
         Err(e) => {
-            eprintln!(
-                "maxicom: failed to load config at {}: {e}",
-                config_path.display()
-            );
+            eprintln!("maxicom: {e}",);
             return Ok(ExitCode::FAILURE);
         }
     };

@@ -8,7 +8,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{keybindings::KeyBindingsConfig, theme::ThemeConfig};
+use crate::{
+    keybindings::{KeyBindingsConfig, KeymapFileError},
+    theme::{ThemeConfig, ThemeError},
+};
 
 const APP_DIR: &str = "maxicom";
 const CONFIG_FILE: &str = "config.toml";
@@ -17,38 +20,6 @@ const KEYMAP_FILE: &str = "keymap.toml";
 
 pub const MIN_RX_BUF_SIZE: usize = 512;
 pub const MAX_RX_BUF_SIZE: usize = 65_536;
-
-#[derive(Debug)]
-pub enum ConfigValidationError {
-    ZeroDimensions,
-    InvalidBufferSize {
-        actual: usize,
-        min: usize,
-        max: usize,
-    },
-    InvalidTimestampFormat {
-        err: String,
-    },
-}
-
-impl std::fmt::Display for ConfigValidationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ZeroDimensions => write!(f, "terminal rows and cols must be greater than 0"),
-            Self::InvalidBufferSize { actual, min, max } => {
-                write!(
-                    f,
-                    "rx_buffer_size {actual} is out of bounds (allowed range: {min}..={max} bytes)"
-                )
-            }
-            Self::InvalidTimestampFormat { err } => {
-                write!(f, "invalid timestamp format: {err}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ConfigValidationError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -322,6 +293,24 @@ impl Default for StatusBarConfig {
     }
 }
 
+impl StatusBarConfig {
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
+        if self.time_format.is_empty() {
+            return Err(ConfigValidationError::InvalidStatusBarTimeFormat {
+                err: "format cannot be empty".to_owned(),
+            });
+        }
+
+        if let Err(err) = StrftimeItems::new(&self.time_format).parse() {
+            return Err(ConfigValidationError::InvalidStatusBarTimeFormat {
+                err: err.to_string(),
+            });
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
@@ -337,6 +326,12 @@ impl Default for UiConfig {
             show_status_bar: true,
             status_bar: StatusBarConfig::default(),
         }
+    }
+}
+
+impl UiConfig {
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
+        self.status_bar.validate()
     }
 }
 
@@ -384,34 +379,47 @@ pub struct LoadedConfig {
 
 impl AppConfig {
     /// Loads configuration from path, creating default file if it doesn't exist
-    pub fn load_or_create_default<P: AsRef<Path>>(
-        path: P,
-    ) -> Result<LoadedConfig, Box<dyn std::error::Error>> {
+    pub fn load_or_create_default<P: AsRef<Path>>(path: P) -> Result<LoadedConfig, ConfigsError> {
         let path = path.as_ref();
 
         let app_config = if path.exists() {
-            let content = fs::read_to_string(path)?;
-            let config: AppConfig = toml::from_str(&content)?;
-            config.validate()?;
+            let content = fs::read_to_string(path).map_err(|e| ConfigsError::AppIo {
+                path: path.to_path_buf(),
+                source: e,
+            })?;
+            let config: AppConfig =
+                toml::from_str(&content).map_err(|e| ConfigsError::ConfigParse {
+                    path: path.to_path_buf(),
+                    source: e,
+                })?;
+            config.validate().map_err(ConfigsError::Validation)?;
             config
         } else {
             let default_config = AppConfig::default();
 
             if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)?;
+                fs::create_dir_all(parent).map_err(|e| ConfigsError::AppIo {
+                    path: parent.to_path_buf(),
+                    source: e,
+                })?;
             }
 
-            let toml_string = toml::to_string_pretty(&default_config)?;
-            fs::write(path, toml_string)?;
+            let toml_string = toml::to_string_pretty(&default_config).unwrap();
+            fs::write(path, toml_string).map_err(|e| ConfigsError::AppIo {
+                path: path.to_path_buf(),
+                source: e,
+            })?;
 
             default_config
         };
 
         let theme_path = app_config.active_theme_path();
-        let theme = ThemeConfig::load_or_create_default(theme_path)?;
+        let theme =
+            ThemeConfig::load_or_create_default(&theme_path).map_err(ConfigsError::Theme)?;
 
         let keybindings_path = app_config.active_keybindings_path();
-        let keybindings = KeyBindingsConfig::load_or_create_default(keybindings_path)?;
+        let keybindings = KeyBindingsConfig::load_or_create_default(&keybindings_path)
+            .map_err(ConfigsError::Keymap)?;
 
         Ok(LoadedConfig {
             app: app_config,
@@ -476,6 +484,83 @@ impl AppConfig {
             });
         };
 
+        self.ui.validate()?;
+
         Ok(())
     }
 }
+
+#[derive(Debug)]
+pub enum ConfigValidationError {
+    ZeroDimensions,
+    InvalidBufferSize {
+        actual: usize,
+        min: usize,
+        max: usize,
+    },
+    InvalidTimestampFormat {
+        err: String,
+    },
+    InvalidStatusBarTimeFormat {
+        err: String,
+    },
+}
+
+impl std::fmt::Display for ConfigValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ZeroDimensions => write!(f, "terminal rows and cols must be greater than 0"),
+            Self::InvalidBufferSize { actual, min, max } => {
+                write!(
+                    f,
+                    "rx_buffer_size {actual} is out of bounds (allowed range: {min}..={max} bytes)"
+                )
+            }
+            Self::InvalidTimestampFormat { err } => {
+                write!(f, "invalid timestamp format: {err}")
+            }
+            Self::InvalidStatusBarTimeFormat { err } => {
+                write!(f, "invalid status bar time_format: {err}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ConfigValidationError {}
+
+#[derive(Debug)]
+pub enum ConfigsError {
+    AppIo {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    ConfigParse {
+        path: PathBuf,
+        source: toml::de::Error,
+    },
+    Validation(ConfigValidationError),
+    Theme(ThemeError),
+    Keymap(KeymapFileError),
+}
+
+impl std::fmt::Display for ConfigsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AppIo { path, source } => {
+                write!(f, "failed to read config at '{}': {source}", path.display())
+            }
+            Self::ConfigParse { path, source } => {
+                write!(
+                    f,
+                    "invalid config syntax in '{}':\n{source}",
+                    path.display()
+                )
+            }
+            Self::Validation(err) => write!(f, "configuration validation error: {err}"),
+            Self::Theme(err) => write!(f, "{err}"),
+            Self::Keymap(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for ConfigsError {}

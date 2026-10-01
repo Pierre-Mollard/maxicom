@@ -77,6 +77,7 @@ pub fn render(app: &mut App, theme: &ThemeConfig, frame: &mut Frame) -> PostRend
     let focus = app.focus_target();
     let border_style = border_style_for(focus_target, focus, app.is_app_focused(), theme);
 
+    // TODO: disable borders in prompt for line mode and move scrollbar content
     let mut block = Block::default();
     if app.config().ui.show_borders {
         block = block.borders(Borders::ALL).border_style(border_style);

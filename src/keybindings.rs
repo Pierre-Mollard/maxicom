@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     str::FromStr,
 };
 
@@ -685,26 +685,99 @@ impl Default for KeyBindingsConfig {
 }
 
 impl KeyBindingsConfig {
-    pub fn load_or_create_default<P: AsRef<Path>>(
-        path: P,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn load_or_create_default<P: AsRef<Path>>(path: P) -> Result<Self, KeymapFileError> {
         let path = path.as_ref();
 
         if path.exists() {
-            let content = fs::read_to_string(path)?;
-            let keymap: KeyBindingsConfig = toml::from_str(&content)?;
+            let content = fs::read_to_string(path).map_err(|err| KeymapFileError::Io {
+                path: path.to_path_buf(),
+                source: err,
+            })?;
+
+            let keymap: KeyBindingsConfig =
+                toml::from_str(&content).map_err(|err| KeymapFileError::TomlParse {
+                    path: path.to_path_buf(),
+                    source: err,
+                })?;
+
+            KeyResolver::try_new(&keymap).map_err(|err| KeymapFileError::Mapping {
+                path: path.to_path_buf(),
+                source: err,
+            })?;
+
             return Ok(keymap);
         }
 
         let default_keymap = KeyBindingsConfig::default();
 
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
+            fs::create_dir_all(parent).map_err(|err| KeymapFileError::Io {
+                path: parent.to_path_buf(),
+                source: err,
+            })?;
         }
 
-        let toml_string = toml::to_string_pretty(&default_keymap)?;
-        fs::write(path, toml_string)?;
+        let toml_string =
+            toml::to_string_pretty(&default_keymap).map_err(|err| KeymapFileError::Io {
+                path: path.to_path_buf(),
+                source: std::io::Error::new(std::io::ErrorKind::Other, err.to_string()),
+            })?;
+
+        fs::write(path, toml_string).map_err(|err| KeymapFileError::Io {
+            path: path.to_path_buf(),
+            source: err,
+        })?;
 
         Ok(default_keymap)
+    }
+}
+
+#[derive(Debug)]
+pub enum KeymapFileError {
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    TomlParse {
+        path: PathBuf,
+        source: toml::de::Error,
+    },
+    Mapping {
+        path: PathBuf,
+        source: KeymapError,
+    },
+}
+
+impl std::fmt::Display for KeymapFileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io { path, source } => {
+                write!(
+                    f,
+                    "failed to read keymap file '{}': {source}",
+                    path.display()
+                )
+            }
+            Self::TomlParse { path, source } => {
+                write!(
+                    f,
+                    "invalid syntax in keymap file '{}':\n{source}",
+                    path.display()
+                )
+            }
+            Self::Mapping { path, source } => {
+                write!(f, "invalid keybinding in '{}': {source}", path.display())
+            }
+        }
+    }
+}
+
+impl std::error::Error for KeymapFileError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io { source, .. } => Some(source),
+            Self::TomlParse { source, .. } => Some(source),
+            Self::Mapping { source, .. } => Some(source),
+        }
     }
 }
