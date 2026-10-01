@@ -6,7 +6,12 @@ use ratatui::{
 
 use std::fmt::Write;
 
-use crate::{app::App, config::InputMode, types::FocusTarget};
+use crate::{
+    app::App,
+    config::InputMode,
+    theme::{self, ThemeConfig},
+    types::FocusTarget,
+};
 
 pub fn monitor_title(app: &App, area: &Rect) -> String {
     let mut title = String::with_capacity(80);
@@ -185,13 +190,18 @@ pub fn centered_rect(percent_x: u16, height: u16, parent: Rect) -> Rect {
 }
 
 /// Helper function to get standard borders
-pub fn border_style_for(target: FocusTarget, current: FocusTarget, app_focused: bool) -> Style {
+pub fn border_style_for(
+    target: FocusTarget,
+    current: FocusTarget,
+    app_focused: bool,
+    theme: &ThemeConfig,
+) -> Style {
+    let base_color = theme.border;
+
     if !app_focused {
         Style::default().fg(Color::DarkGray)
     } else if target == current {
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD)
+        Style::default().fg(base_color).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::DarkGray)
     }

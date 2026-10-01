@@ -7,11 +7,17 @@ use ratatui::{
 
 use crate::{
     app::App,
+    theme::ThemeConfig,
     types::{FilePathDialog, FocusTarget},
     ui::common::{border_style_for, centered_rect},
 };
 
-pub fn render_filepath_popup(app: &App, dialog: &FilePathDialog, frame: &mut Frame) {
+pub fn render_filepath_popup(
+    app: &App,
+    dialog: &FilePathDialog,
+    frame: &mut Frame,
+    theme: &ThemeConfig,
+) {
     let area = centered_rect(52, 11, frame.area());
     frame.render_widget(Clear, area);
 
@@ -49,6 +55,7 @@ pub fn render_filepath_popup(app: &App, dialog: &FilePathDialog, frame: &mut Fra
                 FocusTarget::Overlay,
                 app.focus_target(),
                 app.is_app_focused(),
+                theme,
             ))
             .title(" Logging ")
             .border_style(Style::default().fg(Color::Cyan)),

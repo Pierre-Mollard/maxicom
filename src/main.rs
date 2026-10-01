@@ -85,6 +85,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
     };
     let app_config = configs.app;
+    let theme = configs.theme;
 
     let key_resolver = match KeyResolver::try_new(&configs.keybindings) {
         Ok(resolver) => resolver,
@@ -126,7 +127,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut running: bool = true;
     let buffer_size = app_config.rx_buffer_size;
     let mut input_buffer = vec![0u8; buffer_size];
-    let mut app = App::new(app_config, configs.theme, key_resolver, console_args);
+    let mut app = App::new(app_config, key_resolver, console_args);
 
     if device.is_none() {
         app.open_overlay(Overlay::DeviceDisconnected(app.serial_config.port.clone()));
@@ -222,7 +223,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
         let mut post_render_effect = PostRenderEffect::None;
         guard.terminal.draw(|frame| {
-            post_render_effect = render(&mut app, frame);
+            post_render_effect = render(&mut app, &theme, frame);
         })?;
 
         match post_render_effect {

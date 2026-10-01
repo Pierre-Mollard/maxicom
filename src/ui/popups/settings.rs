@@ -7,12 +7,13 @@ use ratatui::{
 
 use crate::{
     app::App,
+    theme::ThemeConfig,
     types::FocusTarget,
     ui::common::{border_style_for, centered_rect},
 };
 
 // NOTE: AI generated, make it better
-pub fn render_settings_popup(app: &App, frame: &mut Frame) {
+pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) {
     let area = centered_rect(55, 12, frame.area());
     frame.render_widget(Clear, area);
 
@@ -73,6 +74,7 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame) {
                 FocusTarget::Overlay,
                 app.focus_target(),
                 app.is_app_focused(),
+                theme,
             ))
             .title(" Settings [Toggle Hotkeys] ")
             .style(Style::default().fg(Color::Green)),

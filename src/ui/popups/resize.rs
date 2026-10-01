@@ -7,12 +7,18 @@ use ratatui::{
 
 use crate::{
     app::App,
+    theme::ThemeConfig,
     types::{FocusTarget, ResizeDialog, ResizeField},
     ui::common::{border_style_for, centered_rect},
 };
 
 // NOTE: AI generated, make it better
-pub fn render_resize_popup(app: &App, dialog: &ResizeDialog, frame: &mut Frame) {
+pub fn render_resize_popup(
+    app: &App,
+    dialog: &ResizeDialog,
+    frame: &mut Frame,
+    theme: &ThemeConfig,
+) {
     let area = centered_rect(52, 11, frame.area());
     frame.render_widget(Clear, area);
 
@@ -87,6 +93,7 @@ pub fn render_resize_popup(app: &App, dialog: &ResizeDialog, frame: &mut Frame) 
                 FocusTarget::Overlay,
                 app.focus_target(),
                 app.is_app_focused(),
+                theme,
             ))
             .title(" Resize VT100 Screen ")
             .border_style(Style::default().fg(Color::Cyan)),

@@ -7,7 +7,6 @@ use crate::{
     logger::{LineLogger, TerminalLogger},
     notification::{NotificationManager, ToastLevel},
     serial::SerialConfig,
-    theme::ThemeConfig,
     types::{
         ErrorDialog, FilePathDialog, FocusTarget, Overlay, OverlayResponse, SettingKey,
         ViewportSize,
@@ -34,7 +33,6 @@ pub enum InputContext {
 
 pub struct App {
     app_config: AppConfig,
-    pub theme: ThemeConfig,
     pub key_resolver: KeyResolver,
     pub serial_config: SerialConfig,
     prefix_active: bool,
@@ -58,7 +56,6 @@ pub enum UpdateEffect {
 impl App {
     pub fn new(
         app_config: AppConfig,
-        theme: ThemeConfig,
         key_resolver: KeyResolver,
         serial_config: SerialConfig,
     ) -> Self {
@@ -76,7 +73,6 @@ impl App {
         Self {
             prefix_active: false,
             app_config,
-            theme,
             key_resolver,
             serial_config,
             overlay: None,

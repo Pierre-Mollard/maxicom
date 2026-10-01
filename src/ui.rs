@@ -15,6 +15,7 @@ use ratatui::{
 use crate::{
     app::App,
     config::InputMode,
+    theme::ThemeConfig,
     types::{FocusTarget, Overlay, ViewportSize},
     ui::{
         common::{border_style_for, monitor_bottom_title, monitor_title},
@@ -39,7 +40,7 @@ pub enum PostRenderEffect {
     CopyToClipboard(String),
 }
 
-pub fn render(app: &mut App, frame: &mut Frame) -> PostRenderEffect {
+pub fn render(app: &mut App, theme: &ThemeConfig, frame: &mut Frame) -> PostRenderEffect {
     let screen_area = frame.area();
 
     let (monitor_area, prompt_area, status_bar_area, focus_target): (
@@ -74,7 +75,7 @@ pub fn render(app: &mut App, frame: &mut Frame) -> PostRenderEffect {
     };
 
     let focus = app.focus_target();
-    let border_style = border_style_for(focus_target, focus, app.is_app_focused());
+    let border_style = border_style_for(focus_target, focus, app.is_app_focused(), &theme);
 
     let mut block = Block::default()
         .borders(Borders::ALL)
@@ -129,17 +130,17 @@ pub fn render(app: &mut App, frame: &mut Frame) -> PostRenderEffect {
     render_status_bar(app, frame, status_bar_area);
 
     if let Some(prompt_rect) = prompt_area {
-        render_input_prompt(app, frame, prompt_rect);
+        render_input_prompt(app, frame, prompt_rect, theme);
     }
 
     render_notifications(&app.notifications, frame);
 
     match app.overlay() {
-        Some(Overlay::Help) => render_help_popup(app, frame),
-        Some(Overlay::Settings) => render_settings_popup(app, frame),
-        Some(Overlay::TerminalSize(dialog)) => render_resize_popup(app, dialog, frame),
+        Some(Overlay::Help) => render_help_popup(app, frame, theme),
+        Some(Overlay::Settings) => render_settings_popup(app, frame, theme),
+        Some(Overlay::TerminalSize(dialog)) => render_resize_popup(app, dialog, frame, theme),
         Some(Overlay::SerialSettings(dialog)) => render_reconfigure_popup(dialog, frame),
-        Some(Overlay::FilePath(dialog)) => render_filepath_popup(app, dialog, frame),
+        Some(Overlay::FilePath(dialog)) => render_filepath_popup(app, dialog, frame, theme),
         Some(Overlay::DeviceDisconnected(port)) => render_disconnected_popup(port, frame),
         Some(Overlay::Error(err)) => render_error_popup(err, frame),
         None => {}

@@ -1,26 +1,29 @@
 use std::{fs, path::Path};
 
+use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ThemeConfig {
-    pub border: String,
-    pub timestamp: String,
-    pub selection_bg: String,
-    pub status_bar_bg: String,
+    pub border: Color,
+    pub timestamp: Color,
+    pub selection_bg: Color,
+    pub status_bar_bg: Color,
 }
 
 impl Default for ThemeConfig {
     fn default() -> Self {
         Self {
-            border: String::from("Cyan"),
-            timestamp: String::from("DarkGray"),
-            selection_bg: String::from("#285096"),
-            status_bar_bg: String::from("#1e232d"),
+            border: Color::Cyan,
+            timestamp: Color::DarkGray,
+            selection_bg: Color::Rgb(0x28, 0x50, 0x96),
+            status_bar_bg: Color::Rgb(0x1e, 0x23, 0x2d),
         }
     }
 }
+
+// TODO: handle theme parsing errors like keybindings or config
 
 impl ThemeConfig {
     pub fn load_or_create_default<P: AsRef<Path>>(

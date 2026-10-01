@@ -10,6 +10,7 @@ use ratatui::{
 use crate::{
     app::App,
     config::{LineDisplayMode, WrapMode},
+    theme::ThemeConfig,
     types::{FocusTarget, ViewportSize},
     ui::{
         PostRenderEffect,
@@ -341,7 +342,7 @@ pub fn render_monitor(
     post_effect
 }
 
-pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect) {
+pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect, theme: &ThemeConfig) {
     let input = app.line_mode.input();
     let prompt_prefix = "> ";
     let prefix_width = prompt_prefix.len() as u16;
@@ -363,6 +364,7 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect) {
         app.focus_target(),
         FocusTarget::LineInput,
         app.is_app_focused(),
+        theme,
     );
 
     let input_widget = Paragraph::new(input_text).scroll((0, scroll as u16)).block(

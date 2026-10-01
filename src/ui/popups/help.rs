@@ -7,12 +7,13 @@ use ratatui::{
 
 use crate::{
     app::App,
+    theme::ThemeConfig,
     types::FocusTarget,
     ui::common::{border_style_for, centered_rect},
 };
 
 // NOTE: AI generated, make it better
-pub fn render_help_popup(app: &App, frame: &mut Frame) {
+pub fn render_help_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) {
     let area = centered_rect(60, 14, frame.area());
     frame.render_widget(Clear, area); // Blank background
 
@@ -79,6 +80,7 @@ pub fn render_help_popup(app: &App, frame: &mut Frame) {
                 FocusTarget::Overlay,
                 app.focus_target(),
                 app.is_app_focused(),
+                theme,
             ))
             .title(" Help [Keybindings] ")
             .style(Style::default().fg(Color::White)),
