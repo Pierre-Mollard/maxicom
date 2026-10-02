@@ -72,7 +72,7 @@ pub enum SearchModeAction {
     Next,
     Previous,
     Cancel,
-    Confirm, // TODO: confirm search should enter copy mode
+    Confirm,
     HandleKey(KeyEvent),
 }
 

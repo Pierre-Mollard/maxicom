@@ -56,11 +56,12 @@ pub fn render(app: &mut App, theme: &ThemeConfig, frame: &mut Frame) -> PostRend
             (chunks[0], None, chunks[1], FocusTarget::Terminal)
         }
         InputMode::Line => {
+            let prompt_height = if app.settings().ui.show_borders { 3 } else { 1 };
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Min(3),
-                    Constraint::Length(3),
+                    Constraint::Length(prompt_height),
                     Constraint::Length(1),
                 ])
                 .split(screen_area);
@@ -76,7 +77,6 @@ pub fn render(app: &mut App, theme: &ThemeConfig, frame: &mut Frame) -> PostRend
     let focus = app.focus_target();
     let border_style = border_style_for(focus_target, focus, app.is_app_focused(), theme);
 
-    // TODO: disable borders in prompt for line mode and move scrollbar content (and titles)
     let mut block = Block::default();
     if app.settings().ui.show_borders {
         block = block.borders(Borders::ALL).border_style(border_style);
@@ -107,13 +107,17 @@ pub fn render(app: &mut App, theme: &ThemeConfig, frame: &mut Frame) -> PostRend
 
     app.update_viewport(ViewportSize::new(terminal_area.width, terminal_area.height));
 
-    let title = monitor_title(app, &monitor_area);
-    block = block.title(title);
+    if app.settings().ui.show_borders {
+        let title = monitor_title(app, &monitor_area);
+        block = block.title(title);
 
-    let bottom_titles = monitor_bottom_title(app);
-    block = bottom_titles
-        .into_iter()
-        .fold(block, |b, t| b.title_bottom(t));
+        let bottom_titles = monitor_bottom_title(app);
+        block = bottom_titles
+            .into_iter()
+            .fold(block, |b, t| b.title_bottom(t));
+    }
+    // TODO: handle rendering search when borders off
+    // TODO: handle the vertical scroll bar when borders off
 
     frame.render_widget(block, monitor_area);
 

@@ -254,7 +254,7 @@ impl Default for StatusBarConfig {
     fn default() -> Self {
         Self {
             left: String::from("{rec}[{mode}] {port} | {baud} | {framing} "),
-            right: String::from(" RX: {rx_bytes} | TX: {tx_bytes} | {time} "),
+            right: String::from(" RX: {rx_bytes} | TX: {tx_bytes} | {time} {prefix}"),
             time_format: String::from("%H:%M:%S"),
         }
     }

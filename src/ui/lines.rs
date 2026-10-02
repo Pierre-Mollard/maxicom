@@ -376,19 +376,33 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect, theme: &The
         theme,
     );
 
-    let input_widget = Paragraph::new(input_text).scroll((0, scroll as u16)).block(
-        Block::default()
+    let mut block = Block::default();
+    if app.settings().ui.show_borders {
+        block = block
             .borders(Borders::ALL)
             .border_style(border_style)
-            .title(" Transmit (TX) "),
-    );
+            .title(" Transmit (TX) ");
+    } else {
+        block = block.borders(Borders::NONE);
+    }
+
+    let input_widget = Paragraph::new(input_text)
+        .scroll((0, scroll as u16))
+        .block(block);
 
     frame.render_widget(input_widget, area);
 
     if !app.line_mode.search().active && !app.line_mode.copy_state().active {
-        let cursor_x =
-            area.x + 1 + prefix_width + (input.visual_cursor().saturating_sub(scroll)) as u16;
-        let cursor_y = area.y + 1;
+        let cursor_x = if app.settings().ui.show_borders {
+            area.x + 1 + prefix_width + (input.visual_cursor().saturating_sub(scroll)) as u16
+        } else {
+            area.x + prefix_width + (input.visual_cursor().saturating_sub(scroll)) as u16
+        };
+        let cursor_y = if app.settings().ui.show_borders {
+            area.y + 1
+        } else {
+            area.y
+        };
 
         if !app.is_app_focused() {
             let buf = frame.buffer_mut();
