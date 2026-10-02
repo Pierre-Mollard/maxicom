@@ -257,7 +257,7 @@ impl LineMode {
         }
     }
 
-    // TODO: in line mode copy is only on visible text.... (and cursor is not spawning at latest
+    // FIX: in line mode copy is only on visible text.... (and cursor is not spawning at latest
     // receive position)
     pub fn handle_copy_action(&mut self, action: CopyModeAction) -> Option<String> {
         let total_visual_rows = self.max_scroll + self.view_height;
@@ -394,7 +394,7 @@ impl LineMode {
 
                 if let Some((row, _col)) = match_pos {
                     self.copy_state.enter_at(row, 0);
-                    // TODO: handle col (doesnt work with wrap/timestampe)
+                    // FIX: handle col (doesnt work with wrap/timestampe)
                 } else {
                     self.copy_state.enter_at(0, 0);
                 }

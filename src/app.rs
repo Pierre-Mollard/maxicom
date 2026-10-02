@@ -30,6 +30,26 @@ pub enum InputContext {
     Terminal,
 }
 
+pub struct Stats {
+    received_bytes: usize,
+    sent_bytes: usize,
+}
+
+impl Stats {
+    pub fn update_rx(&mut self, count: usize) {
+        self.received_bytes = self.received_bytes.saturating_add(count);
+    }
+    pub fn update_tx(&mut self, count: usize) {
+        self.sent_bytes = self.sent_bytes.saturating_add(count);
+    }
+    pub fn rx(&self) -> usize {
+        self.received_bytes
+    }
+    pub fn tx(&self) -> usize {
+        self.sent_bytes
+    }
+}
+
 pub struct App {
     settings: SettingsConfig,
     pub key_resolver: KeyResolver,
@@ -41,6 +61,7 @@ pub struct App {
     pub line_mode: LineMode,
     pub terminal_mode: TerminalMode,
     pub is_window_focused: bool,
+    pub stats: Stats,
 }
 
 // Effects outside which can only be handled by main
@@ -80,6 +101,10 @@ impl App {
             line_mode: line_view,
             terminal_mode: terminal_view,
             is_window_focused: true,
+            stats: Stats {
+                received_bytes: 0,
+                sent_bytes: 0,
+            },
         }
     }
 

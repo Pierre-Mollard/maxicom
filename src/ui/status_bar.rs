@@ -27,11 +27,8 @@ impl StatusBarConfig {
         };
         let prefix = if app.is_prefix_active() { "󰒓 " } else { "" };
 
-        // TODO: implement RX/TX stats
-        // let rx_bytes = app.stats.rx_bytes.to_string();
-        // let tx_bytes = app.stats.tx_bytes.to_string();
-        let rx_bytes = "XXX";
-        let tx_bytes = "XXX";
+        let rx_bytes = app.stats.rx().to_string();
+        let tx_bytes = app.stats.tx().to_string();
 
         template
             .replace("{rec}", rec)
@@ -40,8 +37,8 @@ impl StatusBarConfig {
             .replace("{port}", port)
             .replace("{baud}", &baud)
             .replace("{framing}", &framing)
-            .replace("{rx_bytes}", rx_bytes)
-            .replace("{tx_bytes}", tx_bytes)
+            .replace("{rx_bytes}", &rx_bytes)
+            .replace("{tx_bytes}", &tx_bytes)
             .replace("{time}", &now)
     }
 }

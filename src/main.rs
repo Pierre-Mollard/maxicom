@@ -68,6 +68,7 @@ fn main() -> ExitCode {
     }
 }
 
+// FIX: losing perfs at 200 000 lines in line mode
 fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let config_path = AppConfig::default_config_path();
     let configs = match AppConfig::load_or_create_default(&config_path) {
@@ -128,20 +129,23 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         if let Some(ref mut dev) = device {
             match dev.read(&mut input_buffer) {
                 Ok(0) => {}
-                Ok(bytes_read) => match app.settings().input_mode {
-                    InputMode::Line => {
-                        app.line_mode.feed_rx(
-                            app.settings().line_mode.rx_eol,
-                            app.settings().encoding,
-                            &app.settings().timestamp_format.to_string(),
-                            &input_buffer[..bytes_read],
-                        );
-                    }
-                    InputMode::Terminal => {
-                        app.terminal_mode
-                            .process_rx(app.settings().encoding, &input_buffer[..bytes_read]);
-                    }
-                },
+                Ok(bytes_read) => {
+                    app.stats.update_rx(bytes_read);
+                    match app.settings().input_mode {
+                        InputMode::Line => {
+                            app.line_mode.feed_rx(
+                                app.settings().line_mode.rx_eol,
+                                app.settings().encoding,
+                                &app.settings().timestamp_format.to_string(),
+                                &input_buffer[..bytes_read],
+                            );
+                        }
+                        InputMode::Terminal => {
+                            app.terminal_mode
+                                .process_rx(app.settings().encoding, &input_buffer[..bytes_read]);
+                        }
+                    };
+                }
                 Err(SerialError::InputClosed) => {
                     device = None; // Drops closed handle
                     app.open_overlay(Overlay::DeviceDisconnected(app.serial_config.port.clone()));
@@ -176,16 +180,21 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             match app.update(action) {
                 UpdateEffect::Quit => running = false,
                 UpdateEffect::Transmit(bytes) => {
-                    if let Some(ref mut dev) = device
-                        && let Err(e) = dev.write(&bytes)
-                    {
-                        app.open_overlay(Overlay::Error(
-                            ErrorDialog::new(
-                                "Serial Write Failed",
-                                "Failed to transmit bytes to serial port",
-                            )
-                            .with_details(e),
-                        ));
+                    if let Some(ref mut dev) = device {
+                        match dev.write(&bytes) {
+                            Ok(()) => {
+                                app.stats.update_tx(bytes.len());
+                            }
+                            Err(e) => {
+                                app.open_overlay(Overlay::Error(
+                                    ErrorDialog::new(
+                                        "Serial Write Failed",
+                                        "Failed to transmit bytes to serial port",
+                                    )
+                                    .with_details(e),
+                                ));
+                            }
+                        }
                     }
                 }
                 UpdateEffect::Reconfigure(serial_config) => {
