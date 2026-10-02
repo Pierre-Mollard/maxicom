@@ -10,7 +10,6 @@ use crate::{
     ui::common::centered_rect,
 };
 
-// NOTE: AI generated, make it better
 pub fn render_reconfigure_popup(dialog: &SerialConfigDialog, frame: &mut Frame) {
     let popup_area = centered_rect(52, 11, frame.area());
 

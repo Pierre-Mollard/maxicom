@@ -12,11 +12,11 @@ use crate::{
     ui::common::{border_style_for, centered_rect},
 };
 
-// NOTE: AI generated, make it better
 pub fn render_help_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) {
     let area = centered_rect(60, 14, frame.area());
-    frame.render_widget(Clear, area); // Blank background
+    frame.render_widget(Clear, area);
 
+    // TODO: parse the keybindings conf / resolver
     let help_text = vec![
         Line::from(Span::styled(
             "--- MaxiCom Command Keys (Prefix: Ctrl-A) ---",

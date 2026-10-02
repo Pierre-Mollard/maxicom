@@ -9,13 +9,12 @@ pub mod theme;
 pub use highlights::{HighlightConfig, HighlightError, KeywordHighlight};
 pub use keybindings::{
     KeyBindingAction, KeyBindingCopyAction, KeyBindingLineAction, KeyBindingSearchAction,
-    KeyBindingTerminalAction, KeyBindingsConfig, KeyPattern, KeyResolver, KeymapError,
-    KeymapFileError,
+    KeyBindingTerminalAction, KeyBindingsConfig, KeyPattern, KeyResolver, KeymapFileError,
 };
 pub use settings::{
-    ConfigValidationError, CursorConfig, InputMode, LineDisplayMode, LineLogConfig, LineModeConfig,
-    RxNewlineMode, SettingsConfig, SettingsError, StatusBarConfig, TerminalDimensionMode,
-    TerminalLogConfig, TerminalModeConfig, TextEncoding, TxNewlineSymbol, UiConfig, WrapMode,
+    CursorConfig, InputMode, LineDisplayMode, LineLogConfig, RxNewlineMode, SettingsConfig,
+    SettingsError, StatusBarConfig, TerminalDimensionMode, TerminalLogConfig, TextEncoding,
+    TxNewlineSymbol, WrapMode,
 };
 pub use theme::{ThemeConfig, ThemeError};
 

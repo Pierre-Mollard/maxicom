@@ -12,7 +12,6 @@ use crate::{
     ui::common::{border_style_for, centered_rect},
 };
 
-// NOTE: AI generated, make it better
 pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) {
     let area = centered_rect(55, 12, frame.area());
     frame.render_widget(Clear, area);

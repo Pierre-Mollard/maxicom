@@ -12,7 +12,6 @@ use crate::{
     ui::common::{border_style_for, centered_rect},
 };
 
-// NOTE: AI generated, make it better
 pub fn render_resize_popup(
     app: &App,
     dialog: &ResizeDialog,
@@ -24,7 +23,6 @@ pub fn render_resize_popup(
 
     let active = dialog.active_field;
 
-    // Highlight styles for the active field
     let row_style = if active == ResizeField::Rows {
         Style::default()
             .fg(Color::Yellow)
@@ -41,7 +39,6 @@ pub fn render_resize_popup(
         Style::default().fg(Color::White)
     };
 
-    // Read the string values straight from tui-input
     let rows_str = dialog.rows_input.value();
     let cols_str = dialog.cols_input.value();
 
@@ -101,10 +98,9 @@ pub fn render_resize_popup(
 
     frame.render_widget(popup, area);
 
-    // Position WezTerm's real blinking cursor over the active input field
     let (cursor_input, line_y_offset) = match active {
-        ResizeField::Rows => (&dialog.rows_input, 3), // line index inside popup
-        ResizeField::Cols => (&dialog.cols_input, 4), // line index inside popup
+        ResizeField::Rows => (&dialog.rows_input, 3),
+        ResizeField::Cols => (&dialog.cols_input, 4),
     };
 
     // area.x + 1 (border) + 3 (" ▶ ") + 10 ("Rows    : ") + cursor_offset
