@@ -1,8 +1,7 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
+    style::{Color, Style},
     widgets::{Block, Paragraph},
 };
 
@@ -41,8 +40,8 @@ impl StatusBarConfig {
             .replace("{port}", port)
             .replace("{baud}", &baud)
             .replace("{framing}", &framing)
-            .replace("{rx_bytes}", &rx_bytes)
-            .replace("{tx_bytes}", &tx_bytes)
+            .replace("{rx_bytes}", rx_bytes)
+            .replace("{tx_bytes}", tx_bytes)
             .replace("{time}", &now)
     }
 }

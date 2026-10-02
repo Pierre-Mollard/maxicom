@@ -14,7 +14,7 @@ use ratatui::{
 
 use crate::{
     app::App,
-    configs::{InputMode, ThemeConfig},
+    configs::{InputMode, KeywordHighlight, ThemeConfig},
     types::{FocusTarget, Overlay, ViewportSize},
     ui::{
         common::{border_style_for, monitor_bottom_title, monitor_title},
@@ -39,7 +39,12 @@ pub enum PostRenderEffect {
     CopyToClipboard(String),
 }
 
-pub fn render(app: &mut App, theme: &ThemeConfig, frame: &mut Frame) -> PostRenderEffect {
+pub fn render(
+    app: &mut App,
+    theme: &ThemeConfig,
+    frame: &mut Frame,
+    highlights: &[KeywordHighlight],
+) -> PostRenderEffect {
     let screen_area = frame.area();
 
     let (monitor_area, prompt_area, status_bar_area, focus_target): (
@@ -127,10 +132,10 @@ pub fn render(app: &mut App, theme: &ThemeConfig, frame: &mut Frame) -> PostRend
             if let Some(g_area) = gutter_area {
                 render_timestamp_gutter(app, frame, g_area, theme);
             }
-            render_vt100_terminal(app, frame, terminal_area, monitor_area, theme);
+            render_vt100_terminal(app, frame, terminal_area, monitor_area, theme, highlights);
         }
         InputMode::Line => {
-            render_effect = render_monitor(app, frame, inner_area, monitor_area, theme);
+            render_effect = render_monitor(app, frame, inner_area, monitor_area, theme, highlights);
         }
     }
 

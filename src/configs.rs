@@ -1,10 +1,12 @@
 use std::path::{Path, PathBuf};
 
+pub mod highlights;
 pub mod keybindings;
 pub mod settings;
 pub mod theme;
 
 // Re-exports
+pub use highlights::{HighlightConfig, HighlightError, KeywordHighlight};
 pub use keybindings::{
     KeyBindingAction, KeyBindingCopyAction, KeyBindingLineAction, KeyBindingSearchAction,
     KeyBindingTerminalAction, KeyBindingsConfig, KeyPattern, KeyResolver, KeymapError,
@@ -21,12 +23,14 @@ const APP_DIR: &str = "maxicom";
 const CONFIG_FILE: &str = "config.toml";
 const THEME_FILE: &str = "theme.toml";
 const KEYMAP_FILE: &str = "keymap.toml";
+const HIGHLIGHT_FILE: &str = "highlights.toml";
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub settings: SettingsConfig,
     pub theme: ThemeConfig,
     pub keybindings: KeyBindingsConfig,
+    pub highlights: HighlightConfig,
 }
 
 impl AppConfig {
@@ -45,10 +49,15 @@ impl AppConfig {
         let keybindings = KeyBindingsConfig::load_or_create_default(&keybindings_path)
             .map_err(ConfigsError::Keymap)?;
 
+        let highlights_path = Self::active_highlight_path(&settings);
+        let highlights = HighlightConfig::load_or_create_default(&highlights_path)
+            .map_err(ConfigsError::Highlight)?;
+
         Ok(AppConfig {
             settings,
             theme,
             keybindings,
+            highlights,
         })
     }
 
@@ -70,6 +79,12 @@ impl AppConfig {
             .unwrap_or_else(|| PathBuf::from(KEYMAP_FILE))
     }
 
+    pub fn default_highlights_path() -> PathBuf {
+        dirs::config_dir()
+            .map(|p| p.join(APP_DIR).join(HIGHLIGHT_FILE))
+            .unwrap_or_else(|| PathBuf::from(HIGHLIGHT_FILE))
+    }
+
     pub fn active_theme_path(settings: &SettingsConfig) -> PathBuf {
         settings
             .theme_path
@@ -83,6 +98,13 @@ impl AppConfig {
             .clone()
             .unwrap_or_else(Self::default_keybindings_path)
     }
+
+    pub fn active_highlight_path(settings: &SettingsConfig) -> PathBuf {
+        settings
+            .hightlights_path
+            .clone()
+            .unwrap_or_else(Self::default_highlights_path)
+    }
 }
 
 #[derive(Debug)]
@@ -90,6 +112,7 @@ pub enum ConfigsError {
     Settings(SettingsError),
     Theme(ThemeError),
     Keymap(KeymapFileError),
+    Highlight(HighlightError),
 }
 
 impl std::fmt::Display for ConfigsError {
@@ -98,6 +121,7 @@ impl std::fmt::Display for ConfigsError {
             Self::Settings(err) => write!(f, "{err}"),
             Self::Theme(err) => write!(f, "{err}"),
             Self::Keymap(err) => write!(f, "{err}"),
+            Self::Highlight(err) => write!(f, "{err}"),
         }
     }
 }
@@ -108,6 +132,7 @@ impl std::error::Error for ConfigsError {
             Self::Settings(err) => Some(err),
             Self::Theme(err) => Some(err),
             Self::Keymap(err) => Some(err),
+            Self::Highlight(err) => Some(err),
         }
     }
 }

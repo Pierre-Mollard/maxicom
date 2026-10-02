@@ -9,11 +9,11 @@ use ratatui::{
 
 use crate::{
     app::App,
-    configs::{LineDisplayMode, ThemeConfig, WrapMode},
+    configs::{KeywordHighlight, LineDisplayMode, ThemeConfig, WrapMode},
     types::{FocusTarget, ViewportSize},
     ui::{
         PostRenderEffect,
-        common::{apply_search_highlight, border_style_for},
+        common::{apply_keyword_highlights, apply_search_highlight, border_style_for},
     },
 };
 
@@ -108,6 +108,7 @@ pub fn render_monitor(
     area: Rect,
     outer_area: Rect,
     theme: &ThemeConfig,
+    highlights: &[KeywordHighlight],
 ) -> PostRenderEffect {
     let timestamp_in_line = app.settings().display_live_timestamp;
     let content_width = area.width as usize;
@@ -247,6 +248,8 @@ pub fn render_monitor(
         line_x_offset.min(u16::MAX as usize) as u16,
     ));
     frame.render_widget(history_paragraph, area);
+
+    apply_keyword_highlights(frame.buffer_mut(), area, highlights);
 
     // selection
     if app.line_mode.copy_state().active {

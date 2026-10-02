@@ -316,6 +316,7 @@ pub struct SettingsConfig {
     pub terminal_mode: TerminalModeConfig,
     pub theme_path: Option<PathBuf>,
     pub keybindings_path: Option<PathBuf>,
+    pub hightlights_path: Option<PathBuf>,
     pub ui: UiConfig,
 }
 
@@ -332,6 +333,7 @@ impl Default for SettingsConfig {
             terminal_mode: TerminalModeConfig::default(),
             theme_path: None,
             keybindings_path: None,
+            hightlights_path: None,
             ui: UiConfig::default(),
         }
     }

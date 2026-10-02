@@ -8,9 +8,10 @@ use ratatui::{
 
 use crate::{
     app::App,
-    configs::ThemeConfig,
+    configs::{KeywordHighlight, ThemeConfig},
     terminal::{MaxicomCursor, MaxicomTerminal},
     types::FocusTarget,
+    ui::common::apply_keyword_highlights,
 };
 
 pub fn render_vt100_terminal(
@@ -19,6 +20,7 @@ pub fn render_vt100_terminal(
     area: Rect,
     outer_area: Rect,
     theme: &ThemeConfig,
+    highlights: &[KeywordHighlight],
 ) {
     let view_height = area.height as usize;
     let focus = app.focus_target();
@@ -38,6 +40,8 @@ pub fn render_vt100_terminal(
         .filling_char(&app.settings().terminal_mode.empty_fill_char);
 
     frame.render_widget(term_widget, area);
+
+    apply_keyword_highlights(frame.buffer_mut(), area, highlights);
 
     let (grid_rows, cols) = app.terminal_mode.get_vt100_size();
     let max_sb = app.terminal_mode.get_max_scrollback();

@@ -1,4 +1,5 @@
 use ratatui::{
+    buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -8,7 +9,7 @@ use std::fmt::Write;
 
 use crate::{
     app::App,
-    configs::{InputMode, ThemeConfig},
+    configs::{InputMode, KeywordHighlight, ThemeConfig},
     types::FocusTarget,
 };
 
@@ -268,4 +269,44 @@ pub fn apply_search_highlight(
     }
 
     out_spans
+}
+
+pub fn apply_keyword_highlights(buf: &mut Buffer, area: Rect, highlights: &[KeywordHighlight]) {
+    if highlights.is_empty() {
+        return;
+    }
+
+    for row in area.top()..area.bottom() {
+        let mut line_str = String::with_capacity(area.width as usize);
+        for col in area.left()..area.right() {
+            line_str.push_str(buf[(col, row)].symbol());
+        }
+
+        for hl in highlights {
+            if hl.pattern.is_empty() {
+                continue;
+            }
+
+            for (byte_offset, _) in line_str.match_indices(&hl.pattern) {
+                let start_char_col = line_str[..byte_offset].chars().count();
+                let match_len_chars = hl.pattern.chars().count();
+
+                for char_offset in 0..match_len_chars {
+                    let col = area.left() + (start_char_col + char_offset) as u16;
+                    if col >= area.right() {
+                        break;
+                    }
+
+                    let cell = &mut buf[(col, row)];
+                    if let Some(fg) = hl.style.fg {
+                        cell.set_fg(fg);
+                    }
+                    if let Some(bg) = hl.style.bg {
+                        cell.set_bg(bg);
+                    }
+                    cell.set_style(cell.style().add_modifier(hl.style.add_modifier));
+                }
+            }
+        }
+    }
 }

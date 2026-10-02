@@ -62,8 +62,6 @@ fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
         Err(err) => {
-            // Because TerminalGuard dropped BEFORE this point,
-            // stderr is back to standard terminal mode and readable!
             eprintln!("maxicom: fatal error: {err}");
             ExitCode::FAILURE
         }
@@ -83,9 +81,11 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let settings = configs.settings;
     let theme = configs.theme;
     let keybindings = configs.keybindings;
+    let highlights = configs.highlights;
 
     let key_resolver = KeyResolver::try_new(&keybindings)
         .expect("keybindings were already validated during config loading");
+    let highlight_rules = highlights.compile_rules();
 
     let console_args = match parse_args() {
         Ok(serial::ParseOutcome::Config(config)) => config,
@@ -212,7 +212,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
         let mut post_render_effect = PostRenderEffect::None;
         guard.terminal.draw(|frame| {
-            post_render_effect = render(&mut app, &theme, frame);
+            post_render_effect = render(&mut app, &theme, frame, &highlight_rules);
         })?;
 
         match post_render_effect {
