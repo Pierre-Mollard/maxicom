@@ -9,6 +9,7 @@ use crate::types::LogEntry;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SearchMatch {
     pub line_idx: usize,
+    pub col_idx: usize,
     pub occurrence_in_line: usize,
 }
 
@@ -32,9 +33,11 @@ impl SearchState {
         let q = self.query_str().to_lowercase();
         for (line_idx, entry) in history.iter().enumerate() {
             let line_lower = entry.text.to_lowercase();
-            for (occurrence, _) in line_lower.match_indices(&q).enumerate() {
+            for (occurrence, (byte_idx, _)) in line_lower.match_indices(&q).enumerate() {
+                let col_idx = entry.text[..byte_idx].chars().count();
                 self.matches.push(SearchMatch {
                     line_idx,
+                    col_idx,
                     occurrence_in_line: occurrence,
                 });
             }
@@ -56,9 +59,11 @@ impl SearchState {
 
         for (line_idx, line_text) in all_lines.iter().enumerate() {
             let line_lower = line_text.to_lowercase();
-            for (occurrence, _) in line_lower.match_indices(&q).enumerate() {
+            for (occurrence, (byte_idx, _)) in line_lower.match_indices(&q).enumerate() {
+                let col_idx = line_text[..byte_idx].chars().count();
                 self.matches.push(SearchMatch {
                     line_idx,
+                    col_idx,
                     occurrence_in_line: occurrence,
                 });
             }
@@ -67,6 +72,12 @@ impl SearchState {
         if self.current_match >= self.matches.len() {
             self.current_match = self.matches.len().saturating_sub(1);
         }
+    }
+
+    pub fn current_match_position(&self) -> Option<(usize, usize)> {
+        self.matches
+            .get(self.current_match)
+            .map(|m| (m.line_idx, m.col_idx))
     }
 
     pub fn next_match(&mut self) -> Option<usize> {

@@ -388,7 +388,17 @@ impl LineMode {
             SearchModeAction::Cancel => {
                 self.search_state.toggle(false);
             }
-            SearchModeAction::Confirm => todo!(),
+            SearchModeAction::Confirm => {
+                let match_pos = self.search_state.current_match_position();
+                self.search_state.toggle(false);
+
+                if let Some((row, _col)) = match_pos {
+                    self.copy_state.enter_at(row, 0);
+                    // TODO: handle col (doesnt work with wrap/timestampe)
+                } else {
+                    self.copy_state.enter_at(0, 0);
+                }
+            }
             SearchModeAction::HandleKey(key_event) => {
                 if self.search_state.active {
                     self.handle_input_search(key_event);
