@@ -199,7 +199,7 @@ pub fn border_style_for(
     if !app_focused {
         Style::default().fg(Color::DarkGray)
     } else if target == current {
-        theme.border.style
+        *theme.border
     } else {
         Style::default().fg(Color::DarkGray)
     }

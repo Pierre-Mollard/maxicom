@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(into = "ConfigStyleDef", from = "ConfigStyleDef")]
 pub struct ConfigStyle {
-    pub style: Style,
+    style: Style,
 }
 
 impl ConfigStyle {
@@ -24,7 +24,7 @@ impl ConfigStyle {
         }
     }
 
-    pub fn to_style(self) -> Style {
+    pub const fn to_style(self) -> Style {
         self.style
     }
 }
@@ -58,6 +58,8 @@ enum ConfigStyleDef {
         fg: Option<Color>,
         #[serde(skip_serializing_if = "Option::is_none")]
         bg: Option<Color>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        underline_color: Option<Color>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         bold: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -67,7 +69,15 @@ enum ConfigStyleDef {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         underlined: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        slow_blink: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        rapid_blink: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         reversed: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        hidden: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        crossed: bool,
     },
 }
 
@@ -78,11 +88,16 @@ impl From<ConfigStyleDef> for ConfigStyle {
             ConfigStyleDef::Detailed {
                 fg,
                 bg,
+                underline_color,
                 bold,
                 dim,
                 italic,
                 underlined,
+                slow_blink,
+                rapid_blink,
                 reversed,
+                hidden,
+                crossed,
             } => {
                 let mut s = Style::default();
                 if let Some(c) = fg {
@@ -90,6 +105,9 @@ impl From<ConfigStyleDef> for ConfigStyle {
                 }
                 if let Some(c) = bg {
                     s = s.bg(c);
+                }
+                if let Some(uc) = underline_color {
+                    s = s.underline_color(uc);
                 }
                 if bold {
                     s = s.add_modifier(Modifier::BOLD);
@@ -103,8 +121,20 @@ impl From<ConfigStyleDef> for ConfigStyle {
                 if underlined {
                     s = s.add_modifier(Modifier::UNDERLINED);
                 }
+                if slow_blink {
+                    s = s.add_modifier(Modifier::SLOW_BLINK);
+                }
+                if rapid_blink {
+                    s = s.add_modifier(Modifier::RAPID_BLINK);
+                }
                 if reversed {
                     s = s.add_modifier(Modifier::REVERSED);
+                }
+                if hidden {
+                    s = s.add_modifier(Modifier::HIDDEN);
+                }
+                if crossed {
+                    s = s.add_modifier(Modifier::CROSSED_OUT);
                 }
                 ConfigStyle { style: s }
             }
@@ -112,13 +142,13 @@ impl From<ConfigStyleDef> for ConfigStyle {
     }
 }
 
-// to serialize
 impl From<ConfigStyle> for ConfigStyleDef {
     fn from(t: ConfigStyle) -> Self {
         let style = t.style;
         let mods = style.add_modifier;
 
         if style.bg.is_none()
+            && style.underline_color.is_none()
             && mods.is_empty()
             && let Some(fg) = style.fg
         {
@@ -128,11 +158,16 @@ impl From<ConfigStyle> for ConfigStyleDef {
         ConfigStyleDef::Detailed {
             fg: style.fg,
             bg: style.bg,
+            underline_color: style.underline_color,
             bold: mods.contains(Modifier::BOLD),
             dim: mods.contains(Modifier::DIM),
             italic: mods.contains(Modifier::ITALIC),
             underlined: mods.contains(Modifier::UNDERLINED),
+            slow_blink: mods.contains(Modifier::SLOW_BLINK),
+            rapid_blink: mods.contains(Modifier::RAPID_BLINK),
             reversed: mods.contains(Modifier::REVERSED),
+            hidden: mods.contains(Modifier::HIDDEN),
+            crossed: mods.contains(Modifier::CROSSED_OUT),
         }
     }
 }

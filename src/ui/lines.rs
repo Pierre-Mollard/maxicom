@@ -81,7 +81,7 @@ pub fn history_entry_to_line(
 
     if timestamp_in_line {
         let time = entry.timestamp.format(timestamp_f).to_string();
-        prefix_spans.push(Span::styled(time, theme.timestamp_line.style));
+        prefix_spans.push(Span::styled(time, *theme.timestamp_line));
     }
 
     prefix_spans.push(Span::styled(prefix_str.to_string(), theme.line_prefix));
@@ -176,7 +176,7 @@ pub fn render_monitor(
         }
 
         let partial_prefix = app.settings().line_mode.line_partial_prefix.to_string();
-        let partial_prefix_style = theme.line_partial_prefix.style;
+        let partial_prefix_style = *theme.line_partial_prefix;
         partial_spans.push(Span::styled(partial_prefix, partial_prefix_style));
         partial_spans.extend(format_line_content(&partial_raw, display_mode));
         history_lines.push(Line::from(partial_spans));
