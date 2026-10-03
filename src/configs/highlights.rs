@@ -4,42 +4,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct HighlightStyle {
-    pub fg: Option<Color>,
-    pub bg: Option<Color>,
-    pub bold: bool,
-    pub italic: bool,
-}
-// TODO: factorize style from highlights and theme
-
-impl HighlightStyle {
-    pub fn to_style(self) -> Style {
-        let mut s = Style::default();
-        if let Some(fg) = self.fg {
-            s = s.fg(fg);
-        }
-        if let Some(bg) = self.bg {
-            s = s.bg(bg);
-        }
-        if self.bold {
-            s = s.add_modifier(Modifier::BOLD);
-        }
-        if self.italic {
-            s = s.add_modifier(Modifier::ITALIC);
-        }
-        s
-    }
-}
+use crate::configs::style::ConfigStyle;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HighlightConfig {
     #[serde(flatten)]
-    pub rules: BTreeMap<String, HighlightStyle>,
+    pub rules: BTreeMap<String, ConfigStyle>,
 }
 
 impl Default for HighlightConfig {
@@ -48,33 +21,24 @@ impl Default for HighlightConfig {
 
         rules.insert(
             "ERROR".to_string(),
-            HighlightStyle {
-                fg: Some(Color::White),
-                bg: Some(Color::Red),
-                bold: true,
-                italic: false,
-            },
+            ConfigStyle::new(
+                Style::default()
+                    .fg(Color::White)
+                    .bg(Color::Red)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            ),
         );
 
         rules.insert(
             "WARN".to_string(),
-            HighlightStyle {
-                fg: Some(Color::Yellow),
-                bg: None,
-                bold: true,
-                italic: false,
-            },
+            ConfigStyle::new(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            ),
         );
 
-        rules.insert(
-            "ESP_OK".to_string(),
-            HighlightStyle {
-                fg: Some(Color::Green),
-                bg: None,
-                bold: false,
-                italic: false,
-            },
-        );
+        rules.insert("ESP_OK".to_string(), ConfigStyle::from_fg(Color::Green));
 
         Self { rules }
     }

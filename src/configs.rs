@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 pub mod highlights;
 pub mod keybindings;
 pub mod settings;
+pub mod style;
 pub mod theme;
 
 // Re-exports
