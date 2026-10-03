@@ -196,12 +196,10 @@ pub fn border_style_for(
     app_focused: bool,
     theme: &ThemeConfig,
 ) -> Style {
-    let base_color = theme.border;
-
     if !app_focused {
         Style::default().fg(Color::DarkGray)
     } else if target == current {
-        Style::default().fg(base_color).add_modifier(Modifier::BOLD)
+        theme.border.style
     } else {
         Style::default().fg(Color::DarkGray)
     }

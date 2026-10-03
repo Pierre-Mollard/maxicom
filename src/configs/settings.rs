@@ -190,6 +190,8 @@ pub struct LineModeConfig {
     pub wrap_mode: WrapMode,
     pub max_history_lines: usize,
     pub display_partial_rx: bool,
+    pub line_prefix: String,
+    pub line_partial_prefix: String,
     pub logging: LineLogConfig,
 }
 
@@ -202,6 +204,8 @@ impl Default for LineModeConfig {
             wrap_mode: WrapMode::default(),
             max_history_lines: 1000,
             display_partial_rx: true,
+            line_prefix: String::from("│ "),
+            line_partial_prefix: String::from("│… "),
             logging: LineLogConfig::default(),
         }
     }
@@ -353,7 +357,7 @@ impl Default for SettingsConfig {
             rx_buffer_size: 4096,
             input_mode: InputMode::default(),
             display_live_timestamp: true,
-            timestamp_format: String::from("%H:%M:%S%.3f"),
+            timestamp_format: String::from("[%H:%M:%S%.3f]"),
             line_mode: LineModeConfig::default(),
             terminal_mode: TerminalModeConfig::default(),
             theme_path: None,

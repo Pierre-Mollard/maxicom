@@ -72,6 +72,7 @@ pub fn history_entry_to_line(
     timestamp_in_line: bool,
     mode: LineDisplayMode,
     timestamp_f: &str,
+    prefix_str: &str,
     search_query: &str,
     active_occurrence: Option<usize>,
     theme: &ThemeConfig,
@@ -79,16 +80,11 @@ pub fn history_entry_to_line(
     let mut prefix_spans = Vec::new();
 
     if timestamp_in_line {
-        let time = entry.timestamp.format(timestamp_f);
-        let label = format!("[{time}]");
-        prefix_spans.push(Span::styled(
-            label,
-            Style::default().fg(theme.timestamp_line),
-        ));
+        let time = entry.timestamp.format(timestamp_f).to_string();
+        prefix_spans.push(Span::styled(time, theme.timestamp_line.style));
     }
 
-    // TODO: custom outside and inside (|)
-    prefix_spans.push(Span::styled("| ", Style::default().fg(Color::DarkGray)));
+    prefix_spans.push(Span::styled(prefix_str.to_string(), theme.line_prefix));
 
     let content_spans = format_line_content(&entry.text, mode);
 
@@ -138,6 +134,7 @@ pub fn render_monitor(
                     timestamp_in_line,
                     display_mode,
                     &app.settings().timestamp_format,
+                    &app.settings().line_mode.line_prefix,
                     search_query,
                     active_occ,
                     theme,
@@ -154,6 +151,7 @@ pub fn render_monitor(
                     timestamp_in_line,
                     display_mode,
                     &app.settings().timestamp_format,
+                    &app.settings().line_mode.line_prefix,
                     "",
                     None,
                     theme,
@@ -171,15 +169,15 @@ pub fn render_monitor(
         if app.settings().display_live_timestamp
             && let Some(partial_timestamp) = app.line_mode.partial_line_timestamp()
         {
-            let time = partial_timestamp.format(&app.settings().timestamp_format);
-            let label = format!("[{time}]");
-            partial_spans.push(Span::styled(
-                label,
-                Style::default().fg(theme.timestamp_line),
-            ));
+            let time = partial_timestamp
+                .format(&app.settings().timestamp_format)
+                .to_string();
+            partial_spans.push(Span::styled(time, theme.timestamp_line));
         }
 
-        partial_spans.push(Span::styled("|p ", Style::default().fg(Color::DarkGray)));
+        let partial_prefix = app.settings().line_mode.line_partial_prefix.to_string();
+        let partial_prefix_style = theme.line_partial_prefix.style;
+        partial_spans.push(Span::styled(partial_prefix, partial_prefix_style));
         partial_spans.extend(format_line_content(&partial_raw, display_mode));
         history_lines.push(Line::from(partial_spans));
     }
@@ -274,9 +272,6 @@ pub fn render_monitor(
 
         // selection area
         if copy_state.selection_anchor.is_some() {
-            let select_bg = theme.selection_bg;
-            let select_fg = Color::White;
-
             for r in 0..area.height as usize {
                 let visual_row = paragraph_y_offset + r;
                 if visual_row >= total_visual_rows {
@@ -287,8 +282,7 @@ pub fn render_monitor(
                     let visual_col = line_x_offset + c;
                     if copy_state.is_selected(visual_row, visual_col) {
                         let cell = &mut buf[(area.x + c as u16, area.y + r as u16)];
-                        cell.set_bg(select_bg);
-                        cell.set_fg(select_fg);
+                        cell.set_style(theme.selection);
                     }
                 }
             }

@@ -1,7 +1,6 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
     widgets::{Block, Paragraph},
 };
 
@@ -54,7 +53,7 @@ pub fn render_status_bar(app: &App, frame: &mut Frame, area: Rect, theme: &Theme
     let left_text = sb_cfg.format_template(&sb_cfg.left, app);
     let right_text = sb_cfg.format_template(&sb_cfg.right, app);
 
-    let bar_style = Style::default().bg(theme.status_bar_bg).fg(Color::White);
+    let bar_style = theme.status_bar_bg;
     frame.render_widget(Block::default().style(bar_style), area);
 
     let left_paragraph = Paragraph::new(left_text).style(bar_style);

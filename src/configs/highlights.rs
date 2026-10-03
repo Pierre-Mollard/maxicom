@@ -15,6 +15,7 @@ pub struct HighlightStyle {
     pub bold: bool,
     pub italic: bool,
 }
+// TODO: factorize style from highlights and theme
 
 impl HighlightStyle {
     pub fn to_style(self) -> Style {

@@ -138,9 +138,6 @@ pub fn render_vt100_terminal(
 
         // selection area
         if copy_state.selection_anchor.is_some() {
-            let select_bg = theme.selection_bg;
-            let select_fg = Color::White;
-
             for r in 0..area.height as usize {
                 let emulator_row = r + pan_y;
                 if emulator_row >= grid_rows as usize {
@@ -152,8 +149,7 @@ pub fn render_vt100_terminal(
                     let world_col = c + pan_x;
                     if copy_state.is_selected(world_row, world_col) {
                         let cell = &mut buf[(area.x + c as u16, area.y + r as u16)];
-                        cell.set_bg(select_bg);
-                        cell.set_fg(select_fg);
+                        cell.set_style(theme.selection);
                     }
                 }
             }
@@ -294,14 +290,14 @@ pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect, theme: 
         if row_has_text && let Some(ts) = maybe_ts {
             let formatted = ts.format(&app.settings().timestamp_format).to_string();
             lines.push(Line::from(vec![
-                Span::styled(formatted, Style::default().fg(theme.timestamp)),
-                Span::styled("│", Style::default().fg(theme.timestamp)),
+                Span::styled(formatted, theme.timestamp),
+                Span::styled("│", theme.timestamp),
             ]));
         } else {
             let spaces = " ".repeat(ts_width);
             lines.push(Line::from(vec![
                 Span::raw(spaces),
-                Span::styled("│", Style::default().fg(theme.timestamp_bg)),
+                Span::styled("│", theme.timestamp_bg),
             ]));
         }
     }
