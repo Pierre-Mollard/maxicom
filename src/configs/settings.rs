@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    fmt::Display,
     fs,
     path::{Path, PathBuf},
 };
@@ -61,6 +62,30 @@ impl TextEncoding {
                 Cow::Owned(utf8_string.into_bytes())
             }
         }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Utf8 => "UTF8",
+            Self::Ascii => "ASCII",
+            Self::Cp437 => "CP437",
+            Self::Latin1 => "LATIN1",
+        }
+    }
+
+    pub fn toggle(&mut self) {
+        *self = match *self {
+            Self::Utf8 => Self::Ascii,
+            Self::Ascii => Self::Cp437,
+            Self::Cp437 => Self::Latin1,
+            Self::Latin1 => Self::Utf8,
+        };
+    }
+}
+
+impl Display for TextEncoding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 

@@ -377,6 +377,13 @@ impl App {
             SettingKey::DisplayTimestamp => {
                 self.settings.display_live_timestamp = !self.settings.display_live_timestamp;
             }
+            SettingKey::TextEncoding => {
+                self.settings.encoding.toggle();
+                self.notify_info(format!(
+                    "Rx Text Encoding is {}",
+                    self.settings.encoding.as_str()
+                ));
+            }
         }
     }
 

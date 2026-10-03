@@ -187,8 +187,20 @@ impl KeyBindingAction {
     pub fn to_action(self, app: &App) -> Action {
         match self {
             KeyBindingAction::Quit => Action::App(AppAction::Quit),
-            KeyBindingAction::ToggleInputMode => {
+            KeyBindingAction::SKInputMode => {
                 Action::App(AppAction::ToggleSetting(SettingKey::InputMode))
+            }
+            KeyBindingAction::SKLocalEcho => {
+                Action::App(AppAction::ToggleSetting(SettingKey::LocalEcho))
+            }
+            KeyBindingAction::SKLineWrap => {
+                Action::App(AppAction::ToggleSetting(SettingKey::LineWrap))
+            }
+            KeyBindingAction::SKDisplayTimestamp => {
+                Action::App(AppAction::ToggleSetting(SettingKey::DisplayTimestamp))
+            }
+            KeyBindingAction::SKTextEncoding => {
+                Action::App(AppAction::ToggleSetting(SettingKey::TextEncoding))
             }
             KeyBindingAction::Help => Action::App(AppAction::OpenOverlay(Overlay::Help)),
             KeyBindingAction::Settings => Action::App(AppAction::OpenOverlay(Overlay::Settings)),

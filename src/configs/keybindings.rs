@@ -21,7 +21,11 @@ impl std::error::Error for UnknownActionError {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyBindingAction {
     Quit,
-    ToggleInputMode,
+    SKInputMode,
+    SKLocalEcho,
+    SKLineWrap,
+    SKDisplayTimestamp,
+    SKTextEncoding,
     Help,
     Settings,
     ToggleLogging,
@@ -49,7 +53,11 @@ impl FromStr for KeyBindingAction {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "quit" => Ok(KeyBindingAction::Quit),
-            "toggle_input_mode" => Ok(KeyBindingAction::ToggleInputMode),
+            "toggle_input_mode" => Ok(KeyBindingAction::SKInputMode),
+            "toggle_local_echo" => Ok(KeyBindingAction::SKLocalEcho),
+            "toggle_line_wrap" => Ok(KeyBindingAction::SKLineWrap),
+            "toggle_display_timestamp" => Ok(KeyBindingAction::SKDisplayTimestamp),
+            "toggle_text_encoding" => Ok(KeyBindingAction::SKTextEncoding),
             "help" => Ok(KeyBindingAction::Help),
             "settings" => Ok(KeyBindingAction::Settings),
             "toggle_logging" => Ok(KeyBindingAction::ToggleLogging),
@@ -78,7 +86,11 @@ impl std::fmt::Display for KeyBindingAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
             Self::Quit => "quit",
-            Self::ToggleInputMode => "toggle_input_mode",
+            Self::SKInputMode => "toggle_input_mode",
+            Self::SKLocalEcho => "toggle_local_echo",
+            Self::SKLineWrap => "toggle_line_wrap",
+            Self::SKDisplayTimestamp => "toggle_display_timestamp",
+            Self::SKTextEncoding => "toggle_text_encoding",
             Self::Help => "help",
             Self::Settings => "settings",
             Self::ToggleLogging => "toggle_logging",
@@ -613,7 +625,8 @@ impl Default for KeyBindingsConfig {
         let prefix_actions = default_bindings! {
             "q"     => KeyBindingAction::Quit,
             "x"     => KeyBindingAction::Quit,
-            "m"     => KeyBindingAction::ToggleInputMode,
+            "m"     => KeyBindingAction::SKInputMode,
+            "o"     => KeyBindingAction::SKTextEncoding,
             "z"     => KeyBindingAction::Help,
             "s"     => KeyBindingAction::Settings,
             "l"     => KeyBindingAction::ToggleLogging,

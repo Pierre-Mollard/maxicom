@@ -41,6 +41,7 @@ impl Overlay {
                 _ => OverlayResponse::Handled,
             },
             Overlay::Settings => match key.code {
+                // TODO: automate or add missing
                 KeyCode::Esc => OverlayResponse::Close,
                 KeyCode::Char('e' | 'E') => OverlayResponse::ToggleSetting(SettingKey::LocalEcho),
                 KeyCode::Char('w' | 'W') => OverlayResponse::ToggleSetting(SettingKey::LineWrap),
@@ -381,4 +382,5 @@ pub enum SettingKey {
     InputMode,
     LineWrap,
     DisplayTimestamp,
-} // TODO: add all settings
+    TextEncoding,
+}
