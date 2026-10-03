@@ -13,7 +13,7 @@ use crate::{
 };
 
 pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) {
-    let area = centered_rect(55, 12, frame.area());
+    let area = centered_rect(55, 11, frame.area());
     frame.render_widget(Clear, area);
 
     let mode_str = match app.settings().input_mode {
@@ -34,6 +34,7 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
     } else {
         "OFF"
     };
+    let encoding_str = app.settings().encoding.as_str();
 
     let text = vec![
         Line::from(Span::styled(
@@ -62,6 +63,11 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
             Span::styled("[T] ", Style::default().fg(Color::Yellow)),
             Span::raw("Timestamps  : "),
             Span::styled(timestamp_str, Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(vec![
+            Span::styled("[X] ", Style::default().fg(Color::Yellow)),
+            Span::raw("Rx Encoding : "),
+            Span::styled(encoding_str, Style::default().fg(Color::Cyan)),
         ]),
         Line::from(""),
         Line::from(Span::styled(

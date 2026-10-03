@@ -41,13 +41,15 @@ impl Overlay {
                 _ => OverlayResponse::Handled,
             },
             Overlay::Settings => match key.code {
-                // TODO: automate or add missing
                 KeyCode::Esc => OverlayResponse::Close,
                 KeyCode::Char('e' | 'E') => OverlayResponse::ToggleSetting(SettingKey::LocalEcho),
                 KeyCode::Char('w' | 'W') => OverlayResponse::ToggleSetting(SettingKey::LineWrap),
                 KeyCode::Char('m' | 'M') => OverlayResponse::ToggleSetting(SettingKey::InputMode),
                 KeyCode::Char('t' | 'T') => {
                     OverlayResponse::ToggleSetting(SettingKey::DisplayTimestamp)
+                }
+                KeyCode::Char('x' | 'X') => {
+                    OverlayResponse::ToggleSetting(SettingKey::TextEncoding)
                 }
                 _ => OverlayResponse::Handled,
             },
