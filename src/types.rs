@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{cell::Cell, path::PathBuf};
 
 /// Module to reduce inter modules exchange or something
 use chrono::{DateTime, Local};
@@ -165,12 +165,12 @@ impl HelpCategory {
 
     pub fn title(self) -> &'static str {
         match self {
-            Self::Prefix => "Prefix Commands",
-            Self::Direct => "Direct Global",
-            Self::CopyMode => "Copy Mode",
-            Self::Search => "Search Mode",
-            Self::LineMode => "Line Mode",
-            Self::TerminalMode => "Terminal Mode",
+            Self::Prefix => "Prefixed",
+            Self::Direct => "Directs",
+            Self::CopyMode => "Copy",
+            Self::Search => "Search",
+            Self::LineMode => "Line",
+            Self::TerminalMode => "Terminal",
         }
     }
 
@@ -201,6 +201,7 @@ impl HelpCategory {
 pub struct HelpDialog {
     pub category: HelpCategory,
     pub scroll: usize,
+    pub max_scroll: Cell<usize>,
 }
 
 impl HelpDialog {
@@ -209,19 +210,23 @@ impl HelpDialog {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> OverlayResponse {
+        let max = self.max_scroll.get();
+
         match key.code {
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
                 self.category = self.category.next();
                 self.scroll = 0;
+                self.max_scroll.set(0);
                 OverlayResponse::Handled
             }
             KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
                 self.category = self.category.prev();
                 self.scroll = 0;
+                self.max_scroll.set(0);
                 OverlayResponse::Handled
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.scroll = self.scroll.saturating_add(1);
+                self.scroll = self.scroll.saturating_add(1).min(max);
                 OverlayResponse::Handled
             }
             KeyCode::Up | KeyCode::Char('k') => {
@@ -229,14 +234,22 @@ impl HelpDialog {
                 OverlayResponse::Handled
             }
             KeyCode::PageDown => {
-                self.scroll = self.scroll.saturating_add(5);
+                self.scroll = self.scroll.saturating_add(5).min(max);
                 OverlayResponse::Handled
             }
             KeyCode::PageUp => {
                 self.scroll = self.scroll.saturating_sub(5);
                 OverlayResponse::Handled
             }
-            _ => OverlayResponse::Quit,
+            KeyCode::Home => {
+                self.scroll = 0;
+                OverlayResponse::Handled
+            }
+            KeyCode::End => {
+                self.scroll = max;
+                OverlayResponse::Handled
+            }
+            _ => OverlayResponse::Close,
         }
     }
 }

@@ -181,6 +181,8 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
     let total_lines = lines.len();
     let visible_height = content_area.height as usize;
     let max_scroll = total_lines.saturating_sub(visible_height);
+
+    dialog.max_scroll.set(max_scroll);
     let current_scroll = dialog.scroll.min(max_scroll);
 
     let paragraph = Paragraph::new(lines).scroll((current_scroll as u16, 0));
