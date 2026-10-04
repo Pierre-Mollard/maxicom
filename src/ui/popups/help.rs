@@ -1,90 +1,209 @@
 use ratatui::{
     Frame,
+    layout::{Constraint, Direction, Layout, Margin},
     style::{Color, Modifier, Style},
+    symbols,
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{
+        Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs,
+    },
 };
 
 use crate::{
     app::App,
     configs::ThemeConfig,
-    types::FocusTarget,
+    types::{FocusTarget, HelpCategory, HelpDialog},
     ui::common::{border_style_for, centered_rect},
 };
 
-pub fn render_help_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) {
-    let area = centered_rect(60, 14, frame.area());
+pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, theme: &ThemeConfig) {
+    let area = centered_rect(65, 18, frame.area());
     frame.render_widget(Clear, area);
 
-    // TODO: parse the keybindings conf / resolver
-    let help_text = vec![
-        Line::from(Span::styled(
-            "--- MaxiCom Command Keys (Prefix: Ctrl-A) ---",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("Ctrl-A H / Z  ", Style::default().fg(Color::Yellow)),
-            Span::raw(": Show this help screen"),
-        ]),
-        Line::from(vec![
-            Span::styled("Ctrl-A O / S  ", Style::default().fg(Color::Yellow)),
-            Span::raw(": Open settings menu"),
-        ]),
-        Line::from(vec![
-            Span::styled("Ctrl-A M      ", Style::default().fg(Color::Yellow)),
-            Span::raw(": Toggle Line / Raw mode"),
-        ]),
-        Line::from(vec![
-            Span::styled("Ctrl-A V", Style::default().fg(Color::Yellow)),
-            Span::raw(": Auto set local emulator terminal size"),
-        ]),
-        Line::from(vec![Span::styled(
-            "May loose data history current of screen",
-            Style::default().fg(Color::Red),
-        )])
-        .right_aligned(),
-        Line::from(vec![
-            Span::styled("Ctrl-A T", Style::default().fg(Color::Yellow)),
-            Span::raw(": Auto set remote bash terminal size"),
-        ]),
-        Line::from(vec![Span::styled(
-            "Remote must be BASH SHELL",
-            Style::default().fg(Color::Red),
-        )])
-        .right_aligned(),
-        Line::from(vec![
-            Span::styled("Ctrl-A Q      ", Style::default().fg(Color::Yellow)),
-            Span::raw(": Quit MaxiCom"),
-        ]),
-        Line::from(""),
-        Line::from(Span::styled(
-            "--- Navigation ---",
-            Style::default().fg(Color::Cyan),
-        )),
-        Line::from("PageUp / PageDown : Scroll serial history"),
-        Line::from("Shift + Home/End  : Jump to start / live bottom"),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Press any key to close",
-            Style::default().fg(Color::DarkGray),
-        )),
-    ];
-
-    let popup = Paragraph::new(help_text).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style_for(
-                FocusTarget::Overlay,
-                app.focus_target(),
-                app.is_app_focused(),
-                theme,
-            ))
-            .title(" Help [Keybindings] ")
-            .style(Style::default().fg(Color::White)),
+    let border_style = border_style_for(
+        FocusTarget::Overlay,
+        app.focus_target(),
+        app.is_app_focused(),
+        theme,
     );
 
-    frame.render_widget(popup, area);
+    let outer_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .title(" Help [Keybindings] ")
+        .title_bottom(Line::from(vec![
+            Span::styled(" Tab/Arrows: ", Style::default().fg(Color::DarkGray)),
+            Span::raw("Category  "),
+            Span::styled("j/k/Scroll: ", Style::default().fg(Color::DarkGray)),
+            Span::raw("Move  "),
+            Span::styled("Esc/q: ", Style::default().fg(Color::DarkGray)),
+            Span::raw("Close "),
+        ]));
+
+    let inner_area = outer_block.inner(area);
+    frame.render_widget(outer_block, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(0)])
+        .split(inner_area);
+
+    let tabs_area = chunks[0];
+    let content_area = chunks[1];
+
+    let tab_titles: Vec<Line> = HelpCategory::ALL
+        .iter()
+        .map(|cat| {
+            let style = if *cat == dialog.category {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Gray)
+            };
+            Line::from(cat.title()).style(style)
+        })
+        .collect();
+
+    let selected_index = HelpCategory::ALL
+        .iter()
+        .position(|&c| c == dialog.category)
+        .unwrap_or(0);
+
+    let tabs = Tabs::new(tab_titles)
+        .select(selected_index)
+        .divider(symbols::line::VERTICAL)
+        .highlight_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::UNDERLINED),
+        );
+    frame.render_widget(tabs, tabs_area);
+
+    let prefix_str = format!("{}", app.key_resolver.prefix);
+    let mut lines = Vec::new();
+
+    match dialog.category {
+        HelpCategory::Prefix => {
+            lines.push(Line::from(Span::styled(
+                format!("Prefix Leader Key: <{prefix_str}>"),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::from(""));
+
+            let mut sorted_keys: Vec<_> = app.key_resolver.prefix_actions.iter().collect();
+            sorted_keys.sort_by_key(|(k, _)| format!("{k}"));
+
+            for (pattern, action) in sorted_keys {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!(" {prefix_str} + {:<10} ", format!("{pattern}")),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Span::raw(format!("-> {}", action)),
+                ]));
+            }
+        }
+        HelpCategory::Direct => {
+            let mut sorted_keys: Vec<_> = app.key_resolver.direct_actions.iter().collect();
+            sorted_keys.sort_by_key(|(k, _)| format!("{k}"));
+
+            for (pattern, action) in sorted_keys {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!(" {:<18} ", format!("{pattern}")),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Span::raw(format!("-> {}", action)),
+                ]));
+            }
+        }
+        HelpCategory::CopyMode => {
+            let mut sorted_keys: Vec<_> = app.key_resolver.copy_actions.iter().collect();
+            sorted_keys.sort_by_key(|(k, _)| format!("{k}"));
+
+            for (pattern, action) in sorted_keys {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!(" {:<18} ", format!("{pattern}")),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Span::raw(format!("-> {}", action)),
+                ]));
+            }
+        }
+        HelpCategory::Search => {
+            let mut sorted_keys: Vec<_> = app.key_resolver.search_actions.iter().collect();
+            sorted_keys.sort_by_key(|(k, _)| format!("{k}"));
+
+            for (pattern, action) in sorted_keys {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!(" {:<18} ", format!("{pattern}")),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Span::raw(format!("-> {}", action)),
+                ]));
+            }
+        }
+        HelpCategory::LineMode => {
+            let mut sorted_keys: Vec<_> = app.key_resolver.line_actions.iter().collect();
+            sorted_keys.sort_by_key(|(k, _)| format!("{k}"));
+
+            for (pattern, action) in sorted_keys {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!(" {:<18} ", format!("{pattern}")),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Span::raw(format!("-> {}", action)),
+                ]));
+            }
+        }
+        HelpCategory::TerminalMode => {
+            let mut sorted_keys: Vec<_> = app.key_resolver.terminal_actions.iter().collect();
+            sorted_keys.sort_by_key(|(k, _)| format!("{k}"));
+
+            for (pattern, action) in sorted_keys {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!(" {:<18} ", format!("{pattern}")),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Span::raw(format!("-> {}", action)),
+                ]));
+            }
+        }
+    }
+
+    let total_lines = lines.len();
+    let visible_height = content_area.height as usize;
+    let max_scroll = total_lines.saturating_sub(visible_height);
+    let current_scroll = dialog.scroll.min(max_scroll);
+
+    let paragraph = Paragraph::new(lines).scroll((current_scroll as u16, 0));
+    frame.render_widget(paragraph, content_area);
+
+    if total_lines > visible_height {
+        let mut scrollbar_state = ScrollbarState::new(max_scroll)
+            .viewport_content_length(visible_height)
+            .position(current_scroll);
+
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("▲"))
+            .end_symbol(Some("▼"))
+            .thumb_symbol("█")
+            .track_symbol(Some("│"));
+
+        frame.render_stateful_widget(
+            scrollbar,
+            content_area.inner(Margin {
+                vertical: 0,
+                horizontal: 0,
+            }),
+            &mut scrollbar_state,
+        );
+    }
 }

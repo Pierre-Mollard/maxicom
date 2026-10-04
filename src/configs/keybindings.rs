@@ -431,6 +431,43 @@ impl FromStr for KeyPattern {
     }
 }
 
+impl std::fmt::Display for KeyPattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut parts = Vec::new();
+        if self.modifiers.contains(KeyModifiers::CONTROL) {
+            parts.push("Ctrl");
+        }
+        if self.modifiers.contains(KeyModifiers::ALT) {
+            parts.push("Alt");
+        }
+        if self.modifiers.contains(KeyModifiers::SHIFT) {
+            parts.push("Shift");
+        }
+
+        let key_str = match self.code {
+            KeyCode::Enter => "Enter".to_string(),
+            KeyCode::Esc => "Esc".to_string(),
+            KeyCode::Backspace => "Backspace".to_string(),
+            KeyCode::Tab => "Tab".to_string(),
+            KeyCode::Up => "Up".to_string(),
+            KeyCode::Down => "Down".to_string(),
+            KeyCode::Left => "Left".to_string(),
+            KeyCode::Right => "Right".to_string(),
+            KeyCode::PageUp => "PageUp".to_string(),
+            KeyCode::PageDown => "PageDown".to_string(),
+            KeyCode::Home => "Home".to_string(),
+            KeyCode::End => "End".to_string(),
+            KeyCode::F(n) => format!("F{n}"),
+            KeyCode::Char(' ') => "Space".to_string(),
+            KeyCode::Char(c) => c.to_uppercase().to_string(),
+            _ => "?".to_string(),
+        };
+
+        parts.push(&key_str);
+        write!(f, "{}", parts.join("-"))
+    }
+}
+
 pub struct KeyResolver {
     pub prefix: KeyPattern,
     pub prefix_actions: HashMap<KeyPattern, KeyBindingAction>,

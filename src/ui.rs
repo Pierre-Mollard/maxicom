@@ -150,8 +150,8 @@ pub fn render(
     render_notifications(&app.notifications, frame);
 
     match app.overlay() {
-        Some(Overlay::Help) => render_help_popup(app, frame, theme),
         Some(Overlay::Settings) => render_settings_popup(app, frame, theme),
+        Some(Overlay::Help(dialog)) => render_help_popup(app, dialog, frame, theme),
         Some(Overlay::TerminalSize(dialog)) => render_resize_popup(app, dialog, frame, theme),
         Some(Overlay::SerialSettings(dialog)) => render_reconfigure_popup(dialog, frame),
         Some(Overlay::FilePath(dialog)) => render_filepath_popup(app, dialog, frame, theme),

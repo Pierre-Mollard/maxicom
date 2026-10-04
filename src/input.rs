@@ -12,7 +12,7 @@ use crate::{
         KeyBindingAction, KeyBindingCopyAction, KeyBindingLineAction, KeyBindingSearchAction,
         KeyBindingTerminalAction, KeyPattern,
     },
-    types::{Overlay, ResizeDialog, SerialConfigDialog, SettingKey},
+    types::{HelpDialog, Overlay, ResizeDialog, SerialConfigDialog, SettingKey},
 };
 
 #[derive(Debug)]
@@ -202,7 +202,9 @@ impl KeyBindingAction {
             KeyBindingAction::SKTextEncoding => {
                 Action::App(AppAction::ToggleSetting(SettingKey::TextEncoding))
             }
-            KeyBindingAction::Help => Action::App(AppAction::OpenOverlay(Overlay::Help)),
+            KeyBindingAction::Help => {
+                Action::App(AppAction::OpenOverlay(Overlay::Help(HelpDialog::new())))
+            }
             KeyBindingAction::Settings => Action::App(AppAction::OpenOverlay(Overlay::Settings)),
             KeyBindingAction::ToggleLogging => Action::App(AppAction::ToggleLogging),
             KeyBindingAction::ResizeDialog => {
