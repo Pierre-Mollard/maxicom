@@ -9,7 +9,7 @@ use ratatui::{
 
 use crate::{
     app::App,
-    configs::{KeywordHighlight, LineDisplayMode, ThemeConfig, WrapMode},
+    configs::{KeywordHighlight, LineDisplayMode, SettingsConfig, ThemeConfig, WrapMode},
     types::{FocusTarget, ViewportSize},
     ui::{
         PostRenderEffect,
@@ -69,24 +69,25 @@ pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'stati
 
 pub fn history_entry_to_line(
     entry: &LogEntry,
-    timestamp_in_line: bool,
-    mode: LineDisplayMode,
-    timestamp_f: &str,
-    prefix_str: &str,
+    settings: &SettingsConfig,
     search_query: &str,
     active_occurrence: Option<usize>,
     theme: &ThemeConfig,
 ) -> Line<'static> {
     let mut prefix_spans = Vec::new();
+    let display_mode = settings.line_mode.display_mode;
+    let timestamp_in_line = settings.display_live_timestamp;
+    let timestamp_format = &settings.timestamp_format;
+    let line_prefix = &settings.line_mode.line_prefix;
 
     if timestamp_in_line {
-        let time = entry.timestamp.format(timestamp_f).to_string();
+        let time = entry.timestamp.format(timestamp_format).to_string();
         prefix_spans.push(Span::styled(time, *theme.timestamp_line));
     }
 
-    prefix_spans.push(Span::styled(prefix_str.to_string(), theme.line_prefix));
+    prefix_spans.push(Span::styled(line_prefix.to_string(), theme.line_prefix));
 
-    let content_spans = format_line_content(&entry.text, mode);
+    let content_spans = format_line_content(&entry.text, display_mode);
 
     if search_query.is_empty() {
         prefix_spans.extend(content_spans);
@@ -106,11 +107,9 @@ pub fn render_monitor(
     theme: &ThemeConfig,
     highlights: &[KeywordHighlight],
 ) -> PostRenderEffect {
-    let timestamp_in_line = app.settings().display_live_timestamp;
     let content_width = area.width as usize;
     let content_height = area.height as usize;
     let wrap_mode = app.settings().line_mode.wrap_mode;
-    let display_mode = app.settings().line_mode.display_mode;
     let mut post_effect = PostRenderEffect::None;
 
     app.update_viewport(ViewportSize::new(area.width, area.height));
@@ -129,34 +128,14 @@ pub fn render_monitor(
             .enumerate()
             .map(|(idx, entry)| {
                 let active_occ = app.line_mode.search().active_occurrence_for_line(idx);
-                history_entry_to_line(
-                    entry,
-                    timestamp_in_line,
-                    display_mode,
-                    &app.settings().timestamp_format,
-                    &app.settings().line_mode.line_prefix,
-                    search_query,
-                    active_occ,
-                    theme,
-                )
+                history_entry_to_line(entry, app.settings(), search_query, active_occ, theme)
             })
             .collect()
     } else {
         app.line_mode
             .history()
             .iter()
-            .map(|entry| {
-                history_entry_to_line(
-                    entry,
-                    timestamp_in_line,
-                    display_mode,
-                    &app.settings().timestamp_format,
-                    &app.settings().line_mode.line_prefix,
-                    "",
-                    None,
-                    theme,
-                )
-            })
+            .map(|entry| history_entry_to_line(entry, app.settings(), "", None, theme))
             .collect()
     };
 

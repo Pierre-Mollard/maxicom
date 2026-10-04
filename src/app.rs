@@ -147,10 +147,6 @@ impl App {
         self.overlay.as_ref()
     }
 
-    pub fn overlay_mut(&mut self) -> Option<&mut Overlay> {
-        self.overlay.as_mut()
-    }
-
     pub fn open_overlay(&mut self, overlay: Overlay) {
         self.overlay = Some(overlay);
     }
