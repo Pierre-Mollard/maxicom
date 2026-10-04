@@ -275,6 +275,7 @@ impl Default for TerminalModeConfig {
 #[serde(default)]
 pub struct StatusBarConfig {
     pub left: String,
+    pub center: String,
     pub right: String,
     pub time_format: String,
 }
@@ -282,8 +283,11 @@ pub struct StatusBarConfig {
 impl Default for StatusBarConfig {
     fn default() -> Self {
         Self {
-            left: String::from("{rec}[{mode}] {port} | {baud} | {framing} "),
-            right: String::from(" RX: {rx_bytes} | TX: {tx_bytes} | {time} {prefix}"),
+            left: String::from(
+                "[{rec}](red bold)[{prefix}](yellow bold)[{mode}](cyan bold) {port} | [{baud}](yellow) | {framing}",
+            ),
+            center: String::default(),
+            right: String::from("[RX: {rx_bytes}](gray) | [TX: {tx_bytes}](gray) | [{time}](blue)"),
             time_format: String::from("%H:%M:%S"),
         }
     }
