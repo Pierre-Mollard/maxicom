@@ -284,10 +284,12 @@ impl Default for StatusBarConfig {
     fn default() -> Self {
         Self {
             left: String::from(
-                "[{rec}](red bold)[{prefix}](yellow bold)[{mode}](cyan bold) {port} | [{baud}](yellow) | {framing}",
+                "[󰒓 ](prefix?yellow:hide)[ {mode} ](prefix?yellow:copy?magenta:search?blue:cyan bold) {port} | [{baud}](yellow)",
             ),
             center: String::default(),
-            right: String::from("[RX: {rx_bytes}](gray) | [TX: {tx_bytes}](gray) | [{time}](blue)"),
+            right: String::from(
+                "[ REC](rec?red bold:hide) | [RX: {rx_bytes}](gray) | [{time}](blue)",
+            ),
             time_format: String::from("%H:%M:%S"),
         }
     }

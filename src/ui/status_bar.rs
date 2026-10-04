@@ -7,39 +7,180 @@ use ratatui::{
 };
 
 use crate::{
-    app::App,
+    app::{App, InputContext},
     configs::{InputMode, StatusBarConfig, ThemeConfig},
 };
 
-pub fn parse_inline_style(spec: &str, base_style: Style) -> Style {
+// TODO: review this AI code (whole file) a explain how to format to the user
+
+pub fn parse_inline_style(spec: &str, base_style: Style, app: &App) -> Option<Style> {
     let mut style = base_style;
 
-    for part in spec.split_whitespace() {
-        let part_lower = part.to_ascii_lowercase();
-        match part_lower.as_str() {
-            "bold" => style = style.add_modifier(Modifier::BOLD),
-            "dim" => style = style.add_modifier(Modifier::DIM),
-            "italic" => style = style.add_modifier(Modifier::ITALIC),
-            "underlined" | "underline" => style = style.add_modifier(Modifier::UNDERLINED),
-            "reversed" | "reverse" => style = style.add_modifier(Modifier::REVERSED),
-            "reset" | "default" => style = base_style,
-            _ => {
-                if let Some(c) = part.strip_prefix("fg=") {
-                    if let Ok(color) = c.parse::<Color>() {
+    for token in tokenize_spec(spec) {
+        let resolved = evaluate_expression(token.trim(), app);
+        for part in resolved.split_whitespace() {
+            let part_lower = part.to_ascii_lowercase();
+            match part_lower.as_str() {
+                // If any resolved style is 'hide', 'hidden', or 'none', suppress this span!
+                "hide" | "hidden" | "none" => return None,
+
+                "bold" => style = style.add_modifier(Modifier::BOLD),
+                "dim" => style = style.add_modifier(Modifier::DIM),
+                "italic" => style = style.add_modifier(Modifier::ITALIC),
+                "underlined" | "underline" => style = style.add_modifier(Modifier::UNDERLINED),
+                "reversed" | "reverse" => style = style.add_modifier(Modifier::REVERSED),
+                "reset" | "default" => style = base_style,
+                _ => {
+                    if let Some(c) = part.strip_prefix("fg=") {
+                        if let Ok(color) = c.parse::<Color>() {
+                            style = style.fg(color);
+                        }
+                    } else if let Some(c) = part.strip_prefix("bg=") {
+                        if let Ok(color) = c.parse::<Color>() {
+                            style = style.bg(color);
+                        }
+                    } else if let Ok(color) = part.parse::<Color>() {
                         style = style.fg(color);
                     }
-                } else if let Some(c) = part.strip_prefix("bg=") {
-                    if let Ok(color) = c.parse::<Color>() {
-                        style = style.bg(color);
-                    }
-                } else if let Ok(color) = part.parse::<Color>() {
-                    style = style.fg(color);
                 }
             }
         }
     }
 
-    style
+    Some(style)
+}
+
+/// Splits style specs by whitespace while keeping parenthesized groups
+/// AND uncompleted ternaries ("cond?true_branch:false_branch") intact.
+fn tokenize_spec(spec: &str) -> Vec<&str> {
+    let mut tokens = Vec::new();
+    let mut paren_depth: i32 = 0;
+    let mut ternary_depth: i32 = 0;
+    let mut start = 0;
+
+    for (i, ch) in spec.char_indices() {
+        match ch {
+            '(' => paren_depth += 1,
+            ')' => paren_depth = paren_depth.saturating_sub(1),
+            '?' if paren_depth == 0 => ternary_depth += 1,
+            ':' if paren_depth == 0 => ternary_depth = ternary_depth.saturating_sub(1),
+            ' ' | '\t' if paren_depth == 0 && ternary_depth == 0 => {
+                let token = spec[start..i].trim();
+                if !token.is_empty() {
+                    tokens.push(token);
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+
+    let tail = spec[start..].trim();
+    if !tail.is_empty() {
+        tokens.push(tail);
+    }
+
+    tokens
+}
+
+fn evaluate_condition(cond: &str, app: &App) -> bool {
+    let ctx = app.input_context();
+    match cond.trim().to_ascii_lowercase().as_str() {
+        "prefix" => ctx == InputContext::Prefix || app.is_prefix_active(),
+        "copy" | "copymode" => ctx == InputContext::CopyMode || app.is_copy_mode_active(),
+        "search" => ctx == InputContext::Search || app.is_search_active(),
+        "line" | "linemode" => ctx == InputContext::LineInput,
+        "term" | "terminal" => ctx == InputContext::Terminal,
+        "overlay" | "popup" => ctx == InputContext::Overlay || app.overlay().is_some(),
+        "rec" | "logging" => app.is_logging_active(),
+        "focused" => app.is_app_focused(),
+
+        _ => false,
+    }
+}
+
+fn evaluate_expression<'a>(expr: &'a str, app: &App) -> &'a str {
+    let expr = expr.trim();
+
+    // Strip wrapping parentheses if present: "(cond?a:b)" -> "cond?a:b"
+    if expr.starts_with('(') && expr.ends_with(')') {
+        let mut depth = 0;
+        let mut fully_enclosed = true;
+        for (i, ch) in expr.char_indices() {
+            // <-- char_indices provides byte offsets!
+            if ch == '(' {
+                depth += 1;
+            } else if ch == ')' {
+                depth -= 1;
+                if depth == 0 && i < expr.len() - 1 {
+                    fully_enclosed = false;
+                    break;
+                }
+            }
+        }
+        if fully_enclosed {
+            return evaluate_expression(&expr[1..expr.len() - 1], app);
+        }
+    }
+
+    // Find the first top-level '?' (depth == 0)
+    let mut depth: i32 = 0;
+    let mut question_pos = None;
+
+    for (i, ch) in expr.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            '?' if depth == 0 && question_pos.is_none() => {
+                question_pos = Some(i);
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    let Some(q_idx) = question_pos else {
+        // No ternary operator at this level; return the static style token as is
+        return expr;
+    };
+
+    let condition = &expr[..q_idx];
+    let remainder = &expr[q_idx + 1..];
+
+    // Find the matching ':' at depth 0
+    depth = 0;
+    let mut colon_pos = None;
+    for (i, ch) in remainder.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            '?' => depth += 1, // Treat inner ternaries as increasing depth
+            ':' => {
+                if depth == 0 {
+                    colon_pos = Some(i);
+                    break;
+                } else {
+                    depth -= 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let Some(c_idx) = colon_pos else {
+        // Malformed (no matching ':'); return the unparsed expression
+        return expr;
+    };
+
+    let true_branch = &remainder[..c_idx];
+    let false_branch = &remainder[c_idx + 1..];
+
+    // Evaluate condition and recurse into the chosen branch
+    if evaluate_condition(condition, app) {
+        evaluate_expression(true_branch, app)
+    } else {
+        evaluate_expression(false_branch, app)
+    }
 }
 
 impl StatusBarConfig {
@@ -75,8 +216,12 @@ impl StatusBarConfig {
                         let text_content = &expanded[text_start..text_end];
                         let style_spec = &expanded[style_start..style_end];
 
-                        let span_style = parse_inline_style(style_spec, base_style);
-                        spans.push(Span::styled(text_content.to_string(), span_style));
+                        // Only render the span if style is not hidden:
+                        if let Some(span_style) = parse_inline_style(style_spec, base_style, app) {
+                            if !text_content.is_empty() {
+                                spans.push(Span::styled(text_content.to_string(), span_style));
+                            }
+                        }
 
                         cursor = style_end + 1;
                         continue;
@@ -103,19 +248,11 @@ impl StatusBarConfig {
             InputMode::Terminal => "TERM",
             InputMode::Line => "LINE",
         };
-        let rec = if app.is_logging_active() {
-            " REC "
-        } else {
-            ""
-        };
-        let prefix = if app.is_prefix_active() { "󰒓 " } else { "" };
 
         let rx_bytes = app.stats.rx().to_string();
         let tx_bytes = app.stats.tx().to_string();
 
         template
-            .replace("{rec}", rec)
-            .replace("{prefix}", prefix)
             .replace("{mode}", mode)
             .replace("{port}", port)
             .replace("{baud}", &baud)
