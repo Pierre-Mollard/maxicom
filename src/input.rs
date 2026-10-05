@@ -2,9 +2,10 @@
 /// Using the 'crossterm' crate
 use std::{io, time::Duration};
 
-use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use terminput::Encoding;
 use terminput_crossterm::to_terminput_key;
+use tui_input::{Input, InputRequest, backend::crossterm::EventHandler};
 
 use crate::{
     app::{App, InputContext},
@@ -308,4 +309,65 @@ fn handle_terminal_mode(key_event_crossterm: KeyEvent) -> Action {
     }
 
     Action::Ignore
+}
+
+// TODO: implement a vim motion mode
+
+/// Used to handle input fields in popups and other direct use case
+pub fn dispatch_input_key(input: &mut Input, key: KeyEvent) {
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        match key.code {
+            KeyCode::Char('e') => {
+                input.handle(InputRequest::GoToEnd);
+                return;
+            }
+            KeyCode::Char('u') => {
+                input.reset();
+                return;
+            }
+            KeyCode::Char('w') => {
+                input.handle(InputRequest::DeletePrevWord);
+                return;
+            }
+            KeyCode::Char('d') => {
+                input.handle(InputRequest::DeleteNextChar);
+                return;
+            }
+            KeyCode::Char('k') => {
+                let cursor = input.cursor();
+                let text = input.value()[..cursor].to_string();
+                *input = Input::new(text).with_cursor(cursor);
+                return;
+            }
+            KeyCode::Left => {
+                input.handle(InputRequest::GoToPrevWord);
+                return;
+            }
+            KeyCode::Right => {
+                input.handle(InputRequest::GoToNextWord);
+                return;
+            }
+            _ => {}
+        }
+    }
+
+    if key.modifiers.contains(KeyModifiers::ALT) {
+        match key.code {
+            KeyCode::Char('b') | KeyCode::Left => {
+                input.handle(InputRequest::GoToPrevWord);
+                return;
+            }
+            KeyCode::Char('f') | KeyCode::Right => {
+                input.handle(InputRequest::GoToNextWord);
+                return;
+            }
+            KeyCode::Backspace | KeyCode::Char('d') => {
+                input.handle(InputRequest::DeleteNextWord);
+                return;
+            }
+            _ => {}
+        }
+    }
+
+    input.handle_event(&crossterm::event::Event::Key(key));
 }

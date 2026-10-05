@@ -5,13 +5,9 @@ use crossterm::event::KeyEvent;
 use vt100::Parser;
 
 use crate::{
-    app::{
-        UpdateEffect, ViewportSize,
-        search::{SearchState, dispatch_input_key},
-        selection::CopyModeState,
-    },
+    app::{UpdateEffect, ViewportSize, search::SearchState, selection::CopyModeState},
     configs::{TerminalDimensionMode, TextEncoding},
-    input::{CopyModeAction, SearchModeAction, TerminalAction},
+    input::{CopyModeAction, SearchModeAction, TerminalAction, dispatch_input_key},
     logger::TerminalLogger,
 };
 

@@ -3,9 +3,12 @@ use std::{cell::Cell, path::PathBuf};
 /// Module to reduce inter modules exchange or something
 use chrono::{DateTime, Local};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use tui_input::{Input, backend::crossterm::EventHandler};
+use tui_input::Input;
 
-use crate::serial::{CharSize, FlowControl, Parity, SerialConfig, StopBits};
+use crate::{
+    input::dispatch_input_key,
+    serial::{CharSize, FlowControl, Parity, SerialConfig, StopBits},
+};
 
 pub struct LogEntry {
     pub text: String,
@@ -135,7 +138,7 @@ impl ResizeDialog {
                     ResizeField::Rows => &mut self.rows_input,
                     ResizeField::Cols => &mut self.cols_input,
                 };
-                input.handle_event(&crossterm::event::Event::Key(key));
+                dispatch_input_key(input, key);
                 OverlayResponse::Handled
             }
         }
@@ -280,8 +283,7 @@ impl FilePathDialog {
                 }
             }
             _ => {
-                self.file_input
-                    .handle_event(&crossterm::event::Event::Key(key));
+                dispatch_input_key(&mut self.file_input, key);
                 OverlayResponse::Handled
             }
         }

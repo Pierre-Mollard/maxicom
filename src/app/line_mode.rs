@@ -4,13 +4,9 @@ use std::{collections::VecDeque, io, path::PathBuf};
 use tui_input::Input;
 
 use crate::{
-    app::{
-        UpdateEffect,
-        search::{SearchState, dispatch_input_key},
-        selection::CopyModeState,
-    },
+    app::{UpdateEffect, search::SearchState, selection::CopyModeState},
     configs::{RxNewlineMode, TextEncoding, TxNewlineSymbol, WrapMode},
-    input::{CopyModeAction, LineInputAction, SearchModeAction},
+    input::{CopyModeAction, LineInputAction, SearchModeAction, dispatch_input_key},
     logger::LineLogger,
     types::{LogEntry, ViewportSize},
 };

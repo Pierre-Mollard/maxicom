@@ -1,8 +1,7 @@
 use std::collections::VecDeque;
 use std::io::{self, Write};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use tui_input::{Input, InputRequest, backend::crossterm::EventHandler};
+use tui_input::Input;
 
 use crate::types::LogEntry;
 
@@ -136,65 +135,6 @@ impl SearchState {
     pub fn query_str(&self) -> &str {
         self.query.value()
     }
-}
-
-// TODO: implement a vim motion mode (and generalize for any Input in project?)
-pub fn dispatch_input_key(input: &mut Input, key: KeyEvent) {
-    if key.modifiers.contains(KeyModifiers::CONTROL) {
-        match key.code {
-            KeyCode::Char('e') => {
-                input.handle(InputRequest::GoToEnd);
-                return;
-            }
-            KeyCode::Char('u') => {
-                input.reset();
-                return;
-            }
-            KeyCode::Char('w') => {
-                input.handle(InputRequest::DeletePrevWord);
-                return;
-            }
-            KeyCode::Char('d') => {
-                input.handle(InputRequest::DeleteNextChar);
-                return;
-            }
-            KeyCode::Char('k') => {
-                let cursor = input.cursor();
-                let text = input.value()[..cursor].to_string();
-                *input = Input::new(text).with_cursor(cursor);
-                return;
-            }
-            KeyCode::Left => {
-                input.handle(InputRequest::GoToPrevWord);
-                return;
-            }
-            KeyCode::Right => {
-                input.handle(InputRequest::GoToNextWord);
-                return;
-            }
-            _ => {}
-        }
-    }
-
-    if key.modifiers.contains(KeyModifiers::ALT) {
-        match key.code {
-            KeyCode::Char('b') | KeyCode::Left => {
-                input.handle(InputRequest::GoToPrevWord);
-                return;
-            }
-            KeyCode::Char('f') | KeyCode::Right => {
-                input.handle(InputRequest::GoToNextWord);
-                return;
-            }
-            KeyCode::Backspace | KeyCode::Char('d') => {
-                input.handle(InputRequest::DeleteNextWord);
-                return;
-            }
-            _ => {}
-        }
-    }
-
-    input.handle_event(&crossterm::event::Event::Key(key));
 }
 
 /// Copies text to the host system clipboard via ANSI OSC 52 escape code.
