@@ -7,10 +7,9 @@ use ratatui::{
 };
 
 use crate::{
-    app::App,
+    app::{App, types::FocusTarget},
     configs::{KeywordHighlight, ThemeConfig},
     terminal::{MaxicomCursor, MaxicomTerminal},
-    types::FocusTarget,
     ui::common::apply_keyword_highlights,
 };
 

@@ -1,37 +1,31 @@
-use std::io;
-use std::io::ErrorKind;
-use std::io::stdout;
-use std::process::ExitCode;
-use std::time::Duration;
+use std::{
+    io::{self, ErrorKind, stdout},
+    process::ExitCode,
+    time::Duration,
+};
 
-use crossterm::event::DisableFocusChange;
-use crossterm::event::EnableFocusChange;
-use crossterm::execute;
+use crossterm::{
+    event::{DisableFocusChange, EnableFocusChange},
+    execute,
+};
 use ratatui::DefaultTerminal;
 
-use crate::app::App;
-use crate::app::UpdateEffect;
-use crate::app::search::copy_via_osc52;
-use crate::configs::AppConfig;
-use crate::configs::InputMode;
-use crate::configs::KeyResolver;
-use crate::serial::SerialDevice;
-use crate::serial::SerialError;
-use crate::serial::parse_args;
-use crate::serial::print_help;
-use crate::types::ErrorDialog;
-use crate::types::Overlay;
-use crate::ui::PostRenderEffect;
-use crate::ui::render;
+use crate::{
+    app::{App, UpdateEffect, search::copy_via_osc52},
+    configs::{AppConfig, InputMode, KeyResolver},
+    overlays::{ErrorDialog, Overlay},
+    serial::{SerialDevice, SerialError, parse_args, print_help},
+    ui::{PostRenderEffect, render},
+};
 
 mod app;
 mod configs;
 mod input;
 mod logger;
 mod notification;
+mod overlays;
 mod serial;
 mod terminal;
-mod types;
 mod ui;
 
 // 0 -- Success

@@ -6,9 +6,8 @@ use ratatui::{
 };
 
 use crate::{
-    app::App,
+    app::{App, types::FocusTarget},
     configs::ThemeConfig,
-    types::FocusTarget,
     ui::common::{border_style_for, centered_rect},
 };
 

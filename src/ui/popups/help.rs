@@ -10,9 +10,9 @@ use ratatui::{
 };
 
 use crate::{
-    app::App,
+    app::{App, types::FocusTarget},
     configs::ThemeConfig,
-    types::{FocusTarget, HelpCategory, HelpDialog},
+    overlays::{HelpCategory, HelpDialog},
     ui::common::{border_style_for, centered_rect},
 };
 

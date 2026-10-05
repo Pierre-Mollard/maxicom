@@ -8,9 +8,8 @@ use ratatui::{
 use std::fmt::Write;
 
 use crate::{
-    app::App,
+    app::{App, types::FocusTarget},
     configs::{InputMode, KeywordHighlight, ThemeConfig},
-    types::FocusTarget,
 };
 
 pub fn monitor_title(app: &App, area: &Rect) -> String {

@@ -3,7 +3,7 @@ use std::io::{self, Write};
 
 use tui_input::Input;
 
-use crate::types::LogEntry;
+use crate::app::types::LogEntry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SearchMatch {

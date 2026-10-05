@@ -13,9 +13,12 @@ use ratatui::{
 };
 
 use crate::{
-    app::App,
+    app::{
+        App,
+        types::{FocusTarget, ViewportSize},
+    },
     configs::{InputMode, KeywordHighlight, ThemeConfig},
-    types::{FocusTarget, Overlay, ViewportSize},
+    overlays::Overlay,
     ui::{
         common::{border_style_for, monitor_bottom_title, monitor_title},
         lines::{render_input_prompt, render_monitor},

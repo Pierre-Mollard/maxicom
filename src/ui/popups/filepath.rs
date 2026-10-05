@@ -6,9 +6,9 @@ use ratatui::{
 };
 
 use crate::{
-    app::App,
+    app::{App, types::FocusTarget},
     configs::ThemeConfig,
-    types::{FilePathDialog, FocusTarget},
+    overlays::FilePathDialog,
     ui::common::{border_style_for, centered_rect},
 };
 

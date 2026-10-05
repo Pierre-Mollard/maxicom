@@ -1,21 +1,20 @@
 use std::time::Duration;
 
 use crate::{
+    app::types::{FocusTarget, ViewportSize},
     configs::{InputMode, KeyResolver, SettingsConfig, WrapMode},
     input::{Action, AppAction, CopyModeAction, HistoryAction, SearchModeAction},
     logger::{LineLogger, TerminalLogger},
     notification::{NotificationManager, ToastLevel},
+    overlays::{ErrorDialog, FilePathDialog, Overlay, OverlayResponse, SettingKey},
     serial::SerialConfig,
-    types::{
-        ErrorDialog, FilePathDialog, FocusTarget, Overlay, OverlayResponse, SettingKey,
-        ViewportSize,
-    },
 };
 
 pub mod line_mode;
 pub mod search;
 pub mod selection;
 pub mod terminal_mode;
+pub mod types;
 
 pub use line_mode::LineMode;
 pub use terminal_mode::TerminalMode;

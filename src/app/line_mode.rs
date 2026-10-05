@@ -4,14 +4,18 @@ use std::{collections::VecDeque, io, path::PathBuf};
 use tui_input::Input;
 
 use crate::{
-    app::{UpdateEffect, search::SearchState, selection::CopyModeState},
+    app::{
+        UpdateEffect,
+        search::SearchState,
+        selection::CopyModeState,
+        types::{LogEntry, ViewportSize},
+    },
     configs::{RxNewlineMode, TextEncoding, TxNewlineSymbol, WrapMode},
     input::{
         CopyModeAction, LineInputAction, SearchModeAction, ViMode, ViState, dispatch_input_key,
         dispatch_input_key_vi,
     },
     logger::LineLogger,
-    types::{LogEntry, ViewportSize},
 };
 
 pub struct LineMode {

@@ -1,5 +1,5 @@
+use crate::app::types::LogEntry;
 use crate::configs::{LineLogConfig, TerminalLogConfig};
-use crate::types::LogEntry;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::PathBuf;

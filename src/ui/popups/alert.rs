@@ -5,7 +5,7 @@ use ratatui::{
     widgets::{Block, Clear, Paragraph, Wrap},
 };
 
-use crate::{types::ErrorDialog, ui::common::centered_rect};
+use crate::{overlays::ErrorDialog, ui::common::centered_rect};
 
 pub fn render_disconnected_popup(port: &str, frame: &mut Frame) {
     let area = centered_rect(54, 9, frame.area());

@@ -13,7 +13,7 @@ use crate::{
         InputMode, KeyBindingAction, KeyBindingCopyAction, KeyBindingLineAction,
         KeyBindingSearchAction, KeyBindingTerminalAction, KeyPattern,
     },
-    types::{HelpDialog, Overlay, ResizeDialog, SerialConfigDialog, SettingKey},
+    overlays::{HelpDialog, Overlay, ResizeDialog, SerialConfigDialog, SettingKey},
 };
 
 #[derive(Debug)]

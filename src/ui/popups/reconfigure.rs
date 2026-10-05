@@ -6,7 +6,7 @@ use ratatui::{
 };
 
 use crate::{
-    types::{SerialConfigDialog, SerialSettingField},
+    overlays::{SerialConfigDialog, SerialSettingField},
     ui::common::centered_rect,
 };
 

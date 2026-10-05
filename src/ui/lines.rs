@@ -8,16 +8,16 @@ use ratatui::{
 };
 
 use crate::{
-    app::App,
+    app::{
+        App,
+        types::{FocusTarget, LogEntry, ViewportSize},
+    },
     configs::{KeywordHighlight, LineDisplayMode, SettingsConfig, ThemeConfig, WrapMode},
-    types::{FocusTarget, ViewportSize},
     ui::{
         PostRenderEffect,
         common::{apply_keyword_highlights, apply_search_highlight, border_style_for},
     },
 };
-
-use crate::types::LogEntry;
 
 fn trim_trailing_incomplete_ansi(text: &str) -> &str {
     if let Some(esc_idx) = text.rfind('\x1b') {
