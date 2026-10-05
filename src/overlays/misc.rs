@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crossterm::event::{KeyCode, KeyEvent};
 use tui_input::Input;
 
-use crate::{input::dispatch_input_key, overlays::OverlayResponse};
+use crate::{inputs::dispatch_input_key, overlays::OverlayResponse};
 
 #[derive(Debug, Clone)]
 pub struct FilePathDialog {

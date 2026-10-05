@@ -11,7 +11,7 @@ use crate::{
         types::{LogEntry, ViewportSize},
     },
     configs::{RxNewlineMode, TextEncoding, TxNewlineSymbol, WrapMode},
-    input::{
+    inputs::{
         CopyModeAction, LineInputAction, SearchModeAction, ViMode, ViState, dispatch_input_key,
         dispatch_input_key_vi,
     },

@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::{
     app::types::{FocusTarget, ViewportSize},
     configs::{InputMode, KeyResolver, SettingsConfig, WrapMode},
-    input::{Action, AppAction, CopyModeAction, HistoryAction, SearchModeAction},
+    inputs::{Action, AppAction, CopyModeAction, HistoryAction, SearchModeAction},
     logger::{LineLogger, TerminalLogger},
     notification::{NotificationManager, ToastLevel},
     overlays::{ErrorDialog, FilePathDialog, Overlay, OverlayResponse, SettingKey},

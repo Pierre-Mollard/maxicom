@@ -20,7 +20,7 @@ use crate::{
 
 mod app;
 mod configs;
-mod input;
+mod inputs;
 mod logger;
 mod notification;
 mod overlays;
@@ -169,8 +169,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
         }
 
-        if let Ok(Some(event)) = input::poll_event(Duration::from_millis(10)) {
-            let action = input::handle_event(event, &app);
+        if let Ok(Some(event)) = inputs::poll_event(Duration::from_millis(10)) {
+            let action = inputs::handle_event(event, &app);
             match app.update(action) {
                 UpdateEffect::Quit => running = false,
                 UpdateEffect::Transmit(bytes) => {

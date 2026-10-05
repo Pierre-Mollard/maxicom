@@ -7,7 +7,7 @@ use vt100::Parser;
 use crate::{
     app::{UpdateEffect, ViewportSize, search::SearchState, selection::CopyModeState},
     configs::{TerminalDimensionMode, TextEncoding},
-    input::{CopyModeAction, SearchModeAction, TerminalAction, dispatch_input_key},
+    inputs::{CopyModeAction, SearchModeAction, TerminalAction, dispatch_input_key},
     logger::TerminalLogger,
 };
 

@@ -366,7 +366,7 @@ impl Default for SettingsConfig {
             encoding: TextEncoding::default(),
             rx_buffer_size: 4096,
             input_mode: InputMode::default(),
-            display_live_timestamp: true,
+            display_live_timestamp: false,
             timestamp_format: String::from("[%H:%M:%S%.3f]"),
             line_mode: LineModeConfig::default(),
             terminal_mode: TerminalModeConfig::default(),
