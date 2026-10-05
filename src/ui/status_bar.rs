@@ -1,3 +1,57 @@
+//! # Status Bar Formatting Engine
+//!
+//! The status bar supports dynamic templating, Starship-style styling,
+//! conditional ternaries, and element visibility toggling.
+//!
+//! ## Syntax
+//! - **Plain Text**: Rendered using default theme colors.
+//! - **Variables**: `{variable_name}` replaced at runtime.
+//! - **Styled Blocks**: `[content](style_spec)`
+//! - **Conditionals**: `(condition?if_true:if_false)`
+//!
+//! ## Available Variables
+//! | Variable     | Description                         | Example          |
+//! |--------------|-------------------------------------|------------------|
+//! | `{mode}`     | Current input mode                  | `TERM`           |
+//! | `{port}`     | Serial device path                  | `/dev/ttyUSB0`   |
+//! | `{baud}`     | Current baudrate                    | `115200`         |
+//! | `{framing}`  | Data bits, parity, stop bits        | `8N1`            |
+//! | `{rx_bytes}` | Total bytes received                | `1024`           |
+//! | `{tx_bytes}` | Total bytes transmitted             | `256`            |
+//! | `{time}`     | Current local time, format in conf  | `21:45:00`       |
+//!
+//! ## Conditional States (`?`)
+//! | State      | Matches When...                                              |
+//! |------------|--------------------------------------------------------------|
+//! | `prefix`   | Leader prefix key (`Ctrl-A`) is currently active             |
+//! | `rec`      | Session is currently logged in a file                        |
+//! | `line`     | App is in Line Input mode                                    |
+//! | `term`     | App is in Terminal Emulation mode                            |
+//! | `copy`     | App is in Copy / Scrollback mode                             |
+//! | `search`   | App is in Search mode                                        |
+//! | `overlay`  | A dialog or settings popup is currently open                 |
+//! | `focused`  | Terminal window has OS desktop focus                         |
+//!
+//! ## Style Keywords
+//! - **Modifiers**: `bold`, `dim`, `italic`, `underlined`, `reversed`, `reset`, `crossed`, `slow_blink`, `rapid_blink`
+//! - **Visibility**: `hide` / `hidden` / `none`
+//! - **Colors**: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`,
+//!   `gray`, `darkgray`, `white`, or hex `#RRGGBB`
+//! - **Prefixes**: `fg=<color>`, `bg=<color>`
+//!
+//! ## Examples
+//! ```toml
+//! [ui.status_bar]
+//! # Hide REC when idle, show bright red when recording:
+//! left = "[  REC ](rec?red bold:hide)[ {mode} ](prefix?yellow:cyan bold) {port} | [{baud}](yellow)"
+//!
+//! # Chain multiple modes:
+//! left = "[ {mode} ](prefix?yellow:copy?magenta:search?blue:line?green:cyan bold)"
+//!
+//! # Right-aligned counters and blue timestamp:
+//! right = "[RX: {rx_bytes}](gray) | [TX: {tx_bytes}](gray) | [{time}](blue)"
+//! ```
+
 use ratatui::{
     Frame,
     layout::{Alignment, Rect},
@@ -11,8 +65,6 @@ use crate::{
     configs::{InputMode, StatusBarConfig, ThemeConfig},
 };
 
-// TODO: review this AI code (whole file) a explain how to format to the user
-
 pub fn parse_inline_style(spec: &str, base_style: Style, app: &App) -> Option<Style> {
     let mut style = base_style;
 
@@ -21,12 +73,14 @@ pub fn parse_inline_style(spec: &str, base_style: Style, app: &App) -> Option<St
         for part in resolved.split_whitespace() {
             let part_lower = part.to_ascii_lowercase();
             match part_lower.as_str() {
-                // If any resolved style is 'hide', 'hidden', or 'none', suppress this span!
                 "hide" | "hidden" | "none" => return None,
 
                 "bold" => style = style.add_modifier(Modifier::BOLD),
                 "dim" => style = style.add_modifier(Modifier::DIM),
                 "italic" => style = style.add_modifier(Modifier::ITALIC),
+                "crossed" => style = style.add_modifier(Modifier::CROSSED_OUT),
+                "slow_blink" | "sblink" => style = style.add_modifier(Modifier::SLOW_BLINK),
+                "rapid_blink" | "rblink" => style = style.add_modifier(Modifier::RAPID_BLINK),
                 "underlined" | "underline" => style = style.add_modifier(Modifier::UNDERLINED),
                 "reversed" | "reverse" => style = style.add_modifier(Modifier::REVERSED),
                 "reset" | "default" => style = base_style,
@@ -50,8 +104,6 @@ pub fn parse_inline_style(spec: &str, base_style: Style, app: &App) -> Option<St
     Some(style)
 }
 
-/// Splits style specs by whitespace while keeping parenthesized groups
-/// AND uncompleted ternaries ("cond?true_branch:false_branch") intact.
 fn tokenize_spec(spec: &str) -> Vec<&str> {
     let mut tokens = Vec::new();
     let mut paren_depth: i32 = 0;
@@ -99,15 +151,14 @@ fn evaluate_condition(cond: &str, app: &App) -> bool {
     }
 }
 
+/// recursive, first remove top level parenthesis, then find top level '?'/':' and check condition
 fn evaluate_expression<'a>(expr: &'a str, app: &App) -> &'a str {
     let expr = expr.trim();
 
-    // Strip wrapping parentheses if present: "(cond?a:b)" -> "cond?a:b"
     if expr.starts_with('(') && expr.ends_with(')') {
         let mut depth = 0;
         let mut fully_enclosed = true;
         for (i, ch) in expr.char_indices() {
-            // <-- char_indices provides byte offsets!
             if ch == '(' {
                 depth += 1;
             } else if ch == ')' {
@@ -140,21 +191,19 @@ fn evaluate_expression<'a>(expr: &'a str, app: &App) -> &'a str {
     }
 
     let Some(q_idx) = question_pos else {
-        // No ternary operator at this level; return the static style token as is
-        return expr;
+        return expr; // no '?', return as is
     };
 
     let condition = &expr[..q_idx];
     let remainder = &expr[q_idx + 1..];
 
-    // Find the matching ':' at depth 0
     depth = 0;
     let mut colon_pos = None;
     for (i, ch) in remainder.char_indices() {
         match ch {
             '(' => depth += 1,
             ')' => depth = depth.saturating_sub(1),
-            '?' => depth += 1, // Treat inner ternaries as increasing depth
+            '?' => depth += 1,
             ':' => {
                 if depth == 0 {
                     colon_pos = Some(i);
@@ -168,14 +217,13 @@ fn evaluate_expression<'a>(expr: &'a str, app: &App) -> &'a str {
     }
 
     let Some(c_idx) = colon_pos else {
-        // Malformed (no matching ':'); return the unparsed expression
-        return expr;
+        return expr; // no ':', malformed!
     };
 
     let true_branch = &remainder[..c_idx];
     let false_branch = &remainder[c_idx + 1..];
 
-    // Evaluate condition and recurse into the chosen branch
+    // recursively continue other levels based on runtime evaluation of user-chosen check
     if evaluate_condition(condition, app) {
         evaluate_expression(true_branch, app)
     } else {
@@ -216,11 +264,10 @@ impl StatusBarConfig {
                         let text_content = &expanded[text_start..text_end];
                         let style_spec = &expanded[style_start..style_end];
 
-                        // Only render the span if style is not hidden:
-                        if let Some(span_style) = parse_inline_style(style_spec, base_style, app) {
-                            if !text_content.is_empty() {
-                                spans.push(Span::styled(text_content.to_string(), span_style));
-                            }
+                        if let Some(span_style) = parse_inline_style(style_spec, base_style, app)
+                            && !text_content.is_empty()
+                        {
+                            spans.push(Span::styled(text_content.to_string(), span_style));
                         }
 
                         cursor = style_end + 1;
