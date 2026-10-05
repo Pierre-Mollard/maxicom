@@ -10,8 +10,8 @@ use tui_input::{Input, InputRequest, backend::crossterm::EventHandler};
 use crate::{
     app::{App, InputContext},
     configs::{
-        KeyBindingAction, KeyBindingCopyAction, KeyBindingLineAction, KeyBindingSearchAction,
-        KeyBindingTerminalAction, KeyPattern,
+        InputMode, KeyBindingAction, KeyBindingCopyAction, KeyBindingLineAction,
+        KeyBindingSearchAction, KeyBindingTerminalAction, KeyPattern,
     },
     types::{HelpDialog, Overlay, ResizeDialog, SerialConfigDialog, SettingKey},
 };
@@ -128,39 +128,57 @@ pub fn handle_event(event: Event, app: &App) -> Action {
 
     let pattern = KeyPattern::from_event(&key_event);
     let resolver = &app.key_resolver;
+    let ctx = app.input_context();
 
-    if pattern == resolver.prefix && app.input_context() != InputContext::Prefix {
+    // Actions using or ignoring with prefix
+    match ctx {
+        InputContext::Overlay => {
+            return Action::OverlayKey(key_event);
+        }
+        InputContext::Search => {
+            if let Some(search_action_binding) = resolver.search_actions.get(&pattern) {
+                return search_action_binding.to_action();
+            } else {
+                return Action::Search(SearchModeAction::HandleKey(key_event));
+            }
+        }
+        InputContext::Prefix => {
+            // Prefix pressed twice (terminal send, line mode forward)
+            if pattern == resolver.prefix {
+                match app.settings().input_mode {
+                    InputMode::Line => {
+                        return Action::LineInput(LineInputAction::HandleKey(key_event));
+                    }
+                    InputMode::Terminal => {
+                        let bytes = resolver.prefix.to_raw_bytes();
+                        if !bytes.is_empty() {
+                            return Action::TransmitRaw(bytes);
+                        }
+                        return Action::App(AppAction::SetPrefix(false));
+                    }
+                }
+            }
+
+            if let Some(prefix_action_binding) = resolver.prefix_actions.get(&pattern) {
+                return prefix_action_binding.to_action(app);
+            } else {
+                return Action::App(AppAction::SetPrefix(false));
+            }
+        }
+        _ => {}
+    }
+
+    if pattern == resolver.prefix {
         return Action::App(AppAction::SetPrefix(true));
     }
 
-    match app.input_context() {
-        InputContext::Overlay => Action::OverlayKey(key_event),
-        InputContext::Prefix => {
-            if pattern == resolver.prefix {
-                let bytes = resolver.prefix.to_raw_bytes();
-                if !bytes.is_empty() {
-                    return Action::TransmitRaw(bytes);
-                }
-                return Action::App(AppAction::SetPrefix(false));
-            }
-            if let Some(prefix_action_binding) = resolver.prefix_actions.get(&pattern) {
-                prefix_action_binding.to_action(app)
-            } else {
-                Action::App(AppAction::SetPrefix(false))
-            }
-        }
+    // Actions unreachable with prefix
+    match ctx {
         InputContext::CopyMode => {
             if let Some(copy_action_binding) = resolver.copy_actions.get(&pattern) {
                 copy_action_binding.to_action()
             } else {
                 Action::Ignore
-            }
-        }
-        InputContext::Search => {
-            if let Some(search_action_binding) = resolver.search_actions.get(&pattern) {
-                search_action_binding.to_action()
-            } else {
-                Action::Search(SearchModeAction::HandleKey(key_event))
             }
         }
         InputContext::LineInput => {
@@ -181,6 +199,7 @@ pub fn handle_event(event: Event, app: &App) -> Action {
                 handle_terminal_mode(key_event)
             }
         }
+        InputContext::Overlay | InputContext::Search | InputContext::Prefix => unreachable!(),
     }
 }
 
@@ -311,13 +330,15 @@ fn handle_terminal_mode(key_event_crossterm: KeyEvent) -> Action {
     Action::Ignore
 }
 
-// TODO: implement a vim motion mode
-
 /// Used to handle input fields in popups and other direct use case
 pub fn dispatch_input_key(input: &mut Input, key: KeyEvent) {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         match key.code {
-            KeyCode::Char('e') => {
+            KeyCode::Char('a') | KeyCode::Home => {
+                input.handle(InputRequest::GoToStart);
+                return;
+            }
+            KeyCode::Char('e') | KeyCode::End => {
                 input.handle(InputRequest::GoToEnd);
                 return;
             }
@@ -329,7 +350,7 @@ pub fn dispatch_input_key(input: &mut Input, key: KeyEvent) {
                 input.handle(InputRequest::DeletePrevWord);
                 return;
             }
-            KeyCode::Char('d') => {
+            KeyCode::Char('d') | KeyCode::Delete => {
                 input.handle(InputRequest::DeleteNextChar);
                 return;
             }
@@ -345,6 +366,10 @@ pub fn dispatch_input_key(input: &mut Input, key: KeyEvent) {
             }
             KeyCode::Right => {
                 input.handle(InputRequest::GoToNextWord);
+                return;
+            }
+            KeyCode::Char('h') => {
+                input.handle(InputRequest::DeletePrevChar);
                 return;
             }
             _ => {}
@@ -369,5 +394,5 @@ pub fn dispatch_input_key(input: &mut Input, key: KeyEvent) {
         }
     }
 
-    input.handle_event(&crossterm::event::Event::Key(key));
+    input.handle_event(&Event::Key(key));
 }

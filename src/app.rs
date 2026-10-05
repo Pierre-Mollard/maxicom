@@ -156,6 +156,10 @@ impl App {
     }
 
     pub fn update(&mut self, action: Action) -> UpdateEffect {
+        if !matches!(action, Action::App(AppAction::SetPrefix(true))) {
+            self.prefix_active = false;
+        }
+
         let effect = match action {
             Action::App(action) => self.update_action_app(action),
             Action::TransmitRaw(bytes) => {
@@ -264,8 +268,6 @@ impl App {
     }
 
     fn update_action_copy_mode(&mut self, action: CopyModeAction) -> UpdateEffect {
-        self.prefix_active = false;
-
         match self.settings.input_mode {
             InputMode::Terminal => {
                 if let Some(text) = self.terminal_mode.handle_copy_action(action) {
@@ -282,8 +284,6 @@ impl App {
     }
 
     fn update_action_search_mode(&mut self, action: SearchModeAction) -> UpdateEffect {
-        self.prefix_active = false;
-
         match self.settings.input_mode {
             InputMode::Terminal => {
                 self.terminal_mode.handle_search_action(action);
