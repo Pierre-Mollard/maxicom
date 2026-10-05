@@ -329,7 +329,13 @@ pub fn render_monitor(
 
 pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect, theme: &ThemeConfig) {
     let input = app.line_mode.input();
-    let prompt_prefix = "> ";
+
+    let prompt_prefix = if app.line_mode.is_prompt_vi() {
+        &app.settings().line_mode.prompt_vi_prefix
+    } else {
+        &app.settings().line_mode.prompt_prefix
+    };
+
     let prefix_width = prompt_prefix.len() as u16;
     let inner_width = (area.width.saturating_sub(2 + prefix_width)) as usize;
 

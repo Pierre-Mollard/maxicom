@@ -192,6 +192,8 @@ pub struct LineModeConfig {
     pub display_partial_rx: bool,
     pub line_prefix: String,
     pub line_partial_prefix: String,
+    pub prompt_prefix: String,
+    pub prompt_vi_prefix: String,
     pub logging: LineLogConfig,
 }
 
@@ -206,6 +208,8 @@ impl Default for LineModeConfig {
             display_partial_rx: true,
             line_prefix: String::from("│ "),
             line_partial_prefix: String::from("│… "),
+            prompt_prefix: String::from("> "),
+            prompt_vi_prefix: String::from("< "),
             logging: LineLogConfig::default(),
         }
     }

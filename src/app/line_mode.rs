@@ -6,7 +6,10 @@ use tui_input::Input;
 use crate::{
     app::{UpdateEffect, search::SearchState, selection::CopyModeState},
     configs::{RxNewlineMode, TextEncoding, TxNewlineSymbol, WrapMode},
-    input::{CopyModeAction, LineInputAction, SearchModeAction, dispatch_input_key},
+    input::{
+        CopyModeAction, LineInputAction, SearchModeAction, ViMode, ViState, dispatch_input_key,
+        dispatch_input_key_vi,
+    },
     logger::LineLogger,
     types::{LogEntry, ViewportSize},
 };
@@ -27,6 +30,7 @@ pub struct LineMode {
     partial_line_timestamp: Option<DateTime<Local>>,
     /// Current line being typed by user as futur device input
     user_input: Input,
+    vi_state: ViState,
     /// Waiting to receive carriage return
     pending_carriage_return: bool,
     /// Number of visual lines above newest output
@@ -56,6 +60,7 @@ impl LineMode {
             max_lines: max_history_lines,
             partial_line: Vec::new(),
             user_input: Input::default(),
+            vi_state: ViState::default(),
             partial_line_timestamp: None,
             pending_carriage_return: false,
             scroll_from_bottom: 0,
@@ -247,7 +252,7 @@ impl LineMode {
             }
             LineInputAction::HandleKey(key_event) => {
                 self.history_index = None;
-                dispatch_input_key(&mut self.user_input, key_event);
+                dispatch_input_key_vi(&mut self.user_input, &mut self.vi_state, key_event);
                 UpdateEffect::None
             }
         }
@@ -426,6 +431,11 @@ impl LineMode {
 
     pub fn logger_active_path(&self) -> &PathBuf {
         self.logger.active_path()
+    }
+
+    #[inline]
+    pub fn is_prompt_vi(&self) -> bool {
+        self.vi_state.mode == ViMode::Normal
     }
 
     pub fn update_viewport(&mut self, wrap_mode: WrapMode, viewport: ViewportSize) {
