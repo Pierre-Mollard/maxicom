@@ -145,87 +145,86 @@ pub fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
 
 pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, _theme: &ThemeConfig) {
     let has_borders = app.settings().ui.show_borders;
-    let query_str = if app.settings().input_mode == crate::configs::InputMode::Terminal {
-        app.terminal_mode.search().query_str()
+    let is_terminal = app.settings().input_mode == InputMode::Terminal;
+
+    let s = if is_terminal {
+        app.terminal_mode.search()
     } else {
-        app.line_mode.search().query_str()
-    };
-    let visual_cursor = if app.settings().input_mode == crate::configs::InputMode::Terminal {
-        app.terminal_mode.search().query.visual_cursor() as u16
-    } else {
-        app.line_mode.search().query.visual_cursor() as u16
+        app.line_mode.search()
     };
 
-    if has_borders {
-        let cursor_x = area.x + 10 + visual_cursor;
-        let cursor_y = area.y + area.height;
+    let query_str = s.query_str();
+    let visual_cursor = s.query.visual_cursor() as u16;
+    let match_count = s.matches.len();
+    let current_pos = if s.matches.is_empty() {
+        0
+    } else {
+        s.current_match + 1
+    };
 
-        let search_text = format!(" SEARCH: {} ", query_str);
-        let buf = frame.buffer_mut();
-        buf.set_string(
-            area.x + 2,
-            cursor_y,
-            &search_text,
+    let stats_style = if match_count > 0 {
+        Style::default().fg(Color::Green)
+    } else if !query_str.is_empty() {
+        Style::default().fg(Color::Red)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let spans = vec![
+        Span::styled(
+            " SEARCH: ",
+            Style::default()
+                .bg(Color::Blue)
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" {} ", query_str),
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
-        );
+        ),
+        Span::styled(format!("({}/{})", current_pos, match_count), stats_style),
+        Span::styled(" [ ←/→, Esc: Exit ] ", Style::default().fg(Color::DarkGray)),
+    ];
+    let line = Line::from(spans);
 
-        if !app.is_app_focused() {
-            buf[(cursor_x, cursor_y)].set_style(Style::default().add_modifier(Modifier::REVERSED));
+    let (cursor_x, cursor_y) = if has_borders {
+        let border_y = area.y + area.height;
+        let start_x = area.x + 2;
+
+        let buf = frame.buffer_mut();
+        let mut cur_x = start_x;
+        for span in &line.spans {
+            buf.set_string(cur_x, border_y, &span.content, span.style);
+            cur_x += span.content.chars().count() as u16;
         }
-        frame.set_cursor_position((cursor_x, cursor_y));
+
+        // start_x + " SEARCH: " (9) + " " (1) + visual_cursor
+        (start_x + 10 + visual_cursor, border_y)
     } else {
         let bottom_y = area.y + area.height.saturating_sub(1);
-        let search_line_area = Rect {
+        let search_area = Rect {
             x: area.x,
             y: bottom_y,
             width: area.width,
             height: 1,
         };
 
-        frame.render_widget(Clear, search_line_area);
-        let prompt_line = Line::from(vec![
-            ratatui::text::Span::styled(
-                " SEARCH: ",
-                Style::default()
-                    .bg(Color::Yellow)
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            ratatui::text::Span::styled(
-                format!(" {} ", query_str),
-                Style::default().bg(Color::DarkGray).fg(Color::White),
-            ),
-        ]);
-        frame.render_widget(Paragraph::new(prompt_line), search_line_area);
+        frame.render_widget(Clear, search_area);
+        frame.render_widget(Paragraph::new(line), search_area);
 
-        let cursor_x = area.x + 9 + visual_cursor;
-        frame.set_cursor_position((cursor_x, bottom_y));
+        // area.x + " SEARCH: " (9) + " " (1) + visual_cursor
+        (area.x + 10 + visual_cursor, bottom_y)
+    };
+
+    if !app.is_app_focused() {
+        let buf = frame.buffer_mut();
+        if cursor_x < buf.area.width && cursor_y < buf.area.height {
+            buf[(cursor_x, cursor_y)].set_style(Style::default().add_modifier(Modifier::REVERSED));
+        }
     }
-
-    // TODO: add more info to the search input field
-    /*
-                     if app.line_mode.search().active {
-                    let match_count = app.line_mode.search().matches_count();
-                    let current_pos = app.line_mode.search().current_match_display();
-
-                    titles.push(Line::from(vec![
-                        Span::styled(
-                            " SEARCH: ",
-                            Style::default().bg(Color::Blue).fg(Color::White),
-                        ),
-                        Span::styled(
-                            format!(" {} ", app.line_mode.search().query),
-                            Style::default().fg(Color::Yellow),
-                        ),
-                        Span::styled(
-                            format!("({}/{}) [ <-/->, Esc: Exit ] ", current_pos, match_count),
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                    ]))
-                }
-    */
+    frame.set_cursor_position((cursor_x, cursor_y));
 }
 
 /// Helper function to center a popup window
