@@ -321,6 +321,7 @@ impl StatusBarConfig {
 #[serde(default)]
 pub struct UiConfig {
     pub show_borders: bool,
+    pub show_scrollbar: bool,
     pub show_status_bar: bool,
     pub status_bar: StatusBarConfig,
 }
@@ -329,6 +330,7 @@ impl Default for UiConfig {
     fn default() -> Self {
         Self {
             show_borders: true,
+            show_scrollbar: true,
             show_status_bar: true,
             status_bar: StatusBarConfig::default(),
         }

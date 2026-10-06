@@ -1,6 +1,7 @@
 /// View, render screen from state (app)
 /// Using the 'ratatui' crate
 pub mod common;
+pub mod layout;
 pub mod lines;
 pub mod popups;
 pub mod status_bar;
@@ -21,6 +22,7 @@ use crate::{
     overlays::Overlay,
     ui::{
         common::{border_style_for, monitor_bottom_title, monitor_title},
+        layout::ScreenLayout,
         lines::{render_input_prompt, render_monitor},
         popups::{
             alert::{render_disconnected_popup, render_error_popup},
@@ -48,110 +50,73 @@ pub fn render(
     frame: &mut Frame,
     highlights: &[KeywordHighlight],
 ) -> PostRenderEffect {
-    let screen_area = frame.area();
-
-    let (monitor_area, prompt_area, status_bar_area, focus_target): (
-        Rect,
-        Option<Rect>,
-        Rect,
-        FocusTarget,
-    ) = match app.settings().input_mode {
-        InputMode::Terminal => {
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(3), Constraint::Length(1)])
-                .split(screen_area);
-            (chunks[0], None, chunks[1], FocusTarget::Terminal)
-        }
-        InputMode::Line => {
-            let prompt_height = if app.settings().ui.show_borders { 3 } else { 1 };
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Min(3),
-                    Constraint::Length(prompt_height),
-                    Constraint::Length(1),
-                ])
-                .split(screen_area);
-            (
-                chunks[0],
-                Some(chunks[1]),
-                chunks[2],
-                FocusTarget::LineHistory,
-            )
-        }
-    };
-
-    let focus = app.focus_target();
-    let border_style = border_style_for(focus_target, focus, app.is_app_focused(), theme);
-
-    let mut block = Block::default();
-    if app.settings().ui.show_borders {
-        block = block.borders(Borders::ALL).border_style(border_style);
-    } else {
-        block = block.borders(Borders::NONE);
-    }
-
-    let inner_area = block.inner(monitor_area);
-
-    let sample_ts = chrono::Local::now();
-    let ts_width = sample_ts
-        .format(&app.settings().timestamp_format)
-        .to_string()
-        .chars()
-        .count();
-
-    let (gutter_area, terminal_area) = match app.settings().input_mode {
-        InputMode::Terminal if app.settings().display_live_timestamp => {
-            let gutter_width = (ts_width.saturating_add(1) as u16).min(inner_area.width);
-            let chunks = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Length(gutter_width), Constraint::Min(0)])
-                .split(inner_area);
-            (Some(chunks[0]), chunks[1])
-        }
-        _ => (None, inner_area),
-    };
-
-    app.update_viewport(ViewportSize::new(terminal_area.width, terminal_area.height));
+    let layout = ScreenLayout::compute(frame.area(), app);
+    app.update_viewport(ViewportSize::new(
+        layout.content_area.width,
+        layout.content_area.height,
+    ));
 
     if app.settings().ui.show_borders {
-        let title = monitor_title(app, &monitor_area);
-        block = block.title(title);
+        let border_style = border_style_for(
+            layout.focus_target,
+            app.focus_target(),
+            app.is_app_focused(),
+            theme,
+        );
 
-        let bottom_titles = monitor_bottom_title(app);
-        block = bottom_titles
-            .into_iter()
-            .fold(block, |b, t| b.title_bottom(t));
+        let mut block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .title(monitor_title(app, &layout.monitor_outer));
+
+        for bottom_title in monitor_bottom_title(app) {
+            block = block.title_bottom(bottom_title);
+        }
+
+        frame.render_widget(block, layout.monitor_outer);
     }
-    // TODO: handle rendering search when borders off
-    // TODO: handle the vertical scroll bar when borders off
 
-    frame.render_widget(block, monitor_area);
-
-    let mut render_effect = PostRenderEffect::None;
-    match app.settings().input_mode {
+    let post_effect = match app.settings().input_mode {
         InputMode::Terminal => {
-            if let Some(g_area) = gutter_area {
+            if let Some(g_area) = layout.timestamp_gutter {
                 render_timestamp_gutter(app, frame, g_area, theme);
             }
-            render_vt100_terminal(app, frame, terminal_area, monitor_area, theme, highlights);
+            render_vt100_terminal(
+                app,
+                frame,
+                layout.content_area,
+                layout.scrollbar_area,
+                theme,
+                highlights,
+            );
+            PostRenderEffect::None
         }
-        InputMode::Line => {
-            render_effect = render_monitor(app, frame, inner_area, monitor_area, theme, highlights);
-        }
-    }
+        InputMode::Line => render_monitor(
+            app,
+            frame,
+            layout.content_area,
+            layout.scrollbar_area,
+            theme,
+            highlights,
+        ),
+    };
 
-    if app.settings().ui.show_status_bar {
-        render_status_bar(app, frame, status_bar_area, theme);
-    }
-
-    if let Some(prompt_rect) = prompt_area {
+    if let Some(prompt_rect) = layout.prompt_area {
         render_input_prompt(app, frame, prompt_rect, theme);
     }
 
+    if let Some(status_rect) = layout.status_bar_area {
+        render_status_bar(app, frame, status_rect, theme);
+    }
+
+    render_active_overlay(app, frame, theme);
+
     render_notifications(&app.notifications, frame);
 
+    post_effect
+}
+
+fn render_active_overlay(app: &App, frame: &mut Frame, theme: &ThemeConfig) {
     match app.overlay() {
         Some(Overlay::Settings) => render_settings_popup(app, frame, theme),
         Some(Overlay::Help(dialog)) => render_help_popup(app, dialog, frame, theme),
@@ -162,6 +127,4 @@ pub fn render(
         Some(Overlay::Error(err)) => render_error_popup(err, frame),
         None => {}
     }
-
-    render_effect
 }

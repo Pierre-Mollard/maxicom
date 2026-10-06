@@ -10,12 +10,14 @@ use ratatui::{
 use crate::{
     app::{
         App,
-        types::{FocusTarget, LogEntry, ViewportSize},
+        types::{FocusTarget, LogEntry},
     },
     configs::{KeywordHighlight, LineDisplayMode, SettingsConfig, ThemeConfig, WrapMode},
     ui::{
         PostRenderEffect,
-        common::{apply_keyword_highlights, apply_search_highlight, border_style_for},
+        common::{
+            apply_keyword_highlights, apply_search_highlight, border_style_for, render_search_bar,
+        },
     },
 };
 
@@ -66,7 +68,11 @@ pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'stati
         }
     }
 }
+// TODO: when scrollling from prefix keep prefix enabled
 
+// TODO: added scrolling info and pan for status bar
+
+// TODO: add a remote resize in line mode like in terminal (with decoration readjust)
 pub fn history_entry_to_line(
     entry: &LogEntry,
     settings: &SettingsConfig,
@@ -102,17 +108,15 @@ pub fn history_entry_to_line(
 pub fn render_monitor(
     app: &mut App,
     frame: &mut Frame,
-    area: Rect,
-    outer_area: Rect,
+    content_area: Rect,
+    scrollbar_area: Option<Rect>,
     theme: &ThemeConfig,
     highlights: &[KeywordHighlight],
 ) -> PostRenderEffect {
-    let content_width = area.width as usize;
-    let content_height = area.height as usize;
+    let content_width = content_area.width as usize;
+    let content_height = content_area.height as usize;
     let wrap_mode = app.settings().line_mode.wrap_mode;
     let mut post_effect = PostRenderEffect::None;
-
-    app.update_viewport(ViewportSize::new(area.width, area.height));
 
     let is_search_active = app.line_mode.search().active;
     let search_query = if is_search_active {
@@ -171,7 +175,7 @@ pub fn render_monitor(
 
     // WARN: Paragraph.line_width and .line_count are experiemental deps
     let max_pan = match wrap_mode {
-        WrapMode::Wrap => 0, //unused so no need to process
+        WrapMode::Wrap => 0,
         WrapMode::Truncate => history_paragraph.line_width().saturating_sub(content_width),
     };
     let total_visual_rows = match wrap_mode {
@@ -180,7 +184,6 @@ pub fn render_monitor(
     };
 
     let max_scroll = total_visual_rows.saturating_sub(content_height);
-
     app.line_mode.update_limits(max_scroll, max_pan);
 
     // PERF: Visual row calculation for word-wrapped text when search-jump
@@ -224,9 +227,9 @@ pub fn render_monitor(
         paragraph_y_offset.min(u16::MAX as usize) as u16,
         line_x_offset.min(u16::MAX as usize) as u16,
     ));
-    frame.render_widget(history_paragraph, area);
+    frame.render_widget(history_paragraph, content_area);
 
-    apply_keyword_highlights(frame.buffer_mut(), area, highlights);
+    apply_keyword_highlights(frame.buffer_mut(), content_area, highlights);
 
     // selection
     if app.line_mode.copy_state().active {
@@ -238,7 +241,7 @@ pub fn render_monitor(
         if copy_state.pending_yank {
             let yanked_text = copy_state.extract_selected_from_buffer(
                 buf,
-                area,
+                content_area,
                 paragraph_y_offset,
                 line_x_offset,
             );
@@ -251,16 +254,16 @@ pub fn render_monitor(
 
         // selection area
         if copy_state.selection_anchor.is_some() {
-            for r in 0..area.height as usize {
+            for r in 0..content_area.height as usize {
                 let visual_row = paragraph_y_offset + r;
                 if visual_row >= total_visual_rows {
                     break;
                 }
 
-                for c in 0..area.width as usize {
+                for c in 0..content_area.width as usize {
                     let visual_col = line_x_offset + c;
                     if copy_state.is_selected(visual_row, visual_col) {
-                        let cell = &mut buf[(area.x + c as u16, area.y + r as u16)];
+                        let cell = &mut buf[(content_area.x + c as u16, content_area.y + r as u16)];
                         cell.set_style(theme.selection);
                     }
                 }
@@ -270,11 +273,11 @@ pub fn render_monitor(
         // selector cursor
         if cursor.row >= paragraph_y_offset {
             let viewer_row = cursor.row - paragraph_y_offset;
-            if viewer_row < area.height as usize && cursor.col >= line_x_offset {
+            if viewer_row < content_area.height as usize && cursor.col >= line_x_offset {
                 let viewer_col = cursor.col - line_x_offset;
-                if viewer_col < area.width as usize {
-                    let screen_x = area.x + viewer_col as u16;
-                    let screen_y = area.y + viewer_row as u16;
+                if viewer_col < content_area.width as usize {
+                    let screen_x = content_area.x + viewer_col as u16;
+                    let screen_y = content_area.y + viewer_row as u16;
 
                     if !app.is_app_focused() {
                         buf[(screen_x, screen_y)]
@@ -287,41 +290,30 @@ pub fn render_monitor(
     }
 
     // scrollbar
-    if total_visual_rows > content_height {
-        let mut scrollbar_state = ScrollbarState::new(max_scroll)
-            .viewport_content_length(content_height)
-            .position(paragraph_y_offset);
+    if let Some(sb_area) = scrollbar_area {
+        let has_borders = app.settings().ui.show_borders;
 
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(Some("▲"))
-            .end_symbol(Some("▼"))
-            .track_symbol(Some("│"))
-            .thumb_symbol("█");
+        if total_visual_rows > content_height {
+            let mut scrollbar_state = ScrollbarState::new(max_scroll)
+                .viewport_content_length(content_height)
+                .position(paragraph_y_offset);
 
-        let scrollbar_area = Rect {
-            x: outer_area.x + outer_area.width.saturating_sub(1),
-            y: outer_area.y + 1,
-            width: 1,
-            height: outer_area.height.saturating_sub(2),
-        };
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("▲"))
+                .end_symbol(Some("▼"))
+                .track_symbol(if has_borders { Some("│") } else { Some(" ") })
+                .thumb_symbol("█");
 
-        frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
+            frame.render_stateful_widget(scrollbar, sb_area, &mut scrollbar_state);
+        } else if !has_borders {
+            let blank = Paragraph::new(" ");
+            frame.render_widget(blank, sb_area);
+        }
     }
 
     // search
     if app.line_mode.search().active {
-        let visual_cursor = app.line_mode.search().query.visual_cursor() as u16;
-
-        // outer_area.x + 1 (left border) + " SEARCH: " (9) + 1 (space) + visual_cursor
-        let cursor_x = outer_area.x + 1 + 9 + 1 + visual_cursor;
-        // Bottom border line of the monitor outer box
-        let cursor_y = outer_area.y + outer_area.height.saturating_sub(1);
-
-        if !app.is_app_focused() {
-            let buf = frame.buffer_mut();
-            buf[(cursor_x, cursor_y)].set_style(Style::default().add_modifier(Modifier::REVERSED));
-        }
-        frame.set_cursor_position((cursor_x, cursor_y));
+        render_search_bar(app, frame, content_area, theme);
     }
 
     post_effect

@@ -10,18 +10,18 @@ use crate::{
     app::{App, types::FocusTarget},
     configs::{KeywordHighlight, ThemeConfig},
     terminal::{MaxicomCursor, MaxicomTerminal},
-    ui::common::apply_keyword_highlights,
+    ui::common::{apply_keyword_highlights, render_search_bar},
 };
 
 pub fn render_vt100_terminal(
     app: &mut App,
     frame: &mut Frame,
-    area: Rect,
-    outer_area: Rect,
+    content_area: Rect,
+    scrollbar_area: Option<Rect>,
     theme: &ThemeConfig,
     highlights: &[KeywordHighlight],
 ) {
-    let view_height = area.height as usize;
+    let view_height = content_area.height as usize;
     let focus = app.focus_target();
     let is_terminal_focused = focus == FocusTarget::Terminal;
     let cursor = MaxicomCursor::from_config(&app.settings().terminal_mode.cursor);
@@ -38,9 +38,8 @@ pub fn render_vt100_terminal(
         .cursor(cursor)
         .filling_char(&app.settings().terminal_mode.empty_fill_char);
 
-    frame.render_widget(term_widget, area);
-
-    apply_keyword_highlights(frame.buffer_mut(), area, highlights);
+    frame.render_widget(term_widget, content_area);
+    apply_keyword_highlights(frame.buffer_mut(), content_area, highlights);
 
     let (grid_rows, cols) = app.terminal_mode.get_vt100_size();
     let max_sb = app.terminal_mode.get_max_scrollback();
@@ -68,15 +67,11 @@ pub fn render_vt100_terminal(
                 continue;
             }
             let emulator_row = search_match.line_idx - top_visible_world_line;
-            if emulator_row >= grid_rows as usize {
-                continue;
-            }
-
-            if emulator_row < pan_y {
+            if emulator_row >= grid_rows as usize || emulator_row < pan_y {
                 continue;
             }
             let viewer_row = emulator_row - pan_y;
-            if viewer_row >= area.height as usize {
+            if viewer_row >= content_area.height as usize {
                 continue;
             }
 
@@ -114,12 +109,12 @@ pub fn render_vt100_terminal(
                         continue;
                     }
                     let viewer_col = world_col - pan_x;
-                    if viewer_col >= area.width as usize {
+                    if viewer_col >= content_area.width as usize {
                         break;
                     }
 
-                    let buf_x = area.x + viewer_col as u16;
-                    let buf_y = area.y + viewer_row as u16;
+                    let buf_x = content_area.x + viewer_col as u16;
+                    let buf_y = content_area.y + viewer_row as u16;
 
                     let cell = &mut buf[(buf_x, buf_y)];
                     cell.set_bg(bg_color);
@@ -135,35 +130,35 @@ pub fn render_vt100_terminal(
         let cursor = copy_state.cursor;
         let buf = frame.buffer_mut();
 
-        // selection area
+        // selection highlight
         if copy_state.selection_anchor.is_some() {
-            for r in 0..area.height as usize {
+            for r in 0..content_area.height as usize {
                 let emulator_row = r + pan_y;
                 if emulator_row >= grid_rows as usize {
                     break;
                 }
                 let world_row = top_visible_world_line + emulator_row;
 
-                for c in 0..area.width as usize {
+                for c in 0..content_area.width as usize {
                     let world_col = c + pan_x;
                     if copy_state.is_selected(world_row, world_col) {
-                        let cell = &mut buf[(area.x + c as u16, area.y + r as u16)];
+                        let cell = &mut buf[(content_area.x + c as u16, content_area.y + r as u16)];
                         cell.set_style(theme.selection);
                     }
                 }
             }
         }
 
-        // selector cursor
+        // selection cursor
         if cursor.row >= top_visible_world_line {
             let emulator_row = cursor.row - top_visible_world_line;
             if emulator_row >= pan_y {
                 let viewer_row = emulator_row - pan_y;
-                if viewer_row < area.height as usize && cursor.col >= pan_x {
+                if viewer_row < content_area.height as usize && cursor.col >= pan_x {
                     let viewer_col = cursor.col - pan_x;
-                    if viewer_col < area.width as usize {
-                        let screen_x = area.x + viewer_col as u16;
-                        let screen_y = area.y + viewer_row as u16;
+                    if viewer_col < content_area.width as usize {
+                        let screen_x = content_area.x + viewer_col as u16;
+                        let screen_y = content_area.y + viewer_row as u16;
 
                         if !app.is_app_focused() {
                             buf[(screen_x, screen_y)]
@@ -177,31 +172,32 @@ pub fn render_vt100_terminal(
     }
 
     // scrollbar
-    let max_vertical = app.terminal_mode.max_vertical_scroll();
-    if max_vertical > 0 && view_height > 0 {
-        let position_from_top = max_vertical.saturating_sub(app.terminal_mode.scrollback_offset());
+    if let Some(sb_area) = scrollbar_area {
+        let max_vertical = app.terminal_mode.max_vertical_scroll();
+        let has_borders = app.settings().ui.show_borders;
 
-        let mut scrollbar_state = ScrollbarState::new(max_vertical)
-            .viewport_content_length(view_height)
-            .position(position_from_top);
+        if max_vertical > 0 && view_height > 0 {
+            let position_from_top =
+                max_vertical.saturating_sub(app.terminal_mode.scrollback_offset());
 
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(Some("▲"))
-            .end_symbol(Some("▼"))
-            .track_symbol(Some("│"))
-            .thumb_symbol("█");
+            let mut scrollbar_state = ScrollbarState::new(max_vertical)
+                .viewport_content_length(view_height)
+                .position(position_from_top);
 
-        let scrollbar_area = Rect {
-            x: outer_area.x + outer_area.width.saturating_sub(1),
-            y: outer_area.y + 1,
-            width: 1,
-            height: outer_area.height.saturating_sub(2),
-        };
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("▲"))
+                .end_symbol(Some("▼"))
+                .track_symbol(if has_borders { Some("│") } else { Some(" ") })
+                .thumb_symbol("█");
 
-        frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
+            frame.render_stateful_widget(scrollbar, sb_area, &mut scrollbar_state);
+        } else if !has_borders {
+            let blank = Paragraph::new(" ");
+            frame.render_widget(blank, sb_area);
+        }
     }
 
-    // Cusor
+    // emulation cursor
     let screen = app.terminal_mode.vt100_screen();
     let is_scrolled_into_history = screen.scrollback() > 0;
 
@@ -217,11 +213,11 @@ pub fn render_vt100_terminal(
         let local_row = c_row.checked_sub(app.terminal_mode.pan_offset_y() as u16);
 
         if let (Some(col), Some(row)) = (local_col, local_row)
-            && col < area.width
-            && row < area.height
+            && col < content_area.width
+            && row < content_area.height
         {
-            let cursor_x = area.x + col;
-            let cursor_y = area.y + row;
+            let cursor_x = content_area.x + col;
+            let cursor_y = content_area.y + row;
             if !app.is_app_focused() {
                 let buf = frame.buffer_mut();
                 buf[(cursor_x, cursor_y)]
@@ -231,20 +227,9 @@ pub fn render_vt100_terminal(
         }
     }
 
-    // Search
+    // search input
     if app.terminal_mode.search().active {
-        let visual_cursor = app.terminal_mode.search().query.visual_cursor() as u16;
-
-        // outer_area.x + 1 (left border) + " SEARCH: " (9) + 1 (space) + visual_cursor
-        let cursor_x = outer_area.x + 1 + 9 + 1 + visual_cursor;
-        // Bottom border line of the monitor outer box
-        let cursor_y = outer_area.y + outer_area.height.saturating_sub(1);
-
-        if !app.is_app_focused() {
-            let buf = frame.buffer_mut();
-            buf[(cursor_x, cursor_y)].set_style(Style::default().add_modifier(Modifier::REVERSED));
-        }
-        frame.set_cursor_position((cursor_x, cursor_y));
+        render_search_bar(app, frame, content_area, theme);
     }
 }
 

@@ -1,8 +1,10 @@
 use ratatui::{
+    Frame,
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
+    widgets::{Clear, Paragraph},
 };
 
 use std::fmt::Write;
@@ -82,6 +84,7 @@ pub fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
         .fg(Color::Yellow)
         .add_modifier(Modifier::BOLD);
 
+    // TODO: add panning as config and with no borders
     match app.settings().input_mode {
         InputMode::Terminal => {
             if let Some(pan_left_possible) = app.terminal_mode.can_pan_left() {
@@ -103,26 +106,6 @@ pub fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
                     ])
                     .right_aligned(),
                 );
-            }
-
-            if app.terminal_mode.search().active {
-                let match_count = app.terminal_mode.search().matches_count();
-                let current_pos = app.terminal_mode.search().current_match_display();
-
-                titles.push(Line::from(vec![
-                    Span::styled(
-                        " SEARCH: ",
-                        Style::default().bg(Color::Blue).fg(Color::White),
-                    ),
-                    Span::styled(
-                        format!(" {} ", app.terminal_mode.search().query),
-                        Style::default().fg(Color::Yellow),
-                    ),
-                    Span::styled(
-                        format!("({}/{}) [ <-/->, Esc: Exit ] ", current_pos, match_count),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                ]))
             }
         }
         InputMode::Line => {
@@ -155,29 +138,94 @@ pub fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
                     .right_aligned(),
                 );
             }
-
-            if app.line_mode.search().active {
-                let match_count = app.line_mode.search().matches_count();
-                let current_pos = app.line_mode.search().current_match_display();
-
-                titles.push(Line::from(vec![
-                    Span::styled(
-                        " SEARCH: ",
-                        Style::default().bg(Color::Blue).fg(Color::White),
-                    ),
-                    Span::styled(
-                        format!(" {} ", app.line_mode.search().query),
-                        Style::default().fg(Color::Yellow),
-                    ),
-                    Span::styled(
-                        format!("({}/{}) [ <-/->, Esc: Exit ] ", current_pos, match_count),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                ]))
-            }
         }
     }
     titles
+}
+
+pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, _theme: &ThemeConfig) {
+    let has_borders = app.settings().ui.show_borders;
+    let query_str = if app.settings().input_mode == crate::configs::InputMode::Terminal {
+        app.terminal_mode.search().query_str()
+    } else {
+        app.line_mode.search().query_str()
+    };
+    let visual_cursor = if app.settings().input_mode == crate::configs::InputMode::Terminal {
+        app.terminal_mode.search().query.visual_cursor() as u16
+    } else {
+        app.line_mode.search().query.visual_cursor() as u16
+    };
+
+    if has_borders {
+        let cursor_x = area.x + 10 + visual_cursor;
+        let cursor_y = area.y + area.height;
+
+        let search_text = format!(" SEARCH: {} ", query_str);
+        let buf = frame.buffer_mut();
+        buf.set_string(
+            area.x + 2,
+            cursor_y,
+            &search_text,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
+
+        if !app.is_app_focused() {
+            buf[(cursor_x, cursor_y)].set_style(Style::default().add_modifier(Modifier::REVERSED));
+        }
+        frame.set_cursor_position((cursor_x, cursor_y));
+    } else {
+        let bottom_y = area.y + area.height.saturating_sub(1);
+        let search_line_area = Rect {
+            x: area.x,
+            y: bottom_y,
+            width: area.width,
+            height: 1,
+        };
+
+        frame.render_widget(Clear, search_line_area);
+        let prompt_line = Line::from(vec![
+            ratatui::text::Span::styled(
+                " SEARCH: ",
+                Style::default()
+                    .bg(Color::Yellow)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            ratatui::text::Span::styled(
+                format!(" {} ", query_str),
+                Style::default().bg(Color::DarkGray).fg(Color::White),
+            ),
+        ]);
+        frame.render_widget(Paragraph::new(prompt_line), search_line_area);
+
+        let cursor_x = area.x + 9 + visual_cursor;
+        frame.set_cursor_position((cursor_x, bottom_y));
+    }
+
+    // TODO: add more info to the search input field
+    /*
+                     if app.line_mode.search().active {
+                    let match_count = app.line_mode.search().matches_count();
+                    let current_pos = app.line_mode.search().current_match_display();
+
+                    titles.push(Line::from(vec![
+                        Span::styled(
+                            " SEARCH: ",
+                            Style::default().bg(Color::Blue).fg(Color::White),
+                        ),
+                        Span::styled(
+                            format!(" {} ", app.line_mode.search().query),
+                            Style::default().fg(Color::Yellow),
+                        ),
+                        Span::styled(
+                            format!("({}/{}) [ <-/->, Esc: Exit ] ", current_pos, match_count),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                    ]))
+                }
+    */
 }
 
 /// Helper function to center a popup window
