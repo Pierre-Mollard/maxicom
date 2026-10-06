@@ -84,63 +84,42 @@ pub fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
         .fg(Color::Yellow)
         .add_modifier(Modifier::BOLD);
 
-    // TODO: add panning as config and with no borders
-    match app.settings().input_mode {
-        InputMode::Terminal => {
-            if let Some(pan_left_possible) = app.terminal_mode.can_pan_left() {
-                titles.push(
-                    Line::from(vec![
-                        Span::styled(" ◀ (", arrow_style),
-                        Span::styled(pan_left_possible.to_string(), arrow_style),
-                        Span::styled(")", arrow_style),
-                    ])
-                    .left_aligned(),
-                );
-            }
-            if let Some(pan_right_possible) = app.terminal_mode.can_pan_right() {
-                titles.push(
-                    Line::from(vec![
-                        Span::styled("(", arrow_style),
-                        Span::styled(pan_right_possible.to_string(), arrow_style),
-                        Span::styled(") ▶ ", arrow_style),
-                    ])
-                    .right_aligned(),
-                );
-            }
-        }
-        InputMode::Line => {
-            if let Some(pan_left_possible) = app.line_mode.can_pan_left() {
-                titles.push(
-                    Line::from(vec![
-                        Span::styled(" ◀ (", arrow_style),
-                        Span::styled(pan_left_possible.to_string(), arrow_style),
-                        Span::styled(")", arrow_style),
-                    ])
-                    .left_aligned(),
-                );
-            }
-            if let Some((pan_right_possible, pan_explored)) = app.line_mode.can_pan_right()
-                && pan_right_possible > 0
-            {
-                let to_discover_alert =
-                    if pan_right_possible > pan_explored.saturating_sub(app.line_mode.x_offset()) {
-                        "!"
-                    } else {
-                        ""
-                    };
-                titles.push(
-                    Line::from(vec![
-                        Span::styled(to_discover_alert, arrow_style),
-                        Span::styled("(", arrow_style),
-                        Span::styled(pan_right_possible.to_string(), arrow_style),
-                        Span::styled(") ▶ ", arrow_style),
-                    ])
-                    .right_aligned(),
-                );
-            }
-        }
+    if let Some(left) = pan_left_indicator(app) {
+        titles
+            .push(Line::from(vec![Span::raw(" "), Span::styled(left, arrow_style)]).left_aligned());
     }
+
+    if let Some(right) = pan_right_indicator(app) {
+        titles.push(
+            Line::from(vec![Span::styled(right, arrow_style), Span::raw(" ")]).right_aligned(),
+        );
+    }
+
     titles
+}
+
+pub fn pan_left_indicator(app: &App) -> Option<String> {
+    app.pan_left_status()
+        .filter(|&cols| cols > 0)
+        .map(|cols| format!("◀ ({})", cols))
+}
+
+pub fn pan_right_indicator(app: &App) -> Option<String> {
+    app.pan_right_status().and_then(|(cols, explored)| {
+        if cols == 0 {
+            return None;
+        }
+
+        let alert = if app.settings().input_mode == crate::configs::InputMode::Line
+            && cols > explored.saturating_sub(app.line_mode.x_offset())
+        {
+            "!"
+        } else {
+            ""
+        };
+
+        Some(format!("{}({}) ▶", alert, cols))
+    })
 }
 
 pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, _theme: &ThemeConfig) {

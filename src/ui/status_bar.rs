@@ -19,6 +19,8 @@
 //! | `{rx_bytes}` | Total bytes received                | `1024`           |
 //! | `{tx_bytes}` | Total bytes transmitted             | `256`            |
 //! | `{time}`     | Current local time, format in conf  | `21:45:00`       |
+//! | `{pan_left}` | Display left pan amount possible    | `◀ (3)`          |
+//! | `{pan_right}`| Display right pan amount possible   | `!(2) ▶`         |
 //!
 //! ## Conditional States (`?`)
 //! | State      | Matches When...                                              |
@@ -31,6 +33,10 @@
 //! | `search`   | App is in Search mode                                        |
 //! | `overlay`  | A dialog or settings popup is currently open                 |
 //! | `focused`  | Terminal window has OS desktop focus                         |
+//! | `panned`   | Is it panned currently                                       |
+//! | `pan_right`| Panning right is possible                                    |
+//! | `pan_left` | Panning left is possible                                     |
+//! | `pan_alert`| New content arrived in further panned right                  |
 //!
 //! ## Style Keywords
 //! - **Modifiers**: `bold`, `dim`, `italic`, `underlined`, `reversed`, `reset`, `crossed`, `slow_blink`, `rapid_blink`
@@ -63,6 +69,7 @@ use ratatui::{
 use crate::{
     app::{App, InputContext},
     configs::{InputMode, StatusBarConfig, ThemeConfig},
+    ui::common::{pan_left_indicator, pan_right_indicator},
 };
 
 pub fn parse_inline_style(spec: &str, base_style: Style, app: &App) -> Option<Style> {
@@ -146,6 +153,16 @@ fn evaluate_condition(cond: &str, app: &App) -> bool {
         "overlay" | "popup" => ctx == InputContext::Overlay || app.overlay().is_some(),
         "rec" | "logging" => app.is_logging_active(),
         "focused" => app.is_app_focused(),
+        "pan_left" | "can_pan_left" => app.pan_left_status().is_some_and(|cols| cols > 0),
+        "pan_right" | "can_pan_right" => app.pan_right_status().is_some_and(|(cols, _)| cols > 0),
+        "pan_right_alert" | "pan_alert"
+            if app.settings().input_mode == crate::configs::InputMode::Line =>
+        {
+            app.pan_right_status().is_some_and(|(cols, explored)| {
+                cols > explored.saturating_sub(app.line_mode.x_offset())
+            })
+        }
+        "panned" | "pan" | "panning" => app.pan_left_status().is_some_and(|c| c > 0),
 
         _ => false,
     }
@@ -296,6 +313,9 @@ impl StatusBarConfig {
             InputMode::Line => "LINE",
         };
 
+        let pan_left = pan_left_indicator(app).unwrap_or_default();
+        let pan_right = pan_right_indicator(app).unwrap_or_default();
+
         let rx_bytes = app.stats.rx().to_string();
         let tx_bytes = app.stats.tx().to_string();
 
@@ -307,6 +327,8 @@ impl StatusBarConfig {
             .replace("{rx_bytes}", &rx_bytes)
             .replace("{tx_bytes}", &tx_bytes)
             .replace("{time}", &now)
+            .replace("{pan_left}", &pan_left)
+            .replace("{pan_right}", &pan_right)
     }
 }
 

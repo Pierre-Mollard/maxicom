@@ -68,7 +68,7 @@ pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'stati
         }
     }
 }
-// TODO: when scrollling from prefix keep prefix enabled
+// TODO: when scrolling/panning from prefix keep prefix enabled
 
 // TODO: added scrolling info and pan for status bar
 

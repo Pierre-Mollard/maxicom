@@ -469,6 +469,23 @@ impl App {
         }
     }
 
+    pub fn pan_left_status(&self) -> Option<usize> {
+        match self.settings().input_mode {
+            InputMode::Terminal => self.terminal_mode.can_pan_left(),
+            InputMode::Line => self.line_mode.can_pan_left(),
+        }
+    }
+
+    pub fn pan_right_status(&self) -> Option<(usize, usize)> {
+        match self.settings().input_mode {
+            InputMode::Terminal => self
+                .terminal_mode
+                .can_pan_right()
+                .map(|pan_right| (pan_right, 0)),
+            InputMode::Line => self.line_mode.can_pan_right(),
+        }
+    }
+
     pub fn notify_info(&mut self, msg: impl Into<String>) {
         self.notifications
             .push(msg, ToastLevel::Info, Duration::from_secs(3));

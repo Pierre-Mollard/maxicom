@@ -48,6 +48,8 @@ cargo run --bin fake_device
   - {rx_bytes}   => Bytes received counter
   - {tx_bytes}   => Bytes sent counter
   - {time}       => Local time (configured via time_format)
+  - {pan_left}   => Display left pan amount possible (`◀ (3)`)
+  - {pan_right}  => Display right pan amount possible with warning new (`!(2) ▶`)
 
 - Conditions:
   - prefix       => When Ctrl-A prefix mode is active
@@ -58,6 +60,10 @@ cargo run --bin fake_device
   - search       => When search mode is active
   - overlay      => When a dialog or popup window is active
   - focused      => When the application has the cursor focus
+  - panned       => When currently panning
+  - pan_right    => When panning right is possible
+  - pan_left     => When panning left is possible
+  - pan_alert    => When unexplored panning right arrived
 
 - Styles:
   - Colors       => black, red, green, yellow, blue, magenta, cyan, gray, #RRGGBB
