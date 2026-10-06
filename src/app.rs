@@ -474,41 +474,27 @@ impl App {
         }
     }
 
-    pub fn pan_left_status(&self) -> Option<usize> {
-        match self.settings().input_mode {
-            InputMode::Terminal => self.terminal_mode.can_pan_left(),
-            InputMode::Line => self.line_mode.can_pan_left(),
-        }
-    }
-
-    pub fn pan_right_status(&self) -> Option<(usize, usize)> {
-        match self.settings().input_mode {
-            InputMode::Terminal => self
-                .terminal_mode
-                .can_pan_right()
-                .map(|pan_right| (pan_right, 0)),
-            InputMode::Line => self.line_mode.can_pan_right(),
-        }
-    }
-
+    #[inline]
     pub fn scroll_status(&self) -> ScrollStatus {
         match self.settings().input_mode {
-            InputMode::Terminal => {
-                let max = self.terminal_mode.max_vertical_scroll();
-                let offset = self.terminal_mode.scrollback_offset();
-                ScrollStatus {
-                    max_scroll: max,
-                    offset_from_bottom: offset,
-                }
-            }
-            InputMode::Line => {
-                let max = self.line_mode.max_scroll();
-                let offset = self.line_mode.scroll_offset();
-                ScrollStatus {
-                    max_scroll: max,
-                    offset_from_bottom: offset,
-                }
-            }
+            InputMode::Terminal => self.terminal_mode.scroller().status(),
+            InputMode::Line => self.line_mode.scroller().status(),
+        }
+    }
+
+    #[inline]
+    pub fn pan_left_status(&self) -> Option<usize> {
+        match self.settings().input_mode {
+            InputMode::Terminal => self.terminal_mode.scroller().can_pan_left(),
+            InputMode::Line => self.line_mode.scroller().can_pan_left(),
+        }
+    }
+
+    #[inline]
+    pub fn pan_right_status(&self) -> Option<(usize, usize)> {
+        match self.settings().input_mode {
+            InputMode::Terminal => self.terminal_mode.scroller().can_pan_right(),
+            InputMode::Line => self.line_mode.scroller().can_pan_right(),
         }
     }
 

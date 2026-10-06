@@ -70,8 +70,6 @@ pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'stati
 }
 // TODO: when scrolling/panning from prefix keep prefix enabled
 
-// TODO: added scrolling info and pan for status bar
-
 // TODO: add a remote resize in line mode like in terminal (with decoration readjust)
 pub fn history_entry_to_line(
     entry: &LogEntry,

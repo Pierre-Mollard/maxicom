@@ -6,6 +6,7 @@ use tui_input::Input;
 use crate::{
     app::{
         UpdateEffect,
+        scroller::ViewportScroller,
         search::SearchState,
         selection::CopyModeState,
         types::{LogEntry, ViewportSize},
@@ -37,25 +38,17 @@ pub struct LineMode {
     vi_state: ViState,
     /// Waiting to receive carriage return
     pending_carriage_return: bool,
-    /// Number of visual lines above newest output
-    scroll_from_bottom: usize,
-    /// Offset to display when lines are not wrapped
-    x_offset: usize,
-    new_content_missed: bool,
     logger: LineLogger,
-    max_scroll: usize,
-    max_pan: usize,
-    pan_right_explored_amount: usize,
-    view_height: usize,
-    view_width: usize,
     search_state: SearchState,
     copy_state: CopyModeState,
+    scroller: ViewportScroller,
 }
 
 impl LineMode {
     pub fn new(max_history_lines: usize, logger: LineLogger) -> Self {
         let search_state = SearchState::default();
         let copy_state = CopyModeState::default();
+        let scroller = ViewportScroller::default();
         LineMode {
             local_history: VecDeque::with_capacity(max_history_lines),
             local_send_history: VecDeque::with_capacity(max_history_lines),
@@ -67,17 +60,10 @@ impl LineMode {
             vi_state: ViState::default(),
             partial_line_timestamp: None,
             pending_carriage_return: false,
-            scroll_from_bottom: 0,
-            x_offset: 0,
-            max_scroll: 0,
-            max_pan: 0,
-            new_content_missed: false,
             logger,
-            pan_right_explored_amount: 0,
-            view_width: 0,
-            view_height: 0,
             search_state,
             copy_state,
+            scroller,
         }
     }
 
@@ -149,9 +135,7 @@ impl LineMode {
 
         self.local_history.push_back(entry);
 
-        if self.scroll_offset() > 0 {
-            self.new_content_missed = true;
-        }
+        self.scroller.on_rx_received();
 
         // Enforce maximum scrollback size.
         while self.local_history.len() > self.max_lines {
@@ -175,7 +159,6 @@ impl LineMode {
         &self.partial_line
     }
 
-    // TODO: try to move span and scroll from both term and line to dedicated mod
     pub fn history_up(&mut self) {
         if self.local_send_history.is_empty() {
             return;
@@ -266,8 +249,8 @@ impl LineMode {
     // FIX: in line mode copy is only on visible text.... (and cursor is not spawning at latest
     // receive position)
     pub fn handle_copy_action(&mut self, action: CopyModeAction) -> Option<String> {
-        let total_visual_rows = self.max_scroll + self.view_height;
-        let content_width = self.view_width;
+        let total_visual_rows = self.scroller.max_scroll_y + self.scroller.view_height;
+        let content_width = self.scroller.view_width;
 
         if total_visual_rows == 0 {
             if action == CopyModeAction::Exit {
@@ -277,13 +260,16 @@ impl LineMode {
         }
 
         let max_row = total_visual_rows.saturating_sub(1);
-        let max_col = content_width + self.max_pan;
+        let max_col = content_width + self.scroller.max_pan_x;
 
         match action {
             CopyModeAction::Enter => {
-                let current_top = self.max_scroll.saturating_sub(self.scroll_from_bottom);
+                let current_top = self
+                    .scroller
+                    .max_scroll_y
+                    .saturating_sub(self.scroll_offset());
                 let current_bottom =
-                    (current_top + self.view_height.saturating_sub(1)).min(max_row);
+                    (current_top + self.scroller.view_height.saturating_sub(1)).min(max_row);
 
                 self.copy_state.enter_at(current_bottom, 0);
 
@@ -311,12 +297,12 @@ impl LineMode {
                 self.keep_copy_cursor_in_view();
             }
             CopyModeAction::PageUp => {
-                let jump = self.view_height.saturating_sub(1);
+                let jump = self.scroller.view_height.saturating_sub(1);
                 self.copy_state.cursor.row = self.copy_state.cursor.row.saturating_sub(jump);
                 self.keep_copy_cursor_in_view();
             }
             CopyModeAction::PageDown => {
-                let jump = self.view_height.saturating_sub(1);
+                let jump = self.scroller.view_height.saturating_sub(1);
                 self.copy_state.cursor.row = (self.copy_state.cursor.row + jump).min(max_row);
                 self.keep_copy_cursor_in_view();
             }
@@ -339,10 +325,13 @@ impl LineMode {
     fn keep_copy_cursor_in_view(&mut self) {
         let cursor_row = self.copy_state.cursor.row;
         let cursor_col = self.copy_state.cursor.col;
-        let view_h = self.view_height;
-        let view_w = self.view_width;
+        let view_h = self.scroller.view_height;
+        let view_w = self.scroller.view_width;
 
-        let current_top = self.max_scroll.saturating_sub(self.scroll_from_bottom);
+        let current_top = self
+            .scroller
+            .max_scroll_y
+            .saturating_sub(self.scroller.offset_y);
         let current_bottom = current_top + view_h.saturating_sub(1);
 
         if cursor_row < current_top {
@@ -353,14 +342,18 @@ impl LineMode {
             self.scroll_down(diff);
         }
 
-        if view_w > 0 && self.max_pan > 0 {
-            if cursor_col < self.x_offset {
-                self.x_offset = cursor_col;
-            } else if cursor_col >= self.x_offset + view_w {
-                self.x_offset = (cursor_col + 1).saturating_sub(view_w).min(self.max_pan);
+        if view_w > 0 && self.scroller.max_pan_x > 0 {
+            if cursor_col < self.scroller.offset_x {
+                self.scroller.offset_x = cursor_col;
+            } else if cursor_col >= self.scroller.offset_x + view_w {
+                self.scroller.offset_x = (cursor_col + 1)
+                    .saturating_sub(view_w)
+                    .min(self.scroller.max_pan_x);
             }
+            self.scroller.pan_right_explored =
+                self.scroller.pan_right_explored.max(self.scroller.offset_x);
         } else {
-            self.x_offset = 0;
+            self.scroller.offset_x = 0;
         }
     }
 
@@ -444,104 +437,76 @@ impl LineMode {
     }
 
     pub fn update_viewport(&mut self, wrap_mode: WrapMode, viewport: ViewportSize) {
-        self.view_height = viewport.rows;
-        self.view_width = viewport.cols;
-        self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll);
-        self.x_offset = match wrap_mode {
-            WrapMode::Wrap => 0,
-            WrapMode::Truncate => self.x_offset.min(self.max_pan),
-        };
-    }
-
-    pub fn update_limits(&mut self, max_scroll: usize, max_pan: usize) {
-        self.max_scroll = max_scroll;
-        self.max_pan = max_pan;
-        self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll);
-        self.x_offset = self.x_offset.min(self.max_pan);
-    }
-
-    pub fn scroll_to(&mut self, lines: usize) {
-        self.scroll_from_bottom = lines;
-    }
-
-    pub fn scroll_up(&mut self, lines: usize) {
-        self.scroll_from_bottom = self.scroll_from_bottom.saturating_add(lines);
-    }
-
-    pub fn scroll_down(&mut self, lines: usize) {
-        self.scroll_from_bottom = self.scroll_from_bottom.saturating_sub(lines);
-        if self.scroll_offset() == 0 {
-            self.new_content_missed = false;
+        self.scroller.update_view_size(viewport.cols, viewport.rows);
+        if wrap_mode == WrapMode::Wrap {
+            self.scroller.offset_x = 0;
         }
     }
 
-    pub fn scroll_up_page(&mut self) {
-        self.scroll_from_bottom = self
-            .scroll_from_bottom
-            .saturating_add(self.view_height.saturating_sub(1));
-    }
-
-    pub fn scroll_down_page(&mut self) {
-        self.scroll_from_bottom = self
-            .scroll_from_bottom
-            .saturating_sub(self.view_height.saturating_sub(1));
-    }
-
-    pub fn scroll_to_bottom(&mut self) {
-        self.scroll_from_bottom = 0;
-    }
-
-    pub fn scroll_to_top(&mut self) {
-        self.scroll_from_bottom = usize::MAX;
-    }
-
-    pub fn pan_to_right(&mut self, cols: usize) {
-        self.x_offset = self.x_offset.saturating_add(cols);
-        self.pan_right_explored_amount = self.pan_right_explored_amount.max(self.x_offset);
-    }
-
-    pub fn pan_to_left(&mut self, cols: usize) {
-        self.x_offset = self.x_offset.saturating_sub(cols);
+    pub fn update_limits(&mut self, max_scroll: usize, max_pan: usize) {
+        self.scroller.update_limits(max_scroll, max_pan);
     }
 
     #[inline]
     pub fn scroll_offset(&self) -> usize {
-        self.scroll_from_bottom
+        self.scroller.offset_y
     }
-
     #[inline]
     pub fn max_scroll(&self) -> usize {
-        self.max_scroll
+        self.scroller.max_scroll_y
+    }
+    #[inline]
+    pub fn x_offset(&self) -> usize {
+        self.scroller.offset_x
+    }
+    #[inline]
+    pub fn can_pan_left(&self) -> Option<usize> {
+        self.scroller.can_pan_left()
+    }
+    #[inline]
+    pub fn can_pan_right(&self) -> Option<(usize, usize)> {
+        self.scroller.can_pan_right()
+    }
+    #[inline]
+    pub fn is_new_content_missed(&self) -> bool {
+        self.scroller.new_content_missed
     }
 
     #[inline]
-    pub fn x_offset(&self) -> usize {
-        self.x_offset
+    pub fn scroll_up(&mut self, lines: usize) {
+        self.scroller.scroll_up(lines);
     }
-
-    /// Return Some(pan possible, max pan explored since start)
-    pub fn can_pan_right(&self) -> Option<(usize, usize)> {
-        if self.max_pan > 0 {
-            Some((
-                self.max_pan.saturating_sub(self.x_offset),
-                self.pan_right_explored_amount,
-            ))
-        } else {
-            None
-        }
+    #[inline]
+    pub fn scroll_down(&mut self, lines: usize) {
+        self.scroller.scroll_down(lines);
     }
-
-    /// Return Some(pan possible)
-    pub fn can_pan_left(&self) -> Option<usize> {
-        if self.x_offset > 0 {
-            Some(self.x_offset)
-        } else {
-            None
-        }
+    #[inline]
+    pub fn scroll_up_page(&mut self) {
+        self.scroller.scroll_up_page();
     }
-
-    pub fn is_new_content_missed(&self) -> bool {
-        self.new_content_missed
+    #[inline]
+    pub fn scroll_down_page(&mut self) {
+        self.scroller.scroll_down_page();
+    }
+    #[inline]
+    pub fn scroll_to_bottom(&mut self) {
+        self.scroller.scroll_to_bottom();
+    }
+    #[inline]
+    pub fn scroll_to_top(&mut self) {
+        self.scroller.scroll_to_top();
+    }
+    #[inline]
+    pub fn scroll_to(&mut self, lines: usize) {
+        self.scroller.scroll_to(lines);
+    }
+    #[inline]
+    pub fn pan_to_right(&mut self, cols: usize) {
+        self.scroller.pan_right(cols);
+    }
+    #[inline]
+    pub fn pan_to_left(&mut self, cols: usize) {
+        self.scroller.pan_left(cols);
     }
 
     #[inline]
@@ -562,5 +527,10 @@ impl LineMode {
     #[inline]
     pub fn copy_state_mut(&mut self) -> &mut CopyModeState {
         &mut self.copy_state
+    }
+
+    #[inline]
+    pub fn scroller(&self) -> &ViewportScroller {
+        &self.scroller
     }
 }

@@ -5,7 +5,10 @@ use crossterm::event::KeyEvent;
 use vt100::Parser;
 
 use crate::{
-    app::{UpdateEffect, ViewportSize, search::SearchState, selection::CopyModeState},
+    app::{
+        UpdateEffect, ViewportSize, scroller::ViewportScroller, search::SearchState,
+        selection::CopyModeState,
+    },
     configs::{TerminalDimensionMode, TextEncoding},
     inputs::{CopyModeAction, SearchModeAction, TerminalAction, dispatch_input_key},
     logger::TerminalLogger,
@@ -14,20 +17,15 @@ use crate::{
 pub struct TerminalMode {
     vt100_parser: Parser,
     logger: TerminalLogger,
-    scrollback_offset: usize,
-    pan_offset_x: usize,
-    pan_offset_y: usize,
     max_content_scrollback: usize,
-    view_height: usize,
-    view_width: usize,
-    max_pan: usize,
     max_history_lines: usize,
-    new_content_missed: bool,
     search_state: SearchState,
     copy_state: CopyModeState,
+    scroller: ViewportScroller,
+    pan_offset_y: usize,
 
-    pub history_timestamps: VecDeque<DateTime<Local>>,
-    pub screen_timestamps: Vec<Option<DateTime<Local>>>,
+    history_timestamps: VecDeque<DateTime<Local>>,
+    screen_timestamps: Vec<Option<DateTime<Local>>>,
 }
 
 impl TerminalMode {
@@ -35,21 +33,17 @@ impl TerminalMode {
         let vt100_parser = Parser::new(rows, cols, max_history_lines);
         let search_state = SearchState::default();
         let copy_state = CopyModeState::default();
+        let scroller = ViewportScroller::default();
 
         TerminalMode {
             vt100_parser,
             logger,
-            scrollback_offset: 0,
-            pan_offset_x: 0,
-            pan_offset_y: 0,
-            view_height: 0,
-            view_width: 0,
             max_content_scrollback: 0,
-            max_pan: 0,
             max_history_lines,
-            new_content_missed: false,
             search_state,
             copy_state,
+            scroller,
+            pan_offset_y: 0,
             history_timestamps: VecDeque::with_capacity(max_history_lines),
             screen_timestamps: vec![None; rows as usize],
         }
@@ -87,9 +81,7 @@ impl TerminalMode {
             }
         }
 
-        if self.scrollback_offset > 0 {
-            self.new_content_missed = true;
-        }
+        self.scroller.on_rx_received();
 
         let utf8_bytes = encoding.to_utf8_bytes(raw_bytes);
         self.vt100_parser.process(&utf8_bytes);
@@ -113,8 +105,7 @@ impl TerminalMode {
         conf_rows: u16,
         conf_cols: u16,
     ) {
-        self.view_height = viewport.rows;
-        self.view_width = viewport.cols;
+        self.scroller.update_view_size(viewport.cols, viewport.rows);
 
         let avail_h = viewport.rows as u16;
         let avail_w = viewport.cols as u16;
@@ -190,12 +181,12 @@ impl TerminalMode {
 
     #[inline]
     pub fn pan_offset(&self) -> usize {
-        self.pan_offset_x
+        self.scroller.offset_x
     }
 
     #[inline]
     pub fn pan_offset_x(&self) -> usize {
-        self.pan_offset_x
+        self.scroller.offset_x
     }
 
     #[inline]
@@ -205,29 +196,38 @@ impl TerminalMode {
 
     #[inline]
     pub fn scrollback_offset(&self) -> usize {
-        self.scrollback_offset
+        self.scroller.offset_y
     }
 
     // for 2D terminal mode the metrics and clamping is handled within the emulator
     fn clamp_pan_x(&mut self, visible_cols: usize) {
         let vt_cols = self.vt100_parser.screen().size().1 as usize;
-        self.max_pan = vt_cols.saturating_sub(visible_cols);
-        self.pan_offset_x = self.pan_offset_x.min(self.max_pan);
+        let max_pan = vt_cols.saturating_sub(visible_cols);
+        self.scroller.max_pan_x = max_pan;
+        self.scroller.offset_x = self.scroller.offset_x.min(max_pan);
     }
 
     pub fn pan_to_right(&mut self, cols: usize, visible_cols: usize) {
-        self.pan_offset_x = self.pan_offset_x.saturating_add(cols);
+        self.scroller.pan_right(cols);
         self.clamp_pan_x(visible_cols);
     }
 
     pub fn pan_to_left(&mut self, cols: usize, visible_cols: usize) {
-        self.pan_offset_x = self.pan_offset_x.saturating_sub(cols);
+        self.scroller.pan_left(cols);
         self.clamp_pan_x(visible_cols);
+    }
+
+    pub fn can_pan_right(&self) -> Option<usize> {
+        self.scroller.can_pan_right().map(|(cols, _)| cols)
+    }
+
+    pub fn can_pan_left(&self) -> Option<usize> {
+        self.scroller.can_pan_left()
     }
 
     pub fn max_screen_pan_y(&self) -> usize {
         let vt_rows = self.vt100_parser.screen().size().0 as usize;
-        vt_rows.saturating_sub(self.view_height)
+        vt_rows.saturating_sub(self.scroller.view_height)
     }
 
     pub fn max_vertical_scroll(&self) -> usize {
@@ -244,16 +244,16 @@ impl TerminalMode {
         let max_pan_y = self.max_screen_pan_y();
         let max_total = self.max_vertical_scroll();
 
-        // clamping from last
-        self.scrollback_offset = self.scrollback_offset.min(max_total);
+        self.scroller.max_scroll_y = max_total;
+        self.scroller.clamp();
 
-        let (y_offset, vt_scrollback) = if self.scrollback_offset <= max_pan_y {
+        let (y_offset, vt_scrollback) = if self.scroller.offset_y <= max_pan_y {
             // In the active screen: pan from bottom to top
-            let y = max_pan_y - self.scrollback_offset;
+            let y = max_pan_y - self.scroller.offset_y;
             (y as u16, 0)
         } else {
             // Past the active screen: camera is at top (y=0), vt100 scrolls history
-            let history_offset = self.scrollback_offset - max_pan_y;
+            let history_offset = self.scroller.offset_y - max_pan_y;
             (0, history_offset)
         };
 
@@ -262,35 +262,33 @@ impl TerminalMode {
     }
 
     pub fn scroll_up(&mut self, lines: usize) {
-        let max = self.max_vertical_scroll();
-        self.scrollback_offset = self.scrollback_offset.saturating_add(lines).min(max);
+        self.scroller.max_scroll_y = self.max_vertical_scroll();
+        self.scroller.scroll_up(lines);
         self.reconcile_both_vertical_scroll();
     }
 
     pub fn scroll_down(&mut self, lines: usize) {
-        self.scrollback_offset = self.scrollback_offset.saturating_sub(lines);
+        self.scroller.max_scroll_y = self.max_vertical_scroll();
+        self.scroller.scroll_down(lines);
         self.reconcile_both_vertical_scroll();
-
-        if self.scrollback_offset == 0 {
-            self.new_content_missed = false;
-        }
     }
 
     pub fn scroll_up_page(&mut self) {
-        self.scroll_up(self.view_height.saturating_sub(1));
+        self.scroll_up(self.scroller.view_height.saturating_sub(1));
     }
 
     pub fn scroll_down_page(&mut self) {
-        self.scroll_down(self.view_height.saturating_sub(1));
+        self.scroll_down(self.scroller.view_height.saturating_sub(1));
     }
 
     pub fn scroll_to_bottom(&mut self) {
-        self.scrollback_offset = 0;
+        self.scroller.scroll_to_bottom();
         self.reconcile_both_vertical_scroll();
     }
 
     pub fn scroll_to_top(&mut self) {
-        self.scrollback_offset = self.max_vertical_scroll();
+        self.scroller.max_scroll_y = self.max_vertical_scroll();
+        self.scroller.scroll_to_top();
         self.reconcile_both_vertical_scroll();
     }
 
@@ -308,29 +306,11 @@ impl TerminalMode {
         let effective_height = (grid_rows as usize).min(view_height);
         let half_canvas = effective_height / 2;
 
-        let target_scrollback_offset = lines_from_bottom.saturating_sub(half_canvas);
+        let target_offset = lines_from_bottom.saturating_sub(half_canvas);
 
-        let max_total = self.max_vertical_scroll();
-        self.scrollback_offset = target_scrollback_offset.min(max_total);
+        self.scroller.max_scroll_y = self.max_vertical_scroll();
+        self.scroller.scroll_to(target_offset);
         self.reconcile_both_vertical_scroll();
-    }
-
-    /// Return Some(pan possible, max pan explored since start)
-    pub fn can_pan_right(&self) -> Option<usize> {
-        if self.max_pan.saturating_sub(self.pan_offset_x) > 0 {
-            Some(self.max_pan.saturating_sub(self.pan_offset_x))
-        } else {
-            None
-        }
-    }
-
-    /// Return Some(pan possible)
-    pub fn can_pan_left(&self) -> Option<usize> {
-        if self.pan_offset_x > 0 {
-            Some(self.pan_offset_x)
-        } else {
-            None
-        }
     }
 
     // HACK: there is no scrollback current len from the crate, make PR?
@@ -339,7 +319,7 @@ impl TerminalMode {
         self.vt100_parser.screen_mut().set_scrollback(usize::MAX);
         self.max_content_scrollback = self.vt100_parser.screen().scrollback();
         self.vt100_parser.screen_mut().set_scrollback(current);
-        self.scrollback_offset = current;
+        self.scroller.max_scroll_y = self.max_vertical_scroll();
     }
 
     pub fn set_vt100_size(&mut self, rows: u16, cols: u16) {
@@ -361,6 +341,10 @@ impl TerminalMode {
 
     pub fn get_max_scrollback(&self) -> usize {
         self.max_content_scrollback
+    }
+
+    pub fn is_new_content_missed(&self) -> bool {
+        self.scroller.new_content_missed
     }
 
     pub fn all_text_lines(&mut self) -> Vec<String> {
@@ -389,23 +373,22 @@ impl TerminalMode {
         lines
     }
 
-    pub fn is_new_content_missed(&self) -> bool {
-        self.new_content_missed
-    }
-
     pub fn update_action_terminal(&mut self, action: TerminalAction) -> UpdateEffect {
         match action {
             TerminalAction::AutoResizeRemoteToViewer => {
-                let rows = self.view_height as u16;
-                let cols = self.view_width as u16;
+                let rows = self.scroller.view_height as u16;
+                let cols = self.scroller.view_width as u16;
                 let cmd =
                     format!("stty rows {rows} cols {cols}; export LINES={rows} COLUMNS={cols}\n");
                 UpdateEffect::Transmit(cmd.into_bytes())
             }
             TerminalAction::AutoResizeEmulatorToViewer => {
-                self.set_vt100_size(self.view_height as u16, self.view_width as u16);
-                self.pan_offset_x = 0;
-                self.max_pan = 0;
+                self.set_vt100_size(
+                    self.scroller.view_height as u16,
+                    self.scroller.view_width as u16,
+                );
+                self.scroller.offset_x = 0;
+                self.scroller.max_pan_x = 0;
                 UpdateEffect::None
             }
         }
@@ -505,13 +488,13 @@ impl TerminalMode {
             }
 
             CopyModeAction::PageUp => {
-                let jump = self.view_height.saturating_sub(1);
+                let jump = self.scroller.view_height.saturating_sub(1);
                 self.copy_state.cursor.row = self.copy_state.cursor.row.saturating_sub(jump);
                 self.keep_terminal_copy_cursor_in_view();
             }
 
             CopyModeAction::PageDown => {
-                let jump = self.view_height.saturating_sub(1);
+                let jump = self.scroller.view_height.saturating_sub(1);
                 self.copy_state.cursor.row = (self.copy_state.cursor.row + jump).min(max_row);
                 self.keep_terminal_copy_cursor_in_view();
             }
@@ -544,8 +527,8 @@ impl TerminalMode {
     fn keep_terminal_copy_cursor_in_view(&mut self) {
         let cursor_row = self.copy_state.cursor.row;
         let cursor_col = self.copy_state.cursor.col;
-        let view_h = self.view_height;
-        let view_w = self.view_width; // or passed-in visible columns width
+        let view_h = self.scroller.view_height;
+        let view_w = self.scroller.view_width; // or passed-in visible columns width
         let (grid_rows, grid_cols) = self.get_vt100_size();
 
         let current_sb = self.vt100_screen().scrollback();
@@ -564,13 +547,13 @@ impl TerminalMode {
         if view_w > 0 && (grid_cols as usize) > view_w {
             let max_pan_x = (grid_cols as usize).saturating_sub(view_w);
 
-            if cursor_col < self.pan_offset_x {
-                self.pan_offset_x = cursor_col;
-            } else if cursor_col >= self.pan_offset_x + view_w {
-                self.pan_offset_x = (cursor_col + 1).saturating_sub(view_w).min(max_pan_x);
+            if cursor_col < self.scroller.offset_x {
+                self.scroller.offset_x = cursor_col;
+            } else if cursor_col >= self.scroller.offset_x + view_w {
+                self.scroller.offset_x = (cursor_col + 1).saturating_sub(view_w).min(max_pan_x);
             }
         } else {
-            self.pan_offset_x = 0;
+            self.scroller.offset_x = 0;
         }
     }
 
@@ -651,5 +634,10 @@ impl TerminalMode {
     #[inline]
     pub fn copy_state(&self) -> &CopyModeState {
         &self.copy_state
+    }
+
+    #[inline]
+    pub fn scroller(&self) -> &ViewportScroller {
+        &self.scroller
     }
 }
