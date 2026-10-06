@@ -4,43 +4,55 @@
 //! conditional ternaries, and element visibility toggling.
 //!
 //! ## Syntax
-//! - **Plain Text**: Rendered using default theme colors.
+//! - **Plain Text**: Rendered using base theme style `status_bar`.
 //! - **Variables**: `{variable_name}` replaced at runtime.
 //! - **Styled Blocks**: `[content](style_spec)`
-//! - **Conditionals**: `(condition?if_true:if_false)`
+//! - **Conditionals**: `[content](condition?true_style:false_style)`
+//! - **Grouping**: Use parentheses `(style1 style2)` to group multiple styles in conditional branches.
 //!
 //! ## Available Variables
-//! | Variable     | Description                         | Example          |
-//! |--------------|-------------------------------------|------------------|
-//! | `{mode}`     | Current input mode                  | `TERM`           |
-//! | `{port}`     | Serial device path                  | `/dev/ttyUSB0`   |
-//! | `{baud}`     | Current baudrate                    | `115200`         |
-//! | `{framing}`  | Data bits, parity, stop bits        | `8N1`            |
-//! | `{rx_bytes}` | Total bytes received                | `1024`           |
-//! | `{tx_bytes}` | Total bytes transmitted             | `256`            |
-//! | `{time}`     | Current local time, format in conf  | `21:45:00`       |
-//! | `{pan_left}` | Display left pan amount possible    | `◀ (3)`          |
-//! | `{pan_right}`| Display right pan amount possible   | `!(2) ▶`         |
+//! | Variable            | Description                                             | Example          |
+//! |---------------------|---------------------------------------------------------|------------------|
+//! | `{mode}`            | Current input mode (`TERM` or `LINE`)                   | `TERM`           |
+//! | `{port}`            | Serial device path                                      | `/dev/ttyUSB0`   |
+//! | `{baud}`            | Serial baudrate                                         | `115200`         |
+//! | `{framing}`         | Data bits, parity, stop bits                            | `8N1`            |
+//! | `{rx_bytes}`        | Total bytes received                                    | `1024`           |
+//! | `{tx_bytes}`        | Total bytes transmitted                                 | `256`            |
+//! | `{time}`            | Current local time (format in config)                   | `21:45:00`       |
+//! | `{pan_left}`        | Left pan amount possible                                | `◀ (3)`          |
+//! | `{pan_right}`       | Right pan amount possible with alert indicator          | `!(2) ▶`         |
+//! | `{scroll_pos}`      | Scroll position indicator (`Top`, `Bot`, `All`, or `%`) | `42%`            |
+//! | `{scroll_pos_up}`   | Uppercase scroll position indicator                     | `BOT`            |
+//! | `{scroll_percent}`  | Scroll position as numeric percentage (0-100)           | `42`             |
+//! | `{scroll_offset}`   | Lines scrolled up from the bottom                       | `15`             |
+//! | `{scroll_max}`      | Maximum total scrollback lines available                | `500`            |
 //!
 //! ## Conditional States (`?`)
-//! | State      | Matches When...                                              |
-//! |------------|--------------------------------------------------------------|
-//! | `prefix`   | Leader prefix key (`Ctrl-A`) is currently active             |
-//! | `rec`      | Session is currently logged in a file                        |
-//! | `line`     | App is in Line Input mode                                    |
-//! | `term`     | App is in Terminal Emulation mode                            |
-//! | `copy`     | App is in Copy / Scrollback mode                             |
-//! | `search`   | App is in Search mode                                        |
-//! | `overlay`  | A dialog or settings popup is currently open                 |
-//! | `focused`  | Terminal window has OS desktop focus                         |
-//! | `panned`   | Is it panned currently                                       |
-//! | `pan_right`| Panning right is possible                                    |
-//! | `pan_left` | Panning left is possible                                     |
-//! | `pan_alert`| New content arrived in further panned right                  |
+//! | State / Keyword                 | Aliases                                    | Matches When...                                          |
+//! |---------------------------------|--------------------------------------------|----------------------------------------------------------|
+//! | `prefix`                        | —                                          | Leader prefix key (`Ctrl-A`) is currently active         |
+//! | `rec`                           | `logging`                                  | File recording / capture session is active               |
+//! | `line`                          | `linemode`                                 | Line Input mode is active                                |
+//! | `term`                          | `terminal`                                 | Direct Terminal mode is active                           |
+//! | `copy`                          | `copymode`                                 | Copy / Backlog Scrollback mode is active                 |
+//! | `search`                        | —                                          | Search mode is active                                    |
+//! | `overlay`                       | `popup`                                    | A modal dialog or popup is open                          |
+//! | `focused`                       | —                                          | Terminal window has OS desktop focus                     |
+//! | `is_live`                       | `live`, `is_bottom`, `bottom`, `bot`       | Viewport is following live serial tail (offset is 0)     |
+//! | `is_top`                        | `top`                                      | Viewport is scrolled to the absolute top of history      |
+//! | `is_scrolled`                   | `scrolled`, `paused`                       | Viewport is scrolled up into history (not live tail)     |
+//! | `scroll_up`                     | `can_scroll_up`                            | More history lines are available above the viewport      |
+//! | `scroll_down`                   | `can_scroll_down`                          | More history lines are available below the viewport      |
+//! | `has_scroll`                    | —                                          | Total buffer lines exceed visible screen height          |
+//! | `panned`                        | `pan`, `panning`                           | Viewport is horizontally panned in either direction      |
+//! | `pan_left`                      | `can_pan_left`                             | Horizontal panning to the left is possible               |
+//! | `pan_right`                     | `can_pan_right`                            | Horizontal panning to the right is possible              |
+//! | `pan_right_alert`               | `pan_alert`                                | New unread content arrived further to the right (Line)   |
 //!
 //! ## Style Keywords
-//! - **Modifiers**: `bold`, `dim`, `italic`, `underlined`, `reversed`, `reset`, `crossed`, `slow_blink`, `rapid_blink`
-//! - **Visibility**: `hide` / `hidden` / `none`
+//! - **Modifiers**: `bold`, `dim`, `italic`, `underlined` (`underline`), `reversed` (`reverse`), `reset` (`default`), `crossed`, `slow_blink` (`sblink`), `rapid_blink` (`rblink`)
+//! - **Visibility**: `hide`, `hidden`, `none` (omits the span completely)
 //! - **Colors**: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`,
 //!   `gray`, `darkgray`, `white`, or hex `#RRGGBB`
 //! - **Prefixes**: `fg=<color>`, `bg=<color>`
@@ -48,13 +60,13 @@
 //! ## Examples
 //! ```toml
 //! [ui.status_bar]
-//! # Hide REC when idle, show bright red when recording:
-//! left = "[  REC ](rec?red bold:hide)[ {mode} ](prefix?yellow:cyan bold) {port} | [{baud}](yellow)"
+//! # Hide REC when idle, light up red when active; show mode in yellow on prefix:
+//! left = "[  REC ](rec?red bold:hide)[ {mode} ](prefix?yellow:cyan bold)[ PAUSED (+{scroll_offset}) ](scrolled?red bold:hide) {port}"
 //!
-//! # Chain multiple modes:
-//! left = "[ {mode} ](prefix?yellow:copy?magenta:search?blue:line?green:cyan bold)"
+//! # Center scroll position and pan arrows:
+//! center = "[{pan_left}](pan_left?yellow:hide) [ {scroll_pos} ](has_scroll?gray:hide) [{pan_right}](pan_right_alert?red bold:(pan_right?yellow:hide))"
 //!
-//! # Right-aligned counters and blue timestamp:
+//! # Right-aligned byte statistics and blue local clock:
 //! right = "[RX: {rx_bytes}](gray) | [TX: {tx_bytes}](gray) | [{time}](blue)"
 //! ```
 
@@ -144,6 +156,8 @@ fn tokenize_spec(spec: &str) -> Vec<&str> {
 
 fn evaluate_condition(cond: &str, app: &App) -> bool {
     let ctx = app.input_context();
+    let scroll = app.scroll_status();
+
     match cond.trim().to_ascii_lowercase().as_str() {
         "prefix" => ctx == InputContext::Prefix || app.is_prefix_active(),
         "copy" | "copymode" => ctx == InputContext::CopyMode || app.is_copy_mode_active(),
@@ -153,6 +167,14 @@ fn evaluate_condition(cond: &str, app: &App) -> bool {
         "overlay" | "popup" => ctx == InputContext::Overlay || app.overlay().is_some(),
         "rec" | "logging" => app.is_logging_active(),
         "focused" => app.is_app_focused(),
+
+        "is_live" | "live" | "is_bottom" | "bottom" | "bot" => scroll.is_bottom(),
+        "is_top" | "top" => scroll.is_top(),
+        "is_scrolled" | "scrolled" | "paused" => !scroll.is_bottom(),
+        "scroll_up" | "can_scroll_up" => scroll.can_scroll_up(),
+        "scroll_down" | "can_scroll_down" => scroll.can_scroll_down(),
+        "has_scroll" => scroll.max_scroll > 0,
+
         "pan_left" | "can_pan_left" => app.pan_left_status().is_some_and(|cols| cols > 0),
         "pan_right" | "can_pan_right" => app.pan_right_status().is_some_and(|(cols, _)| cols > 0),
         "pan_right_alert" | "pan_alert"
@@ -316,6 +338,13 @@ impl StatusBarConfig {
         let pan_left = pan_left_indicator(app).unwrap_or_default();
         let pan_right = pan_right_indicator(app).unwrap_or_default();
 
+        let scroll = app.scroll_status();
+        let scroll_pos = scroll.position_display();
+        let scroll_pos_up = scroll.position_display().to_uppercase();
+        let scroll_percent = scroll.percent().to_string();
+        let scroll_offset = scroll.offset_from_bottom.to_string();
+        let scroll_max = scroll.max_scroll.to_string();
+
         let rx_bytes = app.stats.rx().to_string();
         let tx_bytes = app.stats.tx().to_string();
 
@@ -329,6 +358,11 @@ impl StatusBarConfig {
             .replace("{time}", &now)
             .replace("{pan_left}", &pan_left)
             .replace("{pan_right}", &pan_right)
+            .replace("{scroll_pos}", &scroll_pos)
+            .replace("{scroll_pos_up}", &scroll_pos_up)
+            .replace("{scroll_percent}", &scroll_percent)
+            .replace("{scroll_offset}", &scroll_offset)
+            .replace("{scroll_max}", &scroll_max)
     }
 }
 

@@ -34,39 +34,61 @@ cargo run --bin fake_device
 #### STATUS BAR FORMAT
 
 - Syntax:
-  - `plain text`, rendered using base style 'status_bar' in theme
-  - `{variables}`, replaced at runtime from list below
-  - `[content](style)`, content rendered using specified style
-  - `[content](condition?true_style:false_style)`, conditionnal from list below
-  - `(style1 style2 style3)`, use parenthesis to regroup styles with spaces in conditions
+  - `plain text`                  Base theme style
+  - `{variable}`                  Dynamic runtime value
+  - `[content](style)`            Styled text span
+  - `[content](cond?true:false)`  Conditional style
+  - `(style1 style2)`             Group multiple styles with spaces
 
 - Variables:
-  - {mode}       => "TERM" or "LINE"
-  - {port}       => Active serial port (e.g. /dev/ttyUSB0)
-  - {baud}       => Baud rate (e.g. 115200)
-  - {framing}    => Serial framing (e.g. 8N1)
-  - {rx_bytes}   => Bytes received counter
-  - {tx_bytes}   => Bytes sent counter
-  - {time}       => Local time (configured via time_format)
-  - {pan_left}   => Display left pan amount possible (`◀ (3)`)
-  - {pan_right}  => Display right pan amount possible with warning new (`!(2) ▶`)
+  - {mode}           "TERM" or "LINE"
+  - {port}           Serial device path (e.g. /dev/ttyUSB0)
+  - {baud}           Baud rate (e.g. 115200)
+  - {framing}        Serial framing (e.g. 8N1)
+  - {rx_bytes}       Received bytes count
+  - {tx_bytes}       Transmitted bytes count
+  - {time}           Local time (via time_format)
+  - {pan_left}       Left pan amount (`◀ (3)`)
+  - {pan_right}      Right pan amount (`!(2) ▶`)
+  - {scroll_pos}     Position: "All", "Bot", "Top", "42%"
+  - {scroll_pos_up}  Uppercase position: "ALL", "BOT", "TOP"
+  - {scroll_percent} Numeric percent: 0..100
+  - {scroll_offset}  Lines scrolled away from tail
+  - {scroll_max}     Total scrollback depth
 
 - Conditions:
-  - prefix       => When Ctrl-A prefix mode is active
-  - rec          => When recording to file is active
-  - line         => When line input mode is active
-  - term         => When terminal input mode is active
-  - copy         => When copy mode is active
-  - search       => When search mode is active
-  - overlay      => When a dialog or popup window is active
-  - focused      => When the application has the cursor focus
-  - panned       => When currently panning
-  - pan_right    => When panning right is possible
-  - pan_left     => When panning left is possible
-  - pan_alert    => When unexplored panning right arrived
+  - Modes & Focus:
+    - prefix         Prefix key (Ctrl-A) is active
+    - rec            File capture is active (alias: logging)
+    - line           Line input active (alias: linemode)
+    - term           Terminal mode active (alias: terminal)
+    - copy           Scrollback mode active (alias: copymode)
+    - search         Search mode is active
+    - overlay        Dialog/popup is open (alias: popup)
+    - focused        Window has OS desktop focus
+
+  - Viewport & Scroll:
+    - is_live        Following live tail (alias: live, bot, bottom)
+    - is_top         Scrolled to top of buffer (alias: top)
+    - is_scrolled    Viewing past buffer history (alias: scrolled, paused)
+    - scroll_up      History available above (alias: can_scroll_up)
+    - scroll_down    History available below (alias: can_scroll_down)
+    - has_scroll     Buffer exceeds visible screen height
+
+  - Horizontal Pan:
+    - panned         Viewport is panned (alias: pan, panning)
+    - pan_left       Can pan left (alias: can_pan_left)
+    - pan_right      Can pan right (alias: can_pan_right)
+    - pan_alert      Unread content to right (alias: pan_right_alert)
 
 - Styles:
-  - Colors       => black, red, green, yellow, blue, magenta, cyan, gray, #RRGGBB
-  - Specifiers   => `fg=<color>`, `bg=<color>`
-  - Modifiers    => bold, dim, italic, underline, reverse, crossed, sblink, rblink
-  - Visibility   => hide, hidden, none
+  - Colors:
+    black, red, green, yellow, blue, magenta, cyan, gray,
+    darkgray, white, or hex (#RRGGBB)
+  - Specifiers:
+    `fg=<color>`, `bg=<color>`
+  - Modifiers:
+    bold, dim, italic, underline, reverse, crossed,
+    sblink (slow blink), rblink (rapid blink), reset
+  - Visibility:
+    hide, hidden, none

@@ -1,7 +1,10 @@
 use std::time::Duration;
 
 use crate::{
-    app::types::{FocusTarget, ViewportSize},
+    app::{
+        scroller::ScrollStatus,
+        types::{FocusTarget, ViewportSize},
+    },
     configs::{InputMode, KeyResolver, SettingsConfig, WrapMode},
     inputs::{Action, AppAction, CopyModeAction, HistoryAction, SearchModeAction},
     logger::{LineLogger, TerminalLogger},
@@ -11,6 +14,8 @@ use crate::{
 };
 
 pub mod line_mode;
+pub mod panner;
+pub mod scroller;
 pub mod search;
 pub mod selection;
 pub mod terminal_mode;
@@ -483,6 +488,27 @@ impl App {
                 .can_pan_right()
                 .map(|pan_right| (pan_right, 0)),
             InputMode::Line => self.line_mode.can_pan_right(),
+        }
+    }
+
+    pub fn scroll_status(&self) -> ScrollStatus {
+        match self.settings().input_mode {
+            InputMode::Terminal => {
+                let max = self.terminal_mode.max_vertical_scroll();
+                let offset = self.terminal_mode.scrollback_offset();
+                ScrollStatus {
+                    max_scroll: max,
+                    offset_from_bottom: offset,
+                }
+            }
+            InputMode::Line => {
+                let max = self.line_mode.max_scroll();
+                let offset = self.line_mode.scroll_offset();
+                ScrollStatus {
+                    max_scroll: max,
+                    offset_from_bottom: offset,
+                }
+            }
         }
     }
 

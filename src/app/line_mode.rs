@@ -175,6 +175,7 @@ impl LineMode {
         &self.partial_line
     }
 
+    // TODO: try to move span and scroll from both term and line to dedicated mod
     pub fn history_up(&mut self) {
         if self.local_send_history.is_empty() {
             return;
@@ -506,6 +507,11 @@ impl LineMode {
     #[inline]
     pub fn scroll_offset(&self) -> usize {
         self.scroll_from_bottom
+    }
+
+    #[inline]
+    pub fn max_scroll(&self) -> usize {
+        self.max_scroll
     }
 
     #[inline]

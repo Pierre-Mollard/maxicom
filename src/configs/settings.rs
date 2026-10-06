@@ -292,7 +292,7 @@ impl Default for StatusBarConfig {
             ),
             center: String::default(),
             right: String::from(
-                "[[ REC]](rec?red bold:hide) [RX: {rx_bytes}](gray) | [TX: {tx_bytes}](gray) | [{time}](blue)",
+                "[[ REC]](rec?red bold:hide) {scroll_pos_up} [RX: {rx_bytes}](gray) | [TX: {tx_bytes}](gray) | [{time}](blue)",
             ),
             time_format: String::from("%H:%M:%S"),
         }
