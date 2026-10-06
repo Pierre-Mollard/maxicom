@@ -9,15 +9,11 @@ pub mod terminal;
 
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
     widgets::{Block, Borders},
 };
 
 use crate::{
-    app::{
-        App,
-        types::{FocusTarget, ViewportSize},
-    },
+    app::{App, types::ViewportSize},
     configs::{InputMode, KeywordHighlight, ThemeConfig},
     overlays::Overlay,
     ui::{

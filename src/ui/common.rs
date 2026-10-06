@@ -134,12 +134,8 @@ pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, _theme: &Them
 
     let query_str = s.query_str();
     let visual_cursor = s.query.visual_cursor() as u16;
-    let match_count = s.matches.len();
-    let current_pos = if s.matches.is_empty() {
-        0
-    } else {
-        s.current_match + 1
-    };
+    let match_count = s.matches_count();
+    let current_pos = s.current_match_display();
 
     let stats_style = if match_count > 0 {
         Style::default().fg(Color::Green)

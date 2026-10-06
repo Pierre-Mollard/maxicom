@@ -452,10 +452,6 @@ impl LineMode {
         self.scroller.offset_y
     }
     #[inline]
-    pub fn max_scroll(&self) -> usize {
-        self.scroller.max_scroll_y
-    }
-    #[inline]
     pub fn x_offset(&self) -> usize {
         self.scroller.offset_x
     }

@@ -61,10 +61,6 @@ pub struct ViewportScroller {
 }
 
 impl ViewportScroller {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn on_rx_received(&mut self) {
         if self.offset_y > 0 {
             self.new_content_missed = true;

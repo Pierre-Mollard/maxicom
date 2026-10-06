@@ -217,8 +217,8 @@ impl TerminalMode {
         self.clamp_pan_x(visible_cols);
     }
 
-    pub fn can_pan_right(&self) -> Option<usize> {
-        self.scroller.can_pan_right().map(|(cols, _)| cols)
+    pub fn can_pan_right(&self) -> Option<(usize, usize)> {
+        self.scroller.can_pan_right()
     }
 
     pub fn can_pan_left(&self) -> Option<usize> {

@@ -14,7 +14,6 @@ use crate::{
 };
 
 pub mod line_mode;
-pub mod panner;
 pub mod scroller;
 pub mod search;
 pub mod selection;
@@ -160,7 +159,18 @@ impl App {
     }
 
     pub fn update(&mut self, action: Action) -> UpdateEffect {
-        if !matches!(action, Action::App(AppAction::SetPrefix(true))) {
+        let is_repeatable_history = self.prefix_active
+            && matches!(
+                action,
+                Action::History(
+                    HistoryAction::ScrollUp(_)
+                        | HistoryAction::ScrollDown(_)
+                        | HistoryAction::PanLeft(_)
+                        | HistoryAction::PanRight(_)
+                )
+            );
+
+        if !matches!(action, Action::App(AppAction::SetPrefix(true))) && !is_repeatable_history {
             self.prefix_active = false;
         }
 
@@ -353,7 +363,7 @@ impl App {
             (InputMode::Terminal, HistoryAction::PanLeft(cols)) => {
                 self.terminal_mode.pan_to_left(cols, self.viewport.cols);
             }
-            (InputMode::Terminal, HistoryAction::Clear) => todo!(),
+            (InputMode::Terminal, HistoryAction::Clear) => todo!(), // TODO: clear history for terminal_mode
         }
 
         UpdateEffect::None
@@ -485,16 +495,16 @@ impl App {
     #[inline]
     pub fn pan_left_status(&self) -> Option<usize> {
         match self.settings().input_mode {
-            InputMode::Terminal => self.terminal_mode.scroller().can_pan_left(),
-            InputMode::Line => self.line_mode.scroller().can_pan_left(),
+            InputMode::Terminal => self.terminal_mode.can_pan_left(),
+            InputMode::Line => self.line_mode.can_pan_left(),
         }
     }
 
     #[inline]
     pub fn pan_right_status(&self) -> Option<(usize, usize)> {
         match self.settings().input_mode {
-            InputMode::Terminal => self.terminal_mode.scroller().can_pan_right(),
-            InputMode::Line => self.line_mode.scroller().can_pan_right(),
+            InputMode::Terminal => self.terminal_mode.can_pan_right(),
+            InputMode::Line => self.line_mode.can_pan_right(),
         }
     }
 
