@@ -15,7 +15,7 @@ pub use keybindings::{
 pub use settings::{
     CursorConfig, InputMode, LineDisplayMode, LineLogConfig, RxNewlineMode, SettingsConfig,
     SettingsError, StatusBarConfig, TerminalDimensionMode, TerminalLogConfig, TextEncoding,
-    TxNewlineSymbol, WrapMode,
+    WrapMode,
 };
 pub use theme::{ThemeConfig, ThemeError};
 

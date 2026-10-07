@@ -158,6 +158,12 @@ impl App {
         self.overlay = None;
     }
 
+    // TODO: reduce settings related args of terminal and linput modes
+
+    // TODO: add prefered cols for selection copymode both ?
+
+    // TODO: add vi motions to selection word next/previous/v
+
     pub fn update(&mut self, action: Action) -> UpdateEffect {
         let is_repeatable_history = self.prefix_active
             && matches!(
@@ -186,13 +192,9 @@ impl App {
                 }
                 UpdateEffect::Transmit(bytes)
             }
-            Action::LineInput(action) => self.line_mode.update_action_lineinput(
-                self.settings.local_echo,
-                self.settings.line_mode.tx_eol,
-                self.settings.display_live_timestamp,
-                &self.settings.timestamp_format,
-                action,
-            ),
+            Action::LineInput(action) => self
+                .line_mode
+                .update_action_lineinput(&self.settings, action),
             Action::Terminal(action) => self.terminal_mode.update_action_terminal(action),
             Action::History(action) => self.update_action_history(action),
             Action::CopyMode(action) => self.update_action_copy_mode(action),

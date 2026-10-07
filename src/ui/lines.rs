@@ -263,17 +263,7 @@ pub fn render_monitor(
         let cursor_line = copy_state.cursor.line_idx;
         let cursor_char = copy_state.cursor.char_idx;
 
-        let mut gutter_offset = 0;
-        if app.settings().display_live_timestamp {
-            gutter_offset += chrono::Local::now()
-                .format(&app.settings().timestamp_format)
-                .to_string()
-                .chars()
-                .count();
-        }
-        gutter_offset += app.settings().line_mode.line_prefix.chars().count();
-
-        // TODO: use this info for the visual row width for actions
+        let gutter_offset = app.settings().line_gutter_width();
 
         let visual_row = match wrap_mode {
             WrapMode::Truncate => cursor_line,

@@ -11,7 +11,7 @@ use crate::{
         selection::CopyModeState,
         types::{LogEntry, ViewportSize},
     },
-    configs::{LineDisplayMode, RxNewlineMode, TextEncoding, TxNewlineSymbol, WrapMode},
+    configs::{LineDisplayMode, RxNewlineMode, SettingsConfig, TextEncoding, WrapMode},
     inputs::{
         CopyModeAction, LineInputAction, SearchModeAction, ViMode, ViState, dispatch_input_key,
         dispatch_input_key_vi,
@@ -201,10 +201,7 @@ impl LineMode {
 
     pub fn update_action_lineinput(
         &mut self,
-        local_echo: bool,
-        tx_eol_mode: TxNewlineSymbol,
-        timestamp: bool,
-        timestamp_f: &str,
+        settings: &SettingsConfig,
         action: LineInputAction,
     ) -> UpdateEffect {
         match action {
@@ -218,13 +215,13 @@ impl LineMode {
                     self.local_send_history.push_back(text.clone());
                 }
 
-                if local_echo {
-                    self.push_history(&text, timestamp_f);
+                if settings.local_echo {
+                    self.push_history(&text, &settings.timestamp_format);
                 }
 
                 // consumming string!
                 let mut bytes = text.into_bytes();
-                bytes.extend_from_slice(tx_eol_mode.as_bytes());
+                bytes.extend_from_slice(settings.line_mode.tx_eol.as_bytes());
 
                 UpdateEffect::Transmit(bytes)
             }
@@ -237,7 +234,8 @@ impl LineMode {
                 UpdateEffect::None
             }
             LineInputAction::AutoResizeRemoteToWidth => {
-                let cols = self.line_width_max(timestamp, timestamp_f);
+                let gutter = settings.line_gutter_width();
+                let cols = self.scroller.view_width.saturating_sub(gutter).max(1);
                 let cmd = format!("stty cols {cols}; export COLUMNS={cols}\n");
                 UpdateEffect::Transmit(cmd.into_bytes())
             }
@@ -356,21 +354,6 @@ impl LineMode {
             }
         }
         None
-    }
-
-    // TODO: maybe use something like this to handle wrap/timestamp and stuff
-    fn line_width_max(&self, timestamp: bool, timestamp_f: &str) -> usize {
-        let mut w = self.scroller.view_width;
-
-        if timestamp {
-            let timestamp = Local::now();
-            w = w.saturating_sub(timestamp.format(timestamp_f).to_string().len() + 1);
-        }
-
-        // TODO: somehow use app.settings().line_mode.prompt_prefix.len() ?
-        w = w.saturating_sub(2);
-
-        w
     }
 
     fn sync_scroll_with_cursor(&mut self) {

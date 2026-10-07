@@ -456,6 +456,20 @@ impl SettingsConfig {
 
         Ok(())
     }
+
+    pub fn line_gutter_width(&self) -> usize {
+        let mut width = 0;
+
+        if self.display_live_timestamp {
+            let sample_time = chrono::Local::now();
+            let ts_str = sample_time.format(&self.timestamp_format).to_string();
+            width += ts_str.chars().count();
+        }
+
+        width += self.line_mode.line_prefix.chars().count();
+
+        width
+    }
 }
 
 #[derive(Debug)]
