@@ -62,7 +62,7 @@ fn main() -> ExitCode {
     }
 }
 
-// FIX: losing perfs at 200 000 lines in line mode
+// PERF: losing perfs at 200 000 lines in line mode
 fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let config_path = AppConfig::default_config_path();
     let configs = match AppConfig::load_or_create_default(&config_path) {

@@ -174,6 +174,22 @@ impl TerminalMode {
         }
     }
 
+    pub fn clear_history(&mut self) {
+        let (rows, cols) = self.get_vt100_size();
+
+        self.vt100_parser = Parser::new(rows, cols, self.max_history_lines);
+        self.history_timestamps.clear();
+        self.screen_timestamps = vec![None; rows as usize];
+
+        self.max_content_scrollback = 0;
+        self.pan_offset_y = 0;
+
+        self.scroller.scroll_to_bottom();
+        self.scroller.max_scroll_y = 0;
+        self.scroller.offset_x = 0;
+        self.scroller.pan_right_explored = 0;
+    }
+
     #[inline]
     pub fn vt100_screen(&self) -> &vt100::Screen {
         self.vt100_parser.screen()

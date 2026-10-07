@@ -363,7 +363,7 @@ impl App {
             (InputMode::Terminal, HistoryAction::PanLeft(cols)) => {
                 self.terminal_mode.pan_to_left(cols, self.viewport.cols);
             }
-            (InputMode::Terminal, HistoryAction::Clear) => todo!(), // TODO: clear history for terminal_mode
+            (InputMode::Terminal, HistoryAction::Clear) => self.terminal_mode.clear_history(),
         }
 
         UpdateEffect::None
