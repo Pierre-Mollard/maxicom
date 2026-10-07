@@ -220,7 +220,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
         match post_render_effect {
             PostRenderEffect::None => (),
-            PostRenderEffect::CopyToClipboard(text) => execute_clipboard_copy(&mut app, &text),
+            PostRenderEffect::_CopyToClipboard(text) => execute_clipboard_copy(&mut app, &text),
         }
     }
 

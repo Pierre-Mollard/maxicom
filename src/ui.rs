@@ -37,7 +37,7 @@ use crate::{
 #[derive(Debug, PartialEq, Eq)]
 pub enum PostRenderEffect {
     None,
-    CopyToClipboard(String),
+    _CopyToClipboard(String),
 }
 
 pub fn render(

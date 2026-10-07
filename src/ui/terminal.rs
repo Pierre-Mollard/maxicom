@@ -150,12 +150,12 @@ pub fn render_vt100_terminal(
         }
 
         // selection cursor
-        if cursor.row >= top_visible_world_line {
-            let emulator_row = cursor.row - top_visible_world_line;
+        if cursor.line_idx >= top_visible_world_line {
+            let emulator_row = cursor.line_idx - top_visible_world_line;
             if emulator_row >= pan_y {
                 let viewer_row = emulator_row - pan_y;
-                if viewer_row < content_area.height as usize && cursor.col >= pan_x {
-                    let viewer_col = cursor.col - pan_x;
+                if viewer_row < content_area.height as usize && cursor.char_idx >= pan_x {
+                    let viewer_col = cursor.char_idx - pan_x;
                     if viewer_col < content_area.width as usize {
                         let screen_x = content_area.x + viewer_col as u16;
                         let screen_y = content_area.y + viewer_row as u16;

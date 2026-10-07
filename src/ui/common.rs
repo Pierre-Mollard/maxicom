@@ -11,7 +11,7 @@ use std::fmt::Write;
 
 use crate::{
     app::{App, types::FocusTarget},
-    configs::{InputMode, KeywordHighlight, ThemeConfig},
+    configs::{InputMode, KeywordHighlight, LineDisplayMode, ThemeConfig},
 };
 
 pub fn monitor_title(app: &App, area: &Rect) -> String {
@@ -326,6 +326,67 @@ pub fn apply_keyword_highlights(buf: &mut Buffer, area: Rect, highlights: &[Keyw
                     cell.set_style(cell.style().add_modifier(hl.style.add_modifier));
                 }
             }
+        }
+    }
+}
+
+pub fn apply_selection_to_spans(
+    spans: Vec<Span<'static>>,
+    sel_start: usize,
+    sel_end: usize,
+    selection_style: Style,
+) -> Vec<Span<'static>> {
+    let mut out = Vec::new();
+    let mut char_cursor: usize = 0;
+
+    for span in spans {
+        let span_chars: Vec<char> = span.content.chars().collect();
+        let span_len = span_chars.len();
+        if span_len == 0 {
+            out.push(span);
+            continue;
+        }
+
+        let span_start = char_cursor;
+        let span_end = char_cursor + span_len - 1;
+
+        if span_end < sel_start || span_start > sel_end {
+            out.push(span);
+        } else if span_start >= sel_start && span_end <= sel_end {
+            out.push(Span::styled(span.content, selection_style));
+        } else {
+            for ch in span_chars {
+                if char_cursor >= sel_start && char_cursor <= sel_end {
+                    out.push(Span::styled(ch.to_string(), selection_style));
+                } else {
+                    out.push(Span::styled(ch.to_string(), span.style));
+                }
+                char_cursor += 1;
+            }
+            continue;
+        }
+
+        char_cursor += span_len;
+    }
+
+    out
+}
+
+pub fn displayable_line_string(text: &str, mode: LineDisplayMode) -> String {
+    match mode {
+        LineDisplayMode::Pretty | LineDisplayMode::Clean => strip_ansi_escapes::strip_str(text),
+        LineDisplayMode::Raw => {
+            let mut raw = String::new();
+            for ch in text.chars() {
+                match ch {
+                    '\x1b' => raw.push_str("^["),
+                    '\r' => raw.push_str("\\r"),
+                    '\t' => raw.push_str("    "),
+                    c if c.is_control() => raw.push_str(&format!("\\x{:02X}", c as u32)),
+                    c => raw.push(c),
+                }
+            }
+            raw
         }
     }
 }

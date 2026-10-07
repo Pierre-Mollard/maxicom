@@ -16,7 +16,8 @@ use crate::{
     ui::{
         PostRenderEffect,
         common::{
-            apply_keyword_highlights, apply_search_highlight, border_style_for, render_search_bar,
+            apply_keyword_highlights, apply_search_highlight, apply_selection_to_spans,
+            border_style_for, render_search_bar,
         },
     },
 };
@@ -74,9 +75,10 @@ pub fn history_entry_to_line(
     settings: &SettingsConfig,
     search_query: &str,
     active_occurrence: Option<usize>,
+    selection_range: Option<(usize, usize)>,
     theme: &ThemeConfig,
 ) -> Line<'static> {
-    let mut prefix_spans = Vec::new();
+    let mut spans = Vec::new();
     let display_mode = settings.line_mode.display_mode;
     let timestamp_in_line = settings.display_live_timestamp;
     let timestamp_format = &settings.timestamp_format;
@@ -84,21 +86,24 @@ pub fn history_entry_to_line(
 
     if timestamp_in_line {
         let time = entry.timestamp.format(timestamp_format).to_string();
-        prefix_spans.push(Span::styled(time, *theme.timestamp_line));
+        spans.push(Span::styled(time, *theme.timestamp_line));
     }
 
-    prefix_spans.push(Span::styled(line_prefix.to_string(), theme.line_prefix));
+    spans.push(Span::styled(line_prefix.to_string(), theme.line_prefix));
 
-    let content_spans = format_line_content(&entry.text, display_mode);
+    let mut content_spans = format_line_content(&entry.text, display_mode);
 
-    if search_query.is_empty() {
-        prefix_spans.extend(content_spans);
-        return Line::from(prefix_spans);
+    if !search_query.is_empty() {
+        content_spans = apply_search_highlight(content_spans, search_query, active_occurrence);
     }
 
-    let highlighted_spans = apply_search_highlight(content_spans, search_query, active_occurrence);
-    prefix_spans.extend(highlighted_spans);
-    Line::from(prefix_spans)
+    if let Some((sel_start, sel_end)) = selection_range {
+        content_spans =
+            apply_selection_to_spans(content_spans, sel_start, sel_end, *theme.selection);
+    }
+
+    spans.extend(content_spans);
+    Line::from(spans)
 }
 
 pub fn render_monitor(
@@ -112,7 +117,7 @@ pub fn render_monitor(
     let content_width = content_area.width as usize;
     let content_height = content_area.height as usize;
     let wrap_mode = app.settings().line_mode.wrap_mode;
-    let mut post_effect = PostRenderEffect::None;
+    let post_effect = PostRenderEffect::None; // unused for now
 
     let is_search_active = app.line_mode.search().active;
     let search_query = if is_search_active {
@@ -121,23 +126,48 @@ pub fn render_monitor(
         ""
     };
 
-    let mut history_lines: Vec<Line> = if is_search_active {
-        app.line_mode
-            .history()
-            .iter()
-            .enumerate()
-            .map(|(idx, entry)| {
-                let active_occ = app.line_mode.search().active_occurrence_for_line(idx);
-                history_entry_to_line(entry, app.settings(), search_query, active_occ, theme)
-            })
-            .collect()
-    } else {
-        app.line_mode
-            .history()
-            .iter()
-            .map(|entry| history_entry_to_line(entry, app.settings(), "", None, theme))
-            .collect()
-    };
+    let copy_range = app.line_mode.copy_state().normalized_selection();
+
+    let mut history_lines: Vec<Line> = app
+        .line_mode
+        .history()
+        .iter()
+        .enumerate()
+        .map(|(idx, entry)| {
+            let active_occ = if is_search_active {
+                app.line_mode.search().active_occurrence_for_line(idx)
+            } else {
+                None
+            };
+
+            let sel_range = copy_range.and_then(|(start, end)| {
+                if idx < start.line_idx || idx > end.line_idx {
+                    None
+                } else {
+                    let from = if idx == start.line_idx {
+                        start.char_idx
+                    } else {
+                        0
+                    };
+                    let to = if idx == end.line_idx {
+                        end.char_idx
+                    } else {
+                        usize::MAX
+                    };
+                    Some((from, to))
+                }
+            });
+
+            history_entry_to_line(
+                entry,
+                app.settings(),
+                search_query,
+                active_occ,
+                sel_range,
+                theme,
+            )
+        })
+        .collect();
 
     if app.settings().line_mode.display_partial_rx && !app.line_mode.partial_rx().is_empty() {
         let display_mode = app.settings().line_mode.display_mode;
@@ -227,54 +257,52 @@ pub fn render_monitor(
 
     apply_keyword_highlights(frame.buffer_mut(), content_area, highlights);
 
-    // selection
+    // selection cursor
     if app.line_mode.copy_state().active {
         let copy_state = app.line_mode.copy_state_mut();
-        let cursor = copy_state.cursor;
-        let buf = frame.buffer_mut();
+        let cursor_line = copy_state.cursor.line_idx;
+        let cursor_char = copy_state.cursor.char_idx;
 
-        // yank request
-        if copy_state.pending_yank {
-            let yanked_text = copy_state.extract_selected_from_buffer(
-                buf,
-                content_area,
-                paragraph_y_offset,
-                line_x_offset,
-            );
-
-            if let Some(text) = yanked_text {
-                post_effect = PostRenderEffect::CopyToClipboard(text);
-                copy_state.exit();
-            }
+        let mut gutter_offset = 0;
+        if app.settings().display_live_timestamp {
+            gutter_offset += chrono::Local::now()
+                .format(&app.settings().timestamp_format)
+                .to_string()
+                .chars()
+                .count();
         }
+        gutter_offset += app.settings().line_mode.line_prefix.chars().count();
 
-        // selection area
-        if copy_state.selection_anchor.is_some() {
-            for r in 0..content_area.height as usize {
-                let visual_row = paragraph_y_offset + r;
-                if visual_row >= total_visual_rows {
-                    break;
-                }
+        // TODO: use this info for the visual row width for actions
 
-                for c in 0..content_area.width as usize {
-                    let visual_col = line_x_offset + c;
-                    if copy_state.is_selected(visual_row, visual_col) {
-                        let cell = &mut buf[(content_area.x + c as u16, content_area.y + r as u16)];
-                        cell.set_style(theme.selection);
-                    }
-                }
+        let visual_row = match wrap_mode {
+            WrapMode::Truncate => cursor_line,
+            WrapMode::Wrap => {
+                let w = (content_width as u16).max(1);
+                history_lines
+                    .iter()
+                    .take(cursor_line)
+                    .map(|line| {
+                        Paragraph::new(vec![line.clone()])
+                            .wrap(Wrap { trim: false })
+                            .line_count(w)
+                            .max(1)
+                    })
+                    .sum()
             }
-        }
+        };
 
-        // selector cursor
-        if cursor.row >= paragraph_y_offset {
-            let viewer_row = cursor.row - paragraph_y_offset;
-            if viewer_row < content_area.height as usize && cursor.col >= line_x_offset {
-                let viewer_col = cursor.col - line_x_offset;
+        if visual_row >= paragraph_y_offset {
+            let viewer_row = visual_row - paragraph_y_offset;
+            let visual_col = gutter_offset + cursor_char;
+
+            if viewer_row < content_area.height as usize && visual_col >= line_x_offset {
+                let viewer_col = visual_col - line_x_offset;
                 if viewer_col < content_area.width as usize {
                     let screen_x = content_area.x + viewer_col as u16;
                     let screen_y = content_area.y + viewer_row as u16;
 
+                    let buf = frame.buffer_mut();
                     if !app.is_app_focused() {
                         buf[(screen_x, screen_y)]
                             .set_style(Style::default().add_modifier(Modifier::REVERSED));

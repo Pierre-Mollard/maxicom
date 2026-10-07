@@ -11,12 +11,13 @@ use crate::{
         selection::CopyModeState,
         types::{LogEntry, ViewportSize},
     },
-    configs::{RxNewlineMode, TextEncoding, TxNewlineSymbol, WrapMode},
+    configs::{LineDisplayMode, RxNewlineMode, TextEncoding, TxNewlineSymbol, WrapMode},
     inputs::{
         CopyModeAction, LineInputAction, SearchModeAction, ViMode, ViState, dispatch_input_key,
         dispatch_input_key_vi,
     },
     logger::LineLogger,
+    ui::common::displayable_line_string,
 };
 
 pub struct LineMode {
@@ -252,34 +253,26 @@ impl LineMode {
         }
     }
 
-    // FIX: in line mode copy is only on visible text.... (and cursor is not spawning at latest
-    // receive position)
-    pub fn handle_copy_action(&mut self, action: CopyModeAction) -> Option<String> {
-        let total_visual_rows = self.scroller.max_scroll_y + self.scroller.view_height;
-        let content_width = self.scroller.view_width;
-
-        if total_visual_rows == 0 {
+    pub fn handle_copy_action(
+        &mut self,
+        action: CopyModeAction,
+        display_mode: LineDisplayMode,
+    ) -> Option<String> {
+        let total_lines = self.local_history.len();
+        if total_lines == 0 {
             if action == CopyModeAction::Exit {
                 self.copy_state.exit();
             }
             return None;
         }
 
-        let max_row = total_visual_rows.saturating_sub(1);
-        let max_col = content_width + self.scroller.max_pan_x;
+        let max_line = total_lines.saturating_sub(1);
+        let max_col = self.scroller.view_width + self.scroller.max_pan_x;
 
         match action {
             CopyModeAction::Enter => {
-                let current_top = self
-                    .scroller
-                    .max_scroll_y
-                    .saturating_sub(self.scroll_offset());
-                let current_bottom =
-                    (current_top + self.scroller.view_height.saturating_sub(1)).min(max_row);
-
-                self.copy_state.enter_at(current_bottom, 0);
-
-                self.keep_copy_cursor_in_view();
+                self.copy_state.enter_at(max_line, 0);
+                self.sync_scroll_with_cursor();
                 return None;
             }
             CopyModeAction::Exit => {
@@ -287,42 +280,79 @@ impl LineMode {
                 return None;
             }
             CopyModeAction::MoveUp => {
-                self.copy_state.cursor.row = self.copy_state.cursor.row.saturating_sub(1);
-                self.keep_copy_cursor_in_view();
+                self.copy_state.cursor.line_idx = self.copy_state.cursor.line_idx.saturating_sub(1);
+                self.sync_scroll_with_cursor();
             }
             CopyModeAction::MoveDown => {
-                self.copy_state.cursor.row = (self.copy_state.cursor.row + 1).min(max_row);
-                self.keep_copy_cursor_in_view();
+                self.copy_state.cursor.line_idx =
+                    (self.copy_state.cursor.line_idx + 1).min(max_line);
+                self.sync_scroll_with_cursor();
             }
             CopyModeAction::MoveLeft => {
-                self.copy_state.cursor.col = self.copy_state.cursor.col.saturating_sub(1);
-                self.keep_copy_cursor_in_view();
+                self.copy_state.cursor.char_idx = self.copy_state.cursor.char_idx.saturating_sub(1);
             }
             CopyModeAction::MoveRight => {
-                self.copy_state.cursor.col = (self.copy_state.cursor.col + 1).min(max_col);
-                self.keep_copy_cursor_in_view();
+                self.copy_state.cursor.char_idx =
+                    (self.copy_state.cursor.char_idx + 1).min(max_col);
             }
             CopyModeAction::PageUp => {
                 let jump = self.scroller.view_height.saturating_sub(1);
-                self.copy_state.cursor.row = self.copy_state.cursor.row.saturating_sub(jump);
-                self.keep_copy_cursor_in_view();
+                self.copy_state.cursor.line_idx =
+                    self.copy_state.cursor.line_idx.saturating_sub(jump);
+                self.sync_scroll_with_cursor();
             }
             CopyModeAction::PageDown => {
                 let jump = self.scroller.view_height.saturating_sub(1);
-                self.copy_state.cursor.row = (self.copy_state.cursor.row + jump).min(max_row);
-                self.keep_copy_cursor_in_view();
+                self.copy_state.cursor.line_idx =
+                    (self.copy_state.cursor.line_idx + jump).min(max_line);
+                self.sync_scroll_with_cursor();
             }
             CopyModeAction::StartOfLine => {
-                self.copy_state.cursor.col = 0;
+                self.copy_state.cursor.char_idx = 0;
             }
             CopyModeAction::EndOfLine => {
-                self.copy_state.cursor.col = max_col;
+                if let Some(entry) = self.local_history.get(self.copy_state.cursor.line_idx) {
+                    let display_text = displayable_line_string(&entry.text, display_mode);
+                    self.copy_state.cursor.char_idx = display_text.chars().count();
+                }
             }
             CopyModeAction::Select => {
                 self.copy_state.toggle_selection();
             }
             CopyModeAction::Yank => {
-                self.copy_state.pending_yank = true;
+                let (start, end) = self.copy_state.normalized_selection()?;
+                let mut yanked = String::new();
+
+                for idx in start.line_idx..=end.line_idx {
+                    if let Some(entry) = self.local_history.get(idx) {
+                        let display_text = displayable_line_string(&entry.text, display_mode);
+                        let chars: Vec<char> = display_text.chars().collect();
+                        let len = chars.len();
+
+                        let from = if idx == start.line_idx {
+                            start.char_idx.min(len)
+                        } else {
+                            0
+                        };
+                        let to = if idx == end.line_idx {
+                            (end.char_idx + 1).min(len)
+                        } else {
+                            len
+                        };
+
+                        if from < to {
+                            yanked.extend(&chars[from..to]);
+                        }
+                        if idx != end.line_idx {
+                            yanked.push('\n');
+                        }
+                    }
+                }
+
+                self.copy_state.exit();
+                if !yanked.is_empty() {
+                    return Some(yanked);
+                }
             }
         }
         None
@@ -343,39 +373,18 @@ impl LineMode {
         w
     }
 
-    fn keep_copy_cursor_in_view(&mut self) {
-        let cursor_row = self.copy_state.cursor.row;
-        let cursor_col = self.copy_state.cursor.col;
+    fn sync_scroll_with_cursor(&mut self) {
+        let total_lines = self.local_history.len();
+        if total_lines == 0 {
+            return;
+        }
+
+        let line_from_bottom = (total_lines - 1).saturating_sub(self.copy_state.cursor.line_idx);
         let view_h = self.scroller.view_height;
-        let view_w = self.scroller.view_width;
+        let half = view_h / 2;
 
-        let current_top = self
-            .scroller
-            .max_scroll_y
-            .saturating_sub(self.scroller.offset_y);
-        let current_bottom = current_top + view_h.saturating_sub(1);
-
-        if cursor_row < current_top {
-            let diff = current_top - cursor_row;
-            self.scroll_up(diff);
-        } else if cursor_row > current_bottom {
-            let diff = cursor_row - current_bottom;
-            self.scroll_down(diff);
-        }
-
-        if view_w > 0 && self.scroller.max_pan_x > 0 {
-            if cursor_col < self.scroller.offset_x {
-                self.scroller.offset_x = cursor_col;
-            } else if cursor_col >= self.scroller.offset_x + view_w {
-                self.scroller.offset_x = (cursor_col + 1)
-                    .saturating_sub(view_w)
-                    .min(self.scroller.max_pan_x);
-            }
-            self.scroller.pan_right_explored =
-                self.scroller.pan_right_explored.max(self.scroller.offset_x);
-        } else {
-            self.scroller.offset_x = 0;
-        }
+        let target_scroll = line_from_bottom.saturating_sub(half);
+        self.scroller.scroll_to(target_scroll);
     }
 
     pub fn update_search_matches(&mut self) {

@@ -486,43 +486,47 @@ impl TerminalMode {
             }
 
             CopyModeAction::MoveUp => {
-                self.copy_state.cursor.row = self.copy_state.cursor.row.saturating_sub(1);
+                self.copy_state.cursor.line_idx = self.copy_state.cursor.line_idx.saturating_sub(1);
                 self.keep_terminal_copy_cursor_in_view();
             }
 
             CopyModeAction::MoveDown => {
-                self.copy_state.cursor.row = (self.copy_state.cursor.row + 1).min(max_row);
+                self.copy_state.cursor.line_idx =
+                    (self.copy_state.cursor.line_idx + 1).min(max_row);
                 self.keep_terminal_copy_cursor_in_view();
             }
 
             CopyModeAction::MoveLeft => {
-                self.copy_state.cursor.col = self.copy_state.cursor.col.saturating_sub(1);
+                self.copy_state.cursor.char_idx = self.copy_state.cursor.char_idx.saturating_sub(1);
             }
 
             CopyModeAction::MoveRight => {
-                self.copy_state.cursor.col = (self.copy_state.cursor.col + 1).min(max_col);
+                self.copy_state.cursor.char_idx =
+                    (self.copy_state.cursor.char_idx + 1).min(max_col);
             }
 
             CopyModeAction::PageUp => {
                 let jump = self.scroller.view_height.saturating_sub(1);
-                self.copy_state.cursor.row = self.copy_state.cursor.row.saturating_sub(jump);
+                self.copy_state.cursor.line_idx =
+                    self.copy_state.cursor.line_idx.saturating_sub(jump);
                 self.keep_terminal_copy_cursor_in_view();
             }
 
             CopyModeAction::PageDown => {
                 let jump = self.scroller.view_height.saturating_sub(1);
-                self.copy_state.cursor.row = (self.copy_state.cursor.row + jump).min(max_row);
+                self.copy_state.cursor.line_idx =
+                    (self.copy_state.cursor.line_idx + jump).min(max_row);
                 self.keep_terminal_copy_cursor_in_view();
             }
 
             CopyModeAction::StartOfLine => {
-                self.copy_state.cursor.col = 0;
+                self.copy_state.cursor.char_idx = 0;
             }
 
             CopyModeAction::EndOfLine => {
                 let all_lines = self.all_text_lines();
-                if let Some(line) = all_lines.get(self.copy_state.cursor.row) {
-                    self.copy_state.cursor.col = line.trim_end().chars().count().min(max_col);
+                if let Some(line) = all_lines.get(self.copy_state.cursor.line_idx) {
+                    self.copy_state.cursor.char_idx = line.trim_end().chars().count().min(max_col);
                 }
             }
 
@@ -541,8 +545,8 @@ impl TerminalMode {
     }
 
     fn keep_terminal_copy_cursor_in_view(&mut self) {
-        let cursor_row = self.copy_state.cursor.row;
-        let cursor_col = self.copy_state.cursor.col;
+        let cursor_row = self.copy_state.cursor.line_idx;
+        let cursor_col = self.copy_state.cursor.char_idx;
         let view_h = self.scroller.view_height;
         let view_w = self.scroller.view_width; // or passed-in visible columns width
         let (grid_rows, grid_cols) = self.get_vt100_size();
@@ -578,20 +582,20 @@ impl TerminalMode {
         let all_lines = self.all_text_lines();
         let mut out = String::new();
 
-        for row_idx in start.row..=end.row {
+        for row_idx in start.line_idx..=end.line_idx {
             let Some(line_str) = all_lines.get(row_idx) else {
                 continue;
             };
             let chars: Vec<char> = line_str.chars().collect();
             let len = chars.len();
 
-            let col_start = if row_idx == start.row {
-                start.col.min(len)
+            let col_start = if row_idx == start.line_idx {
+                start.char_idx.min(len)
             } else {
                 0
             };
-            let col_end = if row_idx == end.row {
-                (end.col + 1).min(len)
+            let col_end = if row_idx == end.line_idx {
+                (end.char_idx + 1).min(len)
             } else {
                 len
             };
@@ -599,7 +603,7 @@ impl TerminalMode {
             if col_start < col_end {
                 out.extend(&chars[col_start..col_end]);
             }
-            if row_idx != end.row {
+            if row_idx != end.line_idx {
                 out.push('\n');
             }
         }

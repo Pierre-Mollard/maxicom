@@ -290,8 +290,12 @@ impl App {
                 }
             }
             InputMode::Line => {
-                // line mode is a deferred copy (rendering pass needed)
-                self.line_mode.handle_copy_action(action);
+                if let Some(text) = self
+                    .line_mode
+                    .handle_copy_action(action, self.settings.line_mode.display_mode)
+                {
+                    return UpdateEffect::CopyToClipboard(text);
+                }
             }
         }
 
