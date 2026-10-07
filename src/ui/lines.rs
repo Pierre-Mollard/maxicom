@@ -17,7 +17,7 @@ use crate::{
         PostRenderEffect,
         common::{
             apply_keyword_highlights, apply_search_highlight, apply_selection_to_spans,
-            border_style_for, render_search_bar,
+            border_style_for, displayable_line_string, render_search_bar,
         },
     },
 };
@@ -283,8 +283,16 @@ pub fn render_monitor(
         };
 
         if visual_row >= paragraph_y_offset {
+            let content_visual_col = if let Some(entry) = app.line_mode.history().get(cursor_line) {
+                let display_text =
+                    displayable_line_string(&entry.text, app.settings().line_mode.display_mode);
+                let chars_before: String = display_text.chars().take(cursor_char).collect();
+                unicode_width::UnicodeWidthStr::width(chars_before.as_str())
+            } else {
+                cursor_char
+            };
             let viewer_row = visual_row - paragraph_y_offset;
-            let visual_col = gutter_offset + cursor_char;
+            let visual_col = gutter_offset + content_visual_col;
 
             if viewer_row < content_area.height as usize && visual_col >= line_x_offset {
                 let viewer_col = visual_col - line_x_offset;

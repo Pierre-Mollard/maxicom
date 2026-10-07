@@ -310,7 +310,8 @@ impl App {
                 self.terminal_mode.handle_search_action(action);
             }
             InputMode::Line => {
-                self.line_mode.handle_search_action(action);
+                self.line_mode
+                    .handle_search_action(action, self.settings.line_mode.display_mode);
             }
         }
 

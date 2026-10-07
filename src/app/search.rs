@@ -4,6 +4,8 @@ use std::io::{self, Write};
 use tui_input::Input;
 
 use crate::app::types::LogEntry;
+use crate::configs::LineDisplayMode;
+use crate::ui::common::displayable_line_string;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SearchMatch {
@@ -22,7 +24,11 @@ pub struct SearchState {
 }
 
 impl SearchState {
-    pub fn update_matches_from_entries(&mut self, history: &VecDeque<LogEntry>) {
+    pub fn update_matches_from_entries(
+        &mut self,
+        history: &VecDeque<LogEntry>,
+        display_mode: LineDisplayMode,
+    ) {
         self.matches.clear();
         if self.query_str().is_empty() {
             self.current_match = 0;
@@ -31,9 +37,10 @@ impl SearchState {
 
         let q = self.query_str().to_lowercase();
         for (line_idx, entry) in history.iter().enumerate() {
-            let line_lower = entry.text.to_lowercase();
+            let display_text = displayable_line_string(&entry.text, display_mode);
+            let line_lower = display_text.to_lowercase();
             for (occurrence, (byte_idx, _)) in line_lower.match_indices(&q).enumerate() {
-                let col_idx = entry.text[..byte_idx].chars().count();
+                let col_idx = display_text[..byte_idx].chars().count();
                 self.matches.push(SearchMatch {
                     line_idx,
                     col_idx,

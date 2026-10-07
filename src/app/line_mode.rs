@@ -370,17 +370,21 @@ impl LineMode {
         self.scroller.scroll_to(target_scroll);
     }
 
-    pub fn update_search_matches(&mut self) {
+    pub fn update_search_matches(&mut self, display_mode: LineDisplayMode) {
         self.search_state
-            .update_matches_from_entries(&self.local_history);
+            .update_matches_from_entries(&self.local_history, display_mode);
     }
 
-    pub fn handle_search_action(&mut self, action: SearchModeAction) {
+    pub fn handle_search_action(
+        &mut self,
+        action: SearchModeAction,
+        display_mode: LineDisplayMode,
+    ) {
         match action {
             SearchModeAction::Start => {
                 self.search_state.toggle_itself();
                 if self.search_state.active {
-                    self.update_search_matches();
+                    self.update_search_matches(display_mode);
                 }
             }
             SearchModeAction::Next => {
@@ -404,24 +408,23 @@ impl LineMode {
                 let match_pos = self.search_state.current_match_position();
                 self.search_state.toggle(false);
 
-                if let Some((row, _col)) = match_pos {
-                    self.copy_state.enter_at(row, 0);
-                    // FIX: handle col (doesnt work with wrap/timestampe)
+                if let Some((row, col)) = match_pos {
+                    self.copy_state.enter_at(row, col);
                 } else {
                     self.copy_state.enter_at(0, 0);
                 }
             }
             SearchModeAction::HandleKey(key_event) => {
                 if self.search_state.active {
-                    self.handle_input_search(key_event);
+                    self.handle_input_search(key_event, display_mode);
                 }
             }
         }
     }
 
-    pub fn handle_input_search(&mut self, key_event: KeyEvent) {
+    pub fn handle_input_search(&mut self, key_event: KeyEvent, display_mode: LineDisplayMode) {
         dispatch_input_key(&mut self.search_state.query, key_event);
-        self.update_search_matches();
+        self.update_search_matches(display_mode);
         if let Some(&first_match_idx) = self.search_state.matches.first() {
             self.search_state.current_match = 0;
             self.search_state.target_jump_index = Some(first_match_idx.line_idx);
