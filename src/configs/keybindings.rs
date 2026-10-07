@@ -31,6 +31,7 @@ pub enum KeyBindingAction {
     ToggleLogging,
     ResizeDialog,
     AutoResizeRemote,
+    AutoResizeRemoteLine,
     AutoResizeEmulator,
     SerialSettings,
     EnterCopyMode,
@@ -63,6 +64,7 @@ impl FromStr for KeyBindingAction {
             "toggle_logging" => Ok(KeyBindingAction::ToggleLogging),
             "resize_dialog" => Ok(KeyBindingAction::ResizeDialog),
             "auto_resize_remote" => Ok(KeyBindingAction::AutoResizeRemote),
+            "auto_resize_remote_line" => Ok(KeyBindingAction::AutoResizeRemoteLine),
             "auto_resize_emulator" => Ok(KeyBindingAction::AutoResizeEmulator),
             "serial_settings" => Ok(KeyBindingAction::SerialSettings),
             "enter_copy_mode" => Ok(KeyBindingAction::EnterCopyMode),
@@ -96,6 +98,7 @@ impl std::fmt::Display for KeyBindingAction {
             Self::ToggleLogging => "toggle_logging",
             Self::ResizeDialog => "resize_dialog",
             Self::AutoResizeRemote => "auto_resize_remote",
+            Self::AutoResizeRemoteLine => "auto_resize_remote_line",
             Self::AutoResizeEmulator => "auto_resize_emulator",
             Self::SerialSettings => "serial_settings",
             Self::EnterCopyMode => "enter_copy_mode",
@@ -120,6 +123,7 @@ pub enum KeyBindingLineAction {
     Submit,
     HistoryPrev,
     HistoryNext,
+    AutoResizeRemoteLine,
     ClearLine,
     Quit,
 }
@@ -132,6 +136,7 @@ impl std::str::FromStr for KeyBindingLineAction {
             "submit" => Ok(Self::Submit),
             "history_prev" => Ok(Self::HistoryPrev),
             "history_next" => Ok(Self::HistoryNext),
+            "auto_resize_remote_line" => Ok(Self::AutoResizeRemoteLine),
             "clear_line" => Ok(Self::ClearLine),
             "quit" => Ok(Self::Quit),
             other => Err(UnknownActionError(other.to_string())),
@@ -145,6 +150,7 @@ impl std::fmt::Display for KeyBindingLineAction {
             Self::Submit => "submit",
             Self::HistoryPrev => "history_prev",
             Self::HistoryNext => "history_next",
+            Self::AutoResizeRemoteLine => "auto_resize_remote_line",
             Self::ClearLine => "clear_line",
             Self::Quit => "quit",
         };
@@ -669,6 +675,7 @@ impl Default for KeyBindingsConfig {
             "l"     => KeyBindingAction::ToggleLogging,
             "r"     => KeyBindingAction::ResizeDialog,
             "v"     => KeyBindingAction::AutoResizeRemote,
+            "b"     => KeyBindingAction::AutoResizeRemoteLine,
             "t"     => KeyBindingAction::AutoResizeEmulator,
             "d"     => KeyBindingAction::SerialSettings,
             "up"    => KeyBindingAction::ScrollUp,
@@ -686,6 +693,7 @@ impl Default for KeyBindingsConfig {
             "down"   => KeyBindingLineAction::HistoryNext,
             "ctrl-c" => KeyBindingLineAction::Quit,
             "ctrl-u" => KeyBindingLineAction::ClearLine,
+            "alt-r"  => KeyBindingLineAction::AutoResizeRemoteLine,
         };
 
         let terminal_mode = default_bindings! {

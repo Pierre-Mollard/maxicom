@@ -189,6 +189,7 @@ impl App {
             Action::LineInput(action) => self.line_mode.update_action_lineinput(
                 self.settings.local_echo,
                 self.settings.line_mode.tx_eol,
+                self.settings.display_live_timestamp,
                 &self.settings.timestamp_format,
                 action,
             ),

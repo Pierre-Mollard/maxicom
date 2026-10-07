@@ -202,6 +202,7 @@ impl LineMode {
         &mut self,
         local_echo: bool,
         tx_eol_mode: TxNewlineSymbol,
+        timestamp: bool,
         timestamp_f: &str,
         action: LineInputAction,
     ) -> UpdateEffect {
@@ -233,6 +234,11 @@ impl LineMode {
             LineInputAction::HistoryDown => {
                 self.history_down();
                 UpdateEffect::None
+            }
+            LineInputAction::AutoResizeRemoteToWidth => {
+                let cols = self.line_width_max(timestamp, timestamp_f);
+                let cmd = format!("stty cols {cols}; export COLUMNS={cols}\n");
+                UpdateEffect::Transmit(cmd.into_bytes())
             }
             LineInputAction::ClearLine => {
                 self.user_input.reset();
@@ -320,6 +326,21 @@ impl LineMode {
             }
         }
         None
+    }
+
+    // TODO: maybe use something like this to handle wrap/timestamp and stuff
+    fn line_width_max(&self, timestamp: bool, timestamp_f: &str) -> usize {
+        let mut w = self.scroller.view_width;
+
+        if timestamp {
+            let timestamp = Local::now();
+            w = w.saturating_sub(timestamp.format(timestamp_f).to_string().len() + 1);
+        }
+
+        // TODO: somehow use app.settings().line_mode.prompt_prefix.len() ?
+        w = w.saturating_sub(2);
+
+        w
     }
 
     fn keep_copy_cursor_in_view(&mut self) {

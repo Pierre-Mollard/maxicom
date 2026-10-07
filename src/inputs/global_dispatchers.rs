@@ -43,6 +43,9 @@ impl KeyBindingAction {
                 )))
             }
 
+            KeyBindingAction::AutoResizeRemoteLine => {
+                Action::LineInput(LineInputAction::AutoResizeRemoteToWidth)
+            }
             KeyBindingAction::AutoResizeRemote => {
                 Action::Terminal(TerminalAction::AutoResizeRemoteToViewer)
             }
@@ -77,6 +80,9 @@ impl KeyBindingLineAction {
             Self::Submit => Action::LineInput(LineInputAction::Submit),
             Self::HistoryPrev => Action::LineInput(LineInputAction::HistoryUp),
             Self::HistoryNext => Action::LineInput(LineInputAction::HistoryDown),
+            Self::AutoResizeRemoteLine => {
+                Action::LineInput(LineInputAction::AutoResizeRemoteToWidth)
+            }
             Self::ClearLine => Action::LineInput(LineInputAction::ClearLine),
             Self::Quit => Action::App(AppAction::Quit),
         }

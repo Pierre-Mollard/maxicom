@@ -69,7 +69,6 @@ pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'stati
     }
 }
 
-// TODO: add a remote resize in line mode like in terminal (with decoration readjust)
 pub fn history_entry_to_line(
     entry: &LogEntry,
     settings: &SettingsConfig,

@@ -48,6 +48,7 @@ pub enum LineInputAction {
     Submit,
     HistoryUp,
     HistoryDown,
+    AutoResizeRemoteToWidth,
     ClearLine,
     HandleKey(KeyEvent),
 }
