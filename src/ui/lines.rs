@@ -106,6 +106,7 @@ pub fn history_entry_to_line(
     Line::from(spans)
 }
 
+// TODO: add a wrap mode (pre wrap) where the wrap is flat, not variable and keeping words together
 pub fn render_monitor(
     app: &mut App,
     frame: &mut Frame,
@@ -259,13 +260,31 @@ pub fn render_monitor(
 
     // selection cursor
     if app.line_mode.copy_state().active {
-        let copy_state = app.line_mode.copy_state_mut();
+        let copy_state = app.line_mode.copy_state();
         let cursor_line = copy_state.cursor.line_idx;
         let cursor_char = copy_state.cursor.char_idx;
 
         let gutter_offset = app.settings().line_gutter_width();
 
-        let visual_row = match wrap_mode {
+        let content_visual_col = if let Some(entry) = app.line_mode.history().get(cursor_line) {
+            let display_text =
+                displayable_line_string(&entry.text, app.settings().line_mode.display_mode);
+            let total_chars = display_text.chars().count();
+
+            if cursor_char <= total_chars {
+                let chars_before: String = display_text.chars().take(cursor_char).collect();
+                unicode_width::UnicodeWidthStr::width(chars_before.as_str())
+            } else {
+                let text_w = unicode_width::UnicodeWidthStr::width(display_text.as_str());
+                text_w + (cursor_char - total_chars)
+            }
+        } else {
+            cursor_char
+        };
+
+        let raw_visual_col = gutter_offset + content_visual_col;
+
+        let base_visual_row = match wrap_mode {
             WrapMode::Truncate => cursor_line,
             WrapMode::Wrap => {
                 let w = (content_width as u16).max(1);
@@ -282,17 +301,22 @@ pub fn render_monitor(
             }
         };
 
+        // TODO: wrapping is not correclty handled here
+        let (visual_row, visual_col) = match wrap_mode {
+            WrapMode::Truncate => (base_visual_row, raw_visual_col),
+            WrapMode::Wrap => {
+                if content_width > 0 {
+                    let wrapped_sub_rows = raw_visual_col / content_width;
+                    let wrapped_col = raw_visual_col % content_width;
+                    (base_visual_row + wrapped_sub_rows, wrapped_col)
+                } else {
+                    (base_visual_row, raw_visual_col)
+                }
+            }
+        };
+
         if visual_row >= paragraph_y_offset {
-            let content_visual_col = if let Some(entry) = app.line_mode.history().get(cursor_line) {
-                let display_text =
-                    displayable_line_string(&entry.text, app.settings().line_mode.display_mode);
-                let chars_before: String = display_text.chars().take(cursor_char).collect();
-                unicode_width::UnicodeWidthStr::width(chars_before.as_str())
-            } else {
-                cursor_char
-            };
             let viewer_row = visual_row - paragraph_y_offset;
-            let visual_col = gutter_offset + content_visual_col;
 
             if viewer_row < content_area.height as usize && visual_col >= line_x_offset {
                 let viewer_col = visual_col - line_x_offset;

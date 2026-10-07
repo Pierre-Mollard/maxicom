@@ -279,39 +279,48 @@ impl LineMode {
             }
             CopyModeAction::MoveUp => {
                 self.copy_state.cursor.line_idx = self.copy_state.cursor.line_idx.saturating_sub(1);
+                self.copy_state.cursor.char_idx = self.copy_state.cursor.preferred_col;
                 self.sync_scroll_with_cursor();
             }
             CopyModeAction::MoveDown => {
                 self.copy_state.cursor.line_idx =
                     (self.copy_state.cursor.line_idx + 1).min(max_line);
+                self.copy_state.cursor.char_idx = self.copy_state.cursor.preferred_col;
                 self.sync_scroll_with_cursor();
             }
             CopyModeAction::MoveLeft => {
                 self.copy_state.cursor.char_idx = self.copy_state.cursor.char_idx.saturating_sub(1);
+                self.copy_state.cursor.preferred_col = self.copy_state.cursor.char_idx;
             }
             CopyModeAction::MoveRight => {
                 self.copy_state.cursor.char_idx =
                     (self.copy_state.cursor.char_idx + 1).min(max_col);
+                self.copy_state.cursor.preferred_col = self.copy_state.cursor.char_idx;
             }
             CopyModeAction::PageUp => {
                 let jump = self.scroller.view_height.saturating_sub(1);
                 self.copy_state.cursor.line_idx =
                     self.copy_state.cursor.line_idx.saturating_sub(jump);
+                self.copy_state.cursor.char_idx = self.copy_state.cursor.preferred_col;
                 self.sync_scroll_with_cursor();
             }
             CopyModeAction::PageDown => {
                 let jump = self.scroller.view_height.saturating_sub(1);
                 self.copy_state.cursor.line_idx =
                     (self.copy_state.cursor.line_idx + jump).min(max_line);
+                self.copy_state.cursor.char_idx = self.copy_state.cursor.preferred_col;
                 self.sync_scroll_with_cursor();
             }
             CopyModeAction::StartOfLine => {
                 self.copy_state.cursor.char_idx = 0;
+                self.copy_state.cursor.preferred_col = 0;
             }
             CopyModeAction::EndOfLine => {
                 if let Some(entry) = self.local_history.get(self.copy_state.cursor.line_idx) {
                     let display_text = displayable_line_string(&entry.text, display_mode);
-                    self.copy_state.cursor.char_idx = display_text.chars().count();
+                    let len = display_text.chars().count();
+                    self.copy_state.cursor.char_idx = len;
+                    self.copy_state.cursor.preferred_col = len;
                 }
             }
             CopyModeAction::Select => {
@@ -534,11 +543,6 @@ impl LineMode {
     #[inline]
     pub fn copy_state(&self) -> &CopyModeState {
         &self.copy_state
-    }
-
-    #[inline]
-    pub fn copy_state_mut(&mut self) -> &mut CopyModeState {
-        &mut self.copy_state
     }
 
     #[inline]

@@ -2,6 +2,7 @@
 pub struct LogicalPosition {
     pub line_idx: usize,
     pub char_idx: usize,
+    pub preferred_col: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -27,7 +28,11 @@ impl CopyModeState {
 
     pub fn enter_at(&mut self, line_idx: usize, char_idx: usize) {
         self.active = true;
-        self.cursor = LogicalPosition { line_idx, char_idx };
+        self.cursor = LogicalPosition {
+            line_idx,
+            char_idx,
+            preferred_col: char_idx,
+        };
         self.selection_anchor = None;
     }
 

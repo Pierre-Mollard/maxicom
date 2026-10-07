@@ -160,8 +160,6 @@ impl App {
 
     // TODO: reduce settings related args of terminal and linput modes
 
-    // TODO: add prefered cols for selection copymode both ?
-
     // TODO: add vi motions to selection word next/previous/v
 
     pub fn update(&mut self, action: Action) -> UpdateEffect {
