@@ -158,8 +158,6 @@ impl App {
         self.overlay = None;
     }
 
-    // TODO: reduce settings related args of terminal and linput modes
-
     // TODO: add vi motions to selection word next/previous/v
 
     // TODO: capture screenshot terminal image
@@ -296,12 +294,7 @@ impl App {
                 }
             }
             InputMode::Line => {
-                if let Some(text) = self.line_mode.handle_copy_action(
-                    action,
-                    self.settings.line_mode.display_mode,
-                    self.settings.line_mode.wrap_mode,
-                    self.settings.line_gutter_width(),
-                ) {
+                if let Some(text) = self.line_mode.handle_copy_action(action, &self.settings) {
                     return UpdateEffect::CopyToClipboard(text);
                 }
             }

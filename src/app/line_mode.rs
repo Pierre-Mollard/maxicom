@@ -254,10 +254,11 @@ impl LineMode {
     pub fn handle_copy_action(
         &mut self,
         action: CopyModeAction,
-        display_mode: LineDisplayMode,
-        wrap_mode: WrapMode,
-        gutter_width: usize,
+        settings: &SettingsConfig,
     ) -> Option<String> {
+        let display_mode = settings.line_mode.display_mode;
+        let wrap_mode = settings.line_mode.wrap_mode;
+        let gutter_width = settings.line_gutter_width();
         let total_lines = self.local_history.len();
         if total_lines == 0 {
             if action == CopyModeAction::Exit {
