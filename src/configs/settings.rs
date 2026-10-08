@@ -19,6 +19,11 @@ pub enum LineDisplayMode {
     Pretty,
     Clean,
     Raw,
+    Hex,
+    #[serde(alias = "oct")]
+    Octal,
+    #[serde(alias = "bin", alias = "bits", alias = "byte", alias = "bytes")]
+    Binary,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

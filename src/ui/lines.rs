@@ -104,12 +104,10 @@ pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'stati
             }
             vec![Span::raw(displayable.to_string())]
         }
-
         LineDisplayMode::Clean => {
             let clean_text = strip_ansi_escapes::strip_str(text);
             vec![Span::raw(clean_text)]
         }
-
         LineDisplayMode::Raw => {
             let mut raw = String::new();
             for ch in text.chars() {
@@ -122,6 +120,73 @@ pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'stati
                 }
             }
             vec![Span::styled(raw, Style::default().fg(Color::White))]
+        }
+        LineDisplayMode::Hex => {
+            let bytes = text.as_bytes();
+            if bytes.is_empty() {
+                return vec![Span::raw("")];
+            }
+
+            let mut spans = Vec::with_capacity(bytes.len() * 2);
+
+            for (i, &b) in bytes.iter().enumerate() {
+                let color = match b {
+                    0x00 => Color::DarkGray,                        // \0
+                    0x0A | 0x0D => Color::Yellow,                   // \r and \n
+                    0xAA | 0x55 | 0x7E => Color::LightRed,          // sync / frame delimiters
+                    b if (0x20..=0x7E).contains(&b) => Color::Cyan, // ASCII
+                    _ => Color::White,
+                };
+
+                spans.push(Span::styled(format!("{b:02X}"), Style::default().fg(color)));
+
+                if i + 1 < bytes.len() {
+                    spans.push(Span::raw(" "));
+                }
+            }
+
+            spans
+        }
+        LineDisplayMode::Octal => {
+            let bytes = text.as_bytes();
+            if bytes.is_empty() {
+                return vec![Span::raw("")];
+            }
+            let mut spans = Vec::with_capacity(bytes.len() * 2);
+            for (i, &b) in bytes.iter().enumerate() {
+                let color = match b {
+                    0 => Color::DarkGray,
+                    0o12 | 0o15 => Color::Yellow, // \r and \n
+                    b if (0x20..=0x7E).contains(&b) => Color::Green,
+                    _ => Color::White,
+                };
+                spans.push(Span::styled(format!("{b:03o}"), Style::default().fg(color)));
+                if i + 1 < bytes.len() {
+                    spans.push(Span::raw(" "));
+                }
+            }
+            spans
+        }
+        LineDisplayMode::Binary => {
+            let bytes = text.as_bytes();
+            if bytes.is_empty() {
+                return vec![Span::raw("")];
+            }
+            let mut spans = Vec::with_capacity(bytes.len() * 2);
+            for (i, &b) in bytes.iter().enumerate() {
+                let color = if b == 0 {
+                    Color::DarkGray
+                } else if b == 0xFF {
+                    Color::LightRed
+                } else {
+                    Color::LightBlue
+                };
+                spans.push(Span::styled(format!("{b:08b}"), Style::default().fg(color)));
+                if i + 1 < bytes.len() {
+                    spans.push(Span::raw(" "));
+                }
+            }
+            spans
         }
     }
 }

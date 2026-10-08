@@ -157,7 +157,6 @@ impl App {
     pub fn close_overlay(&mut self) {
         self.overlay = None;
     }
-    // TODO: fix the weird => appearring with zsh
 
     // TODO: reduce settings related args of terminal and linput modes
 
@@ -165,7 +164,9 @@ impl App {
 
     // TODO: capture screenshot terminal image
 
-    // TODO: display mode with hexadecimal window (and fromat everything as hex)
+    // TODO: display mode with hexadecimal window on the side
+
+    // TODO: make prefix line toggable for all (not only first or none)
 
     pub fn update(&mut self, action: Action) -> UpdateEffect {
         let is_repeatable_history = self.prefix_active

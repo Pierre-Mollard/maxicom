@@ -388,5 +388,38 @@ pub fn displayable_line_string(text: &str, mode: LineDisplayMode) -> String {
             }
             raw
         }
+        LineDisplayMode::Hex => {
+            let bytes = text.as_bytes();
+            if bytes.is_empty() {
+                return String::new();
+            }
+            bytes
+                .iter()
+                .map(|b| format!("{b:02X}"))
+                .collect::<Vec<String>>()
+                .join(" ")
+        }
+        LineDisplayMode::Octal => {
+            let bytes = text.as_bytes();
+            if bytes.is_empty() {
+                return String::new();
+            }
+            bytes
+                .iter()
+                .map(|b| format!("{b:03o}"))
+                .collect::<Vec<String>>()
+                .join(" ")
+        }
+        LineDisplayMode::Binary => {
+            let bytes = text.as_bytes();
+            if bytes.is_empty() {
+                return String::new();
+            }
+            bytes
+                .iter()
+                .map(|b| format!("{b:08b}"))
+                .collect::<Vec<String>>()
+                .join(" ")
+        }
     }
 }
