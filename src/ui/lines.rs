@@ -24,15 +24,69 @@ use crate::{
     },
 };
 
+pub fn sanitize_terminal_control_sequences(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            match chars.peek().copied() {
+                // Keep CSI (styles, controls)
+                Some('[') => {
+                    out.push(ch);
+                }
+                // OSC (ESC] to BELL or ESC\)
+                Some(']') => {
+                    chars.next();
+                    while let Some(c) = chars.next() {
+                        if c == '\x07' {
+                            break;
+                        }
+                        if c == '\x1b' && chars.peek() == Some(&'\\') {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                // DCS, APC, PM (ESC] to ESC\)
+                Some('P') | Some('_') | Some('^') => {
+                    chars.next();
+                    while let Some(c) = chars.next() {
+                        if c == '\x1b' && chars.peek() == Some(&'\\') {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                // 2-byte escape sequence (DECKPAM `=`, DECKPNM `>`, DECSC `7`, DECRC `8`, RIS `c`, etc.)
+                Some(next_ch) if next_ch.is_ascii() && !next_ch.is_ascii_control() => {
+                    chars.next();
+                }
+                _ => {}
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+
+    out
+}
+
 fn trim_trailing_incomplete_ansi(text: &str) -> &str {
     if let Some(esc_idx) = text.rfind('\x1b') {
         let tail = &text[esc_idx..];
-        let is_finished = tail
-            .chars()
-            .skip(1)
-            .any(|c| c.is_ascii_alphabetic() || ('@'..='~').contains(&c));
-        if !is_finished {
+        if tail.len() == 1 {
             return &text[..esc_idx];
+        }
+
+        if tail.starts_with("\x1b[") {
+            let is_finished = tail
+                .chars()
+                .skip(2)
+                .any(|c| c.is_ascii_alphabetic() || ('@'..='~').contains(&c));
+            if !is_finished {
+                return &text[..esc_idx];
+            }
         }
     }
     text
@@ -41,13 +95,13 @@ fn trim_trailing_incomplete_ansi(text: &str) -> &str {
 pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'static>> {
     match mode {
         LineDisplayMode::Pretty => {
-            let displayable = trim_trailing_incomplete_ansi(text);
+            let sanitized = sanitize_terminal_control_sequences(text);
+            let displayable = trim_trailing_incomplete_ansi(&sanitized);
             if let Ok(parsed) = displayable.as_bytes().into_text()
                 && let Some(first_line) = parsed.lines.into_iter().next()
             {
                 return first_line.spans;
             }
-            // Fallback
             vec![Span::raw(displayable.to_string())]
         }
 
