@@ -190,6 +190,52 @@ impl TerminalMode {
         self.scroller.pan_right_explored = 0;
     }
 
+    // HACK: there is no function to fetch string content from history so sb everywhere
+    pub fn get_world_line_text(&mut self, world_row: usize) -> Option<String> {
+        let (rows, cols) = self.get_vt100_size();
+        let max_sb = self.max_content_scrollback;
+        let total_world = max_sb + rows as usize;
+
+        if world_row >= total_world {
+            return None;
+        }
+
+        let current_sb = self.vt100_parser.screen().scrollback();
+
+        let (view_row, target_sb) = if world_row < max_sb {
+            // history
+            (0, max_sb - world_row)
+        } else {
+            // live view
+            ((world_row - max_sb) as u16, 0)
+        };
+
+        if current_sb != target_sb {
+            self.vt100_parser.screen_mut().set_scrollback(target_sb);
+        }
+
+        let mut line_str = String::with_capacity(cols as usize);
+        for c in 0..cols {
+            if let Some(cell) = self.vt100_parser.screen().cell(view_row, c) {
+                line_str.push_str(cell.contents());
+            } else {
+                line_str.push(' ');
+            }
+        }
+
+        if current_sb != target_sb {
+            self.vt100_parser.screen_mut().set_scrollback(current_sb);
+        }
+
+        Some(line_str)
+    }
+
+    pub fn get_world_line_trimmed_len(&mut self, world_row: usize) -> usize {
+        self.get_world_line_text(world_row)
+            .map(|s| s.trim_end().chars().count())
+            .unwrap_or(0)
+    }
+
     #[inline]
     pub fn vt100_screen(&self) -> &vt100::Screen {
         self.vt100_parser.screen()
@@ -472,68 +518,84 @@ impl TerminalMode {
                 let (c_row, c_col) = self.vt100_screen().cursor_position();
 
                 let cursor_world_row = max_sb + (c_row as usize);
-                let cursor_world_col = c_col as usize;
+                let cursor_world_col = (c_col as usize).min(max_col);
 
                 self.copy_state.enter_at(cursor_world_row, cursor_world_col);
-
                 self.keep_terminal_copy_cursor_in_view();
                 return None;
             }
-
             CopyModeAction::Exit => {
                 self.copy_state.exit();
                 return None;
             }
-
             CopyModeAction::MoveUp => {
-                self.copy_state.cursor.line_idx = self.copy_state.cursor.line_idx.saturating_sub(1);
+                let target_row = self.copy_state.cursor.line_idx.saturating_sub(1);
+                self.copy_state.cursor.line_idx = target_row;
+                let trimmed_len = self.get_world_line_trimmed_len(target_row);
+                let max_valid_char = trimmed_len.saturating_sub(1);
+                self.copy_state.cursor.char_idx =
+                    self.copy_state.cursor.preferred_col.min(max_valid_char);
                 self.keep_terminal_copy_cursor_in_view();
             }
-
             CopyModeAction::MoveDown => {
-                self.copy_state.cursor.line_idx =
-                    (self.copy_state.cursor.line_idx + 1).min(max_row);
+                let target_row = (self.copy_state.cursor.line_idx + 1).min(max_row);
+                self.copy_state.cursor.line_idx = target_row;
+                let trimmed_len = self.get_world_line_trimmed_len(target_row);
+                let max_valid_char = trimmed_len.saturating_sub(1);
+                self.copy_state.cursor.char_idx =
+                    self.copy_state.cursor.preferred_col.min(max_valid_char);
                 self.keep_terminal_copy_cursor_in_view();
             }
-
             CopyModeAction::MoveLeft => {
                 self.copy_state.cursor.char_idx = self.copy_state.cursor.char_idx.saturating_sub(1);
+                self.copy_state.cursor.preferred_col = self.copy_state.cursor.char_idx;
+                self.keep_terminal_copy_cursor_in_view();
             }
-
             CopyModeAction::MoveRight => {
+                let current_row = self.copy_state.cursor.line_idx;
+                let trimmed_len = self.get_world_line_trimmed_len(current_row);
+                let max_valid_char = trimmed_len.saturating_sub(1);
                 self.copy_state.cursor.char_idx =
-                    (self.copy_state.cursor.char_idx + 1).min(max_col);
+                    (self.copy_state.cursor.char_idx + 1).min(max_valid_char);
+                self.copy_state.cursor.preferred_col = self.copy_state.cursor.char_idx;
+                self.keep_terminal_copy_cursor_in_view();
             }
-
             CopyModeAction::PageUp => {
                 let jump = self.scroller.view_height.saturating_sub(1);
-                self.copy_state.cursor.line_idx =
-                    self.copy_state.cursor.line_idx.saturating_sub(jump);
+                let target_row = self.copy_state.cursor.line_idx.saturating_sub(jump);
+                self.copy_state.cursor.line_idx = target_row;
+                let trimmed_len = self.get_world_line_trimmed_len(target_row);
+                let max_valid_char = trimmed_len.saturating_sub(1);
+                self.copy_state.cursor.char_idx =
+                    self.copy_state.cursor.preferred_col.min(max_valid_char);
                 self.keep_terminal_copy_cursor_in_view();
             }
-
             CopyModeAction::PageDown => {
                 let jump = self.scroller.view_height.saturating_sub(1);
-                self.copy_state.cursor.line_idx =
-                    (self.copy_state.cursor.line_idx + jump).min(max_row);
+                let target_row = (self.copy_state.cursor.line_idx + jump).min(max_row);
+                self.copy_state.cursor.line_idx = target_row;
+                let trimmed_len = self.get_world_line_trimmed_len(target_row);
+                let max_valid_char = trimmed_len.saturating_sub(1);
+                self.copy_state.cursor.char_idx =
+                    self.copy_state.cursor.preferred_col.min(max_valid_char);
                 self.keep_terminal_copy_cursor_in_view();
             }
-
             CopyModeAction::StartOfLine => {
                 self.copy_state.cursor.char_idx = 0;
+                self.copy_state.cursor.preferred_col = 0;
+                self.keep_terminal_copy_cursor_in_view();
             }
-
             CopyModeAction::EndOfLine => {
-                let all_lines = self.all_text_lines();
-                if let Some(line) = all_lines.get(self.copy_state.cursor.line_idx) {
-                    self.copy_state.cursor.char_idx = line.trim_end().chars().count().min(max_col);
-                }
+                let current_row = self.copy_state.cursor.line_idx;
+                let trimmed_len = self.get_world_line_trimmed_len(current_row);
+                let last_char = trimmed_len.saturating_sub(1);
+                self.copy_state.cursor.char_idx = last_char;
+                self.copy_state.cursor.preferred_col = last_char;
+                self.keep_terminal_copy_cursor_in_view();
             }
-
             CopyModeAction::Select => {
                 self.copy_state.toggle_selection();
             }
-
             CopyModeAction::Yank => {
                 let selected = self.extract_selected_text();
                 self.copy_state.exit();
@@ -579,25 +641,24 @@ impl TerminalMode {
 
     fn extract_selected_text(&mut self) -> Option<String> {
         let (start, end) = self.copy_state.normalized_selection()?;
-        let all_lines = self.all_text_lines();
         let mut out = String::new();
 
         for row_idx in start.line_idx..=end.line_idx {
-            let Some(line_str) = all_lines.get(row_idx) else {
+            let Some(line_str) = self.get_world_line_text(row_idx) else {
                 continue;
             };
+            let trimmed_len = line_str.trim_end().chars().count();
             let chars: Vec<char> = line_str.chars().collect();
-            let len = chars.len();
 
             let col_start = if row_idx == start.line_idx {
-                start.char_idx.min(len)
+                start.char_idx.min(chars.len())
             } else {
                 0
             };
             let col_end = if row_idx == end.line_idx {
-                (end.char_idx + 1).min(len)
+                (end.char_idx + 1).min(trimmed_len)
             } else {
-                len
+                trimmed_len
             };
 
             if col_start < col_end {

@@ -132,6 +132,8 @@ pub fn render_vt100_terminal(
 
         // selection highlight
         if copy_state.selection_anchor.is_some() {
+            let (start_pos, end_pos) = copy_state.normalized_selection().unwrap();
+
             for r in 0..content_area.height as usize {
                 let emulator_row = r + pan_y;
                 if emulator_row >= grid_rows as usize {
@@ -139,9 +141,19 @@ pub fn render_vt100_terminal(
                 }
                 let world_row = top_visible_world_line + emulator_row;
 
+                if world_row < start_pos.line_idx || world_row > end_pos.line_idx {
+                    continue;
+                }
+                let row_text = app
+                    .terminal_mode
+                    .vt100_screen()
+                    .rows(0, cols)
+                    .nth(emulator_row)
+                    .unwrap_or_default();
+                let trimmed_len = row_text.trim_end().chars().count();
                 for c in 0..content_area.width as usize {
                     let world_col = c + pan_x;
-                    if copy_state.is_selected(world_row, world_col) {
+                    if copy_state.is_selected(world_row, world_col) && world_col < trimmed_len {
                         let cell = &mut buf[(content_area.x + c as u16, content_area.y + r as u16)];
                         cell.set_style(theme.selection);
                     }
