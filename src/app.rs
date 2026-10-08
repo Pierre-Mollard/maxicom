@@ -5,7 +5,7 @@ use crate::{
         scroller::ScrollStatus,
         types::{FocusTarget, ViewportSize},
     },
-    configs::{InputMode, KeyResolver, SettingsConfig, WrapMode},
+    configs::{InputMode, KeyResolver, SettingsConfig, WrapMode, settings::PrefixWrapBehavior},
     inputs::{Action, AppAction, CopyModeAction, HistoryAction, SearchModeAction},
     logger::{LineLogger, TerminalLogger},
     notification::{NotificationManager, ToastLevel},
@@ -402,6 +402,19 @@ impl App {
                 self.notify_info(format!(
                     "Rx Text Encoding is {}",
                     self.settings.encoding.as_str()
+                ));
+            }
+            SettingKey::IdentWrap => {
+                self.settings.line_mode.wrap_indent = match self.settings.line_mode.wrap_indent {
+                    PrefixWrapBehavior::None => PrefixWrapBehavior::Prefix,
+                    PrefixWrapBehavior::Prefix => PrefixWrapBehavior::None,
+                }
+            }
+            SettingKey::DisplayMode => {
+                self.settings.line_mode.display_mode.toggle();
+                self.notify_info(format!(
+                    "Display Mode is {}",
+                    self.settings.line_mode.display_mode.as_str()
                 ));
             }
         }

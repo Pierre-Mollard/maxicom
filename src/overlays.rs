@@ -45,6 +45,8 @@ impl Overlay {
                 KeyCode::Char('e' | 'E') => OverlayResponse::ToggleSetting(SettingKey::LocalEcho),
                 KeyCode::Char('w' | 'W') => OverlayResponse::ToggleSetting(SettingKey::LineWrap),
                 KeyCode::Char('m' | 'M') => OverlayResponse::ToggleSetting(SettingKey::InputMode),
+                KeyCode::Char('i' | 'I') => OverlayResponse::ToggleSetting(SettingKey::IdentWrap),
+                KeyCode::Char('d' | 'D') => OverlayResponse::ToggleSetting(SettingKey::DisplayMode),
                 KeyCode::Char('t' | 'T') => {
                     OverlayResponse::ToggleSetting(SettingKey::DisplayTimestamp)
                 }
@@ -81,6 +83,8 @@ pub enum SettingKey {
     LocalEcho,
     InputMode,
     LineWrap,
+    IdentWrap,
     DisplayTimestamp,
     TextEncoding,
+    DisplayMode,
 }

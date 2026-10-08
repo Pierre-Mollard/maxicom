@@ -31,6 +31,12 @@ impl KeyBindingAction {
             KeyBindingAction::SKTextEncoding => {
                 Action::App(AppAction::ToggleSetting(SettingKey::TextEncoding))
             }
+            KeyBindingAction::SKIndentWrap => {
+                Action::App(AppAction::ToggleSetting(SettingKey::IdentWrap))
+            }
+            KeyBindingAction::SKDisplayMode => {
+                Action::App(AppAction::ToggleSetting(SettingKey::DisplayMode))
+            }
             KeyBindingAction::Help => {
                 Action::App(AppAction::OpenOverlay(Overlay::Help(HelpDialog::new())))
             }

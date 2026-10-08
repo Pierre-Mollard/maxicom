@@ -93,15 +93,16 @@ impl LineMode {
                 b'\r' => match rx_eol_mode {
                     RxNewlineMode::CrLf | RxNewlineMode::Auto => {
                         self.pending_carriage_return = true;
+                        self.partial_line.push(b'\r');
                     }
-                    RxNewlineMode::LfOnly => {}
+                    RxNewlineMode::LfOnly => {
+                        self.partial_line.push(b'\r');
+                    }
                 },
                 b'\n' => {
+                    self.partial_line.push(b'\n');
                     self.pending_carriage_return = false;
                     self.commit_partial_line(encoding, timestamp_f);
-                }
-                0x08 | 0x7F => {
-                    self.partial_line.pop();
                 }
                 byte => {
                     if self.pending_carriage_return {
@@ -117,8 +118,7 @@ impl LineMode {
 
     fn commit_partial_line(&mut self, encoding: TextEncoding, timestamp_f: &str) {
         let line = encoding.decode(&self.partial_line);
-        let trimmed = line.trim_end_matches(['\r', '\n']).to_string();
-        self.push_history(&trimmed, timestamp_f);
+        self.push_history(&line, timestamp_f);
         self.partial_line.clear();
     }
 

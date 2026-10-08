@@ -374,7 +374,10 @@ pub fn apply_selection_to_spans(
 
 pub fn displayable_line_string(text: &str, mode: LineDisplayMode) -> String {
     match mode {
-        LineDisplayMode::Pretty | LineDisplayMode::Clean => strip_ansi_escapes::strip_str(text),
+        LineDisplayMode::Pretty | LineDisplayMode::Clean => {
+            let clean = text.trim_end_matches(['\r', '\n']);
+            strip_ansi_escapes::strip_str(clean)
+        }
         LineDisplayMode::Raw => {
             let mut raw = String::new();
             for ch in text.chars() {

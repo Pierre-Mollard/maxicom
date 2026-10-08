@@ -98,7 +98,8 @@ fn trim_trailing_incomplete_ansi(text: &str) -> &str {
 pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'static>> {
     match mode {
         LineDisplayMode::Pretty => {
-            let sanitized = sanitize_terminal_control_sequences(text);
+            let clean = text.trim_end_matches(['\r', '\n']);
+            let sanitized = sanitize_terminal_control_sequences(clean);
             let displayable = trim_trailing_incomplete_ansi(&sanitized);
             if let Ok(parsed) = displayable.as_bytes().into_text()
                 && let Some(first_line) = parsed.lines.into_iter().next()
@@ -108,7 +109,8 @@ pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'stati
             vec![Span::raw(displayable.to_string())]
         }
         LineDisplayMode::Clean => {
-            let clean_text = strip_ansi_escapes::strip_str(text);
+            let clean = text.trim_end_matches(['\r', '\n']);
+            let clean_text = strip_ansi_escapes::strip_str(clean);
             vec![Span::raw(clean_text)]
         }
         LineDisplayMode::Raw => {

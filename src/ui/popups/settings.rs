@@ -7,12 +7,12 @@ use ratatui::{
 
 use crate::{
     app::{App, types::FocusTarget},
-    configs::ThemeConfig,
+    configs::{PrefixWrapBehavior, ThemeConfig},
     ui::common::{border_style_for, centered_rect},
 };
 
 pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) {
-    let area = centered_rect(55, 11, frame.area());
+    let area = centered_rect(55, 15, frame.area());
     frame.render_widget(Clear, area);
 
     let mode_str = match app.settings().input_mode {
@@ -23,6 +23,10 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
         crate::configs::WrapMode::Word => "Word-Wrap",
         crate::configs::WrapMode::Char => "Char-Wrap",
         crate::configs::WrapMode::Truncate => "Truncate",
+    };
+    let indent_str = match app.settings().line_mode.wrap_indent {
+        PrefixWrapBehavior::None => "None",
+        PrefixWrapBehavior::Prefix => "Prefix",
     };
     let echo_str = if app.settings().local_echo {
         "ON"
@@ -35,6 +39,7 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
         "OFF"
     };
     let encoding_str = app.settings().encoding.as_str();
+    let display_mode_str = app.settings().line_mode.display_mode.as_str();
 
     let text = vec![
         Line::from(Span::styled(
@@ -55,11 +60,6 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
             Span::styled(echo_str, Style::default().fg(Color::Cyan)),
         ]),
         Line::from(vec![
-            Span::styled("[W] ", Style::default().fg(Color::Yellow)),
-            Span::raw("Line Wrap   : "),
-            Span::styled(wrap_str, Style::default().fg(Color::Cyan)),
-        ]),
-        Line::from(vec![
             Span::styled("[T] ", Style::default().fg(Color::Yellow)),
             Span::raw("Timestamps  : "),
             Span::styled(timestamp_str, Style::default().fg(Color::Cyan)),
@@ -68,6 +68,29 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
             Span::styled("[X] ", Style::default().fg(Color::Yellow)),
             Span::raw("Rx Encoding : "),
             Span::styled(encoding_str, Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "--- Line Mode Specifics ---",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("[W] ", Style::default().fg(Color::Yellow)),
+            Span::raw("Line Wrap   : "),
+            Span::styled(wrap_str, Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(vec![
+            Span::styled("[I] ", Style::default().fg(Color::Yellow)),
+            Span::raw("Indent Wrap : "),
+            Span::styled(indent_str, Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(vec![
+            Span::styled("[D] ", Style::default().fg(Color::Yellow)),
+            Span::raw("Display Mode : "),
+            Span::styled(display_mode_str, Style::default().fg(Color::Cyan)),
         ]),
         Line::from(""),
         Line::from(Span::styled(

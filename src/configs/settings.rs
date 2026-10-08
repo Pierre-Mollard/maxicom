@@ -26,6 +26,30 @@ pub enum LineDisplayMode {
     Binary,
 }
 
+impl LineDisplayMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            LineDisplayMode::Pretty => "Pretty",
+            LineDisplayMode::Clean => "Clean",
+            LineDisplayMode::Raw => "Raw",
+            LineDisplayMode::Hex => "Hex",
+            LineDisplayMode::Octal => "Octal",
+            LineDisplayMode::Binary => "Binary",
+        }
+    }
+
+    pub fn toggle(&mut self) {
+        *self = match *self {
+            LineDisplayMode::Pretty => LineDisplayMode::Clean,
+            LineDisplayMode::Clean => LineDisplayMode::Raw,
+            LineDisplayMode::Raw => LineDisplayMode::Hex,
+            LineDisplayMode::Hex => LineDisplayMode::Octal,
+            LineDisplayMode::Octal => LineDisplayMode::Binary,
+            LineDisplayMode::Binary => LineDisplayMode::Pretty,
+        };
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TextEncoding {
