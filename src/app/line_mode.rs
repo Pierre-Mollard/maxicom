@@ -344,7 +344,9 @@ impl LineMode {
 
                 let line_len = get_line_len(&self.local_history, target_line);
                 self.copy_state.cursor.char_idx = match wrap_mode {
-                    WrapMode::Wrap => self.copy_state.cursor.preferred_col.min(line_len),
+                    WrapMode::Word | WrapMode::Char => {
+                        self.copy_state.cursor.preferred_col.min(line_len)
+                    }
                     WrapMode::Truncate => self.copy_state.cursor.preferred_col,
                 };
                 self.sync_scroll_with_cursor();
@@ -356,7 +358,9 @@ impl LineMode {
 
                 let line_len = get_line_len(&self.local_history, target_line);
                 self.copy_state.cursor.char_idx = match wrap_mode {
-                    WrapMode::Wrap => self.copy_state.cursor.preferred_col.min(line_len),
+                    WrapMode::Word | WrapMode::Char => {
+                        self.copy_state.cursor.preferred_col.min(line_len)
+                    }
                     WrapMode::Truncate => self.copy_state.cursor.preferred_col,
                 };
                 self.sync_scroll_with_cursor();
@@ -545,7 +549,7 @@ impl LineMode {
 
     pub fn update_viewport(&mut self, wrap_mode: WrapMode, viewport: ViewportSize) {
         self.scroller.update_view_size(viewport.cols, viewport.rows);
-        if wrap_mode == WrapMode::Wrap {
+        if wrap_mode == WrapMode::Word || wrap_mode == WrapMode::Char {
             self.scroller.offset_x = 0;
         }
     }

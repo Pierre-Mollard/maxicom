@@ -20,7 +20,8 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
         crate::configs::InputMode::Terminal => "Terminal Mode",
     };
     let wrap_str = match app.settings().line_mode.wrap_mode {
-        crate::configs::WrapMode::Wrap => "Soft-Wrap",
+        crate::configs::WrapMode::Word => "Word-Wrap",
+        crate::configs::WrapMode::Char => "Char-Wrap",
         crate::configs::WrapMode::Truncate => "Truncate",
     };
     let echo_str = if app.settings().local_echo {

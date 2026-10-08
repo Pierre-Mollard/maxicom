@@ -165,7 +165,7 @@ impl App {
 
     // TODO: capture screenshot terminal image
 
-    // TODO: display mode with hexadecimal window
+    // TODO: display mode with hexadecimal window (and fromat everything as hex)
 
     pub fn update(&mut self, action: Action) -> UpdateEffect {
         let is_repeatable_history = self.prefix_active
@@ -389,8 +389,9 @@ impl App {
             }
             SettingKey::LineWrap => {
                 self.settings.line_mode.wrap_mode = match self.settings.line_mode.wrap_mode {
-                    WrapMode::Wrap => WrapMode::Truncate,
-                    WrapMode::Truncate => WrapMode::Wrap,
+                    WrapMode::Word => WrapMode::Char,
+                    WrapMode::Char => WrapMode::Truncate,
+                    WrapMode::Truncate => WrapMode::Word,
                 };
                 self.update_viewport(self.viewport);
             }

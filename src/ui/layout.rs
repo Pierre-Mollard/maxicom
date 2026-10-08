@@ -288,6 +288,127 @@ pub fn wrap_line_by_words(
     sub_lines
 }
 
+pub fn wrap_line_by_chars(
+    line: Line<'static>,
+    max_width: usize,
+    gutter_chars: usize,
+) -> Vec<VisualSubLine> {
+    if max_width == 0 {
+        let total_chars: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+        return vec![VisualSubLine {
+            visual_width: line.width(),
+            gutter_chars,
+            content_char_len: total_chars.saturating_sub(gutter_chars),
+            spans: line.spans,
+        }];
+    }
+
+    let mut sub_lines = Vec::new();
+    let mut current_spans: Vec<Span<'static>> = Vec::new();
+    let mut current_row_chars = 0;
+    let mut current_row_width = 0;
+
+    for span in line.spans {
+        let style = span.style;
+        let mut text = span.content.into_owned();
+
+        while !text.is_empty() {
+            let available_width = max_width.saturating_sub(current_row_width);
+
+            if available_width == 0 {
+                let is_first = sub_lines.is_empty();
+                let g_chars = if is_first {
+                    gutter_chars.min(current_row_chars)
+                } else {
+                    0
+                };
+
+                sub_lines.push(VisualSubLine {
+                    spans: std::mem::take(&mut current_spans),
+                    gutter_chars: g_chars,
+                    content_char_len: current_row_chars.saturating_sub(g_chars),
+                    visual_width: current_row_width,
+                });
+                current_row_chars = 0;
+                current_row_width = 0;
+                continue;
+            }
+
+            let mut take_bytes = 0;
+            let mut take_chars = 0;
+            let mut take_width = 0;
+
+            for (idx, ch) in text.char_indices() {
+                let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+                if take_width + cw > available_width {
+                    break;
+                }
+                take_width += cw;
+                take_chars += 1;
+                take_bytes = idx + ch.len_utf8();
+            }
+
+            if take_chars == 0 {
+                if current_row_width > 0 {
+                    let is_first = sub_lines.is_empty();
+                    let g_chars = if is_first {
+                        gutter_chars.min(current_row_chars)
+                    } else {
+                        0
+                    };
+
+                    sub_lines.push(VisualSubLine {
+                        spans: std::mem::take(&mut current_spans),
+                        gutter_chars: g_chars,
+                        content_char_len: current_row_chars.saturating_sub(g_chars),
+                        visual_width: current_row_width,
+                    });
+                    current_row_chars = 0;
+                    current_row_width = 0;
+                    continue;
+                } else {
+                    let ch = text.chars().next().unwrap();
+                    take_bytes = ch.len_utf8();
+                    take_chars = 1;
+                    take_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+                }
+            }
+
+            let chunk: String = text.drain(..take_bytes).collect();
+            current_row_chars += take_chars;
+            current_row_width += take_width;
+            current_spans.push(Span::styled(chunk, style));
+        }
+    }
+
+    if !current_spans.is_empty() {
+        let is_first = sub_lines.is_empty();
+        let g_chars = if is_first {
+            gutter_chars.min(current_row_chars)
+        } else {
+            0
+        };
+
+        sub_lines.push(VisualSubLine {
+            spans: current_spans,
+            gutter_chars: g_chars,
+            content_char_len: current_row_chars.saturating_sub(g_chars),
+            visual_width: current_row_width,
+        });
+    }
+
+    if sub_lines.is_empty() {
+        sub_lines.push(VisualSubLine {
+            spans: Vec::new(),
+            gutter_chars: 0,
+            content_char_len: 0,
+            visual_width: 0,
+        });
+    }
+
+    sub_lines
+}
+
 pub fn prepare_view_layout(
     lines: Vec<Line<'static>>,
     wrap_mode: WrapMode,
@@ -302,8 +423,22 @@ pub fn prepare_view_layout(
         let visual_row_start = visual_lines.len();
 
         match wrap_mode {
-            WrapMode::Wrap if content_width > 0 => {
+            WrapMode::Word if content_width > 0 => {
                 let subs = wrap_line_by_words(line, content_width, gutter_chars);
+                for sub in &subs {
+                    if sub.visual_width > max_line_width {
+                        max_line_width = sub.visual_width;
+                    }
+                    visual_lines.push(Line::from(sub.spans.clone()));
+                }
+                line_layouts.push(LogicalLineLayout {
+                    visual_row_start,
+                    sub_lines: subs,
+                });
+            }
+
+            WrapMode::Char if content_width > 0 => {
+                let subs = wrap_line_by_chars(line, content_width, gutter_chars);
                 for sub in &subs {
                     if sub.visual_width > max_line_width {
                         max_line_width = sub.visual_width;

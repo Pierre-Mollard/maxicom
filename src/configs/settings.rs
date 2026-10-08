@@ -159,7 +159,8 @@ pub enum InputMode {
 #[serde(rename_all = "lowercase")]
 pub enum WrapMode {
     #[default]
-    Wrap,
+    Word,
+    Char,
     Truncate,
 }
 

@@ -108,7 +108,6 @@ pub fn history_entry_to_line(
     Line::from(spans)
 }
 
-// TODO: add a wrap mode (pre wrap) where the wrap is flat, not variable and keeping words together
 pub fn render_monitor(
     app: &mut App,
     frame: &mut Frame,
@@ -198,7 +197,7 @@ pub fn render_monitor(
     let layout = prepare_view_layout(history_lines, wrap_mode, content_width, gutter_chars);
     let total_visual_rows = layout.visual_lines.len();
     let max_pan = match wrap_mode {
-        WrapMode::Wrap => 0,
+        WrapMode::Word | WrapMode::Char => 0,
         WrapMode::Truncate => layout.max_line_width.saturating_sub(content_width),
     };
 
@@ -222,7 +221,7 @@ pub fn render_monitor(
     let scroll_from_bottom = app.line_mode.scroll_offset();
     let paragraph_y_offset = max_scroll.saturating_sub(scroll_from_bottom);
     let line_x_offset = match wrap_mode {
-        WrapMode::Wrap => 0,
+        WrapMode::Word | WrapMode::Char => 0,
         WrapMode::Truncate => app.line_mode.x_offset(),
     };
 
