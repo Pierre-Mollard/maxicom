@@ -4,8 +4,9 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
+    widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
+use unicode_width::UnicodeWidthChar;
 
 use crate::{
     app::{
@@ -17,8 +18,9 @@ use crate::{
         PostRenderEffect,
         common::{
             apply_keyword_highlights, apply_search_highlight, apply_selection_to_spans,
-            border_style_for, displayable_line_string, render_search_bar,
+            border_style_for, render_search_bar,
         },
+        layout::prepare_view_layout,
     },
 };
 
@@ -128,6 +130,7 @@ pub fn render_monitor(
     };
 
     let copy_range = app.line_mode.copy_state().normalized_selection();
+    let gutter_chars = app.settings().line_gutter_width();
 
     let mut history_lines: Vec<Line> = app
         .line_mode
@@ -192,47 +195,20 @@ pub fn render_monitor(
         history_lines.push(Line::from(partial_spans));
     }
 
-    let history_line_count = history_lines.len();
-    let mut history_paragraph = Paragraph::new(&history_lines[..]);
-
-    history_paragraph = match wrap_mode {
-        WrapMode::Wrap => history_paragraph.wrap(Wrap { trim: false }),
-        WrapMode::Truncate => history_paragraph,
-    };
-
-    // WARN: Paragraph.line_width and .line_count are experiemental deps
+    let layout = prepare_view_layout(history_lines, wrap_mode, content_width, gutter_chars);
+    let total_visual_rows = layout.visual_lines.len();
     let max_pan = match wrap_mode {
         WrapMode::Wrap => 0,
-        WrapMode::Truncate => history_paragraph.line_width().saturating_sub(content_width),
-    };
-    let total_visual_rows = match wrap_mode {
-        WrapMode::Wrap => history_paragraph.line_count(content_width as u16),
-        WrapMode::Truncate => history_line_count,
+        WrapMode::Truncate => layout.max_line_width.saturating_sub(content_width),
     };
 
     let max_scroll = total_visual_rows.saturating_sub(content_height);
     app.line_mode.update_limits(max_scroll, max_pan);
 
-    // PERF: Visual row calculation for word-wrapped text when search-jump
     if let Some(target_idx) = app.line_mode.search_mut().target_jump_index.take()
-        && target_idx < history_lines.len()
+        && target_idx < layout.line_layouts.len()
     {
-        let target_visual_row: usize = match wrap_mode {
-            WrapMode::Truncate => target_idx,
-            WrapMode::Wrap => {
-                let w = (content_width as u16).max(1);
-                history_lines
-                    .iter()
-                    .take(target_idx)
-                    .map(|line| {
-                        Paragraph::new(vec![line.clone()])
-                            .wrap(Wrap { trim: false })
-                            .line_count(w)
-                            .max(1)
-                    })
-                    .sum()
-            }
-        };
+        let target_visual_row = layout.line_layouts[target_idx].visual_row_start;
 
         let rows_from_bottom = total_visual_rows
             .saturating_sub(1)
@@ -250,7 +226,7 @@ pub fn render_monitor(
         WrapMode::Truncate => app.line_mode.x_offset(),
     };
 
-    history_paragraph = history_paragraph.scroll((
+    let history_paragraph = Paragraph::new(layout.visual_lines).scroll((
         paragraph_y_offset.min(u16::MAX as usize) as u16,
         line_x_offset.min(u16::MAX as usize) as u16,
     ));
@@ -264,72 +240,61 @@ pub fn render_monitor(
         let cursor_line = copy_state.cursor.line_idx;
         let cursor_char = copy_state.cursor.char_idx;
 
-        let gutter_offset = app.settings().line_gutter_width();
+        if let Some(line_meta) = layout.line_layouts.get(cursor_line) {
+            let mut resolved_row = line_meta.visual_row_start;
+            let mut resolved_col = 0;
+            let mut remaining_content_chars = cursor_char;
 
-        let content_visual_col = if let Some(entry) = app.line_mode.history().get(cursor_line) {
-            let display_text =
-                displayable_line_string(&entry.text, app.settings().line_mode.display_mode);
-            let total_chars = display_text.chars().count();
+            for (sub_idx, sub) in line_meta.sub_lines.iter().enumerate() {
+                let is_last_sub_line = sub_idx == line_meta.sub_lines.len() - 1;
 
-            if cursor_char <= total_chars {
-                let chars_before: String = display_text.chars().take(cursor_char).collect();
-                unicode_width::UnicodeWidthStr::width(chars_before.as_str())
-            } else {
-                let text_w = unicode_width::UnicodeWidthStr::width(display_text.as_str());
-                text_w + (cursor_char - total_chars)
-            }
-        } else {
-            cursor_char
-        };
+                if remaining_content_chars < sub.content_char_len || is_last_sub_line {
+                    resolved_row = line_meta.visual_row_start + sub_idx;
 
-        let raw_visual_col = gutter_offset + content_visual_col;
+                    let mut gutter_to_skip = sub.gutter_chars;
+                    let mut content_to_take = remaining_content_chars;
+                    let mut accumulated_width = 0;
 
-        let base_visual_row = match wrap_mode {
-            WrapMode::Truncate => cursor_line,
-            WrapMode::Wrap => {
-                let w = (content_width as u16).max(1);
-                history_lines
-                    .iter()
-                    .take(cursor_line)
-                    .map(|line| {
-                        Paragraph::new(vec![line.clone()])
-                            .wrap(Wrap { trim: false })
-                            .line_count(w)
-                            .max(1)
-                    })
-                    .sum()
-            }
-        };
-
-        // TODO: wrapping is not correclty handled here
-        let (visual_row, visual_col) = match wrap_mode {
-            WrapMode::Truncate => (base_visual_row, raw_visual_col),
-            WrapMode::Wrap => {
-                if content_width > 0 {
-                    let wrapped_sub_rows = raw_visual_col / content_width;
-                    let wrapped_col = raw_visual_col % content_width;
-                    (base_visual_row + wrapped_sub_rows, wrapped_col)
-                } else {
-                    (base_visual_row, raw_visual_col)
-                }
-            }
-        };
-
-        if visual_row >= paragraph_y_offset {
-            let viewer_row = visual_row - paragraph_y_offset;
-
-            if viewer_row < content_area.height as usize && visual_col >= line_x_offset {
-                let viewer_col = visual_col - line_x_offset;
-                if viewer_col < content_area.width as usize {
-                    let screen_x = content_area.x + viewer_col as u16;
-                    let screen_y = content_area.y + viewer_row as u16;
-
-                    let buf = frame.buffer_mut();
-                    if !app.is_app_focused() {
-                        buf[(screen_x, screen_y)]
-                            .set_style(Style::default().add_modifier(Modifier::REVERSED));
+                    for span in &sub.spans {
+                        for ch in span.content.chars() {
+                            let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+                            if gutter_to_skip > 0 {
+                                gutter_to_skip -= 1;
+                                accumulated_width += cw;
+                            } else if content_to_take > 0 {
+                                content_to_take -= 1;
+                                accumulated_width += cw;
+                            } else {
+                                break;
+                            }
+                        }
                     }
-                    frame.set_cursor_position((screen_x, screen_y));
+
+                    accumulated_width += content_to_take;
+                    resolved_col = accumulated_width;
+                    break;
+                }
+
+                remaining_content_chars -= sub.content_char_len;
+            }
+
+            // Draw cursor
+            if resolved_row >= paragraph_y_offset {
+                let viewer_row = resolved_row - paragraph_y_offset;
+
+                if viewer_row < content_area.height as usize && resolved_col >= line_x_offset {
+                    let viewer_col = resolved_col - line_x_offset;
+                    if viewer_col < content_area.width as usize {
+                        let screen_x = content_area.x + viewer_col as u16;
+                        let screen_y = content_area.y + viewer_row as u16;
+
+                        let buf = frame.buffer_mut();
+                        if !app.is_app_focused() {
+                            buf[(screen_x, screen_y)]
+                                .set_style(Style::default().add_modifier(Modifier::REVERSED));
+                        }
+                        frame.set_cursor_position((screen_x, screen_y));
+                    }
                 }
             }
         }

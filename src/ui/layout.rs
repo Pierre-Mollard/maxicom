@@ -1,8 +1,12 @@
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::{
+    layout::{Constraint, Direction, Layout, Rect},
+    text::{Line, Span},
+};
+use unicode_width::UnicodeWidthChar;
 
 use crate::{
     app::{App, types::FocusTarget},
-    configs::InputMode,
+    configs::{InputMode, WrapMode},
 };
 
 pub struct ScreenLayout {
@@ -128,5 +132,212 @@ impl ScreenLayout {
             status_bar_area,
             focus_target,
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct VisualSubLine {
+    pub spans: Vec<Span<'static>>,
+    pub gutter_chars: usize,
+    pub content_char_len: usize,
+    pub visual_width: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct LogicalLineLayout {
+    pub visual_row_start: usize,
+    pub sub_lines: Vec<VisualSubLine>,
+}
+
+pub struct PreparedLayout {
+    pub visual_lines: Vec<Line<'static>>,
+    pub line_layouts: Vec<LogicalLineLayout>,
+    pub max_line_width: usize,
+}
+
+/// Word-wraps a Line (with gutter aware) like ratatui did before
+pub fn wrap_line_by_words(
+    line: Line<'static>,
+    max_width: usize,
+    gutter_chars: usize,
+) -> Vec<VisualSubLine> {
+    if max_width == 0 {
+        let total_chars: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+        return vec![VisualSubLine {
+            visual_width: line.width(),
+            gutter_chars,
+            content_char_len: total_chars.saturating_sub(gutter_chars),
+            spans: line.spans,
+        }];
+    }
+
+    let mut sub_lines = Vec::new();
+    let mut current_spans: Vec<Span<'static>> = Vec::new();
+    let mut current_row_chars = 0;
+    let mut current_row_width = 0;
+
+    for span in line.spans {
+        let style = span.style;
+        let mut text = span.content.into_owned();
+
+        while !text.is_empty() {
+            let available_width = max_width.saturating_sub(current_row_width);
+            let is_whitespace = text.starts_with(char::is_whitespace);
+            let mut token_bytes = 0;
+            let mut token_chars = 0;
+            let mut token_width = 0;
+
+            for (idx, ch) in text.char_indices() {
+                if ch.is_whitespace() != is_whitespace {
+                    break;
+                }
+                token_bytes = idx + ch.len_utf8();
+                token_chars += 1;
+                token_width += UnicodeWidthChar::width(ch).unwrap_or(0);
+            }
+
+            let token: String = text.drain(..token_bytes).collect();
+
+            // word wrap here if too big
+            if !is_whitespace && token_width > available_width && current_row_width > 0 {
+                let is_first = sub_lines.is_empty();
+                let g_chars = if is_first {
+                    gutter_chars.min(current_row_chars)
+                } else {
+                    0
+                };
+
+                sub_lines.push(VisualSubLine {
+                    spans: std::mem::take(&mut current_spans),
+                    gutter_chars: g_chars,
+                    content_char_len: current_row_chars.saturating_sub(g_chars),
+                    visual_width: current_row_width,
+                });
+                current_row_chars = 0;
+                current_row_width = 0;
+            }
+
+            // word is split if too big and not space max
+            if token_width > max_width && current_row_width == 0 {
+                let mut chunk_bytes = 0;
+                let mut chunk_chars = 0;
+                let mut chunk_w = 0;
+
+                for (idx, ch) in token.char_indices() {
+                    let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+                    if chunk_w + cw > max_width && chunk_w > 0 {
+                        break;
+                    }
+                    chunk_bytes = idx + ch.len_utf8();
+                    chunk_chars += 1;
+                    chunk_w += cw;
+                }
+
+                current_spans.push(Span::styled(token[..chunk_bytes].to_string(), style));
+                let is_first = sub_lines.is_empty();
+                let g_chars = if is_first {
+                    gutter_chars.min(chunk_chars)
+                } else {
+                    0
+                };
+
+                sub_lines.push(VisualSubLine {
+                    spans: std::mem::take(&mut current_spans),
+                    gutter_chars: g_chars,
+                    content_char_len: chunk_chars.saturating_sub(g_chars),
+                    visual_width: chunk_w,
+                });
+
+                text = format!("{}{}", &token[chunk_bytes..], text);
+                current_row_chars = 0;
+                current_row_width = 0;
+                continue;
+            }
+
+            current_row_chars += token_chars;
+            current_row_width += token_width;
+            current_spans.push(Span::styled(token, style));
+        }
+    }
+
+    if !current_spans.is_empty() {
+        let is_first = sub_lines.is_empty();
+        let g_chars = if is_first {
+            gutter_chars.min(current_row_chars)
+        } else {
+            0
+        };
+
+        sub_lines.push(VisualSubLine {
+            spans: current_spans,
+            gutter_chars: g_chars,
+            content_char_len: current_row_chars.saturating_sub(g_chars),
+            visual_width: current_row_width,
+        });
+    }
+
+    if sub_lines.is_empty() {
+        sub_lines.push(VisualSubLine {
+            spans: Vec::new(),
+            gutter_chars: 0,
+            content_char_len: 0,
+            visual_width: 0,
+        });
+    }
+
+    sub_lines
+}
+
+pub fn prepare_view_layout(
+    lines: Vec<Line<'static>>,
+    wrap_mode: WrapMode,
+    content_width: usize,
+    gutter_chars: usize,
+) -> PreparedLayout {
+    let mut visual_lines = Vec::new();
+    let mut line_layouts = Vec::with_capacity(lines.len());
+    let mut max_line_width = 0;
+
+    for line in lines {
+        let visual_row_start = visual_lines.len();
+
+        match wrap_mode {
+            WrapMode::Wrap if content_width > 0 => {
+                let subs = wrap_line_by_words(line, content_width, gutter_chars);
+                for sub in &subs {
+                    if sub.visual_width > max_line_width {
+                        max_line_width = sub.visual_width;
+                    }
+                    visual_lines.push(Line::from(sub.spans.clone()));
+                }
+                line_layouts.push(LogicalLineLayout {
+                    visual_row_start,
+                    sub_lines: subs,
+                });
+            }
+            _ => {
+                let total_chars: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+                let visual_width = line.width();
+                if visual_width > max_line_width {
+                    max_line_width = visual_width;
+                }
+                visual_lines.push(line.clone());
+                line_layouts.push(LogicalLineLayout {
+                    visual_row_start,
+                    sub_lines: vec![VisualSubLine {
+                        spans: line.spans,
+                        gutter_chars,
+                        content_char_len: total_chars.saturating_sub(gutter_chars),
+                        visual_width,
+                    }],
+                });
+            }
+        }
+    }
+
+    PreparedLayout {
+        visual_lines,
+        line_layouts,
+        max_line_width,
     }
 }

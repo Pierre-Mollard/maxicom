@@ -255,6 +255,8 @@ impl LineMode {
         &mut self,
         action: CopyModeAction,
         display_mode: LineDisplayMode,
+        wrap_mode: WrapMode,
+        gutter_width: usize,
     ) -> Option<String> {
         let total_lines = self.local_history.len();
         if total_lines == 0 {
@@ -265,7 +267,17 @@ impl LineMode {
         }
 
         let max_line = total_lines.saturating_sub(1);
-        let max_col = self.scroller.view_width + self.scroller.max_pan_x;
+
+        let get_line_len = |history: &VecDeque<LogEntry>, idx: usize| -> usize {
+            history
+                .get(idx)
+                .map(|e| {
+                    displayable_line_string(&e.text, display_mode)
+                        .chars()
+                        .count()
+                })
+                .unwrap_or(0)
+        };
 
         match action {
             CopyModeAction::Enter => {
@@ -278,49 +290,92 @@ impl LineMode {
                 return None;
             }
             CopyModeAction::MoveUp => {
-                self.copy_state.cursor.line_idx = self.copy_state.cursor.line_idx.saturating_sub(1);
-                self.copy_state.cursor.char_idx = self.copy_state.cursor.preferred_col;
+                let target_line = self.copy_state.cursor.line_idx.saturating_sub(1);
+                self.copy_state.cursor.line_idx = target_line;
+
+                let line_len = get_line_len(&self.local_history, target_line);
+                let max_char_idx = line_len.saturating_sub(1);
+                self.copy_state.cursor.char_idx =
+                    self.copy_state.cursor.preferred_col.min(max_char_idx);
+
                 self.sync_scroll_with_cursor();
+                if wrap_mode == WrapMode::Truncate {
+                    self.sync_pan_with_cursor(display_mode, gutter_width);
+                }
             }
             CopyModeAction::MoveDown => {
-                self.copy_state.cursor.line_idx =
-                    (self.copy_state.cursor.line_idx + 1).min(max_line);
-                self.copy_state.cursor.char_idx = self.copy_state.cursor.preferred_col;
+                let target_line = (self.copy_state.cursor.line_idx + 1).min(max_line);
+                self.copy_state.cursor.line_idx = target_line;
+
+                let line_len = get_line_len(&self.local_history, target_line);
+                let max_char_idx = line_len.saturating_sub(1);
+                self.copy_state.cursor.char_idx =
+                    self.copy_state.cursor.preferred_col.min(max_char_idx);
+
                 self.sync_scroll_with_cursor();
+                if wrap_mode == WrapMode::Truncate {
+                    self.sync_pan_with_cursor(display_mode, gutter_width);
+                }
             }
             CopyModeAction::MoveLeft => {
                 self.copy_state.cursor.char_idx = self.copy_state.cursor.char_idx.saturating_sub(1);
                 self.copy_state.cursor.preferred_col = self.copy_state.cursor.char_idx;
+                if wrap_mode == WrapMode::Truncate {
+                    self.sync_pan_with_cursor(display_mode, gutter_width);
+                }
             }
             CopyModeAction::MoveRight => {
+                let current_line_len =
+                    get_line_len(&self.local_history, self.copy_state.cursor.line_idx);
+                let max_char_idx = current_line_len.saturating_sub(1);
+
                 self.copy_state.cursor.char_idx =
-                    (self.copy_state.cursor.char_idx + 1).min(max_col);
+                    (self.copy_state.cursor.char_idx + 1).min(max_char_idx);
                 self.copy_state.cursor.preferred_col = self.copy_state.cursor.char_idx;
+
+                if wrap_mode == WrapMode::Truncate {
+                    self.sync_pan_with_cursor(display_mode, gutter_width);
+                }
             }
             CopyModeAction::PageUp => {
                 let jump = self.scroller.view_height.saturating_sub(1);
-                self.copy_state.cursor.line_idx =
-                    self.copy_state.cursor.line_idx.saturating_sub(jump);
-                self.copy_state.cursor.char_idx = self.copy_state.cursor.preferred_col;
+                let target_line = self.copy_state.cursor.line_idx.saturating_sub(jump);
+                self.copy_state.cursor.line_idx = target_line;
+
+                let line_len = get_line_len(&self.local_history, target_line);
+                self.copy_state.cursor.char_idx = match wrap_mode {
+                    WrapMode::Wrap => self.copy_state.cursor.preferred_col.min(line_len),
+                    WrapMode::Truncate => self.copy_state.cursor.preferred_col,
+                };
                 self.sync_scroll_with_cursor();
             }
             CopyModeAction::PageDown => {
                 let jump = self.scroller.view_height.saturating_sub(1);
-                self.copy_state.cursor.line_idx =
-                    (self.copy_state.cursor.line_idx + jump).min(max_line);
-                self.copy_state.cursor.char_idx = self.copy_state.cursor.preferred_col;
+                let target_line = (self.copy_state.cursor.line_idx + jump).min(max_line);
+                self.copy_state.cursor.line_idx = target_line;
+
+                let line_len = get_line_len(&self.local_history, target_line);
+                self.copy_state.cursor.char_idx = match wrap_mode {
+                    WrapMode::Wrap => self.copy_state.cursor.preferred_col.min(line_len),
+                    WrapMode::Truncate => self.copy_state.cursor.preferred_col,
+                };
                 self.sync_scroll_with_cursor();
             }
             CopyModeAction::StartOfLine => {
                 self.copy_state.cursor.char_idx = 0;
                 self.copy_state.cursor.preferred_col = 0;
+                if wrap_mode == WrapMode::Truncate {
+                    self.sync_pan_with_cursor(display_mode, gutter_width);
+                }
             }
             CopyModeAction::EndOfLine => {
-                if let Some(entry) = self.local_history.get(self.copy_state.cursor.line_idx) {
-                    let display_text = displayable_line_string(&entry.text, display_mode);
-                    let len = display_text.chars().count();
-                    self.copy_state.cursor.char_idx = len;
-                    self.copy_state.cursor.preferred_col = len;
+                let len = get_line_len(&self.local_history, self.copy_state.cursor.line_idx);
+                let last_idx = len.saturating_sub(1);
+                self.copy_state.cursor.char_idx = last_idx;
+                self.copy_state.cursor.preferred_col = last_idx;
+
+                if wrap_mode == WrapMode::Truncate {
+                    self.sync_pan_with_cursor(display_mode, gutter_width);
                 }
             }
             CopyModeAction::Select => {
@@ -377,6 +432,33 @@ impl LineMode {
 
         let target_scroll = line_from_bottom.saturating_sub(half);
         self.scroller.scroll_to(target_scroll);
+    }
+
+    fn sync_pan_with_cursor(&mut self, display_mode: LineDisplayMode, gutter_width: usize) {
+        let view_w = self.scroller.view_width;
+        if view_w == 0 {
+            return;
+        }
+
+        let cursor_char_idx = self.copy_state.cursor.char_idx;
+        let content_width =
+            if let Some(entry) = self.local_history.get(self.copy_state.cursor.line_idx) {
+                let display_text = displayable_line_string(&entry.text, display_mode);
+                let chars_before: String = display_text.chars().take(cursor_char_idx).collect();
+                unicode_width::UnicodeWidthStr::width(chars_before.as_str())
+            } else {
+                cursor_char_idx
+            };
+
+        let total_cursor_col = gutter_width + content_width;
+
+        if total_cursor_col < self.scroller.offset_x + gutter_width {
+            self.scroller.offset_x = total_cursor_col.saturating_sub(gutter_width);
+        } else if total_cursor_col >= self.scroller.offset_x + view_w {
+            self.scroller.offset_x = total_cursor_col - view_w + 1;
+        }
+
+        self.scroller.offset_x = self.scroller.offset_x.min(self.scroller.max_pan_x);
     }
 
     pub fn update_search_matches(&mut self, display_mode: LineDisplayMode) {

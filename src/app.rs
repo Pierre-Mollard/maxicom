@@ -157,10 +157,15 @@ impl App {
     pub fn close_overlay(&mut self) {
         self.overlay = None;
     }
+    // TODO: fix the weird => appearring with zsh
 
     // TODO: reduce settings related args of terminal and linput modes
 
     // TODO: add vi motions to selection word next/previous/v
+
+    // TODO: capture screenshot terminal image
+
+    // TODO: display mode with hexadecimal window
 
     pub fn update(&mut self, action: Action) -> UpdateEffect {
         let is_repeatable_history = self.prefix_active
@@ -290,10 +295,12 @@ impl App {
                 }
             }
             InputMode::Line => {
-                if let Some(text) = self
-                    .line_mode
-                    .handle_copy_action(action, self.settings.line_mode.display_mode)
-                {
+                if let Some(text) = self.line_mode.handle_copy_action(
+                    action,
+                    self.settings.line_mode.display_mode,
+                    self.settings.line_mode.wrap_mode,
+                    self.settings.line_gutter_width(),
+                ) {
                     return UpdateEffect::CopyToClipboard(text);
                 }
             }
