@@ -164,8 +164,6 @@ impl App {
 
     // TODO: display mode with hexadecimal window on the side
 
-    // TODO: make prefix line toggable for all (not only first or none)
-
     pub fn update(&mut self, action: Action) -> UpdateEffect {
         let is_repeatable_history = self.prefix_active
             && matches!(

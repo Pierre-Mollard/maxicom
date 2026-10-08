@@ -143,6 +143,14 @@ pub enum RxNewlineMode {
     LfOnly,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PrefixWrapBehavior {
+    None,
+    #[default]
+    Prefix,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalDimensionMode {
@@ -194,9 +202,11 @@ pub struct LineModeConfig {
     pub rx_eol: RxNewlineMode,
     pub display_mode: LineDisplayMode,
     pub wrap_mode: WrapMode,
+    pub wrap_indent: PrefixWrapBehavior,
     pub max_history_lines: usize,
     pub display_partial_rx: bool,
     pub line_prefix: String,
+    pub line_indent_prefix: String,
     pub line_partial_prefix: String,
     pub prompt_prefix: String,
     pub prompt_vi_prefix: String,
@@ -210,10 +220,12 @@ impl Default for LineModeConfig {
             rx_eol: RxNewlineMode::default(),
             display_mode: LineDisplayMode::default(),
             wrap_mode: WrapMode::default(),
+            wrap_indent: PrefixWrapBehavior::default(),
             max_history_lines: 1000,
             display_partial_rx: true,
             line_prefix: String::from("│ "),
-            line_partial_prefix: String::from("│… "),
+            line_indent_prefix: String::from("│ "),
+            line_partial_prefix: String::from("│…"),
             prompt_prefix: String::from("> "),
             prompt_vi_prefix: String::from("< "),
             logging: LineLogConfig::default(),

@@ -2,11 +2,11 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     text::{Line, Span},
 };
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     app::{App, types::FocusTarget},
-    configs::{InputMode, WrapMode},
+    configs::{InputMode, SettingsConfig, ThemeConfig, WrapMode, settings::PrefixWrapBehavior},
 };
 
 pub struct ScreenLayout {
@@ -411,62 +411,68 @@ pub fn wrap_line_by_chars(
 
 pub fn prepare_view_layout(
     lines: Vec<Line<'static>>,
-    wrap_mode: WrapMode,
+    settings: &SettingsConfig,
+    theme: &ThemeConfig,
     content_width: usize,
-    gutter_chars: usize,
 ) -> PreparedLayout {
     let mut visual_lines = Vec::new();
     let mut line_layouts = Vec::with_capacity(lines.len());
     let mut max_line_width = 0;
 
+    let wrap_mode = settings.line_mode.wrap_mode;
+    let gutter_chars = settings.line_gutter_width();
+
+    let indent_prefix: &str = match settings.line_mode.wrap_indent {
+        PrefixWrapBehavior::None => "",
+        PrefixWrapBehavior::Prefix => &settings.line_mode.line_indent_prefix,
+    };
+    let indent_width = indent_prefix.width();
+    let indent_style = *theme.line_indent_prefix;
+
     for line in lines {
         let visual_row_start = visual_lines.len();
 
-        match wrap_mode {
-            WrapMode::Word if content_width > 0 => {
-                let subs = wrap_line_by_words(line, content_width, gutter_chars);
-                for sub in &subs {
-                    if sub.visual_width > max_line_width {
-                        max_line_width = sub.visual_width;
-                    }
-                    visual_lines.push(Line::from(sub.spans.clone()));
+        if content_width > 0 && matches!(wrap_mode, WrapMode::Word | WrapMode::Char) {
+            let subs = match wrap_mode {
+                WrapMode::Word => wrap_line_by_words(line, content_width, gutter_chars),
+                WrapMode::Char => wrap_line_by_chars(line, content_width, gutter_chars),
+                _ => unreachable!(),
+            };
+            for (sub_idx, sub) in subs.iter().enumerate() {
+                let mut row_spans = Vec::new();
+                let extra_w = if sub_idx > 0 && indent_width > 0 {
+                    row_spans.push(Span::styled(indent_prefix.to_string(), indent_style));
+                    indent_width
+                } else {
+                    0
+                };
+                row_spans.extend(sub.spans.clone());
+                let total_row_w = sub.visual_width + extra_w;
+                if total_row_w > max_line_width {
+                    max_line_width = total_row_w;
                 }
-                line_layouts.push(LogicalLineLayout {
-                    visual_row_start,
-                    sub_lines: subs,
-                });
+                visual_lines.push(Line::from(row_spans));
             }
-
-            WrapMode::Char if content_width > 0 => {
-                let subs = wrap_line_by_chars(line, content_width, gutter_chars);
-                for sub in &subs {
-                    if sub.visual_width > max_line_width {
-                        max_line_width = sub.visual_width;
-                    }
-                    visual_lines.push(Line::from(sub.spans.clone()));
-                }
-                line_layouts.push(LogicalLineLayout {
-                    visual_row_start,
-                    sub_lines: subs,
-                });
+            line_layouts.push(LogicalLineLayout {
+                visual_row_start,
+                sub_lines: subs,
+            });
+        } else {
+            let total_chars: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+            let visual_width = line.width();
+            if visual_width > max_line_width {
+                max_line_width = visual_width;
             }
-            _ => {
-                let total_chars: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
-                let visual_width = line.width();
-                if visual_width > max_line_width {
-                    max_line_width = visual_width;
-                }
-                visual_lines.push(line.clone());
-                line_layouts.push(LogicalLineLayout {
-                    visual_row_start,
-                    sub_lines: vec![VisualSubLine {
-                        spans: line.spans,
-                        gutter_chars,
-                        content_char_len: total_chars.saturating_sub(gutter_chars),
-                        visual_width,
-                    }],
-                });
-            }
+            visual_lines.push(line.clone());
+            line_layouts.push(LogicalLineLayout {
+                visual_row_start,
+                sub_lines: vec![VisualSubLine {
+                    spans: line.spans,
+                    gutter_chars,
+                    content_char_len: total_chars.saturating_sub(gutter_chars),
+                    visual_width,
+                }],
+            });
         }
     }
 

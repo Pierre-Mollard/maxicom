@@ -6,14 +6,17 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     app::{
         App,
         types::{FocusTarget, LogEntry},
     },
-    configs::{KeywordHighlight, LineDisplayMode, SettingsConfig, ThemeConfig, WrapMode},
+    configs::{
+        KeywordHighlight, LineDisplayMode, SettingsConfig, ThemeConfig, WrapMode,
+        settings::PrefixWrapBehavior,
+    },
     ui::{
         PostRenderEffect,
         common::{
@@ -248,7 +251,6 @@ pub fn render_monitor(
     };
 
     let copy_range = app.line_mode.copy_state().normalized_selection();
-    let gutter_chars = app.settings().line_gutter_width();
 
     let mut history_lines: Vec<Line> = app
         .line_mode
@@ -313,7 +315,7 @@ pub fn render_monitor(
         history_lines.push(Line::from(partial_spans));
     }
 
-    let layout = prepare_view_layout(history_lines, wrap_mode, content_width, gutter_chars);
+    let layout = prepare_view_layout(history_lines, app.settings(), theme, content_width);
     let total_visual_rows = layout.visual_lines.len();
     let max_pan = match wrap_mode {
         WrapMode::Word | WrapMode::Char => 0,
@@ -358,6 +360,11 @@ pub fn render_monitor(
         let cursor_line = copy_state.cursor.line_idx;
         let cursor_char = copy_state.cursor.char_idx;
 
+        let indent_width = match app.settings().line_mode.wrap_indent {
+            PrefixWrapBehavior::None => 0,
+            PrefixWrapBehavior::Prefix => app.settings().line_mode.line_indent_prefix.width(),
+        };
+
         if let Some(line_meta) = layout.line_layouts.get(cursor_line) {
             let mut resolved_row = line_meta.visual_row_start;
             let mut resolved_col = 0;
@@ -372,6 +379,10 @@ pub fn render_monitor(
                     let mut gutter_to_skip = sub.gutter_chars;
                     let mut content_to_take = remaining_content_chars;
                     let mut accumulated_width = 0;
+
+                    if sub_idx > 0 {
+                        accumulated_width += indent_width;
+                    }
 
                     for span in &sub.spans {
                         for ch in span.content.chars() {

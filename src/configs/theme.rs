@@ -18,6 +18,7 @@ pub struct ThemeConfig {
     pub selection: ConfigStyle,
     pub status_bar_bg: ConfigStyle,
     pub line_prefix: ConfigStyle,
+    pub line_indent_prefix: ConfigStyle,
     pub line_partial_prefix: ConfigStyle,
 }
 
@@ -35,6 +36,7 @@ impl Default for ThemeConfig {
             ),
             status_bar_bg: ConfigStyle::from_bg(Color::Rgb(0x1e, 0x23, 0x2d)),
             line_prefix: ConfigStyle::from_fg(Color::DarkGray),
+            line_indent_prefix: ConfigStyle::from_fg(Color::DarkGray),
             line_partial_prefix: ConfigStyle::new(
                 Style::default()
                     .fg(Color::Yellow)
