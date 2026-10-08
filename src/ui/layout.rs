@@ -1,5 +1,6 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
+    style::Style,
     text::{Line, Span},
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -155,6 +156,13 @@ pub struct PreparedLayout {
     pub max_line_width: usize,
 }
 
+struct WordToken {
+    parts: Vec<(String, Style)>,
+    is_whitespace: bool,
+    char_count: usize,
+    visual_width: usize,
+}
+
 /// Word-wraps a Line (with gutter aware) like ratatui did before
 pub fn wrap_line_by_words(
     line: Line<'static>,
@@ -171,17 +179,12 @@ pub fn wrap_line_by_words(
         }];
     }
 
-    let mut sub_lines = Vec::new();
-    let mut current_spans: Vec<Span<'static>> = Vec::new();
-    let mut current_row_chars = 0;
-    let mut current_row_width = 0;
-
+    let mut tokens: Vec<WordToken> = Vec::new();
     for span in line.spans {
         let style = span.style;
         let mut text = span.content.into_owned();
 
         while !text.is_empty() {
-            let available_width = max_width.saturating_sub(current_row_width);
             let is_whitespace = text.starts_with(char::is_whitespace);
             let mut token_bytes = 0;
             let mut token_chars = 0;
@@ -196,67 +199,100 @@ pub fn wrap_line_by_words(
                 token_width += UnicodeWidthChar::width(ch).unwrap_or(0);
             }
 
-            let token: String = text.drain(..token_bytes).collect();
+            let chunk: String = text.drain(..token_bytes).collect();
 
-            // word wrap here if too big
-            if !is_whitespace && token_width > available_width && current_row_width > 0 {
-                let is_first = sub_lines.is_empty();
-                let g_chars = if is_first {
-                    gutter_chars.min(current_row_chars)
-                } else {
-                    0
-                };
-
-                sub_lines.push(VisualSubLine {
-                    spans: std::mem::take(&mut current_spans),
-                    gutter_chars: g_chars,
-                    content_char_len: current_row_chars.saturating_sub(g_chars),
-                    visual_width: current_row_width,
+            if let Some(last) = tokens.last_mut()
+                && last.is_whitespace == is_whitespace
+            {
+                last.parts.push((chunk, style));
+                last.char_count += token_chars;
+                last.visual_width += token_width;
+            } else {
+                tokens.push(WordToken {
+                    parts: vec![(chunk, style)],
+                    is_whitespace,
+                    char_count: token_chars,
+                    visual_width: token_width,
                 });
-                current_row_chars = 0;
-                current_row_width = 0;
             }
+        }
+    }
 
-            // word is split if too big and not space max
-            if token_width > max_width && current_row_width == 0 {
-                let mut chunk_bytes = 0;
-                let mut chunk_chars = 0;
-                let mut chunk_w = 0;
+    let mut sub_lines = Vec::new();
+    let mut current_spans: Vec<Span<'static>> = Vec::new();
+    let mut current_row_chars = 0;
+    let mut current_row_width = 0;
 
-                for (idx, ch) in token.char_indices() {
-                    let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
-                    if chunk_w + cw > max_width && chunk_w > 0 {
-                        break;
+    for token in tokens {
+        let available_width = max_width.saturating_sub(current_row_width);
+
+        if !token.is_whitespace && token.visual_width > available_width && current_row_width > 0 {
+            let is_first = sub_lines.is_empty();
+            let g_chars = if is_first {
+                gutter_chars.min(current_row_chars)
+            } else {
+                0
+            };
+
+            sub_lines.push(VisualSubLine {
+                spans: std::mem::take(&mut current_spans),
+                gutter_chars: g_chars,
+                content_char_len: current_row_chars.saturating_sub(g_chars),
+                visual_width: current_row_width,
+            });
+            current_row_chars = 0;
+            current_row_width = 0;
+        }
+
+        if token.visual_width > max_width && current_row_width == 0 {
+            for (text_part, style) in token.parts {
+                let mut remaining = text_part;
+                while !remaining.is_empty() {
+                    let avail = max_width.saturating_sub(current_row_width);
+                    let mut chunk_bytes = 0;
+                    let mut chunk_chars = 0;
+                    let mut chunk_w = 0;
+                    for (idx, ch) in remaining.char_indices() {
+                        let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+                        if chunk_w + cw > avail && chunk_w > 0 {
+                            break;
+                        }
+                        chunk_bytes = idx + ch.len_utf8();
+                        chunk_chars += 1;
+                        chunk_w += cw;
                     }
-                    chunk_bytes = idx + ch.len_utf8();
-                    chunk_chars += 1;
-                    chunk_w += cw;
+
+                    if chunk_chars == 0 {
+                        let is_first = sub_lines.is_empty();
+                        let g_chars = if is_first {
+                            gutter_chars.min(current_row_chars)
+                        } else {
+                            0
+                        };
+                        sub_lines.push(VisualSubLine {
+                            spans: std::mem::take(&mut current_spans),
+                            gutter_chars: g_chars,
+                            content_char_len: current_row_chars.saturating_sub(g_chars),
+                            visual_width: current_row_width,
+                        });
+                        current_row_chars = 0;
+                        current_row_width = 0;
+                        continue;
+                    }
+
+                    let part: String = remaining.drain(..chunk_bytes).collect();
+                    current_row_chars += chunk_chars;
+                    current_row_width += chunk_w;
+                    current_spans.push(Span::styled(part, style));
                 }
-
-                current_spans.push(Span::styled(token[..chunk_bytes].to_string(), style));
-                let is_first = sub_lines.is_empty();
-                let g_chars = if is_first {
-                    gutter_chars.min(chunk_chars)
-                } else {
-                    0
-                };
-
-                sub_lines.push(VisualSubLine {
-                    spans: std::mem::take(&mut current_spans),
-                    gutter_chars: g_chars,
-                    content_char_len: chunk_chars.saturating_sub(g_chars),
-                    visual_width: chunk_w,
-                });
-
-                text = format!("{}{}", &token[chunk_bytes..], text);
-                current_row_chars = 0;
-                current_row_width = 0;
-                continue;
             }
+            continue;
+        }
 
-            current_row_chars += token_chars;
-            current_row_width += token_width;
-            current_spans.push(Span::styled(token, style));
+        current_row_chars += token.char_count;
+        current_row_width += token.visual_width;
+        for (text_part, style) in token.parts {
+            current_spans.push(Span::styled(text_part, style));
         }
     }
 
