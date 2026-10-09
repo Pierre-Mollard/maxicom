@@ -73,6 +73,7 @@ pub enum UpdateEffect {
     Transmit(Vec<u8>),
     Reconfigure(SerialConfig),
     CopyToClipboard(String),
+    Screenshot(Result<String, String>),
     Quit,
 }
 
@@ -159,8 +160,6 @@ impl App {
     }
 
     // TODO: display mode with hexadecimal window on the side
-
-    // TODO: capture screenshot terminal image
 
     // TODO: replay recorded bytes streams
 

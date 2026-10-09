@@ -1,4 +1,10 @@
-use std::{collections::VecDeque, io, path::PathBuf};
+use std::{
+    collections::VecDeque,
+    fs::File,
+    io::{self, Write},
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use chrono::{DateTime, Local};
 use crossterm::event::KeyEvent;
@@ -13,8 +19,8 @@ use crate::{
     },
     configs::{TerminalDimensionMode, TextEncoding},
     inputs::{
-        CopyModeAction, SearchModeAction, TerminalAction, dispatch_input_key,
-        local_dispatchers::dispatch_copy_key_vi, vi::ViPending,
+        CopyModeAction, SearchModeAction, TerminalAction, ViPending, dispatch_input_key,
+        local_dispatchers::dispatch_copy_key_vi,
     },
     logger::TerminalLogger,
 };
@@ -29,6 +35,7 @@ pub struct TerminalMode {
     scroller: ViewportScroller,
     pan_offset_y: usize,
     vi_pending_copy: Option<ViPending>,
+    flash_until: Option<Instant>,
 
     history_timestamps: VecDeque<DateTime<Local>>,
     screen_timestamps: Vec<Option<DateTime<Local>>>,
@@ -51,6 +58,7 @@ impl TerminalMode {
             scroller,
             pan_offset_y: 0,
             vi_pending_copy: None,
+            flash_until: None,
             history_timestamps: VecDeque::with_capacity(max_history_lines),
             screen_timestamps: vec![None; rows as usize],
         }
@@ -414,6 +422,20 @@ impl TerminalMode {
                 self.scroller.max_pan_x = 0;
                 UpdateEffect::None
             }
+            TerminalAction::ScreenshotBytes => match self.save_screenshot_ansi() {
+                Ok(filename) => {
+                    self.trigger_flash();
+                    UpdateEffect::Screenshot(Ok(filename))
+                }
+                Err(e) => UpdateEffect::Screenshot(Err(e.to_string())),
+            },
+            TerminalAction::ScreenshotTxt => match self.save_screenshot_txt() {
+                Ok(filename) => {
+                    self.trigger_flash();
+                    UpdateEffect::Screenshot(Ok(filename))
+                }
+                Err(e) => UpdateEffect::Screenshot(Err(e.to_string())),
+            },
         }
     }
     pub fn handle_search_action(&mut self, action: SearchModeAction) {
@@ -588,6 +610,43 @@ impl TerminalMode {
     #[inline]
     pub fn scroller(&self) -> &ViewportScroller {
         &self.scroller
+    }
+
+    pub fn save_screenshot_txt(&self) -> std::io::Result<String> {
+        let timestamp = Local::now().format("%Y%m%d_%H%M%S");
+        let filename = format!("screen_{}.txt", timestamp);
+
+        let text = self.vt100_parser.screen().contents();
+        let mut file = File::create(&filename)?;
+        file.write_all(text.as_bytes())?;
+
+        Ok(filename)
+    }
+
+    pub fn save_screenshot_ansi(&self) -> std::io::Result<String> {
+        let timestamp = Local::now().format("%Y%m%d_%H%M%S");
+        let filename = format!("screen_{}.ans", timestamp);
+
+        let bytes = self.vt100_parser.screen().contents_formatted();
+        let mut file = File::create(&filename)?;
+        file.write_all(&bytes)?;
+
+        Ok(filename)
+    }
+
+    pub fn trigger_flash(&mut self) {
+        self.flash_until = Some(Instant::now() + Duration::from_millis(120));
+    }
+
+    pub fn is_flashing(&mut self) -> bool {
+        if let Some(until) = self.flash_until {
+            if Instant::now() < until {
+                return true;
+            } else {
+                self.flash_until = None;
+            }
+        }
+        false
     }
 }
 

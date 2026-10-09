@@ -210,6 +210,14 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     execute_clipboard_copy(&mut app, &text);
                 }
                 UpdateEffect::None => {}
+                UpdateEffect::Screenshot(filename) => match filename {
+                    Ok(name) => {
+                        app.notify_success(format!("Screenshot saved to {name}"));
+                    }
+                    Err(err) => {
+                        app.notify_error(format!("Could not save screenshot: {err}"));
+                    }
+                },
             }
         }
 

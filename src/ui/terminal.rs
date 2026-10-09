@@ -243,6 +243,18 @@ pub fn render_vt100_terminal(
     if app.terminal_mode.search().active {
         render_search_bar(app, frame, content_area, theme);
     }
+
+    // flash for screenshot
+    if app.terminal_mode.is_flashing() {
+        let buf = frame.buffer_mut();
+        for y in content_area.top()..content_area.bottom() {
+            for x in content_area.left()..content_area.right() {
+                let cell = &mut buf[(x, y)];
+                cell.set_bg(Color::White);
+                cell.set_fg(Color::DarkGray);
+            }
+        }
+    }
 }
 
 pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect, theme: &ThemeConfig) {

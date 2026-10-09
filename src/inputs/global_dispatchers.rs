@@ -48,7 +48,6 @@ impl KeyBindingAction {
                     ResizeDialog::new(r, c),
                 )))
             }
-
             KeyBindingAction::AutoResizeRemoteLine => {
                 Action::LineInput(LineInputAction::AutoResizeRemoteToWidth)
             }
@@ -58,11 +57,12 @@ impl KeyBindingAction {
             KeyBindingAction::AutoResizeEmulator => {
                 Action::Terminal(TerminalAction::AutoResizeEmulatorToViewer)
             }
+            KeyBindingAction::ScreenshotBytes => Action::Terminal(TerminalAction::ScreenshotBytes),
+            KeyBindingAction::ScreenshotTxt => Action::Terminal(TerminalAction::ScreenshotTxt),
             KeyBindingAction::SerialSettings => {
                 let dialog = SerialConfigDialog::new(&app.serial_config);
                 Action::App(AppAction::OpenOverlay(Overlay::SerialSettings(dialog)))
             }
-
             KeyBindingAction::ScrollUp => Action::History(HistoryAction::ScrollUp(1)),
             KeyBindingAction::ScrollDown => Action::History(HistoryAction::ScrollDown(1)),
             KeyBindingAction::ScrollToBottom => Action::History(HistoryAction::ScrollToBottom),
@@ -71,7 +71,6 @@ impl KeyBindingAction {
             KeyBindingAction::PanRight => Action::History(HistoryAction::PanRight(1)),
             KeyBindingAction::PageUp => Action::History(HistoryAction::ScrollUpPage),
             KeyBindingAction::PageDown => Action::History(HistoryAction::ScrollDownPage),
-
             KeyBindingAction::EnterCopyMode => Action::CopyMode(CopyModeAction::Enter),
             KeyBindingAction::EnterSearch => Action::Search(SearchModeAction::Start),
             KeyBindingAction::ClearHistory => Action::History(HistoryAction::Clear),

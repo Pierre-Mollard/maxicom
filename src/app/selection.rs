@@ -1,6 +1,5 @@
 use crate::inputs::{
-    CopyModeAction,
-    vi::{find_next_word, find_prev_word, find_prev_word_end, find_word_end},
+    CopyModeAction, find_next_word, find_prev_word, find_prev_word_end, find_word_end,
 };
 
 // target need to impl this

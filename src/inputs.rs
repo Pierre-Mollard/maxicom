@@ -18,7 +18,9 @@ pub mod vi;
 
 // Re-exports
 pub use local_dispatchers::{dispatch_input_key, dispatch_input_key_vi};
-pub use vi::{ViMode, ViState};
+pub use vi::{
+    ViMode, ViPending, ViState, find_next_word, find_prev_word, find_prev_word_end, find_word_end,
+};
 
 #[derive(Debug)]
 pub enum Action {
@@ -57,6 +59,8 @@ pub enum LineInputAction {
 pub enum TerminalAction {
     AutoResizeRemoteToViewer,
     AutoResizeEmulatorToViewer,
+    ScreenshotBytes,
+    ScreenshotTxt,
 }
 
 #[derive(Debug, PartialEq, Eq)]
