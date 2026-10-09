@@ -52,6 +52,63 @@ impl LineDisplayMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+pub enum RawSideView {
+    #[default]
+    Off,
+    Hex,
+    #[serde(alias = "oct")]
+    Octal,
+    #[serde(alias = "bin", alias = "bits", alias = "byte", alias = "bytes")]
+    Binary,
+}
+
+impl RawSideView {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            RawSideView::Off => "Off",
+            RawSideView::Hex => "Hex",
+            RawSideView::Octal => "Octal",
+            RawSideView::Binary => "Binary",
+        }
+    }
+
+    pub fn toggle(&mut self) {
+        *self = match *self {
+            RawSideView::Off => RawSideView::Hex,
+            RawSideView::Hex => RawSideView::Octal,
+            RawSideView::Octal => RawSideView::Binary,
+            RawSideView::Binary => RawSideView::Off,
+        };
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RawSideOrientation {
+    #[default]
+    Right,
+    Bottom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RawSideConfig {
+    pub view: RawSideView,
+    pub orientation: RawSideOrientation,
+    pub split_percent: u16,
+}
+
+impl Default for RawSideConfig {
+    fn default() -> Self {
+        Self {
+            view: RawSideView::Off,
+            orientation: RawSideOrientation::Right,
+            split_percent: 40,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum TextEncoding {
     #[default]
     Utf8,
@@ -401,6 +458,7 @@ pub struct SettingsConfig {
     pub keybindings_path: Option<PathBuf>,
     pub hightlights_path: Option<PathBuf>,
     pub ui: UiConfig,
+    pub raw_side: RawSideConfig,
 }
 
 impl Default for SettingsConfig {
@@ -418,6 +476,7 @@ impl Default for SettingsConfig {
             keybindings_path: None,
             hightlights_path: None,
             ui: UiConfig::default(),
+            raw_side: RawSideConfig::default(),
         }
     }
 }

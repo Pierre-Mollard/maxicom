@@ -47,6 +47,7 @@ impl Overlay {
                 KeyCode::Char('m' | 'M') => OverlayResponse::ToggleSetting(SettingKey::InputMode),
                 KeyCode::Char('i' | 'I') => OverlayResponse::ToggleSetting(SettingKey::IdentWrap),
                 KeyCode::Char('d' | 'D') => OverlayResponse::ToggleSetting(SettingKey::DisplayMode),
+                KeyCode::Char('b' | 'B') => OverlayResponse::ToggleSetting(SettingKey::DisplayRaw),
                 KeyCode::Char('t' | 'T') => {
                     OverlayResponse::ToggleSetting(SettingKey::DisplayTimestamp)
                 }
@@ -87,4 +88,5 @@ pub enum SettingKey {
     DisplayTimestamp,
     TextEncoding,
     DisplayMode,
+    DisplayRaw,
 }

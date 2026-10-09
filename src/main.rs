@@ -215,7 +215,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         app.notify_success(format!("Screenshot saved to {name}"));
                     }
                     Err(err) => {
-                        app.notify_error(format!("Could not save screenshot: {err}"));
+                        app.notify_error(format!("Failed to save screenshot: {err}"));
                     }
                 },
             }

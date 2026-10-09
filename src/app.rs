@@ -159,8 +159,6 @@ impl App {
         self.overlay = None;
     }
 
-    // TODO: display mode with hexadecimal window on the side
-
     // TODO: replay recorded bytes streams
 
     // TODO: make a cache so when connect back to fd data is there (with clear opt)
@@ -416,6 +414,13 @@ impl App {
                 self.notify_info(format!(
                     "Display Mode is {}",
                     self.settings.line_mode.display_mode.as_str()
+                ));
+            }
+            SettingKey::DisplayRaw => {
+                self.settings.raw_side.view.toggle();
+                self.notify_info(format!(
+                    "Raw SideView is {}",
+                    self.settings.raw_side.view.as_str()
                 ));
             }
         }

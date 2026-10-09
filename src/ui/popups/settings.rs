@@ -12,7 +12,7 @@ use crate::{
 };
 
 pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) {
-    let area = centered_rect(55, 15, frame.area());
+    let area = centered_rect(55, 16, frame.area());
     frame.render_widget(Clear, area);
 
     let mode_str = match app.settings().input_mode {
@@ -40,6 +40,7 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
     };
     let encoding_str = app.settings().encoding.as_str();
     let display_mode_str = app.settings().line_mode.display_mode.as_str();
+    let raw_display_str = app.settings().raw_side.view.as_str();
 
     let text = vec![
         Line::from(Span::styled(
@@ -68,6 +69,11 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
             Span::styled("[X] ", Style::default().fg(Color::Yellow)),
             Span::raw("Rx Encoding : "),
             Span::styled(encoding_str, Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(vec![
+            Span::styled("[B] ", Style::default().fg(Color::Yellow)),
+            Span::raw("Side Raw   : "),
+            Span::styled(raw_display_str, Style::default().fg(Color::Cyan)),
         ]),
         Line::from(""),
         Line::from(Span::styled(

@@ -111,7 +111,7 @@ impl TerminalMode {
         if !is_alternate {
             self.refresh_max_scrollback();
         }
-    }
+    } // TODO: long line remove the privous instead of soft wrap?
 
     pub fn update_viewport(
         &mut self,

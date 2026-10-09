@@ -37,6 +37,9 @@ impl KeyBindingAction {
             KeyBindingAction::SKDisplayMode => {
                 Action::App(AppAction::ToggleSetting(SettingKey::DisplayMode))
             }
+            KeyBindingAction::SKDisplayRaw => {
+                Action::App(AppAction::ToggleSetting(SettingKey::DisplayRaw))
+            }
             KeyBindingAction::Help => {
                 Action::App(AppAction::OpenOverlay(Overlay::Help(HelpDialog::new())))
             }
