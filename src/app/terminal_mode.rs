@@ -9,13 +9,12 @@ use crate::{
         UpdateEffect, ViewportSize,
         scroller::ViewportScroller,
         search::SearchState,
-        selection::{CopyModeState, LogicalPosition},
+        selection::{CopyActionResult, CopyModeState, TextSource},
     },
     configs::{TerminalDimensionMode, TextEncoding},
     inputs::{
         CopyModeAction, SearchModeAction, TerminalAction, dispatch_input_key,
-        local_dispatchers::dispatch_copy_key_vi,
-        vi::{ViPending, find_next_word, find_prev_word, find_word_end},
+        local_dispatchers::dispatch_copy_key_vi, vi::ViPending,
     },
     logger::TerminalLogger,
 };
@@ -196,52 +195,6 @@ impl TerminalMode {
         self.scroller.max_scroll_y = 0;
         self.scroller.offset_x = 0;
         self.scroller.pan_right_explored = 0;
-    }
-
-    // HACK: there is no function to fetch string content from history so sb everywhere
-    pub fn get_world_line_text(&mut self, world_row: usize) -> Option<String> {
-        let (rows, cols) = self.get_vt100_size();
-        let max_sb = self.max_content_scrollback;
-        let total_world = max_sb + rows as usize;
-
-        if world_row >= total_world {
-            return None;
-        }
-
-        let current_sb = self.vt100_parser.screen().scrollback();
-
-        let (view_row, target_sb) = if world_row < max_sb {
-            // history
-            (0, max_sb - world_row)
-        } else {
-            // live view
-            ((world_row - max_sb) as u16, 0)
-        };
-
-        if current_sb != target_sb {
-            self.vt100_parser.screen_mut().set_scrollback(target_sb);
-        }
-
-        let mut line_str = String::with_capacity(cols as usize);
-        for c in 0..cols {
-            if let Some(cell) = self.vt100_parser.screen().cell(view_row, c) {
-                line_str.push_str(cell.contents());
-            } else {
-                line_str.push(' ');
-            }
-        }
-
-        if current_sb != target_sb {
-            self.vt100_parser.screen_mut().set_scrollback(current_sb);
-        }
-
-        Some(line_str)
-    }
-
-    pub fn get_world_line_trimmed_len(&mut self, world_row: usize) -> usize {
-        self.get_world_line_text(world_row)
-            .map(|s| s.trim_end().chars().count())
-            .unwrap_or(0)
     }
 
     #[inline]
@@ -507,218 +460,51 @@ impl TerminalMode {
     }
 
     pub fn handle_copy_action(&mut self, action: CopyModeAction) -> Option<String> {
-        let (grid_rows, cols) = self.get_vt100_size();
-        let total_world_rows = self.max_content_scrollback + (grid_rows as usize);
-
-        if total_world_rows == 0 {
-            if action == CopyModeAction::Exit {
-                self.copy_state.exit();
+        if let CopyModeAction::HandleKey(key) = action {
+            let line_text = read_vt100_world_line_text(
+                &mut self.vt100_parser,
+                self.max_content_scrollback,
+                self.copy_state.cursor.line_idx,
+            )
+            .unwrap_or_default();
+            if let Some(sub_action) = dispatch_copy_key_vi(
+                &mut self.vi_pending_copy,
+                &line_text,
+                self.copy_state.cursor.char_idx,
+                key,
+            ) {
+                return self.handle_copy_action(sub_action);
             }
             return None;
         }
 
-        let max_row = total_world_rows.saturating_sub(1);
-        let max_col = (cols as usize).saturating_sub(1);
-
-        match action {
-            CopyModeAction::HandleKey(key_event) => {
-                let line_text = self
-                    .get_world_line_text(self.copy_state.cursor.line_idx)
-                    .unwrap_or_default();
-                if let Some(sub_action) = dispatch_copy_key_vi(
-                    &mut self.vi_pending_copy,
-                    &line_text,
-                    self.copy_state.cursor.char_idx,
-                    key_event,
-                ) {
-                    return self.handle_copy_action(sub_action);
-                }
-                return None;
-            }
-            CopyModeAction::Enter => {
-                let max_sb = self.max_content_scrollback;
-                let (c_row, c_col) = self.vt100_screen().cursor_position();
-
-                let cursor_world_row = max_sb + (c_row as usize);
-                let cursor_world_col = (c_col as usize).min(max_col);
-
-                self.copy_state.enter_at(cursor_world_row, cursor_world_col);
-                self.keep_terminal_copy_cursor_in_view();
-                return None;
-            }
-            CopyModeAction::Exit => {
-                self.copy_state.exit();
-                return None;
-            }
-            CopyModeAction::MoveUp => {
-                let target_row = self.copy_state.cursor.line_idx.saturating_sub(1);
-                self.copy_state.cursor.line_idx = target_row;
-                let trimmed_len = self.get_world_line_trimmed_len(target_row);
-                let max_valid_char = trimmed_len.saturating_sub(1);
-                self.copy_state.cursor.char_idx =
-                    self.copy_state.cursor.preferred_col.min(max_valid_char);
-                self.keep_terminal_copy_cursor_in_view();
-            }
-            CopyModeAction::MoveDown => {
-                let target_row = (self.copy_state.cursor.line_idx + 1).min(max_row);
-                self.copy_state.cursor.line_idx = target_row;
-                let trimmed_len = self.get_world_line_trimmed_len(target_row);
-                let max_valid_char = trimmed_len.saturating_sub(1);
-                self.copy_state.cursor.char_idx =
-                    self.copy_state.cursor.preferred_col.min(max_valid_char);
-                self.keep_terminal_copy_cursor_in_view();
-            }
-            CopyModeAction::MoveLeft => {
-                self.copy_state.cursor.char_idx = self.copy_state.cursor.char_idx.saturating_sub(1);
-                self.copy_state.cursor.preferred_col = self.copy_state.cursor.char_idx;
-                self.keep_terminal_copy_cursor_in_view();
-            }
-            CopyModeAction::MoveRight => {
-                let current_row = self.copy_state.cursor.line_idx;
-                let trimmed_len = self.get_world_line_trimmed_len(current_row);
-                let max_valid_char = trimmed_len.saturating_sub(1);
-                self.copy_state.cursor.char_idx =
-                    (self.copy_state.cursor.char_idx + 1).min(max_valid_char);
-                self.copy_state.cursor.preferred_col = self.copy_state.cursor.char_idx;
-                self.keep_terminal_copy_cursor_in_view();
-            }
-            CopyModeAction::PageUp => {
-                let jump = self.scroller.view_height.saturating_sub(1);
-                let target_row = self.copy_state.cursor.line_idx.saturating_sub(jump);
-                self.copy_state.cursor.line_idx = target_row;
-                let trimmed_len = self.get_world_line_trimmed_len(target_row);
-                let max_valid_char = trimmed_len.saturating_sub(1);
-                self.copy_state.cursor.char_idx =
-                    self.copy_state.cursor.preferred_col.min(max_valid_char);
-                self.keep_terminal_copy_cursor_in_view();
-            }
-            CopyModeAction::PageDown => {
-                let jump = self.scroller.view_height.saturating_sub(1);
-                let target_row = (self.copy_state.cursor.line_idx + jump).min(max_row);
-                self.copy_state.cursor.line_idx = target_row;
-                let trimmed_len = self.get_world_line_trimmed_len(target_row);
-                let max_valid_char = trimmed_len.saturating_sub(1);
-                self.copy_state.cursor.char_idx =
-                    self.copy_state.cursor.preferred_col.min(max_valid_char);
-                self.keep_terminal_copy_cursor_in_view();
-            }
-            CopyModeAction::StartOfLine => {
-                self.copy_state.cursor.char_idx = 0;
-                self.copy_state.cursor.preferred_col = 0;
-                self.keep_terminal_copy_cursor_in_view();
-            }
-            CopyModeAction::EndOfLine => {
-                let current_row = self.copy_state.cursor.line_idx;
-                let trimmed_len = self.get_world_line_trimmed_len(current_row);
-                let last_char = trimmed_len.saturating_sub(1);
-                self.copy_state.cursor.char_idx = last_char;
-                self.copy_state.cursor.preferred_col = last_char;
-                self.keep_terminal_copy_cursor_in_view();
-            }
-            CopyModeAction::NextWord => {
-                let current_row = self.copy_state.cursor.line_idx;
-                if let Some(line) = self.get_world_line_text(current_row) {
-                    let trimmed_len = line.trim_end().chars().count();
-                    let new_char = find_next_word(&line, self.copy_state.cursor.char_idx, false);
-                    let clamped = new_char.min(trimmed_len.saturating_sub(1));
-                    self.copy_state.cursor.char_idx = clamped;
-                    self.copy_state.cursor.preferred_col = clamped;
-                    self.keep_terminal_copy_cursor_in_view();
-                }
-            }
-            CopyModeAction::NextBigWord => {
-                let current_row = self.copy_state.cursor.line_idx;
-                if let Some(line) = self.get_world_line_text(current_row) {
-                    let trimmed_len = line.trim_end().chars().count();
-                    let new_char = find_next_word(&line, self.copy_state.cursor.char_idx, true);
-                    let clamped = new_char.min(trimmed_len.saturating_sub(1));
-                    self.copy_state.cursor.char_idx = clamped;
-                    self.copy_state.cursor.preferred_col = clamped;
-                    self.keep_terminal_copy_cursor_in_view();
-                }
-            }
-            CopyModeAction::PrevWord => {
-                let current_row = self.copy_state.cursor.line_idx;
-                if let Some(line) = self.get_world_line_text(current_row) {
-                    let new_char = find_prev_word(&line, self.copy_state.cursor.char_idx, false);
-                    self.copy_state.cursor.char_idx = new_char;
-                    self.copy_state.cursor.preferred_col = new_char;
-                    self.keep_terminal_copy_cursor_in_view();
-                }
-            }
-            CopyModeAction::PrevBigWord => {
-                let current_row = self.copy_state.cursor.line_idx;
-                if let Some(line) = self.get_world_line_text(current_row) {
-                    let new_char = find_prev_word(&line, self.copy_state.cursor.char_idx, true);
-                    self.copy_state.cursor.char_idx = new_char;
-                    self.copy_state.cursor.preferred_col = new_char;
-                    self.keep_terminal_copy_cursor_in_view();
-                }
-            }
-            CopyModeAction::WordEnd => {
-                let current_row = self.copy_state.cursor.line_idx;
-                if let Some(line) = self.get_world_line_text(current_row) {
-                    let trimmed_len = line.trim_end().chars().count();
-                    let new_char = find_word_end(&line, self.copy_state.cursor.char_idx, false);
-                    let clamped = new_char.min(trimmed_len.saturating_sub(1));
-                    self.copy_state.cursor.char_idx = clamped;
-                    self.copy_state.cursor.preferred_col = clamped;
-                    self.keep_terminal_copy_cursor_in_view();
-                }
-            }
-            CopyModeAction::BigWordEnd => {
-                let current_row = self.copy_state.cursor.line_idx;
-                if let Some(line) = self.get_world_line_text(current_row) {
-                    let trimmed_len = line.trim_end().chars().count();
-                    let new_char = find_word_end(&line, self.copy_state.cursor.char_idx, true);
-                    let clamped = new_char.min(trimmed_len.saturating_sub(1));
-                    self.copy_state.cursor.char_idx = clamped;
-                    self.copy_state.cursor.preferred_col = clamped;
-                    self.keep_terminal_copy_cursor_in_view();
-                }
-            }
-            CopyModeAction::JumpToTop => {
-                self.copy_state.cursor.line_idx = 0;
-                self.copy_state.cursor.char_idx = 0;
-                self.copy_state.cursor.preferred_col = 0;
-                self.keep_terminal_copy_cursor_in_view();
-            }
-            CopyModeAction::JumpToBottom => {
-                self.copy_state.cursor.line_idx = max_row;
-                let trimmed_len = self.get_world_line_trimmed_len(max_row);
-                let last_char = trimmed_len.saturating_sub(1);
-                self.copy_state.cursor.char_idx = last_char;
-                self.copy_state.cursor.preferred_col = last_char;
-                self.keep_terminal_copy_cursor_in_view();
-            }
-            CopyModeAction::SelectRange(start, end) => {
-                let line_idx = self.copy_state.cursor.line_idx;
-                let trimmed_len = self.get_world_line_trimmed_len(line_idx);
-                let clamped_start = start.min(trimmed_len.saturating_sub(1));
-                let clamped_end = end.saturating_sub(1).min(trimmed_len.saturating_sub(1));
-
-                self.copy_state.selection_anchor = Some(LogicalPosition {
-                    line_idx,
-                    char_idx: clamped_start,
-                    preferred_col: clamped_start,
-                });
-                self.copy_state.cursor.char_idx = clamped_end;
-                self.copy_state.cursor.preferred_col = clamped_end;
-                self.keep_terminal_copy_cursor_in_view();
-            }
-            CopyModeAction::Select => {
-                self.copy_state.toggle_selection();
-            }
-            CopyModeAction::Yank => {
-                let selected = self.extract_selected_text();
-                self.copy_state.exit();
-                return selected;
-            }
-            CopyModeAction::PrevWordEnd => todo!(), // TODO: ?
-            CopyModeAction::PrevBigWordEnd => todo!(), // TODO: ?
+        if action == CopyModeAction::Enter {
+            let (c_row, c_col) = self.vt100_screen().cursor_position();
+            let max_col = self.get_vt100_size().1.saturating_sub(1) as usize;
+            self.copy_state.enter_at(
+                self.max_content_scrollback + (c_row as usize),
+                (c_col as usize).min(max_col),
+            );
+            self.keep_terminal_copy_cursor_in_view();
+            return None;
         }
 
-        None
+        // adapter for the TextSource trait
+        let mut source = TerminalModeTextSource {
+            parser: &mut self.vt100_parser,
+            max_content_scrollback: self.max_content_scrollback,
+            view_height: self.scroller.view_height,
+        };
+
+        let result = self.copy_state.apply_action(action, &mut source);
+        match result {
+            CopyActionResult::Moved => {
+                self.keep_terminal_copy_cursor_in_view();
+                None
+            }
+            CopyActionResult::Yanked(text) => Some(text),
+            _ => None,
+        }
     }
 
     fn keep_terminal_copy_cursor_in_view(&mut self) {
@@ -752,39 +538,6 @@ impl TerminalMode {
         } else {
             self.scroller.offset_x = 0;
         }
-    }
-
-    fn extract_selected_text(&mut self) -> Option<String> {
-        let (start, end) = self.copy_state.normalized_selection()?;
-        let mut out = String::new();
-
-        for row_idx in start.line_idx..=end.line_idx {
-            let Some(line_str) = self.get_world_line_text(row_idx) else {
-                continue;
-            };
-            let trimmed_len = line_str.trim_end().chars().count();
-            let chars: Vec<char> = line_str.chars().collect();
-
-            let col_start = if row_idx == start.line_idx {
-                start.char_idx.min(chars.len())
-            } else {
-                0
-            };
-            let col_end = if row_idx == end.line_idx {
-                (end.char_idx + 1).min(trimmed_len)
-            } else {
-                trimmed_len
-            };
-
-            if col_start < col_end {
-                out.extend(&chars[col_start..col_end]);
-            }
-            if row_idx != end.line_idx {
-                out.push('\n');
-            }
-        }
-
-        if out.is_empty() { None } else { Some(out) }
     }
 
     pub fn update_search_matches(&mut self) {
@@ -835,5 +588,67 @@ impl TerminalMode {
     #[inline]
     pub fn scroller(&self) -> &ViewportScroller {
         &self.scroller
+    }
+}
+
+// HACK: there is no function to fetch string content from history so sb everywhere
+pub fn read_vt100_world_line_text(
+    parser: &mut vt100::Parser,
+    max_sb: usize,
+    world_row: usize,
+) -> Option<String> {
+    // this function is not a member to simlify ownership with TerminalModeTextSource
+    let (rows, cols) = parser.screen().size();
+    let total_world = max_sb + rows as usize;
+
+    if world_row >= total_world {
+        return None;
+    }
+
+    let current_sb = parser.screen().scrollback();
+
+    let (view_row, target_sb) = if world_row < max_sb {
+        (0, max_sb - world_row)
+    } else {
+        ((world_row - max_sb) as u16, 0)
+    };
+
+    if current_sb != target_sb {
+        parser.screen_mut().set_scrollback(target_sb);
+    }
+
+    let mut line_str = String::with_capacity(cols as usize);
+    for c in 0..cols {
+        if let Some(cell) = parser.screen().cell(view_row, c) {
+            line_str.push_str(cell.contents());
+        } else {
+            line_str.push(' ');
+        }
+    }
+    if current_sb != target_sb {
+        parser.screen_mut().set_scrollback(current_sb);
+    }
+
+    Some(line_str)
+}
+
+struct TerminalModeTextSource<'a> {
+    pub parser: &'a mut vt100::Parser,
+    pub max_content_scrollback: usize,
+    pub view_height: usize,
+}
+
+impl<'a> TextSource for TerminalModeTextSource<'a> {
+    fn total_lines(&mut self) -> usize {
+        let (rows, _) = self.parser.screen().size();
+        self.max_content_scrollback + (rows as usize)
+    }
+
+    fn get_line_text(&mut self, line_idx: usize) -> Option<String> {
+        read_vt100_world_line_text(self.parser, self.max_content_scrollback, line_idx)
+    }
+
+    fn view_height(&mut self) -> usize {
+        self.view_height
     }
 }

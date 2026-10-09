@@ -304,7 +304,6 @@ impl fmt::Display for SerialError {
     }
 }
 
-// 2. Standard library error trait implementation (allows error chaining)
 impl Error for SerialError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
