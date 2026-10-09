@@ -15,6 +15,8 @@ use crate::{
     inputs::{
         CopyModeAction, LineInputAction, SearchModeAction, ViMode, ViState, dispatch_input_key,
         dispatch_input_key_vi,
+        local_dispatchers::dispatch_copy_key_vi,
+        vi::{ViPending, find_next_word, find_prev_word, find_word_end},
     },
     logger::LineLogger,
     ui::common::displayable_line_string,
@@ -36,13 +38,14 @@ pub struct LineMode {
     partial_line_timestamp: Option<DateTime<Local>>,
     /// Current line being typed by user as futur device input
     user_input: Input,
-    vi_state: ViState,
+    vi_state_prompt: ViState,
     /// Waiting to receive carriage return
     pending_carriage_return: bool,
     logger: LineLogger,
     search_state: SearchState,
     copy_state: CopyModeState,
     scroller: ViewportScroller,
+    vi_state_copymode: Option<ViPending>,
 }
 
 impl LineMode {
@@ -58,13 +61,14 @@ impl LineMode {
             max_lines: max_history_lines,
             partial_line: Vec::new(),
             user_input: Input::default(),
-            vi_state: ViState::default(),
+            vi_state_prompt: ViState::default(),
             partial_line_timestamp: None,
             pending_carriage_return: false,
             logger,
             search_state,
             copy_state,
             scroller,
+            vi_state_copymode: None,
         }
     }
 
@@ -245,7 +249,7 @@ impl LineMode {
             }
             LineInputAction::HandleKey(key_event) => {
                 self.history_index = None;
-                dispatch_input_key_vi(&mut self.user_input, &mut self.vi_state, key_event);
+                dispatch_input_key_vi(&mut self.user_input, &mut self.vi_state_prompt, key_event);
                 UpdateEffect::None
             }
         }
@@ -280,7 +284,25 @@ impl LineMode {
                 .unwrap_or(0)
         };
 
+        // TODO: facto into selection.rs ?
         match action {
+            CopyModeAction::HandleKey(key_event) => {
+                let display_text = self
+                    .local_history
+                    .get(self.copy_state.cursor.line_idx)
+                    .map(|e| displayable_line_string(&e.text, display_mode))
+                    .unwrap_or_default();
+
+                if let Some(sub_action) = dispatch_copy_key_vi(
+                    &mut self.vi_state_copymode,
+                    &display_text,
+                    self.copy_state.cursor.char_idx,
+                    key_event,
+                ) {
+                    return self.handle_copy_action(sub_action, settings);
+                }
+                return None;
+            }
             CopyModeAction::Enter => {
                 self.copy_state.enter_at(max_line, 0);
                 self.sync_scroll_with_cursor();
@@ -379,6 +401,65 @@ impl LineMode {
                 self.copy_state.cursor.char_idx = last_idx;
                 self.copy_state.cursor.preferred_col = last_idx;
 
+                if wrap_mode == WrapMode::Truncate {
+                    self.sync_pan_with_cursor(display_mode, gutter_width);
+                }
+            }
+            CopyModeAction::JumpToTop => {
+                self.copy_state.cursor.line_idx = 0;
+                self.copy_state.cursor.char_idx = 0;
+                self.copy_state.cursor.preferred_col = 0;
+                self.sync_scroll_with_cursor();
+            }
+            CopyModeAction::JumpToBottom => {
+                self.copy_state.cursor.line_idx = max_line;
+                let len = get_line_len(&self.local_history, max_line);
+                self.copy_state.cursor.char_idx = len.saturating_sub(1);
+                self.copy_state.cursor.preferred_col = self.copy_state.cursor.char_idx;
+                self.sync_scroll_with_cursor();
+            }
+            CopyModeAction::NextWord => {
+                if let Some(entry) = self.local_history.get(self.copy_state.cursor.line_idx) {
+                    let display_text = displayable_line_string(&entry.text, display_mode);
+                    let next = find_next_word(&display_text, self.copy_state.cursor.char_idx);
+                    self.copy_state.cursor.char_idx = next;
+                    self.copy_state.cursor.preferred_col = next;
+                    if wrap_mode == WrapMode::Truncate {
+                        self.sync_pan_with_cursor(display_mode, gutter_width);
+                    }
+                }
+            }
+            CopyModeAction::PrevWord => {
+                if let Some(entry) = self.local_history.get(self.copy_state.cursor.line_idx) {
+                    let display_text = displayable_line_string(&entry.text, display_mode);
+                    let prev = find_prev_word(&display_text, self.copy_state.cursor.char_idx);
+                    self.copy_state.cursor.char_idx = prev;
+                    self.copy_state.cursor.preferred_col = prev;
+                    if wrap_mode == WrapMode::Truncate {
+                        self.sync_pan_with_cursor(display_mode, gutter_width);
+                    }
+                }
+            }
+            CopyModeAction::WordEnd => {
+                if let Some(entry) = self.local_history.get(self.copy_state.cursor.line_idx) {
+                    let display_text = displayable_line_string(&entry.text, display_mode);
+                    let end = find_word_end(&display_text, self.copy_state.cursor.char_idx);
+                    self.copy_state.cursor.char_idx = end;
+                    self.copy_state.cursor.preferred_col = end;
+                    if wrap_mode == WrapMode::Truncate {
+                        self.sync_pan_with_cursor(display_mode, gutter_width);
+                    }
+                }
+            }
+            CopyModeAction::SelectRange(start, end) => {
+                let line_idx = self.copy_state.cursor.line_idx;
+                self.copy_state.selection_anchor = Some(crate::app::selection::LogicalPosition {
+                    line_idx,
+                    char_idx: start,
+                    preferred_col: start,
+                });
+                self.copy_state.cursor.char_idx = end.saturating_sub(1);
+                self.copy_state.cursor.preferred_col = self.copy_state.cursor.char_idx;
                 if wrap_mode == WrapMode::Truncate {
                     self.sync_pan_with_cursor(display_mode, gutter_width);
                 }
@@ -545,7 +626,7 @@ impl LineMode {
 
     #[inline]
     pub fn is_prompt_vi(&self) -> bool {
-        self.vi_state.mode == ViMode::Normal
+        self.vi_state_prompt.mode == ViMode::Normal
     }
 
     pub fn update_viewport(&mut self, wrap_mode: WrapMode, viewport: ViewportSize) {

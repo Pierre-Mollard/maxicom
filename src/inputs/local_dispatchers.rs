@@ -1,7 +1,48 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use tui_input::{Input, InputRequest, backend::crossterm::EventHandler};
 
-use crate::inputs::vi::{ViMode, ViOperator, ViPending, ViState, handle_pending_operator};
+use crate::inputs::{
+    CopyModeAction,
+    vi::{
+        ViMode, ViMotion, ViOperator, ViPending, ViState, apply_vi_motion_to_input,
+        handle_pending_operator, resolve_vi_motion,
+    },
+};
+
+/// Used to handle for copy mode navigation
+pub fn dispatch_copy_key_vi(
+    pending: &mut Option<ViPending>,
+    current_line_text: &str,
+    cursor_char: usize,
+    key: KeyEvent,
+) -> Option<CopyModeAction> {
+    if let Some(motion) = resolve_vi_motion(pending, current_line_text, cursor_char, key) {
+        return Some(match motion {
+            ViMotion::Left => CopyModeAction::MoveLeft,
+            ViMotion::Down => CopyModeAction::MoveDown,
+            ViMotion::Up => CopyModeAction::MoveUp,
+            ViMotion::Right => CopyModeAction::MoveRight,
+            ViMotion::NextWord => CopyModeAction::NextWord,
+            ViMotion::PrevWord => CopyModeAction::PrevWord,
+            ViMotion::WordEnd => CopyModeAction::WordEnd,
+            ViMotion::PrevWordEnd => CopyModeAction::PrevWord,
+            ViMotion::StartOfLine => CopyModeAction::StartOfLine,
+            ViMotion::EndOfLine => CopyModeAction::EndOfLine,
+            ViMotion::JumpToTop => CopyModeAction::JumpToTop,
+            ViMotion::JumpToBottom => CopyModeAction::JumpToBottom,
+            ViMotion::PageUp => CopyModeAction::PageUp,
+            ViMotion::PageDown => CopyModeAction::PageDown,
+            ViMotion::TextObject { start, end } => CopyModeAction::SelectRange(start, end),
+        });
+    }
+
+    match key.code {
+        KeyCode::Char('v') | KeyCode::Char(' ') => Some(CopyModeAction::Select),
+        KeyCode::Char('y') | KeyCode::Enter => Some(CopyModeAction::Yank),
+        KeyCode::Esc | KeyCode::Char('q') => Some(CopyModeAction::Exit),
+        _ => None,
+    }
+}
 
 /// Used to handle input fields in popups and other direct use case
 pub fn dispatch_input_key(input: &mut Input, key: KeyEvent) {
@@ -70,6 +111,7 @@ pub fn dispatch_input_key(input: &mut Input, key: KeyEvent) {
     input.handle_event(&Event::Key(key));
 }
 
+/// Used to handle input fields with vi motion for line mode prompt
 pub fn dispatch_input_key_vi(input: &mut Input, state: &mut ViState, key: KeyEvent) {
     match state.mode {
         ViMode::Insert => {
@@ -93,6 +135,13 @@ pub fn dispatch_input_key_vi(input: &mut Input, state: &mut ViState, key: KeyEve
                 return;
             }
 
+            if let Some(motion) =
+                resolve_vi_motion(&mut state.pending, input.value(), input.cursor(), key)
+            {
+                apply_vi_motion_to_input(input, motion);
+                return;
+            }
+
             match key.code {
                 KeyCode::Char('i') => state.mode = ViMode::Insert,
                 KeyCode::Char('I') => {
@@ -106,25 +155,6 @@ pub fn dispatch_input_key_vi(input: &mut Input, state: &mut ViState, key: KeyEve
                 KeyCode::Char('A') => {
                     input.handle(InputRequest::GoToEnd);
                     state.mode = ViMode::Insert;
-                }
-
-                KeyCode::Char('h') | KeyCode::Left => {
-                    input.handle(InputRequest::GoToPrevChar);
-                }
-                KeyCode::Char('l') | KeyCode::Right => {
-                    input.handle(InputRequest::GoToNextChar);
-                }
-                KeyCode::Char('w') => {
-                    input.handle(InputRequest::GoToNextWord);
-                }
-                KeyCode::Char('b') => {
-                    input.handle(InputRequest::GoToPrevWord);
-                }
-                KeyCode::Char('0') | KeyCode::Char('^') => {
-                    input.handle(InputRequest::GoToStart);
-                }
-                KeyCode::Char('$') => {
-                    input.handle(InputRequest::GoToEnd);
                 }
 
                 KeyCode::Char('x') => {

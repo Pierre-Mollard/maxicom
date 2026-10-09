@@ -93,8 +93,15 @@ pub enum CopyModeAction {
     PageDown,
     StartOfLine,
     EndOfLine,
+    NextWord,
+    PrevWord,
+    WordEnd,
+    JumpToTop,
+    JumpToBottom,
     Select,
+    SelectRange(usize, usize),
     Yank,
+    HandleKey(KeyEvent),
     Exit,
 }
 
@@ -183,7 +190,7 @@ pub fn handle_event(event: Event, app: &App) -> Action {
             if let Some(copy_action_binding) = resolver.copy_actions.get(&pattern) {
                 copy_action_binding.to_action()
             } else {
-                Action::Ignore
+                Action::CopyMode(CopyModeAction::HandleKey(key_event))
             }
         }
         InputContext::LineInput => {

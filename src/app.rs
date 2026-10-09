@@ -158,11 +158,13 @@ impl App {
         self.overlay = None;
     }
 
-    // TODO: add vi motions to selection word next/previous/v
+    // TODO: display mode with hexadecimal window on the side
 
     // TODO: capture screenshot terminal image
 
-    // TODO: display mode with hexadecimal window on the side
+    // TODO: replay recorded bytes streams
+
+    // TODO: make a cache so when connect back to fd data is there (with clear opt)
 
     pub fn update(&mut self, action: Action) -> UpdateEffect {
         let is_repeatable_history = self.prefix_active
