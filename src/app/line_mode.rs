@@ -421,7 +421,19 @@ impl LineMode {
             CopyModeAction::NextWord => {
                 if let Some(entry) = self.local_history.get(self.copy_state.cursor.line_idx) {
                     let display_text = displayable_line_string(&entry.text, display_mode);
-                    let next = find_next_word(&display_text, self.copy_state.cursor.char_idx);
+                    let next =
+                        find_next_word(&display_text, self.copy_state.cursor.char_idx, false);
+                    self.copy_state.cursor.char_idx = next;
+                    self.copy_state.cursor.preferred_col = next;
+                    if wrap_mode == WrapMode::Truncate {
+                        self.sync_pan_with_cursor(display_mode, gutter_width);
+                    }
+                }
+            }
+            CopyModeAction::NextBigWord => {
+                if let Some(entry) = self.local_history.get(self.copy_state.cursor.line_idx) {
+                    let display_text = displayable_line_string(&entry.text, display_mode);
+                    let next = find_next_word(&display_text, self.copy_state.cursor.char_idx, true);
                     self.copy_state.cursor.char_idx = next;
                     self.copy_state.cursor.preferred_col = next;
                     if wrap_mode == WrapMode::Truncate {
@@ -432,7 +444,19 @@ impl LineMode {
             CopyModeAction::PrevWord => {
                 if let Some(entry) = self.local_history.get(self.copy_state.cursor.line_idx) {
                     let display_text = displayable_line_string(&entry.text, display_mode);
-                    let prev = find_prev_word(&display_text, self.copy_state.cursor.char_idx);
+                    let prev =
+                        find_prev_word(&display_text, self.copy_state.cursor.char_idx, false);
+                    self.copy_state.cursor.char_idx = prev;
+                    self.copy_state.cursor.preferred_col = prev;
+                    if wrap_mode == WrapMode::Truncate {
+                        self.sync_pan_with_cursor(display_mode, gutter_width);
+                    }
+                }
+            }
+            CopyModeAction::PrevBigWord => {
+                if let Some(entry) = self.local_history.get(self.copy_state.cursor.line_idx) {
+                    let display_text = displayable_line_string(&entry.text, display_mode);
+                    let prev = find_prev_word(&display_text, self.copy_state.cursor.char_idx, true);
                     self.copy_state.cursor.char_idx = prev;
                     self.copy_state.cursor.preferred_col = prev;
                     if wrap_mode == WrapMode::Truncate {
@@ -443,7 +467,18 @@ impl LineMode {
             CopyModeAction::WordEnd => {
                 if let Some(entry) = self.local_history.get(self.copy_state.cursor.line_idx) {
                     let display_text = displayable_line_string(&entry.text, display_mode);
-                    let end = find_word_end(&display_text, self.copy_state.cursor.char_idx);
+                    let end = find_word_end(&display_text, self.copy_state.cursor.char_idx, false);
+                    self.copy_state.cursor.char_idx = end;
+                    self.copy_state.cursor.preferred_col = end;
+                    if wrap_mode == WrapMode::Truncate {
+                        self.sync_pan_with_cursor(display_mode, gutter_width);
+                    }
+                }
+            }
+            CopyModeAction::BigWordEnd => {
+                if let Some(entry) = self.local_history.get(self.copy_state.cursor.line_idx) {
+                    let display_text = displayable_line_string(&entry.text, display_mode);
+                    let end = find_word_end(&display_text, self.copy_state.cursor.char_idx, true);
                     self.copy_state.cursor.char_idx = end;
                     self.copy_state.cursor.preferred_col = end;
                     if wrap_mode == WrapMode::Truncate {
@@ -502,6 +537,8 @@ impl LineMode {
                     return Some(yanked);
                 }
             }
+            CopyModeAction::PrevWordEnd => todo!(), //TODO: ???
+            CopyModeAction::PrevBigWordEnd => todo!(), //TODO: ???
         }
         None
     }

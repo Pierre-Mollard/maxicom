@@ -619,7 +619,18 @@ impl TerminalMode {
                 let current_row = self.copy_state.cursor.line_idx;
                 if let Some(line) = self.get_world_line_text(current_row) {
                     let trimmed_len = line.trim_end().chars().count();
-                    let new_char = find_next_word(&line, self.copy_state.cursor.char_idx);
+                    let new_char = find_next_word(&line, self.copy_state.cursor.char_idx, false);
+                    let clamped = new_char.min(trimmed_len.saturating_sub(1));
+                    self.copy_state.cursor.char_idx = clamped;
+                    self.copy_state.cursor.preferred_col = clamped;
+                    self.keep_terminal_copy_cursor_in_view();
+                }
+            }
+            CopyModeAction::NextBigWord => {
+                let current_row = self.copy_state.cursor.line_idx;
+                if let Some(line) = self.get_world_line_text(current_row) {
+                    let trimmed_len = line.trim_end().chars().count();
+                    let new_char = find_next_word(&line, self.copy_state.cursor.char_idx, true);
                     let clamped = new_char.min(trimmed_len.saturating_sub(1));
                     self.copy_state.cursor.char_idx = clamped;
                     self.copy_state.cursor.preferred_col = clamped;
@@ -629,7 +640,16 @@ impl TerminalMode {
             CopyModeAction::PrevWord => {
                 let current_row = self.copy_state.cursor.line_idx;
                 if let Some(line) = self.get_world_line_text(current_row) {
-                    let new_char = find_prev_word(&line, self.copy_state.cursor.char_idx);
+                    let new_char = find_prev_word(&line, self.copy_state.cursor.char_idx, false);
+                    self.copy_state.cursor.char_idx = new_char;
+                    self.copy_state.cursor.preferred_col = new_char;
+                    self.keep_terminal_copy_cursor_in_view();
+                }
+            }
+            CopyModeAction::PrevBigWord => {
+                let current_row = self.copy_state.cursor.line_idx;
+                if let Some(line) = self.get_world_line_text(current_row) {
+                    let new_char = find_prev_word(&line, self.copy_state.cursor.char_idx, true);
                     self.copy_state.cursor.char_idx = new_char;
                     self.copy_state.cursor.preferred_col = new_char;
                     self.keep_terminal_copy_cursor_in_view();
@@ -639,7 +659,18 @@ impl TerminalMode {
                 let current_row = self.copy_state.cursor.line_idx;
                 if let Some(line) = self.get_world_line_text(current_row) {
                     let trimmed_len = line.trim_end().chars().count();
-                    let new_char = find_word_end(&line, self.copy_state.cursor.char_idx);
+                    let new_char = find_word_end(&line, self.copy_state.cursor.char_idx, false);
+                    let clamped = new_char.min(trimmed_len.saturating_sub(1));
+                    self.copy_state.cursor.char_idx = clamped;
+                    self.copy_state.cursor.preferred_col = clamped;
+                    self.keep_terminal_copy_cursor_in_view();
+                }
+            }
+            CopyModeAction::BigWordEnd => {
+                let current_row = self.copy_state.cursor.line_idx;
+                if let Some(line) = self.get_world_line_text(current_row) {
+                    let trimmed_len = line.trim_end().chars().count();
+                    let new_char = find_word_end(&line, self.copy_state.cursor.char_idx, true);
                     let clamped = new_char.min(trimmed_len.saturating_sub(1));
                     self.copy_state.cursor.char_idx = clamped;
                     self.copy_state.cursor.preferred_col = clamped;
@@ -683,6 +714,8 @@ impl TerminalMode {
                 self.copy_state.exit();
                 return selected;
             }
+            CopyModeAction::PrevWordEnd => todo!(), // TODO: ?
+            CopyModeAction::PrevBigWordEnd => todo!(), // TODO: ?
         }
 
         None

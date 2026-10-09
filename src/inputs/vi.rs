@@ -1,8 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tui_input::{Input, InputRequest};
 
-// TODO: add W and E and B (big words)
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ViMode {
     #[default]
@@ -36,32 +34,47 @@ pub enum ViMotion {
     Down,
     Up,
     Right,
-    NextWord,     // `w`
-    PrevWord,     // `b`
-    WordEnd,      // `e`
-    PrevWordEnd,  // `ge`
-    StartOfLine,  // `0`, `^`, `gh`
-    EndOfLine,    // `$`, `gl`
-    JumpToTop,    // `gg`
-    JumpToBottom, // `G`
-    PageUp,       // `Ctrl+u`, `Ctrl+b`
-    PageDown,     // `Ctrl+d`, `Ctrl+f`
+    NextWord,       // `w`
+    NextBigWord,    // `W`
+    PrevWord,       // `b`
+    PrevBigWord,    // `B`
+    WordEnd,        // `e`
+    BigWordEnd,     // `E`
+    PrevWordEnd,    // `ge`
+    PrevBigWordEnd, // `gE`
+    StartOfLine,    // `0`, `^`, `gh`
+    EndOfLine,      // `$`, `gl`
+    JumpToTop,      // `gg`
+    JumpToBottom,   // `G`
+    PageUp,         // `Ctrl+u`, `Ctrl+b`
+    PageDown,       // `Ctrl+d`, `Ctrl+f`
     TextObject { start: usize, end: usize },
 }
 
-pub fn find_next_word(text: &str, cursor: usize) -> usize {
+#[inline]
+fn same_word_class(a: char, b: char, big_word: bool) -> bool {
+    if a.is_whitespace() || b.is_whitespace() {
+        return false;
+    }
+    if big_word {
+        true
+    } else {
+        let is_alphanumeric_or_under = |c: char| c.is_alphanumeric() || c == '_';
+        is_alphanumeric_or_under(a) == is_alphanumeric_or_under(b)
+    }
+}
+
+pub fn find_next_word(text: &str, cursor: usize, big_word: bool) -> usize {
     let chars: Vec<char> = text.chars().collect();
     let total = chars.len();
     if cursor >= total.saturating_sub(1) {
         return total.saturating_sub(1);
     }
-
     let mut idx = cursor;
-    let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
-    let initial_kind = is_word_char(chars[idx]);
-    while idx < total && is_word_char(chars[idx]) == initial_kind && !chars[idx].is_whitespace() {
+    while idx + 1 < total && same_word_class(chars[idx], chars[idx + 1], big_word) {
         idx += 1;
     }
+    idx += 1;
     while idx < total && chars[idx].is_whitespace() {
         idx += 1;
     }
@@ -69,90 +82,83 @@ pub fn find_next_word(text: &str, cursor: usize) -> usize {
     idx.min(total.saturating_sub(1))
 }
 
-pub fn find_prev_word(text: &str, cursor: usize) -> usize {
+pub fn find_prev_word(text: &str, cursor: usize, big_word: bool) -> usize {
     let chars: Vec<char> = text.chars().collect();
     if cursor == 0 || chars.is_empty() {
         return 0;
     }
-
     let mut idx = cursor.min(chars.len() - 1);
     idx = idx.saturating_sub(1);
     while idx > 0 && chars[idx].is_whitespace() {
         idx -= 1;
     }
-    let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
-    let target_kind = is_word_char(chars[idx]);
-    while idx > 0 && is_word_char(chars[idx - 1]) == target_kind && !chars[idx - 1].is_whitespace()
-    {
+    while idx > 0 && same_word_class(chars[idx], chars[idx - 1], big_word) {
         idx -= 1;
     }
-
     idx
 }
 
-pub fn find_word_end(text: &str, cursor: usize) -> usize {
+pub fn find_word_end(text: &str, cursor: usize, big_word: bool) -> usize {
     let chars: Vec<char> = text.chars().collect();
     let total = chars.len();
     if cursor >= total.saturating_sub(1) {
         return total.saturating_sub(1);
     }
-
     let mut idx = cursor + 1;
-
     while idx < total && chars[idx].is_whitespace() {
         idx += 1;
     }
-    let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
-    let target_kind = is_word_char(chars[idx]);
-    while idx + 1 < total
-        && is_word_char(chars[idx + 1]) == target_kind
-        && !chars[idx + 1].is_whitespace()
-    {
+    while idx + 1 < total && same_word_class(chars[idx], chars[idx + 1], big_word) {
         idx += 1;
     }
-
     idx.min(total.saturating_sub(1))
 }
 
-pub fn find_prev_word_end(text: &str, cursor: usize) -> usize {
+pub fn find_prev_word_end(text: &str, cursor: usize, big_word: bool) -> usize {
     let chars: Vec<char> = text.chars().collect();
-    if cursor == 0 || chars.is_empty() {
+    let total = chars.len();
+    if cursor == 0 || total == 0 {
         return 0;
     }
-
-    let mut idx = cursor.saturating_sub(1);
-
+    let mut idx = cursor.min(total - 1);
+    if !chars[idx].is_whitespace() {
+        while idx > 0 && same_word_class(chars[idx], chars[idx - 1], big_word) {
+            idx -= 1;
+        }
+        if idx == 0 {
+            return 0;
+        }
+        idx -= 1;
+    }
     while idx > 0 && chars[idx].is_whitespace() {
         idx -= 1;
     }
-
-    idx
+    if chars[idx].is_whitespace() { 0 } else { idx }
 }
 
-pub fn find_word_bounds(text: &str, cursor: usize) -> (usize, usize) {
+pub fn find_word_bounds(text: &str, cursor: usize, big_word: bool, inner: bool) -> (usize, usize) {
     if text.is_empty() {
         return (0, 0);
     }
     let chars: Vec<char> = text.chars().collect();
     let total = chars.len();
     let cursor = cursor.min(total.saturating_sub(1));
-
-    let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
-    let target_kind = is_word_char(chars[cursor]);
-
+    if chars[cursor].is_whitespace() {
+        return (cursor, cursor);
+    }
     let mut start = cursor;
-    while start > 0
-        && is_word_char(chars[start - 1]) == target_kind
-        && !chars[start - 1].is_whitespace()
-    {
+    while start > 0 && same_word_class(chars[cursor], chars[start - 1], big_word) {
         start -= 1;
     }
-
     let mut end = cursor;
-    while end < total && is_word_char(chars[end]) == target_kind && !chars[end].is_whitespace() {
+    while end < total && same_word_class(chars[cursor], chars[end], big_word) {
         end += 1;
     }
-
+    if !inner {
+        while end < total && chars[end].is_whitespace() {
+            end += 1;
+        }
+    }
     (start, end)
 }
 
@@ -203,7 +209,8 @@ pub fn find_text_object_bounds(
     inner: bool,
 ) -> Option<(usize, usize)> {
     match ch {
-        'w' => Some(find_word_bounds(text, cursor)),
+        'w' => Some(find_word_bounds(text, cursor, false, inner)),
+        'W' => Some(find_word_bounds(text, cursor, true, inner)),
         '"' => find_paired_bounds(text, cursor, '"', '"', inner),
         '\'' => find_paired_bounds(text, cursor, '\'', '\'', inner),
         '(' | ')' | 'b' => find_paired_bounds(text, cursor, '(', ')', inner),
@@ -224,6 +231,7 @@ pub fn resolve_vi_motion(
             ViPending::Goto => match key.code {
                 KeyCode::Char('g') => return Some(ViMotion::JumpToTop),
                 KeyCode::Char('e') => return Some(ViMotion::PrevWordEnd),
+                KeyCode::Char('E') => return Some(ViMotion::PrevBigWordEnd),
                 KeyCode::Char('h') => return Some(ViMotion::StartOfLine),
                 KeyCode::Char('l') => return Some(ViMotion::EndOfLine),
                 _ => return None,
@@ -262,9 +270,12 @@ pub fn resolve_vi_motion(
         KeyCode::Char('b') => Some(ViMotion::PrevWord),
         KeyCode::Char('e') => Some(ViMotion::WordEnd),
 
+        KeyCode::Char('W') => Some(ViMotion::NextBigWord),
+        KeyCode::Char('B') => Some(ViMotion::PrevBigWord),
+        KeyCode::Char('E') => Some(ViMotion::BigWordEnd),
+
         KeyCode::Char('0') | KeyCode::Char('^') | KeyCode::Home => Some(ViMotion::StartOfLine),
         KeyCode::Char('$') | KeyCode::End => Some(ViMotion::EndOfLine),
-
         KeyCode::Char('G') => Some(ViMotion::JumpToBottom),
 
         KeyCode::Char('g') => {
@@ -377,6 +388,19 @@ pub fn handle_pending_operator(
 }
 
 pub fn apply_vi_motion_to_input(input: &mut Input, motion: ViMotion) {
+    let move_cursor_to = |input: &mut Input, target: usize| {
+        let current = input.cursor();
+        if target > current {
+            for _ in 0..(target - current) {
+                input.handle(InputRequest::GoToNextChar);
+            }
+        } else if current > target {
+            for _ in 0..(current - target) {
+                input.handle(InputRequest::GoToPrevChar);
+            }
+        }
+    };
+
     match motion {
         ViMotion::Left => {
             input.handle(InputRequest::GoToPrevChar);
@@ -384,48 +408,41 @@ pub fn apply_vi_motion_to_input(input: &mut Input, motion: ViMotion) {
         ViMotion::Right => {
             input.handle(InputRequest::GoToNextChar);
         }
-        ViMotion::NextWord => {
-            let next = find_next_word(input.value(), input.cursor());
-            let current = input.cursor();
-            if next > current {
-                for _ in 0..(next - current) {
-                    input.handle(InputRequest::GoToNextChar);
-                }
-            }
-        }
-        ViMotion::PrevWord => {
-            let prev = find_prev_word(input.value(), input.cursor());
-            let current = input.cursor();
-            if current > prev {
-                for _ in 0..(current - prev) {
-                    input.handle(InputRequest::GoToPrevChar);
-                }
-            }
-        }
-        ViMotion::PrevWordEnd => {
-            let prev_end = find_prev_word_end(input.value(), input.cursor());
-            let current = input.cursor();
-            if current > prev_end {
-                for _ in 0..(current - prev_end) {
-                    input.handle(InputRequest::GoToPrevChar);
-                }
-            }
-        }
-        ViMotion::WordEnd => {
-            let end = find_word_end(input.value(), input.cursor());
-            let current = input.cursor();
-            if end > current {
-                for _ in 0..(end - current) {
-                    input.handle(InputRequest::GoToNextChar);
-                }
-            }
-        }
         ViMotion::StartOfLine => {
             input.handle(InputRequest::GoToStart);
         }
         ViMotion::EndOfLine => {
             input.handle(InputRequest::GoToEnd);
         }
+        ViMotion::NextWord => {
+            move_cursor_to(input, find_next_word(input.value(), input.cursor(), false))
+        }
+        ViMotion::NextBigWord => {
+            move_cursor_to(input, find_next_word(input.value(), input.cursor(), true))
+        }
+
+        ViMotion::PrevWord => {
+            move_cursor_to(input, find_prev_word(input.value(), input.cursor(), false))
+        }
+        ViMotion::PrevBigWord => {
+            move_cursor_to(input, find_prev_word(input.value(), input.cursor(), true))
+        }
+
+        ViMotion::WordEnd => {
+            move_cursor_to(input, find_word_end(input.value(), input.cursor(), false))
+        }
+        ViMotion::BigWordEnd => {
+            move_cursor_to(input, find_word_end(input.value(), input.cursor(), true))
+        }
+
+        ViMotion::PrevWordEnd => move_cursor_to(
+            input,
+            find_prev_word_end(input.value(), input.cursor(), false),
+        ),
+        ViMotion::PrevBigWordEnd => move_cursor_to(
+            input,
+            find_prev_word_end(input.value(), input.cursor(), true),
+        ),
         ViMotion::TextObject { start, .. } => {
             let current = input.cursor();
             if start > current {
