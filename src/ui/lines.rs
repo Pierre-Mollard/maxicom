@@ -23,7 +23,7 @@ use crate::{
             apply_keyword_highlights, apply_search_highlight, apply_selection_to_spans,
             border_style_for, render_search_bar,
         },
-        layout::prepare_view_layout,
+        layout::{PreparedLayout, prepare_view_layout},
     },
 };
 
@@ -350,16 +350,16 @@ pub fn render_monitor(
         WrapMode::Truncate => app.line_mode.x_offset(),
     };
 
+    // side view raw panel
+    if let Some(raw_area) = raw_side_area {
+        render_raw_side_panel(app, frame, raw_area, paragraph_y_offset, &layout, theme);
+    }
+
     let history_paragraph = Paragraph::new(layout.visual_lines).scroll((
         paragraph_y_offset.min(u16::MAX as usize) as u16,
         line_x_offset.min(u16::MAX as usize) as u16,
     ));
     frame.render_widget(history_paragraph, content_area);
-
-    // side view raw panel
-    if let Some(raw_area) = raw_side_area {
-        render_raw_side_panel(app, frame, raw_area, paragraph_y_offset, theme);
-    }
 
     apply_keyword_highlights(frame.buffer_mut(), content_area, highlights);
 
@@ -535,14 +535,14 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect, theme: &The
     }
 }
 
-// TODO: make wrap sync
 // TODO: add  "search" highlights
-// TODO: check if possible to opti only visible lines
+// TODO: handle a pan
 pub fn render_raw_side_panel(
     app: &App,
     frame: &mut Frame,
     raw_area: Rect,
     paragraph_y_offset: usize,
+    layout: &PreparedLayout,
     theme: &ThemeConfig,
 ) {
     let raw_view = app.settings().raw_side.view;
@@ -551,12 +551,6 @@ pub fn render_raw_side_panel(
     }
 
     let display_mode = raw_view_to_display_mode(raw_view);
-    let title = match raw_view {
-        RawSideView::Hex => " RAW (Hex) ",
-        RawSideView::Octal => " RAW (Octal) ",
-        RawSideView::Binary => " RAW (Bits) ",
-        RawSideView::Off => return,
-    };
 
     let borders = match app.settings().raw_side.orientation {
         RawSideOrientation::Right => Borders::LEFT,
@@ -565,30 +559,48 @@ pub fn render_raw_side_panel(
 
     let block = Block::default()
         .borders(borders)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .title(title);
+        .border_style(Style::default().fg(Color::DarkGray));
 
     let inner_area = block.inner(raw_area);
     frame.render_widget(block, raw_area);
 
-    let copy_range = app.line_mode.copy_state().normalized_selection();
+    let view_height = inner_area.height as usize;
+    let visible_visual_start = paragraph_y_offset;
+    let visible_visual_end = visible_visual_start + view_height;
 
-    let mut raw_lines: Vec<Line> = app
-        .line_mode
-        .history()
-        .iter()
-        .enumerate()
-        .map(|(idx, entry)| {
+    let copy_range = app.line_mode.copy_state().normalized_selection();
+    let history = app.line_mode.history();
+
+    let mut visible_raw_lines: Vec<Line<'static>> = Vec::with_capacity(view_height);
+
+    let mut current_visual_row = 0;
+
+    for (logical_idx, entry_layout) in layout.line_layouts.iter().enumerate() {
+        let visual_sub_count = entry_layout.sub_lines.len();
+        let entry_visual_end = current_visual_row + visual_sub_count;
+
+        if entry_visual_end <= visible_visual_start {
+            current_visual_row = entry_visual_end;
+            continue;
+        }
+        if current_visual_row >= visible_visual_end {
+            break;
+        }
+
+        if let Some(entry) = history.get(logical_idx) {
+            let entry_chars: Vec<char> = entry.text.chars().collect();
+            let mut char_offset = 0;
+
             let sel_range = copy_range.and_then(|(start, end)| {
-                if idx < start.line_idx || idx > end.line_idx {
+                if logical_idx < start.line_idx || logical_idx > end.line_idx {
                     None
                 } else {
-                    let from = if idx == start.line_idx {
+                    let from = if logical_idx == start.line_idx {
                         start.char_idx
                     } else {
                         0
                     };
-                    let to = if idx == end.line_idx {
+                    let to = if logical_idx == end.line_idx {
                         end.char_idx
                     } else {
                         usize::MAX
@@ -597,35 +609,65 @@ pub fn render_raw_side_panel(
                 }
             });
 
-            let mut spans = format_line_content(&entry.text, display_mode);
+            for (sub_idx, sub) in entry_layout.sub_lines.iter().enumerate() {
+                let line_y = current_visual_row + sub_idx;
+                let sub_char_count = sub.content_char_len;
 
-            if let Some((sel_start, sel_end)) = sel_range {
-                let stride = match raw_view {
-                    RawSideView::Hex => 3,
-                    RawSideView::Octal => 4,
-                    RawSideView::Binary => 9,
-                    RawSideView::Off => 1,
-                };
-                let raw_sel_start = sel_start * stride;
-                let raw_sel_end = (sel_end + 1) * stride;
-                spans =
-                    apply_selection_to_spans(spans, raw_sel_start, raw_sel_end, *theme.selection);
+                let sub_char_end = (char_offset + sub_char_count).min(entry_chars.len());
+                let sub_slice: String = entry_chars[char_offset..sub_char_end].iter().collect();
+
+                if line_y >= visible_visual_start && line_y < visible_visual_end {
+                    if sub_slice.is_empty() {
+                        visible_raw_lines.push(Line::from(""));
+                    } else {
+                        let mut spans = format_line_content(&sub_slice, display_mode);
+
+                        if let Some((sel_start, sel_end)) = sel_range
+                            && sel_end >= char_offset
+                            && sel_start < sub_char_end
+                        {
+                            let local_start = sel_start.saturating_sub(char_offset);
+                            let local_end =
+                                (sel_end.saturating_sub(char_offset)).min(sub_char_count);
+
+                            let stride = match raw_view {
+                                RawSideView::Hex => 3,
+                                RawSideView::Octal => 4,
+                                RawSideView::Binary => 9,
+                                RawSideView::Off => 1,
+                            };
+
+                            let raw_sel_start = local_start * stride;
+                            let raw_sel_end = (local_end + 1) * stride;
+
+                            spans = apply_selection_to_spans(
+                                spans,
+                                raw_sel_start,
+                                raw_sel_end,
+                                *theme.selection,
+                            );
+                        }
+
+                        visible_raw_lines.push(Line::from(spans));
+                    }
+                }
+
+                char_offset = sub_char_end;
             }
+        }
 
-            Line::from(spans)
-        })
-        .collect();
-
-    if app.settings().line_mode.display_partial_rx && !app.line_mode.partial_rx().is_empty() {
-        let partial_raw = String::from_utf8_lossy(app.line_mode.partial_rx());
-        let spans = format_line_content(&partial_raw, display_mode);
-        raw_lines.push(Line::from(spans));
+        current_visual_row = entry_visual_end;
     }
 
-    let raw_paragraph = Paragraph::new(raw_lines).scroll((
-        paragraph_y_offset.min(u16::MAX as usize) as u16,
-        0, // X-scroll remains 0 (or optionally synced)
-    ));
+    if app.settings().line_mode.display_partial_rx
+        && !app.line_mode.partial_rx().is_empty()
+        && visible_raw_lines.len() < view_height
+    {
+        let partial_raw = String::from_utf8_lossy(app.line_mode.partial_rx());
+        let spans = format_line_content(&partial_raw, display_mode);
+        visible_raw_lines.push(Line::from(spans));
+    }
 
-    frame.render_widget(raw_paragraph, inner_area);
+    let paragraph = Paragraph::new(visible_raw_lines);
+    frame.render_widget(paragraph, inner_area);
 }

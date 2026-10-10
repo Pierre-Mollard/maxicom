@@ -346,13 +346,6 @@ pub fn render_vt100_raw_side_panel(
         RawSideView::Off => return,
     };
 
-    let title = match raw_view {
-        RawSideView::Hex => " RAW (Hex) ",
-        RawSideView::Octal => " RAW (Octal) ",
-        RawSideView::Binary => " RAW (Bits) ",
-        RawSideView::Off => return,
-    };
-
     let borders = match app.settings().raw_side.orientation {
         RawSideOrientation::Right => Borders::LEFT,
         RawSideOrientation::Bottom => Borders::TOP,
@@ -360,8 +353,7 @@ pub fn render_vt100_raw_side_panel(
 
     let block = Block::default()
         .borders(borders)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .title(title);
+        .border_style(Style::default().fg(Color::DarkGray));
 
     let inner_area = block.inner(raw_area);
     frame.render_widget(block, raw_area);
@@ -387,15 +379,14 @@ pub fn render_vt100_raw_side_panel(
     let rows_to_render = (inner_area.height as usize).min(grid_rows as usize);
     let mut raw_lines = Vec::with_capacity(rows_to_render);
 
-    for r in 0..rows_to_render {
+    for (r, row_text) in screen
+        .rows(0, cols)
+        .skip(pan_y)
+        .take(rows_to_render)
+        .enumerate()
+    {
         let emulator_row = r + pan_y;
-        if emulator_row >= grid_rows as usize {
-            raw_lines.push(Line::from(""));
-            continue;
-        }
-
         let world_row = top_visible_world_line + emulator_row;
-        let row_text = screen.rows(0, cols).nth(emulator_row).unwrap_or_default();
 
         let trimmed_text = row_text.trim_end();
         if trimmed_text.is_empty() {
