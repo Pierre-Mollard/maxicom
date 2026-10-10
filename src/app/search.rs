@@ -3,9 +3,9 @@ use std::io::{self, Write};
 
 use tui_input::Input;
 
+use crate::app::data_processing::displayable_line_string;
 use crate::app::types::LogEntry;
 use crate::configs::LineDisplayMode;
-use crate::ui::common::displayable_line_string;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SearchMatch {

@@ -6,6 +6,7 @@ use tui_input::Input;
 use crate::{
     app::{
         UpdateEffect,
+        data_processing::displayable_line_string,
         scroller::ViewportScroller,
         search::SearchState,
         selection::{CopyActionResult, CopyModeState, TextSource},
@@ -17,7 +18,6 @@ use crate::{
         dispatch_input_key_vi, local_dispatchers::dispatch_copy_key_vi, vi::ViPending,
     },
     logger::LineLogger,
-    ui::common::displayable_line_string,
 };
 
 pub struct LineMode {

@@ -1,10 +1,10 @@
 /// View, render screen from state (app)
 /// Using the 'ratatui' crate
 pub mod common;
+pub mod data_display;
 pub mod layout;
 pub mod lines;
 pub mod popups;
-pub mod raw_inspector;
 pub mod status_bar;
 pub mod terminal;
 

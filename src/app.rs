@@ -13,6 +13,7 @@ use crate::{
     serial::SerialConfig,
 };
 
+pub mod data_processing;
 pub mod line_mode;
 pub mod scroller;
 pub mod search;

@@ -15,7 +15,7 @@ use crate::{
     terminal::{MaxicomCursor, MaxicomTerminal},
     ui::{
         common::{apply_keyword_highlights, apply_selection_to_spans, render_search_bar},
-        lines::format_line_content,
+        data_display::format_line_content,
     },
 };
 
@@ -328,6 +328,7 @@ pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect, theme: 
 
 // TODO: apply mirrors to search occurences
 // TODO: search with speical 0x, 0b, 0o
+// TODO: selection bug mirroring last bytes (small line)
 pub fn render_vt100_raw_side_panel(
     app: &App,
     frame: &mut Frame,
