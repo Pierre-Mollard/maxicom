@@ -498,6 +498,9 @@ pub fn render_raw_side_panel(
         visible_raw_lines.push(Line::from(spans));
     }
 
-    let paragraph = Paragraph::new(visible_raw_lines);
-    frame.render_widget(paragraph, inner_area);
+    let raw_pan_x = app.line_mode.raw_pan_x();
+    let raw_paragraph =
+        Paragraph::new(visible_raw_lines).scroll((0, raw_pan_x.min(u16::MAX as usize) as u16));
+
+    frame.render_widget(raw_paragraph, inner_area);
 }

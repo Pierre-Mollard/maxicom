@@ -429,6 +429,9 @@ pub fn render_vt100_raw_side_panel(
         raw_lines.push(Line::from(spans));
     }
 
-    let paragraph = Paragraph::new(raw_lines);
-    frame.render_widget(paragraph, inner_area);
+    let raw_pan_x = app.terminal_mode.raw_pan_x();
+    let raw_paragraph =
+        Paragraph::new(raw_lines).scroll((0, raw_pan_x.min(u16::MAX as usize) as u16));
+
+    frame.render_widget(raw_paragraph, inner_area);
 }

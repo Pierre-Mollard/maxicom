@@ -6,7 +6,7 @@ use crate::{
         types::{FocusTarget, ViewportSize},
     },
     configs::{InputMode, KeyResolver, SettingsConfig, WrapMode, settings::PrefixWrapBehavior},
-    inputs::{Action, AppAction, CopyModeAction, HistoryAction, SearchModeAction},
+    inputs::{Action, AppAction, CopyModeAction, HistoryAction, SearchModeAction, SideViewAction},
     logger::{LineLogger, TerminalLogger},
     notification::{NotificationManager, ToastLevel},
     overlays::{ErrorDialog, FilePathDialog, Overlay, OverlayResponse, SettingKey},
@@ -196,6 +196,7 @@ impl App {
                 .line_mode
                 .update_action_lineinput(&self.settings, action),
             Action::Terminal(action) => self.terminal_mode.update_action_terminal(action),
+            Action::SideView(action) => self.update_side_view(action),
             Action::History(action) => self.update_action_history(action),
             Action::CopyMode(action) => self.update_action_copy_mode(action),
             Action::Search(action) => self.update_action_search_mode(action),
@@ -284,6 +285,20 @@ impl App {
         }
     }
 
+    fn update_side_view(&mut self, action: SideViewAction) -> UpdateEffect {
+        // TODO: check why this not called
+        match self.settings.input_mode {
+            InputMode::Terminal => {
+                self.terminal_mode.handle_side_view_action(action);
+            }
+            InputMode::Line => {
+                self.line_mode.handle_side_view_action(action);
+            }
+        }
+
+        UpdateEffect::None
+    }
+
     fn update_action_copy_mode(&mut self, action: CopyModeAction) -> UpdateEffect {
         match self.settings.input_mode {
             InputMode::Terminal => {
@@ -307,8 +322,7 @@ impl App {
                 self.terminal_mode.handle_search_action(action);
             }
             InputMode::Line => {
-                self.line_mode
-                    .handle_search_action(action, self.settings.line_mode.display_mode);
+                self.line_mode.handle_search_action(action, &self.settings);
             }
         }
 

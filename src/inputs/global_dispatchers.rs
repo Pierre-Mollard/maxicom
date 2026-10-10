@@ -7,7 +7,7 @@ use crate::{
     },
     inputs::{
         Action, AppAction, CopyModeAction, HistoryAction, LineInputAction, SearchModeAction,
-        TerminalAction,
+        SideViewAction, TerminalAction,
     },
     overlays::{HelpDialog, Overlay, ResizeDialog, SerialConfigDialog, SettingKey},
 };
@@ -76,6 +76,8 @@ impl KeyBindingAction {
             KeyBindingAction::PageDown => Action::History(HistoryAction::ScrollDownPage),
             KeyBindingAction::EnterCopyMode => Action::CopyMode(CopyModeAction::Enter),
             KeyBindingAction::EnterSearch => Action::Search(SearchModeAction::Start),
+            KeyBindingAction::PanSideRight => Action::SideView(SideViewAction::PanRight(6)),
+            KeyBindingAction::PanSideLeft => Action::SideView(SideViewAction::PanLeft(6)),
             KeyBindingAction::ClearHistory => Action::History(HistoryAction::Clear),
             KeyBindingAction::ExitPrefix => Action::App(AppAction::SetPrefix(false)),
         }

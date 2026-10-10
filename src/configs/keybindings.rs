@@ -49,6 +49,8 @@ pub enum KeyBindingAction {
     PageDown,
     PanRight,
     PanLeft,
+    PanSideRight,
+    PanSideLeft,
     ClearHistory,
     ExitPrefix,
 }
@@ -87,6 +89,8 @@ impl FromStr for KeyBindingAction {
             "page_down" => Ok(KeyBindingAction::PageDown),
             "pan_right" => Ok(KeyBindingAction::PanRight),
             "pan_left" => Ok(KeyBindingAction::PanLeft),
+            "pan_side_right" => Ok(KeyBindingAction::PanSideRight),
+            "pan_side_left" => Ok(KeyBindingAction::PanSideLeft),
             "clear_history" => Ok(KeyBindingAction::ClearHistory),
             "exit_prefix" => Ok(KeyBindingAction::ExitPrefix),
             other => Err(UnknownActionError(other.to_string())),
@@ -126,6 +130,8 @@ impl std::fmt::Display for KeyBindingAction {
             Self::PageDown => "page_down",
             Self::PanRight => "pan_right",
             Self::PanLeft => "pan_left",
+            Self::PanSideRight => "pan_side_right",
+            Self::PanSideLeft => "pan_side_left",
             Self::ClearHistory => "clear_history",
             Self::ExitPrefix => "exit_prefix",
         };
@@ -678,6 +684,8 @@ impl Default for KeyBindingsConfig {
             "pagedown"   => KeyBindingAction::PageDown,
             "shift-home" => KeyBindingAction::ScrollToTop,
             "shift-end"  => KeyBindingAction::ScrollToBottom,
+            "ctrl-right" => KeyBindingAction::PanSideRight,
+            "ctrl-left"  => KeyBindingAction::PanSideLeft,
         };
 
         let prefix_actions = default_bindings! {

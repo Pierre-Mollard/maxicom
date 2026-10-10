@@ -19,8 +19,8 @@ use crate::{
     },
     configs::{TerminalDimensionMode, TextEncoding},
     inputs::{
-        CopyModeAction, SearchModeAction, TerminalAction, ViPending, dispatch_input_key,
-        local_dispatchers::dispatch_copy_key_vi,
+        CopyModeAction, SearchModeAction, SideViewAction, TerminalAction, ViPending,
+        dispatch_input_key, local_dispatchers::dispatch_copy_key_vi,
     },
     logger::TerminalLogger,
 };
@@ -36,6 +36,9 @@ pub struct TerminalMode {
     pan_offset_y: usize,
     vi_pending_copy: Option<ViPending>,
     flash_until: Option<Instant>,
+
+    raw_pan_x: usize,
+    max_raw_pan_x: usize,
 
     history_timestamps: VecDeque<DateTime<Local>>,
     screen_timestamps: Vec<Option<DateTime<Local>>>,
@@ -59,6 +62,8 @@ impl TerminalMode {
             pan_offset_y: 0,
             vi_pending_copy: None,
             flash_until: None,
+            raw_pan_x: 0,
+            max_raw_pan_x: 0,
             history_timestamps: VecDeque::with_capacity(max_history_lines),
             screen_timestamps: vec![None; rows as usize],
         }
@@ -576,6 +581,17 @@ impl TerminalMode {
         }
     }
 
+    pub fn handle_side_view_action(&mut self, action: SideViewAction) {
+        match action {
+            SideViewAction::PanLeft(amount) => {
+                self.pan_raw_left(amount);
+            }
+            SideViewAction::PanRight(amount) => {
+                self.pan_raw_right(amount);
+            }
+        }
+    }
+
     pub fn start_logging(&mut self, path: PathBuf) -> io::Result<()> {
         self.logger.start_with_path(path)
     }
@@ -610,6 +626,11 @@ impl TerminalMode {
     #[inline]
     pub fn scroller(&self) -> &ViewportScroller {
         &self.scroller
+    }
+
+    #[inline]
+    pub fn raw_pan_x(&self) -> usize {
+        self.raw_pan_x
     }
 
     pub fn save_screenshot_txt(&self) -> std::io::Result<String> {
@@ -647,6 +668,35 @@ impl TerminalMode {
             }
         }
         false
+    }
+
+    pub fn pan_raw_left(&mut self, amount: usize) {
+        self.raw_pan_x = self.raw_pan_x.saturating_sub(amount);
+    }
+
+    pub fn pan_raw_right(&mut self, amount: usize) {
+        self.raw_pan_x = (self.raw_pan_x + amount).min(self.max_raw_pan_x);
+    }
+
+    pub fn reset_raw_pan(&mut self) {
+        self.raw_pan_x = 0;
+    }
+
+    pub fn compute_raw_cursor_pan(
+        cursor_char: usize,
+        raw_panel_width: usize,
+        current_pan_x: usize,
+        stride: usize,
+    ) -> usize {
+        let raw_cursor_x = cursor_char * stride;
+
+        if raw_cursor_x >= current_pan_x + raw_panel_width {
+            raw_cursor_x.saturating_sub(raw_panel_width) + 4
+        } else if raw_cursor_x < current_pan_x {
+            raw_cursor_x.saturating_sub(2)
+        } else {
+            current_pan_x
+        }
     }
 }
 

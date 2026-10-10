@@ -553,3 +553,19 @@ pub fn prepare_view_layout(
         max_line_width,
     }
 }
+
+impl PreparedLayout {
+    pub fn resolve_cursor_sub_line(&self, line_idx: usize, char_idx: usize) -> (usize, usize) {
+        if let Some(line_meta) = self.line_layouts.get(line_idx) {
+            let mut remaining = char_idx;
+            for (sub_idx, sub) in line_meta.sub_lines.iter().enumerate() {
+                let is_last = sub_idx == line_meta.sub_lines.len().saturating_sub(1);
+                if remaining < sub.content_char_len || is_last {
+                    return (sub_idx, remaining);
+                }
+                remaining -= sub.content_char_len;
+            }
+        }
+        (0, char_idx)
+    }
+}

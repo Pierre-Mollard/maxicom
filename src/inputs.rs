@@ -31,6 +31,7 @@ pub enum Action {
     History(HistoryAction),
     CopyMode(CopyModeAction),
     Search(SearchModeAction),
+    SideView(SideViewAction),
     OverlayKey(KeyEvent),
     Ignore,
 }
@@ -74,6 +75,12 @@ pub enum HistoryAction {
     PanLeft(usize),
     PanRight(usize),
     Clear,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum SideViewAction {
+    PanLeft(usize),
+    PanRight(usize),
 }
 
 #[derive(Debug, PartialEq, Eq)]

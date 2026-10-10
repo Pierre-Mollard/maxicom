@@ -12,10 +12,14 @@ use crate::{
         selection::{CopyActionResult, CopyModeState, TextSource},
         types::{LogEntry, ViewportSize},
     },
-    configs::{LineDisplayMode, RxNewlineMode, SettingsConfig, TextEncoding, WrapMode},
+    configs::{
+        LineDisplayMode, RxNewlineMode, SettingsConfig, TextEncoding, WrapMode,
+        settings::RawSideView,
+    },
     inputs::{
-        CopyModeAction, LineInputAction, SearchModeAction, ViMode, ViState, dispatch_input_key,
-        dispatch_input_key_vi, local_dispatchers::dispatch_copy_key_vi, vi::ViPending,
+        CopyModeAction, LineInputAction, SearchModeAction, SideViewAction, ViMode, ViState,
+        dispatch_input_key, dispatch_input_key_vi, local_dispatchers::dispatch_copy_key_vi,
+        vi::ViPending,
     },
     logger::LineLogger,
 };
@@ -44,6 +48,8 @@ pub struct LineMode {
     copy_state: CopyModeState,
     scroller: ViewportScroller,
     vi_state_copymode: Option<ViPending>,
+    raw_pan_x: usize,
+    max_raw_pan_x: usize,
 }
 
 impl LineMode {
@@ -67,6 +73,8 @@ impl LineMode {
             copy_state,
             scroller,
             vi_state_copymode: None,
+            raw_pan_x: 0,
+            max_raw_pan_x: 0,
         }
     }
 
@@ -297,9 +305,15 @@ impl LineMode {
         match result {
             CopyActionResult::Moved => {
                 self.sync_scroll_with_cursor();
+
                 if wrap_mode == WrapMode::Truncate {
                     self.sync_pan_with_cursor(display_mode, gutter_width);
                 }
+
+                let raw_panel_width =
+                    (self.scroller.view_width * settings.raw_side.split_percent as usize) / 100;
+                self.sync_raw_pan_with_cursor(settings, raw_panel_width);
+
                 None
             }
             CopyActionResult::Yanked(text) => Some(text),
@@ -348,16 +362,36 @@ impl LineMode {
         self.scroller.offset_x = self.scroller.offset_x.min(self.scroller.max_pan_x);
     }
 
+    pub fn sync_raw_pan_with_cursor(&mut self, settings: &SettingsConfig, raw_panel_width: usize) {
+        if settings.raw_side.view == RawSideView::Off || raw_panel_width == 0 {
+            return;
+        }
+
+        let stride = match settings.raw_side.view {
+            RawSideView::Hex => 3,
+            RawSideView::Octal => 4,
+            RawSideView::Binary => 9,
+            RawSideView::Off => 1,
+        };
+
+        let cursor_char_idx = self.copy_state.cursor.char_idx;
+        let raw_cursor_x = cursor_char_idx * stride;
+
+        let margin = stride * 2;
+        if raw_cursor_x >= self.raw_pan_x + raw_panel_width.saturating_sub(margin) {
+            self.raw_pan_x = raw_cursor_x.saturating_sub(raw_panel_width) + margin + stride;
+        } else if raw_cursor_x < self.raw_pan_x + margin {
+            self.raw_pan_x = raw_cursor_x.saturating_sub(margin);
+        }
+    }
+
     pub fn update_search_matches(&mut self, display_mode: LineDisplayMode) {
         self.search_state
             .update_matches_from_entries(&self.local_history, display_mode);
     }
 
-    pub fn handle_search_action(
-        &mut self,
-        action: SearchModeAction,
-        display_mode: LineDisplayMode,
-    ) {
+    pub fn handle_search_action(&mut self, action: SearchModeAction, settings: &SettingsConfig) {
+        let display_mode = settings.line_mode.display_mode;
         match action {
             SearchModeAction::Start => {
                 self.search_state.toggle_itself();
@@ -370,6 +404,11 @@ impl LineMode {
                     && let Some(target_line_idx) = self.search_state.next_match()
                 {
                     self.search_state.target_jump_index = Some(target_line_idx);
+                    if let Some((_, col)) = self.search_state.current_match_position() {
+                        self.copy_state.cursor.char_idx = col;
+                        let raw_panel_width = (self.scroller.view_width * 40) / 100;
+                        self.sync_raw_pan_with_cursor(&settings, raw_panel_width);
+                    }
                 }
             }
             SearchModeAction::Previous => {
@@ -377,6 +416,11 @@ impl LineMode {
                     && let Some(target_line_idx) = self.search_state.prev_match()
                 {
                     self.search_state.target_jump_index = Some(target_line_idx);
+                    if let Some((_, col)) = self.search_state.current_match_position() {
+                        self.copy_state.cursor.char_idx = col;
+                        let raw_panel_width = (self.scroller.view_width * 40) / 100;
+                        self.sync_raw_pan_with_cursor(&settings, raw_panel_width);
+                    }
                 }
             }
             SearchModeAction::Cancel => {
@@ -406,6 +450,17 @@ impl LineMode {
         if let Some(&first_match_idx) = self.search_state.matches.first() {
             self.search_state.current_match = 0;
             self.search_state.target_jump_index = Some(first_match_idx.line_idx);
+        }
+    }
+
+    pub fn handle_side_view_action(&mut self, action: SideViewAction) {
+        match action {
+            SideViewAction::PanLeft(amount) => {
+                self.pan_raw_left(amount);
+            }
+            SideViewAction::PanRight(amount) => {
+                self.pan_raw_right(amount);
+            }
         }
     }
 
@@ -517,6 +572,40 @@ impl LineMode {
     #[inline]
     pub fn scroller(&self) -> &ViewportScroller {
         &self.scroller
+    }
+
+    #[inline]
+    pub fn raw_pan_x(&self) -> usize {
+        self.raw_pan_x
+    }
+
+    pub fn pan_raw_left(&mut self, amount: usize) {
+        self.raw_pan_x = self.raw_pan_x.saturating_sub(amount);
+    }
+
+    pub fn pan_raw_right(&mut self, amount: usize) {
+        self.raw_pan_x = (self.raw_pan_x + amount).min(self.max_raw_pan_x);
+    }
+
+    pub fn reset_raw_pan(&mut self) {
+        self.raw_pan_x = 0;
+    }
+
+    pub fn compute_raw_cursor_pan(
+        cursor_char: usize,
+        raw_panel_width: usize,
+        current_pan_x: usize,
+        stride: usize,
+    ) -> usize {
+        let raw_cursor_x = cursor_char * stride;
+
+        if raw_cursor_x >= current_pan_x + raw_panel_width {
+            raw_cursor_x.saturating_sub(raw_panel_width) + 4
+        } else if raw_cursor_x < current_pan_x {
+            raw_cursor_x.saturating_sub(2)
+        } else {
+            current_pan_x
+        }
     }
 }
 
