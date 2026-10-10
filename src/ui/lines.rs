@@ -15,7 +15,7 @@ use crate::{
     },
     configs::{
         KeywordHighlight, LineDisplayMode, SettingsConfig, ThemeConfig, WrapMode,
-        settings::PrefixWrapBehavior,
+        settings::{PrefixWrapBehavior, RawSideOrientation, RawSideView, raw_view_to_display_mode},
     },
     ui::{
         PostRenderEffect,
@@ -95,6 +95,7 @@ fn trim_trailing_incomplete_ansi(text: &str) -> &str {
     text
 }
 
+// TODO: move in a common ?
 pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'static>> {
     match mode {
         LineDisplayMode::Pretty => {
@@ -236,6 +237,7 @@ pub fn render_monitor(
     app: &mut App,
     frame: &mut Frame,
     content_area: Rect,
+    raw_side_area: Option<Rect>,
     scrollbar_area: Option<Rect>,
     theme: &ThemeConfig,
     highlights: &[KeywordHighlight],
@@ -353,6 +355,11 @@ pub fn render_monitor(
         line_x_offset.min(u16::MAX as usize) as u16,
     ));
     frame.render_widget(history_paragraph, content_area);
+
+    // side view raw panel
+    if let Some(raw_area) = raw_side_area {
+        render_raw_side_panel(app, frame, raw_area, paragraph_y_offset, theme);
+    }
 
     apply_keyword_highlights(frame.buffer_mut(), content_area, highlights);
 
@@ -526,4 +533,99 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect, theme: &The
         }
         frame.set_cursor_position((cursor_x, cursor_y));
     }
+}
+
+// TODO: make wrap sync
+// TODO: add  "search" highlights
+// TODO: check if possible to opti only visible lines
+pub fn render_raw_side_panel(
+    app: &App,
+    frame: &mut Frame,
+    raw_area: Rect,
+    paragraph_y_offset: usize,
+    theme: &ThemeConfig,
+) {
+    let raw_view = app.settings().raw_side.view;
+    if raw_view == RawSideView::Off || raw_area.width == 0 || raw_area.height == 0 {
+        return;
+    }
+
+    let display_mode = raw_view_to_display_mode(raw_view);
+    let title = match raw_view {
+        RawSideView::Hex => " RAW (Hex) ",
+        RawSideView::Octal => " RAW (Octal) ",
+        RawSideView::Binary => " RAW (Bits) ",
+        RawSideView::Off => return,
+    };
+
+    let borders = match app.settings().raw_side.orientation {
+        RawSideOrientation::Right => Borders::LEFT,
+        RawSideOrientation::Bottom => Borders::TOP,
+    };
+
+    let block = Block::default()
+        .borders(borders)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title(title);
+
+    let inner_area = block.inner(raw_area);
+    frame.render_widget(block, raw_area);
+
+    let copy_range = app.line_mode.copy_state().normalized_selection();
+
+    let mut raw_lines: Vec<Line> = app
+        .line_mode
+        .history()
+        .iter()
+        .enumerate()
+        .map(|(idx, entry)| {
+            let sel_range = copy_range.and_then(|(start, end)| {
+                if idx < start.line_idx || idx > end.line_idx {
+                    None
+                } else {
+                    let from = if idx == start.line_idx {
+                        start.char_idx
+                    } else {
+                        0
+                    };
+                    let to = if idx == end.line_idx {
+                        end.char_idx
+                    } else {
+                        usize::MAX
+                    };
+                    Some((from, to))
+                }
+            });
+
+            let mut spans = format_line_content(&entry.text, display_mode);
+
+            if let Some((sel_start, sel_end)) = sel_range {
+                let stride = match raw_view {
+                    RawSideView::Hex => 3,
+                    RawSideView::Octal => 4,
+                    RawSideView::Binary => 9,
+                    RawSideView::Off => 1,
+                };
+                let raw_sel_start = sel_start * stride;
+                let raw_sel_end = (sel_end + 1) * stride;
+                spans =
+                    apply_selection_to_spans(spans, raw_sel_start, raw_sel_end, *theme.selection);
+            }
+
+            Line::from(spans)
+        })
+        .collect();
+
+    if app.settings().line_mode.display_partial_rx && !app.line_mode.partial_rx().is_empty() {
+        let partial_raw = String::from_utf8_lossy(app.line_mode.partial_rx());
+        let spans = format_line_content(&partial_raw, display_mode);
+        raw_lines.push(Line::from(spans));
+    }
+
+    let raw_paragraph = Paragraph::new(raw_lines).scroll((
+        paragraph_y_offset.min(u16::MAX as usize) as u16,
+        0, // X-scroll remains 0 (or optionally synced)
+    ));
+
+    frame.render_widget(raw_paragraph, inner_area);
 }

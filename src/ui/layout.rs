@@ -7,13 +7,17 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     app::{App, types::FocusTarget},
-    configs::{InputMode, SettingsConfig, ThemeConfig, WrapMode, settings::PrefixWrapBehavior},
+    configs::{
+        InputMode, SettingsConfig, ThemeConfig, WrapMode,
+        settings::{PrefixWrapBehavior, RawSideOrientation, RawSideView},
+    },
 };
 
 pub struct ScreenLayout {
     pub monitor_outer: Rect,
     pub content_area: Rect,
     pub scrollbar_area: Option<Rect>,
+    pub raw_side_area: Option<Rect>,
     pub timestamp_gutter: Option<Rect>,
     pub prompt_area: Option<Rect>,
     pub status_bar_area: Option<Rect>,
@@ -96,6 +100,36 @@ impl ScreenLayout {
             _ => (None, inner_monitor),
         };
 
+        let (main_stream_area, raw_side_area) = if app.settings().raw_side.view != RawSideView::Off
+        {
+            let inspector_percent = app.settings().raw_side.split_percent.clamp(10, 85);
+            let main_percent = 100 - app.settings().raw_side.split_percent;
+            let orientation = match app.settings().raw_side.orientation {
+                RawSideOrientation::Right => Direction::Horizontal,
+                RawSideOrientation::Bottom => Direction::Vertical,
+            };
+            let is_sufficiently_large = match orientation {
+                Direction::Horizontal => remaining_after_gutter.width >= 50,
+                Direction::Vertical => remaining_after_gutter.height >= 12,
+            };
+
+            if is_sufficiently_large {
+                let chunks = Layout::default()
+                    .direction(orientation)
+                    .constraints([
+                        Constraint::Percentage(main_percent),
+                        Constraint::Percentage(inspector_percent),
+                    ])
+                    .split(remaining_after_gutter);
+
+                (chunks[0], Some(chunks[1]))
+            } else {
+                (remaining_after_gutter, None) //  TODO: rendering error : screen too small
+            }
+        } else {
+            (remaining_after_gutter, None)
+        };
+
         let (content_area, scrollbar_area) = if show_scrollbar {
             if show_borders {
                 let sb_area = Rect {
@@ -104,13 +138,13 @@ impl ScreenLayout {
                     width: 1,
                     height: monitor_outer.height.saturating_sub(2),
                 };
-                (remaining_after_gutter, Some(sb_area))
+                (main_stream_area, Some(sb_area))
             } else {
                 let content = Rect {
-                    x: remaining_after_gutter.x,
-                    y: remaining_after_gutter.y,
-                    width: remaining_after_gutter.width.saturating_sub(1),
-                    height: remaining_after_gutter.height,
+                    x: main_stream_area.x,
+                    y: main_stream_area.y,
+                    width: main_stream_area.width.saturating_sub(1),
+                    height: main_stream_area.height,
                 };
                 let sb = Rect {
                     x: remaining_after_gutter.x + remaining_after_gutter.width.saturating_sub(1),
@@ -121,13 +155,14 @@ impl ScreenLayout {
                 (content, Some(sb))
             }
         } else {
-            (remaining_after_gutter, None)
+            (main_stream_area, None)
         };
 
         Self {
             monitor_outer,
             content_area,
             scrollbar_area,
+            raw_side_area,
             timestamp_gutter: gutter_area,
             prompt_area,
             status_bar_area,

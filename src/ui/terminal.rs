@@ -3,20 +3,27 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 
 use crate::{
     app::{App, types::FocusTarget},
-    configs::{KeywordHighlight, ThemeConfig},
+    configs::{
+        KeywordHighlight, LineDisplayMode, ThemeConfig,
+        settings::{RawSideOrientation, RawSideView},
+    },
     terminal::{MaxicomCursor, MaxicomTerminal},
-    ui::common::{apply_keyword_highlights, render_search_bar},
+    ui::{
+        common::{apply_keyword_highlights, apply_selection_to_spans, render_search_bar},
+        lines::format_line_content,
+    },
 };
 
 pub fn render_vt100_terminal(
     app: &mut App,
     frame: &mut Frame,
     content_area: Rect,
+    raw_side_area: Option<Rect>,
     scrollbar_area: Option<Rect>,
     theme: &ThemeConfig,
     highlights: &[KeywordHighlight],
@@ -40,6 +47,11 @@ pub fn render_vt100_terminal(
 
     frame.render_widget(term_widget, content_area);
     apply_keyword_highlights(frame.buffer_mut(), content_area, highlights);
+
+    // side view raw panel
+    if let Some(raw_area) = raw_side_area {
+        render_vt100_raw_side_panel(app, frame, raw_area, theme);
+    }
 
     let (grid_rows, cols) = app.terminal_mode.get_vt100_size();
     let max_sb = app.terminal_mode.get_max_scrollback();
@@ -312,4 +324,119 @@ pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect, theme: 
 
     let gutter = Paragraph::new(lines);
     frame.render_widget(gutter, area);
+}
+
+// TODO: apply mirrors to search occurences
+// TODO: search with speical 0x, 0b, 0o
+pub fn render_vt100_raw_side_panel(
+    app: &App,
+    frame: &mut Frame,
+    raw_area: Rect,
+    theme: &ThemeConfig,
+) {
+    let raw_view = app.settings().raw_side.view;
+    if raw_view == RawSideView::Off || raw_area.width == 0 || raw_area.height == 0 {
+        return;
+    }
+
+    let display_mode = match raw_view {
+        RawSideView::Hex => LineDisplayMode::Hex,
+        RawSideView::Octal => LineDisplayMode::Octal,
+        RawSideView::Binary => LineDisplayMode::Binary,
+        RawSideView::Off => return,
+    };
+
+    let title = match raw_view {
+        RawSideView::Hex => " RAW (Hex) ",
+        RawSideView::Octal => " RAW (Octal) ",
+        RawSideView::Binary => " RAW (Bits) ",
+        RawSideView::Off => return,
+    };
+
+    let borders = match app.settings().raw_side.orientation {
+        RawSideOrientation::Right => Borders::LEFT,
+        RawSideOrientation::Bottom => Borders::TOP,
+    };
+
+    let block = Block::default()
+        .borders(borders)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title(title);
+
+    let inner_area = block.inner(raw_area);
+    frame.render_widget(block, raw_area);
+
+    let screen = app.terminal_mode.vt100_screen();
+    let (grid_rows, cols) = screen.size();
+    let pan_y = app.terminal_mode.pan_offset_y();
+    let max_sb = app.terminal_mode.get_max_scrollback();
+    let current_sb = screen.scrollback();
+    let top_visible_world_line = if current_sb > 0 {
+        max_sb.saturating_sub(current_sb)
+    } else {
+        max_sb
+    };
+
+    let copy_state = app.terminal_mode.copy_state();
+    let normalized_selection = if copy_state.active {
+        copy_state.normalized_selection()
+    } else {
+        None
+    };
+
+    let rows_to_render = (inner_area.height as usize).min(grid_rows as usize);
+    let mut raw_lines = Vec::with_capacity(rows_to_render);
+
+    for r in 0..rows_to_render {
+        let emulator_row = r + pan_y;
+        if emulator_row >= grid_rows as usize {
+            raw_lines.push(Line::from(""));
+            continue;
+        }
+
+        let world_row = top_visible_world_line + emulator_row;
+        let row_text = screen.rows(0, cols).nth(emulator_row).unwrap_or_default();
+
+        let trimmed_text = row_text.trim_end();
+        if trimmed_text.is_empty() {
+            raw_lines.push(Line::from(""));
+            continue;
+        }
+
+        let mut spans = format_line_content(trimmed_text, display_mode);
+
+        if let Some((start_pos, end_pos)) = normalized_selection
+            && world_row >= start_pos.line_idx
+            && world_row <= end_pos.line_idx
+        {
+            let chars_len = trimmed_text.chars().count();
+            let from = if world_row == start_pos.line_idx {
+                start_pos.char_idx.min(chars_len)
+            } else {
+                0
+            };
+            let to = if world_row == end_pos.line_idx {
+                (end_pos.char_idx + 1).min(chars_len)
+            } else {
+                chars_len
+            };
+
+            let stride = match raw_view {
+                RawSideView::Hex => 3,
+                RawSideView::Octal => 4,
+                RawSideView::Binary => 9,
+                RawSideView::Off => 1,
+            };
+
+            let raw_sel_start = from * stride;
+            let raw_sel_end = to * stride;
+
+            spans = apply_selection_to_spans(spans, raw_sel_start, raw_sel_end, *theme.selection);
+        }
+
+        raw_lines.push(Line::from(spans));
+    }
+
+    let paragraph = Paragraph::new(raw_lines);
+    frame.render_widget(paragraph, inner_area);
 }

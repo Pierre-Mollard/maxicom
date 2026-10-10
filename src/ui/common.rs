@@ -330,6 +330,7 @@ pub fn apply_keyword_highlights(buf: &mut Buffer, area: Rect, highlights: &[Keyw
     }
 }
 
+// TODO: move to utils
 pub fn apply_selection_to_spans(
     spans: Vec<Span<'static>>,
     sel_start: usize,

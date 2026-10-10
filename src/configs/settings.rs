@@ -90,6 +90,15 @@ pub enum RawSideOrientation {
     Bottom,
 }
 
+pub fn raw_view_to_display_mode(view: RawSideView) -> LineDisplayMode {
+    match view {
+        RawSideView::Hex => LineDisplayMode::Hex,
+        RawSideView::Octal => LineDisplayMode::Octal,
+        RawSideView::Binary => LineDisplayMode::Binary,
+        RawSideView::Off => LineDisplayMode::Clean,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RawSideConfig {
     pub view: RawSideView,
@@ -547,6 +556,14 @@ impl SettingsConfig {
             });
         }
 
+        if self.raw_side.split_percent < 10 || self.raw_side.split_percent > 85 {
+            return Err(ConfigValidationError::InvalidGenericField {
+                name: "raw_side.split_percent".to_owned(),
+                min: 10,
+                max: 85,
+            });
+        }
+
         if let Err(err) = StrftimeItems::new(&self.timestamp_format).parse() {
             return Err(ConfigValidationError::InvalidTimestampFormat {
                 err: err.to_string(),
@@ -587,6 +604,11 @@ pub enum ConfigValidationError {
     InvalidStatusBarTimeFormat {
         err: String,
     },
+    InvalidGenericField {
+        name: String,
+        min: usize,
+        max: usize,
+    },
 }
 
 impl std::fmt::Display for ConfigValidationError {
@@ -604,6 +626,9 @@ impl std::fmt::Display for ConfigValidationError {
             }
             Self::InvalidStatusBarTimeFormat { err } => {
                 write!(f, "invalid status bar time_format: {err}")
+            }
+            Self::InvalidGenericField { name, min, max } => {
+                write!(f, "{name} is not a value between {min} and {max}")
             }
         }
     }
