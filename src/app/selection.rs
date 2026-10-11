@@ -1,3 +1,5 @@
+use std::io::{self, Write};
+
 use crate::inputs::{
     CopyModeAction, find_next_word, find_prev_word, find_prev_word_end, find_word_end,
 };
@@ -130,13 +132,26 @@ impl CopyModeState {
                 CopyActionResult::Moved
             }
             CopyModeAction::MoveLeft => {
-                self.cursor.char_idx = self.cursor.char_idx.saturating_sub(1);
+                if self.cursor.char_idx > 0 {
+                    self.cursor.char_idx -= 1;
+                } else if self.cursor.line_idx > 0 {
+                    self.cursor.line_idx -= 1;
+                    let prev_line_len = source.get_line_len(self.cursor.line_idx);
+                    self.cursor.char_idx = prev_line_len.saturating_sub(1);
+                }
                 self.cursor.preferred_col = self.cursor.char_idx;
                 CopyActionResult::Moved
             }
+
             CopyModeAction::MoveRight => {
-                let max_char = source.get_line_len(self.cursor.line_idx).saturating_sub(1);
-                self.cursor.char_idx = (self.cursor.char_idx + 1).min(max_char);
+                let current_line_len = source.get_line_len(self.cursor.line_idx);
+                let max_char = current_line_len.saturating_sub(1);
+                if self.cursor.char_idx < max_char {
+                    self.cursor.char_idx += 1;
+                } else if self.cursor.line_idx < max_line {
+                    self.cursor.line_idx += 1;
+                    self.cursor.char_idx = 0;
+                }
                 self.cursor.preferred_col = self.cursor.char_idx;
                 CopyActionResult::Moved
             }
@@ -178,14 +193,56 @@ impl CopyModeState {
                 self.cursor.preferred_col = last;
                 CopyActionResult::Moved
             }
-            CopyModeAction::NextWord => self.move_word(source, false, find_next_word),
-            CopyModeAction::NextBigWord => self.move_word(source, true, find_next_word),
-            CopyModeAction::PrevWord => self.move_word(source, false, find_prev_word),
-            CopyModeAction::PrevBigWord => self.move_word(source, true, find_prev_word),
-            CopyModeAction::WordEnd => self.move_word(source, false, find_word_end),
-            CopyModeAction::BigWordEnd => self.move_word(source, true, find_word_end),
-            CopyModeAction::PrevWordEnd => self.move_word(source, false, find_prev_word_end),
-            CopyModeAction::PrevBigWordEnd => self.move_word(source, true, find_prev_word_end),
+            CopyModeAction::NextWord | CopyModeAction::NextBigWord => {
+                let big = matches!(action, CopyModeAction::NextBigWord);
+                let current_line_len = source.get_line_len(self.cursor.line_idx);
+                let max_char = current_line_len.saturating_sub(1);
+                if self.cursor.char_idx >= max_char && self.cursor.line_idx < max_line {
+                    self.cursor.line_idx += 1;
+                    self.cursor.char_idx = 0;
+                    self.cursor.preferred_col = 0;
+                    CopyActionResult::Moved
+                } else {
+                    self.move_word(source, big, find_next_word)
+                }
+            }
+            CopyModeAction::PrevWord | CopyModeAction::PrevBigWord => {
+                let big = matches!(action, CopyModeAction::PrevBigWord);
+                if self.cursor.char_idx == 0 && self.cursor.line_idx > 0 {
+                    self.cursor.line_idx -= 1;
+                    let prev_line_len = source.get_line_len(self.cursor.line_idx);
+                    self.cursor.char_idx = prev_line_len.saturating_sub(1);
+                    self.cursor.preferred_col = self.cursor.char_idx;
+                    self.move_word(source, big, find_prev_word)
+                } else {
+                    self.move_word(source, big, find_prev_word)
+                }
+            }
+            CopyModeAction::WordEnd | CopyModeAction::BigWordEnd => {
+                let big = matches!(action, CopyModeAction::BigWordEnd);
+                let current_line_len = source.get_line_len(self.cursor.line_idx);
+                let max_char = current_line_len.saturating_sub(1);
+                if self.cursor.char_idx >= max_char && self.cursor.line_idx < max_line {
+                    self.cursor.line_idx += 1;
+                    self.cursor.char_idx = 0;
+                    self.cursor.preferred_col = 0;
+                    CopyActionResult::Moved
+                } else {
+                    self.move_word(source, big, find_word_end)
+                }
+            }
+            CopyModeAction::PrevWordEnd | CopyModeAction::PrevBigWordEnd => {
+                let big = matches!(action, CopyModeAction::PrevBigWordEnd);
+                if self.cursor.char_idx == 0 && self.cursor.line_idx > 0 {
+                    self.cursor.line_idx -= 1;
+                    let prev_line_len = source.get_line_len(self.cursor.line_idx);
+                    self.cursor.char_idx = prev_line_len.saturating_sub(1);
+                    self.cursor.preferred_col = self.cursor.char_idx;
+                    self.move_word(source, big, find_prev_word_end)
+                } else {
+                    self.move_word(source, big, find_prev_word_end)
+                }
+            }
             CopyModeAction::Select => {
                 self.toggle_selection();
                 CopyActionResult::Moved
@@ -257,4 +314,36 @@ impl CopyModeState {
             CopyActionResult::None
         }
     }
+}
+
+/// copies text via ANSI OSC 52 escape code
+pub fn copy_via_osc52(text: &str) -> io::Result<()> {
+    // simple standard base64 encoding (RFC 4648)
+    const B64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes = text.as_bytes();
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = chunk.get(1).copied().unwrap_or(0);
+        let b2 = chunk.get(2).copied().unwrap_or(0);
+
+        encoded.push(B64_CHARS[(b0 >> 2) as usize] as char);
+        encoded.push(B64_CHARS[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize] as char);
+        if chunk.len() > 1 {
+            encoded.push(B64_CHARS[(((b1 & 0x0F) << 2) | (b2 >> 6)) as usize] as char);
+        } else {
+            encoded.push('=');
+        }
+        if chunk.len() > 2 {
+            encoded.push(B64_CHARS[(b2 & 0x3F) as usize] as char);
+        } else {
+            encoded.push('=');
+        }
+    }
+
+    // write \x1b]52;c;<base64>\x07 to stdout
+    let mut stdout = io::stdout();
+    write!(stdout, "\x1b]52;c;{encoded}\x07")?;
+    stdout.flush()
 }

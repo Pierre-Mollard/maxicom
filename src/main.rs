@@ -11,7 +11,7 @@ use crossterm::{
 use ratatui::DefaultTerminal;
 
 use crate::{
-    app::{App, UpdateEffect, search::copy_via_osc52},
+    app::{App, UpdateEffect, selection::copy_via_osc52},
     configs::{AppConfig, InputMode, KeyResolver},
     overlays::{ErrorDialog, Overlay},
     serial::{SerialDevice, SerialError, parse_args, print_help},

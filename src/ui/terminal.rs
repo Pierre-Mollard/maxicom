@@ -1,6 +1,3 @@
-// TODO: search is not centering in main view
-// TODO: not auto go to new sub line in copy mode
-
 use ratatui::{
     Frame,
     layout::Rect,
