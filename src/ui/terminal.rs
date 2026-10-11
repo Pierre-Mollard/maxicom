@@ -326,9 +326,6 @@ pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect, theme: 
     frame.render_widget(gutter, area);
 }
 
-// TODO: apply mirrors to search occurences
-// TODO: search with speical 0x, 0b, 0o
-// TODO: selection bug mirroring last bytes (small line)
 pub fn render_vt100_raw_side_panel(
     app: &App,
     frame: &mut Frame,

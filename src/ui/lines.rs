@@ -1,7 +1,7 @@
 // TODO: see what in common with the render in terminal mode
 // TODO: check if factorize panning logic in terminal and line mode
-// TODO: center the occurance of search when next/previous and when typing too
 // TODO: add highlight logic to terminal too and fix to match what's here
+// TODO: search with speical 0x, 0b, 0o
 
 use ratatui::{
     Frame,
@@ -251,12 +251,22 @@ pub fn render_monitor(
 
         if let Some(raw_area) = raw_side_area {
             let usable_width = (raw_area.width as usize).saturating_sub(1);
-            app.line_mode.sync_raw_pan_with_local_col(
-                raw_view,
-                usable_width,
-                local_byte_offset,
-                total_sub_bytes,
-            );
+
+            if is_search_active {
+                app.line_mode.center_raw_pan_on_byte(
+                    raw_view,
+                    usable_width,
+                    local_byte_offset,
+                    total_sub_bytes,
+                );
+            } else {
+                app.line_mode.sync_raw_pan_with_local_col(
+                    raw_view,
+                    usable_width,
+                    local_byte_offset,
+                    total_sub_bytes,
+                );
+            }
         }
     }
 
@@ -453,7 +463,7 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect, theme: &The
 
 // NOTE: review this
 pub fn render_raw_side_panel(
-    app: &App,
+    app: &mut App,
     frame: &mut Frame,
     raw_area: Rect,
     paragraph_y_offset: usize,
@@ -659,7 +669,17 @@ pub fn render_raw_side_panel(
         visible_raw_lines.push(Line::from(spans));
     }
 
-    let raw_pan_x = app.line_mode.raw_pan_x();
+    let max_visible_raw_width = visible_raw_lines
+        .iter()
+        .map(|l| l.width())
+        .max()
+        .unwrap_or(0);
+
+    let usable_width = inner_area.width as usize;
+    app.line_mode
+        .update_raw_limits(max_visible_raw_width.saturating_sub(usable_width));
+
+    let raw_pan_x = app.line_mode.raw_pan_x().min(app.line_mode.raw_pan_x_max());
     let raw_paragraph =
         Paragraph::new(visible_raw_lines).scroll((0, raw_pan_x.min(u16::MAX as usize) as u16));
 

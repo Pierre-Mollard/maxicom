@@ -286,7 +286,6 @@ impl App {
     }
 
     fn update_side_view(&mut self, action: SideViewAction) -> UpdateEffect {
-        // TODO: check why this not called
         match self.settings.input_mode {
             InputMode::Terminal => {
                 self.terminal_mode.handle_side_view_action(action);

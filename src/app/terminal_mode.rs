@@ -677,27 +677,6 @@ impl TerminalMode {
     pub fn pan_raw_right(&mut self, amount: usize) {
         self.raw_pan_x = (self.raw_pan_x + amount).min(self.max_raw_pan_x);
     }
-
-    pub fn reset_raw_pan(&mut self) {
-        self.raw_pan_x = 0;
-    }
-
-    pub fn compute_raw_cursor_pan(
-        cursor_char: usize,
-        raw_panel_width: usize,
-        current_pan_x: usize,
-        stride: usize,
-    ) -> usize {
-        let raw_cursor_x = cursor_char * stride;
-
-        if raw_cursor_x >= current_pan_x + raw_panel_width {
-            raw_cursor_x.saturating_sub(raw_panel_width) + 4
-        } else if raw_cursor_x < current_pan_x {
-            raw_cursor_x.saturating_sub(2)
-        } else {
-            current_pan_x
-        }
-    }
 }
 
 // HACK: there is no function to fetch string content from history so sb everywhere
