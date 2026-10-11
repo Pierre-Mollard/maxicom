@@ -318,7 +318,8 @@ impl App {
     fn update_action_search_mode(&mut self, action: SearchModeAction) -> UpdateEffect {
         match self.settings.input_mode {
             InputMode::Terminal => {
-                self.terminal_mode.handle_search_action(action);
+                self.terminal_mode
+                    .handle_search_action(action, self.settings.raw_side.view);
             }
             InputMode::Line => {
                 self.line_mode.handle_search_action(action, &self.settings);

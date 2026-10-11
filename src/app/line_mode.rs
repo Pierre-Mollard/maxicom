@@ -357,18 +357,19 @@ impl LineMode {
         self.scroller.offset_x = self.scroller.offset_x.min(self.scroller.max_pan_x);
     }
 
-    pub fn update_search_matches(&mut self, display_mode: LineDisplayMode) {
+    pub fn update_search_matches(&mut self, display_mode: LineDisplayMode, raw_view: RawSideView) {
         self.search_state
-            .update_matches_from_entries(&self.local_history, display_mode);
+            .update_matches_from_entries(&self.local_history, display_mode, raw_view);
     }
 
     pub fn handle_search_action(&mut self, action: SearchModeAction, settings: &SettingsConfig) {
         let display_mode = settings.line_mode.display_mode;
+        let raw_view = settings.raw_side.view;
         match action {
             SearchModeAction::Start => {
                 self.search_state.toggle_itself();
                 if self.search_state.active {
-                    self.update_search_matches(display_mode);
+                    self.update_search_matches(display_mode, raw_view);
                 }
             }
             SearchModeAction::Next => {
@@ -404,19 +405,24 @@ impl LineMode {
             }
             SearchModeAction::HandleKey(key_event) => {
                 if self.search_state.active {
-                    self.handle_input_search(key_event, display_mode);
+                    self.handle_input_search(key_event, display_mode, raw_view);
                 }
             }
             SearchModeAction::Kind => {
                 self.search_state.toggle_mode();
-                self.update_search_matches(display_mode);
+                self.update_search_matches(display_mode, raw_view);
             }
         }
     }
 
-    pub fn handle_input_search(&mut self, key_event: KeyEvent, display_mode: LineDisplayMode) {
+    pub fn handle_input_search(
+        &mut self,
+        key_event: KeyEvent,
+        display_mode: LineDisplayMode,
+        raw_view: RawSideView,
+    ) {
         dispatch_input_key(&mut self.search_state.query, key_event);
-        self.update_search_matches(display_mode);
+        self.update_search_matches(display_mode, raw_view);
     }
 
     pub fn handle_side_view_action(&mut self, action: SideViewAction) {

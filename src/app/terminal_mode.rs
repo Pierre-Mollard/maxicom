@@ -451,12 +451,12 @@ impl TerminalMode {
             },
         }
     }
-    pub fn handle_search_action(&mut self, action: SearchModeAction) {
+    pub fn handle_search_action(&mut self, action: SearchModeAction, raw_view: RawSideView) {
         match action {
             SearchModeAction::Start => {
                 self.search_state.toggle_itself();
                 if self.search_state.active {
-                    self.update_search_matches();
+                    self.update_search_matches(raw_view);
                 }
             }
             SearchModeAction::Next => {
@@ -492,12 +492,12 @@ impl TerminalMode {
             }
             SearchModeAction::HandleKey(key_event) => {
                 if self.search_state.active {
-                    self.handle_input_search(key_event);
+                    self.handle_input_search(key_event, raw_view);
                 }
             }
             SearchModeAction::Kind => {
                 self.search_state.toggle_mode();
-                self.update_search_matches();
+                self.update_search_matches(raw_view);
             }
         }
     }
@@ -583,14 +583,15 @@ impl TerminalMode {
         }
     }
 
-    pub fn update_search_matches(&mut self) {
+    pub fn update_search_matches(&mut self, raw_view: RawSideView) {
         let text = self.all_text_lines();
-        self.search_state.update_matches_from_strings(&text);
+        self.search_state
+            .update_matches_from_strings(&text, raw_view);
     }
 
-    pub fn handle_input_search(&mut self, key_event: KeyEvent) {
+    pub fn handle_input_search(&mut self, key_event: KeyEvent, raw_view: RawSideView) {
         dispatch_input_key(&mut self.search_state.query, key_event);
-        self.update_search_matches();
+        self.update_search_matches(raw_view);
     }
 
     pub fn handle_side_view_action(&mut self, action: SideViewAction) {

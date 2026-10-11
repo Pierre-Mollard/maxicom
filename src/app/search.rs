@@ -4,6 +4,7 @@ use tui_input::Input;
 use crate::app::data_processing::displayable_line_string;
 use crate::app::types::LogEntry;
 use crate::configs::LineDisplayMode;
+use crate::configs::settings::RawSideView;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SearchModeKind {
@@ -38,6 +39,7 @@ impl SearchState {
         &mut self,
         history: &VecDeque<LogEntry>,
         display_mode: LineDisplayMode,
+        raw_view: RawSideView,
     ) {
         let q_str = self.query_str().to_string();
         if q_str.is_empty() {
@@ -51,7 +53,7 @@ impl SearchState {
 
         match self.mode_kind {
             SearchModeKind::RawBytes => {
-                if let Some(target_bytes) = parse_raw_bytes(&q_str) {
+                if let Some(target_bytes) = parse_raw_bytes_for_view(&q_str, raw_view) {
                     let needle_len = target_bytes.len();
                     for (line_idx, entry) in history.iter().enumerate() {
                         let display_text = displayable_line_string(&entry.text, display_mode);
@@ -99,7 +101,6 @@ impl SearchState {
             }
         }
 
-        // Single write to self.matches avoids all borrow conflicts
         self.matches = new_matches;
         self.current_match = 0;
 
@@ -110,7 +111,7 @@ impl SearchState {
         }
     }
 
-    pub fn update_matches_from_strings(&mut self, all_lines: &[String]) {
+    pub fn update_matches_from_strings(&mut self, all_lines: &[String], raw_view: RawSideView) {
         let q_str = self.query_str().to_string();
         if q_str.is_empty() {
             self.matches.clear();
@@ -123,7 +124,7 @@ impl SearchState {
 
         match self.mode_kind {
             SearchModeKind::RawBytes => {
-                if let Some(target_bytes) = parse_raw_bytes(&q_str) {
+                if let Some(target_bytes) = parse_raw_bytes_for_view(&q_str, raw_view) {
                     let needle_len = target_bytes.len();
                     for (line_idx, line_text) in all_lines.iter().enumerate() {
                         let bytes = line_text.as_bytes();
@@ -236,15 +237,6 @@ impl SearchState {
         self.toggle(!self.active);
     }
 
-    pub fn active_occurrence_for_line(&self, line_idx: usize) -> Option<usize> {
-        if let Some(m) = self.matches.get(self.current_match)
-            && m.line_idx == line_idx
-        {
-            return Some(m.occurrence_in_line);
-        }
-        None
-    }
-
     #[inline]
     pub fn query_str(&self) -> &str {
         self.query.value()
@@ -258,68 +250,83 @@ impl SearchState {
     }
 }
 
-pub fn parse_raw_bytes(input: &str) -> Option<Vec<u8>> {
+// NOTE: check this
+pub fn parse_raw_bytes_for_view(input: &str, raw_view: RawSideView) -> Option<Vec<u8>> {
     let q = input.trim();
     if q.is_empty() {
         return None;
     }
 
-    if q.starts_with("0x") || q.starts_with("\\x") {
-        let clean = q.replace("0x", " ").replace("\\x", " ");
-        return clean
-            .split_whitespace()
-            .map(|tok| u8::from_str_radix(tok, 16))
-            .collect::<Result<Vec<u8>, _>>()
-            .ok();
-    }
-
-    if q.starts_with("0b") {
-        let clean = q.replace("0b", " ");
-        return clean
-            .split_whitespace()
-            .map(|tok| u8::from_str_radix(tok, 2))
-            .collect::<Result<Vec<u8>, _>>()
-            .ok();
-    }
-
-    if q.starts_with("0o") {
-        let clean = q.replace("0o", " ");
-        return clean
-            .split_whitespace()
-            .map(|tok| u8::from_str_radix(tok, 8))
-            .collect::<Result<Vec<u8>, _>>()
-            .ok();
-    }
-
-    if q.contains(' ') {
-        let tokens: Vec<&str> = q.split_whitespace().collect();
-        if tokens
-            .iter()
-            .all(|t| t.len() <= 2 && t.chars().all(|c| c.is_ascii_hexdigit()))
-        {
-            let res: Result<Vec<u8>, _> =
-                tokens.iter().map(|t| u8::from_str_radix(t, 16)).collect();
-            if let Ok(b) = res
-                && !b.is_empty()
-            {
-                return Some(b);
-            }
-        }
-    }
-
-    if q.len() >= 2 && q.len() % 2 == 0 && q.chars().all(|c| c.is_ascii_hexdigit()) {
-        let mut bytes = Vec::with_capacity(q.len() / 2);
-        for i in (0..q.len()).step_by(2) {
-            if let Ok(b) = u8::from_str_radix(&q[i..i + 2], 16) {
-                bytes.push(b);
+    match raw_view {
+        RawSideView::Hex | RawSideView::Off => {
+            let clean = q.replace("0x", " ").replace("\\x", " ");
+            if clean.contains(' ') {
+                clean
+                    .split_whitespace()
+                    .map(|tok| u8::from_str_radix(tok, 16))
+                    .collect::<Result<Vec<u8>, _>>()
+                    .ok()
+            } else if clean.len() >= 2 && clean.len().is_multiple_of(2) {
+                let mut bytes = Vec::with_capacity(clean.len() / 2);
+                for i in (0..clean.len()).step_by(2) {
+                    if let Ok(b) = u8::from_str_radix(&clean[i..i + 2], 16) {
+                        bytes.push(b);
+                    } else {
+                        return None;
+                    }
+                }
+                Some(bytes)
             } else {
-                return None;
+                u8::from_str_radix(&clean, 16).map(|b| vec![b]).ok()
             }
         }
-        return Some(bytes);
+        RawSideView::Octal => {
+            let clean = q.replace("0o", " ");
+            if clean.contains(' ') {
+                clean
+                    .split_whitespace()
+                    .map(|tok| u8::from_str_radix(tok, 8))
+                    .collect::<Result<Vec<u8>, _>>()
+                    .ok()
+            } else if clean.len().is_multiple_of(3) && clean.len() >= 3 {
+                // Unspaced 3-digit octal tokens: e.g. "155141" -> [0o155, 0o141]
+                let mut bytes = Vec::with_capacity(clean.len() / 3);
+                for i in (0..clean.len()).step_by(3) {
+                    if let Ok(b) = u8::from_str_radix(&clean[i..i + 3], 8) {
+                        bytes.push(b);
+                    } else {
+                        return None;
+                    }
+                }
+                Some(bytes)
+            } else {
+                u8::from_str_radix(&clean, 8).map(|b| vec![b]).ok()
+            }
+        }
+        RawSideView::Binary => {
+            let clean = q.replace("0b", " ");
+            if clean.contains(' ') {
+                clean
+                    .split_whitespace()
+                    .map(|tok| u8::from_str_radix(tok, 2))
+                    .collect::<Result<Vec<u8>, _>>()
+                    .ok()
+            } else if clean.len().is_multiple_of(8) && clean.len() >= 8 {
+                // Unspaced 8-bit bytes: e.g. "0110110101100001"
+                let mut bytes = Vec::with_capacity(clean.len() / 8);
+                for i in (0..clean.len()).step_by(8) {
+                    if let Ok(b) = u8::from_str_radix(&clean[i..i + 8], 2) {
+                        bytes.push(b);
+                    } else {
+                        return None;
+                    }
+                }
+                Some(bytes)
+            } else {
+                u8::from_str_radix(&clean, 2).map(|b| vec![b]).ok()
+            }
+        }
     }
-
-    None
 }
 
 #[inline]
