@@ -14,6 +14,7 @@ use crate::{
     app::{
         App,
         data_processing::displayable_line_string,
+        search::SearchMatch,
         types::{FocusTarget, LogEntry},
     },
     configs::{
@@ -23,8 +24,8 @@ use crate::{
     ui::{
         PostRenderEffect,
         common::{
-            apply_keyword_highlights, apply_search_highlight, apply_selection_to_spans,
-            border_style_for, highlight_raw_byte_range, render_search_bar,
+            apply_keyword_highlights, apply_selection_to_spans, border_style_for,
+            highlight_raw_byte_range, render_search_bar,
         },
         data_display::format_line_content,
         layout::{PreparedLayout, prepare_view_layout},
@@ -34,8 +35,8 @@ use crate::{
 pub fn history_entry_to_line(
     entry: &LogEntry,
     settings: &SettingsConfig,
-    search_query: &str,
-    active_occurrence: Option<usize>,
+    line_matches: &[(usize, &SearchMatch)],
+    active_match_idx: usize,
     selection_range: Option<(usize, usize)>,
     theme: &ThemeConfig,
 ) -> Line<'static> {
@@ -54,8 +55,23 @@ pub fn history_entry_to_line(
 
     let mut content_spans = format_line_content(&entry.text, display_mode);
 
-    if !search_query.is_empty() {
-        content_spans = apply_search_highlight(content_spans, search_query, active_occurrence);
+    if !line_matches.is_empty() {
+        let normal_style = Style::default().bg(Color::Yellow).fg(Color::Black);
+        let active_style = Style::default()
+            .bg(Color::Rgb(255, 140, 0))
+            .fg(Color::Black);
+
+        for &(global_idx, m) in line_matches {
+            let style = if global_idx == active_match_idx {
+                active_style
+            } else {
+                normal_style
+            };
+            let char_len = m.match_char_len.max(1);
+            let inclusive_end = m.col_idx + char_len - 1;
+            content_spans =
+                apply_selection_to_spans(content_spans, m.col_idx, inclusive_end, style);
+        }
     }
 
     if let Some((sel_start, sel_end)) = selection_range {
@@ -82,55 +98,62 @@ pub fn render_monitor(
     let raw_view = app.settings().raw_side.view;
     let post_effect = PostRenderEffect::None;
 
-    let is_search_active = app.line_mode.search().active;
-    let search_query = if is_search_active {
-        app.line_mode.search().query_str().to_string()
-    } else {
-        String::new()
-    };
-
+    let is_search_active =
+        app.line_mode.search().active && !app.line_mode.search().matches.is_empty();
+    let active_match_idx = app.line_mode.search().current_match;
     let copy_range = app.line_mode.copy_state().normalized_selection();
 
-    let mut history_lines: Vec<Line> = app
-        .line_mode
-        .history()
-        .iter()
-        .enumerate()
-        .map(|(idx, entry)| {
-            let active_occ = if is_search_active {
-                app.line_mode.search().active_occurrence_for_line(idx)
-            } else {
-                None
-            };
-
-            let sel_range = copy_range.and_then(|(start, end)| {
-                if idx < start.line_idx || idx > end.line_idx {
-                    None
+    let history_lines: Vec<Line> = {
+        let search = app.line_mode.search();
+        app.line_mode
+            .history()
+            .iter()
+            .enumerate()
+            .map(|(idx, entry)| {
+                // Collect search matches for this line in O(log N)
+                let line_matches: Vec<(usize, &SearchMatch)> = if is_search_active {
+                    let start = search.matches.partition_point(|m| m.line_idx < idx);
+                    let end = search.matches.partition_point(|m| m.line_idx <= idx);
+                    search.matches[start..end]
+                        .iter()
+                        .enumerate()
+                        .map(|(offset, m)| (start + offset, m))
+                        .collect()
                 } else {
-                    let from = if idx == start.line_idx {
-                        start.char_idx
-                    } else {
-                        0
-                    };
-                    let to = if idx == end.line_idx {
-                        end.char_idx
-                    } else {
-                        usize::MAX
-                    };
-                    Some((from, to))
-                }
-            });
+                    Vec::new()
+                };
 
-            history_entry_to_line(
-                entry,
-                app.settings(),
-                &search_query,
-                active_occ,
-                sel_range,
-                theme,
-            )
-        })
-        .collect();
+                let sel_range = copy_range.and_then(|(start, end)| {
+                    if idx < start.line_idx || idx > end.line_idx {
+                        None
+                    } else {
+                        let from = if idx == start.line_idx {
+                            start.char_idx
+                        } else {
+                            0
+                        };
+                        let to = if idx == end.line_idx {
+                            end.char_idx
+                        } else {
+                            usize::MAX
+                        };
+                        Some((from, to))
+                    }
+                });
+
+                history_entry_to_line(
+                    entry,
+                    app.settings(),
+                    &line_matches,
+                    active_match_idx,
+                    sel_range,
+                    theme,
+                )
+            })
+            .collect()
+    };
+
+    let mut history_lines = history_lines;
 
     if app.settings().line_mode.display_partial_rx && !app.line_mode.partial_rx().is_empty() {
         let display_mode = app.settings().line_mode.display_mode;
@@ -290,15 +313,7 @@ pub fn render_monitor(
     }
 
     if let Some(raw_area) = raw_side_area {
-        render_raw_side_panel(
-            app,
-            frame,
-            raw_area,
-            paragraph_y_offset,
-            &search_query,
-            &layout,
-            theme,
-        );
+        render_raw_side_panel(app, frame, raw_area, paragraph_y_offset, &layout, theme);
     }
 
     // main history
@@ -486,7 +501,6 @@ pub fn render_raw_side_panel(
     frame: &mut Frame,
     raw_area: Rect,
     paragraph_y_offset: usize,
-    search_query: &str,
     layout: &PreparedLayout,
     theme: &ThemeConfig,
 ) {
@@ -516,9 +530,9 @@ pub fn render_raw_side_panel(
 
     let copy_range = app.line_mode.copy_state().normalized_selection();
     let history = app.line_mode.history();
-    let is_search_active = !search_query.is_empty();
-    let q_lower = search_query.to_lowercase();
-    let query_len = search_query.chars().count();
+    let is_search_active =
+        app.line_mode.search().active && !app.line_mode.search().matches.is_empty();
+    let active_match_idx = app.line_mode.search().current_match;
 
     let normal_match_style = Style::default().bg(Color::Yellow).fg(Color::Black);
     let active_match_style = Style::default()
@@ -563,31 +577,26 @@ pub fn render_raw_side_panel(
                 }
             });
 
-            let active_occ = if is_search_active {
-                app.line_mode
-                    .search()
-                    .active_occurrence_for_line(logical_idx)
+            // Binary search matches for logical_idx in O(log N)
+            let line_matches: Vec<(usize, &SearchMatch)> = if is_search_active {
+                let search = app.line_mode.search();
+                let start = search.matches.partition_point(|m| m.line_idx < logical_idx);
+                let end = search
+                    .matches
+                    .partition_point(|m| m.line_idx <= logical_idx);
+                search.matches[start..end]
+                    .iter()
+                    .enumerate()
+                    .map(|(offset, m)| (start + offset, m))
+                    .collect()
             } else {
-                None
+                Vec::new()
             };
-
-            // search matches
-            let mut line_matches = Vec::new();
-            if is_search_active && query_len > 0 {
-                let text_lower = display_text.to_lowercase();
-                for (occ_idx, (byte_idx, _)) in text_lower.match_indices(&q_lower).enumerate() {
-                    let m_start = display_text[..byte_idx].chars().count();
-                    let m_end = m_start + query_len;
-                    let is_active = active_occ == Some(occ_idx);
-                    line_matches.push((m_start, m_end, is_active));
-                }
-            }
 
             for (sub_idx, sub) in entry_layout.sub_lines.iter().enumerate() {
                 let line_y = current_visual_row + sub_idx;
                 let is_last_sub = sub_idx == visual_sub_count.saturating_sub(1);
 
-                // Take all remaining chars on the last sub-line
                 let sub_char_end = if is_last_sub {
                     entry_chars.len()
                 } else {
@@ -614,8 +623,12 @@ pub fn render_raw_side_panel(
                         }
                         char_to_byte_idx.push(sub_slice.len());
 
-                        // 1. Search Highlights
-                        for &(m_start, m_end, is_active) in &line_matches {
+                        // 1. Search Highlights using pre-computed matches
+                        for &(global_m_idx, m) in &line_matches {
+                            let m_start = m.col_idx;
+                            let char_len = m.match_char_len.max(1);
+                            let m_end = m.col_idx + char_len;
+
                             if m_end > char_offset && m_start < sub_char_end {
                                 let local_char_start = m_start.saturating_sub(char_offset);
                                 let local_char_end =
@@ -626,7 +639,7 @@ pub fn render_raw_side_panel(
                                     let byte_end = char_to_byte_idx[local_char_end];
 
                                     if byte_start < byte_end {
-                                        let style = if is_active {
+                                        let style = if global_m_idx == active_match_idx {
                                             active_match_style
                                         } else {
                                             normal_match_style
@@ -634,7 +647,7 @@ pub fn render_raw_side_panel(
                                         highlight_raw_byte_range(
                                             &mut spans,
                                             byte_start,
-                                            byte_end - 1,
+                                            byte_end.saturating_sub(1),
                                             style,
                                         );
                                     }
@@ -661,7 +674,7 @@ pub fn render_raw_side_panel(
                                     highlight_raw_byte_range(
                                         &mut spans,
                                         byte_start,
-                                        byte_end - 1,
+                                        byte_end.saturating_sub(1),
                                         *theme.selection,
                                     );
                                 }

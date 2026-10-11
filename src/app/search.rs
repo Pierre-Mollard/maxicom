@@ -33,7 +33,6 @@ pub struct SearchState {
 }
 
 // NOTE: check this
-// TODO: search with speical 0x, 0b, 0o (not working)
 impl SearchState {
     pub fn update_matches_from_entries(
         &mut self,

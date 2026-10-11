@@ -64,7 +64,8 @@ pub fn render_vt100_terminal(
         max_sb
     };
 
-    let is_search_active = app.terminal_mode.search().active;
+    let is_search_active =
+        app.terminal_mode.search().active && !app.terminal_mode.search().matches.is_empty();
 
     // raw panel
     let active_focus = if app.terminal_mode.copy_state().active {
@@ -123,16 +124,14 @@ pub fn render_vt100_terminal(
         render_vt100_raw_side_panel(app, frame, raw_area, theme);
     }
 
-    // search
-    if is_search_active && !app.terminal_mode.search().query_str().is_empty() {
-        let query = app.terminal_mode.search().query_str();
-        let q_lower = query.to_lowercase();
-        let query_char_count = query.chars().count();
-
+    // seach
+    if is_search_active {
         let normal_match_bg = Color::Yellow;
         let active_match_bg = Color::Rgb(255, 140, 0);
         let highlight_fg = Color::Black;
         let active_match_idx = app.terminal_mode.search().current_match;
+
+        let buf = frame.buffer_mut();
 
         for (idx, search_match) in app.terminal_mode.search().matches.iter().enumerate() {
             if search_match.line_idx < top_visible_world_line {
@@ -147,51 +146,36 @@ pub fn render_vt100_terminal(
                 continue;
             }
 
-            let row_text = app
-                .terminal_mode
-                .vt100_screen()
-                .rows(0, cols)
-                .nth(emulator_row)
-                .unwrap_or_default();
+            let char_col_start = search_match.col_idx;
+            let match_len = search_match.match_char_len.max(1);
 
-            let row_lower = row_text.to_lowercase();
+            if char_col_start + match_len <= pan_x {
+                continue;
+            }
 
-            if let Some((byte_start, _)) = row_lower
-                .match_indices(&q_lower)
-                .nth(search_match.occurrence_in_line)
-            {
-                let char_col_start = row_text[..byte_start].chars().count();
+            let is_active = idx == active_match_idx;
+            let bg_color = if is_active {
+                active_match_bg
+            } else {
+                normal_match_bg
+            };
 
-                if char_col_start + query_char_count <= pan_x {
+            for c in 0..match_len {
+                let world_col = char_col_start + c;
+                if world_col < pan_x {
                     continue;
                 }
-
-                let is_active = idx == active_match_idx;
-                let bg_color = if is_active {
-                    active_match_bg
-                } else {
-                    normal_match_bg
-                };
-
-                let buf = frame.buffer_mut();
-
-                for c in 0..query_char_count {
-                    let world_col = char_col_start + c;
-                    if world_col < pan_x {
-                        continue;
-                    }
-                    let viewer_col = world_col - pan_x;
-                    if viewer_col >= content_area.width as usize {
-                        break;
-                    }
-
-                    let buf_x = content_area.x + viewer_col as u16;
-                    let buf_y = content_area.y + viewer_row as u16;
-
-                    let cell = &mut buf[(buf_x, buf_y)];
-                    cell.set_bg(bg_color);
-                    cell.set_fg(highlight_fg);
+                let viewer_col = world_col - pan_x;
+                if viewer_col >= content_area.width as usize {
+                    break;
                 }
+
+                let buf_x = content_area.x + viewer_col as u16;
+                let buf_y = content_area.y + viewer_row as u16;
+
+                let cell = &mut buf[(buf_x, buf_y)];
+                cell.set_bg(bg_color);
+                cell.set_fg(highlight_fg);
             }
         }
     }
@@ -430,11 +414,9 @@ pub fn render_vt100_raw_side_panel(
         None
     };
 
-    let is_search_active = app.terminal_mode.search().active;
-    let search_query = app.terminal_mode.search().query_str();
-    let q_lower = search_query.to_lowercase();
-    let query_len = search_query.chars().count();
-    let active_match_idx = app.terminal_mode.search().current_match;
+    let search = app.terminal_mode.search();
+    let is_search_active = search.active && !search.matches.is_empty();
+    let active_match_idx = search.current_match;
 
     let normal_match_style = Style::default().bg(Color::Yellow).fg(Color::Black);
     let active_match_style = Style::default()
@@ -462,7 +444,6 @@ pub fn render_vt100_raw_side_panel(
 
         let mut spans = format_line_content(trimmed_text, display_mode);
 
-        // Map character offsets to byte offsets for multi-byte UTF-8 accuracy
         let current_chars = trimmed_text.chars().count();
         let mut char_to_byte_idx = Vec::with_capacity(current_chars + 1);
         for (b_idx, _) in trimmed_text.char_indices() {
@@ -470,59 +451,56 @@ pub fn render_vt100_raw_side_panel(
         }
         char_to_byte_idx.push(trimmed_text.len());
 
-        // 1. Search Highlights
-        if is_search_active && query_len > 0 {
-            let row_lower = trimmed_text.to_lowercase();
-            for (occ_idx, (b_idx, _)) in row_lower.match_indices(&q_lower).enumerate() {
-                let char_start = trimmed_text[..b_idx].chars().count();
-                let char_end = char_start + query_len;
-
-                if char_end <= current_chars {
-                    let byte_start = char_to_byte_idx[char_start];
-                    let byte_end = char_to_byte_idx[char_end];
-
-                    let is_active = app
-                        .terminal_mode
-                        .search()
-                        .matches
-                        .get(active_match_idx)
-                        .map_or_else(
-                            || false,
-                            |m| m.line_idx == world_row && m.occurrence_in_line == occ_idx,
-                        );
-
-                    let style = if is_active {
-                        active_match_style
-                    } else {
-                        normal_match_style
-                    };
-
-                    highlight_raw_byte_range(&mut spans, byte_start, byte_end - 1, style);
+        let mut apply_char_highlight = |char_start: usize, char_end: usize, style: Style| {
+            let start = char_start.min(current_chars);
+            let end = char_end.min(current_chars);
+            if start < end {
+                let byte_start = char_to_byte_idx[start];
+                let byte_end = char_to_byte_idx[end];
+                if byte_start < byte_end {
+                    let last_byte = byte_end.saturating_sub(1);
+                    highlight_raw_byte_range(&mut spans, byte_start, last_byte, style);
                 }
+            }
+        };
+
+        if is_search_active {
+            let start_idx = search.matches.partition_point(|m| m.line_idx < world_row);
+            let end_idx = search.matches.partition_point(|m| m.line_idx <= world_row);
+
+            for (global_m_idx, m) in search.matches[start_idx..end_idx]
+                .iter()
+                .enumerate()
+                .map(|(offset, m)| (start_idx + offset, m))
+            {
+                let style = if global_m_idx == active_match_idx {
+                    active_match_style
+                } else {
+                    normal_match_style
+                };
+
+                let char_len = m.match_char_len.max(1);
+                apply_char_highlight(m.col_idx, m.col_idx + char_len, style);
             }
         }
 
-        // 2. Selection Highlights
+        // selection
         if let Some((start_pos, end_pos)) = normalized_selection
             && world_row >= start_pos.line_idx
             && world_row <= end_pos.line_idx
         {
             let from_char = if world_row == start_pos.line_idx {
-                start_pos.char_idx.min(current_chars)
+                start_pos.char_idx
             } else {
                 0
             };
             let to_char = if world_row == end_pos.line_idx {
-                (end_pos.char_idx + 1).min(current_chars)
+                end_pos.char_idx + 1
             } else {
                 current_chars
             };
 
-            if from_char < to_char {
-                let byte_start = char_to_byte_idx[from_char];
-                let byte_end = char_to_byte_idx[to_char];
-                highlight_raw_byte_range(&mut spans, byte_start, byte_end - 1, *theme.selection);
-            }
+            apply_char_highlight(from_char, to_char, *theme.selection);
         }
 
         raw_lines.push(Line::from(spans));
