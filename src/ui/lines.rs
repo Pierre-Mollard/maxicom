@@ -1,6 +1,5 @@
 // TODO: see what in common with the render in terminal mode
 // TODO: check if factorize panning logic in terminal and line mode
-// TODO: add highlight logic to terminal too and fix to match what's here
 // TODO: search with speical 0x, 0b, 0o
 
 use ratatui::{

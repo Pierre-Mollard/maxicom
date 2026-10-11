@@ -1,3 +1,6 @@
+// TODO: search is not centering in main view
+// TODO: not auto go to new sub line in copy mode
+
 use ratatui::{
     Frame,
     layout::Rect,
@@ -9,12 +12,12 @@ use ratatui::{
 use crate::{
     app::{App, types::FocusTarget},
     configs::{
-        KeywordHighlight, LineDisplayMode, ThemeConfig,
-        settings::{RawSideOrientation, RawSideView},
+        KeywordHighlight, ThemeConfig,
+        settings::{RawSideOrientation, RawSideView, raw_view_to_display_mode},
     },
     terminal::{MaxicomCursor, MaxicomTerminal},
     ui::{
-        common::{apply_keyword_highlights, apply_selection_to_spans, render_search_bar},
+        common::{apply_keyword_highlights, highlight_raw_byte_range, render_search_bar},
         data_display::format_line_content,
     },
 };
@@ -32,6 +35,7 @@ pub fn render_vt100_terminal(
     let focus = app.focus_target();
     let is_terminal_focused = focus == FocusTarget::Terminal;
     let cursor = MaxicomCursor::from_config(&app.settings().terminal_mode.cursor);
+    let raw_view = app.settings().raw_side.view;
 
     if let Some(target_idx) = app.terminal_mode.search_mut().target_jump_index.take() {
         app.terminal_mode
@@ -48,11 +52,6 @@ pub fn render_vt100_terminal(
     frame.render_widget(term_widget, content_area);
     apply_keyword_highlights(frame.buffer_mut(), content_area, highlights);
 
-    // side view raw panel
-    if let Some(raw_area) = raw_side_area {
-        render_vt100_raw_side_panel(app, frame, raw_area, theme);
-    }
-
     let (grid_rows, cols) = app.terminal_mode.get_vt100_size();
     let max_sb = app.terminal_mode.get_max_scrollback();
     let current_sb = app.terminal_mode.vt100_screen().scrollback();
@@ -64,7 +63,67 @@ pub fn render_vt100_terminal(
         max_sb
     };
 
-    if app.terminal_mode.search().active && !app.terminal_mode.search().query_str().is_empty() {
+    let is_search_active = app.terminal_mode.search().active;
+
+    // raw panel
+    let active_focus = if app.terminal_mode.copy_state().active {
+        Some((
+            app.terminal_mode.copy_state().cursor.line_idx,
+            app.terminal_mode.copy_state().cursor.char_idx,
+        ))
+    } else if is_search_active {
+        app.terminal_mode.search().current_match_position()
+    } else {
+        None
+    };
+
+    if let Some((target_row, target_col)) = active_focus
+        && target_row >= top_visible_world_line
+    {
+        let emulator_row = target_row - top_visible_world_line;
+        if emulator_row < grid_rows as usize {
+            let row_text = app
+                .terminal_mode
+                .vt100_screen()
+                .rows(0, cols)
+                .nth(emulator_row)
+                .unwrap_or_default();
+            let trimmed = row_text.trim_end();
+
+            let local_char = target_col.min(trimmed.chars().count().saturating_sub(1));
+            let byte_offset = trimmed
+                .char_indices()
+                .nth(local_char)
+                .map(|(b, _)| b)
+                .unwrap_or(trimmed.len());
+
+            if let Some(raw_area) = raw_side_area {
+                let usable_width = (raw_area.width as usize).saturating_sub(1);
+                if is_search_active {
+                    app.terminal_mode.center_raw_pan_on_byte(
+                        raw_view,
+                        usable_width,
+                        byte_offset,
+                        trimmed.len(),
+                    );
+                } else {
+                    app.terminal_mode.sync_raw_pan_with_local_col(
+                        raw_view,
+                        usable_width,
+                        byte_offset,
+                        trimmed.len(),
+                    );
+                }
+            }
+        }
+    }
+
+    if let Some(raw_area) = raw_side_area {
+        render_vt100_raw_side_panel(app, frame, raw_area, theme);
+    }
+
+    // search
+    if is_search_active && !app.terminal_mode.search().query_str().is_empty() {
         let query = app.terminal_mode.search().query_str();
         let q_lower = query.to_lowercase();
         let query_char_count = query.chars().count();
@@ -326,6 +385,7 @@ pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect, theme: 
     frame.render_widget(gutter, area);
 }
 
+// NOTE: review this
 pub fn render_vt100_raw_side_panel(
     app: &App,
     frame: &mut Frame,
@@ -337,12 +397,7 @@ pub fn render_vt100_raw_side_panel(
         return;
     }
 
-    let display_mode = match raw_view {
-        RawSideView::Hex => LineDisplayMode::Hex,
-        RawSideView::Octal => LineDisplayMode::Octal,
-        RawSideView::Binary => LineDisplayMode::Binary,
-        RawSideView::Off => return,
-    };
+    let display_mode = raw_view_to_display_mode(raw_view);
 
     let borders = match app.settings().raw_side.orientation {
         RawSideOrientation::Right => Borders::LEFT,
@@ -374,7 +429,19 @@ pub fn render_vt100_raw_side_panel(
         None
     };
 
-    let rows_to_render = (inner_area.height as usize).min(grid_rows as usize);
+    let is_search_active = app.terminal_mode.search().active;
+    let search_query = app.terminal_mode.search().query_str();
+    let q_lower = search_query.to_lowercase();
+    let query_len = search_query.chars().count();
+    let active_match_idx = app.terminal_mode.search().current_match;
+
+    let normal_match_style = Style::default().bg(Color::Yellow).fg(Color::Black);
+    let active_match_style = Style::default()
+        .bg(Color::Rgb(255, 140, 0))
+        .fg(Color::Black);
+
+    let rows_to_render =
+        (inner_area.height as usize).min((grid_rows as usize).saturating_sub(pan_y));
     let mut raw_lines = Vec::with_capacity(rows_to_render);
 
     for (r, row_text) in screen
@@ -394,33 +461,67 @@ pub fn render_vt100_raw_side_panel(
 
         let mut spans = format_line_content(trimmed_text, display_mode);
 
+        // Map character offsets to byte offsets for multi-byte UTF-8 accuracy
+        let current_chars = trimmed_text.chars().count();
+        let mut char_to_byte_idx = Vec::with_capacity(current_chars + 1);
+        for (b_idx, _) in trimmed_text.char_indices() {
+            char_to_byte_idx.push(b_idx);
+        }
+        char_to_byte_idx.push(trimmed_text.len());
+
+        // 1. Search Highlights
+        if is_search_active && query_len > 0 {
+            let row_lower = trimmed_text.to_lowercase();
+            for (occ_idx, (b_idx, _)) in row_lower.match_indices(&q_lower).enumerate() {
+                let char_start = trimmed_text[..b_idx].chars().count();
+                let char_end = char_start + query_len;
+
+                if char_end <= current_chars {
+                    let byte_start = char_to_byte_idx[char_start];
+                    let byte_end = char_to_byte_idx[char_end];
+
+                    let is_active = app
+                        .terminal_mode
+                        .search()
+                        .matches
+                        .get(active_match_idx)
+                        .map_or_else(
+                            || false,
+                            |m| m.line_idx == world_row && m.occurrence_in_line == occ_idx,
+                        );
+
+                    let style = if is_active {
+                        active_match_style
+                    } else {
+                        normal_match_style
+                    };
+
+                    highlight_raw_byte_range(&mut spans, byte_start, byte_end - 1, style);
+                }
+            }
+        }
+
+        // 2. Selection Highlights
         if let Some((start_pos, end_pos)) = normalized_selection
             && world_row >= start_pos.line_idx
             && world_row <= end_pos.line_idx
         {
-            let chars_len = trimmed_text.chars().count();
-            let from = if world_row == start_pos.line_idx {
-                start_pos.char_idx.min(chars_len)
+            let from_char = if world_row == start_pos.line_idx {
+                start_pos.char_idx.min(current_chars)
             } else {
                 0
             };
-            let to = if world_row == end_pos.line_idx {
-                (end_pos.char_idx + 1).min(chars_len)
+            let to_char = if world_row == end_pos.line_idx {
+                (end_pos.char_idx + 1).min(current_chars)
             } else {
-                chars_len
+                current_chars
             };
 
-            let stride = match raw_view {
-                RawSideView::Hex => 3,
-                RawSideView::Octal => 4,
-                RawSideView::Binary => 9,
-                RawSideView::Off => 1,
-            };
-
-            let raw_sel_start = from * stride;
-            let raw_sel_end = to * stride;
-
-            spans = apply_selection_to_spans(spans, raw_sel_start, raw_sel_end, *theme.selection);
+            if from_char < to_char {
+                let byte_start = char_to_byte_idx[from_char];
+                let byte_end = char_to_byte_idx[to_char];
+                highlight_raw_byte_range(&mut spans, byte_start, byte_end - 1, *theme.selection);
+            }
         }
 
         raw_lines.push(Line::from(spans));
