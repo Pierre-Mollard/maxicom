@@ -373,22 +373,20 @@ impl LineMode {
             }
             SearchModeAction::Next => {
                 if self.search_state.active
-                    && let Some(target_line_idx) = self.search_state.next_match()
+                    && let Some((row, col)) = self.search_state.next_match()
                 {
-                    self.search_state.target_jump_index = Some(target_line_idx);
-                    if let Some((_, col)) = self.search_state.current_match_position() {
-                        self.copy_state.cursor.char_idx = col;
-                    }
+                    self.copy_state.cursor.line_idx = row;
+                    self.copy_state.cursor.char_idx = col;
+                    self.copy_state.cursor.preferred_col = col;
                 }
             }
             SearchModeAction::Previous => {
                 if self.search_state.active
-                    && let Some(target_line_idx) = self.search_state.prev_match()
+                    && let Some((row, col)) = self.search_state.prev_match()
                 {
-                    self.search_state.target_jump_index = Some(target_line_idx);
-                    if let Some((_, col)) = self.search_state.current_match_position() {
-                        self.copy_state.cursor.char_idx = col;
-                    }
+                    self.copy_state.cursor.line_idx = row;
+                    self.copy_state.cursor.char_idx = col;
+                    self.copy_state.cursor.preferred_col = col;
                 }
             }
             SearchModeAction::Cancel => {
@@ -415,10 +413,6 @@ impl LineMode {
     pub fn handle_input_search(&mut self, key_event: KeyEvent, display_mode: LineDisplayMode) {
         dispatch_input_key(&mut self.search_state.query, key_event);
         self.update_search_matches(display_mode);
-        if let Some(&first_match_idx) = self.search_state.matches.first() {
-            self.search_state.current_match = 0;
-            self.search_state.target_jump_index = Some(first_match_idx.line_idx);
-        }
     }
 
     pub fn handle_side_view_action(&mut self, action: SideViewAction) {
@@ -566,6 +560,11 @@ impl LineMode {
     #[inline]
     pub fn scroller(&self) -> &ViewportScroller {
         &self.scroller
+    }
+
+    #[inline]
+    pub fn scroller_mut(&mut self) -> &mut ViewportScroller {
+        &mut self.scroller
     }
 
     pub fn center_raw_pan_on_byte(

@@ -165,18 +165,39 @@ pub fn render_monitor(
     let max_scroll = total_visual_rows.saturating_sub(content_height);
     app.line_mode.update_limits(max_scroll, max_pan);
 
-    if let Some(target_idx) = app.line_mode.search_mut().target_jump_index.take()
-        && target_idx < layout.line_layouts.len()
+    // center view on seach occurance
+    if let Some((target_line, target_col)) = app.line_mode.search_mut().target_jump.take()
+        && target_line < layout.line_layouts.len()
     {
-        let target_visual_row = layout.line_layouts[target_idx].visual_row_start;
+        let line_meta = &layout.line_layouts[target_line];
+
+        let mut remaining = target_col;
+        let mut target_visual_row = line_meta.visual_row_start;
+        let mut local_char_col = target_col;
+
+        for (sub_idx, sub) in line_meta.sub_lines.iter().enumerate() {
+            let is_last = sub_idx == line_meta.sub_lines.len().saturating_sub(1);
+            if remaining < sub.content_char_len || is_last {
+                target_visual_row = line_meta.visual_row_start + sub_idx;
+                local_char_col = remaining;
+                break;
+            }
+            remaining = remaining.saturating_sub(sub.content_char_len);
+        }
 
         let rows_from_bottom = total_visual_rows
             .saturating_sub(1)
             .saturating_sub(target_visual_row);
-        let half_screen = content_height / 2;
-        let centered_scroll = rows_from_bottom.saturating_sub(half_screen);
-
+        let half_screen_y = content_height / 2;
+        let centered_scroll = rows_from_bottom.saturating_sub(half_screen_y);
         app.line_mode.scroll_to(centered_scroll.min(max_scroll));
+
+        if wrap_mode == WrapMode::Truncate {
+            let half_screen_x = content_width / 2;
+            let gutter_w = app.settings().line_gutter_width();
+            let centered_pan_x = (gutter_w + local_char_col).saturating_sub(half_screen_x);
+            app.line_mode.scroller_mut().offset_x = centered_pan_x.min(max_pan);
+        }
     }
 
     let scroll_from_bottom = app.line_mode.scroll_offset();

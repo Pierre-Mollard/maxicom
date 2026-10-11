@@ -461,16 +461,20 @@ impl TerminalMode {
             }
             SearchModeAction::Next => {
                 if self.search_state.active
-                    && let Some(target_line_idx) = self.search_state.next_match()
+                    && let Some((row, col)) = self.search_state.next_match()
                 {
-                    self.search_state.target_jump_index = Some(target_line_idx);
+                    self.copy_state.cursor.line_idx = row;
+                    self.copy_state.cursor.char_idx = col;
+                    self.copy_state.cursor.preferred_col = col;
                 }
             }
             SearchModeAction::Previous => {
                 if self.search_state.active
-                    && let Some(target_line_idx) = self.search_state.prev_match()
+                    && let Some((row, col)) = self.search_state.prev_match()
                 {
-                    self.search_state.target_jump_index = Some(target_line_idx);
+                    self.copy_state.cursor.line_idx = row;
+                    self.copy_state.cursor.char_idx = col;
+                    self.copy_state.cursor.preferred_col = col;
                 }
             }
             SearchModeAction::Cancel => {
@@ -583,10 +587,6 @@ impl TerminalMode {
     pub fn handle_input_search(&mut self, key_event: KeyEvent) {
         dispatch_input_key(&mut self.search_state.query, key_event);
         self.update_search_matches();
-        if let Some(&first_match_idx) = self.search_state.matches.first() {
-            self.search_state.current_match = 0;
-            self.search_state.target_jump_index = Some(first_match_idx.line_idx);
-        }
     }
 
     pub fn handle_side_view_action(&mut self, action: SideViewAction) {
@@ -737,6 +737,36 @@ impl TerminalMode {
         }
 
         self.raw_pan_x = self.raw_pan_x.min(self.max_raw_pan_x);
+    }
+
+    pub fn center_on_target_match(
+        &mut self,
+        target_row: usize,
+        target_col: usize,
+        view_w: usize,
+        view_h: usize,
+    ) {
+        let (grid_rows, grid_cols) = self.get_vt100_size();
+        let max_sb = self.max_content_scrollback;
+        let total_world_lines = max_sb + (grid_rows as usize);
+
+        if total_world_lines == 0 || target_row >= total_world_lines {
+            return;
+        }
+
+        let lines_from_bottom = (total_world_lines - 1).saturating_sub(target_row);
+        let half_h = (grid_rows as usize).min(view_h) / 2;
+        let target_scroll_y = lines_from_bottom.saturating_sub(half_h);
+
+        self.scroller.max_scroll_y = self.max_vertical_scroll();
+        self.scroller.scroll_to(target_scroll_y);
+        self.reconcile_both_vertical_scroll();
+
+        if view_w > 0 && (grid_cols as usize) > view_w {
+            let max_pan_x = (grid_cols as usize).saturating_sub(view_w);
+            let half_w = view_w / 2;
+            self.scroller.offset_x = target_col.saturating_sub(half_w).min(max_pan_x);
+        }
     }
 }
 

@@ -21,7 +21,7 @@ pub struct SearchState {
     pub query: Input,
     pub matches: Vec<SearchMatch>,
     pub current_match: usize,
-    pub target_jump_index: Option<usize>,
+    pub target_jump: Option<(usize, usize)>,
 }
 
 impl SearchState {
@@ -31,6 +31,8 @@ impl SearchState {
         display_mode: LineDisplayMode,
     ) {
         self.matches.clear();
+        self.current_match = 0;
+        self.target_jump = None;
         if self.query_str().is_empty() {
             self.current_match = 0;
             return;
@@ -53,10 +55,15 @@ impl SearchState {
         if self.current_match >= self.matches.len() {
             self.current_match = self.matches.len().saturating_sub(1);
         }
+        if let Some(m) = self.matches.get(self.current_match) {
+            self.target_jump = Some((m.line_idx, m.col_idx));
+        }
     }
 
     pub fn update_matches_from_strings(&mut self, all_lines: &[String]) {
         self.matches.clear();
+        self.current_match = 0;
+        self.target_jump = None;
         if self.query_str().is_empty() {
             self.current_match = 0;
             return;
@@ -79,6 +86,9 @@ impl SearchState {
         if self.current_match >= self.matches.len() {
             self.current_match = self.matches.len().saturating_sub(1);
         }
+        if let Some(m) = self.matches.get(self.current_match) {
+            self.target_jump = Some((m.line_idx, m.col_idx));
+        }
     }
 
     pub fn current_match_position(&self) -> Option<(usize, usize)> {
@@ -87,15 +97,21 @@ impl SearchState {
             .map(|m| (m.line_idx, m.col_idx))
     }
 
-    pub fn next_match(&mut self) -> Option<usize> {
+    pub fn next_match(&mut self) -> Option<(usize, usize)> {
         if self.matches.is_empty() {
             return None;
         }
         self.current_match = (self.current_match + 1) % self.matches.len();
-        Some(self.matches[self.current_match].line_idx)
+
+        let pos = (
+            self.matches[self.current_match].line_idx,
+            self.matches[self.current_match].col_idx,
+        );
+        self.target_jump = Some(pos);
+        Some(pos)
     }
 
-    pub fn prev_match(&mut self) -> Option<usize> {
+    pub fn prev_match(&mut self) -> Option<(usize, usize)> {
         if self.matches.is_empty() {
             return None;
         }
@@ -104,7 +120,12 @@ impl SearchState {
         } else {
             self.current_match -= 1;
         }
-        Some(self.matches[self.current_match].line_idx)
+        let pos = (
+            self.matches[self.current_match].line_idx,
+            self.matches[self.current_match].col_idx,
+        );
+        self.target_jump = Some(pos);
+        Some(pos)
     }
 
     pub fn matches_count(&self) -> usize {
@@ -122,7 +143,7 @@ impl SearchState {
     pub fn toggle(&mut self, active: bool) {
         self.active = active;
         if !active {
-            self.target_jump_index = None;
+            self.target_jump = None;
         }
     }
 

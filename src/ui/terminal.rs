@@ -34,9 +34,13 @@ pub fn render_vt100_terminal(
     let cursor = MaxicomCursor::from_config(&app.settings().terminal_mode.cursor);
     let raw_view = app.settings().raw_side.view;
 
-    if let Some(target_idx) = app.terminal_mode.search_mut().target_jump_index.take() {
-        app.terminal_mode
-            .scroll_to_target_line(target_idx, view_height);
+    if let Some((target_row, target_col)) = app.terminal_mode.search_mut().target_jump.take() {
+        app.terminal_mode.center_on_target_match(
+            target_row,
+            target_col,
+            content_area.width as usize,
+            view_height,
+        );
     }
 
     let term_widget = MaxicomTerminal::new(app.terminal_mode.vt100_screen())
