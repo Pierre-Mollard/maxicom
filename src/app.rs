@@ -196,7 +196,6 @@ impl App {
                 .line_mode
                 .update_action_lineinput(&self.settings, action),
             Action::Terminal(action) => self.terminal_mode.update_action_terminal(action),
-            Action::SideView(action) => self.update_side_view(action),
             Action::History(action) => self.update_action_history(action),
             Action::CopyMode(action) => self.update_action_copy_mode(action),
             Action::Search(action) => self.update_action_search_mode(action),
@@ -282,6 +281,7 @@ impl App {
                 UpdateEffect::None
             }
             AppAction::Quit => UpdateEffect::Quit,
+            AppAction::SideView(action) => self.update_side_view(action),
         }
     }
 

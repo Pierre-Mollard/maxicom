@@ -309,11 +309,6 @@ impl LineMode {
                 if wrap_mode == WrapMode::Truncate {
                     self.sync_pan_with_cursor(display_mode, gutter_width);
                 }
-
-                let raw_panel_width =
-                    (self.scroller.view_width * settings.raw_side.split_percent as usize) / 100;
-                self.sync_raw_pan_with_cursor(settings, raw_panel_width);
-
                 None
             }
             CopyActionResult::Yanked(text) => Some(text),
@@ -362,29 +357,6 @@ impl LineMode {
         self.scroller.offset_x = self.scroller.offset_x.min(self.scroller.max_pan_x);
     }
 
-    pub fn sync_raw_pan_with_cursor(&mut self, settings: &SettingsConfig, raw_panel_width: usize) {
-        if settings.raw_side.view == RawSideView::Off || raw_panel_width == 0 {
-            return;
-        }
-
-        let stride = match settings.raw_side.view {
-            RawSideView::Hex => 3,
-            RawSideView::Octal => 4,
-            RawSideView::Binary => 9,
-            RawSideView::Off => 1,
-        };
-
-        let cursor_char_idx = self.copy_state.cursor.char_idx;
-        let raw_cursor_x = cursor_char_idx * stride;
-
-        let margin = stride * 2;
-        if raw_cursor_x >= self.raw_pan_x + raw_panel_width.saturating_sub(margin) {
-            self.raw_pan_x = raw_cursor_x.saturating_sub(raw_panel_width) + margin + stride;
-        } else if raw_cursor_x < self.raw_pan_x + margin {
-            self.raw_pan_x = raw_cursor_x.saturating_sub(margin);
-        }
-    }
-
     pub fn update_search_matches(&mut self, display_mode: LineDisplayMode) {
         self.search_state
             .update_matches_from_entries(&self.local_history, display_mode);
@@ -406,8 +378,6 @@ impl LineMode {
                     self.search_state.target_jump_index = Some(target_line_idx);
                     if let Some((_, col)) = self.search_state.current_match_position() {
                         self.copy_state.cursor.char_idx = col;
-                        let raw_panel_width = (self.scroller.view_width * 40) / 100;
-                        self.sync_raw_pan_with_cursor(&settings, raw_panel_width);
                     }
                 }
             }
@@ -418,8 +388,6 @@ impl LineMode {
                     self.search_state.target_jump_index = Some(target_line_idx);
                     if let Some((_, col)) = self.search_state.current_match_position() {
                         self.copy_state.cursor.char_idx = col;
-                        let raw_panel_width = (self.scroller.view_width * 40) / 100;
-                        self.sync_raw_pan_with_cursor(&settings, raw_panel_width);
                     }
                 }
             }
@@ -606,6 +574,47 @@ impl LineMode {
         } else {
             current_pan_x
         }
+    }
+
+    // NOTE: review this
+    pub fn sync_raw_pan_with_local_col(
+        &mut self,
+        raw_view: RawSideView,
+        usable_panel_width: usize, // inner_area.width
+        local_byte_offset: usize,  // <--- Exact byte index in sub_slice!
+        total_sub_bytes: usize,
+    ) {
+        if raw_view == RawSideView::Off || usable_panel_width == 0 {
+            return;
+        }
+
+        let stride = match raw_view {
+            RawSideView::Hex => 3,    // "XX "
+            RawSideView::Octal => 4,  // "XXX "
+            RawSideView::Binary => 9, // "XXXXXXXX "
+            RawSideView::Off => 1,
+        };
+
+        // Total columns required for all raw bytes on this row
+        let total_raw_width = total_sub_bytes.saturating_mul(stride);
+        self.max_raw_pan_x = total_raw_width.saturating_sub(usable_panel_width);
+
+        // Visual column where this byte starts in the raw pane
+        let raw_cursor_x = local_byte_offset * stride;
+        let cursor_byte_end = raw_cursor_x + stride;
+
+        // Auto-pan viewport:
+        // 1. If cursor is off the right side of the view:
+        if cursor_byte_end > self.raw_pan_x + usable_panel_width {
+            self.raw_pan_x = cursor_byte_end.saturating_sub(usable_panel_width) + stride;
+        }
+        // 2. If cursor is off the left side of the view:
+        else if raw_cursor_x < self.raw_pan_x {
+            self.raw_pan_x = raw_cursor_x;
+        }
+
+        // Clamp to maximum allowed scroll
+        self.raw_pan_x = self.raw_pan_x.min(self.max_raw_pan_x);
     }
 }
 

@@ -31,7 +31,6 @@ pub enum Action {
     History(HistoryAction),
     CopyMode(CopyModeAction),
     Search(SearchModeAction),
-    SideView(SideViewAction),
     OverlayKey(KeyEvent),
     Ignore,
 }
@@ -43,6 +42,7 @@ pub enum AppAction {
     ToggleSetting(SettingKey),
     ToggleLogging,
     OpenOverlay(Overlay),
+    SideView(SideViewAction),
     Quit,
 }
 
