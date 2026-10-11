@@ -90,6 +90,7 @@ pub enum SearchModeAction {
     Previous,
     Cancel,
     Confirm,
+    Kind,
     HandleKey(KeyEvent),
 }
 

@@ -495,6 +495,10 @@ impl TerminalMode {
                     self.handle_input_search(key_event);
                 }
             }
+            SearchModeAction::Kind => {
+                self.search_state.toggle_mode();
+                self.update_search_matches();
+            }
         }
     }
 

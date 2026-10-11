@@ -407,6 +407,10 @@ impl LineMode {
                     self.handle_input_search(key_event, display_mode);
                 }
             }
+            SearchModeAction::Kind => {
+                self.search_state.toggle_mode();
+                self.update_search_matches(display_mode);
+            }
         }
     }
 

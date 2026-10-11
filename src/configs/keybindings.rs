@@ -216,6 +216,7 @@ pub enum KeyBindingSearchAction {
     Previous,
     Cancel,
     Confirm,
+    Kind,
 }
 
 impl std::str::FromStr for KeyBindingSearchAction {
@@ -227,6 +228,7 @@ impl std::str::FromStr for KeyBindingSearchAction {
             "previous" => Ok(Self::Previous),
             "cancel" => Ok(Self::Cancel),
             "confirm" => Ok(Self::Confirm),
+            "search_kind" => Ok(Self::Kind),
             other => Err(UnknownActionError(other.to_string())),
         }
     }
@@ -239,6 +241,7 @@ impl std::fmt::Display for KeyBindingSearchAction {
             Self::Previous => "previous",
             Self::Cancel => "cancel",
             Self::Confirm => "confirm",
+            Self::Kind => "search_kind",
         };
         write!(f, "{s}")
     }
@@ -732,6 +735,7 @@ impl Default for KeyBindingsConfig {
             "ctrl-p"     => KeyBindingSearchAction::Previous,
             "esc"        => KeyBindingSearchAction::Cancel,
             "enter"      => KeyBindingSearchAction::Confirm,
+            "tab"        => KeyBindingSearchAction::Kind,
         };
 
         let copy_mode = default_bindings! {

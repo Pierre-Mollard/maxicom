@@ -122,6 +122,7 @@ impl KeyBindingSearchAction {
             Self::Previous => Action::Search(SearchModeAction::Previous),
             Self::Cancel => Action::Search(SearchModeAction::Cancel),
             Self::Confirm => Action::Search(SearchModeAction::Confirm),
+            Self::Kind => Action::Search(SearchModeAction::Kind),
         }
     }
 }

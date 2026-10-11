@@ -10,7 +10,7 @@ use ratatui::{
 use std::fmt::Write;
 
 use crate::{
-    app::{App, types::FocusTarget},
+    app::{App, search::SearchModeKind, types::FocusTarget},
     configs::{InputMode, KeywordHighlight, ThemeConfig},
 };
 
@@ -145,7 +145,19 @@ pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, _theme: &Them
         Style::default().fg(Color::DarkGray)
     };
 
+    let kind_str = match s.mode_kind {
+        SearchModeKind::Text => "text",
+        SearchModeKind::RawBytes => "byte",
+    };
+
     let spans = vec![
+        Span::styled(
+            format!(" [{}]", kind_str),
+            Style::default()
+                .bg(Color::Blue)
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(
             " SEARCH: ",
             Style::default()
@@ -160,7 +172,10 @@ pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, _theme: &Them
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(format!("({}/{})", current_pos, match_count), stats_style),
-        Span::styled(" [ ←/→, Esc: Exit ] ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            " [ ←/→, Tab: Mode, Esc: Exit ] ",
+            Style::default().fg(Color::DarkGray),
+        ),
     ];
     let line = Line::from(spans);
 
@@ -175,8 +190,8 @@ pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, _theme: &Them
             cur_x += span.content.chars().count() as u16;
         }
 
-        // start_x + " SEARCH: " (9) + " " (1) + visual_cursor
-        (start_x + 10 + visual_cursor, border_y)
+        // start_x + 7 + " SEARCH: " (9) + " " (1) + visual_cursor
+        (start_x + 10 + 7 + visual_cursor, border_y)
     } else {
         let bottom_y = area.y + area.height.saturating_sub(1);
         let search_area = Rect {
@@ -190,7 +205,7 @@ pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, _theme: &Them
         frame.render_widget(Paragraph::new(line), search_area);
 
         // area.x + " SEARCH: " (9) + " " (1) + visual_cursor
-        (area.x + 10 + visual_cursor, bottom_y)
+        (area.x + 10 + 7 + visual_cursor, bottom_y)
     };
 
     if !app.is_app_focused() {
