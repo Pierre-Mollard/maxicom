@@ -5,6 +5,7 @@ pub mod data_display;
 pub mod layout;
 pub mod lines;
 pub mod popups;
+pub mod raw_side;
 pub mod status_bar;
 pub mod terminal;
 

@@ -322,23 +322,3 @@ pub fn apply_selection_to_spans(
 
     out
 }
-
-pub fn highlight_raw_byte_range(
-    spans: &mut [Span<'static>],
-    from_byte: usize,
-    to_byte: usize,
-    style: Style,
-) {
-    for byte_idx in from_byte..=to_byte {
-        let span_idx = byte_idx * 2;
-        if span_idx < spans.len() {
-            spans[span_idx].style = style;
-        }
-        if byte_idx < to_byte {
-            let space_idx = span_idx + 1;
-            if space_idx < spans.len() {
-                spans[space_idx].style = style;
-            }
-        }
-    }
-}

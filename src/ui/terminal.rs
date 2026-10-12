@@ -3,19 +3,22 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 
 use crate::{
     app::{App, types::FocusTarget},
     configs::{
         KeywordHighlight, ThemeConfig,
-        settings::{RawSideOrientation, RawSideView, raw_view_to_display_mode},
+        settings::{RawSideView, raw_view_to_display_mode},
     },
     terminal::{MaxicomCursor, MaxicomTerminal},
     ui::{
-        common::{apply_keyword_highlights, highlight_raw_byte_range, render_search_bar},
-        data_display::format_line_content,
+        common::{apply_keyword_highlights, render_search_bar},
+        raw_side::{
+            CharHighlight, format_raw_line_with_highlights, raw_panel_layout,
+            render_raw_panel_widget,
+        },
     },
 };
 
@@ -370,7 +373,6 @@ pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect, theme: 
     frame.render_widget(gutter, area);
 }
 
-// NOTE: review this
 pub fn render_vt100_raw_side_panel(
     app: &App,
     frame: &mut Frame,
@@ -382,20 +384,10 @@ pub fn render_vt100_raw_side_panel(
         return;
     }
 
+    let (block, inner_area) = raw_panel_layout(raw_area, app.settings().raw_side.orientation);
+    let view_height = inner_area.height as usize;
+
     let display_mode = raw_view_to_display_mode(raw_view);
-
-    let borders = match app.settings().raw_side.orientation {
-        RawSideOrientation::Right => Borders::LEFT,
-        RawSideOrientation::Bottom => Borders::TOP,
-    };
-
-    let block = Block::default()
-        .borders(borders)
-        .border_style(Style::default().fg(Color::DarkGray));
-
-    let inner_area = block.inner(raw_area);
-    frame.render_widget(block, raw_area);
-
     let screen = app.terminal_mode.vt100_screen();
     let (grid_rows, cols) = screen.size();
     let pan_y = app.terminal_mode.pan_offset_y();
@@ -418,13 +410,12 @@ pub fn render_vt100_raw_side_panel(
     let is_search_active = search.active && !search.matches.is_empty();
     let active_match_idx = search.current_match;
 
-    let normal_match_style = Style::default().bg(Color::Yellow).fg(Color::Black);
-    let active_match_style = Style::default()
+    let normal_style = Style::default().bg(Color::Yellow).fg(Color::Black);
+    let active_style = Style::default()
         .bg(Color::Rgb(255, 140, 0))
         .fg(Color::Black);
 
-    let rows_to_render =
-        (inner_area.height as usize).min((grid_rows as usize).saturating_sub(pan_y));
+    let rows_to_render = view_height.min((grid_rows as usize).saturating_sub(pan_y));
     let mut raw_lines = Vec::with_capacity(rows_to_render);
 
     for (r, row_text) in screen
@@ -435,36 +426,12 @@ pub fn render_vt100_raw_side_panel(
     {
         let emulator_row = r + pan_y;
         let world_row = top_visible_world_line + emulator_row;
-
         let trimmed_text = row_text.trim_end();
-        if trimmed_text.is_empty() {
-            raw_lines.push(Line::from(""));
-            continue;
-        }
 
-        let mut spans = format_line_content(trimmed_text, display_mode);
-
-        let current_chars = trimmed_text.chars().count();
-        let mut char_to_byte_idx = Vec::with_capacity(current_chars + 1);
-        for (b_idx, _) in trimmed_text.char_indices() {
-            char_to_byte_idx.push(b_idx);
-        }
-        char_to_byte_idx.push(trimmed_text.len());
-
-        let mut apply_char_highlight = |char_start: usize, char_end: usize, style: Style| {
-            let start = char_start.min(current_chars);
-            let end = char_end.min(current_chars);
-            if start < end {
-                let byte_start = char_to_byte_idx[start];
-                let byte_end = char_to_byte_idx[end];
-                if byte_start < byte_end {
-                    let last_byte = byte_end.saturating_sub(1);
-                    highlight_raw_byte_range(&mut spans, byte_start, last_byte, style);
-                }
-            }
-        };
+        let mut highlights = Vec::new();
 
         if is_search_active {
+            // find matches in the same line (partition_point is when pred is changing)
             let start_idx = search.matches.partition_point(|m| m.line_idx < world_row);
             let end_idx = search.matches.partition_point(|m| m.line_idx <= world_row);
 
@@ -473,42 +440,53 @@ pub fn render_vt100_raw_side_panel(
                 .enumerate()
                 .map(|(offset, m)| (start_idx + offset, m))
             {
-                let style = if global_m_idx == active_match_idx {
-                    active_match_style
-                } else {
-                    normal_match_style
-                };
-
-                let char_len = m.match_char_len.max(1);
-                apply_char_highlight(m.col_idx, m.col_idx + char_len, style);
+                highlights.push(CharHighlight {
+                    start_col: m.col_idx,
+                    end_col: m.col_idx + m.match_char_len.max(1),
+                    style: if global_m_idx == active_match_idx {
+                        active_style
+                    } else {
+                        normal_style
+                    },
+                });
             }
         }
 
-        // selection
         if let Some((start_pos, end_pos)) = normalized_selection
             && world_row >= start_pos.line_idx
             && world_row <= end_pos.line_idx
         {
-            let from_char = if world_row == start_pos.line_idx {
+            let from = if world_row == start_pos.line_idx {
                 start_pos.char_idx
             } else {
                 0
             };
-            let to_char = if world_row == end_pos.line_idx {
+            let to = if world_row == end_pos.line_idx {
                 end_pos.char_idx + 1
             } else {
-                current_chars
+                usize::MAX
             };
 
-            apply_char_highlight(from_char, to_char, *theme.selection);
+            highlights.push(CharHighlight {
+                start_col: from,
+                end_col: to,
+                style: *theme.selection,
+            });
         }
 
-        raw_lines.push(Line::from(spans));
+        raw_lines.push(format_raw_line_with_highlights(
+            trimmed_text,
+            display_mode,
+            &highlights,
+        ));
     }
 
-    let raw_pan_x = app.terminal_mode.raw_pan_x();
-    let raw_paragraph =
-        Paragraph::new(raw_lines).scroll((0, raw_pan_x.min(u16::MAX as usize) as u16));
-
-    frame.render_widget(raw_paragraph, inner_area);
+    render_raw_panel_widget(
+        frame,
+        raw_area,
+        inner_area,
+        block,
+        raw_lines,
+        app.terminal_mode.raw_pan_x(),
+    );
 }

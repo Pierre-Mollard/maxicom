@@ -1,5 +1,3 @@
-// TODO: see what in common with the render in terminal mode
-
 use ratatui::{
     Frame,
     layout::Rect,
@@ -18,16 +16,19 @@ use crate::{
     },
     configs::{
         KeywordHighlight, SettingsConfig, ThemeConfig, WrapMode,
-        settings::{PrefixWrapBehavior, RawSideOrientation, RawSideView, raw_view_to_display_mode},
+        settings::{PrefixWrapBehavior, RawSideView, raw_view_to_display_mode},
     },
     ui::{
         PostRenderEffect,
         common::{
-            apply_keyword_highlights, apply_selection_to_spans, border_style_for,
-            highlight_raw_byte_range, render_search_bar,
+            apply_keyword_highlights, apply_selection_to_spans, border_style_for, render_search_bar,
         },
         data_display::format_line_content,
         layout::{PreparedLayout, prepare_view_layout},
+        raw_side::{
+            CharHighlight, format_raw_line_with_highlights, raw_panel_layout,
+            render_raw_panel_widget,
+        },
     },
 };
 
@@ -494,7 +495,6 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect, theme: &The
     }
 }
 
-// NOTE: review this
 pub fn render_raw_side_panel(
     app: &mut App,
     frame: &mut Frame,
@@ -508,37 +508,25 @@ pub fn render_raw_side_panel(
         return;
     }
 
-    let raw_display_mode = raw_view_to_display_mode(raw_view);
-    let text_display_mode = app.settings().line_mode.display_mode;
-
-    let borders = match app.settings().raw_side.orientation {
-        RawSideOrientation::Right => Borders::LEFT,
-        RawSideOrientation::Bottom => Borders::TOP,
-    };
-
-    let block = Block::default()
-        .borders(borders)
-        .border_style(Style::default().fg(Color::DarkGray));
-
-    let inner_area = block.inner(raw_area);
-    frame.render_widget(block, raw_area);
-
+    let (block, inner_area) = raw_panel_layout(raw_area, app.settings().raw_side.orientation);
     let view_height = inner_area.height as usize;
     let visible_visual_start = paragraph_y_offset;
     let visible_visual_end = visible_visual_start + view_height;
 
+    let raw_display_mode = raw_view_to_display_mode(raw_view);
+    let text_display_mode = app.settings().line_mode.display_mode;
     let copy_range = app.line_mode.copy_state().normalized_selection();
     let history = app.line_mode.history();
     let is_search_active =
         app.line_mode.search().active && !app.line_mode.search().matches.is_empty();
     let active_match_idx = app.line_mode.search().current_match;
 
-    let normal_match_style = Style::default().bg(Color::Yellow).fg(Color::Black);
-    let active_match_style = Style::default()
+    let normal_style = Style::default().bg(Color::Yellow).fg(Color::Black);
+    let active_style = Style::default()
         .bg(Color::Rgb(255, 140, 0))
         .fg(Color::Black);
 
-    let mut visible_raw_lines: Vec<Line<'static>> = Vec::with_capacity(view_height);
+    let mut visible_raw_lines = Vec::with_capacity(view_height);
     let mut current_visual_row = 0;
 
     for (logical_idx, entry_layout) in layout.line_layouts.iter().enumerate() {
@@ -558,25 +546,7 @@ pub fn render_raw_side_panel(
             let entry_chars: Vec<char> = display_text.chars().collect();
             let mut char_offset = 0;
 
-            let sel_range = copy_range.and_then(|(start, end)| {
-                if logical_idx < start.line_idx || logical_idx > end.line_idx {
-                    None
-                } else {
-                    let from = if logical_idx == start.line_idx {
-                        start.char_idx
-                    } else {
-                        0
-                    };
-                    let to = if logical_idx == end.line_idx {
-                        end.char_idx
-                    } else {
-                        usize::MAX
-                    };
-                    Some((from, to))
-                }
-            });
-
-            // Binary search matches for logical_idx in O(log N)
+            // find search occurance on same line
             let line_matches: Vec<(usize, &SearchMatch)> = if is_search_active {
                 let search = app.line_mode.search();
                 let start = search.matches.partition_point(|m| m.line_idx < logical_idx);
@@ -595,93 +565,67 @@ pub fn render_raw_side_panel(
             for (sub_idx, sub) in entry_layout.sub_lines.iter().enumerate() {
                 let line_y = current_visual_row + sub_idx;
                 let is_last_sub = sub_idx == visual_sub_count.saturating_sub(1);
-
                 let sub_char_end = if is_last_sub {
                     entry_chars.len()
                 } else {
                     (char_offset + sub.content_char_len).min(entry_chars.len())
                 };
 
-                let sub_slice: String = if char_offset < entry_chars.len() {
-                    entry_chars[char_offset..sub_char_end].iter().collect()
-                } else {
-                    String::new()
-                };
-
-                let current_sub_chars = sub_slice.chars().count();
-
                 if line_y >= visible_visual_start && line_y < visible_visual_end {
-                    if sub_slice.is_empty() {
-                        visible_raw_lines.push(Line::from(""));
+                    let sub_slice: String = if char_offset < entry_chars.len() {
+                        entry_chars[char_offset..sub_char_end].iter().collect()
                     } else {
-                        let mut spans = format_line_content(&sub_slice, raw_display_mode);
+                        String::new()
+                    };
 
-                        let mut char_to_byte_idx = Vec::with_capacity(current_sub_chars + 1);
-                        for (b_idx, _) in sub_slice.char_indices() {
-                            char_to_byte_idx.push(b_idx);
+                    let mut highlights = Vec::new();
+
+                    // search highlight on sub line
+                    for &(global_m_idx, m) in &line_matches {
+                        let m_start = m.col_idx;
+                        let m_end = m.col_idx + m.match_char_len.max(1);
+                        if m_end > char_offset && m_start < sub_char_end {
+                            highlights.push(CharHighlight {
+                                start_col: m_start.saturating_sub(char_offset),
+                                end_col: m_end.saturating_sub(char_offset),
+                                style: if global_m_idx == active_match_idx {
+                                    active_style
+                                } else {
+                                    normal_style
+                                },
+                            });
                         }
-                        char_to_byte_idx.push(sub_slice.len());
-
-                        // 1. Search Highlights using pre-computed matches
-                        for &(global_m_idx, m) in &line_matches {
-                            let m_start = m.col_idx;
-                            let char_len = m.match_char_len.max(1);
-                            let m_end = m.col_idx + char_len;
-
-                            if m_end > char_offset && m_start < sub_char_end {
-                                let local_char_start = m_start.saturating_sub(char_offset);
-                                let local_char_end =
-                                    (m_end.saturating_sub(char_offset)).min(current_sub_chars);
-
-                                if local_char_start < local_char_end {
-                                    let byte_start = char_to_byte_idx[local_char_start];
-                                    let byte_end = char_to_byte_idx[local_char_end];
-
-                                    if byte_start < byte_end {
-                                        let style = if global_m_idx == active_match_idx {
-                                            active_match_style
-                                        } else {
-                                            normal_match_style
-                                        };
-                                        highlight_raw_byte_range(
-                                            &mut spans,
-                                            byte_start,
-                                            byte_end.saturating_sub(1),
-                                            style,
-                                        );
-                                    }
-                                }
-                            }
-                        }
-
-                        // 2. Selection Highlights
-                        if let Some((sel_start, sel_end)) = sel_range
-                            && sel_end >= char_offset
-                            && sel_start < sub_char_end
-                        {
-                            let local_char_start = sel_start.saturating_sub(char_offset);
-                            let local_char_end = (sel_end.saturating_sub(char_offset))
-                                .min(current_sub_chars.saturating_sub(1));
-
-                            if local_char_start <= local_char_end
-                                && local_char_end < current_sub_chars
-                            {
-                                let byte_start = char_to_byte_idx[local_char_start];
-                                let byte_end = char_to_byte_idx[local_char_end + 1];
-
-                                if byte_start < byte_end && !spans.is_empty() {
-                                    highlight_raw_byte_range(
-                                        &mut spans,
-                                        byte_start,
-                                        byte_end.saturating_sub(1),
-                                        *theme.selection,
-                                    );
-                                }
-                            }
-                        }
-
-                        visible_raw_lines.push(Line::from(spans));
                     }
+
+                    // selection highlight on sub line
+                    if let Some((sel_start, sel_end)) = copy_range
+                        && logical_idx >= sel_start.line_idx
+                        && logical_idx <= sel_end.line_idx
+                    {
+                        let from = if logical_idx == sel_start.line_idx {
+                            sel_start.char_idx
+                        } else {
+                            0
+                        };
+                        let to = if logical_idx == sel_end.line_idx {
+                            sel_end.char_idx + 1
+                        } else {
+                            usize::MAX
+                        };
+                        if to > char_offset && from < sub_char_end {
+                            highlights.push(CharHighlight {
+                                start_col: from.saturating_sub(char_offset),
+                                end_col: to.saturating_sub(char_offset),
+                                style: *theme.selection,
+                            });
+                        }
+                    }
+
+                    visible_raw_lines.push(format_raw_line_with_highlights(
+                        &sub_slice,
+                        raw_display_mode,
+                        &highlights,
+                    ));
                 }
 
                 char_offset = sub_char_end;
@@ -691,13 +635,17 @@ pub fn render_raw_side_panel(
         current_visual_row = entry_visual_end;
     }
 
+    // partial_rx
     if app.settings().line_mode.display_partial_rx
         && !app.line_mode.partial_rx().is_empty()
         && visible_raw_lines.len() < view_height
     {
         let partial_raw = String::from_utf8_lossy(app.line_mode.partial_rx());
-        let spans = format_line_content(&partial_raw, raw_display_mode);
-        visible_raw_lines.push(Line::from(spans));
+        visible_raw_lines.push(format_raw_line_with_highlights(
+            &partial_raw,
+            raw_display_mode,
+            &[],
+        ));
     }
 
     let max_visible_raw_width = visible_raw_lines
@@ -711,8 +659,13 @@ pub fn render_raw_side_panel(
         .update_raw_limits(max_visible_raw_width.saturating_sub(usable_width));
 
     let raw_pan_x = app.line_mode.raw_pan_x().min(app.line_mode.raw_pan_x_max());
-    let raw_paragraph =
-        Paragraph::new(visible_raw_lines).scroll((0, raw_pan_x.min(u16::MAX as usize) as u16));
 
-    frame.render_widget(raw_paragraph, inner_area);
+    render_raw_panel_widget(
+        frame,
+        raw_area,
+        inner_area,
+        block,
+        visible_raw_lines,
+        raw_pan_x,
+    );
 }
