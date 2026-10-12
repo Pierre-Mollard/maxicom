@@ -229,7 +229,6 @@ pub fn render_monitor(
         WrapMode::Truncate => app.line_mode.x_offset(),
     };
 
-    // NOTE: review this
     // side view raw panel
     let active_focus = if app.line_mode.copy_state().active {
         Some((
@@ -275,6 +274,7 @@ pub fn render_monitor(
                 if remaining < current_sub_chars || is_last {
                     let local_char = remaining.min(current_sub_chars.saturating_sub(1));
 
+                    // convert index to utf8 byte offset
                     let byte_offset = sub_slice
                         .char_indices()
                         .nth(local_char)

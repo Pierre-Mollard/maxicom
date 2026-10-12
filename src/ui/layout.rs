@@ -13,6 +13,21 @@ use crate::{
     },
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LayoutWarning {
+    SidePanelTooSmall {
+        required: u16,
+        actual: u16,
+        orientation: RawSideOrientation,
+    },
+    WindowTooSmall {
+        min_cols: u16,
+        min_rows: u16,
+        actual_cols: u16,
+        actual_rows: u16,
+    },
+}
+
 pub struct ScreenLayout {
     pub monitor_outer: Rect,
     pub content_area: Rect,
@@ -22,10 +37,12 @@ pub struct ScreenLayout {
     pub prompt_area: Option<Rect>,
     pub status_bar_area: Option<Rect>,
     pub focus_target: FocusTarget,
+    pub warnings: Vec<LayoutWarning>,
 }
 
 impl ScreenLayout {
     pub fn compute(screen: Rect, app: &App) -> Self {
+        let mut warnings = Vec::new();
         let ui = &app.settings().ui;
         let show_borders = ui.show_borders;
         let show_status_bar = ui.show_status_bar;
@@ -43,6 +60,15 @@ impl ScreenLayout {
                 }
             }
         };
+
+        if screen.width < 30 || screen.height < 8 {
+            warnings.push(LayoutWarning::WindowTooSmall {
+                min_cols: 30,
+                min_rows: 8,
+                actual_cols: screen.width,
+                actual_rows: screen.height,
+            });
+        }
 
         let v_chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -108,9 +134,23 @@ impl ScreenLayout {
                 RawSideOrientation::Right => Direction::Horizontal,
                 RawSideOrientation::Bottom => Direction::Vertical,
             };
-            let is_sufficiently_large = match orientation {
-                Direction::Horizontal => remaining_after_gutter.width >= 50,
-                Direction::Vertical => remaining_after_gutter.height >= 12,
+            let (is_sufficiently_large, required, actual) = match orientation {
+                Direction::Horizontal => {
+                    let req = 50;
+                    (
+                        remaining_after_gutter.width >= req,
+                        req,
+                        remaining_after_gutter.width,
+                    )
+                }
+                Direction::Vertical => {
+                    let req = 12;
+                    (
+                        remaining_after_gutter.height >= req,
+                        req,
+                        remaining_after_gutter.height,
+                    )
+                }
             };
 
             if is_sufficiently_large {
@@ -124,7 +164,12 @@ impl ScreenLayout {
 
                 (chunks[0], Some(chunks[1]))
             } else {
-                (remaining_after_gutter, None) //  TODO: rendering error : screen too small
+                warnings.push(LayoutWarning::SidePanelTooSmall {
+                    required,
+                    actual,
+                    orientation: app.settings().raw_side.orientation,
+                });
+                (remaining_after_gutter, None)
             }
         } else {
             (remaining_after_gutter, None)
@@ -167,6 +212,7 @@ impl ScreenLayout {
             prompt_area,
             status_bar_area,
             focus_target,
+            warnings,
         }
     }
 }

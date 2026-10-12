@@ -44,6 +44,7 @@ pub struct Toast {
     pub expires_at: Instant,
 }
 
+// TODO: multi line notifications
 #[derive(Default)]
 pub struct NotificationManager {
     toasts: Vec<Toast>,

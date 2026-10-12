@@ -15,7 +15,7 @@ use crate::{
     configs::{AppConfig, InputMode, KeyResolver},
     overlays::{ErrorDialog, Overlay},
     serial::{SerialDevice, SerialError, parse_args, print_help},
-    ui::{PostRenderEffect, render},
+    ui::{PostRenderEffect, layout::LayoutWarning, render},
 };
 
 mod app;
@@ -118,6 +118,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     }
 
     let mut last_reconnect_attempt = std::time::Instant::now();
+    let mut last_layout_warnings: Vec<LayoutWarning> = Vec::default();
 
     while running {
         if let Some(ref mut dev) = device {
@@ -227,8 +228,41 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         })?;
 
         match post_render_effect {
-            PostRenderEffect::None => (),
+            PostRenderEffect::None => {
+                last_layout_warnings.clear();
+            }
             PostRenderEffect::_CopyToClipboard(text) => execute_clipboard_copy(&mut app, &text),
+            PostRenderEffect::LayoutWarnings(current_warnings) => {
+                for warn in &current_warnings {
+                    if !last_layout_warnings.contains(warn) {
+                        let msg = match warn {
+                            LayoutWarning::SidePanelTooSmall {
+                                required,
+                                actual,
+                                orientation,
+                            } => {
+                                format!(
+                                    "Side panel hidden: requires at least {} {:?}, but screen has only {}",
+                                    required, orientation, actual
+                                )
+                            }
+                            LayoutWarning::WindowTooSmall {
+                                min_cols,
+                                min_rows,
+                                actual_cols,
+                                actual_rows,
+                            } => {
+                                format!(
+                                    "Terminal window too small ({}x{}). Minimum is {}x{}",
+                                    actual_cols, actual_rows, min_cols, min_rows
+                                )
+                            }
+                        };
+                        app.notify_warn(msg);
+                    }
+                }
+                last_layout_warnings = current_warnings;
+            }
         }
     }
 

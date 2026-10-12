@@ -33,7 +33,6 @@ pub struct SearchState {
     pub target_jump: Option<(usize, usize)>,
 }
 
-// NOTE: check this
 impl SearchState {
     pub fn update_matches_from_entries(
         &mut self,
@@ -250,7 +249,6 @@ impl SearchState {
     }
 }
 
-// NOTE: check this
 pub fn parse_raw_bytes_for_view(input: &str, raw_view: RawSideView) -> Option<Vec<u8>> {
     let q = input.trim();
     if q.is_empty() {
@@ -289,7 +287,6 @@ pub fn parse_raw_bytes_for_view(input: &str, raw_view: RawSideView) -> Option<Ve
                     .collect::<Result<Vec<u8>, _>>()
                     .ok()
             } else if clean.len().is_multiple_of(3) && clean.len() >= 3 {
-                // Unspaced 3-digit octal tokens: e.g. "155141" -> [0o155, 0o141]
                 let mut bytes = Vec::with_capacity(clean.len() / 3);
                 for i in (0..clean.len()).step_by(3) {
                     if let Ok(b) = u8::from_str_radix(&clean[i..i + 3], 8) {
@@ -312,7 +309,6 @@ pub fn parse_raw_bytes_for_view(input: &str, raw_view: RawSideView) -> Option<Ve
                     .collect::<Result<Vec<u8>, _>>()
                     .ok()
             } else if clean.len().is_multiple_of(8) && clean.len() >= 8 {
-                // Unspaced 8-bit bytes: e.g. "0110110101100001"
                 let mut bytes = Vec::with_capacity(clean.len() / 8);
                 for i in (0..clean.len()).step_by(8) {
                     if let Ok(b) = u8::from_str_radix(&clean[i..i + 8], 2) {

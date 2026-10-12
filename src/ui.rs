@@ -20,7 +20,7 @@ use crate::{
     overlays::Overlay,
     ui::{
         common::{border_style_for, monitor_bottom_title, monitor_title},
-        layout::ScreenLayout,
+        layout::{LayoutWarning, ScreenLayout},
         lines::{render_input_prompt, render_monitor},
         popups::{
             alert::{render_disconnected_popup, render_error_popup},
@@ -39,6 +39,7 @@ use crate::{
 #[derive(Debug, PartialEq, Eq)]
 pub enum PostRenderEffect {
     None,
+    LayoutWarnings(Vec<LayoutWarning>),
     _CopyToClipboard(String),
 }
 
@@ -113,7 +114,11 @@ pub fn render(
 
     render_notifications(&app.notifications, frame);
 
-    post_effect
+    if !layout.warnings.is_empty() {
+        PostRenderEffect::LayoutWarnings(layout.warnings)
+    } else {
+        post_effect
+    }
 }
 
 fn render_active_overlay(app: &App, frame: &mut Frame, theme: &ThemeConfig) {
