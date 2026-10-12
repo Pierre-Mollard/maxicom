@@ -1,5 +1,4 @@
 // TODO: see what in common with the render in terminal mode
-// TODO: check if factorize panning logic in terminal and line mode
 
 use ratatui::{
     Frame,

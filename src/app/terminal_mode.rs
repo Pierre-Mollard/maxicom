@@ -13,6 +13,7 @@ use vt100::Parser;
 use crate::{
     app::{
         UpdateEffect, ViewportSize,
+        raw_scroller::RawSideScroller,
         scroller::ViewportScroller,
         search::SearchState,
         selection::{CopyActionResult, CopyModeState, TextSource},
@@ -33,12 +34,10 @@ pub struct TerminalMode {
     search_state: SearchState,
     copy_state: CopyModeState,
     scroller: ViewportScroller,
+    raw_scroller: RawSideScroller,
     pan_offset_y: usize,
     vi_pending_copy: Option<ViPending>,
     flash_until: Option<Instant>,
-
-    raw_pan_x: usize,
-    max_raw_pan_x: usize,
 
     history_timestamps: VecDeque<DateTime<Local>>,
     screen_timestamps: Vec<Option<DateTime<Local>>>,
@@ -50,6 +49,7 @@ impl TerminalMode {
         let search_state = SearchState::default();
         let copy_state = CopyModeState::default();
         let scroller = ViewportScroller::default();
+        let raw_scroller = RawSideScroller::default();
 
         TerminalMode {
             vt100_parser,
@@ -59,11 +59,10 @@ impl TerminalMode {
             search_state,
             copy_state,
             scroller,
+            raw_scroller,
             pan_offset_y: 0,
             vi_pending_copy: None,
             flash_until: None,
-            raw_pan_x: 0,
-            max_raw_pan_x: 0,
             history_timestamps: VecDeque::with_capacity(max_history_lines),
             screen_timestamps: vec![None; rows as usize],
         }
@@ -328,14 +327,6 @@ impl TerminalMode {
         self.reconcile_both_vertical_scroll();
     }
 
-    pub fn pan_raw_left(&mut self, amount: usize) {
-        self.raw_pan_x = self.raw_pan_x.saturating_sub(amount);
-    }
-
-    pub fn pan_raw_right(&mut self, amount: usize) {
-        self.raw_pan_x = (self.raw_pan_x + amount).min(self.max_raw_pan_x);
-    }
-
     pub fn scroll_to_target_line(&mut self, target_line_idx: usize, view_height: usize) {
         let (grid_rows, _) = self.get_vt100_size();
         let max_sb = self.max_content_scrollback;
@@ -597,10 +588,10 @@ impl TerminalMode {
     pub fn handle_side_view_action(&mut self, action: SideViewAction) {
         match action {
             SideViewAction::PanLeft(amount) => {
-                self.pan_raw_left(amount);
+                self.raw_scroller.pan_left(amount);
             }
             SideViewAction::PanRight(amount) => {
-                self.pan_raw_right(amount);
+                self.raw_scroller.pan_right(amount);
             }
         }
     }
@@ -643,7 +634,7 @@ impl TerminalMode {
 
     #[inline]
     pub fn raw_pan_x(&self) -> usize {
-        self.raw_pan_x
+        self.raw_scroller.pan_x
     }
 
     pub fn save_screenshot_txt(&self) -> std::io::Result<String> {
@@ -690,25 +681,12 @@ impl TerminalMode {
         local_byte_offset: usize,
         total_sub_bytes: usize,
     ) {
-        if raw_view == RawSideView::Off || usable_panel_width == 0 {
-            return;
-        }
-
-        let stride = match raw_view {
-            RawSideView::Hex => 3,
-            RawSideView::Octal => 4,
-            RawSideView::Binary => 9,
-            RawSideView::Off => 1,
-        };
-
-        let total_raw_width = total_sub_bytes.saturating_mul(stride);
-        self.max_raw_pan_x = total_raw_width.saturating_sub(usable_panel_width);
-
-        let raw_match_x = local_byte_offset * stride;
-        let half_width = usable_panel_width / 2;
-        self.raw_pan_x = raw_match_x
-            .saturating_sub(half_width)
-            .min(self.max_raw_pan_x);
+        self.raw_scroller.center_on_byte(
+            raw_view,
+            usable_panel_width,
+            local_byte_offset,
+            total_sub_bytes,
+        );
     }
 
     pub fn sync_raw_pan_with_local_col(
@@ -718,30 +696,12 @@ impl TerminalMode {
         local_byte_offset: usize,
         total_sub_bytes: usize,
     ) {
-        if raw_view == RawSideView::Off || usable_panel_width == 0 {
-            return;
-        }
-
-        let stride = match raw_view {
-            RawSideView::Hex => 3,
-            RawSideView::Octal => 4,
-            RawSideView::Binary => 9,
-            RawSideView::Off => 1,
-        };
-
-        let total_raw_width = total_sub_bytes.saturating_mul(stride);
-        self.max_raw_pan_x = total_raw_width.saturating_sub(usable_panel_width);
-
-        let raw_cursor_x = local_byte_offset * stride;
-        let cursor_byte_end = raw_cursor_x + stride;
-
-        if cursor_byte_end > self.raw_pan_x + usable_panel_width {
-            self.raw_pan_x = cursor_byte_end.saturating_sub(usable_panel_width) + stride;
-        } else if raw_cursor_x < self.raw_pan_x {
-            self.raw_pan_x = raw_cursor_x;
-        }
-
-        self.raw_pan_x = self.raw_pan_x.min(self.max_raw_pan_x);
+        self.raw_scroller.sync_with_cursor(
+            raw_view,
+            usable_panel_width,
+            local_byte_offset,
+            total_sub_bytes,
+        );
     }
 
     pub fn center_on_target_match(

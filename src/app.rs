@@ -15,6 +15,7 @@ use crate::{
 
 pub mod data_processing;
 pub mod line_mode;
+pub mod raw_scroller;
 pub mod scroller;
 pub mod search;
 pub mod selection;

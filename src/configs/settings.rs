@@ -80,6 +80,16 @@ impl RawSideView {
             RawSideView::Binary => RawSideView::Off,
         };
     }
+
+    #[inline]
+    pub fn stride(self) -> usize {
+        match self {
+            RawSideView::Hex => 3,
+            RawSideView::Octal => 4,
+            RawSideView::Binary => 9,
+            RawSideView::Off => 1,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
