@@ -110,6 +110,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
     let mut running: bool = true;
     let buffer_size = settings.rx_buffer_size;
+    let inactivity_timeout = settings.inactivity_detach_timeout;
     let mut input_buffer = vec![0u8; buffer_size];
     let mut app = App::new(settings, key_resolver, console_args);
 
@@ -119,12 +120,14 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
     let mut last_reconnect_attempt = std::time::Instant::now();
     let mut last_layout_warnings: Vec<LayoutWarning> = Vec::default();
+    let mut last_rx_activity = std::time::Instant::now();
 
     while running {
         if let Some(ref mut dev) = device {
             match dev.read(&mut input_buffer) {
                 Ok(0) => {}
                 Ok(bytes_read) => {
+                    last_rx_activity = std::time::Instant::now();
                     app.stats.update_rx(bytes_read);
                     match app.settings().input_mode {
                         InputMode::Line => {
@@ -158,6 +161,17 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     break;
                 }
             }
+
+            if let Some(timeout) = inactivity_timeout
+                && last_rx_activity.elapsed() >= timeout
+            {
+                device = None;
+                app.open_overlay(Overlay::DeviceDetached(app.serial_config.port.clone()));
+                app.notify_warn(format!(
+                    "Device idle for {}s: port detached",
+                    timeout.as_secs()
+                ));
+            }
         } else {
             let is_detached_by_user = matches!(app.overlay(), Some(Overlay::DeviceDetached(_)));
             if !is_detached_by_user
@@ -166,6 +180,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 last_reconnect_attempt = std::time::Instant::now();
                 if let Ok(new_dev) = SerialDevice::open(&app.serial_config) {
                     device = Some(new_dev);
+                    last_rx_activity = std::time::Instant::now();
                     if let Some(Overlay::DeviceDisconnected(_)) = app.overlay() {
                         app.close_overlay();
                     }
@@ -187,6 +202,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         match SerialDevice::open(&app.serial_config) {
                             Ok(dev) => {
                                 device = Some(dev);
+                                last_rx_activity = std::time::Instant::now();
                                 app.close_overlay();
                                 app.notify_success(format!(
                                     "Reconnected to {}",
@@ -203,6 +219,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     if let Some(ref mut dev) = device {
                         match dev.write(&bytes) {
                             Ok(()) => {
+                                last_rx_activity = std::time::Instant::now();
                                 app.stats.update_tx(bytes.len());
                             }
                             Err(e) => {

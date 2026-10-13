@@ -3,12 +3,14 @@ use std::{
     fmt::Display,
     fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use chrono::format::strftime::StrftimeItems;
 use ratatui::style::{Color, Modifier, Style};
 use serde::{Deserialize, Serialize};
 
+pub const DEFAULT_INACTIVITY_DETACH: Duration = Duration::from_secs(4 * 3600);
 pub const MIN_RX_BUF_SIZE: usize = 512;
 pub const MAX_RX_BUF_SIZE: usize = 65_536;
 
@@ -471,6 +473,8 @@ pub struct SettingsConfig {
     pub rx_buffer_size: usize,
     pub display_live_timestamp: bool,
     pub timestamp_format: String,
+    #[serde(with = "humantime_serde")]
+    pub inactivity_detach_timeout: Option<Duration>,
     pub line_mode: LineModeConfig,
     pub terminal_mode: TerminalModeConfig,
     pub theme_path: Option<PathBuf>,
@@ -491,6 +495,7 @@ impl Default for SettingsConfig {
             timestamp_format: String::from("[%H:%M:%S%.3f]"),
             line_mode: LineModeConfig::default(),
             terminal_mode: TerminalModeConfig::default(),
+            inactivity_detach_timeout: Some(DEFAULT_INACTIVITY_DETACH),
             theme_path: None,
             keybindings_path: None,
             hightlights_path: None,
