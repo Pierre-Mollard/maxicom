@@ -217,15 +217,32 @@ pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, _theme: &Them
     frame.set_cursor_position((cursor_x, cursor_y));
 }
 
-/// Helper function to center a popup window
-pub fn centered_rect(percent_x: u16, height: u16, parent: Rect) -> Rect {
-    let width = (parent.width * percent_x) / 100;
-    let x = parent.x + parent.width.saturating_sub(width) / 2;
-    let y = parent.y + parent.height.saturating_sub(height) / 2;
-    Rect::new(x, y, width.min(parent.width), height.min(parent.height))
+pub fn popup_area(
+    parent: Rect,
+    preferred_width: u16,
+    preferred_height: u16,
+    min_width: u16,
+    min_height: u16,
+) -> Rect {
+    if parent.width <= min_width || parent.height <= min_height {
+        return parent; // fullscreen fallback
+    }
+
+    let max_w = parent.width.saturating_sub(2);
+    let max_h = parent.height.saturating_sub(2);
+    if max_w <= min_width || max_h <= min_height {
+        return parent; // fullscreen fallback
+    }
+
+    let target_w = preferred_width.clamp(min_width, max_w);
+    let target_h = preferred_height.clamp(min_height, max_h);
+
+    let x = parent.x + (parent.width.saturating_sub(target_w)) / 2;
+    let y = parent.y + (parent.height.saturating_sub(target_h)) / 2;
+
+    Rect::new(x, y, target_w, target_h)
 }
 
-/// Helper function to get standard borders
 pub fn border_style_for(
     target: FocusTarget,
     current: FocusTarget,

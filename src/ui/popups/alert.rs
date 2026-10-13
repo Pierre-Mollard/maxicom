@@ -5,10 +5,10 @@ use ratatui::{
     widgets::{Block, Clear, Paragraph, Wrap},
 };
 
-use crate::{overlays::ErrorDialog, ui::common::centered_rect};
+use crate::{overlays::ErrorDialog, ui::common::popup_area};
 
 pub fn render_disconnected_popup(port: &str, frame: &mut Frame) {
-    let area = centered_rect(54, 9, frame.area());
+    let area = popup_area(frame.area(), 48, 8, 40, 6);
     frame.render_widget(Clear, area);
 
     let text = vec![
@@ -42,7 +42,7 @@ pub fn render_disconnected_popup(port: &str, frame: &mut Frame) {
 }
 
 pub fn render_detached_popup(port: &str, frame: &mut Frame) {
-    let area = centered_rect(54, 10, frame.area());
+    let area = popup_area(frame.area(), 48, 8, 40, 6);
     frame.render_widget(Clear, area);
 
     let text = vec![
@@ -80,7 +80,7 @@ pub fn render_detached_popup(port: &str, frame: &mut Frame) {
 }
 
 pub fn render_error_popup(err: &ErrorDialog, frame: &mut Frame) {
-    let area = centered_rect(58, 10, frame.area());
+    let area = popup_area(frame.area(), 48, 8, 40, 6);
     frame.render_widget(Clear, area);
 
     let mut lines = vec![

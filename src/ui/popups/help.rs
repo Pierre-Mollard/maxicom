@@ -13,11 +13,11 @@ use crate::{
     app::{App, types::FocusTarget},
     configs::ThemeConfig,
     overlays::{HelpCategory, HelpDialog},
-    ui::common::{border_style_for, centered_rect},
+    ui::common::{border_style_for, popup_area},
 };
 
 pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, theme: &ThemeConfig) {
-    let area = centered_rect(65, 18, frame.area());
+    let area = popup_area(frame.area(), 74, 20, 32, 14);
     frame.render_widget(Clear, area);
 
     let border_style = border_style_for(
@@ -27,11 +27,15 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
         theme,
     );
 
-    let outer_block = Block::default()
+    let is_compact_vertical = area.height < 14;
+
+    let mut outer_block = Block::default()
         .borders(Borders::ALL)
         .border_style(border_style)
-        .title(" Help [Keybindings] ")
-        .title_bottom(Line::from(vec![
+        .title(" Help [Keybindings] ");
+
+    if !is_compact_vertical {
+        outer_block = outer_block.title_bottom(Line::from(vec![
             Span::styled(" Tab/Arrows: ", Style::default().fg(Color::DarkGray)),
             Span::raw("Category  "),
             Span::styled("j/k/Scroll: ", Style::default().fg(Color::DarkGray)),
@@ -39,13 +43,16 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
             Span::styled("Esc/q: ", Style::default().fg(Color::DarkGray)),
             Span::raw("Close "),
         ]));
+    }
 
     let inner_area = outer_block.inner(area);
     frame.render_widget(outer_block, area);
 
+    let tabs_height = if is_compact_vertical { 1 } else { 2 };
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(0)])
+        .constraints([Constraint::Length(tabs_height), Constraint::Min(0)])
         .split(inner_area);
 
     let tabs_area = chunks[0];

@@ -9,7 +9,7 @@ use crate::{
     app::{App, types::FocusTarget},
     configs::ThemeConfig,
     overlays::FilePathDialog,
-    ui::common::{border_style_for, centered_rect},
+    ui::common::{border_style_for, popup_area},
 };
 
 pub fn render_filepath_popup(
@@ -18,7 +18,7 @@ pub fn render_filepath_popup(
     frame: &mut Frame,
     theme: &ThemeConfig,
 ) {
-    let area = centered_rect(52, 11, frame.area());
+    let area = popup_area(frame.area(), 60, 16, 40, 10);
     frame.render_widget(Clear, area);
 
     let style = Style::default()

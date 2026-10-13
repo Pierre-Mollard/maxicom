@@ -7,13 +7,13 @@ use ratatui::{
 
 use crate::{
     overlays::{SerialConfigDialog, SerialSettingField},
-    ui::common::centered_rect,
+    ui::common::popup_area,
 };
 
 pub fn render_reconfigure_popup(dialog: &SerialConfigDialog, frame: &mut Frame) {
-    let popup_area = centered_rect(52, 11, frame.area());
+    let area = popup_area(frame.area(), 40, 11, 42, 10);
 
-    frame.render_widget(Clear, popup_area);
+    frame.render_widget(Clear, area);
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -21,8 +21,8 @@ pub fn render_reconfigure_popup(dialog: &SerialConfigDialog, frame: &mut Frame) 
         .title(" Serial Port Configuration ")
         .title_bottom(Line::from(" [Enter] Apply  [Esc] Cancel ").centered());
 
-    let inner = block.inner(popup_area);
-    frame.render_widget(block, popup_area);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
     let mut lines = Vec::new();
 

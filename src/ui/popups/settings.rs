@@ -8,11 +8,11 @@ use ratatui::{
 use crate::{
     app::{App, types::FocusTarget},
     configs::{PrefixWrapBehavior, ThemeConfig},
-    ui::common::{border_style_for, centered_rect},
+    ui::common::{border_style_for, popup_area},
 };
 
 pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) {
-    let area = centered_rect(55, 16, frame.area());
+    let area = popup_area(frame.area(), 40, 17, 42, 19);
     frame.render_widget(Clear, area);
 
     let mode_str = match app.settings().input_mode {
@@ -51,28 +51,28 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled("[M] ", Style::default().fg(Color::Yellow)),
-            Span::raw("Input Mode  : "),
+            Span::styled(" [M] ", Style::default().fg(Color::Yellow)),
+            Span::raw(" Input Mode  : "),
             Span::styled(mode_str, Style::default().fg(Color::Cyan)),
         ]),
         Line::from(vec![
-            Span::styled("[E] ", Style::default().fg(Color::Yellow)),
-            Span::raw("Local Echo  : "),
+            Span::styled(" [E] ", Style::default().fg(Color::Yellow)),
+            Span::raw(" Local Echo  : "),
             Span::styled(echo_str, Style::default().fg(Color::Cyan)),
         ]),
         Line::from(vec![
-            Span::styled("[T] ", Style::default().fg(Color::Yellow)),
-            Span::raw("Timestamps  : "),
+            Span::styled(" [T] ", Style::default().fg(Color::Yellow)),
+            Span::raw(" Timestamps  : "),
             Span::styled(timestamp_str, Style::default().fg(Color::Cyan)),
         ]),
         Line::from(vec![
-            Span::styled("[X] ", Style::default().fg(Color::Yellow)),
-            Span::raw("Rx Encoding : "),
+            Span::styled(" [X] ", Style::default().fg(Color::Yellow)),
+            Span::raw(" Rx Encoding : "),
             Span::styled(encoding_str, Style::default().fg(Color::Cyan)),
         ]),
         Line::from(vec![
-            Span::styled("[B] ", Style::default().fg(Color::Yellow)),
-            Span::raw("Side Raw   : "),
+            Span::styled(" [B] ", Style::default().fg(Color::Yellow)),
+            Span::raw(" Side Raw   : "),
             Span::styled(raw_display_str, Style::default().fg(Color::Cyan)),
         ]),
         Line::from(""),
@@ -84,18 +84,18 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled("[W] ", Style::default().fg(Color::Yellow)),
-            Span::raw("Line Wrap   : "),
+            Span::styled(" [W] ", Style::default().fg(Color::Yellow)),
+            Span::raw(" Line Wrap   : "),
             Span::styled(wrap_str, Style::default().fg(Color::Cyan)),
         ]),
         Line::from(vec![
-            Span::styled("[I] ", Style::default().fg(Color::Yellow)),
-            Span::raw("Indent Wrap : "),
+            Span::styled(" [I] ", Style::default().fg(Color::Yellow)),
+            Span::raw(" Indent Wrap : "),
             Span::styled(indent_str, Style::default().fg(Color::Cyan)),
         ]),
         Line::from(vec![
-            Span::styled("[D] ", Style::default().fg(Color::Yellow)),
-            Span::raw("Display Mode : "),
+            Span::styled(" [D] ", Style::default().fg(Color::Yellow)),
+            Span::raw(" Display Mode : "),
             Span::styled(display_mode_str, Style::default().fg(Color::Cyan)),
         ]),
         Line::from(""),

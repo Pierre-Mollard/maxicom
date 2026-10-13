@@ -9,7 +9,7 @@ use crate::{
     app::{App, types::FocusTarget},
     configs::ThemeConfig,
     overlays::{ResizeDialog, ResizeField},
-    ui::common::{border_style_for, centered_rect},
+    ui::common::{border_style_for, popup_area},
 };
 
 pub fn render_resize_popup(
@@ -18,7 +18,7 @@ pub fn render_resize_popup(
     frame: &mut Frame,
     theme: &ThemeConfig,
 ) {
-    let area = centered_rect(52, 11, frame.area());
+    let area = popup_area(frame.area(), 40, 11, 42, 10);
     frame.render_widget(Clear, area);
 
     let active = dialog.active_field;
@@ -78,7 +78,11 @@ pub fn render_resize_popup(
         ]),
         Line::from(""),
         Line::from(Span::styled(
-            "[Tab] Switch Field | [Enter] Apply | [Esc] Cancel",
+            "[Tab] Switch Field",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(Span::styled(
+            "[Enter] Apply | [Esc] Cancel",
             Style::default().fg(Color::DarkGray),
         )),
     ];
