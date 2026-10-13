@@ -64,7 +64,6 @@ impl SerialConfigDialog {
         }
     }
 
-    /// Cycle current field forward (Right Arrow or Space)
     pub fn cycle_next(&mut self) {
         match self.selected_field {
             SerialSettingField::BaudRate => {
@@ -102,7 +101,6 @@ impl SerialConfigDialog {
         }
     }
 
-    /// Cycle current field backward (Left Arrow)
     pub fn cycle_prev(&mut self) {
         match self.selected_field {
             SerialSettingField::BaudRate => {
@@ -141,7 +139,6 @@ impl SerialConfigDialog {
         }
     }
 
-    /// Finalize and retrieve updated config
     pub fn to_config(&self) -> SerialConfig {
         let mut final_cfg = self.config.clone();
         final_cfg.port = self.port_input.value().to_string();

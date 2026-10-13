@@ -473,7 +473,12 @@ impl std::fmt::Display for KeyPattern {
         if self.modifiers.contains(KeyModifiers::ALT) {
             parts.push("Alt");
         }
-        if self.modifiers.contains(KeyModifiers::SHIFT) {
+
+        let is_uppercase_char = match self.code {
+            KeyCode::Char(c) => c.is_ascii_uppercase(),
+            _ => false,
+        };
+        if self.modifiers.contains(KeyModifiers::SHIFT) && !is_uppercase_char {
             parts.push("Shift");
         }
 
@@ -492,7 +497,7 @@ impl std::fmt::Display for KeyPattern {
             KeyCode::End => "End".to_string(),
             KeyCode::F(n) => format!("F{n}"),
             KeyCode::Char(' ') => "Space".to_string(),
-            KeyCode::Char(c) => c.to_uppercase().to_string(),
+            KeyCode::Char(c) => c.to_string(),
             _ => "?".to_string(),
         };
 
