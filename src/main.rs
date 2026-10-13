@@ -142,7 +142,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     };
                 }
                 Err(SerialError::InputClosed) => {
-                    device = None; // Drops closed handle
+                    device = None;
                     app.open_overlay(Overlay::DeviceDisconnected(app.serial_config.port.clone()));
                     app.notify_warn("Device Lost");
                 }
@@ -159,13 +159,17 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 }
             }
         } else {
-            if last_reconnect_attempt.elapsed() >= Duration::from_millis(500) {
+            let is_detached_by_user = matches!(app.overlay(), Some(Overlay::DeviceDetached(_)));
+            if !is_detached_by_user
+                && last_reconnect_attempt.elapsed() >= Duration::from_millis(500)
+            {
                 last_reconnect_attempt = std::time::Instant::now();
                 if let Ok(new_dev) = SerialDevice::open(&app.serial_config) {
                     device = Some(new_dev);
                     if let Some(Overlay::DeviceDisconnected(_)) = app.overlay() {
                         app.close_overlay();
                     }
+                    app.notify_success(format!("Device Reconnected: {}", app.serial_config.port));
                 }
             }
         }
@@ -174,6 +178,27 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let action = inputs::handle_event(event, &app);
             match app.update(action) {
                 UpdateEffect::Quit => running = false,
+                UpdateEffect::ToggleAttachSerial => {
+                    if device.is_some() {
+                        device = None;
+                        app.open_overlay(Overlay::DeviceDetached(app.serial_config.port.clone()));
+                        app.notify_warn("Serial Port Released (Detached)");
+                    } else {
+                        match SerialDevice::open(&app.serial_config) {
+                            Ok(dev) => {
+                                device = Some(dev);
+                                app.close_overlay();
+                                app.notify_success(format!(
+                                    "Reconnected to {}",
+                                    app.serial_config.port
+                                ));
+                            }
+                            Err(e) => {
+                                app.notify_error(format!("Failed to reattach: {e}"));
+                            }
+                        }
+                    }
+                }
                 UpdateEffect::Transmit(bytes) => {
                     if let Some(ref mut dev) = device {
                         match dev.write(&bytes) {

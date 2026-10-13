@@ -76,6 +76,7 @@ pub enum UpdateEffect {
     Reconfigure(SerialConfig),
     CopyToClipboard(String),
     Screenshot(Result<String, String>),
+    ToggleAttachSerial,
     Quit,
 }
 
@@ -165,8 +166,12 @@ impl App {
 
     // TODO: make a cache so when connect back to fd data is there (with clear opt)
 
-    // TODO: add feature too disconnect / reconnect fd
+    //
+    // TODO: dialog popup check dim and layout with text content
 
+    // TODO: help keybindings list uppercase hide lower case shortcuts
+
+    //
     // TODO: auto disconnect after fixed time inactivity
 
     pub fn update(&mut self, action: Action) -> UpdateEffect {
@@ -229,6 +234,7 @@ impl App {
                             self.serial_config = new_cfg.clone();
                             UpdateEffect::Reconfigure(new_cfg)
                         }
+                        OverlayResponse::ReconnectSerial => UpdateEffect::ToggleAttachSerial,
                         OverlayResponse::StartCapture(path) => {
                             let result = match self.settings.input_mode {
                                 InputMode::Line => self.line_mode.start_logging(path),
@@ -286,6 +292,7 @@ impl App {
                 UpdateEffect::None
             }
             AppAction::Quit => UpdateEffect::Quit,
+            AppAction::DetachSerial => UpdateEffect::ToggleAttachSerial,
             AppAction::SideView(action) => self.update_side_view(action),
         }
     }

@@ -41,6 +41,7 @@ pub enum AppAction {
     FocusGained(bool),
     ToggleSetting(SettingKey),
     ToggleLogging,
+    DetachSerial,
     OpenOverlay(Overlay),
     SideView(SideViewAction),
     Quit,

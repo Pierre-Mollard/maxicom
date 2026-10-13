@@ -24,6 +24,7 @@ pub enum Overlay {
     SerialSettings(SerialConfigDialog),
     FilePath(FilePathDialog),
     DeviceDisconnected(String),
+    DeviceDetached(String),
     Error(ErrorDialog),
 }
 
@@ -33,6 +34,7 @@ pub enum OverlayResponse {
     ToggleSetting(SettingKey),
     ResizeTerminal { rows: u16, cols: u16 },
     ReconfigureSerial(SerialConfig),
+    ReconnectSerial,
     StartCapture(PathBuf),
     Quit,
 }
@@ -66,6 +68,18 @@ impl Overlay {
                     || matches!(key.code, KeyCode::Esc | KeyCode::Enter)
                 {
                     OverlayResponse::Quit
+                } else {
+                    OverlayResponse::Handled
+                }
+            }
+            Overlay::DeviceDetached(_) => {
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(key.code, KeyCode::Char('c' | 'C'))
+                    || matches!(key.code, KeyCode::Esc)
+                {
+                    OverlayResponse::Quit
+                } else if matches!(key.code, KeyCode::Enter) {
+                    OverlayResponse::ReconnectSerial
                 } else {
                     OverlayResponse::Handled
                 }

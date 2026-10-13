@@ -41,6 +41,44 @@ pub fn render_disconnected_popup(port: &str, frame: &mut Frame) {
     frame.render_widget(popup, area);
 }
 
+pub fn render_detached_popup(port: &str, frame: &mut Frame) {
+    let area = centered_rect(54, 10, frame.area());
+    frame.render_widget(Clear, area);
+
+    let text = vec![
+        Line::from(Span::styled(
+            "⚠ SERIAL DEVICE DETACHED ⚠",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("Device "),
+            Span::styled(port, Style::default().fg(Color::Yellow)),
+            Span::raw(" was released."),
+        ]),
+        Line::from("The serial port is free..."),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Press [ENTER] to reattach",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(Span::styled(
+            "Press [ESC] or [Ctrl+C] to quit",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    let popup = Paragraph::new(text)
+        .alignment(ratatui::layout::Alignment::Center)
+        .block(
+            Block::bordered()
+                .title(" Connection Lost ")
+                .border_style(Style::default().fg(Color::Red)),
+        );
+
+    frame.render_widget(popup, area);
+}
+
 pub fn render_error_popup(err: &ErrorDialog, frame: &mut Frame) {
     let area = centered_rect(58, 10, frame.area());
     frame.render_widget(Clear, area);

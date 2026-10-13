@@ -84,6 +84,7 @@ impl KeyBindingAction {
             }
             KeyBindingAction::ClearHistory => Action::History(HistoryAction::Clear),
             KeyBindingAction::ExitPrefix => Action::App(AppAction::SetPrefix(false)),
+            KeyBindingAction::DetachSerial => Action::App(AppAction::DetachSerial),
         }
     }
 }

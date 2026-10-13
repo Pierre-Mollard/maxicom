@@ -23,7 +23,7 @@ use crate::{
         layout::{LayoutWarning, ScreenLayout},
         lines::{render_input_prompt, render_monitor},
         popups::{
-            alert::{render_disconnected_popup, render_error_popup},
+            alert::{render_detached_popup, render_disconnected_popup, render_error_popup},
             filepath::render_filepath_popup,
             help::render_help_popup,
             notifications::render_notifications,
@@ -129,6 +129,7 @@ fn render_active_overlay(app: &App, frame: &mut Frame, theme: &ThemeConfig) {
         Some(Overlay::SerialSettings(dialog)) => render_reconfigure_popup(dialog, frame),
         Some(Overlay::FilePath(dialog)) => render_filepath_popup(app, dialog, frame, theme),
         Some(Overlay::DeviceDisconnected(port)) => render_disconnected_popup(port, frame),
+        Some(Overlay::DeviceDetached(port)) => render_detached_popup(port, frame),
         Some(Overlay::Error(err)) => render_error_popup(err, frame),
         None => {}
     }

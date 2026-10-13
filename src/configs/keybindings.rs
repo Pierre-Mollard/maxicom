@@ -52,6 +52,7 @@ pub enum KeyBindingAction {
     PanSideRight,
     PanSideLeft,
     ClearHistory,
+    DetachSerial,
     ExitPrefix,
 }
 
@@ -93,6 +94,7 @@ impl FromStr for KeyBindingAction {
             "pan_side_left" => Ok(KeyBindingAction::PanSideLeft),
             "clear_history" => Ok(KeyBindingAction::ClearHistory),
             "exit_prefix" => Ok(KeyBindingAction::ExitPrefix),
+            "detach_serial" => Ok(KeyBindingAction::DetachSerial),
             other => Err(UnknownActionError(other.to_string())),
         }
     }
@@ -134,6 +136,7 @@ impl std::fmt::Display for KeyBindingAction {
             Self::PanSideLeft => "pan_side_left",
             Self::ClearHistory => "clear_history",
             Self::ExitPrefix => "exit_prefix",
+            Self::DetachSerial => "detach_serial",
         };
         write!(f, "{s}")
     }
@@ -713,6 +716,7 @@ impl Default for KeyBindingsConfig {
             "["     => KeyBindingAction::EnterCopyMode,
             "/"     => KeyBindingAction::EnterSearch,
             "a"     => KeyBindingAction::ExitPrefix,
+            "h"     => KeyBindingAction::DetachSerial,
         };
 
         let line_mode = default_bindings! {
