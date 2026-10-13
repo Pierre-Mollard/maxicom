@@ -165,6 +165,10 @@ impl App {
 
     // TODO: make a cache so when connect back to fd data is there (with clear opt)
 
+    // TODO: add feature too disconnect / reconnect fd
+
+    // TODO: auto disconnect after fixed time inactivity
+
     pub fn update(&mut self, action: Action) -> UpdateEffect {
         let is_repeatable_history = self.prefix_active
             && matches!(
