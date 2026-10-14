@@ -1,10 +1,15 @@
-use std::env;
+use std::{env, path::PathBuf};
 
 use crate::serial::{CharSize, FlowControl, Parity, SerialConfig, StopBits};
 
+#[derive(Debug, Clone)]
+pub enum RunMode {
+    Live(SerialConfig),
+    Replay { file_path: PathBuf, delay_ms: u64 },
+}
 #[derive(Debug)]
 pub enum ParseOutcome {
-    Config(SerialConfig),
+    Run(RunMode),
     Help,
 }
 
@@ -34,35 +39,52 @@ impl std::fmt::Display for ParseError {
 }
 
 pub fn parse_args() -> Result<ParseOutcome, ParseError> {
-    let mut config = SerialConfig::default();
     let mut args = env::args().skip(1); // skip program name
+    let mut serial_config = SerialConfig::default();
+    let mut replay_file: Option<PathBuf> = None;
+    let mut replay_delay: u64 = 0;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--replay" | "-r" => {
+                let path = args
+                    .next()
+                    .ok_or(ParseError::MissingValue("Missing file path for --replay"))?;
+                replay_file = Some(PathBuf::from(path));
+            }
+            "--delay" => {
+                let val = args.next().ok_or(ParseError::MissingValue(
+                    "Missing millisecond delay for --delay",
+                ))?;
+                replay_delay = val
+                    .parse::<u64>()
+                    .map_err(|_| ParseError::BadFormat(format!("Invalid delay '{val}'")))?;
+            }
             "--port" | "-p" => {
-                config.port = args.next().ok_or(ParseError::MissingValue("--port"))?;
+                serial_config.port = args.next().ok_or(ParseError::MissingValue("--port"))?;
             }
             "--baud" | "-b" => {
                 let val = args.next().ok_or(ParseError::MissingValue("--baud"))?;
-                config.baudrate = val
+                serial_config.baudrate = val
                     .parse::<u32>()
                     .map_err(|_| ParseError::BadFormat(format!("Invalid baud rate '{val}'")))?;
             }
             "--bits" => {
                 let val = args.next().ok_or(ParseError::MissingValue("--bits"))?;
-                config.char_size = val.parse::<CharSize>().map_err(ParseError::BadFormat)?;
+                serial_config.char_size = val.parse::<CharSize>().map_err(ParseError::BadFormat)?;
             }
             "--stop-bits" => {
                 let val = args.next().ok_or(ParseError::MissingValue("--stop-bits"))?;
-                config.stop_bits = val.parse::<StopBits>().map_err(ParseError::BadFormat)?;
+                serial_config.stop_bits = val.parse::<StopBits>().map_err(ParseError::BadFormat)?;
             }
             "--parity" => {
                 let val = args.next().ok_or(ParseError::MissingValue("--parity"))?;
-                config.parity = val.parse::<Parity>().map_err(ParseError::BadFormat)?;
+                serial_config.parity = val.parse::<Parity>().map_err(ParseError::BadFormat)?;
             }
             "--flow" => {
                 let val = args.next().ok_or(ParseError::MissingValue("--flow"))?;
-                config.flow_control = val.parse::<FlowControl>().map_err(ParseError::BadFormat)?;
+                serial_config.flow_control =
+                    val.parse::<FlowControl>().map_err(ParseError::BadFormat)?;
             }
             "--help" | "-h" => {
                 return Ok(ParseOutcome::Help);
@@ -74,7 +96,14 @@ pub fn parse_args() -> Result<ParseOutcome, ParseError> {
         }
     }
 
-    Ok(ParseOutcome::Config(config))
+    if let Some(file_path) = replay_file {
+        Ok(ParseOutcome::Run(RunMode::Replay {
+            file_path,
+            delay_ms: replay_delay,
+        }))
+    } else {
+        Ok(ParseOutcome::Run(RunMode::Live(serial_config)))
+    }
 }
 
 pub fn print_help() {
@@ -92,6 +121,10 @@ Options:
       --stop-bits <1|2>    Stop bits [default: 1]
       --parity <n|e|o>     Parity: none, even, odd [default: none]
       --flow <none|hw|sw>  Flow control: none, rtscts (hw), xonxoff (sw) [default: none]
+
+  -r, --replay <PATH>      File to replay raw bytes to terminal instead of serial device
+      --delay <ms>         Time to wait between chunks in millisecond
+
   -h, --help               Print help
 "
     );

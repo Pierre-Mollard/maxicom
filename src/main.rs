@@ -1,4 +1,5 @@
 use std::{
+    fs::File,
     io::{self, ErrorKind, stdout},
     process::ExitCode,
     time::Duration,
@@ -12,15 +13,17 @@ use ratatui::DefaultTerminal;
 
 use crate::{
     app::{App, UpdateEffect, selection::copy_via_osc52},
-    args::{ParseOutcome, parse_args, print_help},
+    args::{ParseOutcome, RunMode, parse_args, print_help},
+    bytesource::ByteSource,
     configs::{AppConfig, InputMode, KeyResolver},
     overlays::{ErrorDialog, Overlay},
-    serial::{SerialDevice, SerialError},
+    serial::{SerialConfig, SerialDevice, SerialError},
     ui::{PostRenderEffect, layout::LayoutWarning, render},
 };
 
 mod app;
 mod args;
+mod bytesource;
 mod configs;
 mod inputs;
 mod logger;
@@ -84,8 +87,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         .expect("keybindings were already validated during config loading");
     let highlight_rules = highlights.compile_rules();
 
-    let console_args = match parse_args() {
-        Ok(ParseOutcome::Config(config)) => config,
+    let run_mode = match parse_args() {
+        Ok(ParseOutcome::Run(mode)) => mode,
         Ok(ParseOutcome::Help) => {
             print_help();
             return Ok(ExitCode::SUCCESS);
@@ -96,25 +99,59 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
     };
 
-    let mut device = match SerialDevice::open(&console_args) {
-        Ok(dev) => Some(dev),
-        Err(SerialError::OpenFailed { ref source, .. }) if source.kind() == ErrorKind::NotFound => {
-            None
-        }
-        Err(SerialError::InputClosed) => None,
-        Err(err) => {
-            eprintln!("maxicom: {err}"); // Display is implemented in serial.rs
-            return Ok(ExitCode::FAILURE);
-        }
+    let mut device: Option<ByteSource> = match &run_mode {
+        RunMode::Live(cfg) => match SerialDevice::open(cfg) {
+            Ok(dev) => Some(ByteSource::Live(dev)),
+            Err(SerialError::OpenFailed { ref source, .. })
+                if source.kind() == ErrorKind::NotFound =>
+            {
+                None
+            }
+            Err(SerialError::InputClosed) => None,
+            Err(err) => {
+                eprintln!("maxicom: could not open serial device: {err}");
+                return Ok(ExitCode::FAILURE);
+            }
+        },
+        RunMode::Replay {
+            file_path,
+            delay_ms,
+        } => match File::open(file_path) {
+            Ok(file) => Some(ByteSource::Replay {
+                file,
+                delay: Duration::from_millis(*delay_ms),
+                last_chunk: std::time::Instant::now(),
+                finished: false,
+            }),
+            Err(err) => {
+                eprintln!(
+                    "maxicom: could not open replay file {}: {err}",
+                    file_path.display()
+                );
+                return Ok(ExitCode::FAILURE);
+            }
+        },
     };
 
     let mut guard = TerminalGuard::init()?;
 
     let mut running: bool = true;
+    let is_replay = matches!(run_mode, RunMode::Replay { .. });
     let buffer_size = settings.rx_buffer_size;
     let inactivity_timeout = settings.inactivity_detach_timeout;
     let mut input_buffer = vec![0u8; buffer_size];
-    let mut app = App::new(settings, key_resolver, console_args);
+
+    let serial_config = match &run_mode {
+        RunMode::Live(cfg) => cfg.clone(),
+        RunMode::Replay { file_path, .. } => SerialConfig {
+            port: format!("file://{}", file_path.display()),
+            ..SerialConfig::default()
+        },
+    };
+    let mut app = App::new(settings, key_resolver, serial_config);
+    if is_replay {
+        app.settings_mut().input_mode = InputMode::Terminal;
+    }
 
     if device.is_none() {
         app.open_overlay(Overlay::DeviceDisconnected(app.serial_config.port.clone()));
@@ -164,7 +201,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 }
             }
 
-            if let Some(timeout) = inactivity_timeout
+            if !is_replay
+                && let Some(timeout) = inactivity_timeout
                 && last_rx_activity.elapsed() >= timeout
             {
                 device = None;
@@ -176,12 +214,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
         } else {
             let is_detached_by_user = matches!(app.overlay(), Some(Overlay::DeviceDetached(_)));
-            if !is_detached_by_user
+            if !is_replay
+                && !is_detached_by_user
                 && last_reconnect_attempt.elapsed() >= Duration::from_millis(500)
             {
                 last_reconnect_attempt = std::time::Instant::now();
                 if let Ok(new_dev) = SerialDevice::open(&app.serial_config) {
-                    device = Some(new_dev);
+                    device = Some(ByteSource::Live(new_dev));
                     last_rx_activity = std::time::Instant::now();
                     if let Some(Overlay::DeviceDisconnected(_)) = app.overlay() {
                         app.close_overlay();
@@ -196,23 +235,27 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             match app.update(action) {
                 UpdateEffect::Quit => running = false,
                 UpdateEffect::ToggleAttachSerial => {
-                    if device.is_some() {
-                        device = None;
-                        app.open_overlay(Overlay::DeviceDetached(app.serial_config.port.clone()));
-                        app.notify_warn("Serial Port Released (Detached)");
-                    } else {
-                        match SerialDevice::open(&app.serial_config) {
-                            Ok(dev) => {
-                                device = Some(dev);
-                                last_rx_activity = std::time::Instant::now();
-                                app.close_overlay();
-                                app.notify_success(format!(
-                                    "Reconnected to {}",
-                                    app.serial_config.port
-                                ));
-                            }
-                            Err(e) => {
-                                app.notify_error(format!("Failed to reattach: {e}"));
+                    if !is_replay {
+                        if device.is_some() {
+                            device = None;
+                            app.open_overlay(Overlay::DeviceDetached(
+                                app.serial_config.port.clone(),
+                            ));
+                            app.notify_warn("Serial Port Released (Detached)");
+                        } else {
+                            match SerialDevice::open(&app.serial_config) {
+                                Ok(dev) => {
+                                    device = Some(ByteSource::Live(dev));
+                                    last_rx_activity = std::time::Instant::now();
+                                    app.close_overlay();
+                                    app.notify_success(format!(
+                                        "Reconnected to {}",
+                                        app.serial_config.port
+                                    ));
+                                }
+                                Err(e) => {
+                                    app.notify_error(format!("Failed to reattach: {e}"));
+                                }
                             }
                         }
                     }
@@ -222,7 +265,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         match dev.write(&bytes) {
                             Ok(()) => {
                                 last_rx_activity = std::time::Instant::now();
-                                app.stats.update_tx(bytes.len());
+                                if !is_replay {
+                                    app.stats.update_tx(bytes.len());
+                                }
                             }
                             Err(e) => {
                                 app.open_overlay(Overlay::Error(
@@ -237,7 +282,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     }
                 }
                 UpdateEffect::Reconfigure(serial_config) => {
-                    if let Some(ref mut dev) = device {
+                    if !is_replay && let Some(ByteSource::Live(ref mut dev)) = device {
                         if let Err(e) = dev.reconfigure(&serial_config) {
                             app.open_overlay(Overlay::Error(
                                 ErrorDialog::new(

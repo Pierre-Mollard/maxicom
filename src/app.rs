@@ -479,6 +479,11 @@ impl App {
         &self.settings
     }
 
+    #[inline]
+    pub fn settings_mut(&mut self) -> &mut SettingsConfig {
+        &mut self.settings
+    }
+
     pub fn is_prefix_active(&self) -> bool {
         self.prefix_active
     }
