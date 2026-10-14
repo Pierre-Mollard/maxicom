@@ -1,7 +1,6 @@
 /// HW I/O & Serial configuration
 /// Using the 'serial2' crate
 use std::{
-    env,
     error::Error,
     fmt::{self, Display, Write},
     io::{self, ErrorKind},
@@ -197,19 +196,6 @@ impl Display for SerialConfig {
         f.write_char(compact_bytes[1])?;
         f.write_char(compact_bytes[2])
     }
-}
-
-#[derive(Debug)]
-pub enum ConfigError {
-    MissingValue(&'static str),
-    ParseError(String),
-    UnknownArgument(String),
-}
-
-#[derive(Debug)]
-pub enum ParseOutcome {
-    Config(SerialConfig),
-    Help,
 }
 
 pub struct SerialDevice {
@@ -440,54 +426,6 @@ impl SerialDevice {
     }
 }
 
-pub fn parse_args() -> Result<ParseOutcome, ConfigError> {
-    let mut config = SerialConfig::default();
-    let mut args = env::args().skip(1); // skip program name
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--port" | "-p" => {
-                config.port = args.next().ok_or(ConfigError::MissingValue("--port"))?;
-            }
-            "--baud" | "-b" => {
-                let val = args.next().ok_or(ConfigError::MissingValue("--baud"))?;
-                config.baudrate = val
-                    .parse::<u32>()
-                    .map_err(|_| ConfigError::ParseError(format!("Invalid baud rate '{val}'")))?;
-            }
-            "--bits" => {
-                let val = args.next().ok_or(ConfigError::MissingValue("--bits"))?;
-                config.char_size = val.parse::<CharSize>().map_err(ConfigError::ParseError)?;
-            }
-            "--stop-bits" => {
-                let val = args
-                    .next()
-                    .ok_or(ConfigError::MissingValue("--stop-bits"))?;
-                config.stop_bits = val.parse::<StopBits>().map_err(ConfigError::ParseError)?;
-            }
-            "--parity" => {
-                let val = args.next().ok_or(ConfigError::MissingValue("--parity"))?;
-                config.parity = val.parse::<Parity>().map_err(ConfigError::ParseError)?;
-            }
-            "--flow" => {
-                let val = args.next().ok_or(ConfigError::MissingValue("--flow"))?;
-                config.flow_control = val
-                    .parse::<FlowControl>()
-                    .map_err(ConfigError::ParseError)?;
-            }
-            "--help" | "-h" => {
-                return Ok(ParseOutcome::Help);
-            }
-
-            unknown => {
-                return Err(ConfigError::UnknownArgument(unknown.to_string()));
-            }
-        }
-    }
-
-    Ok(ParseOutcome::Config(config))
-}
-
 #[cfg(unix)]
 impl Drop for SerialDevice {
     fn drop(&mut self) {
@@ -498,42 +436,4 @@ impl Drop for SerialDevice {
             libc::ioctl(fd, libc::TIOCNXCL);
         }
     }
-}
-
-impl std::fmt::Display for ConfigError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ConfigError::MissingValue(option) => {
-                write!(formatter, "Missing value for option '{option}'.")
-            }
-
-            ConfigError::UnknownArgument(argument) => {
-                write!(formatter, "Unknown argument '{argument}'.")
-            }
-
-            ConfigError::ParseError(msg) => {
-                write!(formatter, "{msg}")
-            }
-        }
-    }
-}
-
-pub fn print_help() {
-    println!(
-        "\
-MaxiCom — serial terminal
-
-Usage:
-  maxicom [OPTIONS]
-
-Options:
-  -p, --port <DEVICE>      Serial device path [default: /dev/ttyUSB0]
-  -b, --baud <RATE>        Baud rate [default: 115200]
-      --bits <5|6|7|8>     Character data bits [default: 8]
-      --stop-bits <1|2>    Stop bits [default: 1]
-      --parity <n|e|o>     Parity: none, even, odd [default: none]
-      --flow <none|hw|sw>  Flow control: none, rtscts (hw), xonxoff (sw) [default: none]
-  -h, --help               Print help
-"
-    );
 }

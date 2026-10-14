@@ -12,13 +12,15 @@ use ratatui::DefaultTerminal;
 
 use crate::{
     app::{App, UpdateEffect, selection::copy_via_osc52},
+    args::{ParseOutcome, parse_args, print_help},
     configs::{AppConfig, InputMode, KeyResolver},
     overlays::{ErrorDialog, Overlay},
-    serial::{SerialDevice, SerialError, parse_args, print_help},
+    serial::{SerialDevice, SerialError},
     ui::{PostRenderEffect, layout::LayoutWarning, render},
 };
 
 mod app;
+mod args;
 mod configs;
 mod inputs;
 mod logger;
@@ -83,8 +85,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let highlight_rules = highlights.compile_rules();
 
     let console_args = match parse_args() {
-        Ok(serial::ParseOutcome::Config(config)) => config,
-        Ok(serial::ParseOutcome::Help) => {
+        Ok(ParseOutcome::Config(config)) => config,
+        Ok(ParseOutcome::Help) => {
             print_help();
             return Ok(ExitCode::SUCCESS);
         }
