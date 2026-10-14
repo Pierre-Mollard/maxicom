@@ -41,7 +41,6 @@ pub fn history_entry_to_line(
     theme: &ThemeConfig,
 ) -> Line<'static> {
     let mut spans = Vec::new();
-    let display_mode = settings.line_mode.display_mode;
     let timestamp_in_line = settings.show_timestamps;
     let timestamp_format = &settings.timestamp_format;
     let line_prefix = &settings.line_mode.line_prefix;
@@ -53,7 +52,7 @@ pub fn history_entry_to_line(
 
     spans.push(Span::styled(line_prefix.to_string(), theme.line_prefix));
 
-    let mut content_spans = format_line_content(&entry.text, display_mode);
+    let mut content_spans = entry.cached_content_spans.clone();
 
     if !line_matches.is_empty() {
         let normal_style = Style::default().bg(Color::Yellow).fg(Color::Black);

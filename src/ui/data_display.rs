@@ -75,6 +75,7 @@ fn trim_trailing_incomplete_ansi(text: &str) -> &str {
     text
 }
 
+// TODO: put it cache for opti but now need to reprocess when change
 pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'static>> {
     match mode {
         LineDisplayMode::Pretty => {

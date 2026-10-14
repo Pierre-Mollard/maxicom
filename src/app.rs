@@ -184,8 +184,11 @@ impl App {
                 if self.settings.local_echo {
                     let text = String::from_utf8_lossy(&bytes);
                     if self.settings.mode == Mode::Line {
-                        self.line_mode
-                            .push_history(&text, &self.settings.timestamp_format);
+                        self.line_mode.push_history(
+                            &text,
+                            &self.settings.timestamp_format,
+                            self.settings.line_mode.display_mode,
+                        );
                     }
                 }
                 UpdateEffect::Transmit(bytes)

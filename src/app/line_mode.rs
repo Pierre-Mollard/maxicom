@@ -92,6 +92,7 @@ impl LineMode {
         rx_eol_mode: RxNewlineMode,
         encoding: TextEncoding,
         timestamp_f: &str,
+        display_mode: LineDisplayMode,
         bytes: &[u8],
     ) {
         for &b in bytes {
@@ -112,7 +113,7 @@ impl LineMode {
                 b'\n' => {
                     self.partial_line.push(b'\n');
                     self.pending_carriage_return = false;
-                    self.commit_partial_line(encoding, timestamp_f);
+                    self.commit_partial_line(encoding, timestamp_f, display_mode);
                 }
                 byte => {
                     if self.pending_carriage_return {
@@ -126,20 +127,27 @@ impl LineMode {
         }
     }
 
-    fn commit_partial_line(&mut self, encoding: TextEncoding, timestamp_f: &str) {
+    fn commit_partial_line(
+        &mut self,
+        encoding: TextEncoding,
+        timestamp_f: &str,
+        display_mode: LineDisplayMode,
+    ) {
         let line = encoding.decode(&self.partial_line);
-        self.push_history(&line, timestamp_f);
+        self.push_history(&line, timestamp_f, display_mode);
         self.partial_line.clear();
     }
 
-    pub fn push_history(&mut self, line: &str, timestamp_f: &str) {
+    pub fn push_history(&mut self, line: &str, timestamp_f: &str, display_mode: LineDisplayMode) {
         let timestamp = self
             .partial_line_timestamp
             .take()
             .unwrap_or_else(Local::now);
+        let cached_content_spans = crate::ui::data_display::format_line_content(line, display_mode);
         let entry = LogEntry {
             text: line.to_string(),
             timestamp,
+            cached_content_spans,
         };
 
         let _ = self.logger.log_entry(&entry, timestamp_f);
@@ -226,7 +234,11 @@ impl LineMode {
                 }
 
                 if settings.local_echo {
-                    self.push_history(&text, &settings.timestamp_format);
+                    self.push_history(
+                        &text,
+                        &settings.timestamp_format,
+                        settings.line_mode.display_mode,
+                    );
                 }
 
                 // consumming string!
