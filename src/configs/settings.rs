@@ -10,6 +10,8 @@ use chrono::format::strftime::StrftimeItems;
 use ratatui::style::{Color, Modifier, Style};
 use serde::{Deserialize, Serialize};
 
+use crate::configs::style::ConfigStyle;
+
 pub const DEFAULT_INACTIVITY_DETACH: Duration = Duration::from_secs(4 * 3600);
 pub const MIN_RX_BUF_SIZE: usize = 512;
 pub const MAX_RX_BUF_SIZE: usize = 65_536;
@@ -112,6 +114,7 @@ pub fn raw_view_to_display_mode(view: RawSideView) -> LineDisplayMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct RawSideConfig {
     pub view: RawSideView,
     pub orientation: RawSideOrientation,
@@ -238,6 +241,7 @@ impl TxNewlineSymbol {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
 pub enum RxNewlineMode {
     #[default]
     Auto,
@@ -305,8 +309,8 @@ pub struct LineModeConfig {
     pub display_mode: LineDisplayMode,
     pub wrap_mode: WrapMode,
     pub wrap_indent: PrefixWrapBehavior,
-    pub max_history_lines: usize,
-    pub display_partial_rx: bool,
+    pub history_size: usize,
+    pub show_partial_rx: bool,
     pub line_prefix: String,
     pub line_indent_prefix: String,
     pub line_partial_prefix: String,
@@ -323,8 +327,8 @@ impl Default for LineModeConfig {
             display_mode: LineDisplayMode::default(),
             wrap_mode: WrapMode::default(),
             wrap_indent: PrefixWrapBehavior::default(),
-            max_history_lines: 1000,
-            display_partial_rx: true,
+            history_size: 1000,
+            show_partial_rx: true,
             line_prefix: String::from("│ "),
             line_indent_prefix: String::from("│ "),
             line_partial_prefix: String::from("│…"),
@@ -351,20 +355,21 @@ impl Default for TerminalLogConfig {
     }
 }
 
+// TODO: move to theme.rs ? (with both mode categories)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CursorConfig {
     pub unfocused_glyph: String,
-    pub unfocused_style: Style,
-    pub focused_style: Style,
+    pub unfocused_style: ConfigStyle,
+    pub focused_style: ConfigStyle,
 }
 
 impl Default for CursorConfig {
     fn default() -> Self {
         Self {
             unfocused_glyph: String::from("▯"),
-            unfocused_style: Style::default().fg(Color::DarkGray),
-            focused_style: Style::default().add_modifier(Modifier::REVERSED),
+            unfocused_style: ConfigStyle::from_fg(Color::DarkGray),
+            focused_style: ConfigStyle::new(Style::default().add_modifier(Modifier::REVERSED)),
         }
     }
 }
@@ -471,15 +476,15 @@ pub struct SettingsConfig {
     pub encoding: TextEncoding,
     pub input_mode: InputMode,
     pub rx_buffer_size: usize,
-    pub display_live_timestamp: bool,
+    pub show_timestamps: bool,
     pub timestamp_format: String,
     #[serde(with = "humantime_serde")]
-    pub inactivity_detach_timeout: Option<Duration>,
+    pub inactivity_detach_timeout: Duration,
     pub line_mode: LineModeConfig,
     pub terminal_mode: TerminalModeConfig,
     pub theme_path: Option<PathBuf>,
     pub keybindings_path: Option<PathBuf>,
-    pub hightlights_path: Option<PathBuf>,
+    pub highlights_path: Option<PathBuf>,
     pub ui: UiConfig,
     pub raw_side: RawSideConfig,
 }
@@ -491,14 +496,14 @@ impl Default for SettingsConfig {
             encoding: TextEncoding::default(),
             rx_buffer_size: 4096,
             input_mode: InputMode::default(),
-            display_live_timestamp: false,
+            show_timestamps: false,
             timestamp_format: String::from("[%H:%M:%S%.3f]"),
             line_mode: LineModeConfig::default(),
             terminal_mode: TerminalModeConfig::default(),
-            inactivity_detach_timeout: Some(DEFAULT_INACTIVITY_DETACH),
+            inactivity_detach_timeout: DEFAULT_INACTIVITY_DETACH,
             theme_path: None,
             keybindings_path: None,
-            hightlights_path: None,
+            highlights_path: None,
             ui: UiConfig::default(),
             raw_side: RawSideConfig::default(),
         }
@@ -593,7 +598,7 @@ impl SettingsConfig {
     pub fn line_gutter_width(&self) -> usize {
         let mut width = 0;
 
-        if self.display_live_timestamp {
+        if self.show_timestamps {
             let sample_time = chrono::Local::now();
             let ts_str = sample_time.format(&self.timestamp_format).to_string();
             width += ts_str.chars().count();

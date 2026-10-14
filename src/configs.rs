@@ -101,7 +101,7 @@ impl AppConfig {
 
     pub fn active_highlight_path(settings: &SettingsConfig) -> PathBuf {
         settings
-            .hightlights_path
+            .highlights_path
             .clone()
             .unwrap_or_else(Self::default_highlights_path)
     }

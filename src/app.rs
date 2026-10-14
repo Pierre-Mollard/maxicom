@@ -89,7 +89,7 @@ impl App {
         let line_logger = LineLogger::new(settings.line_mode.logging.to_owned());
         let terminal_logger = TerminalLogger::new(settings.terminal_mode.logging.to_owned());
 
-        let line_view = LineMode::new(settings.line_mode.max_history_lines, line_logger);
+        let line_view = LineMode::new(settings.line_mode.history_size, line_logger);
         let terminal_view = TerminalMode::new(
             settings.terminal_mode.history_size,
             settings.terminal_mode.rows,
@@ -161,10 +161,6 @@ impl App {
     pub fn close_overlay(&mut self) {
         self.overlay = None;
     }
-
-    // TODO: replay recorded bytes streams
-
-    // TODO: make a cache so when connect back to fd data is there (with clear opt)
 
     pub fn update(&mut self, action: Action) -> UpdateEffect {
         let is_repeatable_history = self.prefix_active
@@ -413,7 +409,7 @@ impl App {
                 self.update_viewport(self.viewport);
             }
             SettingKey::DisplayTimestamp => {
-                self.settings.display_live_timestamp = !self.settings.display_live_timestamp;
+                self.settings.show_timestamps = !self.settings.show_timestamps;
             }
             SettingKey::TextEncoding => {
                 self.settings.encoding.toggle();

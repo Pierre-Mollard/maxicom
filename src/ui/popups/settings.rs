@@ -33,7 +33,7 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
     } else {
         "OFF"
     };
-    let timestamp_str = if app.settings().display_live_timestamp {
+    let timestamp_str = if app.settings().show_timestamps {
         "ON"
     } else {
         "OFF"

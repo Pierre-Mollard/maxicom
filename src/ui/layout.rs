@@ -108,7 +108,7 @@ impl ScreenLayout {
         };
 
         let (gutter_area, remaining_after_gutter) = match input_mode {
-            InputMode::Terminal if app.settings().display_live_timestamp => {
+            InputMode::Terminal if app.settings().show_timestamps => {
                 let sample_ts = chrono::Local::now();
                 let ts_width = sample_ts
                     .format(&app.settings().timestamp_format)

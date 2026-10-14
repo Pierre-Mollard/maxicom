@@ -42,7 +42,7 @@ pub fn history_entry_to_line(
 ) -> Line<'static> {
     let mut spans = Vec::new();
     let display_mode = settings.line_mode.display_mode;
-    let timestamp_in_line = settings.display_live_timestamp;
+    let timestamp_in_line = settings.show_timestamps;
     let timestamp_format = &settings.timestamp_format;
     let line_prefix = &settings.line_mode.line_prefix;
 
@@ -155,13 +155,13 @@ pub fn render_monitor(
 
     let mut history_lines = history_lines;
 
-    if app.settings().line_mode.display_partial_rx && !app.line_mode.partial_rx().is_empty() {
+    if app.settings().line_mode.show_partial_rx && !app.line_mode.partial_rx().is_empty() {
         let display_mode = app.settings().line_mode.display_mode;
         let partial_raw = String::from_utf8_lossy(app.line_mode.partial_rx());
 
         let mut partial_spans = Vec::new();
 
-        if app.settings().display_live_timestamp
+        if app.settings().show_timestamps
             && let Some(partial_timestamp) = app.line_mode.partial_line_timestamp()
         {
             let time = partial_timestamp
@@ -636,7 +636,7 @@ pub fn render_raw_side_panel(
     }
 
     // partial_rx
-    if app.settings().line_mode.display_partial_rx
+    if app.settings().line_mode.show_partial_rx
         && !app.line_mode.partial_rx().is_empty()
         && visible_raw_lines.len() < view_height
     {

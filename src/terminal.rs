@@ -33,8 +33,8 @@ impl MaxicomCursor {
         Self {
             show: true,
             unfocused_symbol: config.unfocused_glyph.clone(),
-            unfocused_style: config.unfocused_style,
-            focused_style: config.focused_style,
+            unfocused_style: *config.unfocused_style,
+            focused_style: *config.focused_style,
         }
     }
 }

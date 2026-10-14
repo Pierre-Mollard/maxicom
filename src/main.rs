@@ -202,14 +202,14 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
 
             if !is_replay
-                && let Some(timeout) = inactivity_timeout
-                && last_rx_activity.elapsed() >= timeout
+                && !inactivity_timeout.is_zero()
+                && last_rx_activity.elapsed() >= inactivity_timeout
             {
                 device = None;
                 app.open_overlay(Overlay::DeviceDetached(app.serial_config.port.clone()));
                 app.notify_warn(format!(
                     "Device idle for {}s: port detached",
-                    timeout.as_secs()
+                    inactivity_timeout.as_secs()
                 ));
             }
         } else {
