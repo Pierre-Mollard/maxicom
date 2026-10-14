@@ -15,7 +15,7 @@ use crate::{
     app::{App, UpdateEffect, selection::copy_via_osc52},
     args::{ParseOutcome, RunMode, parse_args, print_help},
     bytesource::ByteSource,
-    configs::{AppConfig, InputMode, KeyResolver},
+    configs::{AppConfig, KeyResolver, Mode},
     overlays::{ErrorDialog, Overlay},
     serial::{SerialConfig, SerialDevice, SerialError},
     ui::{PostRenderEffect, layout::LayoutWarning, render},
@@ -150,7 +150,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     };
     let mut app = App::new(settings, key_resolver, serial_config);
     if is_replay {
-        app.settings_mut().input_mode = InputMode::Terminal;
+        app.settings_mut().mode = Mode::Terminal;
     }
 
     if device.is_none() {
@@ -168,8 +168,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 Ok(bytes_read) => {
                     last_rx_activity = std::time::Instant::now();
                     app.stats.update_rx(bytes_read);
-                    match app.settings().input_mode {
-                        InputMode::Line => {
+                    match app.settings().mode {
+                        Mode::Line => {
                             app.line_mode.feed_rx(
                                 app.settings().line_mode.rx_eol,
                                 app.settings().encoding,
@@ -177,7 +177,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                                 &input_buffer[..bytes_read],
                             );
                         }
-                        InputMode::Terminal => {
+                        Mode::Terminal => {
                             app.terminal_mode
                                 .process_rx(app.settings().encoding, &input_buffer[..bytes_read]);
                         }

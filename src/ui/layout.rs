@@ -8,7 +8,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::{
     app::{App, types::FocusTarget},
     configs::{
-        InputMode, SettingsConfig, ThemeConfig, WrapMode,
+        Mode, SettingsConfig, ThemeConfig, WrapMode,
         settings::{PrefixWrapBehavior, RawSideOrientation, RawSideView},
     },
 };
@@ -47,12 +47,12 @@ impl ScreenLayout {
         let show_borders = ui.show_borders;
         let show_status_bar = ui.show_status_bar;
         let show_scrollbar = ui.show_scrollbar;
-        let input_mode = app.settings().input_mode;
+        let input_mode = app.settings().mode;
 
         let status_height = if show_status_bar { 1 } else { 0 };
         let prompt_height = match input_mode {
-            InputMode::Terminal => 0,
-            InputMode::Line => {
+            Mode::Terminal => 0,
+            Mode::Line => {
                 if show_borders {
                     3
                 } else {
@@ -92,8 +92,8 @@ impl ScreenLayout {
         };
 
         let focus_target = match input_mode {
-            InputMode::Terminal => FocusTarget::Terminal,
-            InputMode::Line => FocusTarget::LineHistory,
+            Mode::Terminal => FocusTarget::Terminal,
+            Mode::Line => FocusTarget::LineHistory,
         };
 
         let inner_monitor = if show_borders {
@@ -108,7 +108,7 @@ impl ScreenLayout {
         };
 
         let (gutter_area, remaining_after_gutter) = match input_mode {
-            InputMode::Terminal if app.settings().show_timestamps => {
+            Mode::Terminal if app.settings().show_timestamps => {
                 let sample_ts = chrono::Local::now();
                 let ts_width = sample_ts
                     .format(&app.settings().timestamp_format)

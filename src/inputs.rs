@@ -8,7 +8,7 @@ use terminput_crossterm::to_terminput_key;
 
 use crate::{
     app::{App, InputContext},
-    configs::{InputMode, KeyPattern},
+    configs::{KeyPattern, Mode},
     overlays::{Overlay, SettingKey},
 };
 
@@ -175,11 +175,11 @@ pub fn handle_event(event: Event, app: &App) -> Action {
         InputContext::Prefix => {
             // Prefix pressed twice (terminal send, line mode forward)
             if pattern == resolver.prefix {
-                match app.settings().input_mode {
-                    InputMode::Line => {
+                match app.settings().mode {
+                    Mode::Line => {
                         return Action::LineInput(LineInputAction::HandleKey(key_event));
                     }
-                    InputMode::Terminal => {
+                    Mode::Terminal => {
                         let bytes = resolver.prefix.to_raw_bytes();
                         if !bytes.is_empty() {
                             return Action::TransmitRaw(bytes);

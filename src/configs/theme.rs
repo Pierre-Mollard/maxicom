@@ -12,6 +12,7 @@ use crate::configs::style::ConfigStyle;
 #[serde(default)]
 pub struct ThemeConfig {
     pub border: ConfigStyle,
+    pub cursor_unfocused: ConfigStyle,
     pub timestamp_line: ConfigStyle,
     pub timestamp: ConfigStyle,
     pub timestamp_bg: ConfigStyle,
@@ -26,6 +27,7 @@ impl Default for ThemeConfig {
     fn default() -> Self {
         Self {
             border: ConfigStyle::from_fg(Color::Cyan),
+            cursor_unfocused: ConfigStyle::from_fg(Color::DarkGray),
             timestamp_line: ConfigStyle::from_fg(Color::Yellow),
             timestamp: ConfigStyle::from_fg(Color::Gray),
             timestamp_bg: ConfigStyle::from_fg(Color::DarkGray),

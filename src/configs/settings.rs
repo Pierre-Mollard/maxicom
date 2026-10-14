@@ -7,10 +7,7 @@ use std::{
 };
 
 use chrono::format::strftime::StrftimeItems;
-use ratatui::style::{Color, Modifier, Style};
 use serde::{Deserialize, Serialize};
-
-use crate::configs::style::ConfigStyle;
 
 pub const DEFAULT_INACTIVITY_DETACH: Duration = Duration::from_secs(4 * 3600);
 pub const MIN_RX_BUF_SIZE: usize = 512;
@@ -268,9 +265,9 @@ pub enum TerminalDimensionMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
-pub enum InputMode {
-    #[default]
+pub enum Mode {
     Line,
+    #[default]
     Terminal,
 }
 
@@ -314,6 +311,7 @@ pub struct LineModeConfig {
     pub line_prefix: String,
     pub line_indent_prefix: String,
     pub line_partial_prefix: String,
+    pub unfocused_cursor_glyph: String,
     pub prompt_prefix: String,
     pub prompt_vi_prefix: String,
     pub logging: LineLogConfig,
@@ -332,6 +330,7 @@ impl Default for LineModeConfig {
             line_prefix: String::from("│ "),
             line_indent_prefix: String::from("│ "),
             line_partial_prefix: String::from("│…"),
+            unfocused_cursor_glyph: String::from("█"),
             prompt_prefix: String::from("> "),
             prompt_vi_prefix: String::from("< "),
             logging: LineLogConfig::default(),
@@ -355,25 +354,6 @@ impl Default for TerminalLogConfig {
     }
 }
 
-// TODO: move to theme.rs ? (with both mode categories)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct CursorConfig {
-    pub unfocused_glyph: String,
-    pub unfocused_style: ConfigStyle,
-    pub focused_style: ConfigStyle,
-}
-
-impl Default for CursorConfig {
-    fn default() -> Self {
-        Self {
-            unfocused_glyph: String::from("▯"),
-            unfocused_style: ConfigStyle::from_fg(Color::DarkGray),
-            focused_style: ConfigStyle::new(Style::default().add_modifier(Modifier::REVERSED)),
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TerminalModeConfig {
@@ -382,7 +362,7 @@ pub struct TerminalModeConfig {
     pub dimension_mode: TerminalDimensionMode,
     pub history_size: usize,
     pub empty_fill_char: String,
-    pub cursor: CursorConfig,
+    pub unfocused_cursor_glyph: String,
     pub logging: TerminalLogConfig,
 }
 
@@ -393,8 +373,8 @@ impl Default for TerminalModeConfig {
             cols: 80,
             dimension_mode: TerminalDimensionMode::GrowOnly,
             history_size: 5000,
-            cursor: CursorConfig::default(),
             empty_fill_char: String::from("░"),
+            unfocused_cursor_glyph: String::from("█"),
             logging: TerminalLogConfig::default(),
         }
     }
@@ -454,7 +434,7 @@ pub struct UiConfig {
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
-            show_borders: true,
+            show_borders: false,
             show_scrollbar: true,
             show_status_bar: true,
             status_bar: StatusBarConfig::default(),
@@ -474,7 +454,7 @@ impl UiConfig {
 pub struct SettingsConfig {
     pub local_echo: bool,
     pub encoding: TextEncoding,
-    pub input_mode: InputMode,
+    pub mode: Mode,
     pub rx_buffer_size: usize,
     pub show_timestamps: bool,
     pub timestamp_format: String,
@@ -495,7 +475,7 @@ impl Default for SettingsConfig {
             local_echo: false,
             encoding: TextEncoding::default(),
             rx_buffer_size: 4096,
-            input_mode: InputMode::default(),
+            mode: Mode::default(),
             show_timestamps: false,
             timestamp_format: String::from("[%H:%M:%S%.3f]"),
             line_mode: LineModeConfig::default(),

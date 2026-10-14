@@ -16,7 +16,7 @@ use ratatui::{
 
 use crate::{
     app::{App, types::ViewportSize},
-    configs::{InputMode, KeywordHighlight, ThemeConfig},
+    configs::{KeywordHighlight, Mode, ThemeConfig},
     overlays::Overlay,
     ui::{
         common::{border_style_for, monitor_bottom_title, monitor_title},
@@ -75,8 +75,8 @@ pub fn render(
         frame.render_widget(block, layout.monitor_outer);
     }
 
-    let post_effect = match app.settings().input_mode {
-        InputMode::Terminal => {
+    let post_effect = match app.settings().mode {
+        Mode::Terminal => {
             if let Some(g_area) = layout.timestamp_gutter {
                 render_timestamp_gutter(app, frame, g_area, theme);
             }
@@ -91,7 +91,7 @@ pub fn render(
             );
             PostRenderEffect::None
         }
-        InputMode::Line => render_monitor(
+        Mode::Line => render_monitor(
             app,
             frame,
             layout.content_area,

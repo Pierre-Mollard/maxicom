@@ -34,7 +34,13 @@ pub fn render_vt100_terminal(
     let view_height = content_area.height as usize;
     let focus = app.focus_target();
     let is_terminal_focused = focus == FocusTarget::Terminal;
-    let cursor = MaxicomCursor::from_config(&app.settings().terminal_mode.cursor);
+    let cursor = MaxicomCursor::from_config(
+        *theme.cursor_unfocused,
+        app.settings()
+            .terminal_mode
+            .unfocused_cursor_glyph
+            .to_owned(),
+    );
     let raw_view = app.settings().raw_side.view;
 
     if let Some((target_row, target_col)) = app.terminal_mode.search_mut().target_jump.take() {
@@ -291,8 +297,7 @@ pub fn render_vt100_terminal(
             let cursor_y = content_area.y + row;
             if !app.is_app_focused() {
                 let buf = frame.buffer_mut();
-                buf[(cursor_x, cursor_y)]
-                    .set_style(Style::default().add_modifier(Modifier::REVERSED));
+                buf[(cursor_x, cursor_y)].set_style(*theme.cursor_unfocused);
             }
             frame.set_cursor_position((cursor_x, cursor_y));
         }

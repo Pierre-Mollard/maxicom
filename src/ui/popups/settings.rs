@@ -15,9 +15,9 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
     let area = popup_area(frame.area(), 40, 17, 42, 19);
     frame.render_widget(Clear, area);
 
-    let mode_str = match app.settings().input_mode {
-        crate::configs::InputMode::Line => "Line Mode",
-        crate::configs::InputMode::Terminal => "Terminal Mode",
+    let mode_str = match app.settings().mode {
+        crate::configs::Mode::Line => "Line Mode",
+        crate::configs::Mode::Terminal => "Terminal Mode",
     };
     let wrap_str = match app.settings().line_mode.wrap_mode {
         crate::configs::WrapMode::Word => "Word-Wrap",

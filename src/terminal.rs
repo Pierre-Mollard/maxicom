@@ -7,14 +7,11 @@ use ratatui::{
 };
 use tui_term::widget::{Cell, Screen};
 
-use crate::configs::CursorConfig;
-
 #[derive(Debug, Clone)]
 pub struct MaxicomCursor {
     pub show: bool,
     pub unfocused_symbol: String,
     pub unfocused_style: Style,
-    pub focused_style: Style,
 }
 
 impl Default for MaxicomCursor {
@@ -23,18 +20,16 @@ impl Default for MaxicomCursor {
             show: true,
             unfocused_symbol: String::from("█"),
             unfocused_style: Style::default(),
-            focused_style: Style::default(),
         }
     }
 }
 
 impl MaxicomCursor {
-    pub fn from_config(config: &CursorConfig) -> Self {
+    pub fn from_config(unfocused: Style, symbol: String) -> Self {
         Self {
             show: true,
-            unfocused_symbol: config.unfocused_glyph.clone(),
-            unfocused_style: *config.unfocused_style,
-            focused_style: *config.focused_style,
+            unfocused_symbol: symbol,
+            unfocused_style: unfocused,
         }
     }
 }
@@ -201,7 +196,7 @@ fn handle<S: Screen>(term: &MaxicomTerminal<S>, area: Rect, buf: &mut Buffer) {
 
         if let Some(source_cell) = screen.cell(c_row, c_col) {
             if source_cell.has_contents() {
-                dst.set_style(term.cursor.focused_style);
+                dst.set_style(term.cursor.unfocused_style);
             } else {
                 dst.set_symbol(&term.cursor.unfocused_symbol);
                 dst.set_style(term.cursor.unfocused_style);

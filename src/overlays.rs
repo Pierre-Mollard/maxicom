@@ -46,7 +46,7 @@ impl Overlay {
                 KeyCode::Esc => OverlayResponse::Close,
                 KeyCode::Char('e' | 'E') => OverlayResponse::ToggleSetting(SettingKey::LocalEcho),
                 KeyCode::Char('w' | 'W') => OverlayResponse::ToggleSetting(SettingKey::LineWrap),
-                KeyCode::Char('m' | 'M') => OverlayResponse::ToggleSetting(SettingKey::InputMode),
+                KeyCode::Char('m' | 'M') => OverlayResponse::ToggleSetting(SettingKey::Mode),
                 KeyCode::Char('i' | 'I') => OverlayResponse::ToggleSetting(SettingKey::IdentWrap),
                 KeyCode::Char('d' | 'D') => OverlayResponse::ToggleSetting(SettingKey::DisplayMode),
                 KeyCode::Char('b' | 'B') => OverlayResponse::ToggleSetting(SettingKey::DisplayRaw),
@@ -96,7 +96,7 @@ impl Overlay {
 #[derive(Debug, PartialEq, Eq)]
 pub enum SettingKey {
     LocalEcho,
-    InputMode,
+    Mode,
     LineWrap,
     IdentWrap,
     DisplayTimestamp,

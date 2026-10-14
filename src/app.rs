@@ -5,7 +5,7 @@ use crate::{
         scroller::ScrollStatus,
         types::{FocusTarget, ViewportSize},
     },
-    configs::{InputMode, KeyResolver, SettingsConfig, WrapMode, settings::PrefixWrapBehavior},
+    configs::{KeyResolver, Mode, SettingsConfig, WrapMode, settings::PrefixWrapBehavior},
     inputs::{Action, AppAction, CopyModeAction, HistoryAction, SearchModeAction, SideViewAction},
     logger::{LineLogger, TerminalLogger},
     notification::{NotificationManager, ToastLevel},
@@ -116,13 +116,13 @@ impl App {
     }
 
     pub fn update_viewport(&mut self, viewport: ViewportSize) {
-        match self.settings.input_mode {
-            InputMode::Line => {
+        match self.settings.mode {
+            Mode::Line => {
                 self.line_mode
                     .update_viewport(self.settings().line_mode.wrap_mode, viewport);
             }
 
-            InputMode::Terminal => {
+            Mode::Terminal => {
                 self.terminal_mode.update_viewport(
                     viewport,
                     self.settings().terminal_mode.dimension_mode,
@@ -143,9 +143,9 @@ impl App {
         } else if self.is_search_active() {
             InputContext::Search
         } else {
-            match self.settings().input_mode {
-                InputMode::Line => InputContext::LineInput,
-                InputMode::Terminal => InputContext::Terminal,
+            match self.settings().mode {
+                Mode::Line => InputContext::LineInput,
+                Mode::Terminal => InputContext::Terminal,
             }
         }
     }
@@ -183,7 +183,7 @@ impl App {
             Action::TransmitRaw(bytes) => {
                 if self.settings.local_echo {
                     let text = String::from_utf8_lossy(&bytes);
-                    if self.settings.input_mode == InputMode::Line {
+                    if self.settings.mode == Mode::Line {
                         self.line_mode
                             .push_history(&text, &self.settings.timestamp_format);
                     }
@@ -224,9 +224,9 @@ impl App {
                         }
                         OverlayResponse::ReconnectSerial => UpdateEffect::ToggleAttachSerial,
                         OverlayResponse::StartCapture(path) => {
-                            let result = match self.settings.input_mode {
-                                InputMode::Line => self.line_mode.start_logging(path),
-                                InputMode::Terminal => self.terminal_mode.start_logging(path),
+                            let result = match self.settings.mode {
+                                Mode::Line => self.line_mode.start_logging(path),
+                                Mode::Terminal => self.terminal_mode.start_logging(path),
                             };
 
                             match result {
@@ -286,11 +286,11 @@ impl App {
     }
 
     fn update_side_view(&mut self, action: SideViewAction) -> UpdateEffect {
-        match self.settings.input_mode {
-            InputMode::Terminal => {
+        match self.settings.mode {
+            Mode::Terminal => {
                 self.terminal_mode.handle_side_view_action(action);
             }
-            InputMode::Line => {
+            Mode::Line => {
                 self.line_mode.handle_side_view_action(action);
             }
         }
@@ -299,13 +299,13 @@ impl App {
     }
 
     fn update_action_copy_mode(&mut self, action: CopyModeAction) -> UpdateEffect {
-        match self.settings.input_mode {
-            InputMode::Terminal => {
+        match self.settings.mode {
+            Mode::Terminal => {
                 if let Some(text) = self.terminal_mode.handle_copy_action(action) {
                     return UpdateEffect::CopyToClipboard(text);
                 }
             }
-            InputMode::Line => {
+            Mode::Line => {
                 if let Some(text) = self.line_mode.handle_copy_action(action, &self.settings) {
                     return UpdateEffect::CopyToClipboard(text);
                 }
@@ -316,12 +316,12 @@ impl App {
     }
 
     fn update_action_search_mode(&mut self, action: SearchModeAction) -> UpdateEffect {
-        match self.settings.input_mode {
-            InputMode::Terminal => {
+        match self.settings.mode {
+            Mode::Terminal => {
                 self.terminal_mode
                     .handle_search_action(action, self.settings.raw_side.view);
             }
-            InputMode::Line => {
+            Mode::Line => {
                 self.line_mode.handle_search_action(action, &self.settings);
             }
         }
@@ -330,59 +330,59 @@ impl App {
     }
 
     fn update_action_history(&mut self, action: HistoryAction) -> UpdateEffect {
-        match (&self.settings.input_mode, action) {
-            (InputMode::Line, HistoryAction::ScrollUp(lines)) => {
+        match (&self.settings.mode, action) {
+            (Mode::Line, HistoryAction::ScrollUp(lines)) => {
                 self.line_mode.scroll_up(lines);
             }
-            (InputMode::Line, HistoryAction::ScrollDown(lines)) => {
+            (Mode::Line, HistoryAction::ScrollDown(lines)) => {
                 self.line_mode.scroll_down(lines);
             }
-            (InputMode::Line, HistoryAction::ScrollUpPage) => {
+            (Mode::Line, HistoryAction::ScrollUpPage) => {
                 self.line_mode.scroll_up_page();
             }
-            (InputMode::Line, HistoryAction::ScrollDownPage) => {
+            (Mode::Line, HistoryAction::ScrollDownPage) => {
                 self.line_mode.scroll_down_page();
             }
-            (InputMode::Line, HistoryAction::ScrollToBottom) => {
+            (Mode::Line, HistoryAction::ScrollToBottom) => {
                 self.line_mode.scroll_to_bottom();
             }
-            (InputMode::Line, HistoryAction::ScrollToTop) => {
+            (Mode::Line, HistoryAction::ScrollToTop) => {
                 self.line_mode.scroll_to_top();
             }
-            (InputMode::Line, HistoryAction::Clear) => {
+            (Mode::Line, HistoryAction::Clear) => {
                 self.line_mode.clear_history();
             }
-            (InputMode::Line, HistoryAction::PanLeft(cols)) => {
+            (Mode::Line, HistoryAction::PanLeft(cols)) => {
                 self.line_mode.pan_to_left(cols);
             }
-            (InputMode::Line, HistoryAction::PanRight(cols)) => {
+            (Mode::Line, HistoryAction::PanRight(cols)) => {
                 self.line_mode.pan_to_right(cols);
             }
-            (InputMode::Terminal, HistoryAction::ScrollUp(lines)) => {
+            (Mode::Terminal, HistoryAction::ScrollUp(lines)) => {
                 self.terminal_mode.scroll_up(lines);
             }
-            (InputMode::Terminal, HistoryAction::ScrollDown(lines)) => {
+            (Mode::Terminal, HistoryAction::ScrollDown(lines)) => {
                 self.terminal_mode.scroll_down(lines);
             }
-            (InputMode::Terminal, HistoryAction::ScrollUpPage) => {
+            (Mode::Terminal, HistoryAction::ScrollUpPage) => {
                 self.terminal_mode.scroll_up_page();
             }
-            (InputMode::Terminal, HistoryAction::ScrollDownPage) => {
+            (Mode::Terminal, HistoryAction::ScrollDownPage) => {
                 self.terminal_mode.scroll_down_page();
             }
-            (InputMode::Terminal, HistoryAction::ScrollToBottom) => {
+            (Mode::Terminal, HistoryAction::ScrollToBottom) => {
                 self.terminal_mode.scroll_to_bottom();
             }
-            (InputMode::Terminal, HistoryAction::ScrollToTop) => {
+            (Mode::Terminal, HistoryAction::ScrollToTop) => {
                 self.terminal_mode.scroll_to_top();
             }
-            (InputMode::Terminal, HistoryAction::PanRight(cols)) => {
+            (Mode::Terminal, HistoryAction::PanRight(cols)) => {
                 self.terminal_mode.pan_to_right(cols, self.viewport.cols);
             }
-            (InputMode::Terminal, HistoryAction::PanLeft(cols)) => {
+            (Mode::Terminal, HistoryAction::PanLeft(cols)) => {
                 self.terminal_mode.pan_to_left(cols, self.viewport.cols);
             }
-            (InputMode::Terminal, HistoryAction::Clear) => self.terminal_mode.clear_history(),
+            (Mode::Terminal, HistoryAction::Clear) => self.terminal_mode.clear_history(),
         }
 
         UpdateEffect::None
@@ -401,10 +401,10 @@ impl App {
                 };
                 self.update_viewport(self.viewport);
             }
-            SettingKey::InputMode => {
-                self.settings.input_mode = match self.settings.input_mode {
-                    InputMode::Line => InputMode::Terminal,
-                    InputMode::Terminal => InputMode::Line,
+            SettingKey::Mode => {
+                self.settings.mode = match self.settings.mode {
+                    Mode::Line => Mode::Terminal,
+                    Mode::Terminal => Mode::Line,
                 };
                 self.update_viewport(self.viewport);
             }
@@ -442,15 +442,15 @@ impl App {
     }
 
     fn toggle_logging(&mut self) {
-        let (is_logging, active_path) = match self.settings.input_mode {
-            InputMode::Line => (
+        let (is_logging, active_path) = match self.settings.mode {
+            Mode::Line => (
                 self.line_mode.is_logging(),
                 self.line_mode
                     .logger_active_path()
                     .to_string_lossy()
                     .into_owned(),
             ),
-            InputMode::Terminal => (
+            Mode::Terminal => (
                 self.terminal_mode.is_logging(),
                 self.terminal_mode
                     .logger_active_path()
@@ -460,9 +460,9 @@ impl App {
         };
 
         if is_logging {
-            match self.settings.input_mode {
-                InputMode::Line => self.line_mode.stop_logging(),
-                InputMode::Terminal => self.terminal_mode.stop_logging(),
+            match self.settings.mode {
+                Mode::Line => self.line_mode.stop_logging(),
+                Mode::Terminal => self.terminal_mode.stop_logging(),
             }
             self.notify_info("Logging stopped");
         } else {
@@ -485,9 +485,9 @@ impl App {
     }
 
     pub fn is_logging_active(&self) -> bool {
-        match self.settings().input_mode {
-            InputMode::Line => self.line_mode.is_logging(),
-            InputMode::Terminal => self.terminal_mode.is_logging(),
+        match self.settings().mode {
+            Mode::Line => self.line_mode.is_logging(),
+            Mode::Terminal => self.terminal_mode.is_logging(),
         }
     }
 
@@ -496,9 +496,9 @@ impl App {
             return FocusTarget::Overlay;
         }
 
-        match self.settings().input_mode {
-            InputMode::Terminal => FocusTarget::Terminal,
-            InputMode::Line => {
+        match self.settings().mode {
+            Mode::Terminal => FocusTarget::Terminal,
+            Mode::Line => {
                 if self.line_mode.search().active || self.line_mode.copy_state().active {
                     FocusTarget::LineHistory
                 } else {
@@ -515,41 +515,41 @@ impl App {
 
     #[inline]
     pub fn is_copy_mode_active(&self) -> bool {
-        match self.settings.input_mode {
-            InputMode::Line => self.line_mode.copy_state().active,
-            InputMode::Terminal => self.terminal_mode.copy_state().active,
+        match self.settings.mode {
+            Mode::Line => self.line_mode.copy_state().active,
+            Mode::Terminal => self.terminal_mode.copy_state().active,
         }
     }
 
     #[inline]
     pub fn is_search_active(&self) -> bool {
-        match self.settings.input_mode {
-            InputMode::Line => self.line_mode.search().active,
-            InputMode::Terminal => self.terminal_mode.search().active,
+        match self.settings.mode {
+            Mode::Line => self.line_mode.search().active,
+            Mode::Terminal => self.terminal_mode.search().active,
         }
     }
 
     #[inline]
     pub fn scroll_status(&self) -> ScrollStatus {
-        match self.settings().input_mode {
-            InputMode::Terminal => self.terminal_mode.scroller().status(),
-            InputMode::Line => self.line_mode.scroller().status(),
+        match self.settings().mode {
+            Mode::Terminal => self.terminal_mode.scroller().status(),
+            Mode::Line => self.line_mode.scroller().status(),
         }
     }
 
     #[inline]
     pub fn pan_left_status(&self) -> Option<usize> {
-        match self.settings().input_mode {
-            InputMode::Terminal => self.terminal_mode.can_pan_left(),
-            InputMode::Line => self.line_mode.can_pan_left(),
+        match self.settings().mode {
+            Mode::Terminal => self.terminal_mode.can_pan_left(),
+            Mode::Line => self.line_mode.can_pan_left(),
         }
     }
 
     #[inline]
     pub fn pan_right_status(&self) -> Option<(usize, usize)> {
-        match self.settings().input_mode {
-            InputMode::Terminal => self.terminal_mode.can_pan_right(),
-            InputMode::Line => self.line_mode.can_pan_right(),
+        match self.settings().mode {
+            Mode::Terminal => self.terminal_mode.can_pan_right(),
+            Mode::Line => self.line_mode.can_pan_right(),
         }
     }
 

@@ -489,7 +489,8 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect, theme: &The
 
         if !app.is_app_focused() {
             let buf = frame.buffer_mut();
-            buf[(cursor_x, cursor_y)].set_style(Style::default().add_modifier(Modifier::REVERSED));
+            buf[(cursor_x, cursor_y)].set_style(*theme.cursor_unfocused);
+            buf[(cursor_x, cursor_y)].set_symbol(&app.settings().line_mode.unfocused_cursor_glyph);
         }
         frame.set_cursor_position((cursor_x, cursor_y));
     }

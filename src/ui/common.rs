@@ -11,14 +11,14 @@ use std::fmt::Write;
 
 use crate::{
     app::{App, search::SearchModeKind, types::FocusTarget},
-    configs::{InputMode, KeywordHighlight, ThemeConfig},
+    configs::{KeywordHighlight, Mode, ThemeConfig},
 };
 
 pub fn monitor_title(app: &App, area: &Rect) -> String {
     let mut title = String::with_capacity(80);
 
-    let (scroll_offset, pan_offset) = match app.settings().input_mode {
-        InputMode::Terminal => {
+    let (scroll_offset, pan_offset) = match app.settings().mode {
+        Mode::Terminal => {
             let screen = app.terminal_mode.vt100_screen();
             if app.terminal_mode.is_new_content_missed() {
                 let _ = write!(title, "! ");
@@ -39,7 +39,7 @@ pub fn monitor_title(app: &App, area: &Rect) -> String {
                 app.terminal_mode.pan_offset(),
             )
         }
-        InputMode::Line => {
+        Mode::Line => {
             if app.line_mode.is_new_content_missed() {
                 let _ = write!(title, "! ");
             }
@@ -110,7 +110,7 @@ pub fn pan_right_indicator(app: &App) -> Option<String> {
             return None;
         }
 
-        let alert = if app.settings().input_mode == crate::configs::InputMode::Line
+        let alert = if app.settings().mode == crate::configs::Mode::Line
             && cols > explored.saturating_sub(app.line_mode.x_offset())
         {
             "!"
@@ -124,7 +124,7 @@ pub fn pan_right_indicator(app: &App) -> Option<String> {
 
 pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, _theme: &ThemeConfig) {
     let has_borders = app.settings().ui.show_borders;
-    let is_terminal = app.settings().input_mode == InputMode::Terminal;
+    let is_terminal = app.settings().mode == Mode::Terminal;
 
     let s = if is_terminal {
         app.terminal_mode.search()

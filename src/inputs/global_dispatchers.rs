@@ -17,7 +17,7 @@ impl KeyBindingAction {
         match self {
             KeyBindingAction::Quit => Action::App(AppAction::Quit),
             KeyBindingAction::SKInputMode => {
-                Action::App(AppAction::ToggleSetting(SettingKey::InputMode))
+                Action::App(AppAction::ToggleSetting(SettingKey::Mode))
             }
             KeyBindingAction::SKLocalEcho => {
                 Action::App(AppAction::ToggleSetting(SettingKey::LocalEcho))

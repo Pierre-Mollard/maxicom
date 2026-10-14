@@ -80,7 +80,7 @@ use ratatui::{
 
 use crate::{
     app::{App, InputContext},
-    configs::{InputMode, StatusBarConfig, ThemeConfig},
+    configs::{Mode, StatusBarConfig, ThemeConfig},
     ui::common::{pan_left_indicator, pan_right_indicator},
 };
 
@@ -177,9 +177,7 @@ fn evaluate_condition(cond: &str, app: &App) -> bool {
 
         "pan_left" | "can_pan_left" => app.pan_left_status().is_some_and(|cols| cols > 0),
         "pan_right" | "can_pan_right" => app.pan_right_status().is_some_and(|(cols, _)| cols > 0),
-        "pan_right_alert" | "pan_alert"
-            if app.settings().input_mode == crate::configs::InputMode::Line =>
-        {
+        "pan_right_alert" | "pan_alert" if app.settings().mode == crate::configs::Mode::Line => {
             app.pan_right_status().is_some_and(|(cols, explored)| {
                 cols > explored.saturating_sub(app.line_mode.x_offset())
             })
@@ -330,9 +328,9 @@ impl StatusBarConfig {
         let port = &app.serial_config.port;
         let baud = app.serial_config.baudrate.to_string();
         let framing = app.serial_config.to_string();
-        let mode = match app.settings().input_mode {
-            InputMode::Terminal => "TERM",
-            InputMode::Line => "LINE",
+        let mode = match app.settings().mode {
+            Mode::Terminal => "TERM",
+            Mode::Line => "LINE",
         };
 
         let pan_left = pan_left_indicator(app).unwrap_or_default();
