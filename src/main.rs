@@ -174,7 +174,6 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                                 app.settings().line_mode.rx_eol,
                                 app.settings().encoding,
                                 &app.settings().timestamp_format.to_string(),
-                                app.settings().line_mode.display_mode,
                                 &input_buffer[..bytes_read],
                             );
                         }

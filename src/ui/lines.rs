@@ -41,6 +41,7 @@ pub fn history_entry_to_line(
     theme: &ThemeConfig,
 ) -> Line<'static> {
     let mut spans = Vec::new();
+    let display_mode = settings.line_mode.display_mode;
     let timestamp_in_line = settings.show_timestamps;
     let timestamp_format = &settings.timestamp_format;
     let line_prefix = &settings.line_mode.line_prefix;
@@ -52,7 +53,7 @@ pub fn history_entry_to_line(
 
     spans.push(Span::styled(line_prefix.to_string(), theme.line_prefix));
 
-    let mut content_spans = entry.cached_content_spans.clone();
+    let mut content_spans = format_line_content(&entry.text, display_mode);
 
     if !line_matches.is_empty() {
         let normal_style = Style::default().bg(Color::Yellow).fg(Color::Black);
@@ -82,6 +83,9 @@ pub fn history_entry_to_line(
     Line::from(spans)
 }
 
+// FIXME: optimisation #2 broke scroll sync with raw side raw_panel
+// FIXME: optimisation #2 broke the copy mode keep in visible screen
+// FIXME: optimisation #2 broke the search mode keep in visible screen
 pub fn render_monitor(
     app: &mut App,
     frame: &mut Frame,
@@ -93,66 +97,89 @@ pub fn render_monitor(
 ) -> PostRenderEffect {
     let content_width = content_area.width as usize;
     let content_height = content_area.height as usize;
+    let total_entries = app.line_mode.history().len();
     let wrap_mode = app.settings().line_mode.wrap_mode;
+    let scroll_from_bottom = app.line_mode.scroll_offset();
     let raw_view = app.settings().raw_side.view;
     let post_effect = PostRenderEffect::None;
+
+    if total_entries == 0 || content_width == 0 || content_height == 0 {
+        return PostRenderEffect::None;
+    }
 
     let is_search_active =
         app.line_mode.search().active && !app.line_mode.search().matches.is_empty();
     let active_match_idx = app.line_mode.search().current_match;
     let copy_range = app.line_mode.copy_state().normalized_selection();
 
-    let history_lines: Vec<Line> = {
-        let search = app.line_mode.search();
-        app.line_mode
-            .history()
-            .iter()
-            .enumerate()
-            .map(|(idx, entry)| {
-                // Collect search matches for this line in O(log N)
-                let line_matches: Vec<(usize, &SearchMatch)> = if is_search_active {
-                    let start = search.matches.partition_point(|m| m.line_idx < idx);
-                    let end = search.matches.partition_point(|m| m.line_idx <= idx);
-                    search.matches[start..end]
-                        .iter()
-                        .enumerate()
-                        .map(|(offset, m)| (start + offset, m))
-                        .collect()
-                } else {
-                    Vec::new()
-                };
+    let global_max_scroll = total_entries.saturating_sub(content_height);
+    let clamped_scroll = scroll_from_bottom.min(global_max_scroll);
 
-                let sel_range = copy_range.and_then(|(start, end)| {
-                    if idx < start.line_idx || idx > end.line_idx {
-                        None
-                    } else {
-                        let from = if idx == start.line_idx {
-                            start.char_idx
-                        } else {
-                            0
-                        };
-                        let to = if idx == end.line_idx {
-                            end.char_idx
-                        } else {
-                            usize::MAX
-                        };
-                        Some((from, to))
-                    }
-                });
-
-                history_entry_to_line(
-                    entry,
-                    app.settings(),
-                    &line_matches,
-                    active_match_idx,
-                    sel_range,
-                    theme,
-                )
-            })
-            .collect()
+    let overscan_entries = match wrap_mode {
+        WrapMode::Truncate => content_height,
+        WrapMode::Word | WrapMode::Char => content_height.saturating_mul(2),
     };
 
-    let mut history_lines = history_lines;
+    let (start_idx, end_idx) = if clamped_scroll == global_max_scroll {
+        let start = 0;
+        let end = (content_height + overscan_entries).min(total_entries);
+        (start, end)
+    } else {
+        let raw_end = total_entries.saturating_sub(clamped_scroll);
+        let end = raw_end.max(content_height.min(total_entries));
+        let start = end.saturating_sub(content_height + overscan_entries);
+        (start, end)
+    };
+
+    let search = app.line_mode.search();
+    let mut visible_lines: Vec<Line> = app
+        .line_mode
+        .history()
+        .range(start_idx..end_idx)
+        .enumerate()
+        .map(|(local_idx, entry)| {
+            let global_idx = start_idx + local_idx;
+
+            let line_matches: Vec<(usize, &SearchMatch)> = if is_search_active {
+                let start = search.matches.partition_point(|m| m.line_idx < global_idx);
+                let end = search.matches.partition_point(|m| m.line_idx <= global_idx);
+                search.matches[start..end]
+                    .iter()
+                    .enumerate()
+                    .map(|(offset, m)| (start + offset, m))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            let sel_range = copy_range.and_then(|(start, end)| {
+                if global_idx < start.line_idx || global_idx > end.line_idx {
+                    None
+                } else {
+                    let from = if global_idx == start.line_idx {
+                        start.char_idx
+                    } else {
+                        0
+                    };
+                    let to = if global_idx == end.line_idx {
+                        end.char_idx
+                    } else {
+                        usize::MAX
+                    };
+                    Some((from, to))
+                }
+            });
+
+            history_entry_to_line(
+                entry,
+                app.settings(),
+                &line_matches,
+                active_match_idx,
+                sel_range,
+                theme,
+            )
+        })
+        .collect();
 
     if app.settings().line_mode.show_partial_rx && !app.line_mode.partial_rx().is_empty() {
         let display_mode = app.settings().line_mode.display_mode;
@@ -173,24 +200,24 @@ pub fn render_monitor(
         let partial_prefix_style = *theme.line_partial_prefix;
         partial_spans.push(Span::styled(partial_prefix, partial_prefix_style));
         partial_spans.extend(format_line_content(&partial_raw, display_mode));
-        history_lines.push(Line::from(partial_spans));
+        visible_lines.push(Line::from(partial_spans));
     }
 
-    let layout = prepare_view_layout(history_lines, app.settings(), theme, content_width);
+    let layout = prepare_view_layout(visible_lines, app.settings(), theme, content_width);
     let total_visual_rows = layout.visual_lines.len();
     let max_pan = match wrap_mode {
         WrapMode::Word | WrapMode::Char => 0,
         WrapMode::Truncate => layout.max_line_width.saturating_sub(content_width),
     };
 
-    let max_scroll = total_visual_rows.saturating_sub(content_height);
-    app.line_mode.update_limits(max_scroll, max_pan);
+    app.line_mode.update_limits(global_max_scroll, max_pan);
 
-    // center view on seach occurance
     if let Some((target_line, target_col)) = app.line_mode.search_mut().target_jump.take()
-        && target_line < layout.line_layouts.len()
+        && target_line >= start_idx
+        && target_line < end_idx
     {
-        let line_meta = &layout.line_layouts[target_line];
+        let local_line = target_line - start_idx;
+        let line_meta = &layout.line_layouts[local_line];
 
         let mut remaining = target_col;
         let mut target_visual_row = line_meta.visual_row_start;
@@ -211,7 +238,8 @@ pub fn render_monitor(
             .saturating_sub(target_visual_row);
         let half_screen_y = content_height / 2;
         let centered_scroll = rows_from_bottom.saturating_sub(half_screen_y);
-        app.line_mode.scroll_to(centered_scroll.min(max_scroll));
+        app.line_mode
+            .scroll_to(centered_scroll.min(global_max_scroll));
 
         if wrap_mode == WrapMode::Truncate {
             let half_screen_x = content_width / 2;
@@ -221,14 +249,17 @@ pub fn render_monitor(
         }
     }
 
-    let scroll_from_bottom = app.line_mode.scroll_offset();
-    let paragraph_y_offset = max_scroll.saturating_sub(scroll_from_bottom);
+    let paragraph_y_offset = if start_idx == 0 && clamped_scroll == global_max_scroll {
+        0
+    } else {
+        total_visual_rows.saturating_sub(content_height)
+    };
+
     let line_x_offset = match wrap_mode {
         WrapMode::Word | WrapMode::Char => 0,
         WrapMode::Truncate => app.line_mode.x_offset(),
     };
 
-    // side view raw panel
     let active_focus = if app.line_mode.copy_state().active {
         Some((
             app.line_mode.copy_state().cursor.line_idx,
@@ -241,7 +272,9 @@ pub fn render_monitor(
     };
 
     if let Some((target_line, target_char)) = active_focus
-        && let Some(line_meta) = layout.line_layouts.get(target_line)
+        && target_line >= start_idx
+        && target_line < end_idx
+        && let Some(line_meta) = layout.line_layouts.get(target_line - start_idx)
     {
         let mut remaining = target_char;
         let mut local_byte_offset = 0;
@@ -273,7 +306,6 @@ pub fn render_monitor(
                 if remaining < current_sub_chars || is_last {
                     let local_char = remaining.min(current_sub_chars.saturating_sub(1));
 
-                    // convert index to utf8 byte offset
                     let byte_offset = sub_slice
                         .char_indices()
                         .nth(local_char)
@@ -315,7 +347,6 @@ pub fn render_monitor(
         render_raw_side_panel(app, frame, raw_area, paragraph_y_offset, &layout, theme);
     }
 
-    // main history
     let history_paragraph = Paragraph::new(layout.visual_lines).scroll((
         paragraph_y_offset.min(u16::MAX as usize) as u16,
         line_x_offset.min(u16::MAX as usize) as u16,
@@ -324,7 +355,6 @@ pub fn render_monitor(
 
     apply_keyword_highlights(frame.buffer_mut(), content_area, highlights);
 
-    // selection cursor
     if app.line_mode.copy_state().active {
         let copy_state = app.line_mode.copy_state();
         let cursor_line = copy_state.cursor.line_idx;
@@ -335,7 +365,10 @@ pub fn render_monitor(
             PrefixWrapBehavior::Prefix => app.settings().line_mode.line_indent_prefix.width(),
         };
 
-        if let Some(line_meta) = layout.line_layouts.get(cursor_line) {
+        if cursor_line >= start_idx
+            && cursor_line < end_idx
+            && let Some(line_meta) = layout.line_layouts.get(cursor_line - start_idx)
+        {
             let mut resolved_row = line_meta.visual_row_start;
             let mut resolved_col = 0;
             let mut remaining = cursor_char;
@@ -397,14 +430,14 @@ pub fn render_monitor(
         }
     }
 
-    // scrollbar
     if let Some(sb_area) = scrollbar_area {
         let has_borders = app.settings().ui.show_borders;
 
-        if total_visual_rows > content_height {
-            let mut scrollbar_state = ScrollbarState::new(max_scroll)
+        if total_entries > content_height {
+            let scrollbar_pos = global_max_scroll.saturating_sub(clamped_scroll);
+            let mut scrollbar_state = ScrollbarState::new(global_max_scroll)
                 .viewport_content_length(content_height)
-                .position(paragraph_y_offset);
+                .position(scrollbar_pos);
 
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(Some("▲"))
@@ -419,7 +452,6 @@ pub fn render_monitor(
         }
     }
 
-    // search
     if app.line_mode.search().active {
         render_search_bar(app, frame, content_area, theme);
     }

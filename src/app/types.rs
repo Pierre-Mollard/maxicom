@@ -1,10 +1,8 @@
 use chrono::{DateTime, Local};
-use ratatui::text::Span;
 
 pub struct LogEntry {
     pub text: String,
     pub timestamp: DateTime<Local>,
-    pub cached_content_spans: Vec<Span<'static>>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
