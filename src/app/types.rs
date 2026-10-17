@@ -3,6 +3,7 @@ use chrono::{DateTime, Local};
 pub struct LogEntry {
     pub text: String,
     pub timestamp: DateTime<Local>,
+    pub formatted_timestamp: String,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

@@ -137,18 +137,17 @@ impl LineMode {
             .partial_line_timestamp
             .take()
             .unwrap_or_else(Local::now);
+        let formatted_timestamp = timestamp.format(timestamp_f).to_string();
         let entry = LogEntry {
             text: line.to_string(),
             timestamp,
+            formatted_timestamp,
         };
 
         let _ = self.logger.log_entry(&entry, timestamp_f);
-
         self.local_history.push_back(entry);
 
         self.scroller.on_rx_received();
-
-        // Enforce maximum scrollback size.
         while self.local_history.len() > self.max_lines {
             self.local_history.pop_front();
         }

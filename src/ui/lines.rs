@@ -32,6 +32,7 @@ use crate::{
     },
 };
 
+// TODO: setting line mode indent wrap should add timestamp as well
 pub fn history_entry_to_line(
     entry: &LogEntry,
     settings: &SettingsConfig,
@@ -43,13 +44,13 @@ pub fn history_entry_to_line(
     let mut spans = Vec::new();
     let display_mode = settings.line_mode.display_mode;
     let timestamp_in_line = settings.show_timestamps;
-    let timestamp_format = &settings.timestamp_format;
     let line_prefix = &settings.line_mode.line_prefix;
 
     if timestamp_in_line {
-        // TODO: cache this to prevent alloc (but handle when settings format changes)
-        let time = entry.timestamp.format(timestamp_format).to_string();
-        spans.push(Span::styled(time, *theme.timestamp_line));
+        spans.push(Span::styled(
+            entry.formatted_timestamp.clone(),
+            *theme.timestamp_line,
+        ));
     }
 
     spans.push(Span::styled(line_prefix.to_string(), theme.line_prefix));
