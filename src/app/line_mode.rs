@@ -216,6 +216,8 @@ impl LineMode {
     ) -> UpdateEffect {
         match action {
             LineInputAction::Submit => {
+                self.scroller.scroll_to_bottom();
+
                 let text = self.user_input.value().to_string();
                 self.user_input.reset();
                 self.temp_input.reset();

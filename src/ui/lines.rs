@@ -83,9 +83,6 @@ pub fn history_entry_to_line(
     Line::from(spans)
 }
 
-// FIXME: optimisation #2 broke scroll sync with raw side raw_panel
-// FIXME: optimisation #2 broke the copy mode keep in visible screen
-// FIXME: optimisation #2 broke the search mode keep in visible screen
 pub fn render_monitor(
     app: &mut App,
     frame: &mut Frame,
@@ -99,7 +96,6 @@ pub fn render_monitor(
     let content_height = content_area.height as usize;
     let total_entries = app.line_mode.history().len();
     let wrap_mode = app.settings().line_mode.wrap_mode;
-    let scroll_from_bottom = app.line_mode.scroll_offset();
     let raw_view = app.settings().raw_side.view;
     let post_effect = PostRenderEffect::None;
 
@@ -112,24 +108,33 @@ pub fn render_monitor(
     let active_match_idx = app.line_mode.search().current_match;
     let copy_range = app.line_mode.copy_state().normalized_selection();
 
+    // resolve search target jump
     let global_max_scroll = total_entries.saturating_sub(content_height);
+    if let Some((target_line, target_col)) = app.line_mode.search_mut().target_jump.take() {
+        let line_from_bottom = (total_entries.saturating_sub(1)).saturating_sub(target_line);
+        let half = content_height / 2;
+        let centered_scroll = line_from_bottom.saturating_sub(half);
+        app.line_mode
+            .scroll_to(centered_scroll.min(global_max_scroll));
+
+        if wrap_mode == WrapMode::Truncate {
+            let half_x = content_width / 2;
+            let gutter_w = app.settings().line_gutter_width();
+            let centered_pan_x = (gutter_w + target_col).saturating_sub(half_x);
+            app.line_mode.scroller_mut().offset_x = centered_pan_x;
+        }
+    }
+
+    let scroll_from_bottom = app.line_mode.scroll_offset();
     let clamped_scroll = scroll_from_bottom.min(global_max_scroll);
 
-    let overscan_entries = match wrap_mode {
-        WrapMode::Truncate => content_height,
-        WrapMode::Word | WrapMode::Char => content_height.saturating_mul(2),
-    };
+    // visible window (opti render only visible +- extra)
+    let overscan = content_height / 2 + 5;
+    let view_bottom_entry = total_entries.saturating_sub(clamped_scroll);
+    let view_top_entry = view_bottom_entry.saturating_sub(content_height);
 
-    let (start_idx, end_idx) = if clamped_scroll == global_max_scroll {
-        let start = 0;
-        let end = (content_height + overscan_entries).min(total_entries);
-        (start, end)
-    } else {
-        let raw_end = total_entries.saturating_sub(clamped_scroll);
-        let end = raw_end.max(content_height.min(total_entries));
-        let start = end.saturating_sub(content_height + overscan_entries);
-        (start, end)
-    };
+    let start_idx = view_top_entry.saturating_sub(overscan);
+    let end_idx = (view_bottom_entry + overscan).min(total_entries);
 
     let search = app.line_mode.search();
     let mut visible_lines: Vec<Line> = app
@@ -204,7 +209,6 @@ pub fn render_monitor(
     }
 
     let layout = prepare_view_layout(visible_lines, app.settings(), theme, content_width);
-    let total_visual_rows = layout.visual_lines.len();
     let max_pan = match wrap_mode {
         WrapMode::Word | WrapMode::Char => 0,
         WrapMode::Truncate => layout.max_line_width.saturating_sub(content_width),
@@ -212,47 +216,15 @@ pub fn render_monitor(
 
     app.line_mode.update_limits(global_max_scroll, max_pan);
 
-    if let Some((target_line, target_col)) = app.line_mode.search_mut().target_jump.take()
-        && target_line >= start_idx
-        && target_line < end_idx
-    {
-        let local_line = target_line - start_idx;
-        let line_meta = &layout.line_layouts[local_line];
-
-        let mut remaining = target_col;
-        let mut target_visual_row = line_meta.visual_row_start;
-        let mut local_char_col = target_col;
-
-        for (sub_idx, sub) in line_meta.sub_lines.iter().enumerate() {
-            let is_last = sub_idx == line_meta.sub_lines.len().saturating_sub(1);
-            if remaining < sub.content_char_len || is_last {
-                target_visual_row = line_meta.visual_row_start + sub_idx;
-                local_char_col = remaining;
-                break;
-            }
-            remaining = remaining.saturating_sub(sub.content_char_len);
-        }
-
-        let rows_from_bottom = total_visual_rows
-            .saturating_sub(1)
-            .saturating_sub(target_visual_row);
-        let half_screen_y = content_height / 2;
-        let centered_scroll = rows_from_bottom.saturating_sub(half_screen_y);
-        app.line_mode
-            .scroll_to(centered_scroll.min(global_max_scroll));
-
-        if wrap_mode == WrapMode::Truncate {
-            let half_screen_x = content_width / 2;
-            let gutter_w = app.settings().line_gutter_width();
-            let centered_pan_x = (gutter_w + local_char_col).saturating_sub(half_screen_x);
-            app.line_mode.scroller_mut().offset_x = centered_pan_x.min(max_pan);
-        }
-    }
-
-    let paragraph_y_offset = if start_idx == 0 && clamped_scroll == global_max_scroll {
-        0
+    // sync raw panel with content (extra sub line counts)
+    let overscan_entry_count = view_top_entry.saturating_sub(start_idx);
+    let paragraph_y_offset: usize = if clamped_scroll == 0 {
+        layout.visual_lines.len().saturating_sub(content_height)
     } else {
-        total_visual_rows.saturating_sub(content_height)
+        layout.line_layouts[..overscan_entry_count.min(layout.line_layouts.len())]
+            .iter()
+            .map(|l| l.sub_lines.len())
+            .sum()
     };
 
     let line_x_offset = match wrap_mode {
