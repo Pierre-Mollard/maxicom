@@ -1,13 +1,20 @@
 /// Convert data stream to strings or raw bytes/hex/octal while cleaning escape sequences and stuff
 use ansi_to_tui::IntoText;
+use const_hex::Buffer;
 use ratatui::{
     style::{Color, Style},
     text::Span,
 };
+use std::borrow::Cow;
+use std::fmt::Write as _;
 
 use crate::configs::LineDisplayMode;
 
-pub fn sanitize_terminal_control_sequences(text: &str) -> String {
+pub fn sanitize_terminal_control_sequences(text: &str) -> Cow<'_, str> {
+    if !text.contains('\x1b') {
+        return Cow::Borrowed(text);
+    }
+
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
 
@@ -52,7 +59,7 @@ pub fn sanitize_terminal_control_sequences(text: &str) -> String {
         }
     }
 
-    out
+    Cow::Owned(out)
 }
 
 fn trim_trailing_incomplete_ansi(text: &str) -> &str {
@@ -94,13 +101,15 @@ pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'stati
             vec![Span::raw(clean_text)]
         }
         LineDisplayMode::Raw => {
-            let mut raw = String::new();
+            let mut raw = String::with_capacity(text.len());
             for ch in text.chars() {
                 match ch {
                     '\x1b' => raw.push_str("^["),
                     '\r' => raw.push_str("\\r"),
                     '\t' => raw.push_str("    "),
-                    c if c.is_control() => raw.push_str(&format!("\\x{:02X}", c as u32)),
+                    c if c.is_control() => {
+                        let _ = write!(raw, "\\x{:02X}", c as u32);
+                    }
                     c => raw.push(c),
                 }
             }
@@ -113,17 +122,22 @@ pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'stati
             }
 
             let mut spans = Vec::with_capacity(bytes.len() * 2);
+            let mut buf = Buffer::<1>::new();
 
             for (i, &b) in bytes.iter().enumerate() {
                 let color = match b {
-                    0x00 => Color::DarkGray,                        // \0
-                    0x0A | 0x0D => Color::Yellow,                   // \r and \n
-                    0xAA | 0x55 | 0x7E => Color::LightRed,          // sync / frame delimiters
-                    b if (0x20..=0x7E).contains(&b) => Color::Cyan, // ASCII
+                    0x00 => Color::DarkGray,
+                    0x0A | 0x0D => Color::Yellow,
+                    0xAA | 0x55 | 0x7E => Color::LightRed,
+                    0x20..=0x7E => Color::Cyan,
                     _ => Color::White,
                 };
 
-                spans.push(Span::styled(format!("{b:02X}"), Style::default().fg(color)));
+                let hex_str = buf.format_upper(&[b]);
+                spans.push(Span::styled(
+                    hex_str.to_string(),
+                    Style::default().fg(color),
+                ));
 
                 if i + 1 < bytes.len() {
                     spans.push(Span::raw(" "));
@@ -141,11 +155,20 @@ pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'stati
             for (i, &b) in bytes.iter().enumerate() {
                 let color = match b {
                     0 => Color::DarkGray,
-                    0o12 | 0o15 => Color::Yellow, // \r and \n
-                    b if (0x20..=0x7E).contains(&b) => Color::Green,
+                    0o12 | 0o15 => Color::Yellow,
+                    0x20..=0x7E => Color::Green,
                     _ => Color::White,
                 };
-                spans.push(Span::styled(format!("{b:03o}"), Style::default().fg(color)));
+                let mut octal_buf = [0u8; 3];
+                octal_buf[0] = b'0' + ((b >> 6) & 0x07);
+                octal_buf[1] = b'0' + ((b >> 3) & 0x07);
+                octal_buf[2] = b'0' + (b & 0x07);
+                let octal_str = unsafe { std::str::from_utf8_unchecked(&octal_buf) };
+
+                spans.push(Span::styled(
+                    octal_str.to_string(),
+                    Style::default().fg(color),
+                ));
                 if i + 1 < bytes.len() {
                     spans.push(Span::raw(" "));
                 }
@@ -166,7 +189,21 @@ pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'stati
                 } else {
                     Color::LightBlue
                 };
-                spans.push(Span::styled(format!("{b:08b}"), Style::default().fg(color)));
+
+                let mut bin_buf = [0u8; 8];
+                (0..8).for_each(|bit| {
+                    bin_buf[bit] = if (b & (1 << (7 - bit))) != 0 {
+                        b'1'
+                    } else {
+                        b'0'
+                    };
+                });
+                let bin_str = unsafe { std::str::from_utf8_unchecked(&bin_buf) };
+
+                spans.push(Span::styled(
+                    bin_str.to_string(),
+                    Style::default().fg(color),
+                ));
                 if i + 1 < bytes.len() {
                     spans.push(Span::raw(" "));
                 }

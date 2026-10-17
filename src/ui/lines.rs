@@ -47,6 +47,7 @@ pub fn history_entry_to_line(
     let line_prefix = &settings.line_mode.line_prefix;
 
     if timestamp_in_line {
+        // TODO: cache this to prevent alloc (but handle when settings format changes)
         let time = entry.timestamp.format(timestamp_format).to_string();
         spans.push(Span::styled(time, *theme.timestamp_line));
     }
