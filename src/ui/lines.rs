@@ -32,6 +32,7 @@ use crate::{
     },
 };
 
+// TODO: search in byte mode for non displayable char is buggy
 // TODO: setting line mode indent wrap should add timestamp as well
 pub fn history_entry_to_line(
     entry: &LogEntry,
@@ -132,11 +133,18 @@ pub fn render_monitor(
 
     // visible window (opti render only visible +- extra)
     let overscan = content_height / 2 + 5;
-    let view_bottom_entry = total_entries.saturating_sub(clamped_scroll);
-    let view_top_entry = view_bottom_entry.saturating_sub(content_height);
 
-    let start_idx = view_top_entry.saturating_sub(overscan);
-    let end_idx = (view_bottom_entry + overscan).min(total_entries);
+    let (start_idx, end_idx) = if clamped_scroll <= overscan {
+        let end = total_entries;
+        let start = end.saturating_sub(content_height + overscan * 2);
+        (start, end)
+    } else {
+        let view_bottom_entry = total_entries.saturating_sub(clamped_scroll);
+        let view_top_entry = view_bottom_entry.saturating_sub(content_height);
+        let start = view_top_entry.saturating_sub(overscan);
+        let end = (view_bottom_entry + overscan).min(total_entries);
+        (start, end)
+    };
 
     let search = app.line_mode.search();
     let mut visible_lines: Vec<Line> = app
@@ -219,10 +227,16 @@ pub fn render_monitor(
     app.line_mode.update_limits(global_max_scroll, max_pan);
 
     // sync raw panel with content (extra sub line counts)
-    let overscan_entry_count = view_top_entry.saturating_sub(start_idx);
-    let paragraph_y_offset: usize = if clamped_scroll == 0 {
-        layout.visual_lines.len().saturating_sub(content_height)
+    let total_visual_rows = layout.visual_lines.len();
+
+    let paragraph_y_offset: usize = if end_idx == total_entries {
+        let base_bottom_offset = total_visual_rows.saturating_sub(content_height);
+        base_bottom_offset.saturating_sub(clamped_scroll)
     } else {
+        let view_bottom_entry = total_entries.saturating_sub(clamped_scroll);
+        let view_top_entry = view_bottom_entry.saturating_sub(content_height);
+        let overscan_entry_count = view_top_entry.saturating_sub(start_idx);
+
         layout.line_layouts[..overscan_entry_count.min(layout.line_layouts.len())]
             .iter()
             .map(|l| l.sub_lines.len())
@@ -318,7 +332,15 @@ pub fn render_monitor(
     }
 
     if let Some(raw_area) = raw_side_area {
-        render_raw_side_panel(app, frame, raw_area, paragraph_y_offset, &layout, theme);
+        render_raw_side_panel(
+            app,
+            frame,
+            raw_area,
+            paragraph_y_offset,
+            start_idx,
+            &layout,
+            theme,
+        );
     }
 
     let history_paragraph = Paragraph::new(layout.visual_lines).scroll((
@@ -506,6 +528,7 @@ pub fn render_raw_side_panel(
     frame: &mut Frame,
     raw_area: Rect,
     paragraph_y_offset: usize,
+    start_idx: usize,
     layout: &PreparedLayout,
     theme: &ThemeConfig,
 ) {
@@ -535,7 +558,9 @@ pub fn render_raw_side_panel(
     let mut visible_raw_lines = Vec::with_capacity(view_height);
     let mut current_visual_row = 0;
 
-    for (logical_idx, entry_layout) in layout.line_layouts.iter().enumerate() {
+    for (local_layout_idx, entry_layout) in layout.line_layouts.iter().enumerate() {
+        let global_idx = start_idx + local_layout_idx;
+
         let visual_sub_count = entry_layout.sub_lines.len();
         let entry_visual_end = current_visual_row + visual_sub_count;
 
@@ -547,7 +572,7 @@ pub fn render_raw_side_panel(
             break;
         }
 
-        if let Some(entry) = history.get(logical_idx) {
+        if let Some(entry) = history.get(global_idx) {
             let display_text = displayable_line_string(&entry.text, text_display_mode);
             let entry_chars: Vec<char> = display_text.chars().collect();
             let mut char_offset = 0;
@@ -555,10 +580,8 @@ pub fn render_raw_side_panel(
             // find search occurance on same line
             let line_matches: Vec<(usize, &SearchMatch)> = if is_search_active {
                 let search = app.line_mode.search();
-                let start = search.matches.partition_point(|m| m.line_idx < logical_idx);
-                let end = search
-                    .matches
-                    .partition_point(|m| m.line_idx <= logical_idx);
+                let start = search.matches.partition_point(|m| m.line_idx < global_idx);
+                let end = search.matches.partition_point(|m| m.line_idx <= global_idx);
                 search.matches[start..end]
                     .iter()
                     .enumerate()
@@ -603,17 +626,17 @@ pub fn render_raw_side_panel(
                         }
                     }
 
-                    // selection highlight on sub line
+                    // Selection compared against GLOBAL index:
                     if let Some((sel_start, sel_end)) = copy_range
-                        && logical_idx >= sel_start.line_idx
-                        && logical_idx <= sel_end.line_idx
+                        && global_idx >= sel_start.line_idx
+                        && global_idx <= sel_end.line_idx
                     {
-                        let from = if logical_idx == sel_start.line_idx {
+                        let from = if global_idx == sel_start.line_idx {
                             sel_start.char_idx
                         } else {
                             0
                         };
-                        let to = if logical_idx == sel_end.line_idx {
+                        let to = if global_idx == sel_end.line_idx {
                             sel_end.char_idx + 1
                         } else {
                             usize::MAX
