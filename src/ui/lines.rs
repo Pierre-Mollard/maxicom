@@ -197,25 +197,30 @@ pub fn render_monitor(
         .collect();
 
     if app.settings().line_mode.show_partial_rx && !app.line_mode.partial_rx().is_empty() {
-        let display_mode = app.settings().line_mode.display_mode;
-        let partial_raw = String::from_utf8_lossy(app.line_mode.partial_rx());
+        let partial_bytes = app.line_mode.partial_rx();
+        let trimmed_bytes = partial_bytes.trim_ascii_end();
 
-        let mut partial_spans = Vec::new();
+        if !trimmed_bytes.is_empty() {
+            let display_mode = app.settings().line_mode.display_mode;
+            let partial_raw = String::from_utf8_lossy(trimmed_bytes);
 
-        if app.settings().show_timestamps
-            && let Some(partial_timestamp) = app.line_mode.partial_line_timestamp()
-        {
-            let time = partial_timestamp
-                .format(&app.settings().timestamp_format)
-                .to_string();
-            partial_spans.push(Span::styled(time, theme.timestamp_line));
+            let mut partial_spans = Vec::new();
+
+            if app.settings().show_timestamps
+                && let Some(partial_timestamp) = app.line_mode.partial_line_timestamp()
+            {
+                let time = partial_timestamp
+                    .format(&app.settings().timestamp_format)
+                    .to_string();
+                partial_spans.push(Span::styled(time, theme.timestamp_line));
+            }
+
+            let partial_prefix = app.settings().line_mode.line_partial_prefix.to_string();
+            let partial_prefix_style = *theme.line_partial_prefix;
+            partial_spans.push(Span::styled(partial_prefix, partial_prefix_style));
+            partial_spans.extend(format_line_content(&partial_raw, display_mode));
+            visible_lines.push(Line::from(partial_spans));
         }
-
-        let partial_prefix = app.settings().line_mode.line_partial_prefix.to_string();
-        let partial_prefix_style = *theme.line_partial_prefix;
-        partial_spans.push(Span::styled(partial_prefix, partial_prefix_style));
-        partial_spans.extend(format_line_content(&partial_raw, display_mode));
-        visible_lines.push(Line::from(partial_spans));
     }
 
     let layout = prepare_view_layout(visible_lines, app.settings(), theme, content_width);

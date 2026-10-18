@@ -221,9 +221,9 @@ pub fn decode_cp437(bytes: &[u8]) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum TxNewlineSymbol {
-    #[default]
     CrLf,
     Cr,
+    #[default]
     Lf,
 }
 
