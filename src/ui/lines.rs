@@ -32,7 +32,6 @@ use crate::{
     },
 };
 
-// TODO: search in byte mode for non displayable char is buggy
 // TODO: setting line mode indent wrap should add timestamp as well
 pub fn history_entry_to_line(
     entry: &LogEntry,

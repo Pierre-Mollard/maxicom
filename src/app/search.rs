@@ -337,9 +337,12 @@ pub fn find_byte_subslice(haystack: &[u8], needle: &[u8]) -> Vec<usize> {
         .collect()
 }
 
-#[inline]
 pub fn safe_byte_to_char_col(s: &str, byte_idx: usize) -> usize {
-    s.char_indices()
-        .take_while(|&(b_idx, _)| b_idx < byte_idx)
-        .count()
+    for (char_idx, (b_start, ch)) in s.char_indices().enumerate() {
+        let b_end = b_start + ch.len_utf8();
+        if byte_idx < b_end {
+            return char_idx;
+        }
+    }
+    s.chars().count()
 }
