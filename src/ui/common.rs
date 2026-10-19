@@ -2,7 +2,7 @@ use ratatui::{
     Frame,
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Clear, Paragraph},
 };
@@ -138,11 +138,11 @@ pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, theme: &Theme
     let current_pos = s.current_match_display();
 
     let stats_style = if match_count > 0 {
-        Style::default().fg(Color::Green)
+        Style::default().fg(theme.text_good)
     } else if !query_str.is_empty() {
-        Style::default().fg(Color::Red)
+        Style::default().fg(theme.text_warn)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(theme.text_muted)
     };
 
     let kind_str = match s.mode_kind {
@@ -151,24 +151,12 @@ pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, theme: &Theme
     };
 
     let spans = vec![
-        Span::styled(
-            format!(" [{}]", kind_str),
-            Style::default()
-                .bg(Color::Blue)
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            " SEARCH: ",
-            Style::default()
-                .bg(Color::Blue)
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(format!(" [{}]", kind_str), *theme.search_indicator),
+        Span::styled(" SEARCH: ", *theme.search_indicator),
         Span::styled(
             format!(" {} ", query_str),
             Style::default()
-                .fg(Color::Yellow)
+                .fg(theme.secondary_color)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(format!("({}/{})", current_pos, match_count), stats_style),

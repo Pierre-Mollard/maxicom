@@ -42,6 +42,7 @@ pub struct MaxicomTerminal<'a, S> {
     style: Option<Style>,
     cursor: MaxicomCursor,
     empty_filling_char: &'a str,
+    outside_filling_style: Style,
     focused: bool,
 }
 
@@ -58,6 +59,7 @@ impl<'a, S: Screen> MaxicomTerminal<'a, S> {
             style: None,
             cursor: MaxicomCursor::default(),
             empty_filling_char: " ",
+            outside_filling_style: Style::default().fg(Color::DarkGray),
             focused: true,
         }
     }
@@ -104,6 +106,12 @@ impl<'a, S: Screen> MaxicomTerminal<'a, S> {
     }
 
     #[inline]
+    pub const fn filling_char_style(mut self, style: Style) -> Self {
+        self.outside_filling_style = style;
+        self
+    }
+
+    #[inline]
     pub const fn focused(mut self, focused: bool) -> Self {
         self.focused = focused;
         self
@@ -125,6 +133,11 @@ impl<S: Screen> Widget for &MaxicomTerminal<'_, S> {
             b.clone().render(area, buf);
             inner_area
         });
+
+        if let Some(style) = self.style {
+            buf.set_style(area, style);
+        }
+
         handle(self, area, buf);
     }
 }
@@ -162,11 +175,14 @@ fn handle<S: Screen>(term: &MaxicomTerminal<S>, area: Rect, buf: &mut Buffer) {
             let source_row = row.saturating_add(term.y_offset);
             let cell = &mut buf[(buf_col, buf_row)];
             if let Some(screen_cell) = screen.cell(source_row, source_col) {
+                if let Some(base_style) = term.style {
+                    cell.set_style(base_style);
+                }
                 screen_cell.apply(cell);
             } else {
                 // Outside the terminal canvas (viewer area padding)
                 cell.set_symbol(term.empty_filling_char);
-                cell.set_style(Style::default().fg(Color::DarkGray));
+                cell.set_style(term.outside_filling_style);
             }
         }
     }

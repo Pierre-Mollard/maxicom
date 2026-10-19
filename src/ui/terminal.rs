@@ -1,7 +1,7 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
@@ -57,7 +57,9 @@ pub fn render_vt100_terminal(
         .y_offset(app.terminal_mode.pan_offset_y() as u16)
         .focused(is_terminal_focused && app.is_app_focused())
         .cursor(cursor)
-        .filling_char(&app.settings().terminal_mode.empty_fill_char);
+        .style(*theme.background)
+        .filling_char(&app.settings().terminal_mode.empty_fill_char)
+        .filling_char_style(*theme.term_outside_bg);
 
     frame.render_widget(term_widget, content_area);
     apply_keyword_highlights(frame.buffer_mut(), content_area, highlights);
@@ -312,8 +314,8 @@ pub fn render_vt100_terminal(
         for y in content_area.top()..content_area.bottom() {
             for x in content_area.left()..content_area.right() {
                 let cell = &mut buf[(x, y)];
-                cell.set_bg(Color::White);
-                cell.set_fg(Color::DarkGray);
+                cell.set_bg(theme.term_flash_bg);
+                cell.set_fg(theme.term_flash_fg);
             }
         }
     }

@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::configs::style::ConfigStyle;
 
+// TODO: make color distincts from config style
+// TODO: make separations for categories
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ThemeConfig {
@@ -16,7 +19,12 @@ pub struct ThemeConfig {
     pub ternary_color: Color,
     pub text_color: Color,
     pub text_muted: Color,
+    pub text_warn: Color,
+    pub text_good: Color,
     pub unselected_color: Color,
+    pub term_flash_fg: Color,
+    pub term_flash_bg: Color,
+
     pub border_panel: ConfigStyle,
     pub border_panel_focused: ConfigStyle,
     pub border_app_unfocused: ConfigStyle,
@@ -32,6 +40,8 @@ pub struct ThemeConfig {
     pub line_partial_prefix: ConfigStyle,
     pub search_match: ConfigStyle,
     pub search_match_active: ConfigStyle,
+    pub term_outside_bg: ConfigStyle,
+    pub search_indicator: ConfigStyle,
 
     pub byte_any: Color,        // When raw
     pub byte_null: Color,       // 0x00 (padding, zero bytes)
@@ -50,6 +60,8 @@ impl Default for ThemeConfig {
             ternary_color: Color::Green,
             text_color: Color::White,
             text_muted: Color::DarkGray,
+            text_warn: Color::Red,
+            text_good: Color::Green,
             unselected_color: Color::White,
             border_panel: ConfigStyle::from_fg(Color::DarkGray),
             border_panel_focused: ConfigStyle::from_fg(Color::Cyan),
@@ -78,7 +90,15 @@ impl Default for ThemeConfig {
                     .bg(Color::Rgb(255, 140, 0))
                     .fg(Color::Black),
             ),
-
+            search_indicator: ConfigStyle::new(
+                Style::default()
+                    .fg(Color::White)
+                    .bg(Color::Blue)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            term_outside_bg: ConfigStyle::from_fg(Color::DarkGray),
+            term_flash_fg: Color::DarkGray,
+            term_flash_bg: Color::White,
             byte_any: Color::White,
             byte_null: Color::DarkGray,
             byte_ascii: Color::Cyan,
