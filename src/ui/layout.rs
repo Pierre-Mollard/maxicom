@@ -539,11 +539,25 @@ pub fn prepare_view_layout(
     let wrap_mode = settings.line_mode.wrap_mode;
     let gutter_chars = settings.line_gutter_width();
 
-    let indent_prefix: &str = match settings.line_mode.wrap_indent {
+    let base_prefix = match settings.line_mode.wrap_indent {
         PrefixWrapBehavior::None => "",
-        PrefixWrapBehavior::Prefix => &settings.line_mode.line_indent_prefix,
+        PrefixWrapBehavior::Prefix | PrefixWrapBehavior::Timestamp => {
+            &settings.line_mode.line_indent_prefix
+        }
     };
-    let indent_width = indent_prefix.width();
+
+    let timestamp_pad = if settings.line_mode.wrap_indent == PrefixWrapBehavior::Timestamp
+        && settings.show_timestamps
+    {
+        let prefix_w = settings.line_mode.line_prefix.width();
+        let ts_width = gutter_chars.saturating_sub(prefix_w);
+        " ".repeat(ts_width)
+    } else {
+        String::new()
+    };
+
+    let full_indent_prefix = format!("{}{}", timestamp_pad, base_prefix);
+    let indent_width = full_indent_prefix.width();
     let indent_style = *theme.line_indent_prefix;
 
     for line in lines {
@@ -558,7 +572,7 @@ pub fn prepare_view_layout(
             for (sub_idx, sub) in subs.iter().enumerate() {
                 let mut row_spans = Vec::new();
                 let extra_w = if sub_idx > 0 && indent_width > 0 {
-                    row_spans.push(Span::styled(indent_prefix.to_string(), indent_style));
+                    row_spans.push(Span::styled(full_indent_prefix.to_string(), indent_style));
                     indent_width
                 } else {
                     0

@@ -250,8 +250,9 @@ pub enum RxNewlineMode {
 #[serde(rename_all = "lowercase")]
 pub enum PrefixWrapBehavior {
     None,
-    #[default]
     Prefix,
+    #[default]
+    Timestamp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

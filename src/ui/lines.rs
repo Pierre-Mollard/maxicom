@@ -32,7 +32,6 @@ use crate::{
     },
 };
 
-// TODO: setting line mode indent wrap should add timestamp as well
 pub fn history_entry_to_line(
     entry: &LogEntry,
     settings: &SettingsConfig,
@@ -363,6 +362,15 @@ pub fn render_monitor(
         let indent_width = match app.settings().line_mode.wrap_indent {
             PrefixWrapBehavior::None => 0,
             PrefixWrapBehavior::Prefix => app.settings().line_mode.line_indent_prefix.width(),
+            PrefixWrapBehavior::Timestamp => {
+                let prefix_w = app.settings().line_mode.line_prefix.width();
+                let ts_width = if app.settings().show_timestamps {
+                    app.settings().line_gutter_width().saturating_sub(prefix_w)
+                } else {
+                    0
+                };
+                ts_width + app.settings().line_mode.line_indent_prefix.width()
+            }
         };
 
         if cursor_line >= start_idx

@@ -421,7 +421,8 @@ impl App {
             SettingKey::IdentWrap => {
                 self.settings.line_mode.wrap_indent = match self.settings.line_mode.wrap_indent {
                     PrefixWrapBehavior::None => PrefixWrapBehavior::Prefix,
-                    PrefixWrapBehavior::Prefix => PrefixWrapBehavior::None,
+                    PrefixWrapBehavior::Prefix => PrefixWrapBehavior::Timestamp,
+                    PrefixWrapBehavior::Timestamp => PrefixWrapBehavior::None,
                 }
             }
             SettingKey::DisplayMode => {

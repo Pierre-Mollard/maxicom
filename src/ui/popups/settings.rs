@@ -27,6 +27,7 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
     let indent_str = match app.settings().line_mode.wrap_indent {
         PrefixWrapBehavior::None => "None",
         PrefixWrapBehavior::Prefix => "Prefix",
+        PrefixWrapBehavior::Timestamp => "Timestamp",
     };
     let echo_str = if app.settings().local_echo {
         "ON"
