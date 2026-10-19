@@ -36,12 +36,12 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
 
     if !is_compact_vertical {
         outer_block = outer_block.title_bottom(Line::from(vec![
-            Span::styled(" Tab/Arrows: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Tab/Arrows: ", Style::default().fg(Color::DarkGray)),
             Span::raw("Category  "),
             Span::styled("j/k/Scroll: ", Style::default().fg(Color::DarkGray)),
             Span::raw("Move  "),
             Span::styled("Esc/q: ", Style::default().fg(Color::DarkGray)),
-            Span::raw("Close "),
+            Span::raw("Close"),
         ]));
     }
 
@@ -66,7 +66,7 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
                     .fg(theme.secondary_color)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(theme.unselected_color)
+                Style::default().fg(theme.text_color)
             };
             Line::from(cat.title()).style(style)
         })

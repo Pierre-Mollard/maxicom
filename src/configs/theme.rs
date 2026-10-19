@@ -13,11 +13,14 @@ use crate::configs::style::ConfigStyle;
 pub struct ThemeConfig {
     pub main_color: Color,
     pub secondary_color: Color,
+    pub ternary_color: Color,
+    pub text_color: Color,
+    pub text_muted: Color,
     pub unselected_color: Color,
     pub border_panel: ConfigStyle,
     pub border_panel_focused: ConfigStyle,
     pub border_app_unfocused: ConfigStyle,
-    pub background: ConfigStyle, // TODO: apply bg everywhere if defined and add all colors/styles
+    pub background: ConfigStyle,
     pub cursor_unfocused: ConfigStyle,
     pub timestamp_line: ConfigStyle,
     pub timestamp: ConfigStyle,
@@ -34,6 +37,9 @@ impl Default for ThemeConfig {
         Self {
             main_color: Color::Cyan,
             secondary_color: Color::Yellow,
+            ternary_color: Color::Green,
+            text_color: Color::White,
+            text_muted: Color::DarkGray,
             unselected_color: Color::White,
             border_panel: ConfigStyle::from_fg(Color::DarkGray),
             border_panel_focused: ConfigStyle::from_fg(Color::Cyan),

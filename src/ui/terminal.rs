@@ -389,7 +389,8 @@ pub fn render_vt100_raw_side_panel(
         return;
     }
 
-    let (block, inner_area) = raw_panel_layout(raw_area, app.settings().raw_side.orientation);
+    let (block, inner_area) =
+        raw_panel_layout(raw_area, app.settings().raw_side.orientation, theme);
     let view_height = inner_area.height as usize;
 
     let display_mode = raw_view_to_display_mode(raw_view);

@@ -18,7 +18,7 @@ pub fn render_filepath_popup(
     frame: &mut Frame,
     theme: &ThemeConfig,
 ) {
-    let area = popup_area(frame.area(), 60, 16, 40, 10);
+    let area = popup_area(frame.area(), 60, 6, 40, 8);
     frame.render_widget(Clear, area);
 
     let style = Style::default()
@@ -41,11 +41,6 @@ pub fn render_filepath_popup(
             Span::styled(path_str, style),
             Span::styled(" [type filepath]", Style::default().fg(Color::DarkGray)),
         ]),
-        Line::from(""),
-        Line::from(Span::styled(
-            "[Enter] Apply | [Esc] Cancel",
-            Style::default().fg(Color::DarkGray),
-        )),
     ];
 
     let popup = Paragraph::new(text).block(
@@ -58,7 +53,13 @@ pub fn render_filepath_popup(
                 theme,
             ))
             .title(" Logging ")
-            .border_style(*theme.border_panel_focused),
+            .border_style(*theme.border_panel_focused)
+            .title_bottom(Line::from(vec![
+                Span::styled("[Enter]: ", Style::default().fg(theme.text_muted)),
+                Span::raw("Apply"),
+                Span::styled("  [Esc]: ", Style::default().fg(theme.text_muted)),
+                Span::raw("Cancel"),
+            ])),
     );
 
     frame.render_widget(popup, area);

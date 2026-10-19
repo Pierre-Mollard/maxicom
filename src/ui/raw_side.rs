@@ -1,13 +1,13 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
 
 use crate::{
-    configs::{LineDisplayMode, settings::RawSideOrientation},
+    configs::{LineDisplayMode, ThemeConfig, settings::RawSideOrientation},
     ui::data_display::format_line_content,
 };
 
@@ -17,7 +17,11 @@ pub struct CharHighlight {
     pub style: Style,
 }
 
-pub fn raw_panel_layout(raw_area: Rect, orientation: RawSideOrientation) -> (Block<'static>, Rect) {
+pub fn raw_panel_layout(
+    raw_area: Rect,
+    orientation: RawSideOrientation,
+    theme: &ThemeConfig,
+) -> (Block<'static>, Rect) {
     let borders = match orientation {
         RawSideOrientation::Right => Borders::LEFT,
         RawSideOrientation::Bottom => Borders::TOP,
@@ -25,7 +29,7 @@ pub fn raw_panel_layout(raw_area: Rect, orientation: RawSideOrientation) -> (Blo
 
     let block = Block::default()
         .borders(borders)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_style(*theme.border_panel);
 
     let inner_area = block.inner(raw_area);
     (block, inner_area)

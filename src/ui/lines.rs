@@ -549,7 +549,8 @@ pub fn render_raw_side_panel(
         return;
     }
 
-    let (block, inner_area) = raw_panel_layout(raw_area, app.settings().raw_side.orientation);
+    let (block, inner_area) =
+        raw_panel_layout(raw_area, app.settings().raw_side.orientation, theme);
     let view_height = inner_area.height as usize;
     let visible_visual_start = paragraph_y_offset;
     let visible_visual_end = visible_visual_start + view_height;

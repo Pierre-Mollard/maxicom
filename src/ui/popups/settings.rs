@@ -1,6 +1,6 @@
 use ratatui::{
     Frame,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
 };
@@ -47,7 +47,7 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
         Line::from(Span::styled(
             "--- Configuration Dashboard ---",
             Style::default()
-                .fg(Color::Green)
+                .fg(theme.ternary_color)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
@@ -80,7 +80,7 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
         Line::from(Span::styled(
             "--- Line Mode Specifics ---",
             Style::default()
-                .fg(Color::Green)
+                .fg(theme.ternary_color)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
@@ -99,11 +99,6 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
             Span::raw(" Display Mode : "),
             Span::styled(display_mode_str, Style::default().fg(theme.main_color)),
         ]),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Press [Esc] to return to terminal",
-            Style::default().fg(Color::DarkGray),
-        )),
     ];
 
     let popup = Paragraph::new(text).block(
@@ -116,7 +111,11 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
                 theme,
             ))
             .title(" Settings [Toggle Hotkeys] ")
-            .style(Style::default().fg(Color::Green)),
+            .style(Style::default().fg(theme.ternary_color))
+            .title_bottom(Line::from(vec![
+                Span::styled("[Esc]: ", Style::default().fg(theme.text_muted)),
+                Span::raw("Return"),
+            ])),
     );
 
     frame.render_widget(popup, area);

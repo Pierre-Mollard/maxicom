@@ -18,7 +18,7 @@ pub fn render_resize_popup(
     frame: &mut Frame,
     theme: &ThemeConfig,
 ) {
-    let area = popup_area(frame.area(), 40, 11, 42, 10);
+    let area = popup_area(frame.area(), 50, 8, 52, 7);
     frame.render_widget(Clear, area);
 
     let active = dialog.active_field;
@@ -77,14 +77,6 @@ pub fn render_resize_popup(
             Span::styled(" [type numbers]", Style::default().fg(Color::DarkGray)),
         ]),
         Line::from(""),
-        Line::from(Span::styled(
-            "[Tab] Switch Field",
-            Style::default().fg(Color::DarkGray),
-        )),
-        Line::from(Span::styled(
-            "[Enter] Apply | [Esc] Cancel",
-            Style::default().fg(Color::DarkGray),
-        )),
     ];
 
     let popup = Paragraph::new(text).block(
@@ -97,7 +89,15 @@ pub fn render_resize_popup(
                 theme,
             ))
             .title(" Resize VT100 Screen ")
-            .border_style(theme.border_panel_focused),
+            .border_style(theme.border_panel_focused)
+            .title_bottom(Line::from(vec![
+                Span::styled("[Tab]: ", Style::default().fg(theme.text_muted)),
+                Span::raw("Switch"),
+                Span::styled(" [Enter]: ", Style::default().fg(theme.text_muted)),
+                Span::raw("Apply"),
+                Span::styled(" [Esc]: ", Style::default().fg(theme.text_muted)),
+                Span::raw("Cancel"),
+            ])),
     );
 
     frame.render_widget(popup, area);

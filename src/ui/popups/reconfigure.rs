@@ -1,6 +1,6 @@
 use ratatui::{
     Frame,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
 };
@@ -24,7 +24,12 @@ pub fn render_reconfigure_popup(
         .borders(Borders::ALL)
         .border_style(*theme.border_panel_focused)
         .title(" Serial Port Configuration ")
-        .title_bottom(Line::from(" [Enter] Apply  [Esc] Cancel ").centered());
+        .title_bottom(Line::from(vec![
+            Span::styled("[Enter]: ", Style::default().fg(theme.text_muted)),
+            Span::raw("Apply  "),
+            Span::styled("[Esc]: ", Style::default().fg(theme.text_muted)),
+            Span::raw("Cancel"),
+        ]));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -76,7 +81,7 @@ pub fn render_reconfigure_popup(
             Span::styled(pointer, style),
             Span::styled(
                 format!("{label:<12}: "),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.ternary_color),
             ),
             Span::styled(value, style),
         ]));
