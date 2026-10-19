@@ -1,14 +1,11 @@
 /// Convert data stream to strings or raw bytes/hex/octal while cleaning escape sequences and stuff
 use ansi_to_tui::IntoText;
 use const_hex::Buffer;
-use ratatui::{
-    style::{Color, Style},
-    text::Span,
-};
+use ratatui::{style::Style, text::Span};
 use std::borrow::Cow;
 use std::fmt::Write as _;
 
-use crate::configs::LineDisplayMode;
+use crate::configs::{LineDisplayMode, ThemeConfig};
 
 pub fn sanitize_terminal_control_sequences(text: &str) -> Cow<'_, str> {
     if !text.contains('\x1b') {
@@ -82,7 +79,12 @@ fn trim_trailing_incomplete_ansi(text: &str) -> &str {
     text
 }
 
-pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'static>> {
+// TODO: check bug why when main is raw, side panel is raw of it? no 0x0A or 0x0D when normal
+pub fn format_line_content(
+    text: &str,
+    mode: LineDisplayMode,
+    theme: &ThemeConfig,
+) -> Vec<Span<'static>> {
     match mode {
         LineDisplayMode::Pretty => {
             let clean = text.trim_end_matches(['\r', '\n']);
@@ -113,7 +115,7 @@ pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'stati
                     c => raw.push(c),
                 }
             }
-            vec![Span::styled(raw, Style::default().fg(Color::White))]
+            vec![Span::styled(raw, Style::default().fg(theme.byte_any))]
         }
         LineDisplayMode::Hex => {
             let bytes = text.as_bytes();
@@ -125,14 +127,7 @@ pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'stati
             let mut buf = Buffer::<1>::new();
 
             for (i, &b) in bytes.iter().enumerate() {
-                let color = match b {
-                    0x00 => Color::DarkGray,
-                    0x0A | 0x0D => Color::Yellow,
-                    0xAA | 0x55 | 0x7E => Color::LightRed,
-                    0x20..=0x7E => Color::Cyan,
-                    _ => Color::White,
-                };
-
+                let color = theme.byte_color(b);
                 let hex_str = buf.format_upper(&[b]);
                 spans.push(Span::styled(
                     hex_str.to_string(),
@@ -153,12 +148,7 @@ pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'stati
             }
             let mut spans = Vec::with_capacity(bytes.len() * 2);
             for (i, &b) in bytes.iter().enumerate() {
-                let color = match b {
-                    0 => Color::DarkGray,
-                    0o12 | 0o15 => Color::Yellow,
-                    0x20..=0x7E => Color::Green,
-                    _ => Color::White,
-                };
+                let color = theme.byte_color(b);
                 let mut octal_buf = [0u8; 3];
                 octal_buf[0] = b'0' + ((b >> 6) & 0x07);
                 octal_buf[1] = b'0' + ((b >> 3) & 0x07);
@@ -182,14 +172,7 @@ pub fn format_line_content(text: &str, mode: LineDisplayMode) -> Vec<Span<'stati
             }
             let mut spans = Vec::with_capacity(bytes.len() * 2);
             for (i, &b) in bytes.iter().enumerate() {
-                let color = if b == 0 {
-                    Color::DarkGray
-                } else if b == 0xFF {
-                    Color::LightRed
-                } else {
-                    Color::LightBlue
-                };
-
+                let color = theme.byte_color(b);
                 let mut bin_buf = [0u8; 8];
                 (0..8).for_each(|bit| {
                     bin_buf[bit] = if (b & (1 << (7 - bit))) != 0 {

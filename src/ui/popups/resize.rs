@@ -1,6 +1,6 @@
 use ratatui::{
     Frame,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
 };
@@ -61,7 +61,7 @@ pub fn render_resize_popup(
             ),
             Span::raw("Rows    : "),
             Span::styled(format!("{rows_str:<5}"), row_style),
-            Span::styled(" [type numbers]", Style::default().fg(Color::DarkGray)),
+            Span::styled(" [type numbers]", Style::default().fg(theme.text_muted)),
         ]),
         Line::from(vec![
             Span::styled(
@@ -74,7 +74,7 @@ pub fn render_resize_popup(
             ),
             Span::raw("Columns : "),
             Span::styled(format!("{cols_str:<5}"), col_style),
-            Span::styled(" [type numbers]", Style::default().fg(Color::DarkGray)),
+            Span::styled(" [type numbers]", Style::default().fg(theme.text_muted)),
         ]),
         Line::from(""),
     ];

@@ -54,12 +54,13 @@ pub fn format_raw_line_with_highlights(
     text: &str,
     display_mode: LineDisplayMode,
     highlights: &[CharHighlight],
+    theme: &ThemeConfig,
 ) -> Line<'static> {
     if text.is_empty() {
         return Line::from("");
     }
 
-    let mut spans = format_line_content(text, display_mode);
+    let mut spans = format_line_content(text, display_mode, theme);
     let char_count = text.chars().count();
 
     // because some char are multiple bytes! utf8 1 to 4 bytes

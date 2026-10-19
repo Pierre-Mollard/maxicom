@@ -135,9 +135,8 @@ pub fn render_vt100_terminal(
 
     // seach
     if is_search_active {
-        let normal_match_bg = Color::Yellow;
-        let active_match_bg = Color::Rgb(255, 140, 0);
-        let highlight_fg = Color::Black;
+        let normal_style = *theme.search_match;
+        let active_style = *theme.search_match_active;
         let active_match_idx = app.terminal_mode.search().current_match;
 
         let buf = frame.buffer_mut();
@@ -163,10 +162,10 @@ pub fn render_vt100_terminal(
             }
 
             let is_active = idx == active_match_idx;
-            let bg_color = if is_active {
-                active_match_bg
+            let style = if is_active {
+                active_style
             } else {
-                normal_match_bg
+                normal_style
             };
 
             for c in 0..match_len {
@@ -183,8 +182,7 @@ pub fn render_vt100_terminal(
                 let buf_y = content_area.y + viewer_row as u16;
 
                 let cell = &mut buf[(buf_x, buf_y)];
-                cell.set_bg(bg_color);
-                cell.set_fg(highlight_fg);
+                cell.set_style(style);
             }
         }
     }
@@ -416,10 +414,8 @@ pub fn render_vt100_raw_side_panel(
     let is_search_active = search.active && !search.matches.is_empty();
     let active_match_idx = search.current_match;
 
-    let normal_style = Style::default().bg(Color::Yellow).fg(Color::Black);
-    let active_style = Style::default()
-        .bg(Color::Rgb(255, 140, 0))
-        .fg(Color::Black);
+    let normal_style = *theme.search_match;
+    let active_style = *theme.search_match_active;
 
     let rows_to_render = view_height.min((grid_rows as usize).saturating_sub(pan_y));
     let mut raw_lines = Vec::with_capacity(rows_to_render);
@@ -484,6 +480,7 @@ pub fn render_vt100_raw_side_panel(
             trimmed_text,
             display_mode,
             &highlights,
+            theme,
         ));
     }
 

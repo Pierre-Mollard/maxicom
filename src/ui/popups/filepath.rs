@@ -1,6 +1,6 @@
 use ratatui::{
     Frame,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
 };
@@ -22,7 +22,7 @@ pub fn render_filepath_popup(
     frame.render_widget(Clear, area);
 
     let style = Style::default()
-        .fg(Color::Yellow)
+        .fg(theme.secondary_color)
         .add_modifier(Modifier::BOLD);
 
     let path_str = dialog.file_input.value();
@@ -39,7 +39,7 @@ pub fn render_filepath_popup(
             Span::styled(" ▶ ", style),
             Span::raw("File    : "),
             Span::styled(path_str, style),
-            Span::styled(" [type filepath]", Style::default().fg(Color::DarkGray)),
+            Span::styled(" [type filepath]", Style::default().fg(theme.text_muted)),
         ]),
     ];
 

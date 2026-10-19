@@ -1,7 +1,7 @@
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Margin},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     symbols,
     text::{Line, Span},
     widgets::{
@@ -36,11 +36,11 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
 
     if !is_compact_vertical {
         outer_block = outer_block.title_bottom(Line::from(vec![
-            Span::styled("Tab/Arrows: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Tab/Arrows: ", Style::default().fg(theme.text_muted)),
             Span::raw("Category  "),
-            Span::styled("j/k/Scroll: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("j/k/Scroll: ", Style::default().fg(theme.text_muted)),
             Span::raw("Move  "),
-            Span::styled("Esc/q: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Esc/q: ", Style::default().fg(theme.text_muted)),
             Span::raw("Close"),
         ]));
     }

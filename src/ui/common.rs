@@ -78,10 +78,10 @@ pub fn monitor_title(app: &App, area: &Rect) -> String {
     title
 }
 
-pub fn monitor_bottom_title<'a>(app: &App) -> Vec<Line<'a>> {
+pub fn monitor_bottom_title<'a>(app: &App, theme: &ThemeConfig) -> Vec<Line<'a>> {
     let mut titles = Vec::with_capacity(2);
     let arrow_style = Style::default()
-        .fg(Color::Yellow)
+        .fg(theme.secondary_color)
         .add_modifier(Modifier::BOLD);
 
     if let Some(left) = pan_left_indicator(app) {
@@ -122,7 +122,7 @@ pub fn pan_right_indicator(app: &App) -> Option<String> {
     })
 }
 
-pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, _theme: &ThemeConfig) {
+pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, theme: &ThemeConfig) {
     let has_borders = app.settings().ui.show_borders;
     let is_terminal = app.settings().mode == Mode::Terminal;
 
@@ -174,7 +174,7 @@ pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, _theme: &Them
         Span::styled(format!("({}/{})", current_pos, match_count), stats_style),
         Span::styled(
             " [ ←/→, Tab: Mode, Esc: Exit ] ",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.text_muted),
         ),
     ];
     let line = Line::from(spans);

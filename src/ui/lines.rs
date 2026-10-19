@@ -1,7 +1,7 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
@@ -54,13 +54,11 @@ pub fn history_entry_to_line(
 
     spans.push(Span::styled(line_prefix.to_string(), theme.line_prefix));
 
-    let mut content_spans = format_line_content(&entry.text, display_mode);
+    let mut content_spans = format_line_content(&entry.text, display_mode, theme);
 
     if !line_matches.is_empty() {
-        let normal_style = Style::default().bg(Color::Yellow).fg(Color::Black);
-        let active_style = Style::default()
-            .bg(Color::Rgb(255, 140, 0))
-            .fg(Color::Black);
+        let normal_style = *theme.search_match;
+        let active_style = *theme.search_match_active;
 
         for &(global_idx, m) in line_matches {
             let style = if global_idx == active_match_idx {
@@ -216,7 +214,7 @@ pub fn render_monitor(
             let partial_prefix = app.settings().line_mode.line_partial_prefix.to_string();
             let partial_prefix_style = *theme.line_partial_prefix;
             partial_spans.push(Span::styled(partial_prefix, partial_prefix_style));
-            partial_spans.extend(format_line_content(&partial_raw, display_mode));
+            partial_spans.extend(format_line_content(&partial_raw, display_mode, theme));
             visible_lines.push(Line::from(partial_spans));
         }
     }
@@ -563,10 +561,8 @@ pub fn render_raw_side_panel(
         app.line_mode.search().active && !app.line_mode.search().matches.is_empty();
     let active_match_idx = app.line_mode.search().current_match;
 
-    let normal_style = Style::default().bg(Color::Yellow).fg(Color::Black);
-    let active_style = Style::default()
-        .bg(Color::Rgb(255, 140, 0))
-        .fg(Color::Black);
+    let normal_style = *theme.search_match;
+    let active_style = *theme.search_match_active;
 
     let mut visible_raw_lines = Vec::with_capacity(view_height);
     let mut current_visual_row = 0;
@@ -667,6 +663,7 @@ pub fn render_raw_side_panel(
                         &sub_slice,
                         raw_display_mode,
                         &highlights,
+                        theme,
                     ));
                 }
 
@@ -687,6 +684,7 @@ pub fn render_raw_side_panel(
             &partial_raw,
             raw_display_mode,
             &[],
+            theme,
         ));
     }
 

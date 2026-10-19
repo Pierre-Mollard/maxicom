@@ -30,6 +30,16 @@ pub struct ThemeConfig {
     pub line_prefix: ConfigStyle,
     pub line_indent_prefix: ConfigStyle,
     pub line_partial_prefix: ConfigStyle,
+    pub search_match: ConfigStyle,
+    pub search_match_active: ConfigStyle,
+
+    pub byte_any: Color,        // When raw
+    pub byte_null: Color,       // 0x00 (padding, zero bytes)
+    pub byte_ascii: Color,      // 0x20..=0x7E (printable ASCII characters)
+    pub byte_whitespace: Color, // 0x0A, 0x0D, 0x09 (\n, \r, \t)
+    pub byte_sync: Color,       // 0x55, 0xAA, 0x7E (serial preambles & sync flags)
+    pub byte_ones: Color,       // 0xFF (broadcast, erased flash)
+    pub byte_other: Color,      // Other arbitrary binary payloads
 }
 
 impl Default for ThemeConfig {
@@ -62,6 +72,20 @@ impl Default for ThemeConfig {
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             ),
+            search_match: ConfigStyle::new(Style::default().bg(Color::Yellow).fg(Color::Black)),
+            search_match_active: ConfigStyle::new(
+                Style::default()
+                    .bg(Color::Rgb(255, 140, 0))
+                    .fg(Color::Black),
+            ),
+
+            byte_any: Color::White,
+            byte_null: Color::DarkGray,
+            byte_ascii: Color::Cyan,
+            byte_whitespace: Color::Yellow,
+            byte_sync: Color::LightRed,
+            byte_ones: Color::Red,
+            byte_other: Color::LightBlue,
         }
     }
 }
@@ -104,6 +128,18 @@ impl ThemeConfig {
         })?;
 
         Ok(default_theme)
+    }
+
+    #[inline]
+    pub fn byte_color(&self, b: u8) -> Color {
+        match b {
+            0x00 => self.byte_null,
+            0x0A | 0x0D | 0x09 => self.byte_whitespace,
+            0xAA | 0x55 | 0x7E => self.byte_sync,
+            0xFF => self.byte_ones,
+            0x20..=0x7E => self.byte_ascii,
+            _ => self.byte_other,
+        }
     }
 }
 

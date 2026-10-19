@@ -68,7 +68,7 @@ pub fn render(
             .border_style(border_style)
             .title(monitor_title(app, &layout.monitor_outer));
 
-        for bottom_title in monitor_bottom_title(app) {
+        for bottom_title in monitor_bottom_title(app, theme) {
             block = block.title_bottom(bottom_title);
         }
 
