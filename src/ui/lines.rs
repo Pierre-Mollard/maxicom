@@ -485,7 +485,7 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect, theme: &The
         Span::styled(
             prompt_prefix,
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme.main_color)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(input.value()),

@@ -63,10 +63,10 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
         .map(|cat| {
             let style = if *cat == dialog.category {
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(theme.secondary_color)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::Gray)
+                Style::default().fg(theme.unselected_color)
             };
             Line::from(cat.title()).style(style)
         })
@@ -82,7 +82,7 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
         .divider(symbols::line::VERTICAL)
         .highlight_style(
             Style::default()
-                .fg(Color::Yellow)
+                .fg(theme.secondary_color)
                 .add_modifier(Modifier::UNDERLINED),
         );
     frame.render_widget(tabs, tabs_area);
@@ -95,7 +95,7 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
             lines.push(Line::from(Span::styled(
                 format!("Prefix Leader Key: <{prefix_str}>"),
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(theme.main_color)
                     .add_modifier(Modifier::BOLD),
             )));
             lines.push(Line::from(""));
@@ -107,7 +107,7 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!(" {prefix_str} + {:<10} ", format!("{pattern}")),
-                        Style::default().fg(Color::Yellow),
+                        Style::default().fg(theme.secondary_color),
                     ),
                     Span::raw(format!("-> {}", action)),
                 ]));
@@ -121,7 +121,7 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!(" {:<18} ", format!("{pattern}")),
-                        Style::default().fg(Color::Yellow),
+                        Style::default().fg(theme.secondary_color),
                     ),
                     Span::raw(format!("-> {}", action)),
                 ]));
@@ -135,7 +135,7 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!(" {:<18} ", format!("{pattern}")),
-                        Style::default().fg(Color::Yellow),
+                        Style::default().fg(theme.secondary_color),
                     ),
                     Span::raw(format!("-> {}", action)),
                 ]));
@@ -149,7 +149,7 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!(" {:<18} ", format!("{pattern}")),
-                        Style::default().fg(Color::Yellow),
+                        Style::default().fg(theme.secondary_color),
                     ),
                     Span::raw(format!("-> {}", action)),
                 ]));
@@ -163,7 +163,7 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!(" {:<18} ", format!("{pattern}")),
-                        Style::default().fg(Color::Yellow),
+                        Style::default().fg(theme.secondary_color),
                     ),
                     Span::raw(format!("-> {}", action)),
                 ]));
@@ -177,7 +177,7 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!(" {:<18} ", format!("{pattern}")),
-                        Style::default().fg(Color::Yellow),
+                        Style::default().fg(theme.secondary_color),
                     ),
                     Span::raw(format!("-> {}", action)),
                 ]));

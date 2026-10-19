@@ -25,18 +25,18 @@ pub fn render_resize_popup(
 
     let row_style = if active == ResizeField::Rows {
         Style::default()
-            .fg(Color::Yellow)
+            .fg(theme.secondary_color)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::White)
+        Style::default().fg(theme.unselected_color)
     };
 
     let col_style = if active == ResizeField::Cols {
         Style::default()
-            .fg(Color::Yellow)
+            .fg(theme.secondary_color)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::White)
+        Style::default().fg(theme.unselected_color)
     };
 
     let rows_str = dialog.rows_input.value();
@@ -46,7 +46,7 @@ pub fn render_resize_popup(
         Line::from(Span::styled(
             "--- Terminal Dimensions ---",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme.main_color)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
@@ -97,7 +97,7 @@ pub fn render_resize_popup(
                 theme,
             ))
             .title(" Resize VT100 Screen ")
-            .border_style(Style::default().fg(Color::Cyan)),
+            .border_style(theme.border_panel_focused),
     );
 
     frame.render_widget(popup, area);

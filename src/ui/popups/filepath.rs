@@ -31,7 +31,7 @@ pub fn render_filepath_popup(
         Line::from(Span::styled(
             "--- Log File Path ---",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme.main_color)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
@@ -58,7 +58,7 @@ pub fn render_filepath_popup(
                 theme,
             ))
             .title(" Logging ")
-            .border_style(Style::default().fg(Color::Cyan)),
+            .border_style(*theme.border_panel_focused),
     );
 
     frame.render_widget(popup, area);

@@ -250,11 +250,11 @@ pub fn border_style_for(
     theme: &ThemeConfig,
 ) -> Style {
     if !app_focused {
-        Style::default().fg(Color::DarkGray)
+        *theme.border_app_unfocused
     } else if target == current {
-        *theme.border
+        *theme.border_panel_focused
     } else {
-        Style::default().fg(Color::DarkGray)
+        *theme.border_panel
     }
 }
 

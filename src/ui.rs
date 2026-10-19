@@ -126,7 +126,7 @@ fn render_active_overlay(app: &App, frame: &mut Frame, theme: &ThemeConfig) {
         Some(Overlay::Settings) => render_settings_popup(app, frame, theme),
         Some(Overlay::Help(dialog)) => render_help_popup(app, dialog, frame, theme),
         Some(Overlay::TerminalSize(dialog)) => render_resize_popup(app, dialog, frame, theme),
-        Some(Overlay::SerialSettings(dialog)) => render_reconfigure_popup(dialog, frame),
+        Some(Overlay::SerialSettings(dialog)) => render_reconfigure_popup(dialog, frame, theme),
         Some(Overlay::FilePath(dialog)) => render_filepath_popup(app, dialog, frame, theme),
         Some(Overlay::DeviceDisconnected(port)) => render_disconnected_popup(port, frame),
         Some(Overlay::DeviceDetached(port)) => render_detached_popup(port, frame),
