@@ -10,8 +10,10 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::{
     app::{
         App,
-        data_processing::displayable_line_string,
-        search::{SearchMatch, build_display_to_raw_byte_map, map_disp_byte_to_raw},
+        data_processing::{
+            build_display_to_raw_byte_map, displayable_line_string, map_disp_byte_to_raw,
+        },
+        search::SearchMatch,
         types::{FocusTarget, LogEntry},
     },
     configs::{
@@ -106,14 +108,12 @@ pub fn render_monitor(
     let active_match_idx = app.line_mode.search().current_match;
     let copy_range = app.line_mode.copy_state().normalized_selection();
 
-    // resolve search target jump
-    let global_max_scroll = total_entries.saturating_sub(content_height);
+    let global_max_scroll = total_entries.saturating_sub(1);
+
     if let Some((target_line, target_col)) = app.line_mode.search_mut().target_jump.take() {
         let line_from_bottom = (total_entries.saturating_sub(1)).saturating_sub(target_line);
-        let half = content_height / 2;
-        let centered_scroll = line_from_bottom.saturating_sub(half);
         app.line_mode
-            .scroll_to(centered_scroll.min(global_max_scroll));
+            .scroll_to(line_from_bottom.min(global_max_scroll));
 
         if wrap_mode == WrapMode::Truncate {
             let half_x = content_width / 2;
@@ -123,13 +123,32 @@ pub fn render_monitor(
         }
     }
 
+    // NOTE: check the window logic again
+    let active_focus = if app.line_mode.copy_state().active {
+        Some((
+            app.line_mode.copy_state().cursor.line_idx,
+            app.line_mode.copy_state().cursor.char_idx,
+        ))
+    } else if is_search_active {
+        app.line_mode.search().current_match_position()
+    } else {
+        None
+    };
+
     let scroll_from_bottom = app.line_mode.scroll_offset();
     let clamped_scroll = scroll_from_bottom.min(global_max_scroll);
-    let overscan = content_height + 20;
-    let view_bottom_entry = total_entries.saturating_sub(clamped_scroll);
-    let view_top_entry = view_bottom_entry.saturating_sub(content_height);
-    let start_idx = view_top_entry.saturating_sub(overscan);
-    let end_idx = (view_bottom_entry + overscan).min(total_entries);
+
+    let focus_entry = if let Some((target_line, _)) = active_focus {
+        target_line
+    } else {
+        (total_entries.saturating_sub(1)).saturating_sub(clamped_scroll)
+    };
+
+    // Overscan window centered around focus_entry:
+    // Large enough so heavy sub-line modes (Binary/Raw) have plenty of buffer:
+    let overscan = content_height.max(35);
+    let start_idx = focus_entry.saturating_sub(overscan);
+    let end_idx = (focus_entry + overscan + 1).min(total_entries);
 
     let search = app.line_mode.search();
     let mut visible_lines: Vec<Line> = app
@@ -218,34 +237,36 @@ pub fn render_monitor(
 
     let total_visual_rows = layout.visual_lines.len();
 
-    let paragraph_y_offset: usize = if clamped_scroll == 0 {
+    // NOTE: check this again
+    let paragraph_y_offset: usize = if clamped_scroll == 0 && !is_search_active {
         total_visual_rows.saturating_sub(content_height)
     } else {
-        let top_relative_entry = view_top_entry.saturating_sub(start_idx);
-        let target_visual_start = layout
-            .line_layouts
-            .get(top_relative_entry)
-            .map(|meta| meta.visual_row_start)
-            .unwrap_or(0);
+        let focus_local = focus_entry.saturating_sub(start_idx);
+        let target_visual_row = if let Some(meta) = layout.line_layouts.get(focus_local) {
+            let target_char = active_focus.map(|(_, c)| c).unwrap_or(0);
+            let mut sub_row = 0;
+            let mut char_acc = 0;
+            for (s_idx, sub) in meta.sub_lines.iter().enumerate() {
+                if target_char >= char_acc && target_char < char_acc + sub.content_char_len {
+                    sub_row = s_idx;
+                    break;
+                }
+                char_acc += sub.content_char_len;
+            }
+            meta.visual_row_start + sub_row
+        } else {
+            0
+        };
 
-        let max_visual_scroll = total_visual_rows.saturating_sub(content_height);
-        target_visual_start.min(max_visual_scroll)
+        let half = content_height / 2;
+        let ideal_offset = target_visual_row.saturating_sub(half);
+        let max_offset = total_visual_rows.saturating_sub(content_height);
+        ideal_offset.min(max_offset)
     };
 
     let line_x_offset = match wrap_mode {
         WrapMode::Word | WrapMode::Char => 0,
         WrapMode::Truncate => app.line_mode.x_offset(),
-    };
-
-    let active_focus = if app.line_mode.copy_state().active {
-        Some((
-            app.line_mode.copy_state().cursor.line_idx,
-            app.line_mode.copy_state().cursor.char_idx,
-        ))
-    } else if is_search_active {
-        app.line_mode.search().current_match_position()
-    } else {
-        None
     };
 
     if let Some((target_line, target_char)) = active_focus
@@ -260,7 +281,8 @@ pub fn render_monitor(
             let raw_bytes = entry.text.as_bytes();
             let display_text =
                 displayable_line_string(&entry.text, app.settings().line_mode.display_mode);
-            let disp_map = build_display_to_raw_byte_map(raw_bytes);
+            let disp_map =
+                build_display_to_raw_byte_map(raw_bytes, app.settings().line_mode.display_mode);
 
             let target_raw_byte = if is_search_active {
                 app.line_mode
@@ -603,7 +625,8 @@ pub fn render_raw_side_panel(
             disp_char_to_byte.push(display_text.len());
 
             // Map from display byte -> raw wire byte:
-            let disp_map = build_display_to_raw_byte_map(raw_bytes);
+            let disp_map =
+                build_display_to_raw_byte_map(raw_bytes, app.settings().line_mode.display_mode);
 
             let mut char_offset = 0;
 

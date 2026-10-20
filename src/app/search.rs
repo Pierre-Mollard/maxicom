@@ -1,7 +1,10 @@
 use std::collections::VecDeque;
 use tui_input::Input;
 
-use crate::app::data_processing::displayable_line_string;
+use crate::app::data_processing::{
+    build_display_to_raw_byte_map, displayable_line_string, map_disp_byte_to_raw,
+    raw_byte_to_display_col, safe_byte_to_char_col,
+};
 use crate::app::types::LogEntry;
 use crate::configs::LineDisplayMode;
 use crate::configs::settings::RawSideView;
@@ -36,6 +39,7 @@ pub struct SearchState {
 }
 
 impl SearchState {
+    // NOTE: verify evolution with mapping
     pub fn update_matches_from_entries(
         &mut self,
         history: &VecDeque<LogEntry>,
@@ -59,7 +63,7 @@ impl SearchState {
                     'outer_raw: for (line_idx, entry) in history.iter().enumerate() {
                         let raw_bytes = entry.text.as_bytes();
                         let display_text = displayable_line_string(&entry.text, display_mode);
-                        let disp_map = build_display_to_raw_byte_map(raw_bytes);
+                        let disp_map = build_display_to_raw_byte_map(raw_bytes, display_mode);
 
                         for (occ, raw_byte_idx) in
                             find_byte_subslice_iter(raw_bytes, &target_bytes).enumerate()
@@ -91,7 +95,7 @@ impl SearchState {
                     let raw_bytes = entry.text.as_bytes();
                     let display_text = displayable_line_string(&entry.text, display_mode);
                     let line_lower = display_text.to_lowercase();
-                    let disp_map = build_display_to_raw_byte_map(raw_bytes);
+                    let disp_map = build_display_to_raw_byte_map(raw_bytes, display_mode);
 
                     for (occurrence, (disp_byte_idx, matched_str)) in
                         line_lower.match_indices(&q_lower).enumerate()
@@ -128,6 +132,7 @@ impl SearchState {
         self.target_jump = self.matches.first().map(|m| (m.line_idx, m.col_idx));
     }
 
+    // NOTE: verify verify no need mapping
     pub fn update_matches_from_strings(&mut self, all_lines: &[String], raw_view: RawSideView) {
         let q_str = self.query.value().to_string();
         if q_str.is_empty() {
@@ -364,92 +369,4 @@ pub fn find_byte_subslice_iter<'a>(
                 None
             }
         })
-}
-
-#[inline]
-pub fn safe_byte_to_char_col(s: &str, byte_idx: usize) -> usize {
-    for (char_idx, (b_start, ch)) in s.char_indices().enumerate() {
-        let b_end = b_start + ch.len_utf8();
-        if byte_idx < b_end {
-            return char_idx;
-        }
-    }
-    s.chars().count()
-}
-
-/// Builds map from display_text byte offset -> raw_bytes byte offset
-// NOTE: review this mapping
-pub fn build_display_to_raw_byte_map(raw_bytes: &[u8]) -> Vec<usize> {
-    let mut end = raw_bytes.len();
-    while end > 0 && (raw_bytes[end - 1] == b'\r' || raw_bytes[end - 1] == b'\n') {
-        end -= 1;
-    }
-    let content_bytes = &raw_bytes[..end];
-
-    let mut map = Vec::with_capacity(content_bytes.len() + 1);
-    let mut i = 0;
-
-    while i < content_bytes.len() {
-        if content_bytes[i] == 0x1B {
-            if i + 1 < content_bytes.len() && content_bytes[i + 1] == b'[' {
-                i += 2;
-                while i < content_bytes.len() {
-                    let b = content_bytes[i];
-                    i += 1;
-                    if (0x40..=0x7E).contains(&b) {
-                        break;
-                    }
-                }
-                continue;
-            }
-            if i + 1 < content_bytes.len() && content_bytes[i + 1] == b']' {
-                i += 2;
-                while i < content_bytes.len() {
-                    if content_bytes[i] == 0x07 {
-                        i += 1;
-                        break;
-                    }
-                    if content_bytes[i] == 0x1B
-                        && i + 1 < content_bytes.len()
-                        && content_bytes[i + 1] == b'\\'
-                    {
-                        i += 2;
-                        break;
-                    }
-                    i += 1;
-                }
-                continue;
-            }
-            if i + 1 < content_bytes.len() {
-                i += 2;
-                continue;
-            }
-            i += 1;
-            continue;
-        }
-
-        map.push(i);
-        i += 1;
-    }
-
-    map.push(end);
-    map
-}
-
-#[inline]
-pub fn map_disp_byte_to_raw(disp_byte: usize, map: &[usize], max_raw_len: usize) -> usize {
-    if disp_byte >= map.len() {
-        max_raw_len
-    } else {
-        map[disp_byte]
-    }
-}
-
-pub fn raw_byte_to_display_col(raw_byte: usize, map: &[usize], display_text: &str) -> usize {
-    // Binary search where this raw byte falls in the display mapping
-    let disp_byte = match map.binary_search(&raw_byte) {
-        Ok(idx) => idx,
-        Err(idx) => idx,
-    };
-    safe_byte_to_char_col(display_text, disp_byte)
 }

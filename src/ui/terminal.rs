@@ -9,7 +9,7 @@ use ratatui::{
 use crate::{
     app::{
         App,
-        search::{build_display_to_raw_byte_map, map_disp_byte_to_raw},
+        data_processing::{build_display_to_raw_byte_map, map_disp_byte_to_raw},
         types::FocusTarget,
     },
     configs::{KeywordHighlight, RawSideView, ThemeConfig, settings::raw_view_to_display_mode},
@@ -110,7 +110,10 @@ pub fn render_vt100_terminal(
                 .nth(emulator_row)
                 .unwrap_or_default();
 
-            let disp_map = build_display_to_raw_byte_map(&row_raw_bytes);
+            let disp_map = build_display_to_raw_byte_map(
+                &row_raw_bytes,
+                crate::configs::LineDisplayMode::Pretty,
+            );
 
             // Map target_col (which is a visual char index) to display byte, then to raw byte:
             let plain_byte_offset = plain_text
@@ -454,7 +457,8 @@ pub fn render_vt100_raw_side_panel(
         }
         plain_char_to_byte.push(plain_text.len());
 
-        let disp_map = build_display_to_raw_byte_map(raw_bytes_slice);
+        let disp_map =
+            build_display_to_raw_byte_map(raw_bytes_slice, crate::configs::LineDisplayMode::Pretty);
 
         let mut highlights = Vec::new();
 

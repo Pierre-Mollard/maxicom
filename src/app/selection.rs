@@ -1,8 +1,8 @@
 use std::io::{self, Write};
 
 use crate::{
-    app::search::{build_display_to_raw_byte_map, map_disp_byte_to_raw},
-    configs::{RawSideView, settings::raw_view_to_display_mode},
+    app::data_processing::{build_display_to_raw_byte_map, map_disp_byte_to_raw},
+    configs::{LineDisplayMode, RawSideView, settings::raw_view_to_display_mode},
     inputs::{CopyModeAction, find_next_word, find_prev_word, find_prev_word_end, find_word_end},
     ui::raw_side::format_raw_bytes_to_plain_string,
 };
@@ -23,6 +23,9 @@ pub trait TextSource {
     }
 
     fn raw_view(&mut self) -> RawSideView;
+    fn display_mode(&mut self) -> LineDisplayMode {
+        LineDisplayMode::Pretty
+    }
 
     fn view_height(&mut self) -> usize {
         20 // fallback default
@@ -340,7 +343,8 @@ impl CopyModeState {
                                 .copied()
                                 .unwrap_or(text.len());
 
-                            let disp_map = build_display_to_raw_byte_map(&raw_bytes);
+                            let disp_map =
+                                build_display_to_raw_byte_map(&raw_bytes, source.display_mode());
                             let raw_from_byte =
                                 map_disp_byte_to_raw(disp_from_byte, &disp_map, raw_bytes.len());
                             let raw_to_byte = if to_char >= len {

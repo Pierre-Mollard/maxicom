@@ -624,6 +624,10 @@ impl<'a> TextSource for LineModeTextSource<'a> {
     fn raw_view(&mut self) -> RawSideView {
         self.raw_view
     }
+    #[inline]
+    fn display_mode(&mut self) -> LineDisplayMode {
+        self.display_mode
+    }
 
     fn view_height(&mut self) -> usize {
         self.view_height
