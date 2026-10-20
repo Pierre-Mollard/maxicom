@@ -292,7 +292,11 @@ pub fn apply_selection_to_spans(
     sel_end: usize,
     selection_style: Style,
 ) -> Vec<Span<'static>> {
-    let mut out = Vec::new();
+    if sel_start > sel_end {
+        return spans;
+    }
+
+    let mut out = Vec::with_capacity(spans.len() + 2);
     let mut char_cursor: usize = 0;
 
     for span in spans {
@@ -305,24 +309,38 @@ pub fn apply_selection_to_spans(
 
         let span_start = char_cursor;
         let span_end = char_cursor + span_len - 1;
+        char_cursor += span_len;
 
         if span_end < sel_start || span_start > sel_end {
             out.push(span);
-        } else if span_start >= sel_start && span_end <= sel_end {
-            out.push(Span::styled(span.content, selection_style));
-        } else {
-            for ch in span_chars {
-                if char_cursor >= sel_start && char_cursor <= sel_end {
-                    out.push(Span::styled(ch.to_string(), selection_style));
-                } else {
-                    out.push(Span::styled(ch.to_string(), span.style));
-                }
-                char_cursor += 1;
-            }
             continue;
         }
 
-        char_cursor += span_len;
+        if span_start >= sel_start && span_end <= sel_end {
+            out.push(Span::styled(span.content, selection_style));
+            continue;
+        }
+
+        let overlap_start = span_start.max(sel_start);
+        let overlap_end = span_end.min(sel_end);
+
+        let local_start = overlap_start - span_start;
+        let local_end = overlap_end - span_start + 1;
+
+        if local_start > 0 {
+            let before: String = span_chars[..local_start].iter().collect();
+            out.push(Span::styled(before, span.style));
+        }
+
+        if local_start < local_end {
+            let selected: String = span_chars[local_start..local_end].iter().collect();
+            out.push(Span::styled(selected, selection_style));
+        }
+
+        if local_end < span_len {
+            let after: String = span_chars[local_end..].iter().collect();
+            out.push(Span::styled(after, span.style));
+        }
     }
 
     out

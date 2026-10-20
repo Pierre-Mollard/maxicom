@@ -14,8 +14,7 @@ use crate::{
         types::{LogEntry, ViewportSize},
     },
     configs::{
-        LineDisplayMode, RxNewlineMode, SettingsConfig, TextEncoding, WrapMode,
-        settings::RawSideView,
+        LineDisplayMode, RawSideView, RxNewlineMode, SettingsConfig, TextEncoding, WrapMode,
     },
     inputs::{
         CopyModeAction, LineInputAction, SearchModeAction, SideViewAction, ViMode, ViState,

@@ -79,7 +79,6 @@ fn trim_trailing_incomplete_ansi(text: &str) -> &str {
     text
 }
 
-// TODO: check bug why when main is raw, side panel is raw of it? no 0x0A or 0x0D when normal
 pub fn format_line_content(
     text: &str,
     mode: LineDisplayMode,

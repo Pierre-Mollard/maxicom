@@ -8,10 +8,7 @@ use ratatui::{
 
 use crate::{
     app::{App, types::FocusTarget},
-    configs::{
-        KeywordHighlight, ThemeConfig,
-        settings::{RawSideView, raw_view_to_display_mode},
-    },
+    configs::{KeywordHighlight, RawSideView, ThemeConfig, settings::raw_view_to_display_mode},
     terminal::{MaxicomCursor, MaxicomTerminal},
     ui::{
         common::{apply_keyword_highlights, render_search_bar},

@@ -270,6 +270,7 @@ pub fn render_monitor(
         let mut total_sub_bytes = 0;
 
         if let Some(entry) = app.line_mode.history().get(target_line) {
+            // PERF: slice directly &display_text[byte_start..byte_end]
             let display_text =
                 displayable_line_string(&entry.text, app.settings().line_mode.display_mode);
             let entry_chars: Vec<char> = display_text.chars().collect();
@@ -582,6 +583,7 @@ pub fn render_raw_side_panel(
         }
 
         if let Some(entry) = history.get(global_idx) {
+            // TODO: check bug why when main is raw, side panel is raw of it? no 0x0A or 0x0D when normal (but offset x if not)
             let display_text = displayable_line_string(&entry.text, text_display_mode);
             let entry_chars: Vec<char> = display_text.chars().collect();
             let mut char_offset = 0;

@@ -8,8 +8,8 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::{
     app::{App, types::FocusTarget},
     configs::{
-        Mode, SettingsConfig, ThemeConfig, WrapMode,
-        settings::{PrefixWrapBehavior, RawSideOrientation, RawSideView},
+        Mode, RawSideView, SettingsConfig, ThemeConfig, WrapMode,
+        settings::{PrefixWrapBehavior, RawSideOrientation},
     },
 };
 
@@ -526,6 +526,7 @@ pub fn wrap_line_by_chars(
     sub_lines
 }
 
+// PERF: remove allocate every call and pass PreparedLayout and clear both of its fields instead
 pub fn prepare_view_layout(
     lines: Vec<Line<'static>>,
     settings: &SettingsConfig,

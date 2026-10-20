@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::configs::style::ConfigStyle;
 
+// TODO: use color background on line mode too and verify
 // TODO: make color distincts from config style
 // TODO: make separations for categories
 

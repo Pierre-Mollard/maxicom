@@ -1,5 +1,6 @@
 use chrono::{DateTime, Local};
 
+// PERF: use CompactStr for text and formatted_timestamp
 pub struct LogEntry {
     pub text: String,
     pub timestamp: DateTime<Local>,

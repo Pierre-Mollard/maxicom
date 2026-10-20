@@ -1,4 +1,4 @@
-use crate::configs::settings::RawSideView;
+use crate::configs::RawSideView;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RawSideScroller {
