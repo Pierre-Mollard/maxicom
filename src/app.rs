@@ -25,6 +25,7 @@ pub mod types;
 pub use line_mode::LineMode;
 pub use terminal_mode::TerminalMode;
 
+// TODO: check if duplicate data on both modes
 // TODO: factorize all popups inputs for navigation
 // PERF: use tools to check performances through profiling
 
@@ -304,7 +305,10 @@ impl App {
     fn update_action_copy_mode(&mut self, action: CopyModeAction) -> UpdateEffect {
         match self.settings.mode {
             Mode::Terminal => {
-                if let Some(text) = self.terminal_mode.handle_copy_action(action) {
+                if let Some(text) = self
+                    .terminal_mode
+                    .handle_copy_action(action, &self.settings)
+                {
                     return UpdateEffect::CopyToClipboard(text);
                 }
             }

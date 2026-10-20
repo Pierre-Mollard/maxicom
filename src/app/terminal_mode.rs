@@ -18,7 +18,7 @@ use crate::{
         search::SearchState,
         selection::{CopyActionResult, CopyModeState, TextSource},
     },
-    configs::{TerminalDimensionMode, TextEncoding, settings::RawSideView},
+    configs::{SettingsConfig, TerminalDimensionMode, TextEncoding, settings::RawSideView},
     inputs::{
         CopyModeAction, SearchModeAction, SideViewAction, TerminalAction, ViPending,
         dispatch_input_key, local_dispatchers::dispatch_copy_key_vi,
@@ -493,7 +493,11 @@ impl TerminalMode {
         }
     }
 
-    pub fn handle_copy_action(&mut self, action: CopyModeAction) -> Option<String> {
+    pub fn handle_copy_action(
+        &mut self,
+        action: CopyModeAction,
+        settings: &SettingsConfig,
+    ) -> Option<String> {
         if let CopyModeAction::HandleKey(key) = action {
             let line_text = read_vt100_world_line_text(
                 &mut self.vt100_parser,
@@ -507,7 +511,7 @@ impl TerminalMode {
                 self.copy_state.cursor.char_idx,
                 key,
             ) {
-                return self.handle_copy_action(sub_action);
+                return self.handle_copy_action(sub_action, settings);
             }
             return None;
         }
@@ -527,6 +531,7 @@ impl TerminalMode {
         let mut source = TerminalModeTextSource {
             parser: &mut self.vt100_parser,
             max_content_scrollback: self.max_content_scrollback,
+            raw_view: settings.raw_side.view,
             view_height: self.scroller.view_height,
         };
 
@@ -779,6 +784,7 @@ pub fn read_vt100_world_line_text(
 struct TerminalModeTextSource<'a> {
     pub parser: &'a mut vt100::Parser,
     pub max_content_scrollback: usize,
+    pub raw_view: RawSideView,
     pub view_height: usize,
 }
 
@@ -790,6 +796,11 @@ impl<'a> TextSource for TerminalModeTextSource<'a> {
 
     fn get_line_text(&mut self, line_idx: usize) -> Option<String> {
         read_vt100_world_line_text(self.parser, self.max_content_scrollback, line_idx)
+    }
+
+    #[inline]
+    fn raw_view(&mut self) -> RawSideView {
+        self.raw_view
     }
 
     fn view_height(&mut self) -> usize {

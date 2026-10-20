@@ -1,7 +1,9 @@
 use std::io::{self, Write};
 
-use crate::inputs::{
-    CopyModeAction, find_next_word, find_prev_word, find_prev_word_end, find_word_end,
+use crate::{
+    configs::{RawSideView, settings::raw_view_to_display_mode},
+    inputs::{CopyModeAction, find_next_word, find_prev_word, find_prev_word_end, find_word_end},
+    ui::raw_side::format_raw_bytes_to_plain_string,
 };
 
 // target need to impl this
@@ -14,6 +16,12 @@ pub trait TextSource {
             .map(|s| s.trim_end().chars().count())
             .unwrap_or(0)
     }
+
+    fn get_line_raw_bytes(&mut self, line_idx: usize) -> Option<Vec<u8>> {
+        self.get_line_text(line_idx).map(|s| s.into_bytes()) // fallback default
+    }
+
+    fn raw_view(&mut self) -> RawSideView;
 
     fn view_height(&mut self) -> usize {
         20 // fallback default
@@ -294,7 +302,61 @@ impl CopyModeState {
                     CopyActionResult::Exited
                 }
             }
+            CopyModeAction::YankRaw => {
+                if let Some((start, end)) = self.normalized_selection()
+                    && source.raw_view() != RawSideView::Off
+                {
+                    let mut raw_lines = Vec::new();
+                    let display_mode = raw_view_to_display_mode(source.raw_view());
 
+                    for idx in start.line_idx..=end.line_idx {
+                        if let Some(raw_bytes) = source.get_line_raw_bytes(idx) {
+                            let text = source.get_line_text(idx).unwrap_or_default();
+                            let text_chars: Vec<char> = text.chars().collect();
+                            let len = text_chars.len();
+
+                            let from_char = if idx == start.line_idx {
+                                start.char_idx.min(len)
+                            } else {
+                                0
+                            };
+                            let to_char = if idx == end.line_idx {
+                                (end.char_idx + 1).min(len)
+                            } else {
+                                len
+                            };
+
+                            let mut char_to_byte = Vec::with_capacity(len + 1);
+                            for (b_idx, _) in text.char_indices() {
+                                char_to_byte.push(b_idx);
+                            }
+                            char_to_byte.push(text.len());
+
+                            let from_byte = char_to_byte.get(from_char).copied().unwrap_or(0);
+                            let to_byte = if to_char >= len {
+                                raw_bytes.len()
+                            } else {
+                                char_to_byte
+                                    .get(to_char)
+                                    .copied()
+                                    .unwrap_or(raw_bytes.len())
+                            };
+
+                            let slice = &raw_bytes
+                                [from_byte.min(raw_bytes.len())..to_byte.min(raw_bytes.len())];
+
+                            let formatted = format_raw_bytes_to_plain_string(slice, display_mode);
+                            raw_lines.push(formatted);
+                        }
+                    }
+
+                    self.exit();
+                    CopyActionResult::Yanked(raw_lines.join("\n"))
+                } else {
+                    self.exit();
+                    CopyActionResult::Exited
+                }
+            }
             _ => CopyActionResult::None,
         }
     }

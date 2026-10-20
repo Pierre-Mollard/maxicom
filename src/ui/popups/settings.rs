@@ -73,7 +73,7 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
         ]),
         Line::from(vec![
             Span::styled(" [B] ", Style::default().fg(theme.secondary_color)),
-            Span::raw(" Side Raw   : "),
+            Span::raw(" Byte Inspect: "),
             Span::styled(raw_display_str, Style::default().fg(theme.main_color)),
         ]),
         Line::from(""),

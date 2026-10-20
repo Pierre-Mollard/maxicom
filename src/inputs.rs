@@ -119,6 +119,7 @@ pub enum CopyModeAction {
     Select,
     SelectRange(usize, usize),
     Yank,
+    YankRaw,
     HandleKey(KeyEvent),
     Exit,
 }

@@ -141,6 +141,7 @@ impl KeyBindingCopyAction {
             Self::EndOfLine => Action::CopyMode(CopyModeAction::EndOfLine),
             Self::Select => Action::CopyMode(CopyModeAction::Select),
             Self::Yank => Action::CopyMode(CopyModeAction::Yank),
+            Self::YankSideInspector => Action::CopyMode(CopyModeAction::YankRaw),
             Self::Exit => Action::CopyMode(CopyModeAction::Exit),
         }
     }

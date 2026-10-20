@@ -298,6 +298,7 @@ impl LineMode {
         let mut source = LineModeTextSource {
             history: &self.local_history,
             display_mode,
+            raw_view: settings.raw_side.view,
             view_height: self.scroller.view_height,
         };
 
@@ -598,6 +599,7 @@ impl LineMode {
 struct LineModeTextSource<'a> {
     history: &'a VecDeque<LogEntry>,
     display_mode: LineDisplayMode,
+    raw_view: RawSideView,
     view_height: usize,
 }
 
@@ -610,6 +612,17 @@ impl<'a> TextSource for LineModeTextSource<'a> {
         self.history
             .get(line_idx)
             .map(|e| displayable_line_string(&e.text, self.display_mode))
+    }
+
+    fn get_line_raw_bytes(&mut self, line_idx: usize) -> Option<Vec<u8>> {
+        self.history
+            .get(line_idx)
+            .map(|entry| entry.text.as_bytes().to_vec())
+    }
+
+    #[inline]
+    fn raw_view(&mut self) -> RawSideView {
+        self.raw_view
     }
 
     fn view_height(&mut self) -> usize {

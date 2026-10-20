@@ -262,6 +262,7 @@ pub enum KeyBindingCopyAction {
     EndOfLine,
     Select,
     Yank,
+    YankSideInspector,
     Exit,
 }
 
@@ -280,6 +281,7 @@ impl std::str::FromStr for KeyBindingCopyAction {
             "end_of_line" => Ok(Self::EndOfLine),
             "select" => Ok(Self::Select),
             "yank" => Ok(Self::Yank),
+            "yank_side_inspector" => Ok(Self::YankSideInspector),
             "exit" => Ok(Self::Exit),
             other => Err(UnknownActionError(other.to_string())),
         }
@@ -299,6 +301,7 @@ impl std::fmt::Display for KeyBindingCopyAction {
             Self::EndOfLine => "end_of_line",
             Self::Select => "select",
             Self::Yank => "yank",
+            Self::YankSideInspector => "yank_side_inspector",
             Self::Exit => "exit",
         };
         write!(f, "{s}")
@@ -764,6 +767,7 @@ impl Default for KeyBindingsConfig {
             "space"     => KeyBindingCopyAction::Select,
             "y"         => KeyBindingCopyAction::Yank,
             "enter"     => KeyBindingCopyAction::Yank,
+            "Y"         => KeyBindingCopyAction::YankSideInspector,
             "q"         => KeyBindingCopyAction::Exit,
             "esc"       => KeyBindingCopyAction::Exit,
         };
