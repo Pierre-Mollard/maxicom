@@ -96,7 +96,6 @@ pub fn render_monitor(
     let total_entries = app.line_mode.history().len();
     let wrap_mode = app.settings().line_mode.wrap_mode;
     let raw_view = app.settings().raw_side.view;
-    let post_effect = PostRenderEffect::None;
 
     if total_entries == 0 || content_width == 0 || content_height == 0 {
         return PostRenderEffect::None;
@@ -126,21 +125,11 @@ pub fn render_monitor(
 
     let scroll_from_bottom = app.line_mode.scroll_offset();
     let clamped_scroll = scroll_from_bottom.min(global_max_scroll);
-
-    // visible window (opti render only visible +- extra)
-    let overscan = content_height / 2 + 5;
-
-    let (start_idx, end_idx) = if clamped_scroll <= overscan {
-        let end = total_entries;
-        let start = end.saturating_sub(content_height + overscan * 2);
-        (start, end)
-    } else {
-        let view_bottom_entry = total_entries.saturating_sub(clamped_scroll);
-        let view_top_entry = view_bottom_entry.saturating_sub(content_height);
-        let start = view_top_entry.saturating_sub(overscan);
-        let end = (view_bottom_entry + overscan).min(total_entries);
-        (start, end)
-    };
+    let overscan = content_height + 20;
+    let view_bottom_entry = total_entries.saturating_sub(clamped_scroll);
+    let view_top_entry = view_bottom_entry.saturating_sub(content_height);
+    let start_idx = view_top_entry.saturating_sub(overscan);
+    let end_idx = (view_bottom_entry + overscan).min(total_entries);
 
     let search = app.line_mode.search();
     let mut visible_lines: Vec<Line> = app
@@ -227,21 +216,20 @@ pub fn render_monitor(
 
     app.line_mode.update_limits(global_max_scroll, max_pan);
 
-    // sync raw panel with content (extra sub line counts)
     let total_visual_rows = layout.visual_lines.len();
 
-    let paragraph_y_offset: usize = if end_idx == total_entries {
-        let base_bottom_offset = total_visual_rows.saturating_sub(content_height);
-        base_bottom_offset.saturating_sub(clamped_scroll)
+    let paragraph_y_offset: usize = if clamped_scroll == 0 {
+        total_visual_rows.saturating_sub(content_height)
     } else {
-        let view_bottom_entry = total_entries.saturating_sub(clamped_scroll);
-        let view_top_entry = view_bottom_entry.saturating_sub(content_height);
-        let overscan_entry_count = view_top_entry.saturating_sub(start_idx);
+        let top_relative_entry = view_top_entry.saturating_sub(start_idx);
+        let target_visual_start = layout
+            .line_layouts
+            .get(top_relative_entry)
+            .map(|meta| meta.visual_row_start)
+            .unwrap_or(0);
 
-        layout.line_layouts[..overscan_entry_count.min(layout.line_layouts.len())]
-            .iter()
-            .map(|l| l.sub_lines.len())
-            .sum()
+        let max_visual_scroll = total_visual_rows.saturating_sub(content_height);
+        target_visual_start.min(max_visual_scroll)
     };
 
     let line_x_offset = match wrap_mode {
@@ -249,7 +237,6 @@ pub fn render_monitor(
         WrapMode::Truncate => app.line_mode.x_offset(),
     };
 
-    // PERF: slice directly &display_text[byte_start..byte_end]
     let active_focus = if app.line_mode.copy_state().active {
         Some((
             app.line_mode.copy_state().cursor.line_idx,
@@ -271,57 +258,61 @@ pub fn render_monitor(
 
         if let Some(entry) = app.line_mode.history().get(target_line) {
             let raw_bytes = entry.text.as_bytes();
-            let visual_sub_count = line_meta.sub_lines.len();
+            let display_text =
+                displayable_line_string(&entry.text, app.settings().line_mode.display_mode);
+            let disp_map = build_display_to_raw_byte_map(raw_bytes);
 
-            // Map each character in raw entry.text to its raw wire byte offset:
-            let mut char_to_byte = Vec::with_capacity(entry.text.chars().count() + 1);
-            for (b_idx, _) in entry.text.char_indices() {
-                char_to_byte.push(b_idx);
-            }
-            char_to_byte.push(raw_bytes.len());
-
-            // If active match comes from search, m.byte_offset is ALREADY the true raw byte offset!
             let target_raw_byte = if is_search_active {
                 app.line_mode
                     .search()
                     .matches
                     .get(active_match_idx)
                     .map(|m| m.byte_offset)
-                    .unwrap_or_else(|| char_to_byte.get(target_char).copied().unwrap_or(0))
+                    .unwrap_or(0)
             } else {
-                // Copy mode cursor is in display char space; map it to raw bytes:
-                let display_text =
-                    displayable_line_string(&entry.text, app.settings().line_mode.display_mode);
-                let disp_byte = display_text
+                let disp_b = display_text
                     .char_indices()
                     .nth(target_char)
                     .map(|(b, _)| b)
                     .unwrap_or(display_text.len());
-                let disp_map = crate::app::search::build_display_to_raw_byte_map(raw_bytes);
-                crate::app::search::map_disp_byte_to_raw(disp_byte, &disp_map, raw_bytes.len())
+                map_disp_byte_to_raw(disp_b, &disp_map, raw_bytes.len())
             };
 
-            let mut char_offset = 0;
+            let mut disp_char_to_byte = Vec::with_capacity(display_text.chars().count() + 1);
+            for (b_idx, _) in display_text.char_indices() {
+                disp_char_to_byte.push(b_idx);
+            }
+            disp_char_to_byte.push(display_text.len());
 
-            // Find which sub-line contains this raw byte:
+            let mut char_offset = 0;
+            let visual_sub_count = line_meta.sub_lines.len();
+
             for (sub_idx, sub) in line_meta.sub_lines.iter().enumerate() {
                 let is_last = sub_idx == visual_sub_count.saturating_sub(1);
-                let raw_byte_start = char_to_byte.get(char_offset).copied().unwrap_or(0);
-                let sub_char_end =
-                    (char_offset + sub.content_char_len).min(char_to_byte.len().saturating_sub(1));
-                let raw_byte_end = if is_last {
-                    raw_bytes.len()
+                let sub_char_end = (char_offset + sub.content_char_len)
+                    .min(disp_char_to_byte.len().saturating_sub(1));
+
+                let disp_b_start = disp_char_to_byte.get(char_offset).copied().unwrap_or(0);
+                let disp_b_end = disp_char_to_byte
+                    .get(sub_char_end)
+                    .copied()
+                    .unwrap_or(display_text.len());
+
+                let raw_b_start = if char_offset == 0 {
+                    0
                 } else {
-                    char_to_byte
-                        .get(sub_char_end)
-                        .copied()
-                        .unwrap_or(raw_bytes.len())
+                    map_disp_byte_to_raw(disp_b_start, &disp_map, raw_bytes.len())
                 };
 
-                if target_raw_byte >= raw_byte_start && (target_raw_byte < raw_byte_end || is_last)
-                {
-                    local_byte_offset = target_raw_byte.saturating_sub(raw_byte_start);
-                    total_sub_bytes = raw_byte_end.saturating_sub(raw_byte_start);
+                let raw_b_end = if is_last {
+                    raw_bytes.len()
+                } else {
+                    map_disp_byte_to_raw(disp_b_end, &disp_map, raw_bytes.len())
+                };
+
+                if (target_raw_byte >= raw_b_start && target_raw_byte < raw_b_end) || is_last {
+                    local_byte_offset = target_raw_byte.saturating_sub(raw_b_start);
+                    total_sub_bytes = raw_b_end.saturating_sub(raw_b_start);
                     break;
                 }
 
@@ -480,7 +471,7 @@ pub fn render_monitor(
         render_search_bar(app, frame, content_area, theme);
     }
 
-    post_effect
+    PostRenderEffect::None
 }
 
 pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect, theme: &ThemeConfig) {
@@ -551,8 +542,6 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect, theme: &The
     }
 }
 
-// TODO: line mode when app is small, the focus on the searched element is broken
-// always in the raw panel, sometimes in the main
 // NOTE: verify evolution with mapping
 pub fn render_raw_side_panel(
     app: &mut App,
