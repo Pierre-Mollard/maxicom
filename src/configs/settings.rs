@@ -273,6 +273,14 @@ pub enum Mode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DualBufferMode {
+    #[default]
+    AlwaysBoth,
+    ActiveOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum WrapMode {
     #[default]
@@ -456,6 +464,7 @@ pub struct SettingsConfig {
     pub local_echo: bool,
     pub encoding: TextEncoding,
     pub mode: Mode,
+    pub dual_mode_buffering: DualBufferMode,
     pub rx_buffer_size: usize,
     pub show_timestamps: bool,
     pub timestamp_format: String,
@@ -477,6 +486,7 @@ impl Default for SettingsConfig {
             encoding: TextEncoding::default(),
             rx_buffer_size: 4096,
             mode: Mode::default(),
+            dual_mode_buffering: DualBufferMode::default(),
             show_timestamps: false,
             timestamp_format: String::from("[%H:%M:%S%.3f]"),
             line_mode: LineModeConfig::default(),

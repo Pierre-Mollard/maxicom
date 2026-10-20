@@ -15,7 +15,7 @@ use crate::{
     app::{App, UpdateEffect, selection::copy_via_osc52},
     args::{ParseOutcome, RunMode, parse_args, print_help},
     bytesource::ByteSource,
-    configs::{AppConfig, KeyResolver, Mode},
+    configs::{AppConfig, DualBufferMode, KeyResolver, Mode},
     overlays::{ErrorDialog, Overlay},
     serial::{SerialConfig, SerialDevice, SerialError},
     ui::{PostRenderEffect, layout::LayoutWarning, render},
@@ -165,22 +165,32 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             match dev.read(&mut input_buffer) {
                 Ok(0) => {}
                 Ok(bytes_read) => {
+                    let chunk = &input_buffer[..bytes_read];
                     last_rx_activity = std::time::Instant::now();
                     app.stats.update_rx(bytes_read);
-                    match app.settings().mode {
-                        Mode::Line => {
-                            app.line_mode.feed_rx(
-                                app.settings().line_mode.rx_eol,
-                                app.settings().encoding,
-                                &app.settings().timestamp_format.to_string(),
-                                &input_buffer[..bytes_read],
-                            );
+                    if app.settings().dual_mode_buffering == DualBufferMode::AlwaysBoth {
+                        app.line_mode.feed_rx(
+                            app.settings().line_mode.rx_eol,
+                            app.settings().encoding,
+                            &app.settings().timestamp_format.to_string(),
+                            chunk,
+                        );
+                        app.terminal_mode.process_rx(app.settings().encoding, chunk);
+                    } else {
+                        match app.settings().mode {
+                            Mode::Line => {
+                                app.line_mode.feed_rx(
+                                    app.settings().line_mode.rx_eol,
+                                    app.settings().encoding,
+                                    &app.settings().timestamp_format.to_string(),
+                                    chunk,
+                                );
+                            }
+                            Mode::Terminal => {
+                                app.terminal_mode.process_rx(app.settings().encoding, chunk);
+                            }
                         }
-                        Mode::Terminal => {
-                            app.terminal_mode
-                                .process_rx(app.settings().encoding, &input_buffer[..bytes_read]);
-                        }
-                    };
+                    }
                 }
                 Err(SerialError::InputClosed) => {
                     device = None;

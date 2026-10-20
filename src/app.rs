@@ -25,7 +25,6 @@ pub mod types;
 pub use line_mode::LineMode;
 pub use terminal_mode::TerminalMode;
 
-// TODO: check if duplicate data on both modes
 // TODO: factorize all popups inputs for navigation
 // PERF: use tools to check performances through profiling
 
