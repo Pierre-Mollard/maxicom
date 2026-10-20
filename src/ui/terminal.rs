@@ -7,13 +7,17 @@ use ratatui::{
 };
 
 use crate::{
-    app::{App, types::FocusTarget},
+    app::{
+        App,
+        search::{build_display_to_raw_byte_map, map_disp_byte_to_raw},
+        types::FocusTarget,
+    },
     configs::{KeywordHighlight, RawSideView, ThemeConfig, settings::raw_view_to_display_mode},
     terminal::{MaxicomCursor, MaxicomTerminal},
     ui::{
         common::{apply_keyword_highlights, render_search_bar},
         raw_side::{
-            CharHighlight, format_raw_line_with_highlights, raw_panel_layout,
+            CharHighlight, format_raw_bytes_with_highlights, raw_panel_layout,
             render_raw_panel_widget,
         },
     },
@@ -92,20 +96,31 @@ pub fn render_vt100_terminal(
     {
         let emulator_row = target_row - top_visible_world_line;
         if emulator_row < grid_rows as usize {
-            let row_text = app
+            let row_raw_bytes = app
+                .terminal_mode
+                .vt100_screen()
+                .rows_formatted(0, cols)
+                .nth(emulator_row)
+                .unwrap_or_default();
+
+            let plain_text = app
                 .terminal_mode
                 .vt100_screen()
                 .rows(0, cols)
                 .nth(emulator_row)
                 .unwrap_or_default();
-            let trimmed = row_text.trim_end();
 
-            let local_char = target_col.min(trimmed.chars().count().saturating_sub(1));
-            let byte_offset = trimmed
+            let disp_map = build_display_to_raw_byte_map(&row_raw_bytes);
+
+            // Map target_col (which is a visual char index) to display byte, then to raw byte:
+            let plain_byte_offset = plain_text
                 .char_indices()
-                .nth(local_char)
+                .nth(target_col)
                 .map(|(b, _)| b)
-                .unwrap_or(trimmed.len());
+                .unwrap_or(plain_text.len());
+
+            let raw_byte_offset =
+                map_disp_byte_to_raw(plain_byte_offset, &disp_map, row_raw_bytes.len());
 
             if let Some(raw_area) = raw_side_area {
                 let usable_width = (raw_area.width as usize).saturating_sub(1);
@@ -113,15 +128,15 @@ pub fn render_vt100_terminal(
                     app.terminal_mode.center_raw_pan_on_byte(
                         raw_view,
                         usable_width,
-                        byte_offset,
-                        trimmed.len(),
+                        raw_byte_offset,
+                        row_raw_bytes.len(),
                     );
                 } else {
                     app.terminal_mode.sync_raw_pan_with_local_col(
                         raw_view,
                         usable_width,
-                        byte_offset,
-                        trimmed.len(),
+                        raw_byte_offset,
+                        row_raw_bytes.len(),
                     );
                 }
             }
@@ -375,6 +390,7 @@ pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect, theme: 
     frame.render_widget(gutter, area);
 }
 
+// NOTE: verify evolution with mapping
 pub fn render_vt100_raw_side_panel(
     app: &App,
     frame: &mut Frame,
@@ -419,20 +435,30 @@ pub fn render_vt100_raw_side_panel(
     let rows_to_render = view_height.min((grid_rows as usize).saturating_sub(pan_y));
     let mut raw_lines = Vec::with_capacity(rows_to_render);
 
-    for (r, row_text) in screen
-        .rows(0, cols)
+    for (r, row_raw_bytes) in screen
+        .rows_formatted(0, cols)
         .skip(pan_y)
         .take(rows_to_render)
         .enumerate()
     {
         let emulator_row = r + pan_y;
         let world_row = top_visible_world_line + emulator_row;
-        let trimmed_text = row_text.trim_end();
+        let raw_bytes_slice = row_raw_bytes.as_slice();
+
+        // Plain text for column -> byte resolution:
+        let plain_text = screen.rows(0, cols).nth(emulator_row).unwrap_or_default();
+
+        let mut plain_char_to_byte = Vec::with_capacity(plain_text.chars().count() + 1);
+        for (b_idx, _) in plain_text.char_indices() {
+            plain_char_to_byte.push(b_idx);
+        }
+        plain_char_to_byte.push(plain_text.len());
+
+        let disp_map = build_display_to_raw_byte_map(raw_bytes_slice);
 
         let mut highlights = Vec::new();
 
         if is_search_active {
-            // find matches in the same line (partition_point is when pred is changing)
             let start_idx = search.matches.partition_point(|m| m.line_idx < world_row);
             let end_idx = search.matches.partition_point(|m| m.line_idx <= world_row);
 
@@ -441,15 +467,27 @@ pub fn render_vt100_raw_side_panel(
                 .enumerate()
                 .map(|(offset, m)| (start_idx + offset, m))
             {
-                highlights.push(CharHighlight {
-                    start_col: m.col_idx,
-                    end_col: m.col_idx + m.match_char_len.max(1),
-                    style: if global_m_idx == active_match_idx {
-                        active_style
-                    } else {
-                        normal_style
-                    },
-                });
+                let disp_start_b = plain_char_to_byte.get(m.col_idx).copied().unwrap_or(0);
+                let disp_end_b = plain_char_to_byte
+                    .get(m.col_idx + m.match_char_len.max(1))
+                    .copied()
+                    .unwrap_or(plain_text.len());
+
+                let raw_m_start =
+                    map_disp_byte_to_raw(disp_start_b, &disp_map, raw_bytes_slice.len());
+                let raw_m_end = map_disp_byte_to_raw(disp_end_b, &disp_map, raw_bytes_slice.len());
+
+                if raw_m_start < raw_m_end {
+                    highlights.push(CharHighlight {
+                        start_col: raw_m_start,
+                        end_col: raw_m_end,
+                        style: if global_m_idx == active_match_idx {
+                            active_style
+                        } else {
+                            normal_style
+                        },
+                    });
+                }
             }
         }
 
@@ -457,26 +495,45 @@ pub fn render_vt100_raw_side_panel(
             && world_row >= start_pos.line_idx
             && world_row <= end_pos.line_idx
         {
-            let from = if world_row == start_pos.line_idx {
-                start_pos.char_idx
-            } else {
+            let is_first_line = world_row == start_pos.line_idx;
+            let is_last_line = world_row == end_pos.line_idx;
+
+            let raw_from_b = if !is_first_line || start_pos.char_idx == 0 {
                 0
-            };
-            let to = if world_row == end_pos.line_idx {
-                end_pos.char_idx + 1
             } else {
-                usize::MAX
+                let disp_from_b = plain_char_to_byte
+                    .get(start_pos.char_idx)
+                    .copied()
+                    .unwrap_or(0);
+                map_disp_byte_to_raw(disp_from_b, &disp_map, raw_bytes_slice.len())
             };
 
-            highlights.push(CharHighlight {
-                start_col: from,
-                end_col: to,
-                style: *theme.selection,
-            });
+            let raw_to_b = if !is_last_line {
+                raw_bytes_slice.len()
+            } else {
+                let to_char = end_pos.char_idx + 1;
+                if to_char >= plain_text.chars().count() {
+                    raw_bytes_slice.len()
+                } else {
+                    let disp_to_b = plain_char_to_byte
+                        .get(to_char)
+                        .copied()
+                        .unwrap_or(plain_text.len());
+                    map_disp_byte_to_raw(disp_to_b, &disp_map, raw_bytes_slice.len())
+                }
+            };
+
+            if raw_from_b < raw_to_b {
+                highlights.push(CharHighlight {
+                    start_col: raw_from_b,
+                    end_col: raw_to_b,
+                    style: *theme.selection,
+                });
+            }
         }
 
-        raw_lines.push(format_raw_line_with_highlights(
-            trimmed_text,
+        raw_lines.push(format_raw_bytes_with_highlights(
+            raw_bytes_slice,
             display_mode,
             &highlights,
             theme,

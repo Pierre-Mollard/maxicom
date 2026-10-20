@@ -1,6 +1,7 @@
 use std::io::{self, Write};
 
 use crate::{
+    app::search::{build_display_to_raw_byte_map, map_disp_byte_to_raw},
     configs::{RawSideView, settings::raw_view_to_display_mode},
     inputs::{CopyModeAction, find_next_word, find_prev_word, find_prev_word_end, find_word_end},
     ui::raw_side::format_raw_bytes_to_plain_string,
@@ -326,25 +327,30 @@ impl CopyModeState {
                                 len
                             };
 
-                            let mut char_to_byte = Vec::with_capacity(len + 1);
+                            let mut disp_char_to_byte = Vec::with_capacity(len + 1);
                             for (b_idx, _) in text.char_indices() {
-                                char_to_byte.push(b_idx);
+                                disp_char_to_byte.push(b_idx);
                             }
-                            char_to_byte.push(text.len());
+                            disp_char_to_byte.push(text.len());
 
-                            let from_byte = char_to_byte.get(from_char).copied().unwrap_or(0);
-                            let to_byte = if to_char >= len {
+                            let disp_from_byte =
+                                disp_char_to_byte.get(from_char).copied().unwrap_or(0);
+                            let disp_to_byte = disp_char_to_byte
+                                .get(to_char)
+                                .copied()
+                                .unwrap_or(text.len());
+
+                            let disp_map = build_display_to_raw_byte_map(&raw_bytes);
+                            let raw_from_byte =
+                                map_disp_byte_to_raw(disp_from_byte, &disp_map, raw_bytes.len());
+                            let raw_to_byte = if to_char >= len {
                                 raw_bytes.len()
                             } else {
-                                char_to_byte
-                                    .get(to_char)
-                                    .copied()
-                                    .unwrap_or(raw_bytes.len())
+                                map_disp_byte_to_raw(disp_to_byte, &disp_map, raw_bytes.len())
                             };
 
-                            let slice = &raw_bytes
-                                [from_byte.min(raw_bytes.len())..to_byte.min(raw_bytes.len())];
-
+                            let slice = &raw_bytes[raw_from_byte.min(raw_bytes.len())
+                                ..raw_to_byte.min(raw_bytes.len())];
                             let formatted = format_raw_bytes_to_plain_string(slice, display_mode);
                             raw_lines.push(formatted);
                         }

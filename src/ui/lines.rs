@@ -11,7 +11,7 @@ use crate::{
     app::{
         App,
         data_processing::displayable_line_string,
-        search::SearchMatch,
+        search::{SearchMatch, build_display_to_raw_byte_map, map_disp_byte_to_raw},
         types::{FocusTarget, LogEntry},
     },
     configs::{
@@ -26,7 +26,7 @@ use crate::{
         data_display::format_line_content,
         layout::{PreparedLayout, prepare_view_layout},
         raw_side::{
-            CharHighlight, format_raw_line_with_highlights, raw_panel_layout,
+            CharHighlight, format_raw_bytes_with_highlights, raw_panel_layout,
             render_raw_panel_widget,
         },
     },
@@ -249,6 +249,7 @@ pub fn render_monitor(
         WrapMode::Truncate => app.line_mode.x_offset(),
     };
 
+    // PERF: slice directly &display_text[byte_start..byte_end]
     let active_focus = if app.line_mode.copy_state().active {
         Some((
             app.line_mode.copy_state().cursor.line_idx,
@@ -265,49 +266,65 @@ pub fn render_monitor(
         && target_line < end_idx
         && let Some(line_meta) = layout.line_layouts.get(target_line - start_idx)
     {
-        let mut remaining = target_char;
         let mut local_byte_offset = 0;
         let mut total_sub_bytes = 0;
 
         if let Some(entry) = app.line_mode.history().get(target_line) {
-            // PERF: slice directly &display_text[byte_start..byte_end]
-            let display_text =
-                displayable_line_string(&entry.text, app.settings().line_mode.display_mode);
-            let entry_chars: Vec<char> = display_text.chars().collect();
-            let mut char_offset = 0;
+            let raw_bytes = entry.text.as_bytes();
             let visual_sub_count = line_meta.sub_lines.len();
 
+            // Map each character in raw entry.text to its raw wire byte offset:
+            let mut char_to_byte = Vec::with_capacity(entry.text.chars().count() + 1);
+            for (b_idx, _) in entry.text.char_indices() {
+                char_to_byte.push(b_idx);
+            }
+            char_to_byte.push(raw_bytes.len());
+
+            // If active match comes from search, m.byte_offset is ALREADY the true raw byte offset!
+            let target_raw_byte = if is_search_active {
+                app.line_mode
+                    .search()
+                    .matches
+                    .get(active_match_idx)
+                    .map(|m| m.byte_offset)
+                    .unwrap_or_else(|| char_to_byte.get(target_char).copied().unwrap_or(0))
+            } else {
+                // Copy mode cursor is in display char space; map it to raw bytes:
+                let display_text =
+                    displayable_line_string(&entry.text, app.settings().line_mode.display_mode);
+                let disp_byte = display_text
+                    .char_indices()
+                    .nth(target_char)
+                    .map(|(b, _)| b)
+                    .unwrap_or(display_text.len());
+                let disp_map = crate::app::search::build_display_to_raw_byte_map(raw_bytes);
+                crate::app::search::map_disp_byte_to_raw(disp_byte, &disp_map, raw_bytes.len())
+            };
+
+            let mut char_offset = 0;
+
+            // Find which sub-line contains this raw byte:
             for (sub_idx, sub) in line_meta.sub_lines.iter().enumerate() {
                 let is_last = sub_idx == visual_sub_count.saturating_sub(1);
-                let sub_char_end = if is_last {
-                    entry_chars.len()
+                let raw_byte_start = char_to_byte.get(char_offset).copied().unwrap_or(0);
+                let sub_char_end =
+                    (char_offset + sub.content_char_len).min(char_to_byte.len().saturating_sub(1));
+                let raw_byte_end = if is_last {
+                    raw_bytes.len()
                 } else {
-                    (char_offset + sub.content_char_len).min(entry_chars.len())
+                    char_to_byte
+                        .get(sub_char_end)
+                        .copied()
+                        .unwrap_or(raw_bytes.len())
                 };
 
-                let sub_slice: String = if char_offset < entry_chars.len() {
-                    entry_chars[char_offset..sub_char_end].iter().collect()
-                } else {
-                    String::new()
-                };
-
-                let current_sub_chars = sub_slice.chars().count();
-
-                if remaining < current_sub_chars || is_last {
-                    let local_char = remaining.min(current_sub_chars.saturating_sub(1));
-
-                    let byte_offset = sub_slice
-                        .char_indices()
-                        .nth(local_char)
-                        .map(|(b, _)| b)
-                        .unwrap_or(sub_slice.len());
-
-                    local_byte_offset = byte_offset;
-                    total_sub_bytes = sub_slice.len();
+                if target_raw_byte >= raw_byte_start && (target_raw_byte < raw_byte_end || is_last)
+                {
+                    local_byte_offset = target_raw_byte.saturating_sub(raw_byte_start);
+                    total_sub_bytes = raw_byte_end.saturating_sub(raw_byte_start);
                     break;
                 }
 
-                remaining = remaining.saturating_sub(current_sub_chars);
                 char_offset = sub_char_end;
             }
         }
@@ -534,8 +551,9 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect, theme: &The
     }
 }
 
-// TODO: make real byte view, terminal has no undisplayables, and line_mode ignore them (otherwise
-// sync errors)
+// TODO: line mode when app is small, the focus on the searched element is broken
+// always in the raw panel, sometimes in the main
+// NOTE: verify evolution with mapping
 pub fn render_raw_side_panel(
     app: &mut App,
     frame: &mut Frame,
@@ -557,7 +575,6 @@ pub fn render_raw_side_panel(
     let visible_visual_end = visible_visual_start + view_height;
 
     let raw_display_mode = raw_view_to_display_mode(raw_view);
-    let text_display_mode = app.settings().line_mode.display_mode;
     let copy_range = app.line_mode.copy_state().normalized_selection();
     let history = app.line_mode.history();
     let is_search_active =
@@ -585,11 +602,22 @@ pub fn render_raw_side_panel(
         }
 
         if let Some(entry) = history.get(global_idx) {
-            let display_text = displayable_line_string(&entry.text, text_display_mode);
-            let entry_chars: Vec<char> = display_text.chars().collect();
+            let raw_bytes = entry.text.as_bytes();
+            let display_text =
+                displayable_line_string(&entry.text, app.settings().line_mode.display_mode);
+
+            // Display text character -> byte mapping:
+            let mut disp_char_to_byte = Vec::with_capacity(display_text.chars().count() + 1);
+            for (b_idx, _) in display_text.char_indices() {
+                disp_char_to_byte.push(b_idx);
+            }
+            disp_char_to_byte.push(display_text.len());
+
+            // Map from display byte -> raw wire byte:
+            let disp_map = build_display_to_raw_byte_map(raw_bytes);
+
             let mut char_offset = 0;
 
-            // find search occurance on same line
             let line_matches: Vec<(usize, &SearchMatch)> = if is_search_active {
                 let search = app.line_mode.search();
                 let start = search.matches.partition_point(|m| m.line_idx < global_idx);
@@ -606,29 +634,42 @@ pub fn render_raw_side_panel(
             for (sub_idx, sub) in entry_layout.sub_lines.iter().enumerate() {
                 let line_y = current_visual_row + sub_idx;
                 let is_last_sub = sub_idx == visual_sub_count.saturating_sub(1);
-                let sub_char_end = if is_last_sub {
-                    entry_chars.len()
-                } else {
-                    (char_offset + sub.content_char_len).min(entry_chars.len())
-                };
+
+                let sub_char_end = (char_offset + sub.content_char_len)
+                    .min(disp_char_to_byte.len().saturating_sub(1));
 
                 if line_y >= visible_visual_start && line_y < visible_visual_end {
-                    let sub_slice: String = if char_offset < entry_chars.len() {
-                        entry_chars[char_offset..sub_char_end].iter().collect()
+                    let disp_byte_start = disp_char_to_byte.get(char_offset).copied().unwrap_or(0);
+                    let disp_byte_end = disp_char_to_byte
+                        .get(sub_char_end)
+                        .copied()
+                        .unwrap_or(display_text.len());
+
+                    let raw_byte_start = if char_offset == 0 {
+                        0
                     } else {
-                        String::new()
+                        map_disp_byte_to_raw(disp_byte_start, &disp_map, raw_bytes.len())
                     };
+
+                    let raw_byte_end = if is_last_sub {
+                        raw_bytes.len()
+                    } else {
+                        map_disp_byte_to_raw(disp_byte_end, &disp_map, raw_bytes.len())
+                    };
+
+                    let sub_raw_bytes = &raw_bytes
+                        [raw_byte_start.min(raw_bytes.len())..raw_byte_end.min(raw_bytes.len())];
 
                     let mut highlights = Vec::new();
 
-                    // search highlight on sub line
+                    // 1. Search Highlights (m.byte_offset is already in raw byte space!)
                     for &(global_m_idx, m) in &line_matches {
-                        let m_start = m.col_idx;
-                        let m_end = m.col_idx + m.match_char_len.max(1);
-                        if m_end > char_offset && m_start < sub_char_end {
+                        let m_start = m.byte_offset;
+                        let m_end = m.byte_offset + m.byte_len;
+                        if m_end > raw_byte_start && m_start < raw_byte_end {
                             highlights.push(CharHighlight {
-                                start_col: m_start.saturating_sub(char_offset),
-                                end_col: m_end.saturating_sub(char_offset),
+                                start_col: m_start.saturating_sub(raw_byte_start),
+                                end_col: m_end.saturating_sub(raw_byte_start),
                                 style: if global_m_idx == active_match_idx {
                                     active_style
                                 } else {
@@ -638,32 +679,50 @@ pub fn render_raw_side_panel(
                         }
                     }
 
-                    // Selection compared against GLOBAL index:
+                    // 2. Selection Highlights:
                     if let Some((sel_start, sel_end)) = copy_range
                         && global_idx >= sel_start.line_idx
                         && global_idx <= sel_end.line_idx
                     {
-                        let from = if global_idx == sel_start.line_idx {
-                            sel_start.char_idx
+                        let is_first_line = global_idx == sel_start.line_idx;
+                        let is_last_line = global_idx == sel_end.line_idx;
+
+                        let raw_from_byte = if !is_first_line || sel_start.char_idx == 0 {
+                            0 // Include ALL leading escape codes!
                         } else {
-                            0
+                            let disp_from_b = disp_char_to_byte
+                                .get(sel_start.char_idx)
+                                .copied()
+                                .unwrap_or(0);
+                            map_disp_byte_to_raw(disp_from_b, &disp_map, raw_bytes.len())
                         };
-                        let to = if global_idx == sel_end.line_idx {
-                            sel_end.char_idx + 1
+
+                        let raw_to_byte = if !is_last_line {
+                            raw_bytes.len() // Include ALL trailing bytes, \r, \n!
                         } else {
-                            usize::MAX
+                            let to_char = sel_end.char_idx + 1;
+                            if to_char >= display_text.chars().count() {
+                                raw_bytes.len()
+                            } else {
+                                let disp_to_b = disp_char_to_byte
+                                    .get(to_char)
+                                    .copied()
+                                    .unwrap_or(display_text.len());
+                                map_disp_byte_to_raw(disp_to_b, &disp_map, raw_bytes.len())
+                            }
                         };
-                        if to > char_offset && from < sub_char_end {
+
+                        if raw_to_byte > raw_byte_start && raw_from_byte < raw_byte_end {
                             highlights.push(CharHighlight {
-                                start_col: from.saturating_sub(char_offset),
-                                end_col: to.saturating_sub(char_offset),
+                                start_col: raw_from_byte.saturating_sub(raw_byte_start),
+                                end_col: raw_to_byte.saturating_sub(raw_byte_start),
                                 style: *theme.selection,
                             });
                         }
                     }
 
-                    visible_raw_lines.push(format_raw_line_with_highlights(
-                        &sub_slice,
+                    visible_raw_lines.push(format_raw_bytes_with_highlights(
+                        sub_raw_bytes,
                         raw_display_mode,
                         &highlights,
                         theme,
@@ -677,14 +736,12 @@ pub fn render_raw_side_panel(
         current_visual_row = entry_visual_end;
     }
 
-    // partial_rx
     if app.settings().line_mode.show_partial_rx
         && !app.line_mode.partial_rx().is_empty()
         && visible_raw_lines.len() < view_height
     {
-        let partial_raw = String::from_utf8_lossy(app.line_mode.partial_rx());
-        visible_raw_lines.push(format_raw_line_with_highlights(
-            &partial_raw,
+        visible_raw_lines.push(format_raw_bytes_with_highlights(
+            app.line_mode.partial_rx(),
             raw_display_mode,
             &[],
             theme,

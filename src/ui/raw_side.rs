@@ -6,10 +6,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::{
-    configs::{LineDisplayMode, ThemeConfig, settings::RawSideOrientation},
-    ui::data_display::format_line_content,
-};
+use crate::configs::{LineDisplayMode, ThemeConfig, settings::RawSideOrientation};
 
 pub struct CharHighlight {
     pub start_col: usize,
@@ -48,46 +45,6 @@ pub fn render_raw_panel_widget(
     let raw_paragraph = Paragraph::new(lines).scroll((0, raw_pan_x.min(u16::MAX as usize) as u16));
 
     frame.render_widget(raw_paragraph, inner_area);
-}
-
-pub fn format_raw_line_with_highlights(
-    text: &str,
-    display_mode: LineDisplayMode,
-    highlights: &[CharHighlight],
-    theme: &ThemeConfig,
-) -> Line<'static> {
-    if text.is_empty() {
-        return Line::from("");
-    }
-
-    let mut spans = format_line_content(text, display_mode, theme);
-    let char_count = text.chars().count();
-
-    // because some char are multiple bytes! utf8 1 to 4 bytes
-    let mut char_to_byte_idx = Vec::with_capacity(char_count + 1);
-    for (b_idx, _) in text.char_indices() {
-        char_to_byte_idx.push(b_idx);
-    }
-    char_to_byte_idx.push(text.len());
-
-    for h in highlights {
-        let start = h.start_col.min(char_count);
-        let end = h.end_col.min(char_count);
-        if start < end {
-            let byte_start = char_to_byte_idx[start];
-            let byte_end = char_to_byte_idx[end];
-            if byte_start < byte_end {
-                highlight_raw_byte_range(
-                    &mut spans,
-                    byte_start,
-                    byte_end.saturating_sub(1),
-                    h.style,
-                );
-            }
-        }
-    }
-
-    Line::from(spans)
 }
 
 pub fn format_raw_bytes_with_highlights(

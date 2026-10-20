@@ -57,20 +57,22 @@ impl SearchState {
                 if let Some(target_bytes) = parse_raw_bytes_for_view(&q_str, raw_view) {
                     let needle_len = target_bytes.len();
                     'outer_raw: for (line_idx, entry) in history.iter().enumerate() {
+                        let raw_bytes = entry.text.as_bytes();
                         let display_text = displayable_line_string(&entry.text, display_mode);
-                        let disp_bytes = display_text.as_bytes();
+                        let disp_map = build_display_to_raw_byte_map(raw_bytes);
 
-                        for (occ, byte_idx) in
-                            find_byte_subslice_iter(disp_bytes, &target_bytes).enumerate()
+                        for (occ, raw_byte_idx) in
+                            find_byte_subslice_iter(raw_bytes, &target_bytes).enumerate()
                         {
-                            let col_idx = safe_byte_to_char_col(&display_text, byte_idx);
+                            let col_idx =
+                                raw_byte_to_display_col(raw_byte_idx, &disp_map, &display_text);
 
                             self.matches.push(SearchMatch {
                                 line_idx,
                                 col_idx,
                                 occurrence_in_line: occ,
                                 match_char_len: needle_len,
-                                byte_offset: byte_idx,
+                                byte_offset: raw_byte_idx,
                                 byte_len: needle_len,
                             });
 
@@ -86,20 +88,32 @@ impl SearchState {
                 let q_char_len = q_str.chars().count();
 
                 'outer_text: for (line_idx, entry) in history.iter().enumerate() {
+                    let raw_bytes = entry.text.as_bytes();
                     let display_text = displayable_line_string(&entry.text, display_mode);
                     let line_lower = display_text.to_lowercase();
+                    let disp_map = build_display_to_raw_byte_map(raw_bytes);
 
-                    for (occurrence, (byte_idx, _)) in
+                    for (occurrence, (disp_byte_idx, matched_str)) in
                         line_lower.match_indices(&q_lower).enumerate()
                     {
-                        let col_idx = safe_byte_to_char_col(&display_text, byte_idx);
+                        let col_idx = safe_byte_to_char_col(&display_text, disp_byte_idx);
+                        let raw_byte_offset =
+                            map_disp_byte_to_raw(disp_byte_idx, &disp_map, raw_bytes.len());
+                        let raw_byte_end = map_disp_byte_to_raw(
+                            disp_byte_idx + matched_str.len(),
+                            &disp_map,
+                            raw_bytes.len(),
+                        );
+
                         self.matches.push(SearchMatch {
                             line_idx,
                             col_idx,
                             occurrence_in_line: occurrence,
                             match_char_len: q_char_len,
-                            byte_offset: byte_idx,
-                            byte_len: q_str.len(),
+                            byte_offset: raw_byte_offset,
+                            byte_len: raw_byte_end
+                                .saturating_sub(raw_byte_offset)
+                                .max(matched_str.len()),
                         });
 
                         if self.matches.len() >= MAX_SEARCH_MATCHES {
@@ -130,8 +144,9 @@ impl SearchState {
                 if let Some(target_bytes) = parse_raw_bytes_for_view(&q_str, raw_view) {
                     let needle_len = target_bytes.len();
                     'outer_raw: for (line_idx, line_text) in all_lines.iter().enumerate() {
+                        let bytes = line_text.as_bytes();
                         for (occ, byte_idx) in
-                            find_byte_subslice_iter(line_text.as_bytes(), &target_bytes).enumerate()
+                            find_byte_subslice_iter(bytes, &target_bytes).enumerate()
                         {
                             let col_idx = safe_byte_to_char_col(line_text, byte_idx);
                             self.matches.push(SearchMatch {
@@ -360,4 +375,81 @@ pub fn safe_byte_to_char_col(s: &str, byte_idx: usize) -> usize {
         }
     }
     s.chars().count()
+}
+
+/// Builds map from display_text byte offset -> raw_bytes byte offset
+// NOTE: review this mapping
+pub fn build_display_to_raw_byte_map(raw_bytes: &[u8]) -> Vec<usize> {
+    let mut end = raw_bytes.len();
+    while end > 0 && (raw_bytes[end - 1] == b'\r' || raw_bytes[end - 1] == b'\n') {
+        end -= 1;
+    }
+    let content_bytes = &raw_bytes[..end];
+
+    let mut map = Vec::with_capacity(content_bytes.len() + 1);
+    let mut i = 0;
+
+    while i < content_bytes.len() {
+        if content_bytes[i] == 0x1B {
+            if i + 1 < content_bytes.len() && content_bytes[i + 1] == b'[' {
+                i += 2;
+                while i < content_bytes.len() {
+                    let b = content_bytes[i];
+                    i += 1;
+                    if (0x40..=0x7E).contains(&b) {
+                        break;
+                    }
+                }
+                continue;
+            }
+            if i + 1 < content_bytes.len() && content_bytes[i + 1] == b']' {
+                i += 2;
+                while i < content_bytes.len() {
+                    if content_bytes[i] == 0x07 {
+                        i += 1;
+                        break;
+                    }
+                    if content_bytes[i] == 0x1B
+                        && i + 1 < content_bytes.len()
+                        && content_bytes[i + 1] == b'\\'
+                    {
+                        i += 2;
+                        break;
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+            if i + 1 < content_bytes.len() {
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+
+        map.push(i);
+        i += 1;
+    }
+
+    map.push(end);
+    map
+}
+
+#[inline]
+pub fn map_disp_byte_to_raw(disp_byte: usize, map: &[usize], max_raw_len: usize) -> usize {
+    if disp_byte >= map.len() {
+        max_raw_len
+    } else {
+        map[disp_byte]
+    }
+}
+
+pub fn raw_byte_to_display_col(raw_byte: usize, map: &[usize], display_text: &str) -> usize {
+    // Binary search where this raw byte falls in the display mapping
+    let disp_byte = match map.binary_search(&raw_byte) {
+        Ok(idx) => idx,
+        Err(idx) => idx,
+    };
+    safe_byte_to_char_col(display_text, disp_byte)
 }
