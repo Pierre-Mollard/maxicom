@@ -534,6 +534,8 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect, theme: &The
     }
 }
 
+// TODO: make real byte view, terminal has no undisplayables, and line_mode ignore them (otherwise
+// sync errors)
 pub fn render_raw_side_panel(
     app: &mut App,
     frame: &mut Frame,
@@ -583,7 +585,6 @@ pub fn render_raw_side_panel(
         }
 
         if let Some(entry) = history.get(global_idx) {
-            // TODO: check bug why when main is raw, side panel is raw of it? no 0x0A or 0x0D when normal (but offset x if not)
             let display_text = displayable_line_string(&entry.text, text_display_mode);
             let entry_chars: Vec<char> = display_text.chars().collect();
             let mut char_offset = 0;

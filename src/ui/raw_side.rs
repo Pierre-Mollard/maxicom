@@ -90,6 +90,93 @@ pub fn format_raw_line_with_highlights(
     Line::from(spans)
 }
 
+pub fn format_raw_bytes_with_highlights(
+    bytes: &[u8],
+    display_mode: LineDisplayMode,
+    highlights: &[CharHighlight],
+    theme: &ThemeConfig,
+) -> Line<'static> {
+    if bytes.is_empty() {
+        return Line::from("");
+    }
+
+    let mut spans = match display_mode {
+        LineDisplayMode::Hex => {
+            let mut s = Vec::with_capacity(bytes.len() * 2);
+            let mut buf = const_hex::Buffer::<1>::new();
+            for (i, &b) in bytes.iter().enumerate() {
+                let color = theme.byte_color(b);
+                let hex_str = buf.format_upper(&[b]);
+                s.push(Span::styled(
+                    hex_str.to_string(),
+                    Style::default().fg(color),
+                ));
+                if i + 1 < bytes.len() {
+                    s.push(Span::styled(" ", Style::default().fg(theme.text_muted)));
+                }
+            }
+            s
+        }
+        LineDisplayMode::Octal => {
+            let mut s = Vec::with_capacity(bytes.len() * 2);
+            for (i, &b) in bytes.iter().enumerate() {
+                let color = theme.byte_color(b);
+                let mut octal_buf = [0u8; 3];
+                octal_buf[0] = b'0' + ((b >> 6) & 0x07);
+                octal_buf[1] = b'0' + ((b >> 3) & 0x07);
+                octal_buf[2] = b'0' + (b & 0x07);
+                let octal_str = unsafe { std::str::from_utf8_unchecked(&octal_buf) };
+                s.push(Span::styled(
+                    octal_str.to_string(),
+                    Style::default().fg(color),
+                ));
+                if i + 1 < bytes.len() {
+                    s.push(Span::styled(" ", Style::default().fg(theme.text_muted)));
+                }
+            }
+            s
+        }
+        LineDisplayMode::Binary => {
+            let mut s = Vec::with_capacity(bytes.len() * 2);
+            for (i, &b) in bytes.iter().enumerate() {
+                let color = theme.byte_color(b);
+                let mut bin_buf = [0u8; 8];
+                (0..8).for_each(|bit| {
+                    bin_buf[bit] = if (b & (1 << (7 - bit))) != 0 {
+                        b'1'
+                    } else {
+                        b'0'
+                    };
+                });
+                let bin_str = unsafe { std::str::from_utf8_unchecked(&bin_buf) };
+                s.push(Span::styled(
+                    bin_str.to_string(),
+                    Style::default().fg(color),
+                ));
+                if i + 1 < bytes.len() {
+                    s.push(Span::styled(" ", Style::default().fg(theme.text_muted)));
+                }
+            }
+            s
+        }
+        _ => {
+            let text = String::from_utf8_lossy(bytes);
+            return Line::from(text.to_string());
+        }
+    };
+
+    // Apply highlights directly to the byte spans (1 byte = span 2*i):
+    for h in highlights {
+        let start = h.start_col.min(bytes.len());
+        let end = h.end_col.min(bytes.len());
+        if start < end {
+            highlight_raw_byte_range(&mut spans, start, end.saturating_sub(1), h.style);
+        }
+    }
+
+    Line::from(spans)
+}
+
 pub fn highlight_raw_byte_range(
     spans: &mut [Span<'static>],
     from_byte: usize,
@@ -109,4 +196,9 @@ pub fn highlight_raw_byte_range(
             }
         }
     }
+}
+
+pub fn format_raw_bytes_to_plain_string(bytes: &[u8], display_mode: LineDisplayMode) -> String {
+    let line = format_raw_bytes_with_highlights(bytes, display_mode, &[], &ThemeConfig::default());
+    line.spans.iter().map(|s| s.content.as_ref()).collect()
 }
