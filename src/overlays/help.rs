@@ -1,8 +1,6 @@
 use std::cell::Cell;
 
-use crossterm::event::{KeyCode, KeyEvent};
-
-use crate::overlays::OverlayResponse;
+use crate::{inputs::DialogAction, overlays::OverlayResponse};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HelpCategory {
@@ -71,47 +69,48 @@ impl HelpDialog {
         Self::default()
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent) -> OverlayResponse {
+    pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
         let max = self.max_scroll.get();
 
-        match key.code {
-            KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
+        match action {
+            DialogAction::Close => OverlayResponse::Close,
+            DialogAction::Right | DialogAction::CycleNext => {
                 self.category = self.category.next();
                 self.scroll = 0;
                 self.max_scroll.set(0);
                 OverlayResponse::Handled
             }
-            KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
+            DialogAction::Left | DialogAction::CyclePrev => {
                 self.category = self.category.prev();
                 self.scroll = 0;
                 self.max_scroll.set(0);
                 OverlayResponse::Handled
             }
-            KeyCode::Down | KeyCode::Char('j') => {
+            DialogAction::Down => {
                 self.scroll = self.scroll.saturating_add(1).min(max);
                 OverlayResponse::Handled
             }
-            KeyCode::Up | KeyCode::Char('k') => {
+            DialogAction::Up => {
                 self.scroll = self.scroll.saturating_sub(1);
                 OverlayResponse::Handled
             }
-            KeyCode::PageDown => {
+            DialogAction::PageDown => {
                 self.scroll = self.scroll.saturating_add(5).min(max);
                 OverlayResponse::Handled
             }
-            KeyCode::PageUp => {
+            DialogAction::PageUp => {
                 self.scroll = self.scroll.saturating_sub(5);
                 OverlayResponse::Handled
             }
-            KeyCode::Home => {
+            DialogAction::Home => {
                 self.scroll = 0;
                 OverlayResponse::Handled
             }
-            KeyCode::End => {
+            DialogAction::End => {
                 self.scroll = max;
                 OverlayResponse::Handled
             }
-            _ => OverlayResponse::Close,
+            _ => OverlayResponse::Handled,
         }
     }
 }

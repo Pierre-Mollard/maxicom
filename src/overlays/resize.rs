@@ -1,7 +1,9 @@
-use crossterm::event::{KeyCode, KeyEvent};
 use tui_input::Input;
 
-use crate::{inputs::dispatch_input_key, overlays::OverlayResponse};
+use crate::{
+    inputs::{DialogAction, dispatch_input_key},
+    overlays::OverlayResponse,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResizeField {
@@ -25,17 +27,24 @@ impl ResizeDialog {
         }
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent) -> OverlayResponse {
-        match key.code {
-            KeyCode::Esc => OverlayResponse::Close,
-            KeyCode::Tab => {
+    pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
+        match action {
+            DialogAction::Close => OverlayResponse::Close,
+            DialogAction::CycleNext | DialogAction::Down => {
                 self.active_field = match self.active_field {
                     ResizeField::Rows => ResizeField::Cols,
                     ResizeField::Cols => ResizeField::Rows,
                 };
                 OverlayResponse::Handled
             }
-            KeyCode::Enter => {
+            DialogAction::CyclePrev | DialogAction::Up => {
+                self.active_field = match self.active_field {
+                    ResizeField::Rows => ResizeField::Cols,
+                    ResizeField::Cols => ResizeField::Rows,
+                };
+                OverlayResponse::Handled
+            }
+            DialogAction::Confirm => {
                 let rows = self.rows_input.value().parse::<u16>();
                 let cols = self.cols_input.value().parse::<u16>();
                 if let (Ok(r), Ok(c)) = (rows, cols)
@@ -47,14 +56,15 @@ impl ResizeDialog {
                     OverlayResponse::Close
                 }
             }
-            _ => {
+            DialogAction::HandleKey(raw_key) => {
                 let input = match self.active_field {
                     ResizeField::Rows => &mut self.rows_input,
                     ResizeField::Cols => &mut self.cols_input,
                 };
-                dispatch_input_key(input, key);
+                dispatch_input_key(input, raw_key);
                 OverlayResponse::Handled
             }
+            _ => OverlayResponse::Handled,
         }
     }
 }

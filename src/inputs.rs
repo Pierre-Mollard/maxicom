@@ -2,7 +2,7 @@
 /// Using the 'crossterm' crate
 use std::{io, time::Duration};
 
-use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use terminput::Encoding;
 use terminput_crossterm::to_terminput_key;
 
@@ -31,7 +31,7 @@ pub enum Action {
     History(HistoryAction),
     CopyMode(CopyModeAction),
     Search(SearchModeAction),
-    OverlayKey(KeyEvent),
+    Overlay(DialogAction),
     Ignore,
 }
 
@@ -124,6 +124,23 @@ pub enum CopyModeAction {
     Exit,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DialogAction {
+    Close,
+    Confirm,
+    Up,
+    Down,
+    Left,
+    Right,
+    CycleNext,
+    CyclePrev,
+    PageUp,
+    PageDown,
+    Home,
+    End,
+    HandleKey(KeyEvent),
+}
+
 /// Using crossterm's event API instead of stdin.read() to handle multi-byte ANSI sequence like
 /// arrows and page up and prefix
 pub fn poll_event(timeout: Duration) -> io::Result<Option<Event>> {
@@ -164,7 +181,29 @@ pub fn handle_event(event: Event, app: &App) -> Action {
     // Actions using or ignoring with prefix
     match ctx {
         InputContext::Overlay => {
-            return Action::OverlayKey(key_event);
+            let is_text_input = app.overlay().map_or_else(|| false, |o| o.is_text_input());
+
+            if is_text_input {
+                let is_modal_command = matches!(
+                    key_event.code,
+                    KeyCode::Esc | KeyCode::Enter | KeyCode::Tab | KeyCode::BackTab
+                ) || key_event.modifiers.contains(KeyModifiers::CONTROL)
+                    || key_event.modifiers.contains(KeyModifiers::ALT);
+
+                if is_modal_command
+                    && let Some(dialog_action_binding) = resolver.dialog_actions.get(&pattern)
+                {
+                    return dialog_action_binding.to_action();
+                }
+                // force typing text for input fields
+                return Action::Overlay(DialogAction::HandleKey(key_event));
+            }
+
+            if let Some(dialog_action_binding) = resolver.dialog_actions.get(&pattern) {
+                return dialog_action_binding.to_action();
+            } else {
+                return Action::Overlay(DialogAction::HandleKey(key_event));
+            }
         }
         InputContext::Search => {
             if let Some(search_action_binding) = resolver.search_actions.get(&pattern) {

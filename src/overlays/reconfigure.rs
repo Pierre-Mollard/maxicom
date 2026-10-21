@@ -1,7 +1,7 @@
-use crossterm::event::{KeyCode, KeyEvent};
 use tui_input::Input;
 
 use crate::{
+    inputs::DialogAction,
     overlays::OverlayResponse,
     serial::{CharSize, FlowControl, Parity, SerialConfig, StopBits},
 };
@@ -145,26 +145,26 @@ impl SerialConfigDialog {
         final_cfg
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent) -> OverlayResponse {
-        match key.code {
-            KeyCode::Esc => OverlayResponse::Close,
-            KeyCode::Tab | KeyCode::Down => {
+    pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
+        match action {
+            DialogAction::Close => OverlayResponse::Close,
+            DialogAction::Down => {
                 self.selected_field = self.selected_field.next();
                 OverlayResponse::Handled
             }
-            KeyCode::Up => {
+            DialogAction::Up => {
                 self.selected_field = self.selected_field.prev();
                 OverlayResponse::Handled
             }
-            KeyCode::Right | KeyCode::Char(' ') => {
+            DialogAction::Right | DialogAction::CycleNext => {
                 self.cycle_next();
                 OverlayResponse::Handled
             }
-            KeyCode::Left => {
+            DialogAction::Left | DialogAction::CyclePrev => {
                 self.cycle_prev();
                 OverlayResponse::Handled
             }
-            KeyCode::Enter => {
+            DialogAction::Confirm => {
                 let new_cfg = self.to_config();
                 OverlayResponse::ReconfigureSerial(new_cfg)
             }

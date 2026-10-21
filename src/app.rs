@@ -25,7 +25,6 @@ pub mod types;
 pub use line_mode::LineMode;
 pub use terminal_mode::TerminalMode;
 
-// TODO: factorize all popups inputs for navigation
 // PERF: use tools to check performances through profiling
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -200,9 +199,9 @@ impl App {
             Action::History(action) => self.update_action_history(action),
             Action::CopyMode(action) => self.update_action_copy_mode(action),
             Action::Search(action) => self.update_action_search_mode(action),
-            Action::OverlayKey(key) => {
+            Action::Overlay(action) => {
                 if let Some(mut overlay) = self.overlay.take() {
-                    let response = overlay.handle_key(key);
+                    let response = overlay.handle_action(action);
                     match response {
                         OverlayResponse::Handled => {
                             self.overlay = Some(overlay); // overlay taken, so give back

@@ -309,6 +309,64 @@ impl std::fmt::Display for KeyBindingCopyAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeyBindingDialogAction {
+    Close,
+    Confirm,
+    NavUp,
+    NavDown,
+    NavLeft,
+    NavRight,
+    CycleNext,
+    CyclePrev,
+    PageUp,
+    PageDown,
+    Home,
+    End,
+}
+
+impl std::str::FromStr for KeyBindingDialogAction {
+    type Err = UnknownActionError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "close" => Ok(Self::Close),
+            "confirm" => Ok(Self::Confirm),
+            "up" => Ok(Self::NavUp),
+            "down" => Ok(Self::NavDown),
+            "left" => Ok(Self::NavLeft),
+            "right" => Ok(Self::NavRight),
+            "cycle_next" => Ok(Self::CycleNext),
+            "cycle_prev" => Ok(Self::CyclePrev),
+            "page_up" => Ok(Self::PageUp),
+            "page_down" => Ok(Self::PageDown),
+            "home" => Ok(Self::Home),
+            "end" => Ok(Self::End),
+            other => Err(UnknownActionError(other.to_string())),
+        }
+    }
+}
+
+impl std::fmt::Display for KeyBindingDialogAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            KeyBindingDialogAction::Close => "close",
+            KeyBindingDialogAction::Confirm => "confirm",
+            KeyBindingDialogAction::NavUp => "up",
+            KeyBindingDialogAction::NavDown => "down",
+            KeyBindingDialogAction::NavLeft => "left",
+            KeyBindingDialogAction::NavRight => "right",
+            KeyBindingDialogAction::CycleNext => "cycle_next",
+            KeyBindingDialogAction::CyclePrev => "cycle_prev",
+            KeyBindingDialogAction::PageUp => "page_up",
+            KeyBindingDialogAction::PageDown => "page_down",
+            KeyBindingDialogAction::Home => "home",
+            KeyBindingDialogAction::End => "end",
+        };
+        write!(f, "{s}")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KeyPattern {
     pub code: KeyCode,
     pub modifiers: KeyModifiers,
@@ -322,6 +380,10 @@ impl KeyPattern {
                 ev.modifiers | KeyModifiers::SHIFT,
             ),
             KeyCode::Char(c) => (KeyCode::Char(c), ev.modifiers - KeyModifiers::SHIFT),
+            KeyCode::BackTab => (KeyCode::BackTab, ev.modifiers | KeyModifiers::SHIFT),
+            KeyCode::Tab if ev.modifiers.contains(KeyModifiers::SHIFT) => {
+                (KeyCode::BackTab, ev.modifiers | KeyModifiers::SHIFT)
+            }
             other => (other, ev.modifiers),
         };
 
@@ -398,6 +460,19 @@ impl FromStr for KeyPattern {
                     code = Some(KeyCode::Tab);
                     continue;
                 }
+                "backtab" | "shifttab" => {
+                    modifiers.insert(KeyModifiers::SHIFT);
+                    code = Some(KeyCode::BackTab);
+                    continue;
+                }
+                "delete" | "del" => {
+                    code = Some(KeyCode::Delete);
+                    continue;
+                }
+                "insert" | "ins" => {
+                    code = Some(KeyCode::Insert);
+                    continue;
+                }
                 "space" => {
                     code = Some(KeyCode::Char(' '));
                     continue;
@@ -462,7 +537,11 @@ impl FromStr for KeyPattern {
             return Err(format!("Unknown key sequence: {part}"));
         }
 
-        let code = code.ok_or_else(|| "Missing key code".to_string())?;
+        let mut code = code.ok_or_else(|| "Missing key code".to_string())?;
+        if code == KeyCode::Tab && modifiers.contains(KeyModifiers::SHIFT) {
+            code = KeyCode::BackTab;
+        }
+
         Ok(Self { code, modifiers })
     }
 }
@@ -481,7 +560,10 @@ impl std::fmt::Display for KeyPattern {
             KeyCode::Char(c) => c.is_ascii_uppercase(),
             _ => false,
         };
-        if self.modifiers.contains(KeyModifiers::SHIFT) && !is_uppercase_char {
+        if self.modifiers.contains(KeyModifiers::SHIFT)
+            && !is_uppercase_char
+            && self.code != KeyCode::BackTab
+        {
             parts.push("Shift");
         }
 
@@ -490,6 +572,9 @@ impl std::fmt::Display for KeyPattern {
             KeyCode::Esc => "Esc".to_string(),
             KeyCode::Backspace => "Backspace".to_string(),
             KeyCode::Tab => "Tab".to_string(),
+            KeyCode::BackTab => "Shift-Tab".to_string(),
+            KeyCode::Delete => "Delete".to_string(),
+            KeyCode::Insert => "Insert".to_string(),
             KeyCode::Up => "Up".to_string(),
             KeyCode::Down => "Down".to_string(),
             KeyCode::Left => "Left".to_string(),
@@ -517,6 +602,7 @@ pub struct KeyResolver {
     pub terminal_actions: HashMap<KeyPattern, KeyBindingTerminalAction>,
     pub search_actions: HashMap<KeyPattern, KeyBindingSearchAction>,
     pub copy_actions: HashMap<KeyPattern, KeyBindingCopyAction>,
+    pub dialog_actions: HashMap<KeyPattern, KeyBindingDialogAction>,
 }
 
 #[derive(Debug)]
@@ -652,6 +738,21 @@ impl KeyResolver {
             copy_actions.insert(pat, act);
         }
 
+        let mut dialog_actions = HashMap::new();
+        for (k, action_str) in &config.dialog_actions {
+            let pat = k.parse().map_err(|err| KeymapError::InvalidKey {
+                section: "dialog_actions",
+                key: k.clone(),
+                reason: err,
+            })?;
+            let act: KeyBindingDialogAction =
+                action_str.parse().map_err(|_| KeymapError::InvalidAction {
+                    section: "dialog_actions",
+                    action: action_str.clone(),
+                })?;
+            dialog_actions.insert(pat, act);
+        }
+
         Ok(Self {
             prefix,
             prefix_actions,
@@ -660,6 +761,7 @@ impl KeyResolver {
             terminal_actions,
             search_actions,
             copy_actions,
+            dialog_actions,
         })
     }
 }
@@ -685,6 +787,7 @@ pub struct KeyBindingsConfig {
     pub terminal_mode: BTreeMap<String, String>,
     pub search_mode: BTreeMap<String, String>,
     pub copy_mode: BTreeMap<String, String>,
+    pub dialog_actions: BTreeMap<String, String>,
 }
 
 impl Default for KeyBindingsConfig {
@@ -772,6 +875,33 @@ impl Default for KeyBindingsConfig {
             "esc"       => KeyBindingCopyAction::Exit,
         };
 
+        let dialog_actions = default_bindings! {
+            "esc"       => KeyBindingDialogAction::Close,
+            "q"         => KeyBindingDialogAction::Close,
+            "enter"     => KeyBindingDialogAction::Confirm,
+            "down"      => KeyBindingDialogAction::NavDown,
+            "j"         => KeyBindingDialogAction::NavDown,
+            "up"        => KeyBindingDialogAction::NavUp,
+            "k"         => KeyBindingDialogAction::NavUp,
+            "left"      => KeyBindingDialogAction::NavLeft,
+            "h"         => KeyBindingDialogAction::NavLeft,
+            "right"     => KeyBindingDialogAction::NavRight,
+            "l"         => KeyBindingDialogAction::NavRight,
+            "tab"       => KeyBindingDialogAction::CycleNext,
+            "space"     => KeyBindingDialogAction::CycleNext,
+            "ctrl-n"    => KeyBindingDialogAction::CycleNext,
+            "ctrl-p"    => KeyBindingDialogAction::CyclePrev,
+            "backtab"   => KeyBindingDialogAction::CyclePrev,
+            "pageup"    => KeyBindingDialogAction::PageUp,
+            "pagedown"  => KeyBindingDialogAction::PageDown,
+            "ctrl-u"    => KeyBindingDialogAction::PageUp,
+            "ctrl-d"    => KeyBindingDialogAction::PageDown,
+            "home"      => KeyBindingDialogAction::Home,
+            "end"       => KeyBindingDialogAction::End,
+            "g"         => KeyBindingDialogAction::Home,
+            "G"         => KeyBindingDialogAction::End,
+        };
+
         Self {
             prefix: "ctrl-a".to_string(),
             direct_actions,
@@ -780,6 +910,7 @@ impl Default for KeyBindingsConfig {
             terminal_mode,
             search_mode,
             copy_mode,
+            dialog_actions,
         }
     }
 }

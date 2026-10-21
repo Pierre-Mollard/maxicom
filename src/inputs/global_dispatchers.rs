@@ -3,11 +3,11 @@ use crate::{
     app::App,
     configs::{
         KeyBindingAction, KeyBindingCopyAction, KeyBindingLineAction, KeyBindingSearchAction,
-        KeyBindingTerminalAction,
+        KeyBindingTerminalAction, keybindings::KeyBindingDialogAction,
     },
     inputs::{
-        Action, AppAction, CopyModeAction, HistoryAction, LineInputAction, SearchModeAction,
-        SideViewAction, TerminalAction,
+        Action, AppAction, CopyModeAction, DialogAction, HistoryAction, LineInputAction,
+        SearchModeAction, SideViewAction, TerminalAction,
     },
     overlays::{HelpDialog, Overlay, ResizeDialog, SerialConfigDialog, SettingKey},
 };
@@ -143,6 +143,25 @@ impl KeyBindingCopyAction {
             Self::Yank => Action::CopyMode(CopyModeAction::Yank),
             Self::YankSideInspector => Action::CopyMode(CopyModeAction::YankRaw),
             Self::Exit => Action::CopyMode(CopyModeAction::Exit),
+        }
+    }
+}
+
+impl KeyBindingDialogAction {
+    pub fn to_action(self) -> Action {
+        match self {
+            Self::Close => Action::Overlay(DialogAction::Close),
+            Self::Confirm => Action::Overlay(DialogAction::Confirm),
+            Self::NavUp => Action::Overlay(DialogAction::Up),
+            Self::NavDown => Action::Overlay(DialogAction::Down),
+            Self::NavLeft => Action::Overlay(DialogAction::Left),
+            Self::NavRight => Action::Overlay(DialogAction::Right),
+            Self::CycleNext => Action::Overlay(DialogAction::CycleNext),
+            Self::CyclePrev => Action::Overlay(DialogAction::CyclePrev),
+            Self::PageUp => Action::Overlay(DialogAction::PageUp),
+            Self::PageDown => Action::Overlay(DialogAction::PageDown),
+            Self::Home => Action::Overlay(DialogAction::Home),
+            Self::End => Action::Overlay(DialogAction::End),
         }
     }
 }

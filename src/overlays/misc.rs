@@ -1,9 +1,11 @@
 use std::path::PathBuf;
 
-use crossterm::event::{KeyCode, KeyEvent};
 use tui_input::Input;
 
-use crate::{inputs::dispatch_input_key, overlays::OverlayResponse};
+use crate::{
+    inputs::{DialogAction, dispatch_input_key},
+    overlays::OverlayResponse,
+};
 
 #[derive(Debug, Clone)]
 pub struct FilePathDialog {
@@ -17,10 +19,10 @@ impl FilePathDialog {
         }
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent) -> OverlayResponse {
-        match key.code {
-            KeyCode::Esc => OverlayResponse::Close,
-            KeyCode::Enter => {
+    pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
+        match action {
+            DialogAction::Close => OverlayResponse::Close,
+            DialogAction::Confirm => {
                 let raw = self.file_input.value().trim();
                 if raw.is_empty() {
                     OverlayResponse::Close
@@ -28,10 +30,11 @@ impl FilePathDialog {
                     OverlayResponse::StartCapture(PathBuf::from(raw))
                 }
             }
-            _ => {
-                dispatch_input_key(&mut self.file_input, key);
+            DialogAction::HandleKey(raw_key) => {
+                dispatch_input_key(&mut self.file_input, raw_key);
                 OverlayResponse::Handled
             }
+            _ => OverlayResponse::Handled,
         }
     }
 }
