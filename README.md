@@ -2,29 +2,48 @@
 
 minicom but written in rust with my custom features.
 
-## PLAN
-
-1. Example @ 115200 baud on testing port
-2. Add data bits, parity, stop bits and flow control
-
 ## NOTES
 
-1. Build with cargo
+- Build with cargo
 
 ```bash
 cargo build
 ```
 
-1. Run with cargo and arguments
+- Run with local bash redirect for testing interactive programs
 
 ```bash
-cargo run -- --port /dev/ttyUSB0 --baud 115200 --test coucou alkgjl df - sflj
+./scripts/run_shell.sh
 ```
 
-1. Run the bin utility "fake_device" for testing (target)
+```bash
+cargo run --bin maxicom --profile profiling -- --baud 115200 --port /tmp/maxicom-shell-test
+```
+
+- Run the bin utility "fake_device" for testing dumb programs
 
 ```bash
-cargo run --bin fake_device
+./scripts/run_fake.sh
+```
+
+```bash
+cargo run --bin maxicom --profile profiling -- --baud 115200 --port /tmp/maxicom
+```
+
+- Profile (flame chart) with sample
+
+```bash
+cargo build --bin maxicom --profile profiling
+```
+
+```bash
+samply record ./target/profiling/maxicom --baud 115200 --port /tmp/maxicom-shell-test
+```
+
+- Check license compat
+
+```bash
+cargo deny check
 ```
 
 ## CONFIG

@@ -2,13 +2,37 @@
 name = "maxicom"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+authors = ["Pierre Mollard <pierre.mollard@proton.me>"]
+description = "A fast, modern serial terminal (minicom alternative) built with Rust and Ratatui"
+readme = "README.md"
+repository = "https://github.com/Pierre-Mollard/maxicom"
+homepage = "https://github.com/Pierre-Mollard/maxicom"
+keywords = ["serial", "terminal", "minicom", "tui", "vt100"]
+categories = ["command-line-utilities", "terminal", "hardware-support"]
+include = [
+    "src/**/*",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE",
+]
+
+[profile.profiling]
+inherits = "release"
+debug = true
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
 
 [dependencies]
 ansi-to-tui = "8.0.1"
 chrono = "0.4.45"
 const-hex = "1.19.3"
 crossterm = "0.29.0"
-dirs = "6.0.0"
+dirs = "7.0.0"
 humantime-serde = "1.1.1"
 libc = "0.2.189"
 ratatui = { version = "0.30.2", features = ["unstable-rendered-line-info", "serde"] }
