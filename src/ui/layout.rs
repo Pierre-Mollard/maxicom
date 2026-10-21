@@ -559,7 +559,7 @@ pub fn prepare_view_layout(
 
     let full_indent_prefix = format!("{}{}", timestamp_pad, base_prefix);
     let indent_width = full_indent_prefix.width();
-    let indent_style = *theme.line_indent_prefix;
+    let indent_style = *theme.line_mode.line_indent_prefix;
 
     for line in lines {
         let visual_row_start = visual_lines.len();

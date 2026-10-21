@@ -22,12 +22,12 @@ pub fn render_reconfigure_popup(
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(*theme.border_panel_focused)
+        .border_style(*theme.ui.border_panel_focused)
         .title(" Serial Port Configuration ")
         .title_bottom(Line::from(vec![
-            Span::styled("[Enter]: ", Style::default().fg(theme.text_muted)),
+            Span::styled("[Enter]: ", Style::default().fg(theme.palette.text_muted)),
             Span::raw("Apply  "),
-            Span::styled("[Esc]: ", Style::default().fg(theme.text_muted)),
+            Span::styled("[Esc]: ", Style::default().fg(theme.palette.text_muted)),
             Span::raw("Cancel"),
         ]));
 
@@ -69,10 +69,10 @@ pub fn render_reconfigure_popup(
 
         let style = if is_selected {
             Style::default()
-                .fg(theme.secondary_color)
+                .fg(theme.palette.secondary)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(theme.unselected_color)
+            Style::default().fg(theme.palette.unselected)
         };
 
         let pointer = if is_selected { "▶ " } else { "  " };
@@ -81,7 +81,7 @@ pub fn render_reconfigure_popup(
             Span::styled(pointer, style),
             Span::styled(
                 format!("{label:<12}: "),
-                Style::default().fg(theme.ternary_color),
+                Style::default().fg(theme.palette.ternary),
             ),
             Span::styled(value, style),
         ]));

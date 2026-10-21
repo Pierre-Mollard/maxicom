@@ -36,11 +36,17 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
 
     if !is_compact_vertical {
         outer_block = outer_block.title_bottom(Line::from(vec![
-            Span::styled("Tab/Arrows: ", Style::default().fg(theme.text_muted)),
+            Span::styled(
+                "Tab/Arrows: ",
+                Style::default().fg(theme.palette.text_muted),
+            ),
             Span::raw("Category  "),
-            Span::styled("j/k/Scroll: ", Style::default().fg(theme.text_muted)),
+            Span::styled(
+                "j/k/Scroll: ",
+                Style::default().fg(theme.palette.text_muted),
+            ),
             Span::raw("Move  "),
-            Span::styled("Esc/q: ", Style::default().fg(theme.text_muted)),
+            Span::styled("Esc/q: ", Style::default().fg(theme.palette.text_muted)),
             Span::raw("Close"),
         ]));
     }
@@ -63,10 +69,10 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
         .map(|cat| {
             let style = if *cat == dialog.category {
                 Style::default()
-                    .fg(theme.secondary_color)
+                    .fg(theme.palette.secondary)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(theme.text_color)
+                Style::default().fg(theme.palette.text)
             };
             Line::from(cat.title()).style(style)
         })
@@ -82,7 +88,7 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
         .divider(symbols::line::VERTICAL)
         .highlight_style(
             Style::default()
-                .fg(theme.secondary_color)
+                .fg(theme.palette.secondary)
                 .add_modifier(Modifier::UNDERLINED),
         );
     frame.render_widget(tabs, tabs_area);
@@ -95,7 +101,7 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
             lines.push(Line::from(Span::styled(
                 format!("Prefix Leader Key: <{prefix_str}>"),
                 Style::default()
-                    .fg(theme.main_color)
+                    .fg(theme.palette.main)
                     .add_modifier(Modifier::BOLD),
             )));
             lines.push(Line::from(""));
@@ -107,7 +113,7 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!(" {prefix_str} + {:<10} ", format!("{pattern}")),
-                        Style::default().fg(theme.secondary_color),
+                        Style::default().fg(theme.palette.secondary),
                     ),
                     Span::raw(format!("-> {}", action)),
                 ]));
@@ -121,7 +127,7 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!(" {:<18} ", format!("{pattern}")),
-                        Style::default().fg(theme.secondary_color),
+                        Style::default().fg(theme.palette.secondary),
                     ),
                     Span::raw(format!("-> {}", action)),
                 ]));
@@ -135,7 +141,7 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!(" {:<18} ", format!("{pattern}")),
-                        Style::default().fg(theme.secondary_color),
+                        Style::default().fg(theme.palette.secondary),
                     ),
                     Span::raw(format!("-> {}", action)),
                 ]));
@@ -149,7 +155,7 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!(" {:<18} ", format!("{pattern}")),
-                        Style::default().fg(theme.secondary_color),
+                        Style::default().fg(theme.palette.secondary),
                     ),
                     Span::raw(format!("-> {}", action)),
                 ]));
@@ -163,7 +169,7 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!(" {:<18} ", format!("{pattern}")),
-                        Style::default().fg(theme.secondary_color),
+                        Style::default().fg(theme.palette.secondary),
                     ),
                     Span::raw(format!("-> {}", action)),
                 ]));
@@ -177,7 +183,7 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!(" {:<18} ", format!("{pattern}")),
-                        Style::default().fg(theme.secondary_color),
+                        Style::default().fg(theme.palette.secondary),
                     ),
                     Span::raw(format!("-> {}", action)),
                 ]));

@@ -36,7 +36,7 @@ pub fn render_vt100_terminal(
     let focus = app.focus_target();
     let is_terminal_focused = focus == FocusTarget::Terminal;
     let cursor = MaxicomCursor::from_config(
-        *theme.cursor_unfocused,
+        *theme.ui.cursor_unfocused,
         app.settings()
             .terminal_mode
             .unfocused_cursor_glyph
@@ -58,9 +58,9 @@ pub fn render_vt100_terminal(
         .y_offset(app.terminal_mode.pan_offset_y() as u16)
         .focused(is_terminal_focused && app.is_app_focused())
         .cursor(cursor)
-        .style(*theme.background)
+        .style(*theme.ui.background)
         .filling_char(&app.settings().terminal_mode.empty_fill_char)
-        .filling_char_style(*theme.term_outside_bg);
+        .filling_char_style(*theme.terminal.term_outside_bg);
 
     frame.render_widget(term_widget, content_area);
     apply_keyword_highlights(frame.buffer_mut(), content_area, highlights);
@@ -152,8 +152,8 @@ pub fn render_vt100_terminal(
 
     // seach
     if is_search_active {
-        let normal_style = *theme.search_match;
-        let active_style = *theme.search_match_active;
+        let normal_style = *theme.search.search_match;
+        let active_style = *theme.search.search_match_active;
         let active_match_idx = app.terminal_mode.search().current_match;
 
         let buf = frame.buffer_mut();
@@ -235,7 +235,7 @@ pub fn render_vt100_terminal(
                     let world_col = c + pan_x;
                     if copy_state.is_selected(world_row, world_col) && world_col < trimmed_len {
                         let cell = &mut buf[(content_area.x + c as u16, content_area.y + r as u16)];
-                        cell.set_style(theme.selection);
+                        cell.set_style(theme.ui.selection);
                     }
                 }
             }
@@ -312,7 +312,7 @@ pub fn render_vt100_terminal(
             let cursor_y = content_area.y + row;
             if !app.is_app_focused() {
                 let buf = frame.buffer_mut();
-                buf[(cursor_x, cursor_y)].set_style(*theme.cursor_unfocused);
+                buf[(cursor_x, cursor_y)].set_style(*theme.ui.cursor_unfocused);
             }
             frame.set_cursor_position((cursor_x, cursor_y));
         }
@@ -329,8 +329,8 @@ pub fn render_vt100_terminal(
         for y in content_area.top()..content_area.bottom() {
             for x in content_area.left()..content_area.right() {
                 let cell = &mut buf[(x, y)];
-                cell.set_bg(theme.term_flash_bg);
-                cell.set_fg(theme.term_flash_fg);
+                cell.set_bg(theme.terminal.term_flash_bg);
+                cell.set_fg(theme.terminal.term_flash_fg);
             }
         }
     }
@@ -377,14 +377,14 @@ pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect, theme: 
         if row_has_text && let Some(ts) = maybe_ts {
             let formatted = ts.format(&app.settings().timestamp_format).to_string();
             lines.push(Line::from(vec![
-                Span::styled(formatted, theme.timestamp),
-                Span::styled("│", theme.timestamp),
+                Span::styled(formatted, theme.terminal.timestamp),
+                Span::styled("│", theme.terminal.timestamp_del),
             ]));
         } else {
             let spaces = " ".repeat(ts_width);
             lines.push(Line::from(vec![
                 Span::raw(spaces),
-                Span::styled("│", theme.timestamp_bg),
+                Span::styled("│", theme.terminal.timestamp_del_empty),
             ]));
         }
     }
@@ -432,8 +432,8 @@ pub fn render_vt100_raw_side_panel(
     let is_search_active = search.active && !search.matches.is_empty();
     let active_match_idx = search.current_match;
 
-    let normal_style = *theme.search_match;
-    let active_style = *theme.search_match_active;
+    let normal_style = *theme.search.search_match;
+    let active_style = *theme.search.search_match_active;
 
     let rows_to_render = view_height.min((grid_rows as usize).saturating_sub(pan_y));
     let mut raw_lines = Vec::with_capacity(rows_to_render);
@@ -531,7 +531,7 @@ pub fn render_vt100_raw_side_panel(
                 highlights.push(CharHighlight {
                     start_col: raw_from_b,
                     end_col: raw_to_b,
-                    style: *theme.selection,
+                    style: *theme.ui.selection,
                 });
             }
         }

@@ -50,17 +50,20 @@ pub fn history_entry_to_line(
     if timestamp_in_line {
         spans.push(Span::styled(
             entry.formatted_timestamp.clone(),
-            *theme.timestamp_line,
+            *theme.line_mode.timestamp,
         ));
     }
 
-    spans.push(Span::styled(line_prefix.to_string(), theme.line_prefix));
+    spans.push(Span::styled(
+        line_prefix.to_string(),
+        theme.line_mode.line_prefix,
+    ));
 
     let mut content_spans = format_line_content(&entry.text, display_mode, theme);
 
     if !line_matches.is_empty() {
-        let normal_style = *theme.search_match;
-        let active_style = *theme.search_match_active;
+        let normal_style = *theme.search.search_match;
+        let active_style = *theme.search.search_match_active;
 
         for &(global_idx, m) in line_matches {
             let style = if global_idx == active_match_idx {
@@ -77,13 +80,14 @@ pub fn history_entry_to_line(
 
     if let Some((sel_start, sel_end)) = selection_range {
         content_spans =
-            apply_selection_to_spans(content_spans, sel_start, sel_end, *theme.selection);
+            apply_selection_to_spans(content_spans, sel_start, sel_end, *theme.ui.selection);
     }
 
     spans.extend(content_spans);
     Line::from(spans)
 }
 
+// TODO: use color background on line mode too and verify
 pub fn render_monitor(
     app: &mut App,
     frame: &mut Frame,
@@ -216,11 +220,11 @@ pub fn render_monitor(
                 let time = partial_timestamp
                     .format(&app.settings().timestamp_format)
                     .to_string();
-                partial_spans.push(Span::styled(time, theme.timestamp_line));
+                partial_spans.push(Span::styled(time, theme.line_mode.timestamp));
             }
 
             let partial_prefix = app.settings().line_mode.line_partial_prefix.to_string();
-            let partial_prefix_style = *theme.line_partial_prefix;
+            let partial_prefix_style = *theme.line_mode.line_partial_prefix;
             partial_spans.push(Span::styled(partial_prefix, partial_prefix_style));
             partial_spans.extend(format_line_content(&partial_raw, display_mode, theme));
             visible_lines.push(Line::from(partial_spans));
@@ -514,7 +518,7 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect, theme: &The
         Span::styled(
             prompt_prefix,
             Style::default()
-                .fg(theme.main_color)
+                .fg(theme.palette.main)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(input.value()),
@@ -557,7 +561,7 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect, theme: &The
 
         if !app.is_app_focused() {
             let buf = frame.buffer_mut();
-            buf[(cursor_x, cursor_y)].set_style(*theme.cursor_unfocused);
+            buf[(cursor_x, cursor_y)].set_style(*theme.ui.cursor_unfocused);
             buf[(cursor_x, cursor_y)].set_symbol(&app.settings().line_mode.unfocused_cursor_glyph);
         }
         frame.set_cursor_position((cursor_x, cursor_y));
@@ -592,8 +596,8 @@ pub fn render_raw_side_panel(
         app.line_mode.search().active && !app.line_mode.search().matches.is_empty();
     let active_match_idx = app.line_mode.search().current_match;
 
-    let normal_style = *theme.search_match;
-    let active_style = *theme.search_match_active;
+    let normal_style = *theme.search.search_match;
+    let active_style = *theme.search.search_match_active;
 
     let mut visible_raw_lines = Vec::with_capacity(view_height);
     let mut current_visual_row = 0;
@@ -728,7 +732,7 @@ pub fn render_raw_side_panel(
                             highlights.push(CharHighlight {
                                 start_col: raw_from_byte.saturating_sub(raw_byte_start),
                                 end_col: raw_to_byte.saturating_sub(raw_byte_start),
-                                style: *theme.selection,
+                                style: *theme.ui.selection,
                             });
                         }
                     }

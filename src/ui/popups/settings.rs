@@ -47,57 +47,57 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
         Line::from(Span::styled(
             "--- Configuration Dashboard ---",
             Style::default()
-                .fg(theme.ternary_color)
+                .fg(theme.palette.ternary)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled(" [M] ", Style::default().fg(theme.secondary_color)),
+            Span::styled(" [M] ", Style::default().fg(theme.palette.secondary)),
             Span::raw(" Input Mode  : "),
-            Span::styled(mode_str, Style::default().fg(theme.main_color)),
+            Span::styled(mode_str, Style::default().fg(theme.palette.main)),
         ]),
         Line::from(vec![
-            Span::styled(" [E] ", Style::default().fg(theme.secondary_color)),
+            Span::styled(" [E] ", Style::default().fg(theme.palette.secondary)),
             Span::raw(" Local Echo  : "),
-            Span::styled(echo_str, Style::default().fg(theme.main_color)),
+            Span::styled(echo_str, Style::default().fg(theme.palette.main)),
         ]),
         Line::from(vec![
-            Span::styled(" [T] ", Style::default().fg(theme.secondary_color)),
+            Span::styled(" [T] ", Style::default().fg(theme.palette.secondary)),
             Span::raw(" Timestamps  : "),
-            Span::styled(timestamp_str, Style::default().fg(theme.main_color)),
+            Span::styled(timestamp_str, Style::default().fg(theme.palette.main)),
         ]),
         Line::from(vec![
-            Span::styled(" [X] ", Style::default().fg(theme.secondary_color)),
+            Span::styled(" [X] ", Style::default().fg(theme.palette.secondary)),
             Span::raw(" Rx Encoding : "),
-            Span::styled(encoding_str, Style::default().fg(theme.main_color)),
+            Span::styled(encoding_str, Style::default().fg(theme.palette.main)),
         ]),
         Line::from(vec![
-            Span::styled(" [B] ", Style::default().fg(theme.secondary_color)),
+            Span::styled(" [B] ", Style::default().fg(theme.palette.secondary)),
             Span::raw(" Byte Inspect: "),
-            Span::styled(raw_display_str, Style::default().fg(theme.main_color)),
+            Span::styled(raw_display_str, Style::default().fg(theme.palette.main)),
         ]),
         Line::from(""),
         Line::from(Span::styled(
             "--- Line Mode Specifics ---",
             Style::default()
-                .fg(theme.ternary_color)
+                .fg(theme.palette.ternary)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled(" [W] ", Style::default().fg(theme.secondary_color)),
+            Span::styled(" [W] ", Style::default().fg(theme.palette.secondary)),
             Span::raw(" Line Wrap   : "),
-            Span::styled(wrap_str, Style::default().fg(theme.main_color)),
+            Span::styled(wrap_str, Style::default().fg(theme.palette.main)),
         ]),
         Line::from(vec![
-            Span::styled(" [I] ", Style::default().fg(theme.secondary_color)),
+            Span::styled(" [I] ", Style::default().fg(theme.palette.secondary)),
             Span::raw(" Indent Wrap : "),
-            Span::styled(indent_str, Style::default().fg(theme.main_color)),
+            Span::styled(indent_str, Style::default().fg(theme.palette.main)),
         ]),
         Line::from(vec![
-            Span::styled(" [D] ", Style::default().fg(theme.secondary_color)),
+            Span::styled(" [D] ", Style::default().fg(theme.palette.secondary)),
             Span::raw(" Display Mode : "),
-            Span::styled(display_mode_str, Style::default().fg(theme.main_color)),
+            Span::styled(display_mode_str, Style::default().fg(theme.palette.main)),
         ]),
     ];
 
@@ -111,9 +111,9 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
                 theme,
             ))
             .title(" Settings [Toggle Hotkeys] ")
-            .style(Style::default().fg(theme.ternary_color))
+            .style(Style::default().fg(theme.palette.ternary))
             .title_bottom(Line::from(vec![
-                Span::styled("[Esc]: ", Style::default().fg(theme.text_muted)),
+                Span::styled("[Esc]: ", Style::default().fg(theme.palette.text_muted)),
                 Span::raw("Return"),
             ])),
     );

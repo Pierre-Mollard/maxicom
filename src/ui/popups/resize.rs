@@ -25,18 +25,18 @@ pub fn render_resize_popup(
 
     let row_style = if active == ResizeField::Rows {
         Style::default()
-            .fg(theme.secondary_color)
+            .fg(theme.palette.secondary)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(theme.unselected_color)
+        Style::default().fg(theme.palette.unselected)
     };
 
     let col_style = if active == ResizeField::Cols {
         Style::default()
-            .fg(theme.secondary_color)
+            .fg(theme.palette.secondary)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(theme.unselected_color)
+        Style::default().fg(theme.palette.unselected)
     };
 
     let rows_str = dialog.rows_input.value();
@@ -46,7 +46,7 @@ pub fn render_resize_popup(
         Line::from(Span::styled(
             "--- Terminal Dimensions ---",
             Style::default()
-                .fg(theme.main_color)
+                .fg(theme.palette.main)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
@@ -61,7 +61,10 @@ pub fn render_resize_popup(
             ),
             Span::raw("Rows    : "),
             Span::styled(format!("{rows_str:<5}"), row_style),
-            Span::styled(" [type numbers]", Style::default().fg(theme.text_muted)),
+            Span::styled(
+                " [type numbers]",
+                Style::default().fg(theme.palette.text_muted),
+            ),
         ]),
         Line::from(vec![
             Span::styled(
@@ -74,7 +77,10 @@ pub fn render_resize_popup(
             ),
             Span::raw("Columns : "),
             Span::styled(format!("{cols_str:<5}"), col_style),
-            Span::styled(" [type numbers]", Style::default().fg(theme.text_muted)),
+            Span::styled(
+                " [type numbers]",
+                Style::default().fg(theme.palette.text_muted),
+            ),
         ]),
         Line::from(""),
     ];
@@ -89,13 +95,13 @@ pub fn render_resize_popup(
                 theme,
             ))
             .title(" Resize VT100 Screen ")
-            .border_style(theme.border_panel_focused)
+            .border_style(theme.ui.border_panel_focused)
             .title_bottom(Line::from(vec![
-                Span::styled("[Tab]: ", Style::default().fg(theme.text_muted)),
+                Span::styled("[Tab]: ", Style::default().fg(theme.palette.text_muted)),
                 Span::raw("Switch"),
-                Span::styled(" [Enter]: ", Style::default().fg(theme.text_muted)),
+                Span::styled(" [Enter]: ", Style::default().fg(theme.palette.text_muted)),
                 Span::raw("Apply"),
-                Span::styled(" [Esc]: ", Style::default().fg(theme.text_muted)),
+                Span::styled(" [Esc]: ", Style::default().fg(theme.palette.text_muted)),
                 Span::raw("Cancel"),
             ])),
     );

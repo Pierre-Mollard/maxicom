@@ -1,83 +1,91 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
-
 use ratatui::style::{Color, Modifier, Style};
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use crate::configs::style::ConfigStyle;
 
-// TODO: use color background on line mode too and verify
-// TODO: make color distincts from config style
-// TODO: make separations for categories
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ThemeConfig {
+    pub palette: PaletteColors,
+    pub ui: UiStyles,
+    pub line_mode: LineModeStyles,
+    pub search: SearchStyles,
+    pub terminal: TerminalStyles,
+    pub raw_inspector: RawInspectorColors,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct ThemeConfig {
-    pub main_color: Color,
-    pub secondary_color: Color,
-    pub ternary_color: Color,
-    pub text_color: Color,
+pub struct PaletteColors {
+    pub main: Color,
+    pub secondary: Color,
+    pub ternary: Color,
+    pub text: Color,
     pub text_muted: Color,
     pub text_warn: Color,
     pub text_good: Color,
-    pub unselected_color: Color,
-    pub term_flash_fg: Color,
-    pub term_flash_bg: Color,
-
-    pub border_panel: ConfigStyle,
-    pub border_panel_focused: ConfigStyle,
-    pub border_app_unfocused: ConfigStyle,
-    pub background: ConfigStyle,
-    pub cursor_unfocused: ConfigStyle,
-    pub timestamp_line: ConfigStyle,
-    pub timestamp: ConfigStyle,
-    pub timestamp_bg: ConfigStyle,
-    pub selection: ConfigStyle,
-    pub status_bar_bg: ConfigStyle,
-    pub line_prefix: ConfigStyle,
-    pub line_indent_prefix: ConfigStyle,
-    pub line_partial_prefix: ConfigStyle,
-    pub search_match: ConfigStyle,
-    pub search_match_active: ConfigStyle,
-    pub term_outside_bg: ConfigStyle,
-    pub search_indicator: ConfigStyle,
-
-    pub byte_any: Color,        // When raw
-    pub byte_null: Color,       // 0x00 (padding, zero bytes)
-    pub byte_ascii: Color,      // 0x20..=0x7E (printable ASCII characters)
-    pub byte_whitespace: Color, // 0x0A, 0x0D, 0x09 (\n, \r, \t)
-    pub byte_sync: Color,       // 0x55, 0xAA, 0x7E (serial preambles & sync flags)
-    pub byte_ones: Color,       // 0xFF (broadcast, erased flash)
-    pub byte_other: Color,      // Other arbitrary binary payloads
+    pub unselected: Color,
 }
 
-impl Default for ThemeConfig {
+impl Default for PaletteColors {
     fn default() -> Self {
         Self {
-            main_color: Color::Cyan,
-            secondary_color: Color::Yellow,
-            ternary_color: Color::Green,
-            text_color: Color::White,
+            main: Color::Cyan,
+            secondary: Color::Yellow,
+            ternary: Color::Green,
+            text: Color::White,
             text_muted: Color::DarkGray,
             text_warn: Color::Red,
             text_good: Color::Green,
-            unselected_color: Color::White,
+            unselected: Color::White,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiStyles {
+    pub background: ConfigStyle,
+    pub border_panel: ConfigStyle,
+    pub border_panel_focused: ConfigStyle,
+    pub border_app_unfocused: ConfigStyle,
+    pub cursor_unfocused: ConfigStyle,
+    pub selection: ConfigStyle,
+    pub status_bar_bg: ConfigStyle,
+}
+
+impl Default for UiStyles {
+    fn default() -> Self {
+        Self {
+            background: ConfigStyle::from_fg(Color::Black),
             border_panel: ConfigStyle::from_fg(Color::DarkGray),
             border_panel_focused: ConfigStyle::from_fg(Color::Cyan),
             border_app_unfocused: ConfigStyle::from_fg(Color::DarkGray),
-            background: ConfigStyle::from_fg(Color::Black),
             cursor_unfocused: ConfigStyle::from_fg(Color::DarkGray),
-            timestamp_line: ConfigStyle::from_fg(Color::Yellow),
-            timestamp: ConfigStyle::from_fg(Color::Gray),
-            timestamp_bg: ConfigStyle::from_fg(Color::DarkGray),
             selection: ConfigStyle::new(
                 Style::default()
                     .bg(Color::Rgb(0x28, 0x50, 0x96))
                     .fg(Color::White),
             ),
             status_bar_bg: ConfigStyle::from_bg(Color::Rgb(0x1e, 0x23, 0x2d)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LineModeStyles {
+    pub line_prefix: ConfigStyle,
+    pub line_indent_prefix: ConfigStyle,
+    pub line_partial_prefix: ConfigStyle,
+    pub timestamp: ConfigStyle,
+}
+
+impl Default for LineModeStyles {
+    fn default() -> Self {
+        Self {
             line_prefix: ConfigStyle::from_fg(Color::DarkGray),
             line_indent_prefix: ConfigStyle::from_fg(Color::DarkGray),
             line_partial_prefix: ConfigStyle::new(
@@ -85,6 +93,22 @@ impl Default for ThemeConfig {
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             ),
+            timestamp: ConfigStyle::from_fg(Color::Yellow),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SearchStyles {
+    pub search_match: ConfigStyle,
+    pub search_match_active: ConfigStyle,
+    pub search_indicator: ConfigStyle,
+}
+
+impl Default for SearchStyles {
+    fn default() -> Self {
+        Self {
             search_match: ConfigStyle::new(Style::default().bg(Color::Yellow).fg(Color::Black)),
             search_match_active: ConfigStyle::new(
                 Style::default()
@@ -97,9 +121,49 @@ impl Default for ThemeConfig {
                     .bg(Color::Blue)
                     .add_modifier(Modifier::BOLD),
             ),
-            term_outside_bg: ConfigStyle::from_fg(Color::DarkGray),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TerminalStyles {
+    pub term_flash_fg: Color,
+    pub term_flash_bg: Color,
+    pub term_outside_bg: ConfigStyle,
+    pub timestamp: ConfigStyle,
+    pub timestamp_del: ConfigStyle,
+    pub timestamp_del_empty: ConfigStyle,
+}
+
+impl Default for TerminalStyles {
+    fn default() -> Self {
+        Self {
             term_flash_fg: Color::DarkGray,
             term_flash_bg: Color::White,
+            term_outside_bg: ConfigStyle::from_fg(Color::DarkGray),
+            timestamp: ConfigStyle::from_fg(Color::Yellow),
+            timestamp_del: ConfigStyle::from_fg(Color::Yellow),
+            timestamp_del_empty: ConfigStyle::from_fg(Color::DarkGray),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RawInspectorColors {
+    pub byte_any: Color,        // Default / text bytes
+    pub byte_null: Color,       // 0x00 (padding, zero bytes)
+    pub byte_ascii: Color,      // 0x20..=0x7E (printable ASCII)
+    pub byte_whitespace: Color, // 0x0A, 0x0D, 0x09 (\n, \r, \t)
+    pub byte_sync: Color,       // 0x55, 0xAA, 0x7E (sync preambles)
+    pub byte_ones: Color,       // 0xFF (broadcast, erased flash)
+    pub byte_other: Color,      // Other arbitrary payloads
+}
+
+impl Default for RawInspectorColors {
+    fn default() -> Self {
+        Self {
             byte_any: Color::White,
             byte_null: Color::DarkGray,
             byte_ascii: Color::Cyan,
@@ -154,12 +218,12 @@ impl ThemeConfig {
     #[inline]
     pub fn byte_color(&self, b: u8) -> Color {
         match b {
-            0x00 => self.byte_null,
-            0x0A | 0x0D | 0x09 => self.byte_whitespace,
-            0xAA | 0x55 | 0x7E => self.byte_sync,
-            0xFF => self.byte_ones,
-            0x20..=0x7E => self.byte_ascii,
-            _ => self.byte_other,
+            0x00 => self.raw_inspector.byte_null,
+            0x0A | 0x0D | 0x09 => self.raw_inspector.byte_whitespace,
+            0xAA | 0x55 | 0x7E => self.raw_inspector.byte_sync,
+            0xFF => self.raw_inspector.byte_ones,
+            0x20..=0x7E => self.raw_inspector.byte_ascii,
+            _ => self.raw_inspector.byte_other,
         }
     }
 }

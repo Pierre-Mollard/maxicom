@@ -81,7 +81,7 @@ pub fn monitor_title(app: &App, area: &Rect) -> String {
 pub fn monitor_bottom_title<'a>(app: &App, theme: &ThemeConfig) -> Vec<Line<'a>> {
     let mut titles = Vec::with_capacity(2);
     let arrow_style = Style::default()
-        .fg(theme.secondary_color)
+        .fg(theme.palette.secondary)
         .add_modifier(Modifier::BOLD);
 
     if let Some(left) = pan_left_indicator(app) {
@@ -138,11 +138,11 @@ pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, theme: &Theme
     let current_pos = s.current_match_display();
 
     let stats_style = if match_count > 0 {
-        Style::default().fg(theme.text_good)
+        Style::default().fg(theme.palette.text_good)
     } else if !query_str.is_empty() {
-        Style::default().fg(theme.text_warn)
+        Style::default().fg(theme.palette.text_warn)
     } else {
-        Style::default().fg(theme.text_muted)
+        Style::default().fg(theme.palette.text_muted)
     };
 
     let kind_str = match s.mode_kind {
@@ -151,18 +151,18 @@ pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, theme: &Theme
     };
 
     let spans = vec![
-        Span::styled(format!(" [{}]", kind_str), *theme.search_indicator),
-        Span::styled(" SEARCH: ", *theme.search_indicator),
+        Span::styled(format!(" [{}]", kind_str), *theme.search.search_indicator),
+        Span::styled(" SEARCH: ", *theme.search.search_indicator),
         Span::styled(
             format!(" {} ", query_str),
             Style::default()
-                .fg(theme.secondary_color)
+                .fg(theme.palette.secondary)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(format!("({}/{})", current_pos, match_count), stats_style),
         Span::styled(
             " [ ←/→, Tab: Mode, Esc: Exit ] ",
-            Style::default().fg(theme.text_muted),
+            Style::default().fg(theme.palette.text_muted),
         ),
     ];
     let line = Line::from(spans);
@@ -238,11 +238,11 @@ pub fn border_style_for(
     theme: &ThemeConfig,
 ) -> Style {
     if !app_focused {
-        *theme.border_app_unfocused
+        *theme.ui.border_app_unfocused
     } else if target == current {
-        *theme.border_panel_focused
+        *theme.ui.border_panel_focused
     } else {
-        *theme.border_panel
+        *theme.ui.border_panel
     }
 }
 

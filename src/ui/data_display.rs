@@ -114,7 +114,10 @@ pub fn format_line_content(
                     c => raw.push(c),
                 }
             }
-            vec![Span::styled(raw, Style::default().fg(theme.byte_any))]
+            vec![Span::styled(
+                raw,
+                Style::default().fg(theme.raw_inspector.byte_any),
+            )]
         }
         LineDisplayMode::Hex => {
             let bytes = text.as_bytes();

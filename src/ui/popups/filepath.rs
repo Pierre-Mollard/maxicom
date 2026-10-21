@@ -22,7 +22,7 @@ pub fn render_filepath_popup(
     frame.render_widget(Clear, area);
 
     let style = Style::default()
-        .fg(theme.secondary_color)
+        .fg(theme.palette.secondary)
         .add_modifier(Modifier::BOLD);
 
     let path_str = dialog.file_input.value();
@@ -31,7 +31,7 @@ pub fn render_filepath_popup(
         Line::from(Span::styled(
             "--- Log File Path ---",
             Style::default()
-                .fg(theme.main_color)
+                .fg(theme.palette.main)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
@@ -39,7 +39,10 @@ pub fn render_filepath_popup(
             Span::styled(" ▶ ", style),
             Span::raw("File    : "),
             Span::styled(path_str, style),
-            Span::styled(" [type filepath]", Style::default().fg(theme.text_muted)),
+            Span::styled(
+                " [type filepath]",
+                Style::default().fg(theme.palette.text_muted),
+            ),
         ]),
     ];
 
@@ -53,11 +56,11 @@ pub fn render_filepath_popup(
                 theme,
             ))
             .title(" Logging ")
-            .border_style(*theme.border_panel_focused)
+            .border_style(*theme.ui.border_panel_focused)
             .title_bottom(Line::from(vec![
-                Span::styled("[Enter]: ", Style::default().fg(theme.text_muted)),
+                Span::styled("[Enter]: ", Style::default().fg(theme.palette.text_muted)),
                 Span::raw("Apply"),
-                Span::styled("  [Esc]: ", Style::default().fg(theme.text_muted)),
+                Span::styled("  [Esc]: ", Style::default().fg(theme.palette.text_muted)),
                 Span::raw("Cancel"),
             ])),
     );

@@ -26,7 +26,7 @@ pub fn raw_panel_layout(
 
     let block = Block::default()
         .borders(borders)
-        .border_style(*theme.border_panel);
+        .border_style(*theme.ui.border_panel);
 
     let inner_area = block.inner(raw_area);
     (block, inner_area)
@@ -69,7 +69,10 @@ pub fn format_raw_bytes_with_highlights(
                     Style::default().fg(color),
                 ));
                 if i + 1 < bytes.len() {
-                    s.push(Span::styled(" ", Style::default().fg(theme.text_muted)));
+                    s.push(Span::styled(
+                        " ",
+                        Style::default().fg(theme.palette.text_muted),
+                    ));
                 }
             }
             s
@@ -88,7 +91,10 @@ pub fn format_raw_bytes_with_highlights(
                     Style::default().fg(color),
                 ));
                 if i + 1 < bytes.len() {
-                    s.push(Span::styled(" ", Style::default().fg(theme.text_muted)));
+                    s.push(Span::styled(
+                        " ",
+                        Style::default().fg(theme.palette.text_muted),
+                    ));
                 }
             }
             s
@@ -111,7 +117,10 @@ pub fn format_raw_bytes_with_highlights(
                     Style::default().fg(color),
                 ));
                 if i + 1 < bytes.len() {
-                    s.push(Span::styled(" ", Style::default().fg(theme.text_muted)));
+                    s.push(Span::styled(
+                        " ",
+                        Style::default().fg(theme.palette.text_muted),
+                    ));
                 }
             }
             s

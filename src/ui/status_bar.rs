@@ -370,7 +370,7 @@ pub fn render_status_bar(app: &App, frame: &mut Frame, area: Rect, theme: &Theme
     }
 
     let sb_cfg = &app.settings().ui.status_bar;
-    let base_style = *theme.status_bar_bg;
+    let base_style = *theme.ui.status_bar_bg;
     frame.render_widget(Block::default().style(base_style), area);
 
     let left_spans = sb_cfg.parse_to_spans(&sb_cfg.left, app, base_style);
