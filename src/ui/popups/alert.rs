@@ -32,15 +32,24 @@ pub fn render_disconnected_popup(port: &str, frame: &mut Frame, theme: &ThemeCon
         )),
     ];
 
+    let block = Block::bordered()
+        .title(Span::styled(
+            " Connection Lost ",
+            Style::default()
+                .fg(theme.palette.text_warn)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .border_style(Style::default().fg(theme.palette.text_warn))
+        .style(*theme.popup.background);
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
     let popup = Paragraph::new(text)
         .alignment(ratatui::layout::Alignment::Center)
-        .block(
-            Block::bordered()
-                .title(" Connection Lost ")
-                .border_style(Style::default().fg(theme.palette.text_warn)),
-        );
+        .style(*theme.popup.background);
 
-    frame.render_widget(popup, area);
+    frame.render_widget(popup, inner);
 }
 
 pub fn render_detached_popup(port: &str, frame: &mut Frame, theme: &ThemeConfig) {
@@ -72,15 +81,24 @@ pub fn render_detached_popup(port: &str, frame: &mut Frame, theme: &ThemeConfig)
         )),
     ];
 
+    let block = Block::bordered()
+        .title(Span::styled(
+            " Connection Lost ",
+            Style::default()
+                .fg(theme.palette.text_warn)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .border_style(Style::default().fg(theme.palette.text_warn))
+        .style(*theme.popup.background);
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
     let popup = Paragraph::new(text)
         .alignment(ratatui::layout::Alignment::Center)
-        .block(
-            Block::bordered()
-                .title(" Connection Lost ")
-                .border_style(Style::default().fg(theme.palette.text_warn)),
-        );
+        .style(*theme.popup.background);
 
-    frame.render_widget(popup, area);
+    frame.render_widget(popup, inner);
 }
 
 pub fn render_error_popup(err: &ErrorDialog, frame: &mut Frame, theme: &ThemeConfig) {
@@ -115,14 +133,23 @@ pub fn render_error_popup(err: &ErrorDialog, frame: &mut Frame, theme: &ThemeCon
         Style::default().fg(theme.palette.text_muted),
     )));
 
+    let block = Block::bordered()
+        .title(Span::styled(
+            format!(" {} ", err.title),
+            Style::default()
+                .fg(theme.palette.text_warn)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .border_style(Style::default().fg(theme.palette.text_warn))
+        .style(*theme.popup.background);
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
     let popup = Paragraph::new(lines)
         .alignment(ratatui::layout::Alignment::Center)
         .wrap(Wrap { trim: true })
-        .block(
-            Block::bordered()
-                .title(format!(" {} ", err.title))
-                .border_style(Style::default().fg(theme.palette.text_warn)),
-        );
+        .style(*theme.popup.background);
 
-    frame.render_widget(popup, area);
+    frame.render_widget(popup, inner);
 }

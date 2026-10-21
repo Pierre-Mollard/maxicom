@@ -17,13 +17,16 @@ pub fn render_reconfigure_popup(
     theme: &ThemeConfig,
 ) {
     let area = popup_area(frame.area(), 40, 11, 42, 10);
-
     frame.render_widget(Clear, area);
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(*theme.ui.border_panel_focused)
-        .title(" Serial Port Configuration ")
+        .border_style(*theme.popup.border)
+        .style(*theme.popup.background)
+        .title(Span::styled(
+            " Serial Port Configuration ",
+            *theme.popup.title,
+        ))
         .title_bottom(Line::from(vec![
             Span::styled("[Enter]: ", Style::default().fg(theme.palette.text_muted)),
             Span::raw("Apply  "),
@@ -87,5 +90,5 @@ pub fn render_reconfigure_popup(
         ]));
     }
 
-    frame.render_widget(Paragraph::new(lines), inner);
+    frame.render_widget(Paragraph::new(lines).style(*theme.popup.background), inner);
 }

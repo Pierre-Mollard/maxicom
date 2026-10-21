@@ -6,18 +6,12 @@ use ratatui::{
 };
 
 use crate::{
-    app::{App, types::FocusTarget},
     configs::ThemeConfig,
     overlays::{ResizeDialog, ResizeField},
-    ui::common::{border_style_for, popup_area},
+    ui::common::popup_area,
 };
 
-pub fn render_resize_popup(
-    app: &App,
-    dialog: &ResizeDialog,
-    frame: &mut Frame,
-    theme: &ThemeConfig,
-) {
+pub fn render_resize_popup(dialog: &ResizeDialog, frame: &mut Frame, theme: &ThemeConfig) {
     let area = popup_area(frame.area(), 50, 8, 52, 7);
     frame.render_widget(Clear, area);
 
@@ -85,37 +79,32 @@ pub fn render_resize_popup(
         Line::from(""),
     ];
 
-    let popup = Paragraph::new(text).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style_for(
-                FocusTarget::Overlay,
-                app.focus_target(),
-                app.is_app_focused(),
-                theme,
-            ))
-            .title(" Resize VT100 Screen ")
-            .border_style(theme.ui.border_panel_focused)
-            .title_bottom(Line::from(vec![
-                Span::styled("[Tab]: ", Style::default().fg(theme.palette.text_muted)),
-                Span::raw("Switch"),
-                Span::styled(" [Enter]: ", Style::default().fg(theme.palette.text_muted)),
-                Span::raw("Apply"),
-                Span::styled(" [Esc]: ", Style::default().fg(theme.palette.text_muted)),
-                Span::raw("Cancel"),
-            ])),
-    );
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(*theme.popup.border)
+        .style(*theme.popup.background)
+        .title(Span::styled(" Resize VT100 Screen ", *theme.popup.title))
+        .title_bottom(Line::from(vec![
+            Span::styled("[Tab]: ", Style::default().fg(theme.palette.text_muted)),
+            Span::raw("Switch"),
+            Span::styled(" [Enter]: ", Style::default().fg(theme.palette.text_muted)),
+            Span::raw("Apply"),
+            Span::styled(" [Esc]: ", Style::default().fg(theme.palette.text_muted)),
+            Span::raw("Cancel"),
+        ]));
 
-    frame.render_widget(popup, area);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    frame.render_widget(Paragraph::new(text).style(*theme.popup.background), inner);
 
     let (cursor_input, line_y_offset) = match active {
-        ResizeField::Rows => (&dialog.rows_input, 3),
-        ResizeField::Cols => (&dialog.cols_input, 4),
+        ResizeField::Rows => (&dialog.rows_input, 2),
+        ResizeField::Cols => (&dialog.cols_input, 3),
     };
 
-    // area.x + 1 (border) + 3 (" ▶ ") + 10 ("Rows    : ") + cursor_offset
-    let cursor_x = area.x + 1 + 3 + 10 + cursor_input.visual_cursor() as u16;
-    let cursor_y = area.y + line_y_offset;
+    // inner.x + 3 (" ▶ ") + 10 ("Rows    : ") + cursor_offset
+    let cursor_x = inner.x + 3 + 10 + cursor_input.visual_cursor() as u16;
+    let cursor_y = inner.y + line_y_offset;
 
     frame.set_cursor_position((cursor_x, cursor_y));
 }

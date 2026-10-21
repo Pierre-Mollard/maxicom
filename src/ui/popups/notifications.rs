@@ -6,7 +6,10 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
 };
 
-use crate::notification::NotificationManager;
+use crate::{
+    configs::ThemeConfig,
+    notification::{NotificationManager, ToastLevel},
+};
 
 const TOAST_MIN_WIDTH: u16 = 24;
 const TOAST_MAX_WIDTH: u16 = 36;
@@ -19,7 +22,7 @@ const TOAST_RIGHT_MARGIN: u16 = 2;
 const TOAST_TOP_START_Y: u16 = 1;
 const TOAST_STACK_GAP_Y: u16 = 1;
 
-pub fn render_notifications(manager: &NotificationManager, frame: &mut Frame) {
+pub fn render_notifications(manager: &NotificationManager, frame: &mut Frame, theme: &ThemeConfig) {
     let active = manager.active_toasts();
     if active.is_empty() {
         return;
@@ -35,9 +38,17 @@ pub fn render_notifications(manager: &NotificationManager, frame: &mut Frame) {
     let mut current_y = TOAST_TOP_START_Y;
 
     for toast in active {
-        let color = toast.level.color();
         let icon = toast.level.icon();
         let icon_len = icon.chars().count();
+
+        let toast_style = match toast.level {
+            ToastLevel::Success => *theme.notification.success,
+            ToastLevel::Error => *theme.notification.error,
+            ToastLevel::Warn => *theme.notification.warn,
+            ToastLevel::Info => *theme.notification.info,
+        };
+
+        let border_color = toast.level.color();
 
         let raw_first_line_len = toast
             .message
@@ -64,12 +75,16 @@ pub fn render_notifications(manager: &NotificationManager, frame: &mut Frame) {
         let toast_area = Rect::new(x, current_y, toast_width, toast_height);
 
         frame.render_widget(Clear, toast_area);
+
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(color))
+            .border_style(Style::default().fg(border_color))
+            .style(toast_style)
             .title(Span::styled(
                 format!(" {} ", toast.level.title()),
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(border_color)
+                    .add_modifier(Modifier::BOLD),
             ));
 
         let mut lines = Vec::with_capacity(content_lines_count);
@@ -81,7 +96,9 @@ pub fn render_notifications(manager: &NotificationManager, frame: &mut Frame) {
                     Span::raw(" "),
                     Span::styled(
                         icon,
-                        Style::default().fg(color).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(border_color)
+                            .add_modifier(Modifier::BOLD),
                     ),
                     Span::raw(line_text),
                 ]));
@@ -94,7 +111,7 @@ pub fn render_notifications(manager: &NotificationManager, frame: &mut Frame) {
             }
         }
 
-        let paragraph = Paragraph::new(lines).block(block);
+        let paragraph = Paragraph::new(lines).style(toast_style).block(block);
         frame.render_widget(paragraph, toast_area);
 
         current_y += toast_height + TOAST_STACK_GAP_Y;

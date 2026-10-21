@@ -6,9 +6,9 @@ use ratatui::{
 };
 
 use crate::{
-    app::{App, types::FocusTarget},
+    app::App,
     configs::{PrefixWrapBehavior, ThemeConfig},
-    ui::common::{border_style_for, popup_area},
+    ui::common::popup_area,
 };
 
 pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) {
@@ -101,22 +101,20 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
         ]),
     ];
 
-    let popup = Paragraph::new(text).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style_for(
-                FocusTarget::Overlay,
-                app.focus_target(),
-                app.is_app_focused(),
-                theme,
-            ))
-            .title(" Settings [Toggle Hotkeys] ")
-            .style(Style::default().fg(theme.palette.ternary))
-            .title_bottom(Line::from(vec![
-                Span::styled("[Esc]: ", Style::default().fg(theme.palette.text_muted)),
-                Span::raw("Return"),
-            ])),
-    );
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(*theme.popup.border)
+        .style(*theme.popup.background)
+        .title(Span::styled(
+            " Settings [Toggle Hotkeys] ",
+            *theme.popup.title,
+        ))
+        .title_bottom(Line::from(vec![
+            Span::styled("[Esc]: ", Style::default().fg(theme.palette.text_muted)),
+            Span::raw("Return"),
+        ]));
 
-    frame.render_widget(popup, area);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    frame.render_widget(Paragraph::new(text).style(*theme.popup.background), inner);
 }

@@ -14,6 +14,8 @@ pub struct ThemeConfig {
     pub search: SearchStyles,
     pub terminal: TerminalStyles,
     pub raw_inspector: RawInspectorColors,
+    pub popup: PopupStyles,
+    pub notification: NotificationStyles,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +42,50 @@ impl Default for PaletteColors {
             text_warn: Color::Red,
             text_good: Color::Green,
             unselected: Color::White,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PopupStyles {
+    pub background: ConfigStyle,
+    pub border: ConfigStyle,
+    pub title: ConfigStyle,
+}
+
+impl Default for PopupStyles {
+    fn default() -> Self {
+        Self {
+            background: ConfigStyle::new(Style::default().bg(Color::Reset).fg(Color::White)),
+            border: ConfigStyle::from_fg(Color::Cyan),
+            title: ConfigStyle::new(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NotificationStyles {
+    pub info: ConfigStyle,
+    pub success: ConfigStyle,
+    pub warn: ConfigStyle,
+    pub error: ConfigStyle,
+    pub border: ConfigStyle,
+}
+
+impl Default for NotificationStyles {
+    fn default() -> Self {
+        Self {
+            info: ConfigStyle::new(Style::default().bg(Color::Reset).fg(Color::White)),
+            success: ConfigStyle::new(Style::default().bg(Color::Reset).fg(Color::Green)),
+            warn: ConfigStyle::new(Style::default().bg(Color::Reset).fg(Color::Yellow)),
+            error: ConfigStyle::new(Style::default().bg(Color::Reset).fg(Color::Red)),
+            border: ConfigStyle::from_fg(Color::DarkGray),
         }
     }
 }

@@ -10,29 +10,23 @@ use ratatui::{
 };
 
 use crate::{
-    app::{App, types::FocusTarget},
+    app::App,
     configs::ThemeConfig,
     overlays::{HelpCategory, HelpDialog},
-    ui::common::{border_style_for, popup_area},
+    ui::common::popup_area,
 };
 
 pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, theme: &ThemeConfig) {
     let area = popup_area(frame.area(), 74, 20, 32, 14);
     frame.render_widget(Clear, area);
 
-    let border_style = border_style_for(
-        FocusTarget::Overlay,
-        app.focus_target(),
-        app.is_app_focused(),
-        theme,
-    );
-
     let is_compact_vertical = area.height < 14;
 
     let mut outer_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(border_style)
-        .title(" Help [Keybindings] ");
+        .border_style(*theme.popup.border)
+        .style(*theme.popup.background)
+        .title(Span::styled(" Help [Keybindings] ", *theme.popup.title));
 
     if !is_compact_vertical {
         outer_block = outer_block.title_bottom(Line::from(vec![
@@ -84,6 +78,7 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
         .unwrap_or(0);
 
     let tabs = Tabs::new(tab_titles)
+        .style(*theme.popup.background)
         .select(selected_index)
         .divider(symbols::line::VERTICAL)
         .highlight_style(
@@ -198,7 +193,9 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
     dialog.max_scroll.set(max_scroll);
     let current_scroll = dialog.scroll.min(max_scroll);
 
-    let paragraph = Paragraph::new(lines).scroll((current_scroll as u16, 0));
+    let paragraph = Paragraph::new(lines)
+        .style(*theme.popup.background)
+        .scroll((current_scroll as u16, 0));
     frame.render_widget(paragraph, content_area);
 
     if total_lines > visible_height {

@@ -117,7 +117,7 @@ pub fn render(
 
     render_active_overlay(app, frame, theme);
 
-    render_notifications(&app.notifications, frame);
+    render_notifications(&app.notifications, frame, theme);
 
     if !layout.warnings.is_empty() {
         PostRenderEffect::LayoutWarnings(layout.warnings)
@@ -130,9 +130,9 @@ fn render_active_overlay(app: &App, frame: &mut Frame, theme: &ThemeConfig) {
     match app.overlay() {
         Some(Overlay::Settings) => render_settings_popup(app, frame, theme),
         Some(Overlay::Help(dialog)) => render_help_popup(app, dialog, frame, theme),
-        Some(Overlay::TerminalSize(dialog)) => render_resize_popup(app, dialog, frame, theme),
+        Some(Overlay::TerminalSize(dialog)) => render_resize_popup(dialog, frame, theme),
         Some(Overlay::SerialSettings(dialog)) => render_reconfigure_popup(dialog, frame, theme),
-        Some(Overlay::FilePath(dialog)) => render_filepath_popup(app, dialog, frame, theme),
+        Some(Overlay::FilePath(dialog)) => render_filepath_popup(dialog, frame, theme),
         Some(Overlay::DeviceDisconnected(port)) => render_disconnected_popup(port, frame, theme),
         Some(Overlay::DeviceDetached(port)) => render_detached_popup(port, frame, theme),
         Some(Overlay::Error(err)) => render_error_popup(err, frame, theme),
