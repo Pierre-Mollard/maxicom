@@ -5,9 +5,6 @@ use std::path::{Path, PathBuf};
 
 use crate::configs::style::ConfigStyle;
 
-// TODO: fix color bg for internal terminal
-// TODO: color bg dialog?
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ThemeConfig {

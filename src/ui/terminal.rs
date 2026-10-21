@@ -58,7 +58,7 @@ pub fn render_vt100_terminal(
         .y_offset(app.terminal_mode.pan_offset_y() as u16)
         .focused(is_terminal_focused && app.is_app_focused())
         .cursor(cursor)
-        .style(*theme.ui.background)
+        .style(*theme.terminal.term_inside)
         .filling_char(&app.settings().terminal_mode.empty_fill_char)
         .filling_char_style(*theme.terminal.term_outside);
 

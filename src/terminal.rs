@@ -175,10 +175,21 @@ fn handle<S: Screen>(term: &MaxicomTerminal<S>, area: Rect, buf: &mut Buffer) {
             let source_row = row.saturating_add(term.y_offset);
             let cell = &mut buf[(buf_col, buf_row)];
             if let Some(screen_cell) = screen.cell(source_row, source_col) {
-                if let Some(base_style) = term.style {
-                    cell.set_style(base_style);
-                }
                 screen_cell.apply(cell);
+
+                // Prevent loosing fg or bg if existing from the real data CSI
+                if let Some(base_style) = term.style {
+                    if let Some(bg) = base_style.bg
+                        && (cell.style().bg.is_none() || cell.style().bg == Some(Color::Reset))
+                    {
+                        cell.set_bg(bg);
+                    }
+                    if let Some(fg) = base_style.fg
+                        && (cell.style().fg.is_none() || cell.style().fg == Some(Color::Reset))
+                    {
+                        cell.set_fg(fg);
+                    }
+                }
             } else {
                 // Outside the terminal canvas (viewer area padding)
                 cell.set_symbol(term.empty_filling_char);
