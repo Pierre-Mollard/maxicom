@@ -4,11 +4,11 @@
 //! conditional ternaries, and element visibility toggling.
 //!
 //! ## Syntax
-//! - **Plain Text**: Rendered using base theme style `status_bar`.
-//! - **Variables**: `{variable_name}` replaced at runtime.
+//! - **Plain Text**: Rendered using the base theme style `status_bar`.
+//! - **Variables**: `{variable_name}` replaced dynamically at runtime.
 //! - **Styled Blocks**: `[content](style_spec)`
 //! - **Conditionals**: `[content](condition?true_style:false_style)`
-//! - **Grouping**: Use parentheses `(style1 style2)` to group multiple styles in conditional branches.
+//! - **Grouping**: Parentheses `(style1 style2)` group styles in conditional branches.
 //!
 //! ## Available Variables
 //! | Variable            | Description                                             | Example          |
@@ -53,21 +53,23 @@
 //! ## Style Keywords
 //! - **Modifiers**: `bold`, `dim`, `italic`, `underlined` (`underline`), `reversed` (`reverse`), `reset` (`default`), `crossed`, `slow_blink` (`sblink`), `rapid_blink` (`rblink`)
 //! - **Visibility**: `hide`, `hidden`, `none` (omits the span completely)
-//! - **Colors**: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`,
-//!   `gray`, `darkgray`, `white`, or hex `#RRGGBB`
-//! - **Prefixes**: `fg=<color>`, `bg=<color>`
+//! - **Theme Palette Names**: `main` (or `primary`), `secondary`, `ternary`, `text`, `muted`, `warn` (`warning`), `good` (`ok`, `success`), `unselected`
+//! - **Standard Named Colors**: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `gray`, `darkgray`, `white`, or hex `#RRGGBB`
+//! - **Explicit Foregrounds**: `fg=<color>` or simply `<color>`
+//! - **Explicit Backgrounds**: `bg=<color>` (e.g. `bg=main`, `bg=red`, `bg=#1e1e2e`)
+//! - **Clearing**: `fg=none` / `fg=reset`, `bg=none` / `bg=reset`
 //!
 //! ## Examples
 //! ```toml
 //! [ui.status_bar]
-//! # Hide REC when idle, light up red when active; show mode in yellow on prefix:
-//! left = "[  REC ](rec?red bold:hide)[ {mode} ](prefix?yellow:cyan bold)[ PAUSED (+{scroll_offset}) ](scrolled?red bold:hide) {port}"
+//! # Solid pill mode indicator that lights up with background when prefix is pressed:
+//! left = "[ {mode} ](prefix?(bg=main fg=black bold):copy?(bg=magenta fg=white bold):search?(bg=good fg=black bold):(fg=main bold)) {port} | [{baud}](secondary) {framing}"
 //!
-//! # Center scroll position and pan arrows:
-//! center = "[{pan_left}](pan_left?yellow:hide) [ {scroll_pos} ](has_scroll?gray:hide) [{pan_right}](pan_right_alert?red bold:(pan_right?yellow:hide))"
+//! # Center scroll indicator and pan arrows with warning states:
+//! center = "[{pan_left} ](pan_left?warn:hide)[{scroll_pos}](has_scroll?muted:hide)[ {pan_right}](pan_right_alert?(bg=warn fg=black bold):(pan_right?warn:hide))"
 //!
-//! # Right-aligned byte statistics and blue local clock:
-//! right = "[RX: {rx_bytes}](gray) | [TX: {tx_bytes}](gray) | [{time}](blue)"
+//! # Right-aligned status with a dedicated red badge for recording:
+//! right = "[  REC ](rec?(bg=warn fg=white bold):hide) [{scroll_pos_up}](has_scroll?muted:hide) [RX: {rx_bytes}](muted) | [TX: {tx_bytes}](muted) | [{time}](secondary)"
 //! ```
 
 use ratatui::{
@@ -134,7 +136,7 @@ pub fn parse_inline_style(
 
 fn resolve_color(name: &str, theme: &ThemeConfig) -> Option<Color> {
     match name.to_ascii_lowercase().as_str() {
-        "main" => Some(theme.palette.main),
+        "main" | "primary" => Some(theme.palette.main),
         "secondary" => Some(theme.palette.secondary),
         "ternary" => Some(theme.palette.ternary),
         "text" => Some(theme.palette.text),
@@ -319,8 +321,24 @@ impl StatusBarConfig {
                     let text_end = text_start + close_bracket;
                     let style_start = text_end + 2;
 
-                    if let Some(close_paren) = expanded[style_start..].find(')') {
-                        let style_end = style_start + close_paren;
+                    let mut depth = 1;
+                    let mut close_paren = None;
+                    for (i, ch) in expanded[style_start..].char_indices() {
+                        match ch {
+                            '(' => depth += 1,
+                            ')' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    close_paren = Some(i);
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    if let Some(paren_idx) = close_paren {
+                        let style_end = style_start + paren_idx;
 
                         let text_content = &expanded[text_start..text_end];
                         let style_spec = &expanded[style_start..style_end];

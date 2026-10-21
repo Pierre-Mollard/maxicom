@@ -210,7 +210,11 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
             .begin_symbol(Some("▲"))
             .end_symbol(Some("▼"))
             .thumb_symbol("█")
-            .track_symbol(Some("│"));
+            .track_symbol(Some("│"))
+            .thumb_style(*theme.ui.scrollbar_thumb)
+            .track_style(*theme.ui.scrollbar_track)
+            .begin_style(*theme.ui.scrollbar_thumb)
+            .end_style(*theme.ui.scrollbar_thumb);
 
         frame.render_stateful_widget(
             scrollbar,

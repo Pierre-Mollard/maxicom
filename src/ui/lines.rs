@@ -378,10 +378,12 @@ pub fn render_monitor(
         );
     }
 
-    let history_paragraph = Paragraph::new(layout.visual_lines).scroll((
-        paragraph_y_offset.min(u16::MAX as usize) as u16,
-        line_x_offset.min(u16::MAX as usize) as u16,
-    ));
+    let history_paragraph = Paragraph::new(layout.visual_lines)
+        .style(*theme.line_mode.history)
+        .scroll((
+            paragraph_y_offset.min(u16::MAX as usize) as u16,
+            line_x_offset.min(u16::MAX as usize) as u16,
+        ));
     frame.render_widget(history_paragraph, content_area);
 
     apply_keyword_highlights(frame.buffer_mut(), content_area, highlights);
@@ -482,8 +484,12 @@ pub fn render_monitor(
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(Some("▲"))
                 .end_symbol(Some("▼"))
-                .track_symbol(if has_borders { Some("│") } else { Some(" ") })
-                .thumb_symbol("█");
+                .track_symbol(Some("│"))
+                .thumb_symbol("█")
+                .thumb_style(*theme.ui.scrollbar_thumb)
+                .track_style(*theme.ui.scrollbar_track)
+                .begin_style(*theme.ui.scrollbar_thumb)
+                .end_style(*theme.ui.scrollbar_thumb);
 
             frame.render_stateful_widget(scrollbar, sb_area, &mut scrollbar_state);
         } else if !has_borders {
@@ -509,8 +515,29 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect, theme: &The
     };
 
     let prefix_width = prompt_prefix.len() as u16;
-    let inner_width = (area.width.saturating_sub(2 + prefix_width)) as usize;
 
+    let border_style = border_style_for(
+        app.focus_target(),
+        FocusTarget::LineInput,
+        app.is_app_focused(),
+        theme,
+    );
+
+    let has_borders = app.settings().ui.show_borders;
+
+    let (block, inner_area) = if has_borders {
+        let b = Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .style(*theme.ui.background)
+            .title(Span::styled(" Transmit (TX) ", border_style));
+        let inner = b.inner(area);
+        (Some(b), inner)
+    } else {
+        (None, area)
+    };
+
+    let inner_width = (inner_area.width.saturating_sub(prefix_width)) as usize;
     let scroll = input.visual_scroll(inner_width);
 
     let input_text = Line::from(vec![
@@ -523,40 +550,20 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect, theme: &The
         Span::raw(input.value()),
     ]);
 
-    let border_style = border_style_for(
-        app.focus_target(),
-        FocusTarget::LineInput,
-        app.is_app_focused(),
-        theme,
-    );
-
-    let mut block = Block::default();
-    if app.settings().ui.show_borders {
-        block = block
-            .borders(Borders::ALL)
-            .border_style(border_style)
-            .title(" Transmit (TX) ");
-    } else {
-        block = block.borders(Borders::NONE);
+    if let Some(b) = block {
+        frame.render_widget(b, area);
     }
 
     let input_widget = Paragraph::new(input_text)
-        .scroll((0, scroll as u16))
-        .block(block);
+        .style(*theme.line_mode.prompt)
+        .scroll((0, scroll as u16));
 
-    frame.render_widget(input_widget, area);
+    frame.render_widget(input_widget, inner_area);
 
     if !app.line_mode.search().active && !app.line_mode.copy_state().active {
-        let cursor_x = if app.settings().ui.show_borders {
-            area.x + 1 + prefix_width + (input.visual_cursor().saturating_sub(scroll)) as u16
-        } else {
-            area.x + prefix_width + (input.visual_cursor().saturating_sub(scroll)) as u16
-        };
-        let cursor_y = if app.settings().ui.show_borders {
-            area.y + 1
-        } else {
-            area.y
-        };
+        let cursor_x =
+            inner_area.x + prefix_width + (input.visual_cursor().saturating_sub(scroll)) as u16;
+        let cursor_y = inner_area.y;
 
         if !app.is_app_focused() {
             let buf = frame.buffer_mut();

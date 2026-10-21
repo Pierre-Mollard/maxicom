@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::configs::style::ConfigStyle;
 
-// TODO: color bg for scrollbars
 // TODO: fix color bg for internal terminal
-// TODO: color bg for line mode (prompot + history)
 // TODO: color bg dialog?
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -59,6 +57,8 @@ pub struct UiStyles {
     pub cursor_unfocused: ConfigStyle,
     pub selection: ConfigStyle,
     pub status_bar: ConfigStyle,
+    pub scrollbar_thumb: ConfigStyle,
+    pub scrollbar_track: ConfigStyle,
 }
 
 impl Default for UiStyles {
@@ -79,6 +79,8 @@ impl Default for UiStyles {
                     .bg(Color::Rgb(0x1e, 0x23, 0x2d))
                     .fg(Color::White),
             ),
+            scrollbar_thumb: ConfigStyle::from_fg(Color::DarkGray),
+            scrollbar_track: ConfigStyle::from_fg(Color::Rgb(0x30, 0x30, 0x38)),
         }
     }
 }

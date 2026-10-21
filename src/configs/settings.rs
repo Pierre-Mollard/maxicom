@@ -402,11 +402,13 @@ impl Default for StatusBarConfig {
     fn default() -> Self {
         Self {
             left: String::from(
-                "[󰒓 ](prefix?yellow:hide)[ {mode} ](prefix?yellow:copy?magenta:search?blue:cyan bold) {port} | [{baud}](yellow) {framing}",
+                "[ {mode} ](prefix?(bg=secondary fg=black bold):copy?(bg=magenta fg=black bold):search?(bg=blue fg=white bold):(fg=primary bold)) {port} | [{baud}](primary) {framing}",
             ),
-            center: String::default(),
+            center: String::from(
+                " [  REC ](rec?(fg=warn bold):hide)[ {pan_left} ](pan_left?warn:hide)[ {pan_right} ](pan_right_alert?(bg=warn fg=black bold):(pan_right?warn:hide))",
+            ),
             right: String::from(
-                "[[ REC]](rec?red bold:hide) {scroll_pos_up} [RX: {rx_bytes}](gray) | [TX: {tx_bytes}](gray) | [{time}](blue)",
+                "[{scroll_pos_up} ](has_scroll?muted:hide)[RX: {rx_bytes}](muted) | [TX: {tx_bytes}](muted) | [{time}](secondary)",
             ),
             time_format: String::from("%H:%M:%S"),
         }

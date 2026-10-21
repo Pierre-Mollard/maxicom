@@ -279,8 +279,12 @@ pub fn render_vt100_terminal(
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(Some("▲"))
                 .end_symbol(Some("▼"))
-                .track_symbol(if has_borders { Some("│") } else { Some(" ") })
-                .thumb_symbol("█");
+                .track_symbol(Some("│"))
+                .thumb_symbol("█")
+                .thumb_style(*theme.ui.scrollbar_thumb)
+                .track_style(*theme.ui.scrollbar_track)
+                .begin_style(*theme.ui.scrollbar_thumb)
+                .end_style(*theme.ui.scrollbar_thumb);
 
             frame.render_stateful_widget(scrollbar, sb_area, &mut scrollbar_state);
         } else if !has_borders {
