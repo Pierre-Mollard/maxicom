@@ -60,7 +60,7 @@ pub fn render_vt100_terminal(
         .cursor(cursor)
         .style(*theme.ui.background)
         .filling_char(&app.settings().terminal_mode.empty_fill_char)
-        .filling_char_style(*theme.terminal.term_outside_bg);
+        .filling_char_style(*theme.terminal.term_outside);
 
     frame.render_widget(term_widget, content_area);
     apply_keyword_highlights(frame.buffer_mut(), content_area, highlights);
@@ -329,8 +329,8 @@ pub fn render_vt100_terminal(
         for y in content_area.top()..content_area.bottom() {
             for x in content_area.left()..content_area.right() {
                 let cell = &mut buf[(x, y)];
-                cell.set_bg(theme.terminal.term_flash_bg);
-                cell.set_fg(theme.terminal.term_flash_fg);
+                cell.set_bg(theme.terminal.term_flash_bg_color);
+                cell.set_fg(theme.terminal.term_flash_fg_color);
             }
         }
     }

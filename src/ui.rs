@@ -49,7 +49,11 @@ pub fn render(
     frame: &mut Frame,
     highlights: &[KeywordHighlight],
 ) -> PostRenderEffect {
-    let layout = ScreenLayout::compute(frame.area(), app);
+    let root_area = frame.area();
+    let root_backdrop = Block::default().style(*theme.ui.background);
+    frame.render_widget(root_backdrop, root_area);
+
+    let layout = ScreenLayout::compute(root_area, app);
     app.update_viewport(ViewportSize::new(
         layout.content_area.width,
         layout.content_area.height,
@@ -66,6 +70,7 @@ pub fn render(
         let mut block = Block::default()
             .borders(Borders::ALL)
             .border_style(border_style)
+            .style(*theme.ui.background)
             .title(monitor_title(app, &layout.monitor_outer));
 
         for bottom_title in monitor_bottom_title(app, theme) {

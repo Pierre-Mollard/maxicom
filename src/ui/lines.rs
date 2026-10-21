@@ -87,7 +87,6 @@ pub fn history_entry_to_line(
     Line::from(spans)
 }
 
-// TODO: use color background on line mode too and verify
 pub fn render_monitor(
     app: &mut App,
     frame: &mut Frame,

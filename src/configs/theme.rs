@@ -5,6 +5,11 @@ use std::path::{Path, PathBuf};
 
 use crate::configs::style::ConfigStyle;
 
+// TODO: color bg for scrollbars
+// TODO: fix color bg for internal terminal
+// TODO: color bg for line mode (prompot + history)
+// TODO: color bg dialog?
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ThemeConfig {
@@ -53,13 +58,13 @@ pub struct UiStyles {
     pub border_app_unfocused: ConfigStyle,
     pub cursor_unfocused: ConfigStyle,
     pub selection: ConfigStyle,
-    pub status_bar_bg: ConfigStyle,
+    pub status_bar: ConfigStyle,
 }
 
 impl Default for UiStyles {
     fn default() -> Self {
         Self {
-            background: ConfigStyle::from_fg(Color::Black),
+            background: ConfigStyle::new(Style::default().bg(Color::Reset).fg(Color::Reset)),
             border_panel: ConfigStyle::from_fg(Color::DarkGray),
             border_panel_focused: ConfigStyle::from_fg(Color::Cyan),
             border_app_unfocused: ConfigStyle::from_fg(Color::DarkGray),
@@ -69,7 +74,11 @@ impl Default for UiStyles {
                     .bg(Color::Rgb(0x28, 0x50, 0x96))
                     .fg(Color::White),
             ),
-            status_bar_bg: ConfigStyle::from_bg(Color::Rgb(0x1e, 0x23, 0x2d)),
+            status_bar: ConfigStyle::new(
+                Style::default()
+                    .bg(Color::Rgb(0x1e, 0x23, 0x2d))
+                    .fg(Color::White),
+            ),
         }
     }
 }
@@ -77,6 +86,8 @@ impl Default for UiStyles {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LineModeStyles {
+    pub prompt: ConfigStyle,
+    pub history: ConfigStyle,
     pub line_prefix: ConfigStyle,
     pub line_indent_prefix: ConfigStyle,
     pub line_partial_prefix: ConfigStyle,
@@ -86,6 +97,8 @@ pub struct LineModeStyles {
 impl Default for LineModeStyles {
     fn default() -> Self {
         Self {
+            history: ConfigStyle::from_bg(Color::Reset),
+            prompt: ConfigStyle::from_bg(Color::Reset),
             line_prefix: ConfigStyle::from_fg(Color::DarkGray),
             line_indent_prefix: ConfigStyle::from_fg(Color::DarkGray),
             line_partial_prefix: ConfigStyle::new(
@@ -128,9 +141,10 @@ impl Default for SearchStyles {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TerminalStyles {
-    pub term_flash_fg: Color,
-    pub term_flash_bg: Color,
-    pub term_outside_bg: ConfigStyle,
+    pub term_flash_fg_color: Color,
+    pub term_flash_bg_color: Color,
+    pub term_inside: ConfigStyle,
+    pub term_outside: ConfigStyle,
     pub timestamp: ConfigStyle,
     pub timestamp_del: ConfigStyle,
     pub timestamp_del_empty: ConfigStyle,
@@ -139,9 +153,10 @@ pub struct TerminalStyles {
 impl Default for TerminalStyles {
     fn default() -> Self {
         Self {
-            term_flash_fg: Color::DarkGray,
-            term_flash_bg: Color::White,
-            term_outside_bg: ConfigStyle::from_fg(Color::DarkGray),
+            term_flash_fg_color: Color::DarkGray,
+            term_flash_bg_color: Color::White,
+            term_inside: ConfigStyle::from_fg(Color::Reset),
+            term_outside: ConfigStyle::from_fg(Color::DarkGray),
             timestamp: ConfigStyle::from_fg(Color::Yellow),
             timestamp_del: ConfigStyle::from_fg(Color::Yellow),
             timestamp_del_empty: ConfigStyle::from_fg(Color::DarkGray),

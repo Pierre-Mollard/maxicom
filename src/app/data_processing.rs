@@ -61,7 +61,6 @@ pub fn displayable_line_string(text: &str, mode: LineDisplayMode) -> String {
 /// to `raw_bytes` byte offsets, tailored to the current `LineDisplayMode`.
 ///
 /// map[disp_byte_idx] == raw_wire_byte_idx
-// NOTE: review this mapping
 pub fn build_display_to_raw_byte_map(raw_bytes: &[u8], mode: LineDisplayMode) -> Vec<usize> {
     match mode {
         LineDisplayMode::Pretty | LineDisplayMode::Clean => {

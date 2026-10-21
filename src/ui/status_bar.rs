@@ -84,7 +84,12 @@ use crate::{
     ui::common::{pan_left_indicator, pan_right_indicator},
 };
 
-pub fn parse_inline_style(spec: &str, base_style: Style, app: &App) -> Option<Style> {
+pub fn parse_inline_style(
+    spec: &str,
+    base_style: Style,
+    app: &App,
+    theme: &ThemeConfig,
+) -> Option<Style> {
     let mut style = base_style;
 
     for token in tokenize_spec(spec) {
@@ -103,16 +108,20 @@ pub fn parse_inline_style(spec: &str, base_style: Style, app: &App) -> Option<St
                 "underlined" | "underline" => style = style.add_modifier(Modifier::UNDERLINED),
                 "reversed" | "reverse" => style = style.add_modifier(Modifier::REVERSED),
                 "reset" | "default" => style = base_style,
+
+                "bg=none" | "bg=reset" => style = style.bg(Color::Reset),
+                "fg=none" | "fg=reset" => style = style.fg(Color::Reset),
+
                 _ => {
                     if let Some(c) = part.strip_prefix("fg=") {
-                        if let Ok(color) = c.parse::<Color>() {
+                        if let Some(color) = resolve_color(c, theme) {
                             style = style.fg(color);
                         }
                     } else if let Some(c) = part.strip_prefix("bg=") {
-                        if let Ok(color) = c.parse::<Color>() {
+                        if let Some(color) = resolve_color(c, theme) {
                             style = style.bg(color);
                         }
-                    } else if let Ok(color) = part.parse::<Color>() {
+                    } else if let Some(color) = resolve_color(part, theme) {
                         style = style.fg(color);
                     }
                 }
@@ -121,6 +130,20 @@ pub fn parse_inline_style(spec: &str, base_style: Style, app: &App) -> Option<St
     }
 
     Some(style)
+}
+
+fn resolve_color(name: &str, theme: &ThemeConfig) -> Option<Color> {
+    match name.to_ascii_lowercase().as_str() {
+        "main" => Some(theme.palette.main),
+        "secondary" => Some(theme.palette.secondary),
+        "ternary" => Some(theme.palette.ternary),
+        "text" => Some(theme.palette.text),
+        "muted" => Some(theme.palette.text_muted),
+        "warn" | "warning" => Some(theme.palette.text_warn),
+        "good" | "ok" | "success" => Some(theme.palette.text_good),
+        "unselected" => Some(theme.palette.unselected),
+        _ => name.parse::<Color>().ok(),
+    }
 }
 
 fn tokenize_spec(spec: &str) -> Vec<&str> {
@@ -274,6 +297,7 @@ impl StatusBarConfig {
         template: &str,
         app: &App,
         base_style: Style,
+        theme: &ThemeConfig,
     ) -> Vec<Span<'a>> {
         let expanded = self.expand_variables(template, app);
 
@@ -301,7 +325,8 @@ impl StatusBarConfig {
                         let text_content = &expanded[text_start..text_end];
                         let style_spec = &expanded[style_start..style_end];
 
-                        if let Some(span_style) = parse_inline_style(style_spec, base_style, app)
+                        if let Some(span_style) =
+                            parse_inline_style(style_spec, base_style, app, theme)
                             && !text_content.is_empty()
                         {
                             spans.push(Span::styled(text_content.to_string(), span_style));
@@ -370,31 +395,25 @@ pub fn render_status_bar(app: &App, frame: &mut Frame, area: Rect, theme: &Theme
     }
 
     let sb_cfg = &app.settings().ui.status_bar;
-    let base_style = *theme.ui.status_bar_bg;
+    let base_style = *theme.ui.status_bar;
     frame.render_widget(Block::default().style(base_style), area);
 
-    let left_spans = sb_cfg.parse_to_spans(&sb_cfg.left, app, base_style);
-    let center_spans = sb_cfg.parse_to_spans(&sb_cfg.center, app, base_style);
-    let right_spans = sb_cfg.parse_to_spans(&sb_cfg.right, app, base_style);
+    let left_spans = sb_cfg.parse_to_spans(&sb_cfg.left, app, base_style, theme);
+    let center_spans = sb_cfg.parse_to_spans(&sb_cfg.center, app, base_style, theme);
+    let right_spans = sb_cfg.parse_to_spans(&sb_cfg.right, app, base_style, theme);
 
     if !left_spans.is_empty() {
-        let left_p = Paragraph::new(Line::from(left_spans))
-            .alignment(Alignment::Left)
-            .style(base_style);
+        let left_p = Paragraph::new(Line::from(left_spans)).alignment(Alignment::Left);
         frame.render_widget(left_p, area);
     }
 
     if !center_spans.is_empty() {
-        let center_p = Paragraph::new(Line::from(center_spans))
-            .alignment(Alignment::Center)
-            .style(base_style);
+        let center_p = Paragraph::new(Line::from(center_spans)).alignment(Alignment::Center);
         frame.render_widget(center_p, area);
     }
 
     if !right_spans.is_empty() {
-        let right_p = Paragraph::new(Line::from(right_spans))
-            .alignment(Alignment::Right)
-            .style(base_style);
+        let right_p = Paragraph::new(Line::from(right_spans)).alignment(Alignment::Right);
         frame.render_widget(right_p, area);
     }
 }
