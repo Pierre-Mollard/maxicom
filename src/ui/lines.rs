@@ -41,21 +41,25 @@ pub fn history_entry_to_line(
     active_match_idx: usize,
     selection_range: Option<(usize, usize)>,
     theme: &ThemeConfig,
+    cached_prefix: &str,
 ) -> Line<'static> {
     let mut spans = Vec::new();
     let display_mode = settings.line_mode.display_mode;
     let timestamp_in_line = settings.show_timestamps;
-    let line_prefix = &settings.line_mode.line_prefix;
 
     if timestamp_in_line {
+        let formatted_timestamp = entry
+            .timestamp
+            .format(&settings.timestamp_format)
+            .to_string();
         spans.push(Span::styled(
-            entry.formatted_timestamp.clone(),
+            formatted_timestamp,
             *theme.line_mode.timestamp,
         ));
     }
 
     spans.push(Span::styled(
-        line_prefix.to_string(),
+        cached_prefix.to_string(),
         theme.line_mode.line_prefix,
     ));
 
@@ -154,6 +158,8 @@ pub fn render_monitor(
     let end_idx = (focus_entry + overscan + 1).min(total_entries);
 
     let search = app.line_mode.search();
+    let line_prefix_cached = app.settings().line_mode.line_prefix.clone();
+
     let mut visible_lines: Vec<Line> = app
         .line_mode
         .history()
@@ -199,6 +205,7 @@ pub fn render_monitor(
                 active_match_idx,
                 sel_range,
                 theme,
+                &line_prefix_cached,
             )
         })
         .collect();

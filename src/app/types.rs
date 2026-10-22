@@ -1,10 +1,10 @@
 use chrono::{DateTime, Local};
 
-// PERF: use CompactStr for text and formatted_timestamp
+// we no longer cache the timestamp string because there is less lines to render
+// and it cost alloc and space when in the 10 of thousands of lines
 pub struct LogEntry {
     pub text: String,
     pub timestamp: DateTime<Local>,
-    pub formatted_timestamp: String,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

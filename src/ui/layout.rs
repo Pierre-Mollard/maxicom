@@ -526,14 +526,13 @@ pub fn wrap_line_by_chars(
     sub_lines
 }
 
-// PERF: remove allocate every call and pass PreparedLayout and clear both of its fields instead
 pub fn prepare_view_layout(
     lines: Vec<Line<'static>>,
     settings: &SettingsConfig,
     theme: &ThemeConfig,
     content_width: usize,
 ) -> PreparedLayout {
-    let mut visual_lines = Vec::new();
+    let mut visual_lines = Vec::with_capacity(lines.len());
     let mut line_layouts = Vec::with_capacity(lines.len());
     let mut max_line_width = 0;
 
@@ -557,7 +556,11 @@ pub fn prepare_view_layout(
         String::new()
     };
 
-    let full_indent_prefix = format!("{}{}", timestamp_pad, base_prefix);
+    let full_indent_prefix = if timestamp_pad.is_empty() {
+        base_prefix.to_string()
+    } else {
+        format!("{}{}", timestamp_pad, base_prefix)
+    };
     let indent_width = full_indent_prefix.width();
     let indent_style = *theme.line_mode.line_indent_prefix;
 
@@ -571,9 +574,9 @@ pub fn prepare_view_layout(
                 _ => unreachable!(),
             };
             for (sub_idx, sub) in subs.iter().enumerate() {
-                let mut row_spans = Vec::new();
+                let mut row_spans = Vec::with_capacity(sub.spans.len() + 1);
                 let extra_w = if sub_idx > 0 && indent_width > 0 {
-                    row_spans.push(Span::styled(full_indent_prefix.to_string(), indent_style));
+                    row_spans.push(Span::styled(full_indent_prefix.clone(), indent_style));
                     indent_width
                 } else {
                     0
@@ -595,11 +598,12 @@ pub fn prepare_view_layout(
             if visual_width > max_line_width {
                 max_line_width = visual_width;
             }
-            visual_lines.push(line.clone());
+            let spans = line.spans;
+            visual_lines.push(Line::from(spans.clone()));
             line_layouts.push(LogicalLineLayout {
                 visual_row_start,
                 sub_lines: vec![VisualSubLine {
-                    spans: line.spans,
+                    spans,
                     gutter_chars,
                     content_char_len: total_chars.saturating_sub(gutter_chars),
                     visual_width,

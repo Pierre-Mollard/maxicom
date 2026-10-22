@@ -25,8 +25,6 @@ pub mod types;
 pub use line_mode::LineMode;
 pub use terminal_mode::TerminalMode;
 
-// PERF: use tools to check performances through profiling
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputContext {
     Overlay,
