@@ -419,3 +419,124 @@ pub fn copy_via_osc52(text: &str) -> io::Result<()> {
     write!(stdout, "\x1b]52;c;{encoded}\x07")?;
     stdout.flush()
 }
+
+#[cfg(test)]
+mod tests {
+    //! Copy mode: selection ordering, hit testing, yanking and cursor moves.
+
+    use super::*;
+
+    struct MockSource {
+        lines: Vec<&'static str>,
+        raw_view: RawSideView,
+    }
+
+    impl TextSource for MockSource {
+        fn total_lines(&mut self) -> usize {
+            self.lines.len()
+        }
+        fn get_line_text(&mut self, line_idx: usize) -> Option<String> {
+            self.lines.get(line_idx).map(|s| s.to_string())
+        }
+        fn raw_view(&mut self) -> RawSideView {
+            self.raw_view
+        }
+    }
+
+    fn source() -> MockSource {
+        MockSource {
+            lines: vec!["hello world", "second line"],
+            raw_view: RawSideView::Hex,
+        }
+    }
+
+    fn pos(line_idx: usize, char_idx: usize) -> LogicalPosition {
+        LogicalPosition {
+            line_idx,
+            char_idx,
+            preferred_col: char_idx,
+        }
+    }
+
+    /// The selection is returned as (start, end), whatever the drag direction.
+    /// How: anchor placed after the cursor.
+    #[test]
+    fn normalized_selection_orders_anchor_and_cursor() {
+        let mut state = CopyModeState::default();
+        state.enter_at(1, 3);
+        state.selection_anchor = Some(pos(0, 6));
+        let (start, end) = state.normalized_selection().unwrap();
+        assert_eq!((start.line_idx, start.char_idx), (0, 6));
+        assert_eq!((end.line_idx, end.char_idx), (1, 3));
+    }
+
+    /// Hit testing across a multi-line selection, edges included.
+    /// How: checks cells inside, on and outside the bounds.
+    #[test]
+    fn is_selected_multi_line() {
+        let mut state = CopyModeState::default();
+        state.enter_at(2, 1);
+        state.selection_anchor = Some(pos(0, 4));
+        assert!(!state.is_selected(0, 3));
+        assert!(state.is_selected(0, 4));
+        assert!(state.is_selected(1, 0));
+        assert!(state.is_selected(2, 1));
+        assert!(!state.is_selected(2, 2));
+        assert!(!state.is_selected(3, 0));
+    }
+
+    /// Yank copies the selected text across lines and leaves copy mode.
+    /// How: mock source, selection from line 0 to 1.
+    #[test]
+    fn yank_multi_line_selection() {
+        let mut state = CopyModeState::default();
+        state.enter_at(1, 5);
+        state.selection_anchor = Some(pos(0, 6));
+        match state.apply_action(CopyModeAction::Yank, &mut source()) {
+            CopyActionResult::Yanked(text) => assert_eq!(text, "world\nsecond"),
+            _ => panic!("expected a yank"),
+        }
+        assert!(!state.active);
+    }
+
+    /// Raw yank copies the selected bytes in the raw view format.
+    /// How: selecting "he" in Hex gives "68 65".
+    #[test]
+    fn yank_raw_formats_selected_bytes() {
+        let mut state = CopyModeState::default();
+        state.enter_at(0, 1);
+        state.selection_anchor = Some(pos(0, 0));
+        match state.apply_action(CopyModeAction::YankRaw, &mut source()) {
+            CopyActionResult::Yanked(text) => assert_eq!(text, "68 65"),
+            _ => panic!("expected a raw yank"),
+        }
+    }
+
+    /// Yank with nothing selected just exits.
+    /// How: checks the `Exited` result.
+    #[test]
+    fn yank_without_selection_exits() {
+        let mut state = CopyModeState::default();
+        state.enter_at(0, 0);
+        assert!(matches!(
+            state.apply_action(CopyModeAction::Yank, &mut source()),
+            CopyActionResult::Exited
+        ));
+    }
+
+    /// Moving up/down clamps to short lines but returns to the preferred column.
+    /// How: long, short, long lines.
+    #[test]
+    fn vertical_moves_keep_preferred_col() {
+        let mut src = MockSource {
+            lines: vec!["long line here", "ab", "another long one"],
+            raw_view: RawSideView::Hex,
+        };
+        let mut state = CopyModeState::default();
+        state.enter_at(0, 10);
+        state.apply_action(CopyModeAction::MoveDown, &mut src);
+        assert_eq!((state.cursor.line_idx, state.cursor.char_idx), (1, 1));
+        state.apply_action(CopyModeAction::MoveDown, &mut src);
+        assert_eq!((state.cursor.line_idx, state.cursor.char_idx), (2, 10));
+    }
+}

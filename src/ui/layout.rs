@@ -618,3 +618,141 @@ pub fn prepare_view_layout(
         max_line_width,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Word and char wrapping of styled lines into visual sub-lines.
+
+    use super::*;
+
+    type WrapFn = fn(Line<'static>, usize, usize) -> Vec<VisualSubLine>;
+    const WRAPPERS: [(&str, WrapFn); 2] =
+        [("words", wrap_line_by_words), ("chars", wrap_line_by_chars)];
+
+    fn line(parts: &[&str]) -> Line<'static> {
+        Line::from(
+            parts
+                .iter()
+                .map(|p| Span::raw(p.to_string()))
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    fn sub_text(sub: &VisualSubLine) -> String {
+        sub.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    /// Wrapping never loses text, char counts add up, and the gutter is only on the first row.
+    /// How: both wrappers over several samples.
+    #[test]
+    fn wrap_preserves_text_and_char_counts() {
+        let samples: [&[&str]; 4] = [
+            &["│ ", "hello world foo bar"],
+            &["│ ", "abcdefghijklmnopqrstuvwxyz"],
+            &["│ ", "héllo ✓ wörld"],
+            &["│ ", ""],
+        ];
+        for (name, wrap) in WRAPPERS {
+            for parts in samples {
+                let full: String = parts.concat();
+                let subs = wrap(line(parts), 8, 2);
+                let joined: String = subs.iter().map(sub_text).collect();
+                assert_eq!(joined, full, "{name} on {parts:?}");
+
+                let counted: usize = subs
+                    .iter()
+                    .map(|s| s.gutter_chars + s.content_char_len)
+                    .sum();
+                assert_eq!(counted, full.chars().count(), "{name} on {parts:?}");
+
+                assert!(subs.iter().skip(1).all(|s| s.gutter_chars == 0), "{name}");
+            }
+        }
+    }
+
+    /// No row is wider than max_width (input without long words or space runs).
+    /// How: checks visual_width on every row.
+    #[test]
+    fn wrap_respects_width_without_whitespace_runs() {
+        for (name, wrap) in WRAPPERS {
+            let subs = wrap(line(&["│ ", "hello world foo bar"]), 8, 2);
+            for sub in &subs {
+                assert!(
+                    sub.visual_width <= 8,
+                    "{name}: {:?} is too wide",
+                    sub_text(sub)
+                );
+            }
+        }
+    }
+
+    /// Word wrap breaks after the space; char wrap splits at the width.
+    /// How: exact rows for short inputs.
+    #[test]
+    fn wrap_breaks_at_words_and_chars() {
+        let subs = wrap_line_by_words(line(&["hello world"]), 8, 0);
+        let texts: Vec<String> = subs.iter().map(sub_text).collect();
+        assert_eq!(texts, ["hello ", "world"]);
+
+        let subs = wrap_line_by_chars(line(&["abcdefghij"]), 4, 0);
+        let texts: Vec<String> = subs.iter().map(sub_text).collect();
+        assert_eq!(texts, ["abcd", "efgh", "ij"]);
+    }
+
+    /// Locks bug #26: a word longer than the width stays on one row.
+    /// How: a 10-char word at width 4.
+    #[test]
+    fn word_wrap_long_word_is_not_split() {
+        // FIXME: current behavior, see #26: a word longer than max_width stays on one row
+        // (the split loop never flushes), so it overflows and gets truncated on screen
+        let subs = wrap_line_by_words(line(&["abcdefghij"]), 4, 0);
+        let texts: Vec<String> = subs.iter().map(sub_text).collect();
+        assert_eq!(texts, ["abcdefghij"]);
+        assert_eq!(subs[0].visual_width, 10);
+    }
+
+    /// Current behavior: a run of spaces can make a row wider than max_width.
+    /// How: exact first row and its width.
+    #[test]
+    fn word_wrap_whitespace_run_can_exceed_width() {
+        // FIXME: current behavior: whitespace tokens never trigger a break, so a row can be wider
+        // than max_width (harmless on screen, but inflates visual_width / max_line_width)
+        let subs = wrap_line_by_words(line(&["aaaa     b"]), 5, 0);
+        assert_eq!(sub_text(&subs[0]), "aaaa     ");
+        assert_eq!(subs[0].visual_width, 9);
+    }
+
+    /// Char wrap counts double-width chars as width 2.
+    /// How: CJK text at width 5.
+    #[test]
+    fn char_wrap_handles_wide_chars() {
+        // each '✓' is width 1, each '日' is width 2
+        let subs = wrap_line_by_chars(line(&["日本語"]), 5, 0);
+        let texts: Vec<String> = subs.iter().map(sub_text).collect();
+        assert_eq!(texts, ["日本", "語"]);
+        assert_eq!(subs[0].visual_width, 4);
+    }
+
+    /// Width 0 returns the whole line as a single sub-line.
+    /// How: checks gutter and content counts.
+    #[test]
+    fn zero_width_returns_single_sub_line() {
+        for (name, wrap) in WRAPPERS {
+            let subs = wrap(line(&["│ ", "hello"]), 0, 2);
+            assert_eq!(subs.len(), 1, "{name}");
+            assert_eq!(subs[0].gutter_chars, 2, "{name}");
+            assert_eq!(subs[0].content_char_len, 5, "{name}");
+        }
+    }
+
+    /// An empty line still produces one (empty) sub-line.
+    /// How: both wrappers on an empty line.
+    #[test]
+    fn empty_line_gives_one_empty_sub_line() {
+        for (name, wrap) in WRAPPERS {
+            let subs = wrap(Line::default(), 10, 0);
+            assert_eq!(subs.len(), 1, "{name}");
+            assert_eq!(subs[0].content_char_len, 0, "{name}");
+        }
+    }
+}

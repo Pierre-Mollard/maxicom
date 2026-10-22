@@ -370,3 +370,217 @@ pub fn find_byte_subslice_iter<'a>(
             }
         })
 }
+
+#[cfg(test)]
+mod tests {
+    //! Query parsing and match finding for text and raw-byte search.
+
+    use super::*;
+    use chrono::Local;
+
+    fn history(lines: &[&str]) -> VecDeque<LogEntry> {
+        lines
+            .iter()
+            .map(|t| LogEntry {
+                text: t.to_string(),
+                timestamp: Local::now(),
+            })
+            .collect()
+    }
+
+    fn search(query: &str, kind: SearchModeKind) -> SearchState {
+        SearchState {
+            active: true,
+            query: Input::from(query),
+            mode_kind: kind,
+            ..Default::default()
+        }
+    }
+
+    /// Hex queries accept spaced, packed, `0x` and `\x` forms, and reject invalid input.
+    /// How: a table of inputs and expected bytes.
+    #[test]
+    fn parse_hex_variants() {
+        let v = RawSideView::Hex;
+        assert_eq!(parse_raw_bytes_for_view("41 42", v), Some(vec![0x41, 0x42]));
+        assert_eq!(parse_raw_bytes_for_view("4142", v), Some(vec![0x41, 0x42]));
+        assert_eq!(
+            parse_raw_bytes_for_view("0x41 0x42", v),
+            Some(vec![0x41, 0x42])
+        );
+        assert_eq!(
+            parse_raw_bytes_for_view("\\x41\\x42", v),
+            Some(vec![0x41, 0x42])
+        );
+        assert_eq!(parse_raw_bytes_for_view("4", v), Some(vec![0x04]));
+        assert_eq!(parse_raw_bytes_for_view("414", v), None);
+        assert_eq!(parse_raw_bytes_for_view("zz", v), None);
+        assert_eq!(parse_raw_bytes_for_view("   ", v), None);
+        assert_eq!(
+            parse_raw_bytes_for_view("41", RawSideView::Off),
+            Some(vec![0x41])
+        );
+    }
+
+    /// Octal and binary queries accept spaced, packed and prefixed forms.
+    /// How: a table of inputs, including an overflow.
+    #[test]
+    fn parse_octal_and_binary_variants() {
+        assert_eq!(
+            parse_raw_bytes_for_view("101 102", RawSideView::Octal),
+            Some(vec![65, 66])
+        );
+        assert_eq!(
+            parse_raw_bytes_for_view("101102", RawSideView::Octal),
+            Some(vec![65, 66])
+        );
+        assert_eq!(
+            parse_raw_bytes_for_view("0o101", RawSideView::Octal),
+            Some(vec![65])
+        );
+        assert_eq!(parse_raw_bytes_for_view("777", RawSideView::Octal), None);
+
+        let b = RawSideView::Binary;
+        assert_eq!(parse_raw_bytes_for_view("01000001", b), Some(vec![65]));
+        assert_eq!(
+            parse_raw_bytes_for_view("0b01000001 0b01000010", b),
+            Some(vec![65, 66])
+        );
+        assert_eq!(parse_raw_bytes_for_view("1", b), Some(vec![1]));
+        assert_eq!(parse_raw_bytes_for_view("2", b), None);
+    }
+
+    /// The byte search reports every occurrence, overlapping ones included.
+    /// How: known haystacks and needles.
+    #[test]
+    fn subslice_finds_all_including_overlaps() {
+        let found: Vec<usize> = find_byte_subslice_iter(b"abcabc", b"bc").collect();
+        assert_eq!(found, [1, 4]);
+        let found: Vec<usize> = find_byte_subslice_iter(b"aaa", b"aa").collect();
+        assert_eq!(found, [0, 1]);
+        assert_eq!(find_byte_subslice_iter(b"ab", b"abc").count(), 0);
+    }
+
+    /// Locks bug #27: a lone "0x" parses to an empty needle.
+    /// How: parses "0x" in Hex view.
+    #[test]
+    fn parse_prefix_only_gives_empty_needle() {
+        // FIXME: current behavior, see #27: typing only "0x" in byte search yields an empty needle
+        assert_eq!(
+            parse_raw_bytes_for_view("0x", RawSideView::Hex),
+            Some(vec![])
+        );
+    }
+
+    /// Locks bug #27: an empty needle panics (crashes the app).
+    /// How: `should_panic` on the `windows(0)` message.
+    #[test]
+    #[should_panic(expected = "window size must be non-zero")]
+    fn subslice_empty_needle_panics() {
+        // FIXME: current behavior, see #27: windows(0) panics, so "0x" in byte search crashes
+        let _ = find_byte_subslice_iter(b"abc", b"").count();
+    }
+
+    /// Text search ignores case and jumps to the first match.
+    /// How: three lines, two matching "hello".
+    #[test]
+    fn text_search_is_case_insensitive() {
+        let mut s = search("hello", SearchModeKind::Text);
+        s.update_matches_from_entries(
+            &history(&["hello world", "nothing", "say Hello"]),
+            LineDisplayMode::Pretty,
+            RawSideView::Hex,
+        );
+        let found: Vec<(usize, usize)> =
+            s.matches.iter().map(|m| (m.line_idx, m.col_idx)).collect();
+        assert_eq!(found, [(0, 0), (2, 4)]);
+        assert_eq!(s.current_match, 0);
+        assert_eq!(s.target_jump, Some((0, 0)));
+    }
+
+    /// A text match gets the right display column and raw byte span.
+    /// How: match "here" after an ANSI-colored word.
+    #[test]
+    fn text_search_maps_back_to_raw_bytes() {
+        // display "ERROR here": 'h' is col 6, raw byte 15 (after ESC[31m ERROR ESC[0m and a space)
+        let mut s = search("here", SearchModeKind::Text);
+        s.update_matches_from_entries(
+            &history(&["\x1b[31mERROR\x1b[0m here"]),
+            LineDisplayMode::Pretty,
+            RawSideView::Hex,
+        );
+        assert_eq!(s.matches.len(), 1);
+        let m = s.matches[0];
+        assert_eq!((m.col_idx, m.byte_offset, m.byte_len), (6, 15, 4));
+    }
+
+    /// A raw-byte match maps back to its display column.
+    /// How: search 45 52 ("ER") inside a colored ERROR.
+    #[test]
+    fn raw_search_maps_to_display_col() {
+        let mut s = search("45 52", SearchModeKind::RawBytes);
+        s.update_matches_from_entries(
+            &history(&["\x1b[31mERROR\x1b[0m"]),
+            LineDisplayMode::Pretty,
+            RawSideView::Hex,
+        );
+        assert_eq!(s.matches.len(), 1);
+        let m = s.matches[0];
+        assert_eq!((m.col_idx, m.byte_offset, m.byte_len), (0, 5, 2));
+    }
+
+    /// Locks bug #18: lowercasing non-ASCII shifts the match column.
+    /// How: 'İ' grows from 2 to 3 bytes, so col 2 instead of 1.
+    #[test]
+    fn text_search_non_ascii_lowercase_shifts_col() {
+        // FIXME: current behavior, see #18: 'İ' lowercases to 3 bytes (2 in the original), so the
+        // offset found in the lowered string maps to col 2 instead of 1
+        let mut s = search("x", SearchModeKind::Text);
+        s.update_matches_from_entries(&history(&["İx"]), LineDisplayMode::Pretty, RawSideView::Hex);
+        assert_eq!(s.matches[0].col_idx, 2);
+    }
+
+    /// Clearing the query clears matches and the jump target.
+    /// How: search, then search again with an empty query.
+    #[test]
+    fn empty_query_clears_matches() {
+        let mut s = search("a", SearchModeKind::Text);
+        s.update_matches_from_entries(&history(&["a"]), LineDisplayMode::Pretty, RawSideView::Hex);
+        assert_eq!(s.matches.len(), 1);
+        s.query = Input::default();
+        s.update_matches_from_entries(&history(&["a"]), LineDisplayMode::Pretty, RawSideView::Hex);
+        assert!(s.matches.is_empty());
+        assert_eq!(s.target_jump, None);
+    }
+
+    /// Next/previous cycle through matches, wrapping at both ends.
+    /// How: two matches, stepping both ways.
+    #[test]
+    fn next_prev_wrap_around() {
+        let mut s = search("a", SearchModeKind::Text);
+        s.update_matches_from_entries(
+            &history(&["a", "a"]),
+            LineDisplayMode::Pretty,
+            RawSideView::Hex,
+        );
+        assert_eq!(s.prev_match(), Some((1, 0)));
+        assert_eq!(s.next_match(), Some((0, 0)));
+        assert_eq!(s.next_match(), Some((1, 0)));
+    }
+
+    /// Terminal-mode search over plain strings finds every case-insensitive occurrence.
+    /// How: three lines, checked (line, col) pairs.
+    #[test]
+    fn terminal_string_search() {
+        let mut s = search("ok", SearchModeKind::Text);
+        let lines = vec![
+            "all OK".to_string(),
+            "none".to_string(),
+            "ok ok".to_string(),
+        ];
+        s.update_matches_from_strings(&lines, RawSideView::Hex);
+        let found: Vec<(usize, usize)> =
+            s.matches.iter().map(|m| (m.line_idx, m.col_idx)).collect();
+        assert_eq!(found, [(0, 4), (2, 0), (2, 3)]);
+    }
+}

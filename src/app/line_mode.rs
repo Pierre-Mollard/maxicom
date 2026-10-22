@@ -631,3 +631,111 @@ impl<'a> TextSource for LineModeTextSource<'a> {
         self.view_height
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! RX ingest: line splitting, EOL modes, history cap and known data-model bugs.
+
+    use super::*;
+    use crate::configs::LineLogConfig;
+
+    fn line_mode(max_lines: usize) -> LineMode {
+        LineMode::new(max_lines, LineLogger::new(LineLogConfig::default()))
+    }
+
+    fn texts(lm: &LineMode) -> Vec<&str> {
+        lm.history().iter().map(|e| e.text.as_str()).collect()
+    }
+
+    const TS: &str = "[%H:%M:%S]";
+
+    /// CRLF and LF both commit a line, and the stored text keeps its EOL.
+    /// How: one chunk with two lines.
+    #[test]
+    fn crlf_line_is_committed_with_its_eol() {
+        let mut lm = line_mode(10);
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"abc\r\ndef\n");
+        assert_eq!(texts(&lm), ["abc\r\n", "def\n"]);
+        assert!(lm.partial_rx().is_empty());
+    }
+
+    /// A line split over two chunks is joined into one entry.
+    /// How: feeds "ab" then "c\n".
+    #[test]
+    fn line_split_across_chunks() {
+        let mut lm = line_mode(10);
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"ab");
+        assert_eq!(lm.partial_rx(), b"ab");
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"c\n");
+        assert_eq!(texts(&lm), ["abc\n"]);
+    }
+
+    /// In Auto mode a lone CR restarts the line (progress-bar style).
+    /// How: "10%\r20%\n" keeps only the last part.
+    #[test]
+    fn lone_cr_overwrites_line_in_auto_mode() {
+        let mut lm = line_mode(10);
+        lm.feed_rx(
+            RxNewlineMode::Auto,
+            TextEncoding::Utf8,
+            TS,
+            b"progress 10%\rprogress 20%\n",
+        );
+        assert_eq!(texts(&lm), ["progress 20%\n"]);
+    }
+
+    /// In LfOnly mode a lone CR stays inside the line.
+    /// How: "a\rb\n" is stored as is.
+    #[test]
+    fn lone_cr_is_kept_in_lf_only_mode() {
+        let mut lm = line_mode(10);
+        lm.feed_rx(RxNewlineMode::LfOnly, TextEncoding::Utf8, TS, b"a\rb\n");
+        assert_eq!(texts(&lm), ["a\rb\n"]);
+    }
+
+    /// History keeps only the newest max_lines entries.
+    /// How: three lines with a cap of 2.
+    #[test]
+    fn history_is_capped() {
+        let mut lm = line_mode(2);
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"1\n2\n3\n");
+        assert_eq!(texts(&lm), ["2\n", "3\n"]);
+    }
+
+    /// Locks bug #19: after pop_front, a stored match points at another line.
+    /// How: match, push one line, see where the index points.
+    #[test]
+    fn search_matches_drift_when_history_is_full() {
+        // FIXME: current behavior, see #19: matches store VecDeque positions, so after a
+        // pop_front they point at the next line
+        let mut lm = line_mode(2);
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"a\ntarget\n");
+        *lm.search_mut() = SearchState {
+            active: true,
+            query: Input::from("target"),
+            ..Default::default()
+        };
+        lm.update_search_matches(LineDisplayMode::Pretty, RawSideView::Hex);
+        assert_eq!(lm.search().matches[0].line_idx, 1);
+
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"other\n");
+        let idx = lm.search().matches[0].line_idx;
+        assert_eq!(lm.history()[idx].text, "other\n");
+    }
+
+    /// Locks bug #20: the history stores decoded UTF-8, not the bytes received.
+    /// How: Latin1 0xE9 is stored as C3 A9.
+    #[test]
+    fn latin1_line_does_not_keep_wire_bytes() {
+        // FIXME: current behavior, see #20: the entry stores decoded UTF-8, so the raw panel
+        // shows C3 A9 instead of the E9 byte received on the wire
+        let mut lm = line_mode(10);
+        lm.feed_rx(
+            RxNewlineMode::Auto,
+            TextEncoding::Latin1,
+            TS,
+            &[0xE9, b'\n'],
+        );
+        assert_eq!(lm.history()[0].text.as_bytes(), [0xC3, 0xA9, b'\n']);
+    }
+}

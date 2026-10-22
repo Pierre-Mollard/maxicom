@@ -197,3 +197,138 @@ pub fn format_line_content(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Turning a history line into styled spans for each display mode.
+
+    use super::*;
+    use crate::app::data_processing::displayable_line_string;
+    use ratatui::style::Color;
+
+    fn concat(spans: &[Span<'_>]) -> String {
+        spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    /// Text without escapes is not copied.
+    /// How: checks for `Cow::Borrowed`.
+    #[test]
+    fn sanitize_borrows_when_no_escape() {
+        assert!(matches!(
+            sanitize_terminal_control_sequences("plain"),
+            Cow::Borrowed("plain")
+        ));
+    }
+
+    /// CSI styling is kept; OSC, DCS and 2-byte escapes are removed.
+    /// How: one input per sequence kind.
+    #[test]
+    fn sanitize_keeps_csi_and_drops_other_sequences() {
+        assert_eq!(
+            sanitize_terminal_control_sequences("\x1b[31mred\x1b[0m"),
+            "\x1b[31mred\x1b[0m"
+        );
+        assert_eq!(
+            sanitize_terminal_control_sequences("a\x1b]0;title\x07b"),
+            "ab"
+        );
+        assert_eq!(
+            sanitize_terminal_control_sequences("a\x1b]0;title\x1b\\b"),
+            "ab"
+        );
+        assert_eq!(
+            sanitize_terminal_control_sequences("a\x1bPdata\x1b\\b"),
+            "ab"
+        );
+        assert_eq!(sanitize_terminal_control_sequences("a\x1b7b"), "ab");
+    }
+
+    /// An unfinished escape at the end of a line is cut off.
+    /// How: complete and incomplete tails.
+    #[test]
+    fn trim_incomplete_ansi_tail() {
+        assert_eq!(trim_trailing_incomplete_ansi("abc\x1b"), "abc");
+        assert_eq!(trim_trailing_incomplete_ansi("abc\x1b[31"), "abc");
+        assert_eq!(trim_trailing_incomplete_ansi("abc\x1b[31m"), "abc\x1b[31m");
+        assert_eq!(trim_trailing_incomplete_ansi("abc"), "abc");
+    }
+
+    /// Pretty mode turns SGR colors into span styles.
+    /// How: the red text becomes a red span.
+    #[test]
+    fn pretty_parses_colors() {
+        let theme = ThemeConfig::default();
+        let spans = format_line_content(
+            "\x1b[31mred\x1b[0m plain\r\n",
+            LineDisplayMode::Pretty,
+            &theme,
+        );
+        assert_eq!(concat(&spans), "red plain");
+        assert_eq!(spans[0].style.fg, Some(Color::Red));
+    }
+
+    /// Hex/Octal/Binary emit one span per byte with separator spans in between.
+    /// How: checks the span texts.
+    #[test]
+    fn numeric_modes_one_span_per_byte_and_separator() {
+        let theme = ThemeConfig::default();
+        let spans = format_line_content("AB", LineDisplayMode::Hex, &theme);
+        let texts: Vec<&str> = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(texts, ["41", " ", "42"]);
+
+        let spans = format_line_content("A", LineDisplayMode::Octal, &theme);
+        assert_eq!(concat(&spans), "101");
+        let spans = format_line_content("A", LineDisplayMode::Binary, &theme);
+        assert_eq!(concat(&spans), "01000001");
+    }
+
+    /// Invariant: the rendered text equals `displayable_line_string` (the mapping relies on it).
+    /// How: every mode over a set of samples.
+    #[test]
+    fn rendered_text_matches_displayable_string() {
+        // the mapping code (search, copy cursor, raw panel) relies on both producing the same text
+        let theme = ThemeConfig::default();
+        let samples = [
+            "",
+            "plain text",
+            "\x1b[31mred\x1b[0m and \x1b[1;32mgreen\x1b[0m\r\n",
+            "héllo wörld ✓",
+            "a\x1b]0;title\x07b",
+        ];
+        let modes = [
+            LineDisplayMode::Pretty,
+            LineDisplayMode::Clean,
+            LineDisplayMode::Raw,
+            LineDisplayMode::Hex,
+            LineDisplayMode::Octal,
+            LineDisplayMode::Binary,
+        ];
+        for text in samples {
+            for mode in modes {
+                let rendered = concat(&format_line_content(text, mode, &theme));
+                assert_eq!(
+                    rendered,
+                    displayable_line_string(text, mode),
+                    "{mode:?} on {text:?}"
+                );
+            }
+        }
+    }
+
+    /// Locks bug #25: the rendered Pretty line keeps the tab, the display string drops it.
+    /// How: compares both for "a\tb".
+    #[test]
+    fn pretty_tab_differs_from_displayable() {
+        // FIXME: current behavior, see #25: the rendered line keeps the tab, displayable drops it
+        let theme = ThemeConfig::default();
+        let rendered = concat(&format_line_content(
+            "a\tb",
+            LineDisplayMode::Pretty,
+            &theme,
+        ));
+        assert_ne!(
+            rendered,
+            displayable_line_string("a\tb", LineDisplayMode::Pretty)
+        );
+    }
+}
