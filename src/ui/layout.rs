@@ -239,11 +239,13 @@ struct WordToken {
     visual_width: usize,
 }
 
-/// Word-wraps a Line (with gutter aware) like ratatui did before
+/// Word-wraps a Line (with gutter aware) like ratatui did before.
+/// Rows after the first get `indent_width` less room, the caller prepends the wrap indent to them
 pub fn wrap_line_by_words(
     line: Line<'static>,
     max_width: usize,
     gutter_chars: usize,
+    indent_width: usize,
 ) -> Vec<VisualSubLine> {
     if max_width == 0 {
         let total_chars: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
@@ -299,8 +301,16 @@ pub fn wrap_line_by_words(
     let mut current_row_chars = 0;
     let mut current_row_width = 0;
 
+    // at least 1 so wrapping always progresses, even with an indent as wide as the view
+    let continuation_width = max_width.saturating_sub(indent_width).max(1);
+
     for token in tokens {
-        let available_width = max_width.saturating_sub(current_row_width);
+        let row_width = if sub_lines.is_empty() {
+            max_width
+        } else {
+            continuation_width
+        };
+        let available_width = row_width.saturating_sub(current_row_width);
 
         if !token.is_whitespace && token.visual_width > available_width && current_row_width > 0 {
             let is_first = sub_lines.is_empty();
@@ -320,17 +330,27 @@ pub fn wrap_line_by_words(
             current_row_width = 0;
         }
 
-        if token.visual_width > max_width && current_row_width == 0 {
+        let row_width = if sub_lines.is_empty() {
+            max_width
+        } else {
+            continuation_width
+        };
+        if token.visual_width > row_width && current_row_width == 0 {
             for (text_part, style) in token.parts {
                 let mut remaining = text_part;
                 while !remaining.is_empty() {
-                    let avail = max_width.saturating_sub(current_row_width);
+                    let row_width = if sub_lines.is_empty() {
+                        max_width
+                    } else {
+                        continuation_width
+                    };
+                    let avail = row_width.saturating_sub(current_row_width);
                     let mut chunk_bytes = 0;
                     let mut chunk_chars = 0;
                     let mut chunk_w = 0;
                     for (idx, ch) in remaining.char_indices() {
                         let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
-                        if chunk_w + cw > avail && chunk_w > 0 {
+                        if chunk_w + cw > avail && (chunk_w > 0 || current_row_width > 0) {
                             break;
                         }
                         chunk_bytes = idx + ch.len_utf8();
@@ -400,10 +420,13 @@ pub fn wrap_line_by_words(
     sub_lines
 }
 
+/// Char-wraps a Line (with gutter aware).
+/// Rows after the first get `indent_width` less room, the caller prepends the wrap indent to them
 pub fn wrap_line_by_chars(
     line: Line<'static>,
     max_width: usize,
     gutter_chars: usize,
+    indent_width: usize,
 ) -> Vec<VisualSubLine> {
     if max_width == 0 {
         let total_chars: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
@@ -420,12 +443,20 @@ pub fn wrap_line_by_chars(
     let mut current_row_chars = 0;
     let mut current_row_width = 0;
 
+    // at least 1 so wrapping always progresses, even with an indent as wide as the view
+    let continuation_width = max_width.saturating_sub(indent_width).max(1);
+
     for span in line.spans {
         let style = span.style;
         let mut text = span.content.into_owned();
 
         while !text.is_empty() {
-            let available_width = max_width.saturating_sub(current_row_width);
+            let row_width = if sub_lines.is_empty() {
+                max_width
+            } else {
+                continuation_width
+            };
+            let available_width = row_width.saturating_sub(current_row_width);
 
             if available_width == 0 {
                 let is_first = sub_lines.is_empty();
@@ -564,8 +595,12 @@ pub fn prepare_view_layout(
 
         if content_width > 0 && matches!(wrap_mode, WrapMode::Word | WrapMode::Char) {
             let subs = match wrap_mode {
-                WrapMode::Word => wrap_line_by_words(line, content_width, gutter_chars),
-                WrapMode::Char => wrap_line_by_chars(line, content_width, gutter_chars),
+                WrapMode::Word => {
+                    wrap_line_by_words(line, content_width, gutter_chars, indent_width)
+                }
+                WrapMode::Char => {
+                    wrap_line_by_chars(line, content_width, gutter_chars, indent_width)
+                }
                 _ => unreachable!(),
             };
             for (sub_idx, sub) in subs.iter().enumerate() {
@@ -620,7 +655,7 @@ mod tests {
 
     use super::*;
 
-    type WrapFn = fn(Line<'static>, usize, usize) -> Vec<VisualSubLine>;
+    type WrapFn = fn(Line<'static>, usize, usize, usize) -> Vec<VisualSubLine>;
     const WRAPPERS: [(&str, WrapFn); 2] =
         [("words", wrap_line_by_words), ("chars", wrap_line_by_chars)];
 
@@ -650,7 +685,7 @@ mod tests {
         for (name, wrap) in WRAPPERS {
             for parts in samples {
                 let full: String = parts.concat();
-                let subs = wrap(line(parts), 8, 2);
+                let subs = wrap(line(parts), 8, 2, 0);
                 let joined: String = subs.iter().map(sub_text).collect();
                 assert_eq!(joined, full, "{name} on {parts:?}");
 
@@ -665,12 +700,12 @@ mod tests {
         }
     }
 
-    /// No row is wider than max_width (input without long words or space runs).
+    /// No row is wider than max_width, long words included (input without space runs).
     /// How: checks visual_width on every row.
     #[test]
     fn wrap_respects_width_without_whitespace_runs() {
         for (name, wrap) in WRAPPERS {
-            let subs = wrap(line(&["│ ", "hello world foo bar"]), 8, 2);
+            let subs = wrap(line(&["│ ", "hello world foo bar abcdefghijkl"]), 8, 2, 0);
             for sub in &subs {
                 assert!(
                     sub.visual_width <= 8,
@@ -685,25 +720,46 @@ mod tests {
     /// How: exact rows for short inputs.
     #[test]
     fn wrap_breaks_at_words_and_chars() {
-        let subs = wrap_line_by_words(line(&["hello world"]), 8, 0);
+        let subs = wrap_line_by_words(line(&["hello world"]), 8, 0, 0);
         let texts: Vec<String> = subs.iter().map(sub_text).collect();
         assert_eq!(texts, ["hello ", "world"]);
 
-        let subs = wrap_line_by_chars(line(&["abcdefghij"]), 4, 0);
+        let subs = wrap_line_by_chars(line(&["abcdefghij"]), 4, 0, 0);
         let texts: Vec<String> = subs.iter().map(sub_text).collect();
         assert_eq!(texts, ["abcd", "efgh", "ij"]);
     }
 
-    /// Locks bug #26: a word longer than the width stays on one row.
-    /// How: a 10-char word at width 4.
+    /// A word longer than the width is split over several rows (#26).
+    /// How: a 10-char word at width 4, then the same after a short word and a gutter.
     #[test]
-    fn word_wrap_long_word_is_not_split() {
-        // FIXME: current behavior, see #26: a word longer than max_width stays on one row
-        // (the split loop never flushes), so it overflows and gets truncated on screen
-        let subs = wrap_line_by_words(line(&["abcdefghij"]), 4, 0);
+    fn word_wrap_splits_long_word() {
+        let subs = wrap_line_by_words(line(&["abcdefghij"]), 4, 0, 0);
         let texts: Vec<String> = subs.iter().map(sub_text).collect();
-        assert_eq!(texts, ["abcdefghij"]);
-        assert_eq!(subs[0].visual_width, 10);
+        assert_eq!(texts, ["abcd", "efgh", "ij"]);
+
+        let subs = wrap_line_by_words(line(&["│ ", "hi abcdefghij"]), 6, 2, 0);
+        let texts: Vec<String> = subs.iter().map(sub_text).collect();
+        assert_eq!(texts, ["│ hi ", "abcdef", "ghij"]);
+        assert_eq!(subs[0].gutter_chars, 2);
+        assert_eq!(subs[0].content_char_len, 3);
+    }
+
+    /// A long word with wide chars breaks before a char that would overflow the row.
+    /// How: "日本語日本" (width 10) at width 5 gives rows of width 4, 4, 2.
+    #[test]
+    fn word_wrap_splits_long_word_with_wide_chars() {
+        let subs = wrap_line_by_words(line(&["日本語日本"]), 5, 0, 0);
+        let widths: Vec<usize> = subs.iter().map(|s| s.visual_width).collect();
+        assert_eq!(widths, [4, 4, 2]);
+    }
+
+    /// A single char wider than max_width still lands on its own row (no infinite loop).
+    /// How: one double-width char at width 1.
+    #[test]
+    fn word_wrap_char_wider_than_width() {
+        let subs = wrap_line_by_words(line(&["日日"]), 1, 0, 0);
+        let texts: Vec<String> = subs.iter().map(sub_text).collect();
+        assert_eq!(texts, ["日", "日"]);
     }
 
     /// Current behavior: a run of spaces can make a row wider than max_width.
@@ -712,7 +768,7 @@ mod tests {
     fn word_wrap_whitespace_run_can_exceed_width() {
         // FIXME: current behavior: whitespace tokens never trigger a break, so a row can be wider
         // than max_width (harmless on screen, but inflates visual_width / max_line_width)
-        let subs = wrap_line_by_words(line(&["aaaa     b"]), 5, 0);
+        let subs = wrap_line_by_words(line(&["aaaa     b"]), 5, 0, 0);
         assert_eq!(sub_text(&subs[0]), "aaaa     ");
         assert_eq!(subs[0].visual_width, 9);
     }
@@ -722,10 +778,62 @@ mod tests {
     #[test]
     fn char_wrap_handles_wide_chars() {
         // each '✓' is width 1, each '日' is width 2
-        let subs = wrap_line_by_chars(line(&["日本語"]), 5, 0);
+        let subs = wrap_line_by_chars(line(&["日本語"]), 5, 0, 0);
         let texts: Vec<String> = subs.iter().map(sub_text).collect();
         assert_eq!(texts, ["日本", "語"]);
         assert_eq!(subs[0].visual_width, 4);
+    }
+
+    /// Rows after the first leave room for the wrap indent (#30).
+    /// How: a 10-char word at width 6 with a 2-wide indent: 6 chars, then 4 per row.
+    #[test]
+    fn wrap_continuation_rows_leave_room_for_indent() {
+        for (name, wrap) in WRAPPERS {
+            let subs = wrap(line(&["abcdefghij"]), 6, 0, 2);
+            let texts: Vec<String> = subs.iter().map(sub_text).collect();
+            assert_eq!(texts, ["abcdef", "ghij"], "{name}");
+        }
+    }
+
+    /// An indent as wide as the view still makes progress, one char per row.
+    /// How: indent 4 at width 4.
+    #[test]
+    fn wrap_indent_as_wide_as_view_still_progresses() {
+        for (name, wrap) in WRAPPERS {
+            let subs = wrap(line(&["abcdef"]), 4, 0, 4);
+            let texts: Vec<String> = subs.iter().map(sub_text).collect();
+            assert_eq!(texts, ["abcd", "e", "f"], "{name}");
+        }
+    }
+
+    /// End to end: no visual row (indent included) is wider than the view, and no char is lost.
+    /// How: the case seen in the app, a 150-char word in a 59-col view, both wrap modes.
+    #[test]
+    fn prepared_layout_rows_fit_view_with_indent() {
+        let theme = ThemeConfig::default();
+        let word = "0123456789".repeat(15);
+        for wrap_mode in [WrapMode::Word, WrapMode::Char] {
+            let mut settings = SettingsConfig::default();
+            settings.line_mode.wrap_mode = wrap_mode;
+            let prefix = settings.line_mode.line_prefix.clone();
+            let indent = settings.line_mode.line_indent_prefix.clone();
+
+            let input = line(&[prefix.as_str(), word.as_str()]);
+            let layout = prepare_view_layout(vec![input], &settings, &theme, 59);
+
+            let mut content = String::new();
+            for (row_idx, row) in layout.visual_lines.iter().enumerate() {
+                assert!(
+                    row.width() <= 59,
+                    "{wrap_mode:?} row {row_idx} is {}",
+                    row.width()
+                );
+                let text: String = row.spans.iter().map(|s| s.content.as_ref()).collect();
+                let skip = if row_idx == 0 { &prefix } else { &indent };
+                content.push_str(text.strip_prefix(skip.as_str()).unwrap());
+            }
+            assert_eq!(content, word, "{wrap_mode:?}");
+        }
     }
 
     /// Width 0 returns the whole line as a single sub-line.
@@ -733,7 +841,7 @@ mod tests {
     #[test]
     fn zero_width_returns_single_sub_line() {
         for (name, wrap) in WRAPPERS {
-            let subs = wrap(line(&["│ ", "hello"]), 0, 2);
+            let subs = wrap(line(&["│ ", "hello"]), 0, 2, 0);
             assert_eq!(subs.len(), 1, "{name}");
             assert_eq!(subs[0].gutter_chars, 2, "{name}");
             assert_eq!(subs[0].content_char_len, 5, "{name}");
@@ -745,7 +853,7 @@ mod tests {
     #[test]
     fn empty_line_gives_one_empty_sub_line() {
         for (name, wrap) in WRAPPERS {
-            let subs = wrap(Line::default(), 10, 0);
+            let subs = wrap(Line::default(), 10, 0, 0);
             assert_eq!(subs.len(), 1, "{name}");
             assert_eq!(subs[0].content_char_len, 0, "{name}");
         }

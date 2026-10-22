@@ -130,7 +130,6 @@ pub fn render_monitor(
         }
     }
 
-    // NOTE: check the window logic again
     let active_focus = if app.line_mode.copy_state().active {
         Some((
             app.line_mode.copy_state().cursor.line_idx,
@@ -247,7 +246,6 @@ pub fn render_monitor(
 
     let total_visual_rows = layout.visual_lines.len();
 
-    // NOTE: check this again
     let paragraph_y_offset: usize = if clamped_scroll == 0 && !is_search_active {
         total_visual_rows.saturating_sub(content_height)
     } else {
@@ -581,7 +579,6 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect, theme: &The
     }
 }
 
-// NOTE: verify evolution with mapping
 pub fn render_raw_side_panel(
     app: &mut App,
     frame: &mut Frame,

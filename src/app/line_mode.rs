@@ -35,6 +35,8 @@ pub struct LineMode {
     temp_input: Input,
     /// Max line history
     max_lines: usize,
+    /// Max sent lines kept for history up/down
+    max_send_lines: usize,
     /// Current line being received from device output as bytes
     partial_line: Vec<u8>,
     partial_line_timestamp: Option<DateTime<Local>>,
@@ -49,20 +51,23 @@ pub struct LineMode {
     scroller: ViewportScroller,
     raw_scroller: RawSideScroller,
     vi_state_copymode: Option<ViPending>,
+    evicted_lines: usize,
 }
 
 impl LineMode {
-    pub fn new(max_history_lines: usize, logger: LineLogger) -> Self {
+    pub fn new(max_history_lines: usize, max_send_lines: usize, logger: LineLogger) -> Self {
         let search_state = SearchState::default();
         let copy_state = CopyModeState::default();
         let scroller = ViewportScroller::default();
         let raw_scroller = RawSideScroller::default();
         LineMode {
-            local_history: VecDeque::with_capacity(max_history_lines),
-            local_send_history: VecDeque::with_capacity(max_history_lines),
+            // grown on demand, the configured size is only a limit
+            local_history: VecDeque::new(),
+            local_send_history: VecDeque::new(),
             history_index: None,
             temp_input: Input::default(),
             max_lines: max_history_lines,
+            max_send_lines,
             partial_line: Vec::new(),
             user_input: Input::default(),
             vi_state_prompt: ViState::default(),
@@ -74,6 +79,7 @@ impl LineMode {
             scroller,
             raw_scroller,
             vi_state_copymode: None,
+            evicted_lines: 0,
         }
     }
 
@@ -124,15 +130,23 @@ impl LineMode {
                 }
             }
         }
+
+        self.rebase_line_refs();
     }
 
     fn commit_partial_line(&mut self, encoding: TextEncoding, timestamp_f: &str) {
         let line = encoding.decode(&self.partial_line);
-        self.push_history(line, timestamp_f);
+        self.push_entry(line, timestamp_f);
         self.partial_line.clear();
     }
 
     pub fn push_history(&mut self, line: String, timestamp_f: &str) {
+        self.push_entry(line, timestamp_f);
+        self.rebase_line_refs();
+    }
+
+    /// Push without rebasing line indexes, the caller rebases once for a whole batch
+    fn push_entry(&mut self, line: String, timestamp_f: &str) {
         let timestamp = self
             .partial_line_timestamp
             .take()
@@ -148,7 +162,17 @@ impl LineMode {
         self.scroller.on_rx_received();
         while self.local_history.len() > self.max_lines {
             self.local_history.pop_front();
+            self.evicted_lines += 1;
         }
+    }
+
+    fn rebase_line_refs(&mut self) {
+        let evicted = std::mem::take(&mut self.evicted_lines);
+        if evicted == 0 {
+            return;
+        }
+        self.search_state.rebase_after_eviction(evicted);
+        self.copy_state.rebase_after_eviction(evicted);
     }
 
     pub fn clear_history(&mut self) {
@@ -222,6 +246,9 @@ impl LineMode {
 
                 if !text.is_empty() && self.local_send_history.back() != Some(&text) {
                     self.local_send_history.push_back(text.clone());
+                    if self.local_send_history.len() > self.max_send_lines {
+                        self.local_send_history.pop_front();
+                    }
                 }
 
                 if settings.local_echo {
@@ -645,7 +672,7 @@ mod tests {
     use crate::configs::LineLogConfig;
 
     fn line_mode(max_lines: usize) -> LineMode {
-        LineMode::new(max_lines, LineLogger::new(LineLogConfig::default()))
+        LineMode::new(max_lines, 1000, LineLogger::new(LineLogConfig::default()))
     }
 
     fn texts(lm: &LineMode) -> Vec<&str> {
@@ -707,12 +734,10 @@ mod tests {
         assert_eq!(texts(&lm), ["2\n", "3\n"]);
     }
 
-    /// Locks bug #19: after pop_front, a stored match points at another line.
-    /// How: match, push one line, see where the index points.
+    /// Search matches keep pointing at the same line when old lines are dropped (#19).
+    /// How: match on the newest line, push more lines, check the line the index points at.
     #[test]
-    fn search_matches_drift_when_history_is_full() {
-        // FIXME: current behavior, see #19: matches store VecDeque positions, so after a
-        // pop_front they point at the next line
+    fn search_matches_follow_their_line_when_history_is_full() {
         let mut lm = line_mode(2);
         lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"a\ntarget\n");
         *lm.search_mut() = SearchState {
@@ -725,7 +750,71 @@ mod tests {
 
         lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"other\n");
         let idx = lm.search().matches[0].line_idx;
-        assert_eq!(lm.history()[idx].text, "other\n");
+        assert_eq!(lm.history()[idx].text, "target\n");
+
+        // once its line is dropped too, the match is gone
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"more\n");
+        assert!(lm.search().matches.is_empty());
+    }
+
+    /// The copy cursor stays on its line when old lines are dropped (#19).
+    /// How: cursor on "b", stream two lines into a 3-line history.
+    #[test]
+    fn copy_cursor_follows_its_line_when_history_is_full() {
+        let mut lm = line_mode(3);
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"a\nb\nc\n");
+        lm.copy_state.enter_at(1, 0);
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"d\n");
+        assert_eq!(lm.history()[lm.copy_state().cursor.line_idx].text, "b\n");
+    }
+
+    /// A large configured history doesn't reserve memory up front (#21).
+    /// How: capacity of a fresh 100k-line LineMode.
+    #[test]
+    fn history_is_not_preallocated() {
+        let lm = line_mode(100_000);
+        assert!(lm.history().capacity() < 100_000);
+        assert!(lm.local_send_history.capacity() < 100_000);
+    }
+
+    /// Sent lines are capped at the configured `send_history_size`, oldest dropped first (#21).
+    /// How: submits 8 lines with a cap of 3, checks size, oldest kept and history up.
+    #[test]
+    fn send_history_is_capped() {
+        let mut lm = LineMode::new(10, 3, LineLogger::new(LineLogConfig::default()));
+        let settings = SettingsConfig::default();
+        for i in 0..8 {
+            lm.user_input = Input::from(format!("cmd {i}").as_str());
+            lm.update_action_lineinput(&settings, LineInputAction::Submit);
+        }
+        let kept: Vec<&str> = lm.local_send_history.iter().map(String::as_str).collect();
+        assert_eq!(kept, ["cmd 5", "cmd 6", "cmd 7"]);
+
+        lm.history_up();
+        assert_eq!(lm.input().value(), "cmd 7");
+    }
+
+    /// A send history size of 0 keeps nothing, and history up does nothing.
+    /// How: cap 0, one submit, then history up on an empty input.
+    #[test]
+    fn send_history_size_zero_keeps_nothing() {
+        let mut lm = LineMode::new(10, 0, LineLogger::new(LineLogConfig::default()));
+        lm.user_input = Input::from("cmd");
+        lm.update_action_lineinput(&SettingsConfig::default(), LineInputAction::Submit);
+        assert!(lm.local_send_history.is_empty());
+        lm.history_up();
+        assert_eq!(lm.input().value(), "");
+    }
+
+    /// Local echo (`push_history`) rebases too, not only received chunks.
+    /// How: match on line 1 of a full history, then push one echoed line.
+    #[test]
+    fn push_history_rebases_line_refs() {
+        let mut lm = line_mode(2);
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"a\ntarget\n");
+        lm.copy_state.enter_at(1, 0);
+        lm.push_history("echo".to_string(), TS);
+        assert_eq!(lm.copy_state().cursor.line_idx, 0);
     }
 
     /// Locks bug #20: the history stores decoded UTF-8, not the bytes received.

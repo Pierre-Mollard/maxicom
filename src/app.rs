@@ -91,7 +91,11 @@ impl App {
         let line_logger = LineLogger::new(settings.line_mode.logging.to_owned());
         let terminal_logger = TerminalLogger::new(settings.terminal_mode.logging.to_owned());
 
-        let line_view = LineMode::new(settings.line_mode.history_size, line_logger);
+        let line_view = LineMode::new(
+            settings.line_mode.history_size,
+            settings.line_mode.send_history_size,
+            line_logger,
+        );
         let terminal_view = TerminalMode::new(
             settings.terminal_mode.history_size,
             settings.terminal_mode.rows,

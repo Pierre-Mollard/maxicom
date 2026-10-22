@@ -109,6 +109,6 @@ mod tests {
             .iter()
             .map(|t| t.message.as_str())
             .collect();
-        assert_eq!(messages, ["t1", "t2", "t3", "t4"]); // TODO: review this, isnt it the reverse?
+        assert_eq!(messages, ["t1", "t2", "t3", "t4"]);
     }
 }

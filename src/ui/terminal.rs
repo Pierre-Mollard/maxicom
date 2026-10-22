@@ -387,7 +387,6 @@ pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect, theme: 
     frame.render_widget(gutter, area);
 }
 
-// NOTE: verify evolution with mapping
 pub fn render_vt100_raw_side_panel(
     app: &App,
     frame: &mut Frame,

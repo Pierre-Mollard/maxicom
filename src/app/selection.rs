@@ -77,6 +77,15 @@ impl CopyModeState {
         self.selection_anchor = None;
     }
 
+    /// The `evicted` oldest lines of the source were dropped: keep cursor and anchor on the
+    /// same lines, clamped to the new first line if theirs is gone
+    pub fn rebase_after_eviction(&mut self, evicted: usize) {
+        self.cursor.line_idx = self.cursor.line_idx.saturating_sub(evicted);
+        if let Some(anchor) = &mut self.selection_anchor {
+            anchor.line_idx = anchor.line_idx.saturating_sub(evicted);
+        }
+    }
+
     pub fn normalized_selection(&self) -> Option<(LogicalPosition, LogicalPosition)> {
         let anchor = self.selection_anchor?;
         if anchor.line_idx < self.cursor.line_idx
@@ -522,6 +531,19 @@ mod tests {
             state.apply_action(CopyModeAction::Yank, &mut source()),
             CopyActionResult::Exited
         ));
+    }
+
+    /// Eviction moves cursor and anchor up, clamping to line 0 when their line is gone.
+    /// How: anchor on line 1, cursor on line 4, evict 2 lines.
+    #[test]
+    fn rebase_after_eviction_moves_cursor_and_anchor() {
+        let mut state = CopyModeState::default();
+        state.enter_at(4, 3);
+        state.selection_anchor = Some(pos(1, 2));
+        state.rebase_after_eviction(2);
+        assert_eq!((state.cursor.line_idx, state.cursor.char_idx), (2, 3));
+        let anchor = state.selection_anchor.unwrap();
+        assert_eq!((anchor.line_idx, anchor.char_idx), (0, 2));
     }
 
     /// Moving up/down clamps to short lines but returns to the preferred column.

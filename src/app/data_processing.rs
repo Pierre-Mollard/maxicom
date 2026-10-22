@@ -251,11 +251,9 @@ pub fn map_disp_byte_to_raw(disp_byte: usize, map: &[usize], max_raw_len: usize)
 }
 
 pub fn raw_byte_to_display_col(raw_byte: usize, map: &[usize], display_text: &str) -> usize {
-    // Binary search where this raw byte falls in the display mapping
-    let disp_byte = match map.binary_search(&raw_byte) {
-        Ok(idx) => idx,
-        Err(idx) => idx,
-    };
+    // first display byte mapped to this raw byte (the map is sorted with one entry per display
+    // byte, so a raw byte has duplicates in Hex/Raw/...), binary_search would return any of them
+    let disp_byte = map.partition_point(|&r| r < raw_byte);
     safe_byte_to_char_col(display_text, disp_byte)
 }
 
@@ -447,15 +445,33 @@ mod tests {
         assert_eq!(raw_byte_to_display_col(6, &map, "Hi"), 1);
     }
 
-    /// Locks bug #24: in Hex the column lands on the separator instead of the byte start.
-    /// How: raw byte 1 of "ABC" gives col 5 (3 expected).
+    /// A raw byte maps to the first column of its digit group in Hex/Octal/Binary (#24).
+    /// How: every byte of "ABC" in each mode, expected col = byte index * stride.
     #[test]
-    fn raw_byte_to_display_col_hex_lands_on_byte_group() {
-        let map = build_display_to_raw_byte_map(b"ABC", LineDisplayMode::Hex);
-        let col = raw_byte_to_display_col(1, &map, "41 42 43");
-        // FIXME: current behavior, see #24: binary_search over duplicated entries returns an
-        // unspecified one, here the separator after "42" (5) instead of the group start (3)
-        assert_eq!(col, 5);
+    fn raw_byte_to_display_col_lands_on_group_start() {
+        let modes = [
+            (LineDisplayMode::Hex, 3),
+            (LineDisplayMode::Octal, 4),
+            (LineDisplayMode::Binary, 9),
+        ];
+        for (mode, stride) in modes {
+            let display = displayable_line_string("ABC", mode);
+            let map = build_display_to_raw_byte_map(b"ABC", mode);
+            for raw_byte in 0..3 {
+                let col = raw_byte_to_display_col(raw_byte, &map, &display);
+                assert_eq!(col, raw_byte * stride, "{mode:?} byte {raw_byte}");
+            }
+        }
+    }
+
+    /// In Raw mode an expanded control maps to the start of its expansion (#24).
+    /// How: the tab of "a\tb" (raw byte 1) is display col 1, 'b' is col 5.
+    #[test]
+    fn raw_byte_to_display_col_raw_expansion_start() {
+        let display = displayable_line_string("a\tb", LineDisplayMode::Raw);
+        let map = build_display_to_raw_byte_map(b"a\tb", LineDisplayMode::Raw);
+        assert_eq!(raw_byte_to_display_col(1, &map, &display), 1);
+        assert_eq!(raw_byte_to_display_col(2, &map, &display), 5);
     }
 
     /// Byte offsets convert to char columns across multibyte chars, clamped at the end.

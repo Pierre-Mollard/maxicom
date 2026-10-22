@@ -63,7 +63,7 @@ impl TerminalMode {
             pan_offset_y: 0,
             vi_pending_copy: None,
             flash_until: None,
-            history_timestamps: VecDeque::with_capacity(max_history_lines),
+            history_timestamps: VecDeque::new(),
             screen_timestamps: vec![None; rows as usize],
         }
     }

@@ -39,7 +39,6 @@ pub struct SearchState {
 }
 
 impl SearchState {
-    // NOTE: verify evolution with mapping
     pub fn update_matches_from_entries(
         &mut self,
         history: &VecDeque<LogEntry>,
@@ -132,7 +131,6 @@ impl SearchState {
         self.target_jump = self.matches.first().map(|m| (m.line_idx, m.col_idx));
     }
 
-    // NOTE: verify verify no need mapping
     pub fn update_matches_from_strings(&mut self, all_lines: &[String], raw_view: RawSideView) {
         let q_str = self.query.value().to_string();
         if q_str.is_empty() {
@@ -198,6 +196,24 @@ impl SearchState {
 
         self.current_match = 0;
         self.target_jump = self.matches.first().map(|m| (m.line_idx, m.col_idx));
+    }
+
+    /// The `evicted` oldest history lines were dropped: shift matches up, drop those that
+    /// were on removed lines. Matches are sorted by line (built in history order)
+    pub fn rebase_after_eviction(&mut self, evicted: usize) {
+        let removed = self.matches.partition_point(|m| m.line_idx < evicted);
+        self.matches.drain(..removed);
+        for m in &mut self.matches {
+            m.line_idx -= evicted;
+        }
+
+        self.current_match = self
+            .current_match
+            .saturating_sub(removed)
+            .min(self.matches.len().saturating_sub(1));
+        self.target_jump = self
+            .target_jump
+            .and_then(|(line, col)| line.checked_sub(evicted).map(|line| (line, col)));
     }
 
     pub fn current_match_position(&self) -> Option<(usize, usize)> {
@@ -529,6 +545,16 @@ mod tests {
         assert_eq!((m.col_idx, m.byte_offset, m.byte_len), (0, 5, 2));
     }
 
+    /// A raw-byte match in Hex display mode highlights from its digit group, not a separator (#24).
+    /// How: search byte 0x42 in "ABC" shown as "41 42 43", expect col 3.
+    #[test]
+    fn raw_search_in_hex_display_starts_on_group() {
+        let mut s = search("42", SearchModeKind::RawBytes);
+        s.update_matches_from_entries(&history(&["ABC"]), LineDisplayMode::Hex, RawSideView::Hex);
+        assert_eq!(s.matches.len(), 1);
+        assert_eq!((s.matches[0].col_idx, s.matches[0].byte_offset), (3, 1));
+    }
+
     /// Locks bug #18: lowercasing non-ASCII shifts the match column.
     /// How: 'İ' grows from 2 to 3 bytes, so col 2 instead of 1.
     #[test]
@@ -550,6 +576,31 @@ mod tests {
         s.query = Input::default();
         s.update_matches_from_entries(&history(&["a"]), LineDisplayMode::Pretty, RawSideView::Hex);
         assert!(s.matches.is_empty());
+        assert_eq!(s.target_jump, None);
+    }
+
+    /// Eviction shifts matches, drops the ones on removed lines and keeps the current one.
+    /// How: matches on lines 0, 2, 3 with the current on line 2, then 1 then 3 lines evicted.
+    #[test]
+    fn rebase_after_eviction_shifts_and_drops() {
+        let mut s = search("a", SearchModeKind::Text);
+        s.update_matches_from_entries(
+            &history(&["a", "b", "a", "a"]),
+            LineDisplayMode::Pretty,
+            RawSideView::Hex,
+        );
+        s.next_match();
+        assert_eq!(s.current_match_position(), Some((2, 0)));
+
+        s.rebase_after_eviction(1);
+        let lines: Vec<usize> = s.matches.iter().map(|m| m.line_idx).collect();
+        assert_eq!(lines, [1, 2]);
+        assert_eq!(s.current_match_position(), Some((1, 0)));
+        assert_eq!(s.target_jump, Some((1, 0)));
+
+        s.rebase_after_eviction(3);
+        assert!(s.matches.is_empty());
+        assert_eq!(s.current_match, 0);
         assert_eq!(s.target_jump, None);
     }
 

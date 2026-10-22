@@ -316,6 +316,7 @@ pub struct LineModeConfig {
     pub wrap_mode: WrapMode,
     pub wrap_indent: PrefixWrapBehavior,
     pub history_size: usize,
+    pub send_history_size: usize,
     pub show_partial_rx: bool,
     pub line_prefix: String,
     pub line_indent_prefix: String,
@@ -335,6 +336,7 @@ impl Default for LineModeConfig {
             wrap_mode: WrapMode::default(),
             wrap_indent: PrefixWrapBehavior::default(),
             history_size: 1000,
+            send_history_size: 1000,
             show_partial_rx: true,
             line_prefix: String::from("│ "),
             line_indent_prefix: String::from("│ "),
@@ -369,6 +371,11 @@ pub struct TerminalModeConfig {
     pub rows: u16,
     pub cols: u16,
     pub dimension_mode: TerminalDimensionMode,
+    /// Scrollback lines kept by the emulator. Biggest memory user of the app: vt100 stores
+    /// every line as a full row of 32 B cells, even blank ones, so memory is about
+    /// `history_size × cols × 32 B` (2500 × 80 cols ≈ 6.4 MB, × 250 cols ≈ 20 MB).
+    /// With `GrowOnly` the emulator keeps the widest width it has seen, and new lines use it
+    /// even after the window shrinks (rows already in scrollback keep their own width)
     pub history_size: usize,
     pub empty_fill_char: String,
     pub unfocused_cursor_glyph: String,
@@ -381,7 +388,7 @@ impl Default for TerminalModeConfig {
             rows: 24,
             cols: 80,
             dimension_mode: TerminalDimensionMode::GrowOnly,
-            history_size: 5000,
+            history_size: 2500,
             empty_fill_char: String::from("░"),
             unfocused_cursor_glyph: String::from("█"),
             logging: TerminalLogConfig::default(),
