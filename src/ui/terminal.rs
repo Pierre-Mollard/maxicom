@@ -35,13 +35,6 @@ pub fn render_vt100_terminal(
     let view_height = content_area.height as usize;
     let focus = app.focus_target();
     let is_terminal_focused = focus == FocusTarget::Terminal;
-    let cursor = MaxicomCursor::from_config(
-        *theme.ui.cursor_unfocused,
-        app.settings()
-            .terminal_mode
-            .unfocused_cursor_glyph
-            .to_owned(),
-    );
     let raw_view = app.settings().raw_side.view;
 
     if let Some((target_row, target_col)) = app.terminal_mode.search_mut().target_jump.take() {
@@ -53,6 +46,10 @@ pub fn render_vt100_terminal(
         );
     }
 
+    let cursor = MaxicomCursor::from_config(
+        *theme.ui.cursor_unfocused,
+        &app.settings().terminal_mode.unfocused_cursor_glyph,
+    );
     let term_widget = MaxicomTerminal::new(app.terminal_mode.vt100_screen())
         .x_offset(app.terminal_mode.pan_offset_x() as u16)
         .y_offset(app.terminal_mode.pan_offset_y() as u16)
@@ -214,22 +211,21 @@ pub fn render_vt100_terminal(
         if copy_state.selection_anchor.is_some() {
             let (start_pos, end_pos) = copy_state.normalized_selection().unwrap();
 
-            for r in 0..content_area.height as usize {
+            // one pass over the rows, rows().nth(r) would rebuild every row before r
+            let visible_rows = app
+                .terminal_mode
+                .vt100_screen()
+                .rows(0, cols)
+                .skip(pan_y)
+                .take(content_area.height as usize);
+
+            for (r, row_text) in visible_rows.enumerate() {
                 let emulator_row = r + pan_y;
-                if emulator_row >= grid_rows as usize {
-                    break;
-                }
                 let world_row = top_visible_world_line + emulator_row;
 
                 if world_row < start_pos.line_idx || world_row > end_pos.line_idx {
                     continue;
                 }
-                let row_text = app
-                    .terminal_mode
-                    .vt100_screen()
-                    .rows(0, cols)
-                    .nth(emulator_row)
-                    .unwrap_or_default();
                 let trimmed_len = row_text.trim_end().chars().count();
                 for c in 0..content_area.width as usize {
                     let world_col = c + pan_x;
@@ -359,12 +355,7 @@ pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect, theme: 
     let start_idx = end_idx.saturating_sub(vt_rows);
 
     let mut lines = Vec::with_capacity(rows_to_draw);
-    let sample_ts = chrono::Local::now();
-    let ts_width = sample_ts
-        .format(&app.settings().timestamp_format)
-        .to_string()
-        .chars()
-        .count();
+    let blank_ts = " ".repeat(app.settings().timestamp_width());
 
     for row in 0..rows_to_draw {
         let source_row = row + pan_y;
@@ -385,9 +376,8 @@ pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect, theme: 
                 Span::styled("│", theme.terminal.timestamp_del),
             ]));
         } else {
-            let spaces = " ".repeat(ts_width);
             lines.push(Line::from(vec![
-                Span::raw(spaces),
+                Span::raw(blank_ts.as_str()),
                 Span::styled("│", theme.terminal.timestamp_del_empty),
             ]));
         }
@@ -442,8 +432,10 @@ pub fn render_vt100_raw_side_panel(
     let rows_to_render = view_height.min((grid_rows as usize).saturating_sub(pan_y));
     let mut raw_lines = Vec::with_capacity(rows_to_render);
 
-    for (r, row_raw_bytes) in screen
+    // formatted bytes and plain text (for column -> byte resolution) walked together in one pass
+    for (r, (row_raw_bytes, plain_text)) in screen
         .rows_formatted(0, cols)
+        .zip(screen.rows(0, cols))
         .skip(pan_y)
         .take(rows_to_render)
         .enumerate()
@@ -451,9 +443,6 @@ pub fn render_vt100_raw_side_panel(
         let emulator_row = r + pan_y;
         let world_row = top_visible_world_line + emulator_row;
         let raw_bytes_slice = row_raw_bytes.as_slice();
-
-        // Plain text for column -> byte resolution:
-        let plain_text = screen.rows(0, cols).nth(emulator_row).unwrap_or_default();
 
         let mut plain_char_to_byte = Vec::with_capacity(plain_text.chars().count() + 1);
         for (b_idx, _) in plain_text.char_indices() {

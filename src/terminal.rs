@@ -8,24 +8,24 @@ use ratatui::{
 use tui_term::widget::{Cell, Screen};
 
 #[derive(Debug, Clone)]
-pub struct MaxicomCursor {
+pub struct MaxicomCursor<'a> {
     pub show: bool,
-    pub unfocused_symbol: String,
+    pub unfocused_symbol: &'a str,
     pub unfocused_style: Style,
 }
 
-impl Default for MaxicomCursor {
+impl Default for MaxicomCursor<'_> {
     fn default() -> Self {
         Self {
             show: true,
-            unfocused_symbol: String::from("█"),
+            unfocused_symbol: "█",
             unfocused_style: Style::default(),
         }
     }
 }
 
-impl MaxicomCursor {
-    pub fn from_config(unfocused: Style, symbol: String) -> Self {
+impl<'a> MaxicomCursor<'a> {
+    pub fn from_config(unfocused: Style, symbol: &'a str) -> Self {
         Self {
             show: true,
             unfocused_symbol: symbol,
@@ -40,7 +40,7 @@ pub struct MaxicomTerminal<'a, S> {
     y_offset: u16,
     block: Option<Block<'a>>,
     style: Option<Style>,
-    cursor: MaxicomCursor,
+    cursor: MaxicomCursor<'a>,
     empty_filling_char: &'a str,
     outside_filling_style: Style,
     focused: bool,
@@ -73,7 +73,7 @@ impl<'a, S: Screen> MaxicomTerminal<'a, S> {
 
     #[inline]
     #[must_use]
-    pub fn cursor(mut self, cursor: MaxicomCursor) -> Self {
+    pub fn cursor(mut self, cursor: MaxicomCursor<'a>) -> Self {
         self.cursor = cursor;
         self
     }
@@ -225,7 +225,7 @@ fn handle<S: Screen>(term: &MaxicomTerminal<S>, area: Rect, buf: &mut Buffer) {
             if source_cell.has_contents() {
                 dst.set_style(term.cursor.unfocused_style);
             } else {
-                dst.set_symbol(&term.cursor.unfocused_symbol);
+                dst.set_symbol(term.cursor.unfocused_symbol);
                 dst.set_style(term.cursor.unfocused_style);
             }
         }

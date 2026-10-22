@@ -109,12 +109,7 @@ impl ScreenLayout {
 
         let (gutter_area, remaining_after_gutter) = match input_mode {
             Mode::Terminal if app.settings().show_timestamps => {
-                let sample_ts = chrono::Local::now();
-                let ts_width = sample_ts
-                    .format(&app.settings().timestamp_format)
-                    .to_string()
-                    .chars()
-                    .count() as u16;
+                let ts_width = app.settings().timestamp_width() as u16;
 
                 let gutter_w = ts_width.saturating_add(1).min(inner_monitor.width);
                 let chunks = Layout::default()

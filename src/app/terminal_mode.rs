@@ -613,6 +613,10 @@ impl TerminalMode {
         self.logger.is_active()
     }
 
+    pub fn flush_logger_if_due(&mut self) {
+        let _ = self.logger.flush_if_due();
+    }
+
     pub fn logger_active_path(&self) -> &PathBuf {
         self.logger.active_path()
     }
@@ -666,6 +670,10 @@ impl TerminalMode {
 
     pub fn trigger_flash(&mut self) {
         self.flash_until = Some(Instant::now() + Duration::from_millis(120));
+    }
+
+    pub fn has_pending_flash(&self) -> bool {
+        self.flash_until.is_some()
     }
 
     pub fn is_flashing(&mut self) -> bool {

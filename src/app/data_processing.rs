@@ -2,6 +2,74 @@
 
 use crate::configs::LineDisplayMode;
 
+/// Digits of every byte value packed one after another ("00" "01" .. "FF" for hex),
+/// built at compile time so formatting a byte is a slice lookup, no allocation.
+/// Slices are `&'static str`, so a `Span` can borrow them instead of owning a `String`
+/// per byte per frame (what `const_hex::Buffer` + `to_string` forced before).
+/// One routine for every radix: `bits_per_digit` is 4 (hex), 3 (octal) or 1 (binary)
+/// and `width` the digits per byte, each digit is a shift + mask into `DIGITS`.
+/// -Claude (mon gars sure)
+const fn byte_digits_table<const LEN: usize>(width: usize, bits_per_digit: usize) -> [u8; LEN] {
+    const DIGITS: &[u8; 16] = b"0123456789ABCDEF";
+    let mask = (1 << bits_per_digit) - 1;
+    let mut table = [0u8; LEN];
+    let mut byte = 0;
+    while byte < 256 {
+        let mut digit = 0;
+        while digit < width {
+            let shift = bits_per_digit * (width - 1 - digit);
+            table[byte * width + digit] = DIGITS[(byte >> shift) & mask];
+            digit += 1;
+        }
+        byte += 1;
+    }
+    table
+}
+
+const fn table_as_str(table: &'static [u8]) -> &'static str {
+    match std::str::from_utf8(table) {
+        Ok(s) => s,
+        Err(_) => panic!("byte digits table is not ascii"),
+    }
+}
+
+static HEX_TABLE: [u8; 512] = byte_digits_table(2, 4);
+static OCTAL_TABLE: [u8; 768] = byte_digits_table(3, 3);
+static BINARY_TABLE: [u8; 2048] = byte_digits_table(8, 1);
+static HEX_DIGITS: &str = table_as_str(&HEX_TABLE);
+static OCTAL_DIGITS: &str = table_as_str(&OCTAL_TABLE);
+static BINARY_DIGITS: &str = table_as_str(&BINARY_TABLE);
+
+/// "00".."FF"
+#[inline]
+pub fn hex_byte_str(b: u8) -> &'static str {
+    &HEX_DIGITS[b as usize * 2..b as usize * 2 + 2]
+}
+
+/// "000".."377"
+#[inline]
+pub fn octal_byte_str(b: u8) -> &'static str {
+    &OCTAL_DIGITS[b as usize * 3..b as usize * 3 + 3]
+}
+
+/// "00000000".."11111111"
+#[inline]
+pub fn binary_byte_str(b: u8) -> &'static str {
+    &BINARY_DIGITS[b as usize * 8..b as usize * 8 + 8]
+}
+
+/// Space separated digits of each byte, in one allocation
+fn join_byte_digits(bytes: &[u8], width: usize, digits_of: fn(u8) -> &'static str) -> String {
+    let mut out = String::with_capacity(bytes.len() * (width + 1));
+    for (i, &b) in bytes.iter().enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        out.push_str(digits_of(b));
+    }
+    out
+}
+
 pub fn displayable_line_string(text: &str, mode: LineDisplayMode) -> String {
     match mode {
         LineDisplayMode::Pretty | LineDisplayMode::Clean => {
@@ -21,39 +89,9 @@ pub fn displayable_line_string(text: &str, mode: LineDisplayMode) -> String {
             }
             raw
         }
-        LineDisplayMode::Hex => {
-            let bytes = text.as_bytes();
-            if bytes.is_empty() {
-                return String::new();
-            }
-            bytes
-                .iter()
-                .map(|b| format!("{b:02X}"))
-                .collect::<Vec<String>>()
-                .join(" ")
-        }
-        LineDisplayMode::Octal => {
-            let bytes = text.as_bytes();
-            if bytes.is_empty() {
-                return String::new();
-            }
-            bytes
-                .iter()
-                .map(|b| format!("{b:03o}"))
-                .collect::<Vec<String>>()
-                .join(" ")
-        }
-        LineDisplayMode::Binary => {
-            let bytes = text.as_bytes();
-            if bytes.is_empty() {
-                return String::new();
-            }
-            bytes
-                .iter()
-                .map(|b| format!("{b:08b}"))
-                .collect::<Vec<String>>()
-                .join(" ")
-        }
+        LineDisplayMode::Hex => join_byte_digits(text.as_bytes(), 2, hex_byte_str),
+        LineDisplayMode::Octal => join_byte_digits(text.as_bytes(), 3, octal_byte_str),
+        LineDisplayMode::Binary => join_byte_digits(text.as_bytes(), 8, binary_byte_str),
     }
 }
 
@@ -246,6 +284,17 @@ mod tests {
         LineDisplayMode::Octal,
         LineDisplayMode::Binary,
     ];
+
+    /// The compile-time digit tables agree with `format!` for every byte value.
+    /// How: compares all 256 bytes in each radix.
+    #[test]
+    fn byte_digit_tables_match_format() {
+        for b in 0..=255u8 {
+            assert_eq!(hex_byte_str(b), format!("{b:02X}"));
+            assert_eq!(octal_byte_str(b), format!("{b:03o}"));
+            assert_eq!(binary_byte_str(b), format!("{b:08b}"));
+        }
+    }
 
     /// Pretty and Clean drop ANSI styling and the trailing EOL.
     /// How: compares against a colored CRLF line.

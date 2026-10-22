@@ -5,7 +5,9 @@ use crate::{
         scroller::ScrollStatus,
         types::{FocusTarget, ViewportSize},
     },
-    configs::{KeyResolver, Mode, SettingsConfig, WrapMode, settings::PrefixWrapBehavior},
+    configs::{
+        DualBufferMode, KeyResolver, Mode, SettingsConfig, WrapMode, settings::PrefixWrapBehavior,
+    },
     inputs::{Action, AppAction, CopyModeAction, HistoryAction, SearchModeAction, SideViewAction},
     logger::{LineLogger, TerminalLogger},
     notification::{NotificationManager, ToastLevel},
@@ -178,15 +180,13 @@ impl App {
             self.prefix_active = false;
         }
 
-        let effect = match action {
+        match action {
             Action::App(action) => self.update_action_app(action),
             Action::TransmitRaw(bytes) => {
-                if self.settings.local_echo {
-                    let text = String::from_utf8_lossy(&bytes);
-                    if self.settings.mode == Mode::Line {
-                        self.line_mode
-                            .push_history(&text, &self.settings.timestamp_format);
-                    }
+                if self.settings.local_echo && self.settings.mode == Mode::Line {
+                    let text = String::from_utf8_lossy(&bytes).into_owned();
+                    self.line_mode
+                        .push_history(text, &self.settings.timestamp_format);
                 }
                 UpdateEffect::Transmit(bytes)
             }
@@ -251,10 +251,36 @@ impl App {
                 }
             }
             Action::Ignore => UpdateEffect::None,
-        };
+        }
+    }
 
-        self.notifications.tick();
-        effect
+    pub fn feed_rx(&mut self, chunk: &[u8]) {
+        let settings = &self.settings;
+        let feed_line = settings.dual_mode_buffering == DualBufferMode::AlwaysBoth
+            || settings.mode == Mode::Line;
+        let feed_terminal = settings.dual_mode_buffering == DualBufferMode::AlwaysBoth
+            || settings.mode == Mode::Terminal;
+
+        if feed_line {
+            self.line_mode.feed_rx(
+                settings.line_mode.rx_eol,
+                settings.encoding,
+                &settings.timestamp_format,
+                chunk,
+            );
+        }
+        if feed_terminal {
+            self.terminal_mode.process_rx(settings.encoding, chunk);
+        }
+    }
+
+    /// Returns true when something on screen changed with time alone (needs a redraw)
+    pub fn tick(&mut self) -> bool {
+        self.line_mode.flush_logger_if_due();
+        self.terminal_mode.flush_logger_if_due();
+
+        let toasts_expired = self.notifications.tick();
+        toasts_expired || self.terminal_mode.has_pending_flash()
     }
 
     fn update_action_app(&mut self, action: AppAction) -> UpdateEffect {

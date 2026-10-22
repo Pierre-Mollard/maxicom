@@ -281,7 +281,7 @@ pub fn parse_raw_bytes_for_view(input: &str, raw_view: RawSideView) -> Option<Ve
         return None;
     }
 
-    match raw_view {
+    let parsed = match raw_view {
         RawSideView::Hex | RawSideView::Off => {
             let clean = q.replace("0x", " ").replace("\\x", " ");
             if clean.contains(' ') {
@@ -348,7 +348,10 @@ pub fn parse_raw_bytes_for_view(input: &str, raw_view: RawSideView) -> Option<Ve
                 u8::from_str_radix(&clean, 2).map(|b| vec![b]).ok()
             }
         }
-    }
+    };
+
+    // a prefix alone ("0x", "0b"...) leaves no byte to search
+    parsed.filter(|bytes| !bytes.is_empty())
 }
 
 #[inline]
@@ -359,8 +362,9 @@ pub fn find_byte_subslice_iter<'a>(
     let needle_len = needle.len();
     let is_valid = !needle.is_empty() && needle_len <= haystack.len();
 
+    // windows(0) panics, an empty needle simply matches nothing (is_valid)
     haystack
-        .windows(needle_len)
+        .windows(needle_len.max(1))
         .enumerate()
         .filter_map(move |(idx, window)| {
             if is_valid && window == needle {
@@ -461,24 +465,20 @@ mod tests {
         assert_eq!(find_byte_subslice_iter(b"ab", b"abc").count(), 0);
     }
 
-    /// Locks bug #27: a lone "0x" parses to an empty needle.
-    /// How: parses "0x" in Hex view.
+    /// A prefix alone ("0x", "0o", "0b") is not a valid query (#27).
+    /// How: parses each prefix in its view.
     #[test]
-    fn parse_prefix_only_gives_empty_needle() {
-        // FIXME: current behavior, see #27: typing only "0x" in byte search yields an empty needle
-        assert_eq!(
-            parse_raw_bytes_for_view("0x", RawSideView::Hex),
-            Some(vec![])
-        );
+    fn parse_prefix_only_is_rejected() {
+        assert_eq!(parse_raw_bytes_for_view("0x", RawSideView::Hex), None);
+        assert_eq!(parse_raw_bytes_for_view("0o", RawSideView::Octal), None);
+        assert_eq!(parse_raw_bytes_for_view("0b", RawSideView::Binary), None);
     }
 
-    /// Locks bug #27: an empty needle panics (crashes the app).
-    /// How: `should_panic` on the `windows(0)` message.
+    /// An empty needle matches nothing instead of panicking (#27).
+    /// How: counts matches of b"" in a haystack.
     #[test]
-    #[should_panic(expected = "window size must be non-zero")]
-    fn subslice_empty_needle_panics() {
-        // FIXME: current behavior, see #27: windows(0) panics, so "0x" in byte search crashes
-        let _ = find_byte_subslice_iter(b"abc", b"").count();
+    fn subslice_empty_needle_matches_nothing() {
+        assert_eq!(find_byte_subslice_iter(b"abc", b"").count(), 0);
     }
 
     /// Text search ignores case and jumps to the first match.

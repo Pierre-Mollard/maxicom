@@ -6,7 +6,10 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::configs::{LineDisplayMode, ThemeConfig, settings::RawSideOrientation};
+use crate::{
+    configs::{LineDisplayMode, ThemeConfig, settings::RawSideOrientation},
+    ui::data_display::byte_digit_spans,
+};
 
 pub struct CharHighlight {
     pub start_col: usize,
@@ -58,72 +61,13 @@ pub fn format_raw_bytes_with_highlights(
     }
 
     let mut spans = match display_mode {
-        LineDisplayMode::Hex => {
-            let mut s = Vec::with_capacity(bytes.len() * 2);
-            let mut buf = const_hex::Buffer::<1>::new();
-            for (i, &b) in bytes.iter().enumerate() {
-                let color = theme.byte_color(b);
-                let hex_str = buf.format_upper(&[b]);
-                s.push(Span::styled(
-                    hex_str.to_string(),
-                    Style::default().fg(color),
-                ));
-                if i + 1 < bytes.len() {
-                    s.push(Span::styled(
-                        " ",
-                        Style::default().fg(theme.palette.text_muted),
-                    ));
-                }
-            }
-            s
-        }
-        LineDisplayMode::Octal => {
-            let mut s = Vec::with_capacity(bytes.len() * 2);
-            for (i, &b) in bytes.iter().enumerate() {
-                let color = theme.byte_color(b);
-                let mut octal_buf = [0u8; 3];
-                octal_buf[0] = b'0' + ((b >> 6) & 0x07);
-                octal_buf[1] = b'0' + ((b >> 3) & 0x07);
-                octal_buf[2] = b'0' + (b & 0x07);
-                let octal_str = unsafe { std::str::from_utf8_unchecked(&octal_buf) };
-                s.push(Span::styled(
-                    octal_str.to_string(),
-                    Style::default().fg(color),
-                ));
-                if i + 1 < bytes.len() {
-                    s.push(Span::styled(
-                        " ",
-                        Style::default().fg(theme.palette.text_muted),
-                    ));
-                }
-            }
-            s
-        }
-        LineDisplayMode::Binary => {
-            let mut s = Vec::with_capacity(bytes.len() * 2);
-            for (i, &b) in bytes.iter().enumerate() {
-                let color = theme.byte_color(b);
-                let mut bin_buf = [0u8; 8];
-                (0..8).for_each(|bit| {
-                    bin_buf[bit] = if (b & (1 << (7 - bit))) != 0 {
-                        b'1'
-                    } else {
-                        b'0'
-                    };
-                });
-                let bin_str = unsafe { std::str::from_utf8_unchecked(&bin_buf) };
-                s.push(Span::styled(
-                    bin_str.to_string(),
-                    Style::default().fg(color),
-                ));
-                if i + 1 < bytes.len() {
-                    s.push(Span::styled(
-                        " ",
-                        Style::default().fg(theme.palette.text_muted),
-                    ));
-                }
-            }
-            s
+        LineDisplayMode::Hex | LineDisplayMode::Octal | LineDisplayMode::Binary => {
+            byte_digit_spans(
+                bytes,
+                display_mode,
+                Style::default().fg(theme.palette.text_muted),
+                theme,
+            )
         }
         _ => {
             let text = String::from_utf8_lossy(bytes);

@@ -2,7 +2,7 @@ use std::{
     fs::File,
     io::{self, ErrorKind, stdout},
     process::ExitCode,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crossterm::{
@@ -15,7 +15,7 @@ use crate::{
     app::{App, UpdateEffect, selection::copy_via_osc52},
     args::{ParseOutcome, RunMode, parse_args, print_help},
     bytesource::ByteSource,
-    configs::{AppConfig, DualBufferMode, KeyResolver, Mode},
+    configs::{AppConfig, KeyResolver, Mode},
     overlays::{ErrorDialog, Overlay},
     serial::{SerialConfig, SerialDevice, SerialError},
     ui::{PostRenderEffect, layout::LayoutWarning, render},
@@ -37,6 +37,17 @@ mod ui;
 // 1 -- General failure
 // 2 -- Invalid argument
 const EXIT_USAGE: u8 = 2;
+
+/// Input events handled before a frame is drawn, so a flood can't stall rendering
+const MAX_EVENTS_PER_FRAME: usize = 512;
+/// Max time spent reading serial in one loop iteration before handling input and drawing
+const RX_DRAIN_BUDGET: Duration = Duration::from_millis(5);
+/// Min time between two frames (~60 fps), frames are only drawn when something changed
+const FRAME_INTERVAL: Duration = Duration::from_millis(16);
+/// Redraw at least this often even when idle (status bar clock)
+const MAX_FRAME_AGE: Duration = Duration::from_secs(1);
+/// Longest wait for input when nothing is happening
+const IDLE_WAIT: Duration = Duration::from_millis(10);
 
 pub struct TerminalGuard {
     pub terminal: DefaultTerminal,
@@ -119,7 +130,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             Ok(file) => Some(ByteSource::Replay {
                 file,
                 delay: Duration::from_millis(*delay_ms),
-                last_chunk: std::time::Instant::now(),
+                last_chunk: Instant::now(),
                 finished: false,
             }),
             Err(err) => {
@@ -156,60 +167,62 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         app.open_overlay(Overlay::DeviceDisconnected(app.serial_config.port.clone()));
     }
 
-    let mut last_reconnect_attempt = std::time::Instant::now();
+    let mut last_reconnect_attempt = Instant::now();
     let mut last_layout_warnings: Vec<LayoutWarning> = Vec::default();
-    let mut last_rx_activity = std::time::Instant::now();
+    let mut last_rx_activity = Instant::now();
+    let mut needs_redraw = true;
+    let mut last_draw: Option<Instant> = None;
 
-    while running {
+    'main: while running {
+        let mut rx_received = false;
+
         if let Some(ref mut dev) = device {
-            match dev.read(&mut input_buffer) {
-                Ok(0) => {}
-                Ok(bytes_read) => {
-                    let chunk = &input_buffer[..bytes_read];
-                    last_rx_activity = std::time::Instant::now();
-                    app.stats.update_rx(bytes_read);
-                    if app.settings().dual_mode_buffering == DualBufferMode::AlwaysBoth {
-                        app.line_mode.feed_rx(
-                            app.settings().line_mode.rx_eol,
-                            app.settings().encoding,
-                            &app.settings().timestamp_format.to_string(),
-                            chunk,
-                        );
-                        app.terminal_mode.process_rx(app.settings().encoding, chunk);
-                    } else {
-                        match app.settings().mode {
-                            Mode::Line => {
-                                app.line_mode.feed_rx(
-                                    app.settings().line_mode.rx_eol,
-                                    app.settings().encoding,
-                                    &app.settings().timestamp_format.to_string(),
-                                    chunk,
-                                );
-                            }
-                            Mode::Terminal => {
-                                app.terminal_mode.process_rx(app.settings().encoding, chunk);
-                            }
+            // read everything already waiting (bounded), instead of one buffer per frame
+            let drain_start = Instant::now();
+            loop {
+                match dev.read(&mut input_buffer) {
+                    Ok(0) => break,
+                    Ok(bytes_read) => {
+                        let chunk = &input_buffer[..bytes_read];
+                        last_rx_activity = Instant::now();
+                        rx_received = true;
+                        app.stats.update_rx(bytes_read);
+                        app.feed_rx(chunk);
+                        if drain_start.elapsed() >= RX_DRAIN_BUDGET {
+                            break;
                         }
                     }
-                }
-                Err(SerialError::InputClosed) => {
-                    device = None;
-                    app.open_overlay(Overlay::DeviceDisconnected(app.serial_config.port.clone()));
-                    app.notify_warn("Device Lost");
-                }
-                Err(SerialError::ReadFailed(e)) => {
-                    app.open_overlay(Overlay::Error(
-                        ErrorDialog::new("Serial Read Error", "Could not read from device buffer")
+                    Err(SerialError::InputClosed) => {
+                        device = None;
+                        app.open_overlay(Overlay::DeviceDisconnected(
+                            app.serial_config.port.clone(),
+                        ));
+                        app.notify_warn("Device Lost");
+                        needs_redraw = true;
+                        break;
+                    }
+                    Err(SerialError::ReadFailed(e)) => {
+                        app.open_overlay(Overlay::Error(
+                            ErrorDialog::new(
+                                "Serial Read Error",
+                                "Could not read from device buffer",
+                            )
                             .with_details(e),
-                    ));
-                }
-                Err(e) => {
-                    eprintln!("Serial read error: {e:?}");
-                    app.notify_error("Serial read error unkown");
-                    break;
+                        ));
+                        needs_redraw = true;
+                        break;
+                    }
+                    Err(e) => {
+                        eprintln!("Serial read error: {e:?}");
+                        app.notify_error("Serial read error unkown");
+                        break 'main;
+                    }
                 }
             }
+            needs_redraw |= rx_received;
+        }
 
+        if device.is_some() {
             if !is_replay
                 && !inactivity_timeout.is_zero()
                 && last_rx_activity.elapsed() >= inactivity_timeout
@@ -220,6 +233,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     "Device idle for {}s: port detached",
                     inactivity_timeout.as_secs()
                 ));
+                needs_redraw = true;
             }
         } else {
             let is_detached_by_user = matches!(app.overlay(), Some(Overlay::DeviceDetached(_)));
@@ -227,19 +241,38 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 && !is_detached_by_user
                 && last_reconnect_attempt.elapsed() >= Duration::from_millis(500)
             {
-                last_reconnect_attempt = std::time::Instant::now();
+                last_reconnect_attempt = Instant::now();
                 if let Ok(new_dev) = SerialDevice::open(&app.serial_config) {
                     device = Some(ByteSource::Live(new_dev));
-                    last_rx_activity = std::time::Instant::now();
+                    last_rx_activity = Instant::now();
                     if let Some(Overlay::DeviceDisconnected(_)) = app.overlay() {
                         app.close_overlay();
                     }
                     app.notify_success(format!("Device Reconnected: {}", app.serial_config.port));
+                    needs_redraw = true;
                 }
             }
         }
 
-        if let Ok(Some(event)) = inputs::poll_event(Duration::from_millis(10)) {
+        // the input poll is the loop's only idle wait: none while RX flows, otherwise until the
+        // next frame is due (if one is pending) or IDLE_WAIT. Then drain what is already pending
+        // (key bursts, pastes) before drawing, instead of one event per frame
+        let since_draw = last_draw.map_or(Duration::MAX, |t| t.elapsed());
+        let mut poll_timeout = if rx_received {
+            Duration::ZERO
+        } else if needs_redraw {
+            FRAME_INTERVAL.saturating_sub(since_draw).min(IDLE_WAIT)
+        } else {
+            IDLE_WAIT
+        };
+        let mut handled_events = 0;
+        while running
+            && handled_events < MAX_EVENTS_PER_FRAME
+            && let Ok(Some(event)) = inputs::poll_event(poll_timeout)
+        {
+            poll_timeout = Duration::ZERO;
+            handled_events += 1;
+            needs_redraw = true;
             let action = inputs::handle_event(event, &app);
             match app.update(action) {
                 UpdateEffect::Quit => running = false,
@@ -255,7 +288,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                             match SerialDevice::open(&app.serial_config) {
                                 Ok(dev) => {
                                     device = Some(ByteSource::Live(dev));
-                                    last_rx_activity = std::time::Instant::now();
+                                    last_rx_activity = Instant::now();
                                     app.close_overlay();
                                     app.notify_success(format!(
                                         "Reconnected to {}",
@@ -273,7 +306,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     if let Some(ref mut dev) = device {
                         match dev.write(&bytes) {
                             Ok(()) => {
-                                last_rx_activity = std::time::Instant::now();
+                                last_rx_activity = Instant::now();
                                 if !is_replay {
                                     app.stats.update_tx(bytes.len());
                                 }
@@ -320,10 +353,20 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
         }
 
+        needs_redraw |= app.tick();
+
+        let since_draw = last_draw.map_or(Duration::MAX, |t| t.elapsed());
+        needs_redraw |= since_draw >= MAX_FRAME_AGE;
+        if !needs_redraw || since_draw < FRAME_INTERVAL {
+            continue;
+        }
+
         let mut post_render_effect = PostRenderEffect::None;
         guard.terminal.draw(|frame| {
             post_render_effect = render(&mut app, &theme, frame, &highlight_rules);
         })?;
+        last_draw = Some(Instant::now());
+        needs_redraw = false;
 
         match post_render_effect {
             PostRenderEffect::None => {
@@ -357,6 +400,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                             }
                         };
                         app.notify_warn(msg);
+                        needs_redraw = true;
                     }
                 }
                 last_layout_warnings = current_warnings;

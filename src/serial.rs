@@ -331,7 +331,8 @@ impl SerialDevice {
             }
         }
 
-        port.set_read_timeout(Duration::from_millis(10))
+        // short: the main loop idles in the input poll, a read only waits for late bytes
+        port.set_read_timeout(Duration::from_millis(1))
             .map_err(SerialError::ConfigFailed)?;
 
         let mut dev = Self { port };

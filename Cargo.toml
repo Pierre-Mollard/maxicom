@@ -30,7 +30,6 @@ strip = true
 [dependencies]
 ansi-to-tui = "8.0.1"
 chrono = "0.4.45"
-const-hex = "1.19.3"
 crossterm = "0.29.0"
 dirs = "7.0.0"
 humantime-serde = "1.1.1"
@@ -45,4 +44,4 @@ toml = "1.1.4"
 tui-input = "0.15.4"
 tui-term = "0.3.4"
 unicode-width = "0.2.2"
-vt100 = "0.16.2"
+vt100 = "0.16.2" # TODO: i think there is an API to get the scrollback size of the emulator, this could drop a WARN

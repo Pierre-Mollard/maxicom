@@ -1,11 +1,13 @@
 /// Convert data stream to strings or raw bytes/hex/octal while cleaning escape sequences and stuff
 use ansi_to_tui::IntoText;
-use const_hex::Buffer;
 use ratatui::{style::Style, text::Span};
 use std::borrow::Cow;
 use std::fmt::Write as _;
 
-use crate::configs::{LineDisplayMode, ThemeConfig};
+use crate::{
+    app::data_processing::{binary_byte_str, hex_byte_str, octal_byte_str},
+    configs::{LineDisplayMode, ThemeConfig},
+};
 
 pub fn sanitize_terminal_control_sequences(text: &str) -> Cow<'_, str> {
     if !text.contains('\x1b') {
@@ -119,83 +121,41 @@ pub fn format_line_content(
                 Style::default().fg(theme.raw_inspector.byte_any),
             )]
         }
-        LineDisplayMode::Hex => {
+        LineDisplayMode::Hex | LineDisplayMode::Octal | LineDisplayMode::Binary => {
             let bytes = text.as_bytes();
             if bytes.is_empty() {
                 return vec![Span::raw("")];
             }
-
-            let mut spans = Vec::with_capacity(bytes.len() * 2);
-            let mut buf = Buffer::<1>::new();
-
-            for (i, &b) in bytes.iter().enumerate() {
-                let color = theme.byte_color(b);
-                let hex_str = buf.format_upper(&[b]);
-                spans.push(Span::styled(
-                    hex_str.to_string(),
-                    Style::default().fg(color),
-                ));
-
-                if i + 1 < bytes.len() {
-                    spans.push(Span::raw(" "));
-                }
-            }
-
-            spans
-        }
-        LineDisplayMode::Octal => {
-            let bytes = text.as_bytes();
-            if bytes.is_empty() {
-                return vec![Span::raw("")];
-            }
-            let mut spans = Vec::with_capacity(bytes.len() * 2);
-            for (i, &b) in bytes.iter().enumerate() {
-                let color = theme.byte_color(b);
-                let mut octal_buf = [0u8; 3];
-                octal_buf[0] = b'0' + ((b >> 6) & 0x07);
-                octal_buf[1] = b'0' + ((b >> 3) & 0x07);
-                octal_buf[2] = b'0' + (b & 0x07);
-                let octal_str = unsafe { std::str::from_utf8_unchecked(&octal_buf) };
-
-                spans.push(Span::styled(
-                    octal_str.to_string(),
-                    Style::default().fg(color),
-                ));
-                if i + 1 < bytes.len() {
-                    spans.push(Span::raw(" "));
-                }
-            }
-            spans
-        }
-        LineDisplayMode::Binary => {
-            let bytes = text.as_bytes();
-            if bytes.is_empty() {
-                return vec![Span::raw("")];
-            }
-            let mut spans = Vec::with_capacity(bytes.len() * 2);
-            for (i, &b) in bytes.iter().enumerate() {
-                let color = theme.byte_color(b);
-                let mut bin_buf = [0u8; 8];
-                (0..8).for_each(|bit| {
-                    bin_buf[bit] = if (b & (1 << (7 - bit))) != 0 {
-                        b'1'
-                    } else {
-                        b'0'
-                    };
-                });
-                let bin_str = unsafe { std::str::from_utf8_unchecked(&bin_buf) };
-
-                spans.push(Span::styled(
-                    bin_str.to_string(),
-                    Style::default().fg(color),
-                ));
-                if i + 1 < bytes.len() {
-                    spans.push(Span::raw(" "));
-                }
-            }
-            spans
+            byte_digit_spans(bytes, mode, Style::default(), theme)
         }
     }
+}
+
+/// One span per byte colored by `theme.byte_color`, separated by `separator_style` spaces
+/// (spans 2*i are bytes, 2*i+1 separators). Spans borrow static digit strings, no alloc per byte.
+pub fn byte_digit_spans(
+    bytes: &[u8],
+    mode: LineDisplayMode,
+    separator_style: Style,
+    theme: &ThemeConfig,
+) -> Vec<Span<'static>> {
+    let digits_of = match mode {
+        LineDisplayMode::Octal => octal_byte_str,
+        LineDisplayMode::Binary => binary_byte_str,
+        _ => hex_byte_str,
+    };
+
+    let mut spans = Vec::with_capacity(bytes.len() * 2);
+    for (i, &b) in bytes.iter().enumerate() {
+        spans.push(Span::styled(
+            digits_of(b),
+            Style::default().fg(theme.byte_color(b)),
+        ));
+        if i + 1 < bytes.len() {
+            spans.push(Span::styled(" ", separator_style));
+        }
+    }
+    spans
 }
 
 #[cfg(test)]

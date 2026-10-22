@@ -93,9 +93,10 @@ impl LineMode {
         timestamp_f: &str,
         bytes: &[u8],
     ) {
+        let now = Local::now();
         for &b in bytes {
             if self.partial_line.is_empty() {
-                self.partial_line_timestamp = Some(Local::now());
+                self.partial_line_timestamp = Some(now);
             }
 
             match b {
@@ -117,7 +118,7 @@ impl LineMode {
                     if self.pending_carriage_return {
                         self.pending_carriage_return = false;
                         self.partial_line.clear();
-                        self.partial_line_timestamp = Some(Local::now());
+                        self.partial_line_timestamp = Some(now);
                     }
                     self.partial_line.push(byte);
                 }
@@ -127,17 +128,17 @@ impl LineMode {
 
     fn commit_partial_line(&mut self, encoding: TextEncoding, timestamp_f: &str) {
         let line = encoding.decode(&self.partial_line);
-        self.push_history(&line, timestamp_f);
+        self.push_history(line, timestamp_f);
         self.partial_line.clear();
     }
 
-    pub fn push_history(&mut self, line: &str, timestamp_f: &str) {
+    pub fn push_history(&mut self, line: String, timestamp_f: &str) {
         let timestamp = self
             .partial_line_timestamp
             .take()
             .unwrap_or_else(Local::now);
         let entry = LogEntry {
-            text: line.to_string(),
+            text: line,
             timestamp,
         };
 
@@ -224,7 +225,7 @@ impl LineMode {
                 }
 
                 if settings.local_echo {
-                    self.push_history(&text, &settings.timestamp_format);
+                    self.push_history(text.clone(), &settings.timestamp_format);
                 }
 
                 // consumming string!
@@ -445,6 +446,10 @@ impl LineMode {
 
     pub fn is_logging(&self) -> bool {
         self.logger.is_active()
+    }
+
+    pub fn flush_logger_if_due(&mut self) {
+        let _ = self.logger.flush_if_due();
     }
 
     pub fn logger_active_path(&self) -> &PathBuf {

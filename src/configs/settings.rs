@@ -479,11 +479,15 @@ pub struct SettingsConfig {
     pub highlights_path: Option<PathBuf>,
     pub ui: UiConfig,
     pub raw_side: RawSideConfig,
+
+    // cache
+    #[serde(skip)]
+    timestamp_width: usize,
 }
 
 impl Default for SettingsConfig {
     fn default() -> Self {
-        Self {
+        let mut settings = Self {
             local_echo: false,
             encoding: TextEncoding::default(),
             rx_buffer_size: 4096,
@@ -499,7 +503,10 @@ impl Default for SettingsConfig {
             highlights_path: None,
             ui: UiConfig::default(),
             raw_side: RawSideConfig::default(),
-        }
+            timestamp_width: 0,
+        };
+        settings.refresh_timestamp_width();
+        settings
     }
 }
 
@@ -513,7 +520,7 @@ impl SettingsConfig {
                 path: path.to_path_buf(),
                 source: e,
             })?;
-            let config: SettingsConfig =
+            let mut config: SettingsConfig =
                 toml::from_str(&content).map_err(|e| SettingsError::Parse {
                     path: path.to_path_buf(),
                     source: e,
@@ -522,6 +529,7 @@ impl SettingsConfig {
                 path: path.to_path_buf(),
                 source: err,
             })?;
+            config.refresh_timestamp_width();
             config
         } else {
             let default_config = SettingsConfig::default();
@@ -588,13 +596,24 @@ impl SettingsConfig {
         Ok(())
     }
 
+    /// WARN: Must be called again if `timestamp_format` changes (it is only set at load for now)
+    fn refresh_timestamp_width(&mut self) {
+        let sample = chrono::Local::now()
+            .format(&self.timestamp_format)
+            .to_string();
+        self.timestamp_width = sample.chars().count();
+    }
+
+    #[inline]
+    pub fn timestamp_width(&self) -> usize {
+        self.timestamp_width
+    }
+
     pub fn line_gutter_width(&self) -> usize {
         let mut width = 0;
 
         if self.show_timestamps {
-            let sample_time = chrono::Local::now();
-            let ts_str = sample_time.format(&self.timestamp_format).to_string();
-            width += ts_str.chars().count();
+            width += self.timestamp_width;
         }
 
         width += self.line_mode.line_prefix.chars().count();
@@ -700,5 +719,25 @@ impl std::error::Error for SettingsError {
             Self::Parse { source, .. } => Some(source),
             Self::Validation { source, .. } => Some(source),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Settings derived at load time.
+
+    use super::*;
+
+    /// The cached timestamp width matches a formatted timestamp, and feeds the line gutter.
+    /// How: default format "[%H:%M:%S%.3f]" is 14 chars, plus the 2-char line prefix.
+    #[test]
+    fn timestamp_width_is_cached_from_format() {
+        let mut settings = SettingsConfig::default();
+        assert_eq!(settings.timestamp_width(), 14);
+        settings.show_timestamps = true;
+        assert_eq!(
+            settings.line_gutter_width(),
+            14 + settings.line_mode.line_prefix.chars().count()
+        );
     }
 }
