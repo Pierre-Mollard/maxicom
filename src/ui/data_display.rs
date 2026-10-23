@@ -8,8 +8,28 @@ use crate::{
         Piece, binary_byte_str, displayable_line_string, hex_byte_str, octal_byte_str,
         plain_visible_line, walk_visible_line,
     },
+    app::types::LogEntry,
     configs::{LineDisplayMode, ThemeConfig},
 };
+
+/// Spans of a history entry: the byte modes show the bytes received, the others its decoded
+/// text (#20)
+pub fn format_entry_content(
+    entry: &LogEntry,
+    mode: LineDisplayMode,
+    theme: &ThemeConfig,
+) -> Vec<Span<'static>> {
+    match mode {
+        LineDisplayMode::Hex | LineDisplayMode::Octal | LineDisplayMode::Binary => {
+            let bytes = entry.wire_bytes();
+            if bytes.is_empty() {
+                return vec![Span::raw("")];
+            }
+            byte_digit_spans(bytes, mode, Style::default(), theme)
+        }
+        _ => format_line_content(&entry.text, mode, theme),
+    }
+}
 
 pub fn format_line_content(
     text: &str,

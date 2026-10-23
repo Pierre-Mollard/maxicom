@@ -149,8 +149,8 @@ mod tests {
     use crate::{
         app::UpdateEffect,
         configs::{
-            KeyBindingsConfig, KeyResolver, LineDisplayMode, RxNewlineMode, SettingsConfig,
-            TextEncoding,
+            KeyBindingsConfig, KeyResolver, LineDisplayMode, RawSideView, RxNewlineMode,
+            SettingsConfig, TextEncoding,
         },
         inputs::{Action, HistoryAction},
         serial::SerialConfig,
@@ -188,9 +188,13 @@ mod tests {
         }
 
         fn feed(&mut self, bytes: &[u8]) {
+            self.feed_as(TextEncoding::Utf8, bytes);
+        }
+
+        fn feed_as(&mut self, encoding: TextEncoding, bytes: &[u8]) {
             self.app
                 .line_mode
-                .feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, "%H", bytes);
+                .feed_rx(RxNewlineMode::Auto, encoding, "%H", bytes);
         }
 
         fn scroll(&mut self, action: HistoryAction) {
@@ -288,5 +292,26 @@ mod tests {
         // and scroll to bottom is back to the live view
         h.scroll(HistoryAction::ScrollToBottom);
         assert_eq!(binary_rows(&h.draw()), views[0]);
+    }
+
+    /// The raw panel and the byte display modes show the bytes received for a Latin1 line (#20).
+    /// How: "xéy" received as 78 E9 79 in Latin1, raw panel in Hex, then the main view in Hex.
+    #[test]
+    fn raw_panel_and_hex_view_show_received_bytes() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+        h.app.settings_mut().raw_side.view = RawSideView::Hex;
+        h.feed_as(TextEncoding::Latin1, b"x\xE9y\n");
+        let rows = h.draw();
+        let line = rows.iter().find(|row| row.contains("xéy")).unwrap();
+        assert!(line.contains("78 E9 79"), "{line}");
+        assert!(!line.contains("C3 A9"), "{line}");
+
+        h.app.settings_mut().raw_side.view = RawSideView::Off;
+        h.app.settings_mut().line_mode.display_mode = LineDisplayMode::Hex;
+        let rows = h.draw();
+        assert!(
+            rows.iter().any(|row| row.contains("78 E9 79 0A")),
+            "{rows:#?}"
+        );
     }
 }

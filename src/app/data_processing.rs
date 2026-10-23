@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use unicode_width::UnicodeWidthChar;
 
-use crate::configs::LineDisplayMode;
+use crate::{app::types::LogEntry, configs::LineDisplayMode};
 
 /// Digits of every byte value packed one after another ("00" "01" .. "FF" for hex),
 /// built at compile time so formatting a byte is a slice lookup, no allocation.
@@ -278,6 +278,40 @@ pub fn displayable_line_string(text: &str, mode: LineDisplayMode) -> Cow<'_, str
         LineDisplayMode::Octal => Cow::Owned(join_byte_digits(text.as_bytes(), 3, octal_byte_str)),
         LineDisplayMode::Binary => {
             Cow::Owned(join_byte_digits(text.as_bytes(), 8, binary_byte_str))
+        }
+    }
+}
+
+/// Display text of a history entry: the byte modes (Hex, Octal, Binary) show the bytes received,
+/// the others the decoded text (#20)
+pub fn entry_display_text(entry: &LogEntry, mode: LineDisplayMode) -> Cow<'_, str> {
+    let bytes = entry.wire_bytes();
+    match mode {
+        LineDisplayMode::Hex => Cow::Owned(join_byte_digits(bytes, 2, hex_byte_str)),
+        LineDisplayMode::Octal => Cow::Owned(join_byte_digits(bytes, 3, octal_byte_str)),
+        LineDisplayMode::Binary => Cow::Owned(join_byte_digits(bytes, 8, binary_byte_str)),
+        _ => displayable_line_string(&entry.text, mode),
+    }
+}
+
+/// For each byte of [`entry_display_text`] (and its end), the received byte it shows: straight
+/// from the received bytes in the byte modes, through the decoded text and
+/// [`LogEntry::text_to_wire_offsets`] in the others (#20)
+pub fn entry_display_to_wire_map(entry: &LogEntry, mode: LineDisplayMode) -> Vec<usize> {
+    match mode {
+        LineDisplayMode::Hex | LineDisplayMode::Octal | LineDisplayMode::Binary => {
+            build_display_to_raw_byte_map(entry.wire_bytes(), mode)
+        }
+        _ => {
+            let to_text = build_display_to_raw_byte_map(entry.text.as_bytes(), mode);
+            if entry.wire.is_none() {
+                return to_text;
+            }
+            let to_wire = entry.text_to_wire_offsets();
+            to_text
+                .into_iter()
+                .map(|text_byte| to_wire[text_byte])
+                .collect()
         }
     }
 }
@@ -717,6 +751,40 @@ mod tests {
                 "{text:?}"
             );
         }
+    }
+
+    /// Entry display text and map go to the bytes received: byte modes format them, the other
+    /// modes map their decoded text back through `text_to_wire_offsets` (#20).
+    /// How: "xéy" received as 78 E9 79 0A in Latin1, in Hex and Pretty; a UTF-8 line unchanged.
+    #[test]
+    fn entry_display_and_map_use_received_bytes() {
+        use crate::configs::TextEncoding;
+        let wire = b"x\xE9y\n";
+        let entry = LogEntry::received(
+            TextEncoding::Latin1.decode(wire),
+            wire,
+            chrono::Local::now(),
+        );
+        assert_eq!(
+            entry_display_text(&entry, LineDisplayMode::Hex),
+            "78 E9 79 0A"
+        );
+        assert_eq!(
+            entry_display_to_wire_map(&entry, LineDisplayMode::Hex),
+            build_display_to_raw_byte_map(wire, LineDisplayMode::Hex)
+        );
+        // "xéy": é is 2 display bytes, both on the received byte 1; the end is the wire's
+        assert_eq!(entry_display_text(&entry, LineDisplayMode::Pretty), "xéy");
+        assert_eq!(
+            entry_display_to_wire_map(&entry, LineDisplayMode::Pretty),
+            [0, 1, 1, 2, 3]
+        );
+
+        let utf8 = LogEntry::new(String::from("xéy\n"), chrono::Local::now());
+        assert_eq!(
+            entry_display_to_wire_map(&utf8, LineDisplayMode::Pretty),
+            build_display_to_raw_byte_map("xéy\n".as_bytes(), LineDisplayMode::Pretty)
+        );
     }
 
     /// Tabs expand to the next 8 column stop counted in display width, wide chars count 2.

@@ -2,8 +2,8 @@ use std::collections::VecDeque;
 use tui_input::Input;
 
 use crate::app::data_processing::{
-    build_display_to_raw_byte_map, displayable_line_string, map_disp_byte_to_raw,
-    raw_byte_to_display_col, safe_byte_to_char_col,
+    entry_display_text, entry_display_to_wire_map, map_disp_byte_to_raw, raw_byte_to_display_col,
+    safe_byte_to_char_col,
 };
 use crate::app::types::LogEntry;
 use crate::configs::LineDisplayMode;
@@ -60,14 +60,14 @@ impl SearchState {
                 if let Some(target_bytes) = parse_raw_bytes_for_view(&q_str, raw_view) {
                     let needle_len = target_bytes.len();
                     'outer_raw: for (line_idx, entry) in history.iter().enumerate() {
-                        let raw_bytes = entry.text.as_bytes();
+                        let raw_bytes = entry.wire_bytes();
                         let mut found =
                             find_byte_subslice_iter(raw_bytes, &target_bytes).peekable();
                         if found.peek().is_none() {
                             continue;
                         }
-                        let display_text = displayable_line_string(&entry.text, display_mode);
-                        let disp_map = build_display_to_raw_byte_map(raw_bytes, display_mode);
+                        let display_text = entry_display_text(entry, display_mode);
+                        let disp_map = entry_display_to_wire_map(entry, display_mode);
 
                         for (occ, raw_byte_idx) in found.enumerate() {
                             let col_idx =
@@ -94,15 +94,15 @@ impl SearchState {
                 let q_char_len = q_str.chars().count();
 
                 'outer_text: for (line_idx, entry) in history.iter().enumerate() {
-                    let raw_bytes = entry.text.as_bytes();
-                    let display_text = displayable_line_string(&entry.text, display_mode);
+                    let raw_bytes = entry.wire_bytes();
+                    let display_text = entry_display_text(entry, display_mode);
                     let mut found =
                         find_ascii_case_insensitive_iter(display_text.as_bytes(), needle)
                             .peekable();
                     if found.peek().is_none() {
                         continue;
                     }
-                    let disp_map = build_display_to_raw_byte_map(raw_bytes, display_mode);
+                    let disp_map = entry_display_to_wire_map(entry, display_mode);
 
                     for (occurrence, disp_byte_idx) in found.enumerate() {
                         let col_idx = safe_byte_to_char_col(&display_text, disp_byte_idx);
@@ -434,10 +434,7 @@ mod tests {
     fn history(lines: &[&str]) -> VecDeque<LogEntry> {
         lines
             .iter()
-            .map(|t| LogEntry {
-                text: t.to_string(),
-                timestamp: Local::now(),
-            })
+            .map(|t| LogEntry::new(t.to_string(), Local::now()))
             .collect()
     }
 

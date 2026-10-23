@@ -199,10 +199,7 @@ mod tests {
             timestamp: false,
         });
         logger.start().unwrap();
-        let entry = LogEntry {
-            text: "hello".to_string(),
-            timestamp: Local::now(),
-        };
+        let entry = LogEntry::new("hello".to_string(), Local::now());
         logger.log_entry(&entry, "%H").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
 

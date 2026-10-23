@@ -6,7 +6,9 @@ use tui_input::Input;
 use crate::{
     app::{
         UpdateEffect,
-        data_processing::displayable_line_string,
+        data_processing::{
+            build_display_to_raw_byte_map, entry_display_text, entry_display_to_wire_map,
+        },
         raw_scroller::RawSideScroller,
         scroller::{ScrollStatus, ViewportScroller},
         search::SearchState,
@@ -143,26 +145,26 @@ impl LineMode {
 
     fn commit_partial_line(&mut self, encoding: TextEncoding, timestamp_f: &str) {
         let line = encoding.decode(&self.partial_line);
-        self.push_entry(line, timestamp_f);
+        let timestamp = self.take_line_timestamp();
+        let entry = LogEntry::received(line, &self.partial_line, timestamp);
+        self.push_entry(entry, timestamp_f);
         self.partial_line.clear();
     }
 
     pub fn push_history(&mut self, line: String, timestamp_f: &str) {
-        self.push_entry(line, timestamp_f);
+        let entry = LogEntry::new(line, self.take_line_timestamp());
+        self.push_entry(entry, timestamp_f);
         self.rebase_line_refs();
     }
 
-    /// Push without rebasing line indexes, the caller rebases once for a whole batch
-    fn push_entry(&mut self, line: String, timestamp_f: &str) {
-        let timestamp = self
-            .partial_line_timestamp
+    fn take_line_timestamp(&mut self) -> DateTime<Local> {
+        self.partial_line_timestamp
             .take()
-            .unwrap_or_else(Local::now);
-        let entry = LogEntry {
-            text: line,
-            timestamp,
-        };
+            .unwrap_or_else(Local::now)
+    }
 
+    /// Push without rebasing line indexes, the caller rebases once for a whole batch
+    fn push_entry(&mut self, entry: LogEntry, timestamp_f: &str) {
         let _ = self.logger.log_entry(&entry, timestamp_f);
         self.local_history.push_back(entry);
 
@@ -329,7 +331,7 @@ impl LineMode {
             let display_text = self
                 .local_history
                 .get(self.copy_state.cursor.line_idx)
-                .map(|e| displayable_line_string(&e.text, display_mode))
+                .map(|e| entry_display_text(e, display_mode))
                 .unwrap_or_default();
             if let Some(sub_action) = dispatch_copy_key_vi(
                 &mut self.vi_state_copymode,
@@ -395,7 +397,7 @@ impl LineMode {
         let cursor_char_idx = self.copy_state.cursor.char_idx;
         let content_width =
             if let Some(entry) = self.local_history.get(self.copy_state.cursor.line_idx) {
-                let display_text = displayable_line_string(&entry.text, display_mode);
+                let display_text = entry_display_text(entry, display_mode);
                 let chars_before: String = display_text.chars().take(cursor_char_idx).collect();
                 unicode_width::UnicodeWidthStr::width(chars_before.as_str())
             } else {
@@ -708,13 +710,20 @@ impl<'a> TextSource for LineModeTextSource<'a> {
     fn get_line_text(&mut self, line_idx: usize) -> Option<String> {
         self.history
             .get(line_idx)
-            .map(|e| displayable_line_string(&e.text, self.display_mode).into_owned())
+            .map(|e| entry_display_text(e, self.display_mode).into_owned())
     }
 
     fn get_line_raw_bytes(&mut self, line_idx: usize) -> Option<Vec<u8>> {
         self.history
             .get(line_idx)
-            .map(|entry| entry.text.as_bytes().to_vec())
+            .map(|entry| entry.wire_bytes().to_vec())
+    }
+
+    fn get_line_raw_map(&mut self, line_idx: usize, raw_bytes: &[u8]) -> Vec<usize> {
+        match self.history.get(line_idx) {
+            Some(entry) => entry_display_to_wire_map(entry, self.display_mode),
+            None => build_display_to_raw_byte_map(raw_bytes, self.display_mode),
+        }
     }
 
     #[inline]
@@ -736,7 +745,7 @@ mod tests {
     //! RX ingest: line splitting, EOL modes, history cap and known data-model bugs.
 
     use super::*;
-    use crate::configs::LineLogConfig;
+    use crate::{app::search::SearchModeKind, configs::LineLogConfig};
 
     fn line_mode(max_lines: usize) -> LineMode {
         LineMode::new(max_lines, 1000, LineLogger::new(LineLogConfig::default()))
@@ -884,12 +893,10 @@ mod tests {
         assert_eq!(lm.copy_state().cursor.line_idx, 0);
     }
 
-    /// Locks bug #20: the history stores decoded UTF-8, not the bytes received.
-    /// How: Latin1 0xE9 is stored as C3 A9.
+    /// A Latin1 line keeps its decoded text and the byte received (#20).
+    /// How: E9 received in Latin1 is "é" as text and E9 on the wire.
     #[test]
-    fn latin1_line_does_not_keep_wire_bytes() {
-        // FIXME: current behavior, see #20: the entry stores decoded UTF-8, so the raw panel
-        // shows C3 A9 instead of the E9 byte received on the wire
+    fn latin1_line_keeps_wire_bytes() {
         let mut lm = line_mode(10);
         lm.feed_rx(
             RxNewlineMode::Auto,
@@ -897,7 +904,8 @@ mod tests {
             TS,
             &[0xE9, b'\n'],
         );
-        assert_eq!(lm.history()[0].text.as_bytes(), [0xC3, 0xA9, b'\n']);
+        assert_eq!(lm.history()[0].text, "é\n");
+        assert_eq!(lm.history()[0].wire_bytes(), [0xE9, b'\n']);
     }
     /// A multi-line paste in the prompt acts like typing it: each line break submits, all
     /// submitted lines go out in one write, and the text after the last break stays typed.
@@ -918,5 +926,81 @@ mod tests {
         };
         assert_eq!(bytes, [b"als", eol, b"pwd", eol].concat());
         assert_eq!(lm.input().value(), "ec");
+    }
+
+    /// Feeds one line received as `wire` (plus LF) with `encoding`
+    fn received(encoding: TextEncoding, wire: &[u8]) -> LineMode {
+        let mut lm = line_mode(10);
+        let mut line = wire.to_vec();
+        line.push(b'\n');
+        lm.feed_rx(RxNewlineMode::Auto, encoding, TS, &line);
+        lm
+    }
+
+    /// The bytes raw yank and the raw panel get for an entry (`get_line_raw_bytes`) are the
+    /// bytes received, whatever the encoding (#20).
+    /// How: one byte that is not plain ASCII, received with each encoding.
+    #[test]
+    fn raw_bytes_of_entries_are_the_received_bytes() {
+        let cases: [(TextEncoding, &[u8]); 5] = [
+            (TextEncoding::Utf8, &[0xC3, 0xA9]),
+            (TextEncoding::Latin1, &[0xE9]),
+            (TextEncoding::Cp437, &[0x82]),
+            (TextEncoding::Utf8, &[0xFF]),
+            (TextEncoding::Ascii, &[0xE9]),
+        ];
+        for (encoding, wire) in cases {
+            let lm = received(encoding, wire);
+            let mut source = LineModeTextSource {
+                history: &lm.local_history,
+                display_mode: LineDisplayMode::Pretty,
+                raw_view: RawSideView::Hex,
+                view_height: 10,
+            };
+            let mut expected = wire.to_vec();
+            expected.push(b'\n');
+            assert_eq!(
+                source.get_line_raw_bytes(0),
+                Some(expected),
+                "{encoding:?} {wire:02X?}"
+            );
+        }
+    }
+
+    /// Yanking a Latin1 line in the Hex raw view gives the bytes received (#20).
+    /// How: select "xéy" received as 78 E9 79 and yank raw.
+    #[test]
+    fn raw_yank_gives_received_bytes() {
+        let mut lm = received(TextEncoding::Latin1, b"x\xE9y");
+        let mut settings = SettingsConfig::default();
+        settings.raw_side.view = RawSideView::Hex;
+        lm.copy_state.enter_at(0, 0);
+        lm.handle_copy_action(CopyModeAction::Select, &settings);
+        lm.handle_copy_action(CopyModeAction::EndOfLine, &settings);
+        let yanked = lm.handle_copy_action(CopyModeAction::YankRaw, &settings);
+        assert_eq!(yanked.as_deref(), Some("78 E9 79 0A"));
+    }
+
+    /// Raw search looks for the bytes received: a Latin1 "é" is found as E9, not as its
+    /// decoded C3 A9, and the match's column is the "é" in the text (#20).
+    /// How: raw searches for E9 and for C3 A9 on "xéy" received as 78 E9 79.
+    #[test]
+    fn raw_search_sees_received_bytes() {
+        let mut lm = received(TextEncoding::Latin1, b"x\xE9y");
+        let mut found = |query: &str| {
+            lm.search_state = SearchState {
+                active: true,
+                query: Input::from(query),
+                mode_kind: SearchModeKind::RawBytes,
+                ..Default::default()
+            };
+            lm.update_search_matches(LineDisplayMode::Pretty, RawSideView::Hex);
+            lm.search_state.matches.len()
+        };
+        assert_eq!(found("E9"), 1);
+        assert_eq!(found("C3 A9"), 0);
+        found("E9");
+        let m = &lm.search_state.matches[0];
+        assert_eq!((m.col_idx, m.byte_offset, m.byte_len), (1, 1, 1));
     }
 }

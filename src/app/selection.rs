@@ -22,6 +22,12 @@ pub trait TextSource {
         self.get_line_text(line_idx).map(|s| s.into_bytes()) // fallback default
     }
 
+    /// Display byte -> raw byte map of a line, built from its raw bytes by default (a source
+    /// whose raw bytes are not its text's bytes overrides it, #20)
+    fn get_line_raw_map(&mut self, _line_idx: usize, raw_bytes: &[u8]) -> Vec<usize> {
+        build_display_to_raw_byte_map(raw_bytes, self.display_mode())
+    }
+
     fn raw_view(&mut self) -> RawSideView;
     fn display_mode(&mut self) -> LineDisplayMode {
         LineDisplayMode::Pretty
@@ -352,8 +358,7 @@ impl CopyModeState {
                                 .copied()
                                 .unwrap_or(text.len());
 
-                            let disp_map =
-                                build_display_to_raw_byte_map(&raw_bytes, source.display_mode());
+                            let disp_map = source.get_line_raw_map(idx, &raw_bytes);
                             let raw_from_byte =
                                 map_disp_byte_to_raw(disp_from_byte, &disp_map, raw_bytes.len());
                             let raw_to_byte = if to_char >= len {

@@ -10,9 +10,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::{
     app::{
         App,
-        data_processing::{
-            build_display_to_raw_byte_map, displayable_line_string, map_disp_byte_to_raw,
-        },
+        data_processing::{entry_display_text, entry_display_to_wire_map, map_disp_byte_to_raw},
         search::SearchMatch,
         types::{FocusTarget, LogEntry},
     },
@@ -25,7 +23,7 @@ use crate::{
         common::{
             apply_keyword_highlights, apply_selection_to_spans, border_style_for, render_search_bar,
         },
-        data_display::format_line_content,
+        data_display::{format_entry_content, format_line_content},
         layout::{LogicalLineLayout, PreparedLayout, prepare_view_layout},
         raw_side::{
             CharHighlight, format_raw_bytes_with_highlights, raw_panel_layout,
@@ -63,7 +61,7 @@ pub fn history_entry_to_line(
         theme.line_mode.line_prefix,
     ));
 
-    let mut content_spans = format_line_content(&entry.text, display_mode, theme);
+    let mut content_spans = format_entry_content(entry, display_mode, theme);
 
     if !line_matches.is_empty() {
         let normal_style = *theme.search.search_match;
@@ -326,11 +324,9 @@ pub fn render_monitor(
         let mut total_sub_bytes = 0;
 
         if let Some(entry) = app.line_mode.history().get(target_line) {
-            let raw_bytes = entry.text.as_bytes();
-            let display_text =
-                displayable_line_string(&entry.text, app.settings().line_mode.display_mode);
-            let disp_map =
-                build_display_to_raw_byte_map(raw_bytes, app.settings().line_mode.display_mode);
+            let raw_bytes = entry.wire_bytes();
+            let display_text = entry_display_text(entry, app.settings().line_mode.display_mode);
+            let disp_map = entry_display_to_wire_map(entry, app.settings().line_mode.display_mode);
 
             let target_raw_byte = if is_search_active {
                 app.line_mode
@@ -667,9 +663,8 @@ pub fn render_raw_side_panel(
         }
 
         if let Some(entry) = history.get(global_idx) {
-            let raw_bytes = entry.text.as_bytes();
-            let display_text =
-                displayable_line_string(&entry.text, app.settings().line_mode.display_mode);
+            let raw_bytes = entry.wire_bytes();
+            let display_text = entry_display_text(entry, app.settings().line_mode.display_mode);
 
             // Display text character -> byte mapping:
             let mut disp_char_to_byte = Vec::with_capacity(display_text.chars().count() + 1);
@@ -679,8 +674,7 @@ pub fn render_raw_side_panel(
             disp_char_to_byte.push(display_text.len());
 
             // Map from display byte -> raw wire byte:
-            let disp_map =
-                build_display_to_raw_byte_map(raw_bytes, app.settings().line_mode.display_mode);
+            let disp_map = entry_display_to_wire_map(entry, app.settings().line_mode.display_mode);
 
             let mut char_offset = 0;
 
