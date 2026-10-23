@@ -43,6 +43,5 @@ terminput = "0.5.15"
 terminput-crossterm = "0.4.11"
 toml = "1.1.4"
 tui-input = "0.15.4"
-tui-term = "0.3.4"
 unicode-width = "0.2.2"
-vt100 = "0.16.2" # TODO: i think there is an API to get the scrollback size of the emulator, this could drop a WARN
+vt100 = "0.18.1"

@@ -26,6 +26,7 @@ use crate::{
         dispatch_input_key, local_dispatchers::dispatch_copy_key_vi, paste_into_input,
     },
     logger::TerminalLogger,
+    terminal::{vt100_dim, vt100_size},
 };
 
 pub struct TerminalMode {
@@ -47,7 +48,7 @@ pub struct TerminalMode {
 
 impl TerminalMode {
     pub fn new(max_history_lines: usize, rows: u16, cols: u16, logger: TerminalLogger) -> Self {
-        let vt100_parser = Parser::new(rows, cols, max_history_lines);
+        let vt100_parser = Parser::new(vt100_dim(rows), vt100_dim(cols), max_history_lines);
         let search_state = SearchState::default();
         let copy_state = CopyModeState::default();
         let scroller = ViewportScroller::default();
@@ -72,7 +73,7 @@ impl TerminalMode {
 
     pub fn process_rx(&mut self, encoding: TextEncoding, raw_bytes: &[u8]) {
         let is_alternate = self.vt100_parser.screen().alternate_screen();
-        let vt_rows = self.vt100_parser.screen().size().0 as usize;
+        let vt_rows = vt100_size(self.vt100_parser.screen()).0 as usize;
 
         let _ = self.logger.log_raw_bytes(raw_bytes);
 
@@ -170,7 +171,7 @@ impl TerminalMode {
 
     pub fn row_has_content(&self, row: u16) -> bool {
         let screen = self.vt100_parser.screen();
-        let cols = screen.size().1;
+        let cols = vt100_size(screen).1;
         for c in 0..cols {
             if let Some(cell) = screen.cell(row, c)
                 && cell.has_contents()
@@ -198,7 +199,7 @@ impl TerminalMode {
     pub fn clear_history(&mut self) {
         let (rows, cols) = self.get_vt100_size();
 
-        self.vt100_parser = Parser::new(rows, cols, self.max_history_lines);
+        self.vt100_parser = Parser::new(vt100_dim(rows), vt100_dim(cols), self.max_history_lines);
         self.history_timestamps.clear();
         self.screen_timestamps = vec![None; rows as usize];
 
@@ -238,7 +239,7 @@ impl TerminalMode {
 
     // for 2D terminal mode the metrics and clamping is handled within the emulator
     fn clamp_pan_x(&mut self, visible_cols: usize) {
-        let vt_cols = self.vt100_parser.screen().size().1 as usize;
+        let vt_cols = vt100_size(self.vt100_parser.screen()).1 as usize;
         let max_pan = vt_cols.saturating_sub(visible_cols);
         self.scroller.max_pan_x = max_pan;
         self.scroller.offset_x = self.scroller.offset_x.min(max_pan);
@@ -263,7 +264,7 @@ impl TerminalMode {
     }
 
     pub fn max_screen_pan_y(&self) -> usize {
-        let vt_rows = self.vt100_parser.screen().size().0 as usize;
+        let vt_rows = vt100_size(self.vt100_parser.screen()).0 as usize;
         vt_rows.saturating_sub(self.scroller.view_height)
     }
 
@@ -350,30 +351,49 @@ impl TerminalMode {
         self.reconcile_both_vertical_scroll();
     }
 
-    // HACK: there is no scrollback current len from the crate, make PR?
     pub fn refresh_max_scrollback(&mut self) {
-        let current = self.vt100_parser.screen().scrollback();
-        self.vt100_parser.screen_mut().set_scrollback(usize::MAX);
-        self.max_content_scrollback = self.vt100_parser.screen().scrollback();
-        self.vt100_parser.screen_mut().set_scrollback(current);
+        self.max_content_scrollback = self.vt100_parser.screen().scrollback_len();
         self.scroller.max_scroll_y = self.max_vertical_scroll();
     }
 
     pub fn set_vt100_size(&mut self, rows: u16, cols: u16) {
-        let (old_rows, old_cols) = self.vt100_parser.screen().size();
+        let (old_rows, old_cols) = self.get_vt100_size();
         if (old_rows, old_cols) == (rows, cols) || rows == 0 || cols == 0 {
             return;
         }
 
-        self.vt100_parser.screen_mut().set_size(rows, cols);
+        let old_scrollback = self.vt100_parser.screen().scrollback_len();
+        self.vt100_parser
+            .screen_mut()
+            .set_size(vt100_dim(rows), vt100_dim(cols));
+        let new_scrollback = self.vt100_parser.screen().scrollback_len();
 
-        let new_rows = rows as usize;
-        self.screen_timestamps.resize(new_rows, None);
+        // since vt100 0.18 a smaller height pushes the top rows into scrollback and a taller one
+        // pulls them back, so their timestamps move between the screen and the history too
+        if new_scrollback > old_scrollback {
+            let pushed = (new_scrollback - old_scrollback).min(self.screen_timestamps.len());
+            for ts in self.screen_timestamps.drain(..pushed).flatten() {
+                if self.history_timestamps.len() >= self.max_history_lines {
+                    self.history_timestamps.pop_front();
+                }
+                self.history_timestamps.push_back(ts);
+            }
+        } else {
+            for _ in 0..old_scrollback - new_scrollback {
+                let ts = self.history_timestamps.pop_back();
+                self.screen_timestamps.insert(0, ts);
+            }
+        }
+        self.screen_timestamps.resize(rows as usize, None);
+
+        if !self.vt100_parser.screen().alternate_screen() {
+            self.refresh_max_scrollback();
+        }
     }
 
     /// Return (rows, cols)
     pub fn get_vt100_size(&self) -> (u16, u16) {
-        self.vt100_parser.screen().size()
+        vt100_size(self.vt100_parser.screen())
     }
 
     pub fn get_max_scrollback(&self) -> usize {
@@ -681,9 +701,9 @@ impl TerminalMode {
         let timestamp = Local::now().format("%Y%m%d_%H%M%S");
         let filename = format!("screen_{}.ans", timestamp);
 
-        let bytes = self.vt100_parser.screen().contents_formatted();
+        let contents = self.vt100_parser.screen().contents_formatted();
         let mut file = File::create(&filename)?;
-        file.write_all(&bytes)?;
+        file.write_all(contents.as_bytes())?;
 
         Ok(filename)
     }
@@ -775,7 +795,7 @@ pub fn read_vt100_world_line_text(
     world_row: usize,
 ) -> Option<String> {
     // this function is not a member to simlify ownership with TerminalModeTextSource
-    let (rows, cols) = parser.screen().size();
+    let (rows, cols) = vt100_size(parser.screen());
     let total_world = max_sb + rows as usize;
 
     if world_row >= total_world {
@@ -863,7 +883,7 @@ struct TerminalModeTextSource<'a> {
 
 impl<'a> TextSource for TerminalModeTextSource<'a> {
     fn total_lines(&mut self) -> usize {
-        let (rows, _) = self.parser.screen().size();
+        let (rows, _) = vt100_size(self.parser.screen());
         self.max_content_scrollback + (rows as usize)
     }
 
@@ -933,6 +953,85 @@ mod tests {
         assert_eq!(sent(KeyCode::Up, KeyModifiers::CONTROL, true), b"\x1b[1;5A");
         assert_eq!(sent(KeyCode::Char('a'), none, true), b"a");
         assert_eq!(sent(KeyCode::PageUp, none, true), b"\x1b[5~");
+    }
+
+    fn terminal(rows: u16) -> TerminalMode {
+        TerminalMode::new(
+            100,
+            rows,
+            80,
+            TerminalLogger::new(TerminalLogConfig::default()),
+        )
+    }
+
+    /// Feeds one line per chunk, 1 ms apart so every row gets a distinct timestamp.
+    fn feed_lines(tm: &mut TerminalMode, lines: &[&str]) {
+        for (i, line) in lines.iter().enumerate() {
+            let sep = if i + 1 < lines.len() { "\r\n" } else { "" };
+            tm.process_rx(TextEncoding::Utf8, format!("{line}{sep}").as_bytes());
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// Timestamps of every world row, history first (top to bottom).
+    fn timeline(tm: &TerminalMode) -> Vec<Option<DateTime<Local>>> {
+        (0..tm.total_timeline_len())
+            .map(|i| tm.get_timeline_timestamp(i))
+            .collect()
+    }
+
+    /// The max scrollback is the number of rows scrolled off, read with `scrollback_len` instead
+    /// of the old set/read/restore offset trick, and the view offset is left alone (#29).
+    /// How: 6 lines on a 3 row screen, scrolled back by 1.
+    #[test]
+    fn max_scrollback_counts_scrolled_rows() {
+        let mut tm = terminal(3);
+        feed_lines(&mut tm, &["1", "2", "3", "4", "5", "6"]);
+        assert_eq!(tm.get_max_scrollback(), 3);
+        tm.vt100_parser.screen_mut().set_scrollback(1);
+        tm.refresh_max_scrollback();
+        assert_eq!(tm.get_max_scrollback(), 3);
+        assert_eq!(tm.vt100_screen().scrollback(), 1);
+    }
+
+    /// vt100 0.18 pushes the top rows into scrollback when the height shrinks (cursor at the
+    /// bottom) and pulls them back when it grows: the timestamps follow their rows (#29).
+    /// How: 4 lines on 4 rows, shrink to 2, then grow back to 4, comparing the timestamps of
+    /// the whole world (history + screen) with the ones before.
+    #[test]
+    fn resize_moves_timestamps_with_rows() {
+        let mut tm = terminal(4);
+        feed_lines(&mut tm, &["a", "b", "c", "d"]);
+        let before = timeline(&tm);
+        assert_eq!(before.len(), 4);
+        // FIXME: current behavior, see #13: the first row never gets a timestamp, its "a\r\n"
+        // chunk stamps row 1 for the `\n` and checks the cursor row only after parsing
+        assert_eq!(before[0], None);
+        assert!(before[1..].iter().all(Option::is_some));
+
+        tm.set_vt100_size(2, 80);
+        assert_eq!(tm.get_max_scrollback(), 2);
+        // FIXME: current behavior, see #13: like when a row scrolls off in `process_rx`, a row
+        // without timestamp keeps nothing in the history, which ends up one short of scrollback
+        assert_eq!(timeline(&tm), before[1..]);
+
+        tm.set_vt100_size(4, 80);
+        assert_eq!(tm.get_max_scrollback(), 0);
+        assert_eq!(tm.history_timestamps.len(), 0);
+        assert_eq!(timeline(&tm), before);
+    }
+
+    /// With the cursor at the top, shrinking drops rows from the bottom (nothing goes to
+    /// scrollback), like before 0.18: the bottom timestamps are dropped.
+    /// How: 1 line on 4 rows, shrink to 2.
+    #[test]
+    fn resize_with_cursor_at_top_drops_bottom_rows() {
+        let mut tm = terminal(4);
+        feed_lines(&mut tm, &["a"]);
+        let before = timeline(&tm);
+        tm.set_vt100_size(2, 80);
+        assert_eq!(tm.get_max_scrollback(), 0);
+        assert_eq!(timeline(&tm), before[..2]);
     }
 
     /// The mode follows what the remote sends: `ESC[?1h` turns it on, `ESC[?1l` off.

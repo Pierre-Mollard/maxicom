@@ -13,7 +13,7 @@ use crate::{
         types::FocusTarget,
     },
     configs::{KeywordHighlight, RawSideView, ThemeConfig, settings::raw_view_to_display_mode},
-    terminal::{MaxicomCursor, MaxicomTerminal},
+    terminal::{MaxicomCursor, MaxicomTerminal, vt100_size},
     ui::{
         common::{apply_keyword_highlights, render_search_bar},
         raw_side::{
@@ -98,7 +98,8 @@ pub fn render_vt100_terminal(
                 .vt100_screen()
                 .rows_formatted(0, cols)
                 .nth(emulator_row)
-                .unwrap_or_default();
+                .unwrap_or_default()
+                .into_bytes();
 
             let plain_text = app
                 .terminal_mode
@@ -338,7 +339,7 @@ pub fn render_vt100_terminal(
 
 pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect, theme: &ThemeConfig) {
     let screen = app.terminal_mode.vt100_screen();
-    let vt_rows = screen.size().0 as usize;
+    let vt_rows = vt100_size(screen).0 as usize;
     let pan_y = app.terminal_mode.pan_offset_y();
 
     let remaining_vt_rows = vt_rows.saturating_sub(pan_y);
@@ -404,7 +405,7 @@ pub fn render_vt100_raw_side_panel(
 
     let display_mode = raw_view_to_display_mode(raw_view);
     let screen = app.terminal_mode.vt100_screen();
-    let (grid_rows, cols) = screen.size();
+    let (grid_rows, cols) = vt100_size(screen);
     let pan_y = app.terminal_mode.pan_offset_y();
     let max_sb = app.terminal_mode.get_max_scrollback();
     let current_sb = screen.scrollback();
@@ -441,7 +442,7 @@ pub fn render_vt100_raw_side_panel(
     {
         let emulator_row = r + pan_y;
         let world_row = top_visible_world_line + emulator_row;
-        let raw_bytes_slice = row_raw_bytes.as_slice();
+        let raw_bytes_slice = row_raw_bytes.as_bytes();
 
         let mut plain_char_to_byte = Vec::with_capacity(plain_text.chars().count() + 1);
         for (b_idx, _) in plain_text.char_indices() {
