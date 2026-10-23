@@ -1,85 +1,15 @@
 /// Convert data stream to strings or raw bytes/hex/octal while cleaning escape sequences and stuff
 use ansi_to_tui::IntoText;
 use ratatui::{style::Style, text::Span};
-use std::borrow::Cow;
 use std::fmt::Write as _;
 
 use crate::{
-    app::data_processing::{binary_byte_str, hex_byte_str, octal_byte_str},
+    app::data_processing::{
+        Piece, binary_byte_str, displayable_line_string, hex_byte_str, octal_byte_str,
+        plain_visible_line, walk_visible_line,
+    },
     configs::{LineDisplayMode, ThemeConfig},
 };
-
-pub fn sanitize_terminal_control_sequences(text: &str) -> Cow<'_, str> {
-    if !text.contains('\x1b') {
-        return Cow::Borrowed(text);
-    }
-
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' {
-            match chars.peek().copied() {
-                // Keep CSI (styles, controls)
-                Some('[') => {
-                    out.push(ch);
-                }
-                // OSC (ESC] to BELL or ESC\)
-                Some(']') => {
-                    chars.next();
-                    while let Some(c) = chars.next() {
-                        if c == '\x07' {
-                            break;
-                        }
-                        if c == '\x1b' && chars.peek() == Some(&'\\') {
-                            chars.next();
-                            break;
-                        }
-                    }
-                }
-                // DCS, APC, PM (ESC] to ESC\)
-                Some('P') | Some('_') | Some('^') => {
-                    chars.next();
-                    while let Some(c) = chars.next() {
-                        if c == '\x1b' && chars.peek() == Some(&'\\') {
-                            chars.next();
-                            break;
-                        }
-                    }
-                }
-                // 2-byte escape sequence (DECKPAM `=`, DECKPNM `>`, DECSC `7`, DECRC `8`, RIS `c`, etc.)
-                Some(next_ch) if next_ch.is_ascii() && !next_ch.is_ascii_control() => {
-                    chars.next();
-                }
-                _ => {}
-            }
-        } else {
-            out.push(ch);
-        }
-    }
-
-    Cow::Owned(out)
-}
-
-fn trim_trailing_incomplete_ansi(text: &str) -> &str {
-    if let Some(esc_idx) = text.rfind('\x1b') {
-        let tail = &text[esc_idx..];
-        if tail.len() == 1 {
-            return &text[..esc_idx];
-        }
-
-        if tail.starts_with("\x1b[") {
-            let is_finished = tail
-                .chars()
-                .skip(2)
-                .any(|c| c.is_ascii_alphabetic() || ('@'..='~').contains(&c));
-            if !is_finished {
-                return &text[..esc_idx];
-            }
-        }
-    }
-    text
-}
 
 pub fn format_line_content(
     text: &str,
@@ -88,21 +18,24 @@ pub fn format_line_content(
 ) -> Vec<Span<'static>> {
     match mode {
         LineDisplayMode::Pretty => {
-            let clean = text.trim_end_matches(['\r', '\n']);
-            let sanitized = sanitize_terminal_control_sequences(clean);
-            let displayable = trim_trailing_incomplete_ansi(&sanitized);
-            if let Ok(parsed) = displayable.as_bytes().into_text()
+            // nothing for ansi_to_tui to parse
+            if let Some(line) = plain_visible_line(text) {
+                return vec![Span::raw(line.to_owned())];
+            }
+            // the shown text with only its SGR colors around it: the same text as
+            // `displayable_line_string` (#25)
+            let mut styled = String::with_capacity(text.len());
+            walk_visible_line(text, |piece| match piece {
+                Piece::Shown(shown, _) | Piece::Sgr(shown) => styled.push_str(shown),
+            });
+            if let Ok(parsed) = styled.as_bytes().into_text()
                 && let Some(first_line) = parsed.lines.into_iter().next()
             {
                 return first_line.spans;
             }
-            vec![Span::raw(displayable.to_string())]
+            vec![Span::raw(displayable_line_string(text, mode).into_owned())]
         }
-        LineDisplayMode::Clean => {
-            let clean = text.trim_end_matches(['\r', '\n']);
-            let clean_text = strip_ansi_escapes::strip_str(clean);
-            vec![Span::raw(clean_text)]
-        }
+        LineDisplayMode::Clean => vec![Span::raw(displayable_line_string(text, mode).into_owned())],
         LineDisplayMode::Raw => {
             let mut raw = String::with_capacity(text.len());
             for ch in text.chars() {
@@ -163,54 +96,11 @@ mod tests {
     //! Turning a history line into styled spans for each display mode.
 
     use super::*;
-    use crate::app::data_processing::displayable_line_string;
+    use crate::app::data_processing::{build_display_to_raw_byte_map, displayable_line_string};
     use ratatui::style::Color;
 
     fn concat(spans: &[Span<'_>]) -> String {
         spans.iter().map(|s| s.content.as_ref()).collect()
-    }
-
-    /// Text without escapes is not copied.
-    /// How: checks for `Cow::Borrowed`.
-    #[test]
-    fn sanitize_borrows_when_no_escape() {
-        assert!(matches!(
-            sanitize_terminal_control_sequences("plain"),
-            Cow::Borrowed("plain")
-        ));
-    }
-
-    /// CSI styling is kept; OSC, DCS and 2-byte escapes are removed.
-    /// How: one input per sequence kind.
-    #[test]
-    fn sanitize_keeps_csi_and_drops_other_sequences() {
-        assert_eq!(
-            sanitize_terminal_control_sequences("\x1b[31mred\x1b[0m"),
-            "\x1b[31mred\x1b[0m"
-        );
-        assert_eq!(
-            sanitize_terminal_control_sequences("a\x1b]0;title\x07b"),
-            "ab"
-        );
-        assert_eq!(
-            sanitize_terminal_control_sequences("a\x1b]0;title\x1b\\b"),
-            "ab"
-        );
-        assert_eq!(
-            sanitize_terminal_control_sequences("a\x1bPdata\x1b\\b"),
-            "ab"
-        );
-        assert_eq!(sanitize_terminal_control_sequences("a\x1b7b"), "ab");
-    }
-
-    /// An unfinished escape at the end of a line is cut off.
-    /// How: complete and incomplete tails.
-    #[test]
-    fn trim_incomplete_ansi_tail() {
-        assert_eq!(trim_trailing_incomplete_ansi("abc\x1b"), "abc");
-        assert_eq!(trim_trailing_incomplete_ansi("abc\x1b[31"), "abc");
-        assert_eq!(trim_trailing_incomplete_ansi("abc\x1b[31m"), "abc\x1b[31m");
-        assert_eq!(trim_trailing_incomplete_ansi("abc"), "abc");
     }
 
     /// Pretty mode turns SGR colors into span styles.
@@ -254,6 +144,9 @@ mod tests {
             "\x1b[31mred\x1b[0m and \x1b[1;32mgreen\x1b[0m\r\n",
             "héllo wörld ✓",
             "a\x1b]0;title\x07b",
+            "name\tsize\tdate",
+            "\x1b[31m10%\r50%\r100% done\x1b[0m",
+            "a\x07b\x08c\x7fd",
         ];
         let modes = [
             LineDisplayMode::Pretty,
@@ -275,20 +168,172 @@ mod tests {
         }
     }
 
-    /// Locks bug #25: the rendered Pretty line keeps the tab, the display string drops it.
-    /// How: compares both for "a\tb".
+    /// A tab is drawn as the spaces the display string has, and a mid-line CR keeps the colors
+    /// set before it (#25).
+    /// How: "a\tb" rendered in Pretty, then a red progress line overwritten by a CR.
     #[test]
-    fn pretty_tab_differs_from_displayable() {
-        // FIXME: current behavior, see #25: the rendered line keeps the tab, displayable drops it
+    fn pretty_tab_and_cr_match_displayable() {
         let theme = ThemeConfig::default();
         let rendered = concat(&format_line_content(
             "a\tb",
             LineDisplayMode::Pretty,
             &theme,
         ));
-        assert_ne!(
+        assert_eq!(rendered, "a       b");
+        assert_eq!(
             rendered,
             displayable_line_string("a\tb", LineDisplayMode::Pretty)
         );
+
+        let spans = format_line_content("\x1b[31m50%\rdone", LineDisplayMode::Pretty, &theme);
+        assert_eq!(concat(&spans), "done");
+        assert_eq!(spans[0].style.fg, Some(Color::Red));
+    }
+
+    /// Every control byte is handled the same way by what search/copy get
+    /// (`displayable_line_string`), the map (one offset per displayed byte + the end) and what is
+    /// drawn (rendered text without the control chars ratatui skips) (#25).
+    /// How: Pretty and Clean over tab, BEL, BS, DEL, mid-line CR and DCS/APC payloads.
+    #[test]
+    fn control_bytes_agree_between_display_map_and_render() {
+        let theme = ThemeConfig::default();
+        let cases = [
+            ("a\tb", "a       b"),
+            ("a\x07b", "ab"),
+            ("a\x08b", "ab"),
+            ("a\x7fb", "ab"),
+            ("50%\rdone", "done"),
+            ("a\x1bPdata\x1b\\b", "ab"),
+            ("a\x1b_apc\x1b\\b", "ab"),
+        ];
+        for (text, shown) in cases {
+            for mode in [LineDisplayMode::Pretty, LineDisplayMode::Clean] {
+                let display = displayable_line_string(text, mode);
+                let map = build_display_to_raw_byte_map(text.as_bytes(), mode);
+                let rendered = concat(&format_line_content(text, mode, &theme));
+                assert_eq!(display, shown, "{text:?} {mode:?}");
+                assert_eq!(rendered, shown, "{text:?} {mode:?}");
+                assert_eq!(map.len(), shown.len() + 1, "{text:?} {mode:?}");
+            }
+        }
+    }
+
+    /// Escape sequences the three already agree on stay that way (#25 must not change them).
+    /// How: a non-SGR CSI, an incomplete CSI at the end, and SGR colors around text.
+    #[test]
+    fn escape_sequences_agree_between_display_map_and_render() {
+        let theme = ThemeConfig::default();
+        for text in ["a\x1b[2Kb", "a\x1b[31", "\x1b[31mred\x1b[0m"] {
+            for mode in [LineDisplayMode::Pretty, LineDisplayMode::Clean] {
+                let display = displayable_line_string(text, mode);
+                let map = build_display_to_raw_byte_map(text.as_bytes(), mode);
+                let rendered = concat(&format_line_content(text, mode, &theme));
+                assert_eq!(rendered, display, "{text:?} {mode:?}");
+                assert_eq!(map.len(), display.len() + 1, "{text:?} {mode:?}");
+            }
+        }
+    }
+
+    /// Lines built from fragments chosen by a fixed-seed xorshift: reproducible without a
+    /// property-test crate, weighted towards what breaks mappings (escapes, controls, tabs, CR,
+    /// multi-byte chars) and always valid UTF-8.
+    fn generated_lines(count: usize) -> Vec<String> {
+        const FRAGMENTS: &[&str] = &[
+            "a",
+            "Z",
+            " ",
+            "0",
+            "1",
+            "3",
+            ";",
+            "m",
+            "[",
+            "]",
+            "(",
+            "#",
+            "B",
+            "P",
+            "\\",
+            "\t",
+            "\r",
+            "\x07",
+            "\x08",
+            "\x7f",
+            "\x1b",
+            "é",
+            "漢",
+            "✓",
+            "\u{85}",
+            "\x1b[31m",
+            "\x1b[0m",
+            "\x1b[38;5;200m",
+            "\x1b[2K",
+            "\x1b(B",
+            "\x1b]0;t\x07",
+            "\x1bPd\x1b\\",
+            "\x1b7",
+        ];
+        let mut state: u64 = 0x2545_F491_4F6C_DD1D;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        (0..count)
+            .map(|_| {
+                let len = next() % 24;
+                let mut line: String = (0..len)
+                    .map(|_| FRAGMENTS[(next() % FRAGMENTS.len() as u64) as usize])
+                    .collect();
+                if next() % 3 == 0 {
+                    line.push_str("\r\n");
+                }
+                line
+            })
+            .collect()
+    }
+
+    /// For any line, in every mode the map has one offset per displayed byte (+ the end), and
+    /// Pretty/Clean render exactly the display text.
+    /// How: 2000 generated lines; a failure prints the line to add as a fixed test.
+    #[test]
+    fn display_map_render_agree_on_generated_lines() {
+        let theme = ThemeConfig::default();
+        for text in generated_lines(2000) {
+            for mode in [
+                LineDisplayMode::Pretty,
+                LineDisplayMode::Clean,
+                LineDisplayMode::Raw,
+                LineDisplayMode::Hex,
+                LineDisplayMode::Octal,
+                LineDisplayMode::Binary,
+            ] {
+                let display = displayable_line_string(&text, mode);
+                let map = build_display_to_raw_byte_map(text.as_bytes(), mode);
+                assert_eq!(map.len(), display.len() + 1, "map {mode:?} on {text:?}");
+                if matches!(mode, LineDisplayMode::Pretty | LineDisplayMode::Clean) {
+                    let rendered = concat(&format_line_content(&text, mode, &theme));
+                    assert_eq!(rendered, display, "render {mode:?} on {text:?}");
+                }
+            }
+        }
+    }
+
+    /// A plain Pretty line skips ansi_to_tui and gives the very spans it would have.
+    /// How: spans compared to ansi_to_tui's first line on plain samples.
+    #[test]
+    fn pretty_plain_line_spans_match_ansi_to_tui() {
+        let theme = ThemeConfig::default();
+        for text in ["plain text\r\n", "héllo ✓ 漢", "a b  c"] {
+            let line = text.trim_end_matches(['\r', '\n']);
+            let parsed = line.as_bytes().into_text().unwrap();
+            let expected = parsed.lines.into_iter().next().unwrap().spans;
+            assert_eq!(
+                format_line_content(text, LineDisplayMode::Pretty, &theme),
+                expected,
+                "{text:?}"
+            );
+        }
     }
 }

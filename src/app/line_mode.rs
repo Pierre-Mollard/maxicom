@@ -669,7 +669,7 @@ impl<'a> TextSource for LineModeTextSource<'a> {
     fn get_line_text(&mut self, line_idx: usize) -> Option<String> {
         self.history
             .get(line_idx)
-            .map(|e| displayable_line_string(&e.text, self.display_mode))
+            .map(|e| displayable_line_string(&e.text, self.display_mode).into_owned())
     }
 
     fn get_line_raw_bytes(&mut self, line_idx: usize) -> Option<Vec<u8>> {
