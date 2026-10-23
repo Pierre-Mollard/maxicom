@@ -8,6 +8,8 @@ use std::{
 
 use chrono::{DateTime, Local};
 use crossterm::event::KeyEvent;
+use terminput::Encoding;
+use terminput_crossterm::to_terminput_key;
 use vt100::Parser;
 
 use crate::{
@@ -440,6 +442,13 @@ impl TerminalMode {
                 }
                 Err(e) => UpdateEffect::Screenshot(Err(e.to_string())),
             },
+            TerminalAction::Key(key_event) => {
+                let application_cursor = self.vt100_screen().application_cursor();
+                match encode_terminal_key(key_event, application_cursor) {
+                    Some(bytes) => UpdateEffect::Transmit(bytes),
+                    None => UpdateEffect::None,
+                }
+            }
             TerminalAction::Paste(text) => {
                 let bracketed = self.vt100_screen().bracketed_paste();
                 UpdateEffect::Transmit(terminal_paste_bytes(&text, bracketed))
@@ -800,6 +809,29 @@ pub fn read_vt100_world_line_text(
     Some(line_str)
 }
 
+/// Bytes sent to the remote for a key typed in terminal mode (legacy xterm encoding). When the
+/// remote turned on application cursor mode (DECCKM, `ESC[?1h`), unmodified arrows, Home and End
+/// are sent as `ESC O x` instead of `ESC [ x`, like xterm does. Modified ones (`ESC[1;5A`) are the
+/// same in both modes
+fn encode_terminal_key(key_event: KeyEvent, application_cursor: bool) -> Option<Vec<u8>> {
+    let key_event = to_terminput_key(key_event).ok()?;
+    let mut buf = [0u8; 32];
+    let len = terminput::Event::Key(key_event)
+        .encode(&mut buf, Encoding::Xterm)
+        .ok()?;
+    let mut bytes = buf[..len].to_vec();
+    if application_cursor
+        && let [
+            0x1b,
+            introducer @ b'[',
+            b'A' | b'B' | b'C' | b'D' | b'H' | b'F',
+        ] = bytes.as_mut_slice()
+    {
+        *introducer = b'O';
+    }
+    Some(bytes)
+}
+
 /// Paste sent to the remote in one write. Line breaks are sent as `\r`, like the Enter key, and
 /// the text is wrapped in paste markers when the remote asked for them (`ESC[?2004h`)
 fn terminal_paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
@@ -851,9 +883,80 @@ impl<'a> TextSource for TerminalModeTextSource<'a> {
 
 #[cfg(test)]
 mod tests {
-    //! Bracketed paste bytes sent in terminal mode (#28).
+    //! Bytes sent in terminal mode: typed keys (#31) and bracketed paste (#28).
 
     use super::*;
+    use crate::configs::TerminalLogConfig;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn sent(code: KeyCode, modifiers: KeyModifiers, application_cursor: bool) -> Vec<u8> {
+        encode_terminal_key(KeyEvent::new(code, modifiers), application_cursor).unwrap()
+    }
+
+    /// Normal cursor mode sends the same bytes as before #31 (captured from the old
+    /// `handle_terminal_mode` in inputs.rs).
+    /// How: arrows, Home, End, a modified arrow, a char, Enter, F1 and PageUp.
+    #[test]
+    fn keys_in_normal_cursor_mode() {
+        let none = KeyModifiers::NONE;
+        assert_eq!(sent(KeyCode::Up, none, false), b"\x1b[A");
+        assert_eq!(sent(KeyCode::Down, none, false), b"\x1b[B");
+        assert_eq!(sent(KeyCode::Right, none, false), b"\x1b[C");
+        assert_eq!(sent(KeyCode::Left, none, false), b"\x1b[D");
+        assert_eq!(sent(KeyCode::Home, none, false), b"\x1b[H");
+        assert_eq!(sent(KeyCode::End, none, false), b"\x1b[F");
+        assert_eq!(
+            sent(KeyCode::Up, KeyModifiers::CONTROL, false),
+            b"\x1b[1;5A"
+        );
+        assert_eq!(sent(KeyCode::Char('a'), none, false), b"a");
+        assert_eq!(sent(KeyCode::Enter, none, false), b"\r");
+        assert_eq!(sent(KeyCode::F(1), none, false), b"\x1bOP");
+        assert_eq!(sent(KeyCode::PageUp, none, false), b"\x1b[5~");
+    }
+
+    /// Application cursor mode only changes unmodified arrows, Home and End to `ESC O x`.
+    /// How: the same keys with the mode on.
+    #[test]
+    fn keys_in_application_cursor_mode() {
+        let none = KeyModifiers::NONE;
+        assert_eq!(sent(KeyCode::Up, none, true), b"\x1bOA");
+        assert_eq!(sent(KeyCode::Down, none, true), b"\x1bOB");
+        assert_eq!(sent(KeyCode::Right, none, true), b"\x1bOC");
+        assert_eq!(sent(KeyCode::Left, none, true), b"\x1bOD");
+        assert_eq!(sent(KeyCode::Home, none, true), b"\x1bOH");
+        assert_eq!(sent(KeyCode::End, none, true), b"\x1bOF");
+        assert_eq!(sent(KeyCode::Up, KeyModifiers::CONTROL, true), b"\x1b[1;5A");
+        assert_eq!(sent(KeyCode::Char('a'), none, true), b"a");
+        assert_eq!(sent(KeyCode::PageUp, none, true), b"\x1b[5~");
+    }
+
+    /// The mode follows what the remote sends: `ESC[?1h` turns it on, `ESC[?1l` off.
+    /// How: an Up key through `update_action_terminal` before, during and after the mode.
+    #[test]
+    fn cursor_mode_follows_remote() {
+        let mut tm = TerminalMode::new(
+            100,
+            24,
+            80,
+            TerminalLogger::new(TerminalLogConfig::default()),
+        );
+        let up = |tm: &mut TerminalMode| match tm
+            .update_action_terminal(TerminalAction::Key(key(KeyCode::Up)))
+        {
+            UpdateEffect::Transmit(bytes) => bytes,
+            _ => panic!("expected a transmit"),
+        };
+        assert_eq!(up(&mut tm), b"\x1b[A");
+        tm.process_rx(TextEncoding::Utf8, b"\x1b[?1h");
+        assert_eq!(up(&mut tm), b"\x1bOA");
+        tm.process_rx(TextEncoding::Utf8, b"\x1b[?1l");
+        assert_eq!(up(&mut tm), b"\x1b[A");
+    }
 
     /// LF, CRLF and CR all become one `\r`, like pressing Enter.
     /// How: one paste with each kind of line break.

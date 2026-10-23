@@ -3,8 +3,6 @@
 use std::{io, time::Duration};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use terminput::Encoding;
-use terminput_crossterm::to_terminput_key;
 
 use crate::{
     app::{App, InputContext},
@@ -64,6 +62,7 @@ pub enum TerminalAction {
     AutoResizeEmulatorToViewer,
     ScreenshotBytes,
     ScreenshotTxt,
+    Key(KeyEvent),
     Paste(String),
 }
 
@@ -271,7 +270,7 @@ pub fn handle_event(event: Event, app: &App) -> Action {
             } else if let Some(term_action_binding) = resolver.terminal_actions.get(&pattern) {
                 term_action_binding.to_action()
             } else {
-                handle_terminal_mode(key_event)
+                Action::Terminal(TerminalAction::Key(key_event))
             }
         }
         InputContext::Overlay | InputContext::Search | InputContext::Prefix => unreachable!(),
@@ -296,19 +295,4 @@ fn handle_paste(text: String, app: &App) -> Action {
         InputContext::LineInput => Action::LineInput(LineInputAction::Paste(text)),
         InputContext::Terminal => Action::Terminal(TerminalAction::Paste(text)),
     }
-}
-
-/// forward everything to the remote through serial
-fn handle_terminal_mode(key_event_crossterm: KeyEvent) -> Action {
-    // Convert Crossterm KeyEvent -> Terminput KeyEvent
-    if let Ok(key_event_terminput) = to_terminput_key(key_event_crossterm) {
-        let event_terminput = terminput::Event::Key(key_event_terminput);
-        let mut buf = [0u8; 32];
-
-        if let Ok(len) = event_terminput.encode(&mut buf, Encoding::Xterm) {
-            return Action::TransmitRaw(buf[..len].to_vec());
-        }
-    }
-
-    Action::Ignore
 }
