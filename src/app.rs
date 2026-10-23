@@ -568,7 +568,7 @@ impl App {
     pub fn scroll_status(&self) -> ScrollStatus {
         match self.settings().mode {
             Mode::Terminal => self.terminal_mode.scroller().status(),
-            Mode::Line => self.line_mode.scroller().status(),
+            Mode::Line => self.line_mode.scroll_status(),
         }
     }
 

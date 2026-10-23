@@ -140,3 +140,153 @@ fn render_active_overlay(app: &App, frame: &mut Frame, theme: &ThemeConfig) {
         None => {}
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Whole-frame rendering through `render`, on a test backend.
+
+    use super::*;
+    use crate::{
+        app::UpdateEffect,
+        configs::{
+            KeyBindingsConfig, KeyResolver, LineDisplayMode, RxNewlineMode, SettingsConfig,
+            TextEncoding,
+        },
+        inputs::{Action, HistoryAction},
+        serial::SerialConfig,
+    };
+    use ratatui::{Terminal, backend::TestBackend};
+
+    struct Harness {
+        app: App,
+        theme: ThemeConfig,
+        status_bar: CompiledStatusBar,
+        terminal: Terminal<TestBackend>,
+    }
+
+    impl Harness {
+        /// Line mode, no timestamps, `display_mode`, on a `w`x`h` screen
+        fn line_mode(display_mode: LineDisplayMode, w: u16, h: u16) -> Self {
+            let mut settings = SettingsConfig::default();
+            settings.mode = Mode::Line;
+            settings.show_timestamps = false;
+            settings.line_mode.display_mode = display_mode;
+            let theme = ThemeConfig::default();
+            let status_bar = CompiledStatusBar::new(&settings.ui.status_bar, &theme);
+            let app = App::new(
+                settings,
+                KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap(),
+                SerialConfig::default(),
+            );
+            let terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+            Self {
+                app,
+                theme,
+                status_bar,
+                terminal,
+            }
+        }
+
+        fn feed(&mut self, bytes: &[u8]) {
+            self.app
+                .line_mode
+                .feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, "%H", bytes);
+        }
+
+        fn scroll(&mut self, action: HistoryAction) {
+            let effect = self.app.update(Action::History(action));
+            assert!(matches!(effect, UpdateEffect::None));
+        }
+
+        /// Draws a frame and returns its rows as text
+        fn draw(&mut self) -> Vec<String> {
+            let Self {
+                app,
+                theme,
+                status_bar,
+                terminal,
+            } = self;
+            terminal
+                .draw(|frame| {
+                    render(app, theme, frame, &[], status_bar);
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            (0..buffer.area.height)
+                .map(|y| {
+                    (0..buffer.area.width)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect()
+                })
+                .collect()
+        }
+    }
+
+    /// Screen rows showing Binary data (at least one 8 digit byte), as drawn.
+    fn binary_rows(rows: &[String]) -> Vec<String> {
+        let is_byte = |word: &str| word.len() == 8 && word.bytes().all(|b| b == b'0' || b == b'1');
+        rows.iter()
+            .filter(|row| row.split(|c: char| !c.is_ascii_digit()).any(is_byte))
+            .cloned()
+            .collect()
+    }
+
+    /// Four lines of 120 bytes in Binary (about 14 rows each) on a screen showing about 9.
+    /// Bytes run through printable ASCII 32..=126 (valid UTF-8, never CR or LF), and 95 is not
+    /// a multiple of the 8 bytes per row, so no two views look the same.
+    fn tall_binary_lines() -> Harness {
+        let mut h = Harness::line_mode(LineDisplayMode::Binary, 80, 12);
+        for line in 0..4 {
+            let mut bytes: Vec<u8> = (0..120)
+                .map(|i| ((line * 120 + i) % 95 + 32) as u8)
+                .collect();
+            bytes.extend_from_slice(b"\r\n");
+            h.feed(&bytes);
+        }
+        h
+    }
+
+    /// Scrolling moves one row at a time through entries taller than the view, every row is
+    /// reachable, and the top and bottom are clamped (#36).
+    /// How: from the bottom, scroll up one row at a time until the view stops changing; each
+    /// view must be the previous one moved down by one row; then page down and back to bottom.
+    #[test]
+    fn line_scroll_moves_one_row_through_tall_entries() {
+        let mut h = tall_binary_lines();
+        let mut views = vec![binary_rows(&h.draw())];
+        loop {
+            h.scroll(HistoryAction::ScrollUp(1));
+            let view = binary_rows(&h.draw());
+            if &view == views.last().unwrap() {
+                break;
+            }
+            views.push(view);
+            assert!(views.len() < 200, "scrolling never reached the top");
+        }
+
+        // each step shows the previous view moved down by one row: no row skipped
+        for pair in views.windows(2) {
+            let (below, above) = (&pair[0], &pair[1]);
+            assert_eq!(above[1..], below[..below.len() - 1]);
+        }
+        // the top shows the first byte received (32 = 00100000)
+        let top = views.last().unwrap();
+        assert!(top[0].contains("00100000 00100001"), "{}", top[0]);
+        // 4 entries of about 14 rows each all went by, not 3 steps
+        assert!(views.len() > 40, "{} views", views.len());
+
+        // scroll to top from the bottom lands on the same view, even with entries taller than it
+        h.scroll(HistoryAction::ScrollToBottom);
+        h.draw();
+        h.scroll(HistoryAction::ScrollToTop);
+        assert_eq!(&binary_rows(&h.draw()), top);
+
+        // a page down from the top moves by a view height minus one row
+        h.scroll(HistoryAction::ScrollDownPage);
+        let paged = binary_rows(&h.draw());
+        assert_eq!(paged[0], top[top.len() - 1]);
+        // and scroll to bottom is back to the live view
+        h.scroll(HistoryAction::ScrollToBottom);
+        assert_eq!(binary_rows(&h.draw()), views[0]);
+    }
+}

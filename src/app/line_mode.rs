@@ -8,7 +8,7 @@ use crate::{
         UpdateEffect,
         data_processing::displayable_line_string,
         raw_scroller::RawSideScroller,
-        scroller::ViewportScroller,
+        scroller::{ScrollStatus, ViewportScroller},
         search::SearchState,
         selection::{CopyActionResult, CopyModeState, TextSource},
         types::{LogEntry, ViewportSize},
@@ -49,6 +49,11 @@ pub struct LineMode {
     search_state: SearchState,
     copy_state: CopyModeState,
     scroller: ViewportScroller,
+    /// Rows of the scrolled-to entry (`scroller.offset_y` entries from the bottom) hidden below
+    /// the view: with it, scrolling moves by rows through entries taller than the view (#36)
+    rows_below: usize,
+    /// Rows to scroll (up > 0), applied by the render with the wrapped layout it computes
+    pending_scroll_rows: isize,
     raw_scroller: RawSideScroller,
     vi_state_copymode: Option<ViPending>,
     evicted_lines: usize,
@@ -77,6 +82,8 @@ impl LineMode {
             search_state,
             copy_state,
             scroller,
+            rows_below: 0,
+            pending_scroll_rows: 0,
             raw_scroller,
             vi_state_copymode: None,
             evicted_lines: 0,
@@ -553,32 +560,63 @@ impl LineMode {
     }
 
     #[inline]
-    pub fn scroll_up(&mut self, lines: usize) {
-        self.scroller.scroll_up(lines);
+    pub fn scroll_up(&mut self, rows: usize) {
+        self.pending_scroll_rows = self.pending_scroll_rows.saturating_add_unsigned(rows);
     }
     #[inline]
-    pub fn scroll_down(&mut self, lines: usize) {
-        self.scroller.scroll_down(lines);
+    pub fn scroll_down(&mut self, rows: usize) {
+        self.pending_scroll_rows = self.pending_scroll_rows.saturating_sub_unsigned(rows);
     }
     #[inline]
     pub fn scroll_up_page(&mut self) {
-        self.scroller.scroll_up_page();
+        self.scroll_up(self.scroller.view_height.saturating_sub(1));
     }
     #[inline]
     pub fn scroll_down_page(&mut self) {
-        self.scroller.scroll_down_page();
+        self.scroll_down(self.scroller.view_height.saturating_sub(1));
     }
     #[inline]
     pub fn scroll_to_bottom(&mut self) {
         self.scroller.scroll_to_bottom();
+        self.rows_below = 0;
+        self.pending_scroll_rows = 0;
     }
+    /// Every row of the first entry hidden below: the render clamps that to the first row of
+    /// the history at the top of the view
     #[inline]
     pub fn scroll_to_top(&mut self) {
         self.scroller.scroll_to_top();
+        self.rows_below = usize::MAX;
+        self.pending_scroll_rows = 0;
     }
+    /// Scrolls to the last row of the entry `lines` entries from the bottom
     #[inline]
     pub fn scroll_to(&mut self, lines: usize) {
         self.scroller.scroll_to(lines);
+        self.rows_below = 0;
+        self.pending_scroll_rows = 0;
+    }
+    #[inline]
+    pub fn rows_below(&self) -> usize {
+        self.rows_below
+    }
+    /// Rows the user scrolled since the last frame, for the render to apply
+    #[inline]
+    pub fn take_pending_scroll_rows(&mut self) -> isize {
+        std::mem::take(&mut self.pending_scroll_rows)
+    }
+    /// Where the render resolved the scroll to
+    pub fn set_scroll_position(&mut self, entries_from_bottom: usize, rows_below: usize) {
+        self.scroller.scroll_to(entries_from_bottom);
+        self.rows_below = rows_below;
+    }
+    /// The scroller's status, not at the bottom while rows of the last entry are hidden below
+    pub fn scroll_status(&self) -> ScrollStatus {
+        let mut status = self.scroller.status();
+        if self.rows_below > 0 {
+            status.offset_from_bottom = status.offset_from_bottom.max(1);
+        }
+        status
     }
     #[inline]
     pub fn pan_to_right(&mut self, cols: usize) {
@@ -614,6 +652,7 @@ impl LineMode {
     }
 
     #[inline]
+    #[cfg(test)]
     pub fn scroller(&self) -> &ViewportScroller {
         &self.scroller
     }

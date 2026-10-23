@@ -52,7 +52,10 @@ pub fn monitor_title(app: &App, area: &Rect) -> String {
                 area.width.saturating_sub(2),
                 area.height.saturating_sub(2),
             );
-            (app.line_mode.scroll_offset(), app.line_mode.x_offset())
+            (
+                app.line_mode.scroll_status().offset_from_bottom,
+                app.line_mode.x_offset(),
+            )
         }
     };
 

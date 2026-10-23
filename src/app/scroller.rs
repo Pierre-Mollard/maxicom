@@ -95,14 +95,6 @@ impl ViewportScroller {
         }
     }
 
-    pub fn scroll_up_page(&mut self) {
-        self.scroll_up(self.view_height.saturating_sub(1));
-    }
-
-    pub fn scroll_down_page(&mut self) {
-        self.scroll_down(self.view_height.saturating_sub(1));
-    }
-
     pub fn scroll_to_bottom(&mut self) {
         self.offset_y = 0;
         self.new_content_missed = false;

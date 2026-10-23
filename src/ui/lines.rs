@@ -26,7 +26,7 @@ use crate::{
             apply_keyword_highlights, apply_selection_to_spans, border_style_for, render_search_bar,
         },
         data_display::format_line_content,
-        layout::{PreparedLayout, prepare_view_layout},
+        layout::{LogicalLineLayout, PreparedLayout, prepare_view_layout},
         raw_side::{
             CharHighlight, format_raw_bytes_with_highlights, raw_panel_layout,
             render_raw_panel_widget,
@@ -142,7 +142,7 @@ pub fn render_monitor(
     };
 
     let scroll_from_bottom = app.line_mode.scroll_offset();
-    let clamped_scroll = scroll_from_bottom.min(global_max_scroll);
+    let mut clamped_scroll = scroll_from_bottom.min(global_max_scroll);
 
     let focus_entry = if let Some((target_line, _)) = active_focus {
         target_line
@@ -151,8 +151,9 @@ pub fn render_monitor(
     };
 
     // Overscan window centered around focus_entry:
-    // Large enough so heavy sub-line modes (Binary/Raw) have plenty of buffer:
-    let overscan = content_height.max(35);
+    // Large enough so heavy sub-line modes (Binary/Raw) have plenty of buffer, and so a scroll of
+    // up to a view height of rows always lands inside it (every entry is at least one row)
+    let overscan = (content_height * 2).max(35);
     let start_idx = focus_entry.saturating_sub(overscan);
     let end_idx = (focus_entry + overscan + 1).min(total_entries);
 
@@ -246,7 +247,46 @@ pub fn render_monitor(
 
     let total_visual_rows = layout.visual_lines.len();
 
-    let paragraph_y_offset: usize = if clamped_scroll == 0 && !is_search_active {
+    // plain scrolling moves by rows (#36), search and copy mode keep centering their target
+    let row_scrolling = !is_search_active && !app.line_mode.copy_state().active;
+    let pending_rows = app.line_mode.take_pending_scroll_rows();
+
+    let paragraph_y_offset: usize = if row_scrolling {
+        // entries of the window only, the partial RX line is drawn after them
+        let entries = &layout.line_layouts[..end_idx - start_idx];
+        let rows_of = |meta: &LogicalLineLayout| meta.sub_lines.len().max(1);
+        let last_row = entries
+            .last()
+            .map_or(0, |meta| meta.visual_row_start + rows_of(meta) - 1);
+
+        // the view's bottom row, moved by the rows scrolled since the last frame
+        let anchor = &entries[focus_entry - start_idx];
+        let rows_below = app.line_mode.rows_below().min(rows_of(anchor) - 1);
+        let anchor_bottom = anchor.visual_row_start + rows_of(anchor) - 1 - rows_below;
+        let limit = content_height as isize;
+        let bottom = anchor_bottom as isize - pending_rows.clamp(-limit, limit);
+
+        if end_idx == total_entries && bottom >= last_row as isize {
+            app.line_mode.scroll_to_bottom();
+            clamped_scroll = 0;
+            total_visual_rows.saturating_sub(content_height)
+        } else {
+            // at the top of the history, the first row stays at the top of the view
+            let min_bottom = if start_idx == 0 {
+                content_height.saturating_sub(1).min(last_row)
+            } else {
+                0
+            };
+            let bottom = bottom.clamp(min_bottom as isize, last_row as isize) as usize;
+            let local = entries.partition_point(|meta| meta.visual_row_start <= bottom) - 1;
+            let meta = &entries[local];
+            let rows_below = meta.visual_row_start + rows_of(meta) - 1 - bottom;
+            clamped_scroll = total_entries - 1 - (start_idx + local);
+            app.line_mode
+                .set_scroll_position(clamped_scroll, rows_below);
+            (bottom + 1).saturating_sub(content_height)
+        }
+    } else if clamped_scroll == 0 && !is_search_active {
         total_visual_rows.saturating_sub(content_height)
     } else {
         let focus_local = focus_entry.saturating_sub(start_idx);
