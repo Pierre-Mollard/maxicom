@@ -8,6 +8,33 @@ use ratatui::{
     widgets::{Block, Clear, Widget},
 };
 
+/// Counts the main screen rows vt100 drops from the top of scrollback (`on_scroll` is only called
+/// for those, not for rows entering it). With the change of `scrollback_len` it gives how many
+/// rows a chunk pushed into scrollback (#13)
+#[derive(Default)]
+pub struct ScrollbackEvictions {
+    pub count: usize,
+}
+
+impl vt100::Callbacks for ScrollbackEvictions {
+    fn on_scroll(&mut self, _: vt100::capture::RowContents<'_>, alternate_screen: bool) {
+        if !alternate_screen {
+            self.count += 1;
+        }
+    }
+}
+
+pub type TerminalParser = vt100::Parser<ScrollbackEvictions>;
+
+pub fn new_parser(rows: u16, cols: u16, max_history_lines: usize) -> TerminalParser {
+    TerminalParser::new_with_callbacks(
+        vt100_dim(rows),
+        vt100_dim(cols),
+        max_history_lines,
+        ScrollbackEvictions::default(),
+    )
+}
+
 /// vt100 sizes are `NonZeroU16`, maxicom uses `u16`: 0 (never a valid size) becomes 1
 pub fn vt100_dim(n: u16) -> NonZeroU16 {
     NonZeroU16::new(n).unwrap_or(NonZeroU16::MIN)
