@@ -122,6 +122,7 @@ impl App {
     }
 
     pub fn update_viewport(&mut self, viewport: ViewportSize) {
+        self.viewport = viewport;
         match self.settings.mode {
             Mode::Line => {
                 self.line_mode
@@ -605,5 +606,41 @@ impl App {
     pub fn notify_error(&mut self, msg: impl Into<String>) {
         self.notifications
             .push(msg, ToastLevel::Error, std::time::Duration::from_secs(5));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! App-level wiring of the viewport (#35).
+
+    use super::*;
+    use crate::configs::KeyBindingsConfig;
+
+    fn app() -> App {
+        App::new(
+            SettingsConfig::default(),
+            KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap(),
+            SerialConfig::default(),
+        )
+    }
+
+    /// Setting toggles that re-lay out the view reuse the last size `render` gave, not a
+    /// default one.
+    /// How: a 100x30 viewport in line mode, then the wrap toggle and the mode toggle (into
+    /// terminal mode); both scrollers must see 100x30.
+    #[test]
+    fn setting_toggles_keep_the_viewport() {
+        let mut app = app();
+        app.settings.mode = Mode::Line;
+        app.update_viewport(ViewportSize::new(100, 30));
+
+        app.toggle_setting(SettingKey::LineWrap);
+        let scroller = app.line_mode.scroller();
+        assert_eq!((scroller.view_width, scroller.view_height), (100, 30));
+
+        app.toggle_setting(SettingKey::Mode);
+        assert_eq!(app.settings.mode, Mode::Terminal);
+        let scroller = app.terminal_mode.scroller();
+        assert_eq!((scroller.view_width, scroller.view_height), (100, 30));
     }
 }

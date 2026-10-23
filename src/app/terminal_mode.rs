@@ -41,6 +41,7 @@ pub struct TerminalMode {
     vi_pending_copy: Option<ViPending>,
     flash_until: Option<Instant>,
     row_timestamps: VecDeque<Option<DateTime<Local>>>,
+    search_text: Option<Vec<String>>,
 }
 
 impl TerminalMode {
@@ -64,12 +65,14 @@ impl TerminalMode {
             vi_pending_copy: None,
             flash_until: None,
             row_timestamps: VecDeque::from(vec![None; rows as usize]),
+            search_text: None,
         }
     }
 
     pub fn process_rx(&mut self, encoding: TextEncoding, raw_bytes: &[u8]) {
         let _ = self.logger.log_raw_bytes(raw_bytes);
         self.scroller.on_rx_received();
+        self.search_text = None;
 
         let started_on_main = !self.vt100_parser.screen().alternate_screen();
         let cursor_row_before = self.vt100_parser.screen().cursor_position().0 as usize;
@@ -199,6 +202,7 @@ impl TerminalMode {
 
         self.vt100_parser = new_parser(rows, cols, self.max_history_lines);
         self.row_timestamps = VecDeque::from(vec![None; rows as usize]);
+        self.search_text = None;
 
         self.max_content_scrollback = 0;
         self.pan_offset_y = 0;
@@ -359,6 +363,7 @@ impl TerminalMode {
             return;
         }
 
+        self.search_text = None;
         let scrollback_before = self.max_content_scrollback;
         let cursor_row_before = self.vt100_parser.screen().cursor_position().0 as usize;
         // the parser's `set_size` (not the screen's) reports the rows it evicts
@@ -624,9 +629,12 @@ impl TerminalMode {
     }
 
     pub fn update_search_matches(&mut self, raw_view: RawSideView) {
-        let text = self.all_text_lines();
+        if self.search_text.is_none() {
+            self.search_text = Some(self.all_text_lines());
+        }
+        let text = self.search_text.as_deref().unwrap_or_default();
         self.search_state
-            .update_matches_from_strings(&text, raw_view);
+            .update_matches_from_strings(text, raw_view);
     }
 
     pub fn handle_input_search(&mut self, key_event: KeyEvent, raw_view: RawSideView) {
@@ -1039,6 +1047,32 @@ mod tests {
             .unwrap_or_default()
             .trim_end()
             .to_string()
+    }
+
+    /// Search text is built once and reused while typing, and rebuilt after anything that
+    /// changes the terminal's text: RX, resize, clear (#12).
+    /// How: count the matches of "hit" before and after each of those.
+    #[test]
+    fn search_text_follows_terminal_changes() {
+        let mut tm = terminal(3);
+        feed_lines(&mut tm, &["hit", "miss"]);
+        tm.search_state.query = tui_input::Input::new("hit".to_string());
+        let matches = |tm: &mut TerminalMode| {
+            tm.update_search_matches(RawSideView::default());
+            tm.search_state.matches.len()
+        };
+        assert_eq!(matches(&mut tm), 1);
+        assert_eq!(matches(&mut tm), 1);
+
+        tm.process_rx(TextEncoding::Utf8, b"\r\nhit again");
+        assert_eq!(matches(&mut tm), 2);
+
+        // a shrink of 3 cols cuts "hit again" to "hit": still 2 rows, and nothing stale
+        tm.set_vt100_size(3, 3);
+        assert_eq!(matches(&mut tm), 2);
+
+        tm.clear_history();
+        assert_eq!(matches(&mut tm), 0);
     }
 
     /// Once scrollback is full each new row evicts the oldest: the copy cursor, the selection
