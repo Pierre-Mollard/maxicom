@@ -1,7 +1,7 @@
 use tui_input::Input;
 
 use crate::{
-    inputs::{DialogAction, dispatch_input_key},
+    inputs::{DialogAction, dispatch_input_key, paste_into_input},
     overlays::OverlayResponse,
 };
 
@@ -62,6 +62,14 @@ impl ResizeDialog {
                     ResizeField::Cols => &mut self.cols_input,
                 };
                 dispatch_input_key(input, raw_key);
+                OverlayResponse::Handled
+            }
+            DialogAction::Paste(text) => {
+                let input = match self.active_field {
+                    ResizeField::Rows => &mut self.rows_input,
+                    ResizeField::Cols => &mut self.cols_input,
+                };
+                paste_into_input(input, &text);
                 OverlayResponse::Handled
             }
             _ => OverlayResponse::Handled,

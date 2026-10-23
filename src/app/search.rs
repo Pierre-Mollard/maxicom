@@ -61,12 +61,15 @@ impl SearchState {
                     let needle_len = target_bytes.len();
                     'outer_raw: for (line_idx, entry) in history.iter().enumerate() {
                         let raw_bytes = entry.text.as_bytes();
+                        let mut found =
+                            find_byte_subslice_iter(raw_bytes, &target_bytes).peekable();
+                        if found.peek().is_none() {
+                            continue;
+                        }
                         let display_text = displayable_line_string(&entry.text, display_mode);
                         let disp_map = build_display_to_raw_byte_map(raw_bytes, display_mode);
 
-                        for (occ, raw_byte_idx) in
-                            find_byte_subslice_iter(raw_bytes, &target_bytes).enumerate()
-                        {
+                        for (occ, raw_byte_idx) in found.enumerate() {
                             let col_idx =
                                 raw_byte_to_display_col(raw_byte_idx, &disp_map, &display_text);
 
@@ -87,23 +90,26 @@ impl SearchState {
                 }
             }
             SearchModeKind::Text => {
-                let q_lower = q_str.to_lowercase();
+                let needle = q_str.as_bytes();
                 let q_char_len = q_str.chars().count();
 
                 'outer_text: for (line_idx, entry) in history.iter().enumerate() {
                     let raw_bytes = entry.text.as_bytes();
                     let display_text = displayable_line_string(&entry.text, display_mode);
-                    let line_lower = display_text.to_lowercase();
+                    let mut found =
+                        find_ascii_case_insensitive_iter(display_text.as_bytes(), needle)
+                            .peekable();
+                    if found.peek().is_none() {
+                        continue;
+                    }
                     let disp_map = build_display_to_raw_byte_map(raw_bytes, display_mode);
 
-                    for (occurrence, (disp_byte_idx, matched_str)) in
-                        line_lower.match_indices(&q_lower).enumerate()
-                    {
+                    for (occurrence, disp_byte_idx) in found.enumerate() {
                         let col_idx = safe_byte_to_char_col(&display_text, disp_byte_idx);
                         let raw_byte_offset =
                             map_disp_byte_to_raw(disp_byte_idx, &disp_map, raw_bytes.len());
                         let raw_byte_end = map_disp_byte_to_raw(
-                            disp_byte_idx + matched_str.len(),
+                            disp_byte_idx + needle.len(),
                             &disp_map,
                             raw_bytes.len(),
                         );
@@ -116,7 +122,7 @@ impl SearchState {
                             byte_offset: raw_byte_offset,
                             byte_len: raw_byte_end
                                 .saturating_sub(raw_byte_offset)
-                                .max(matched_str.len()),
+                                .max(needle.len()),
                         });
 
                         if self.matches.len() >= MAX_SEARCH_MATCHES {
@@ -169,12 +175,11 @@ impl SearchState {
                 }
             }
             SearchModeKind::Text => {
-                let q_lower = q_str.to_lowercase();
                 let q_char_len = q_str.chars().count();
                 'outer_text: for (line_idx, line_text) in all_lines.iter().enumerate() {
-                    let line_lower = line_text.to_lowercase();
-                    for (occurrence, (byte_idx, _)) in
-                        line_lower.match_indices(&q_lower).enumerate()
+                    for (occurrence, byte_idx) in
+                        find_ascii_case_insensitive_iter(line_text.as_bytes(), q_str.as_bytes())
+                            .enumerate()
                     {
                         let col_idx = safe_byte_to_char_col(line_text, byte_idx);
                         self.matches.push(SearchMatch {
@@ -370,25 +375,53 @@ pub fn parse_raw_bytes_for_view(input: &str, raw_view: RawSideView) -> Option<Ve
     parsed.filter(|bytes| !bytes.is_empty())
 }
 
-#[inline]
+/// Byte offsets of every occurrence of `needle`, overlapping ones included ("aa" in "aaa" is
+/// found at 0 and 1). An empty needle matches nothing
 pub fn find_byte_subslice_iter<'a>(
     haystack: &'a [u8],
     needle: &'a [u8],
 ) -> impl Iterator<Item = usize> + 'a {
-    let needle_len = needle.len();
-    let is_valid = !needle.is_empty() && needle_len <= haystack.len();
+    let finder = memchr::memmem::Finder::new(needle);
+    let mut start = 0;
+    std::iter::from_fn(move || {
+        if needle.is_empty() {
+            return None;
+        }
+        let found = start + finder.find(haystack.get(start..)?)?;
+        // next search one byte after this match start, to keep overlapping matches
+        start = found + 1;
+        Some(found)
+    })
+}
 
-    // windows(0) panics, an empty needle simply matches nothing (is_valid)
-    haystack
-        .windows(needle_len.max(1))
-        .enumerate()
-        .filter_map(move |(idx, window)| {
-            if is_valid && window == needle {
-                Some(idx)
-            } else {
-                None
+/// Byte offsets of non-overlapping occurrences of `needle`, ignoring ASCII case.
+/// Works on the original bytes (no lowercased copy), so offsets are always valid in `haystack`
+/// and nothing is allocated. Non-ASCII chars must match exactly ('É' does not match 'é').
+/// An empty needle matches nothing
+pub fn find_ascii_case_insensitive_iter<'a>(
+    haystack: &'a [u8],
+    needle: &'a [u8],
+) -> impl Iterator<Item = usize> + 'a {
+    let mut start = 0;
+    std::iter::from_fn(move || {
+        let (&first, rest) = needle.split_first()?;
+        let rest_len = rest.len();
+        while start + needle.len() <= haystack.len() {
+            // candidates: the first needle byte in either case
+            let offset = memchr::memchr2(
+                first.to_ascii_lowercase(),
+                first.to_ascii_uppercase(),
+                &haystack[start..haystack.len() - rest_len],
+            )?;
+            let at = start + offset;
+            if haystack[at + 1..at + 1 + rest_len].eq_ignore_ascii_case(rest) {
+                start = at + needle.len();
+                return Some(at);
             }
-        })
+            start = at + 1;
+        }
+        None
+    })
 }
 
 #[cfg(test)]
@@ -555,15 +588,80 @@ mod tests {
         assert_eq!((s.matches[0].col_idx, s.matches[0].byte_offset), (3, 1));
     }
 
-    /// Locks bug #18: lowercasing non-ASCII shifts the match column.
-    /// How: 'İ' grows from 2 to 3 bytes, so col 2 instead of 1.
+    /// A match after a non-ASCII char gets the right column, in line and terminal search (#18).
+    /// How: 'İ' (lowercases from 2 to 3 bytes) before "x": col 1 (was 2 with to_lowercase).
     #[test]
-    fn text_search_non_ascii_lowercase_shifts_col() {
-        // FIXME: current behavior, see #18: 'İ' lowercases to 3 bytes (2 in the original), so the
-        // offset found in the lowered string maps to col 2 instead of 1
+    fn text_search_after_non_ascii_keeps_col() {
         let mut s = search("x", SearchModeKind::Text);
         s.update_matches_from_entries(&history(&["İx"]), LineDisplayMode::Pretty, RawSideView::Hex);
-        assert_eq!(s.matches[0].col_idx, 2);
+        assert_eq!(s.matches[0].col_idx, 1);
+
+        let mut s = search("X", SearchModeKind::Text);
+        s.update_matches_from_strings(&["İx".to_string()], RawSideView::Hex);
+        assert_eq!((s.matches[0].col_idx, s.matches[0].byte_offset), (1, 2));
+    }
+
+    /// Case-insensitive finder: ASCII case ignored, non-overlapping, offsets in the original.
+    /// How: known haystacks, including a multibyte char before the match.
+    #[test]
+    fn ascii_case_insensitive_finder() {
+        let found: Vec<usize> =
+            find_ascii_case_insensitive_iter(b"Error error ERROR", b"eRRor").collect();
+        assert_eq!(found, [0, 6, 12]);
+        let found: Vec<usize> = find_ascii_case_insensitive_iter(b"aaaa", b"aa").collect();
+        assert_eq!(found, [0, 2]);
+        let found: Vec<usize> =
+            find_ascii_case_insensitive_iter("é OK".as_bytes(), b"ok").collect();
+        assert_eq!(found, [3]);
+        assert_eq!(find_ascii_case_insensitive_iter(b"abc", b"").count(), 0);
+        assert_eq!(find_ascii_case_insensitive_iter(b"ab", b"abc").count(), 0);
+        let found: Vec<usize> = find_ascii_case_insensitive_iter(b"xab", b"AB").collect();
+        assert_eq!(found, [1]);
+    }
+
+    /// Non-ASCII chars must match exactly: only ASCII case is folded (#18 behavior change).
+    /// How: 'é' matches 'é' but not 'É'.
+    #[test]
+    fn ascii_case_insensitive_finder_non_ascii_exact() {
+        assert_eq!(
+            find_ascii_case_insensitive_iter("café".as_bytes(), "é".as_bytes()).count(),
+            1
+        );
+        assert_eq!(
+            find_ascii_case_insensitive_iter("CAFÉ".as_bytes(), "é".as_bytes()).count(),
+            0
+        );
+    }
+
+    /// Lines without a match are skipped and matches on later lines keep the right line index.
+    /// How: a match only on the last of several lines, in text and raw search.
+    #[test]
+    fn search_skips_lines_without_match() {
+        let lines = history(&["\x1b[32mok\x1b[0m", "nothing here", "the TARGET line"]);
+        let mut s = search("target", SearchModeKind::Text);
+        s.update_matches_from_entries(&lines, LineDisplayMode::Pretty, RawSideView::Hex);
+        let found: Vec<(usize, usize, usize)> = s
+            .matches
+            .iter()
+            .map(|m| (m.line_idx, m.col_idx, m.byte_len))
+            .collect();
+        assert_eq!(found, [(2, 4, 6)]);
+
+        let mut s = search("54 41", SearchModeKind::RawBytes);
+        s.update_matches_from_entries(&lines, LineDisplayMode::Pretty, RawSideView::Hex);
+        let found: Vec<(usize, usize)> =
+            s.matches.iter().map(|m| (m.line_idx, m.col_idx)).collect();
+        assert_eq!(found, [(2, 4)]);
+    }
+
+    /// The match cap still stops the search at MAX_SEARCH_MATCHES.
+    /// How: more matching lines than the cap.
+    #[test]
+    fn search_stops_at_match_cap() {
+        let lines: Vec<&str> = vec!["a"; MAX_SEARCH_MATCHES + 10];
+        let mut s = search("a", SearchModeKind::Text);
+        s.update_matches_from_entries(&history(&lines), LineDisplayMode::Pretty, RawSideView::Hex);
+        assert_eq!(s.matches.len(), MAX_SEARCH_MATCHES);
     }
 
     /// Clearing the query clears matches and the jump target.

@@ -31,7 +31,7 @@ use crate::{
             resize::render_resize_popup,
             settings::render_settings_popup,
         },
-        status_bar::render_status_bar,
+        status_bar::{CompiledStatusBar, render_status_bar},
         terminal::{render_timestamp_gutter, render_vt100_terminal},
     },
 };
@@ -48,6 +48,7 @@ pub fn render(
     theme: &ThemeConfig,
     frame: &mut Frame,
     highlights: &[KeywordHighlight],
+    status_bar: &CompiledStatusBar,
 ) -> PostRenderEffect {
     let root_area = frame.area();
     let root_backdrop = Block::default().style(*theme.ui.background);
@@ -112,7 +113,7 @@ pub fn render(
     }
 
     if let Some(status_rect) = layout.status_bar_area {
-        render_status_bar(app, frame, status_rect, theme);
+        render_status_bar(app, frame, status_rect, theme, status_bar);
     }
 
     render_active_overlay(app, frame, theme);

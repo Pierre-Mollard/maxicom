@@ -21,7 +21,7 @@ use crate::{
     configs::{SettingsConfig, TerminalDimensionMode, TextEncoding, settings::RawSideView},
     inputs::{
         CopyModeAction, SearchModeAction, SideViewAction, TerminalAction, ViPending,
-        dispatch_input_key, local_dispatchers::dispatch_copy_key_vi,
+        dispatch_input_key, local_dispatchers::dispatch_copy_key_vi, paste_into_input,
     },
     logger::TerminalLogger,
 };
@@ -440,8 +440,13 @@ impl TerminalMode {
                 }
                 Err(e) => UpdateEffect::Screenshot(Err(e.to_string())),
             },
+            TerminalAction::Paste(text) => {
+                let bracketed = self.vt100_screen().bracketed_paste();
+                UpdateEffect::Transmit(terminal_paste_bytes(&text, bracketed))
+            }
         }
     }
+
     pub fn handle_search_action(&mut self, action: SearchModeAction, raw_view: RawSideView) {
         match action {
             SearchModeAction::Start => {
@@ -484,6 +489,12 @@ impl TerminalMode {
             SearchModeAction::HandleKey(key_event) => {
                 if self.search_state.active {
                     self.handle_input_search(key_event, raw_view);
+                }
+            }
+            SearchModeAction::Paste(text) => {
+                if self.search_state.active {
+                    paste_into_input(&mut self.search_state.query, &text);
+                    self.update_search_matches(raw_view);
                 }
             }
             SearchModeAction::Kind => {
@@ -789,6 +800,28 @@ pub fn read_vt100_world_line_text(
     Some(line_str)
 }
 
+/// Paste sent to the remote in one write. Line breaks are sent as `\r`, like the Enter key, and
+/// the text is wrapped in paste markers when the remote asked for them (`ESC[?2004h`)
+fn terminal_paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(text.len() + 12);
+    if bracketed {
+        bytes.extend_from_slice(b"\x1b[200~");
+    }
+    let mut prev_cr = false;
+    for &b in text.as_bytes() {
+        match b {
+            b'\n' if prev_cr => {}
+            b'\n' => bytes.push(b'\r'),
+            _ => bytes.push(b),
+        }
+        prev_cr = b == b'\r';
+    }
+    if bracketed {
+        bytes.extend_from_slice(b"\x1b[201~");
+    }
+    bytes
+}
+
 struct TerminalModeTextSource<'a> {
     pub parser: &'a mut vt100::Parser,
     pub max_content_scrollback: usize,
@@ -813,5 +846,34 @@ impl<'a> TextSource for TerminalModeTextSource<'a> {
 
     fn view_height(&mut self) -> usize {
         self.view_height
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Bracketed paste bytes sent in terminal mode (#28).
+
+    use super::*;
+
+    /// LF, CRLF and CR all become one `\r`, like pressing Enter.
+    /// How: one paste with each kind of line break.
+    #[test]
+    fn terminal_paste_line_breaks_become_cr() {
+        assert_eq!(terminal_paste_bytes("a\nb\r\nc\rd", false), b"a\rb\rc\rd");
+    }
+
+    /// The paste markers are only added when the remote enabled bracketed paste.
+    /// How: same text with the remote flag off then on.
+    #[test]
+    fn terminal_paste_markers_follow_remote_mode() {
+        assert_eq!(terminal_paste_bytes("ls", false), b"ls");
+        assert_eq!(terminal_paste_bytes("ls", true), b"\x1b[200~ls\x1b[201~");
+    }
+
+    /// Non-ASCII text is sent as its UTF-8 bytes, like typed chars.
+    /// How: a paste with an accented char.
+    #[test]
+    fn terminal_paste_keeps_utf8() {
+        assert_eq!(terminal_paste_bytes("é", false), "é".as_bytes());
     }
 }

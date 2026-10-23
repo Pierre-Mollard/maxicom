@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use tui_input::Input;
 
 use crate::{
-    inputs::{DialogAction, dispatch_input_key},
+    inputs::{DialogAction, dispatch_input_key, paste_into_input},
     overlays::OverlayResponse,
 };
 
@@ -32,6 +32,10 @@ impl FilePathDialog {
             }
             DialogAction::HandleKey(raw_key) => {
                 dispatch_input_key(&mut self.file_input, raw_key);
+                OverlayResponse::Handled
+            }
+            DialogAction::Paste(text) => {
+                paste_into_input(&mut self.file_input, &text);
                 OverlayResponse::Handled
             }
             _ => OverlayResponse::Handled,

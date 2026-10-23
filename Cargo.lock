@@ -803,6 +803,7 @@ dependencies = [
  "dirs",
  "humantime-serde",
  "libc",
+ "memchr",
  "ratatui",
  "serde",
  "serial2",

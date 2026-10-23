@@ -19,7 +19,7 @@ use crate::{
     inputs::{
         CopyModeAction, LineInputAction, SearchModeAction, SideViewAction, ViMode, ViState,
         dispatch_input_key, dispatch_input_key_vi, local_dispatchers::dispatch_copy_key_vi,
-        vi::ViPending,
+        paste_into_input, vi::ViPending,
     },
     logger::LineLogger,
 };
@@ -284,6 +284,28 @@ impl LineMode {
                 dispatch_input_key_vi(&mut self.user_input, &mut self.vi_state_prompt, key_event);
                 UpdateEffect::None
             }
+            LineInputAction::Paste(text) => {
+                self.history_index = None;
+                let text = text.replace("\r\n", "\n");
+                let mut lines = text.split(['\r', '\n']);
+                let mut current = lines.next().unwrap_or_default();
+                let mut tx = Vec::new();
+                for next in lines {
+                    paste_into_input(&mut self.user_input, current);
+                    if let UpdateEffect::Transmit(bytes) =
+                        self.update_action_lineinput(settings, LineInputAction::Submit)
+                    {
+                        tx.extend_from_slice(&bytes);
+                    }
+                    current = next;
+                }
+                paste_into_input(&mut self.user_input, current);
+                if tx.is_empty() {
+                    UpdateEffect::None
+                } else {
+                    UpdateEffect::Transmit(tx)
+                }
+            }
         }
     }
 
@@ -433,6 +455,12 @@ impl LineMode {
             SearchModeAction::HandleKey(key_event) => {
                 if self.search_state.active {
                     self.handle_input_search(key_event, display_mode, raw_view);
+                }
+            }
+            SearchModeAction::Paste(text) => {
+                if self.search_state.active {
+                    paste_into_input(&mut self.search_state.query, &text);
+                    self.update_search_matches(display_mode, raw_view);
                 }
             }
             SearchModeAction::Kind => {
@@ -831,5 +859,25 @@ mod tests {
             &[0xE9, b'\n'],
         );
         assert_eq!(lm.history()[0].text.as_bytes(), [0xC3, 0xA9, b'\n']);
+    }
+    /// A multi-line paste in the prompt acts like typing it: each line break submits, all
+    /// submitted lines go out in one write, and the text after the last break stays typed.
+    /// How: pastes "ls\r\npwd\nec" in a prompt that already holds "a".
+    #[test]
+    fn paste_submits_each_line_in_one_write() {
+        let mut lm = line_mode(10);
+        let settings = SettingsConfig::default();
+        let eol = settings.line_mode.tx_eol.as_bytes();
+        lm.update_action_lineinput(&settings, LineInputAction::Paste("a".to_string()));
+
+        let effect = lm.update_action_lineinput(
+            &settings,
+            LineInputAction::Paste("ls\r\npwd\nec".to_string()),
+        );
+        let UpdateEffect::Transmit(bytes) = effect else {
+            panic!("expected one transmit");
+        };
+        assert_eq!(bytes, [b"als", eol, b"pwd", eol].concat());
+        assert_eq!(lm.input().value(), "ec");
     }
 }

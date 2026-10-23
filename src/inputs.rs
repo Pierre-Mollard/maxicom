@@ -17,7 +17,7 @@ pub mod local_dispatchers;
 pub mod vi;
 
 // Re-exports
-pub use local_dispatchers::{dispatch_input_key, dispatch_input_key_vi};
+pub use local_dispatchers::{dispatch_input_key, dispatch_input_key_vi, paste_into_input};
 pub use vi::{
     ViMode, ViPending, ViState, find_next_word, find_prev_word, find_prev_word_end, find_word_end,
 };
@@ -55,6 +55,7 @@ pub enum LineInputAction {
     AutoResizeRemoteToWidth,
     ClearLine,
     HandleKey(KeyEvent),
+    Paste(String),
 }
 
 #[derive(Debug)]
@@ -63,6 +64,7 @@ pub enum TerminalAction {
     AutoResizeEmulatorToViewer,
     ScreenshotBytes,
     ScreenshotTxt,
+    Paste(String),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -93,6 +95,7 @@ pub enum SearchModeAction {
     Confirm,
     Kind,
     HandleKey(KeyEvent),
+    Paste(String),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -124,7 +127,7 @@ pub enum CopyModeAction {
     Exit,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DialogAction {
     Close,
     Confirm,
@@ -139,6 +142,7 @@ pub enum DialogAction {
     Home,
     End,
     HandleKey(KeyEvent),
+    Paste(String),
 }
 
 /// Using crossterm's event API instead of stdin.read() to handle multi-byte ANSI sequence like
@@ -155,12 +159,13 @@ pub fn poll_event(timeout: Duration) -> io::Result<Option<Event>> {
 pub fn handle_event(event: Event, app: &App) -> Action {
     // non key events
     match event {
-        crossterm::event::Event::FocusGained => {
+        Event::FocusGained => {
             return Action::App(AppAction::FocusGained(true));
         }
-        crossterm::event::Event::FocusLost => {
+        Event::FocusLost => {
             return Action::App(AppAction::FocusGained(false));
         }
+        Event::Paste(text) => return handle_paste(text, app),
         _ => {}
     }
 
@@ -270,6 +275,26 @@ pub fn handle_event(event: Event, app: &App) -> Action {
             }
         }
         InputContext::Overlay | InputContext::Search | InputContext::Prefix => unreachable!(),
+    }
+}
+
+fn handle_paste(text: String, app: &App) -> Action {
+    if text.is_empty() {
+        return Action::Ignore;
+    }
+    match app.input_context() {
+        InputContext::Overlay => {
+            if app.overlay().is_some_and(|o| o.is_text_input()) {
+                Action::Overlay(DialogAction::Paste(text))
+            } else {
+                Action::Ignore
+            }
+        }
+        InputContext::Search => Action::Search(SearchModeAction::Paste(text)),
+        InputContext::Prefix => Action::App(AppAction::SetPrefix(false)),
+        InputContext::CopyMode => Action::Ignore,
+        InputContext::LineInput => Action::LineInput(LineInputAction::Paste(text)),
+        InputContext::Terminal => Action::Terminal(TerminalAction::Paste(text)),
     }
 }
 

@@ -28,6 +28,14 @@ pub struct ViState {
     pub pending: Option<ViPending>,
 }
 
+/// Byte offset of the char at `char_idx` (or the end of `text`). The tui-input cursor and the
+/// vi bounds count chars, string slices take bytes
+pub fn char_to_byte(text: &str, char_idx: usize) -> usize {
+    text.char_indices()
+        .nth(char_idx)
+        .map_or(text.len(), |(i, _)| i)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ViMotion {
     Left,
@@ -336,7 +344,7 @@ pub fn handle_pending_operator(
             // 'd$' or 'c$' -> delete/change to end of line
             '$' => {
                 let cursor = input.cursor();
-                let text = input.value()[..cursor].to_string();
+                let text = input.value()[..char_to_byte(input.value(), cursor)].to_string();
                 *input = Input::new(text).with_cursor(cursor);
                 if op == ViOperator::Change {
                     state.mode = ViMode::Insert;
@@ -345,8 +353,7 @@ pub fn handle_pending_operator(
 
             // 'd0' or 'c0' -> delete/change to beginning of line
             '0' | '^' => {
-                let cursor = input.cursor();
-                let text = input.value()[cursor..].to_string();
+                let text = input.value()[char_to_byte(input.value(), input.cursor())..].to_string();
                 *input = Input::new(text).with_cursor(0);
                 if op == ViOperator::Change {
                     state.mode = ViMode::Insert;
@@ -373,8 +380,8 @@ pub fn handle_pending_operator(
 
             if let Some((start, end)) = find_text_object_bounds(text, cursor, ch, inner) {
                 let mut new_text = String::new();
-                new_text.push_str(&text[..start]);
-                new_text.push_str(&text[end..]);
+                new_text.push_str(&text[..char_to_byte(text, start)]);
+                new_text.push_str(&text[char_to_byte(text, end)..]);
                 *input = Input::new(new_text).with_cursor(start);
 
                 if op == Some(ViOperator::Change) {

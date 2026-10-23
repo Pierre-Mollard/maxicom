@@ -6,7 +6,7 @@ use std::{
 };
 
 use crossterm::{
-    event::{DisableFocusChange, EnableFocusChange},
+    event::{DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste, EnableFocusChange},
     execute,
 };
 use ratatui::DefaultTerminal;
@@ -18,7 +18,7 @@ use crate::{
     configs::{AppConfig, KeyResolver, Mode},
     overlays::{ErrorDialog, Overlay},
     serial::{SerialConfig, SerialDevice, SerialError},
-    ui::{PostRenderEffect, layout::LayoutWarning, render},
+    ui::{PostRenderEffect, layout::LayoutWarning, render, status_bar::CompiledStatusBar},
 };
 
 mod app;
@@ -56,14 +56,14 @@ pub struct TerminalGuard {
 impl TerminalGuard {
     pub fn init() -> io::Result<Self> {
         let terminal = ratatui::try_init()?;
-        execute!(stdout(), EnableFocusChange)?;
+        execute!(stdout(), EnableFocusChange, EnableBracketedPaste)?;
         Ok(Self { terminal })
     }
 }
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = execute!(stdout(), DisableFocusChange);
+        let _ = execute!(stdout(), DisableBracketedPaste, DisableFocusChange);
         ratatui::restore();
     }
 }
@@ -96,6 +96,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let key_resolver = KeyResolver::try_new(&keybindings)
         .expect("keybindings were already validated during config loading");
     let highlight_rules = highlights.compile_rules();
+    let status_bar = CompiledStatusBar::new(&settings.ui.status_bar, &theme);
 
     let run_mode = match parse_args() {
         Ok(ParseOutcome::Run(mode)) => mode,
@@ -363,7 +364,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
         let mut post_render_effect = PostRenderEffect::None;
         guard.terminal.draw(|frame| {
-            post_render_effect = render(&mut app, &theme, frame, &highlight_rules);
+            post_render_effect = render(&mut app, &theme, frame, &highlight_rules, &status_bar);
         })?;
         last_draw = Some(Instant::now());
         needs_redraw = false;
