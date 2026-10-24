@@ -56,6 +56,14 @@ pub struct LineMode {
     rows_below: usize,
     /// Rows to scroll (up > 0), applied by the render with the wrapped layout it computes
     pending_scroll_rows: isize,
+    /// Rows each history entry takes on screen, aligned with `local_history` (0 = not counted
+    /// yet), counted by the render for the scrollbar and the scroll status (#5d)
+    row_heights: VecDeque<u32>,
+    /// What `row_heights` were counted for (view width, wrap and display modes...): the render
+    /// gives a new key when that changes, which resets every height to "not counted"
+    row_heights_key: u64,
+    /// Scroll position in rows, from the render (#5d)
+    row_scroll_status: ScrollStatus,
     raw_scroller: RawSideScroller,
     vi_state_copymode: Option<ViPending>,
     evicted_lines: usize,
@@ -86,6 +94,9 @@ impl LineMode {
             scroller,
             rows_below: 0,
             pending_scroll_rows: 0,
+            row_heights: VecDeque::new(),
+            row_heights_key: 0,
+            row_scroll_status: ScrollStatus::default(),
             raw_scroller,
             vi_state_copymode: None,
             evicted_lines: 0,
@@ -167,10 +178,12 @@ impl LineMode {
     fn push_entry(&mut self, entry: LogEntry, timestamp_f: &str) {
         let _ = self.logger.log_entry(&entry, timestamp_f);
         self.local_history.push_back(entry);
+        self.row_heights.push_back(0);
 
         self.scroller.on_rx_received();
         while self.local_history.len() > self.max_lines {
             self.local_history.pop_front();
+            self.row_heights.pop_front();
             self.evicted_lines += 1;
         }
     }
@@ -186,6 +199,7 @@ impl LineMode {
 
     pub fn clear_history(&mut self) {
         self.local_history.clear();
+        self.row_heights.clear();
     }
 
     /// Read-only slice/iterator of completed lines
@@ -612,13 +626,25 @@ impl LineMode {
         self.scroller.scroll_to(entries_from_bottom);
         self.rows_below = rows_below;
     }
-    /// The scroller's status, not at the bottom while rows of the last entry are hidden below
+    /// Scroll position in rows (scrollbar, `Bot` / `%`, `SCROLL +n`), as the last frame
+    /// resolved it (#5d)
     pub fn scroll_status(&self) -> ScrollStatus {
-        let mut status = self.scroller.status();
-        if self.rows_below > 0 {
-            status.offset_from_bottom = status.offset_from_bottom.max(1);
+        self.row_scroll_status
+    }
+    pub fn set_scroll_status(&mut self, status: ScrollStatus) {
+        self.row_scroll_status = status;
+    }
+    /// The entry heights for the render to fill and read: reset to "not counted" when `key`
+    /// (what they depend on) changed since the last frame. Given back with `put_row_heights`
+    pub fn take_row_heights(&mut self, key: u64) -> VecDeque<u32> {
+        if key != self.row_heights_key {
+            self.row_heights_key = key;
+            self.row_heights.iter_mut().for_each(|height| *height = 0);
         }
-        status
+        std::mem::take(&mut self.row_heights)
+    }
+    pub fn put_row_heights(&mut self, row_heights: VecDeque<u32>) {
+        self.row_heights = row_heights;
     }
     #[inline]
     pub fn pan_to_right(&mut self, cols: usize) {

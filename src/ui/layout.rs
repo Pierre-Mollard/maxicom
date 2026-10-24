@@ -1,6 +1,7 @@
+use std::borrow::Cow;
+
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::Style,
     text::{Line, Span},
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -256,10 +257,50 @@ impl PreparedLayout {
 }
 
 struct WordToken {
-    parts: Vec<(String, Style)>,
+    part_count: usize,
     is_whitespace: bool,
     char_count: usize,
     visual_width: usize,
+}
+
+/// The bytes `range` of `span`'s text as a span with the same style. Borrowed text (`'static`,
+/// like the byte digits and separators of the byte display modes) is sliced, only owned text
+/// is copied (#5c)
+fn sub_span(span: &Span<'static>, range: std::ops::Range<usize>) -> Span<'static> {
+    let content: Cow<'static, str> = match &span.content {
+        Cow::Borrowed(text) => {
+            let text: &'static str = text;
+            Cow::Borrowed(&text[range])
+        }
+        Cow::Owned(text) => Cow::Owned(text[range].to_string()),
+    };
+    Span::styled(content, span.style)
+}
+
+/// Appends `part` to the token parts: to the last token when it is of the same kind (a word
+/// continued in the next span), or as a new token
+fn push_token_part(
+    tokens: &mut Vec<WordToken>,
+    parts: &mut Vec<Span<'static>>,
+    part: Span<'static>,
+    is_whitespace: bool,
+    char_count: usize,
+    visual_width: usize,
+) {
+    parts.push(part);
+    match tokens.last_mut() {
+        Some(last) if last.is_whitespace == is_whitespace => {
+            last.part_count += 1;
+            last.char_count += char_count;
+            last.visual_width += visual_width;
+        }
+        _ => tokens.push(WordToken {
+            part_count: 1,
+            is_whitespace,
+            char_count,
+            visual_width,
+        }),
+    }
 }
 
 /// Word-wraps a Line (with gutter aware) like ratatui did before.
@@ -280,44 +321,75 @@ pub fn wrap_line_by_words(
         }];
     }
 
+    // ---- Tokens: runs of whitespace and of non-whitespace, in line order ----
+    //
+    // Spans are moved into `parts` whole when they are one run (a byte's digits, a separator,
+    // a word): no copy. A span mixing runs ("hello world") is cut into one sub-span per run,
+    // sliced when its text is borrowed, copied only when owned (#5c). Consecutive runs of the
+    // same kind (a word continued in the next span) make one token
     let mut tokens: Vec<WordToken> = Vec::new();
+    let mut parts: Vec<Span<'static>> = Vec::with_capacity(line.spans.len());
     for span in line.spans {
-        let style = span.style;
-        let mut text = span.content.into_owned();
+        if span.content.is_empty() {
+            continue;
+        }
 
-        while !text.is_empty() {
-            let is_whitespace = text.starts_with(char::is_whitespace);
-            let mut token_bytes = 0;
-            let mut token_chars = 0;
-            let mut token_width = 0;
+        // one pass to see if the whole span is a single run, counting it on the way
+        let text: &str = &span.content;
+        let is_whitespace = text.starts_with(char::is_whitespace);
+        let mut single_run = true;
+        let mut char_count = 0;
+        let mut visual_width = 0;
+        for ch in text.chars() {
+            if ch.is_whitespace() != is_whitespace {
+                single_run = false;
+                break;
+            }
+            char_count += 1;
+            visual_width += UnicodeWidthChar::width(ch).unwrap_or(0);
+        }
+        if single_run {
+            push_token_part(
+                &mut tokens,
+                &mut parts,
+                span,
+                is_whitespace,
+                char_count,
+                visual_width,
+            );
+            continue;
+        }
 
-            for (idx, ch) in text.char_indices() {
+        // several runs: one sub-span each
+        let mut run_start = 0;
+        while run_start < text.len() {
+            let rest = &text[run_start..];
+            let is_whitespace = rest.starts_with(char::is_whitespace);
+            let mut run_end = run_start;
+            let mut char_count = 0;
+            let mut visual_width = 0;
+            for (idx, ch) in rest.char_indices() {
                 if ch.is_whitespace() != is_whitespace {
                     break;
                 }
-                token_bytes = idx + ch.len_utf8();
-                token_chars += 1;
-                token_width += UnicodeWidthChar::width(ch).unwrap_or(0);
+                run_end = run_start + idx + ch.len_utf8();
+                char_count += 1;
+                visual_width += UnicodeWidthChar::width(ch).unwrap_or(0);
             }
-
-            let chunk: String = text.drain(..token_bytes).collect();
-
-            if let Some(last) = tokens.last_mut()
-                && last.is_whitespace == is_whitespace
-            {
-                last.parts.push((chunk, style));
-                last.char_count += token_chars;
-                last.visual_width += token_width;
-            } else {
-                tokens.push(WordToken {
-                    parts: vec![(chunk, style)],
-                    is_whitespace,
-                    char_count: token_chars,
-                    visual_width: token_width,
-                });
-            }
+            let part = sub_span(&span, run_start..run_end);
+            push_token_part(
+                &mut tokens,
+                &mut parts,
+                part,
+                is_whitespace,
+                char_count,
+                visual_width,
+            );
+            run_start = run_end;
         }
     }
+    // the parts are taken in order, `part_count` per token
+    let mut parts = parts.into_iter();
 
     let mut sub_lines = Vec::new();
     let mut current_spans: Vec<Span<'static>> = Vec::new();
@@ -359,9 +431,12 @@ pub fn wrap_line_by_words(
             continuation_width
         };
         if token.visual_width > row_width && current_row_width == 0 {
-            for (text_part, style) in token.parts {
-                let mut remaining = text_part;
-                while !remaining.is_empty() {
+            // a word wider than a whole row: cut it char by char over as many rows as needed
+            for part in parts.by_ref().take(token.part_count) {
+                let text: &str = &part.content;
+                let mut pos = 0;
+                while pos < text.len() {
+                    let remaining = &text[pos..];
                     let row_width = if sub_lines.is_empty() {
                         max_width
                     } else {
@@ -399,10 +474,10 @@ pub fn wrap_line_by_words(
                         continue;
                     }
 
-                    let part: String = remaining.drain(..chunk_bytes).collect();
+                    current_spans.push(sub_span(&part, pos..pos + chunk_bytes));
+                    pos += chunk_bytes;
                     current_row_chars += chunk_chars;
                     current_row_width += chunk_w;
-                    current_spans.push(Span::styled(part, style));
                 }
             }
             continue;
@@ -410,9 +485,7 @@ pub fn wrap_line_by_words(
 
         current_row_chars += token.char_count;
         current_row_width += token.visual_width;
-        for (text_part, style) in token.parts {
-            current_spans.push(Span::styled(text_part, style));
-        }
+        current_spans.extend(parts.by_ref().take(token.part_count));
     }
 
     if !current_spans.is_empty() {
@@ -575,6 +648,75 @@ pub fn wrap_line_by_chars(
     sub_lines
 }
 
+/// What starts the continuation rows of a wrapped line (`wrap_indent`): nothing, the indent
+/// prefix, or the indent prefix after blanks as wide as the timestamp
+pub fn continuation_indent(settings: &SettingsConfig) -> String {
+    let base_prefix = match settings.line_mode.wrap_indent {
+        PrefixWrapBehavior::None => "",
+        PrefixWrapBehavior::Prefix | PrefixWrapBehavior::Timestamp => {
+            &settings.line_mode.line_indent_prefix
+        }
+    };
+
+    let timestamp_pad = if settings.line_mode.wrap_indent == PrefixWrapBehavior::Timestamp
+        && settings.show_timestamps
+    {
+        let prefix_w = settings.line_mode.line_prefix.width();
+        let ts_width = settings.line_gutter_width().saturating_sub(prefix_w);
+        " ".repeat(ts_width)
+    } else {
+        String::new()
+    };
+
+    if timestamp_pad.is_empty() {
+        base_prefix.to_string()
+    } else {
+        format!("{}{}", timestamp_pad, base_prefix)
+    }
+}
+
+/// Rows a byte mode line (Hex, Octal, Binary) takes once word wrapped, counted without laying
+/// it out (opti #5d). `None` when the count could be wrong, so the caller lays the line out instead.
+///
+/// It follows the placement rule of `wrap_line_by_words` for a line made of a gutter then
+/// `bytes` tokens of `digits` columns separated by one space:
+/// - the gutter (timestamp + prefix) opens the first row; it must fit in it and end with a
+///   space, which the caller checks (a prefix ending otherwise merges with the first byte)
+/// - a byte goes to a new row when it doesn't fit in what is left and the row isn't empty
+/// - the separator after a byte always stays on its row, even one column past the width
+/// - continuation rows are narrower by the indent; a byte wider than them is cut char by
+///   char by the word wrap, a case not counted here
+pub fn byte_mode_rows(
+    bytes: usize,
+    digits: usize,
+    max_width: usize,
+    gutter_width: usize,
+    indent_width: usize,
+) -> Option<usize> {
+    if max_width == 0 {
+        return Some(1);
+    }
+    let continuation_width = max_width.saturating_sub(indent_width).max(1);
+    if gutter_width > max_width || digits > continuation_width {
+        return None;
+    }
+    let mut rows = 1;
+    let mut row_width = max_width;
+    let mut used = gutter_width;
+    for byte in 0..bytes {
+        if digits > row_width.saturating_sub(used) && used > 0 {
+            rows += 1;
+            row_width = continuation_width;
+            used = 0;
+        }
+        used += digits;
+        if byte + 1 < bytes {
+            used += 1;
+        }
+    }
+    Some(rows)
+}
+
 pub fn prepare_view_layout(
     lines: Vec<Line<'static>>,
     settings: &SettingsConfig,
@@ -588,28 +730,7 @@ pub fn prepare_view_layout(
     let wrap_mode = settings.line_mode.wrap_mode;
     let gutter_chars = settings.line_gutter_width();
 
-    let base_prefix = match settings.line_mode.wrap_indent {
-        PrefixWrapBehavior::None => "",
-        PrefixWrapBehavior::Prefix | PrefixWrapBehavior::Timestamp => {
-            &settings.line_mode.line_indent_prefix
-        }
-    };
-
-    let timestamp_pad = if settings.line_mode.wrap_indent == PrefixWrapBehavior::Timestamp
-        && settings.show_timestamps
-    {
-        let prefix_w = settings.line_mode.line_prefix.width();
-        let ts_width = gutter_chars.saturating_sub(prefix_w);
-        " ".repeat(ts_width)
-    } else {
-        String::new()
-    };
-
-    let full_indent_prefix = if timestamp_pad.is_empty() {
-        base_prefix.to_string()
-    } else {
-        format!("{}{}", timestamp_pad, base_prefix)
-    };
+    let full_indent_prefix = continuation_indent(settings);
     let indent_width = full_indent_prefix.width();
     let indent_style = *theme.line_mode.line_indent_prefix;
 
@@ -916,5 +1037,158 @@ mod tests {
             };
             assert_eq!(chars(j), chars(a));
         }
+    }
+
+    /// Every row of a laid out line as `gutter|content chars|width|text` (spaces as `·`).
+    fn rows_of(layout: &PreparedLayout) -> Vec<String> {
+        layout
+            .line_layouts
+            .iter()
+            .flat_map(|line| &line.sub_lines)
+            .map(|sub| {
+                let text: String = sub.spans.iter().map(|s| s.content.as_ref()).collect();
+                format!(
+                    "{}|{}|{}|{}",
+                    sub.gutter_chars,
+                    sub.content_char_len,
+                    sub.visual_width,
+                    text.replace(' ', "·")
+                )
+            })
+            .collect()
+    }
+
+    /// Golden rows of the word wrap, captured before it stopped copying spans (#5c): byte modes
+    /// (2 borrowed spans per byte), a gutter (timestamp + prefix) and an indent prefix, a byte
+    /// wider than the row (split char by char), and a Pretty line whose owned spans are split.
+    /// How: real entries through `history_entry_to_line` then `prepare_view_layout`.
+    #[test]
+    fn word_wrap_golden_rows() {
+        use crate::{
+            app::types::LogEntry,
+            configs::{LineDisplayMode, TextEncoding},
+            ui::lines::history_entry_to_line,
+        };
+        let theme = ThemeConfig::default();
+        let laid_out = |mode, wire: &[u8], width, timestamps, indent| {
+            let mut settings = SettingsConfig::default();
+            settings.line_mode.display_mode = mode;
+            settings.show_timestamps = timestamps;
+            settings.timestamp_format = String::from("%M:%S");
+            settings.line_mode.wrap_indent = indent;
+            let time = chrono::TimeZone::with_ymd_and_hms(&chrono::Local, 2026, 10, 24, 12, 34, 56)
+                .unwrap();
+            let entry = LogEntry::received(TextEncoding::Utf8.decode(wire), wire, time);
+            let prefix = settings.line_mode.line_prefix.clone();
+            let line = history_entry_to_line(&entry, &settings, &[], 0, None, &theme, &prefix);
+            rows_of(&prepare_view_layout(vec![line], &settings, &theme, width))
+        };
+        use LineDisplayMode::{Binary, Hex, Octal, Pretty};
+        use PrefixWrapBehavior::{None as NoIndent, Prefix};
+        let cases = [
+            laid_out(Hex, b"Hello World!", 20, false, NoIndent),
+            laid_out(Hex, b"Hello World!", 24, true, Prefix),
+            laid_out(Octal, b"abcdefgh", 18, false, Prefix),
+            laid_out(Binary, b"AB\r\n", 12, false, NoIndent),
+            laid_out(Binary, b"AB", 6, false, NoIndent),
+            laid_out(
+                Pretty,
+                b"hello \x1b[31mwonderful world\x1b[0m, again",
+                10,
+                false,
+                Prefix,
+            ),
+        ];
+        let expected: [&[&str]; 6] = [
+            &["2|18|20|│·48·65·6C·6C·6F·20·", "0|17|17|57·6F·72·6C·64·21"],
+            // the trailing separator is kept even past the width (ratatui cuts it when drawing)
+            &[
+                "16|9|25|34:56│·48·65·6C·6C·6F·20·",
+                "0|17|17|57·6F·72·6C·64·21",
+            ],
+            &["2|16|18|│·141·142·143·144·", "0|15|15|145·146·147·150"],
+            &[
+                "2|9|11|│·01000001·",
+                "0|9|9|01000010·",
+                "0|9|9|00001101·",
+                "0|8|8|00001010",
+            ],
+            // a byte wider than the row is split char by char
+            &[
+                "2|0|2|│·",
+                "0|6|6|010000",
+                "0|3|3|01·",
+                "0|6|6|010000",
+                "0|2|2|10",
+            ],
+            // owned spans split: a word wider than a continuation row (10 - 2 indent) is cut
+            &[
+                "2|6|8|│·hello·",
+                "0|8|8|wonderfu",
+                "0|9|9|l·world,·",
+                "0|5|5|again",
+            ],
+        ];
+        for (rows, expected) in cases.iter().zip(expected) {
+            assert_eq!(rows, expected);
+        }
+    }
+
+    /// The arithmetic row count of byte mode lines equals the rows the word wrap makes, when it
+    /// gives a count (#5d).
+    /// How: generated lines (0-60 bytes) in Hex / Octal / Binary, with and without timestamps
+    /// and an indent prefix, at widths 4-90: count vs `prepare_view_layout` rows.
+    #[test]
+    fn byte_mode_rows_match_the_word_wrap() {
+        use crate::{
+            app::types::LogEntry,
+            configs::{LineDisplayMode, TextEncoding},
+            ui::lines::history_entry_to_line,
+        };
+        let theme = ThemeConfig::default();
+        let mut counted = 0;
+        for (mode, digits) in [
+            (LineDisplayMode::Hex, 2),
+            (LineDisplayMode::Octal, 3),
+            (LineDisplayMode::Binary, 8),
+        ] {
+            for timestamps in [false, true] {
+                for indent in [PrefixWrapBehavior::None, PrefixWrapBehavior::Prefix] {
+                    let mut settings = SettingsConfig::default();
+                    settings.line_mode.display_mode = mode;
+                    settings.show_timestamps = timestamps;
+                    settings.line_mode.wrap_indent = indent;
+                    let prefix = settings.line_mode.line_prefix.clone();
+                    let gutter = settings.line_gutter_width();
+                    let indent_width = continuation_indent(&settings).width();
+                    for len in [0, 1, 2, 5, 13, 31, 60] {
+                        let wire: Vec<u8> = (0..len as u8).map(|b| b'A' + b % 26).collect();
+                        let entry = LogEntry::received(
+                            TextEncoding::Utf8.decode(&wire),
+                            &wire,
+                            chrono::Local::now(),
+                        );
+                        let line =
+                            history_entry_to_line(&entry, &settings, &[], 0, None, &theme, &prefix);
+                        for width in 4..=90 {
+                            let Some(rows) =
+                                byte_mode_rows(len, digits, width, gutter, indent_width)
+                            else {
+                                continue;
+                            };
+                            let layout =
+                                prepare_view_layout(vec![line.clone()], &settings, &theme, width);
+                            let context = format!(
+                                "{mode:?} ts {timestamps} {indent:?} {len} bytes width {width}"
+                            );
+                            assert_eq!(rows, layout.visual_lines.len(), "{context}");
+                            counted += 1;
+                        }
+                    }
+                }
+            }
+        }
+        // most cases are counted, the fallback is only for rows too narrow
+        assert!(counted > 3000, "{counted}");
     }
 }

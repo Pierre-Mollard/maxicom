@@ -1,4 +1,7 @@
-use std::collections::VecDeque;
+use std::{
+    collections::VecDeque,
+    hash::{DefaultHasher, Hash, Hasher},
+};
 
 use ratatui::{
     Frame,
@@ -13,11 +16,12 @@ use crate::{
     app::{
         App,
         data_processing::{entry_display_text, entry_display_to_wire_map, map_disp_byte_to_raw},
+        scroller::ScrollStatus,
         search::SearchMatch,
         types::{FocusTarget, LogEntry},
     },
     configs::{
-        KeywordHighlight, SettingsConfig, ThemeConfig, WrapMode,
+        KeywordHighlight, LineDisplayMode, SettingsConfig, ThemeConfig, WrapMode,
         settings::{PrefixWrapBehavior, RawSideView, raw_view_to_display_mode},
     },
     ui::{
@@ -26,7 +30,10 @@ use crate::{
             apply_keyword_highlights, apply_selection_to_spans, border_style_for, render_search_bar,
         },
         data_display::{format_entry_content, format_line_content},
-        layout::{LogicalLineLayout, PreparedLayout, prepare_view_layout},
+        layout::{
+            LogicalLineLayout, PreparedLayout, byte_mode_rows, continuation_indent,
+            prepare_view_layout,
+        },
         raw_side::{
             CharHighlight, format_raw_bytes_with_highlights, raw_panel_layout,
             render_raw_panel_widget,
@@ -142,7 +149,7 @@ pub fn render_monitor(
     };
 
     let scroll_from_bottom = app.line_mode.scroll_offset();
-    let mut clamped_scroll = scroll_from_bottom.min(global_max_scroll);
+    let clamped_scroll = scroll_from_bottom.min(global_max_scroll);
 
     let focus_entry = if let Some((target_line, _)) = active_focus {
         target_line
@@ -175,6 +182,27 @@ pub fn render_monitor(
         .line_mode
         .take_pending_scroll_rows()
         .clamp(-limit, limit);
+
+    // ---- Entry heights for the scroll position in rows (#5d) ----
+    //
+    // `LineMode` keeps one height (rows on screen) per history entry, 0 when not counted yet.
+    // They depend on how entries are laid out, so they are counted for a key made of what
+    // decides it: when the view width, wrap mode, display mode, timestamps, indent or gutter
+    // change, the key changes and every height goes back to "not counted". Taken here and given
+    // back once the position is known
+    let display_mode = app.settings().line_mode.display_mode;
+    let heights_key = {
+        let mut hasher = DefaultHasher::new();
+        content_width.hash(&mut hasher);
+        std::mem::discriminant(&wrap_mode).hash(&mut hasher);
+        std::mem::discriminant(&display_mode).hash(&mut hasher);
+        std::mem::discriminant(&app.settings().line_mode.wrap_indent).hash(&mut hasher);
+        app.settings().show_timestamps.hash(&mut hasher);
+        app.settings().line_gutter_width().hash(&mut hasher);
+        hasher.finish()
+    };
+    let mut row_heights = app.line_mode.take_row_heights(heights_key);
+    row_heights.resize(total_entries, 0);
 
     // ---- Laying out one entry ----
     //
@@ -257,7 +285,14 @@ pub fn render_monitor(
     let mut end_idx = anchor_entry + 1;
     let mut window: VecDeque<PreparedLayout> = VecDeque::new();
 
-    let anchor = lay_out_entry(anchor_entry);
+    // every entry laid out for the window gives its height for free (#5d)
+    let mut lay_out_and_count = |global_idx: usize| {
+        let entry = lay_out_entry(global_idx);
+        row_heights[global_idx] = entry.visual_lines.len() as u32;
+        entry
+    };
+
+    let anchor = lay_out_and_count(anchor_entry);
     let anchor_rows = anchor.visual_lines.len();
     // Rows already covered by the anchor itself. In plain scrolling the view's bottom row can be
     // inside a tall anchor: its rows above that bottom row count as "above", the ones hidden
@@ -279,7 +314,7 @@ pub fn render_monitor(
     // above the view's bottom row or the history starts
     while rows_above < rows_above_needed && start_idx > 0 {
         start_idx -= 1;
-        let entry = lay_out_entry(start_idx);
+        let entry = lay_out_and_count(start_idx);
         rows_above += entry.visual_lines.len();
         window.push_front(entry);
     }
@@ -292,10 +327,51 @@ pub fn render_monitor(
     // Walk down: lay out the entry after the window and append it, until enough rows are below
     // or the history ends
     while rows_below < rows_below_needed && end_idx < total_entries {
-        let entry = lay_out_entry(end_idx);
+        let entry = lay_out_and_count(end_idx);
         rows_below += entry.visual_lines.len();
         window.push_back(entry);
         end_idx += 1;
+    }
+
+    // ---- Heights of the entries outside the window (#5d) ----
+    //
+    // Counted once (they stay counted until the key changes), the cheapest correct way:
+    // - truncate: one row each
+    // - byte modes (Hex, Octal, Binary) with word wrap: by arithmetic from the byte count
+    //   (`byte_mode_rows`), when the gutter ends with a space so it can't merge with the first
+    //   byte (a prefix like "|" would); `None` from it falls back to laying out
+    // - anything else: laid out like the window entries (after a width change in Pretty
+    //   that is ~2 µs per entry, once)
+    let byte_digits = match display_mode {
+        LineDisplayMode::Hex => Some(2),
+        LineDisplayMode::Octal => Some(3),
+        LineDisplayMode::Binary => Some(8),
+        _ => None,
+    };
+    let gutter_width = app.settings().line_gutter_width();
+    let gutter_ends_with_space = gutter_width == 0
+        || app
+            .settings()
+            .line_mode
+            .line_prefix
+            .ends_with(char::is_whitespace);
+    let indent_width = continuation_indent(app.settings()).width();
+    for (idx, height) in row_heights.iter_mut().enumerate() {
+        if *height != 0 {
+            continue;
+        }
+        let counted = match (wrap_mode, byte_digits) {
+            (WrapMode::Truncate, _) => Some(1),
+            (WrapMode::Word, Some(digits)) if gutter_ends_with_space => byte_mode_rows(
+                app.line_mode.history()[idx].wire_bytes().len(),
+                digits,
+                content_width,
+                gutter_width,
+                indent_width,
+            ),
+            _ => None,
+        };
+        *height = counted.unwrap_or_else(|| lay_out_entry(idx).visual_lines.len()) as u32;
     }
 
     // The partial RX line (received but not ended yet) is drawn after the last entry, so only
@@ -373,7 +449,6 @@ pub fn render_monitor(
             // Reached the last entry's last row: back to the live view, aligned to the bottom
             // of everything laid out (partial RX line included)
             app.line_mode.scroll_to_bottom();
-            clamped_scroll = 0;
             total_visual_rows.saturating_sub(content_height)
         } else {
             // Top clamp: when the window starts at the first entry, the bottom row can't be
@@ -389,9 +464,9 @@ pub fn render_monitor(
             let local = entries.partition_point(|meta| meta.visual_row_start <= bottom) - 1;
             let meta = &entries[local];
             let rows_below = meta.visual_row_start + rows_of(meta) - 1 - bottom;
-            clamped_scroll = total_entries - 1 - (start_idx + local);
+            let entries_from_bottom = total_entries - 1 - (start_idx + local);
             app.line_mode
-                .set_scroll_position(clamped_scroll, rows_below);
+                .set_scroll_position(entries_from_bottom, rows_below);
             // the view ends on `bottom`: its top line is a view height above
             (bottom + 1).saturating_sub(content_height)
         }
@@ -423,6 +498,30 @@ pub fn render_monitor(
         let max_offset = total_visual_rows.saturating_sub(content_height);
         ideal_offset.min(max_offset)
     };
+
+    // ---- Scroll position in rows (#5d) ----
+    //
+    // With every entry's height known, the view's place in the whole history is exact: its top
+    // row is the rows of the entries before the window plus `paragraph_y_offset`. From the
+    // bottom of the history it is what is left below the view (0 when live; the partial RX line
+    // is not counted, so it can only make that 0 sooner). The scrollbar, `Bot` / `%` and the
+    // title's `SCROLL +n` all read this
+    let rows_before_window: usize = row_heights
+        .range(..start_idx)
+        .map(|&height| height as usize)
+        .sum();
+    let total_rows: usize = row_heights.iter().map(|&height| height as usize).sum();
+    let max_scroll = total_rows.saturating_sub(content_height);
+    let view_top = rows_before_window + paragraph_y_offset;
+    let offset_from_bottom = total_rows
+        .saturating_sub(view_top + content_height)
+        .min(max_scroll);
+    let scroll_status = ScrollStatus {
+        max_scroll,
+        offset_from_bottom,
+    };
+    app.line_mode.set_scroll_status(scroll_status);
+    app.line_mode.put_row_heights(row_heights);
 
     let line_x_offset = match wrap_mode {
         WrapMode::Word | WrapMode::Char => 0,
@@ -632,9 +731,10 @@ pub fn render_monitor(
     if let Some(sb_area) = scrollbar_area {
         let has_borders = app.settings().ui.show_borders;
 
-        if total_entries > content_height {
-            let scrollbar_pos = global_max_scroll.saturating_sub(clamped_scroll);
-            let mut scrollbar_state = ScrollbarState::new(global_max_scroll)
+        // in rows (#5d): the thumb moves one step per row scrolled
+        if total_rows > content_height {
+            let scrollbar_pos = max_scroll - offset_from_bottom;
+            let mut scrollbar_state = ScrollbarState::new(max_scroll)
                 .viewport_content_length(content_height)
                 .position(scrollbar_pos);
 

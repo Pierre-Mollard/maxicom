@@ -167,10 +167,21 @@ mod tests {
     impl Harness {
         /// Line mode, no timestamps, `display_mode`, on a `w`x`h` screen
         fn line_mode(display_mode: LineDisplayMode, w: u16, h: u16) -> Self {
+            Self::line_mode_with(display_mode, w, h, |_| {})
+        }
+
+        /// Same, with settings that must be set before the app is built (history size)
+        fn line_mode_with(
+            display_mode: LineDisplayMode,
+            w: u16,
+            h: u16,
+            tweak: impl FnOnce(&mut SettingsConfig),
+        ) -> Self {
             let mut settings = SettingsConfig::default();
             settings.mode = Mode::Line;
             settings.show_timestamps = false;
             settings.line_mode.display_mode = display_mode;
+            tweak(&mut settings);
             let theme = ThemeConfig::default();
             let status_bar = CompiledStatusBar::new(&settings.ui.status_bar, &theme);
             let app = App::new(
@@ -226,12 +237,17 @@ mod tests {
         }
     }
 
-    /// Screen rows showing Binary data (at least one 8 digit byte), as drawn.
+    /// Screen rows showing Binary data (at least one 8 digit byte), as drawn, without the last
+    /// column: the scrollbar, which moves with every step since it counts rows (#5d).
     fn binary_rows(rows: &[String]) -> Vec<String> {
         let is_byte = |word: &str| word.len() == 8 && word.bytes().all(|b| b == b'0' || b == b'1');
         rows.iter()
             .filter(|row| row.split(|c: char| !c.is_ascii_digit()).any(is_byte))
-            .cloned()
+            .map(|row| {
+                let mut row = row.clone();
+                row.pop();
+                row
+            })
             .collect()
     }
 
@@ -341,5 +357,78 @@ mod tests {
             .map(|i| format!("ine {i:02} {}ab", "abcdefghij".repeat(5)))
             .collect();
         assert_eq!(shown, expected);
+    }
+
+    /// The scroll position counts rows (#5d): each scroll step moves it by one, from 0 (live,
+    /// `Bot`) to `max_scroll` = total rows - view (`Top`), and scroll to top / bottom land on
+    /// both ends exactly.
+    /// How: the tall Binary lines, scrolled up one row at a time until the view stops moving.
+    #[test]
+    fn scroll_status_counts_rows() {
+        let mut h = tall_binary_lines();
+        h.draw();
+        let status = h.app.scroll_status();
+        assert_eq!(status.offset_from_bottom, 0);
+        assert!(status.is_bottom());
+        let max_scroll = status.max_scroll;
+        // 4 entries of ~15 rows each, minus a view: more than the 3 entries the old count gave
+        assert!(max_scroll > 40, "{max_scroll}");
+
+        for step in 1..=max_scroll {
+            h.scroll(HistoryAction::ScrollUp(1));
+            h.draw();
+            assert_eq!(h.app.scroll_status().offset_from_bottom, step);
+        }
+        h.scroll(HistoryAction::ScrollUp(1));
+        h.draw();
+        assert_eq!(h.app.scroll_status().offset_from_bottom, max_scroll);
+        assert!(h.app.scroll_status().is_top());
+
+        h.scroll(HistoryAction::ScrollToBottom);
+        h.draw();
+        assert_eq!(h.app.scroll_status().offset_from_bottom, 0);
+        h.scroll(HistoryAction::ScrollToTop);
+        h.draw();
+        assert_eq!(h.app.scroll_status().offset_from_bottom, max_scroll);
+    }
+
+    /// Entry heights stay aligned with the history when old entries are evicted, and are
+    /// counted again after a width change (#5d).
+    /// How: the status after 6 tall lines with a history of 3, drawn after each line, equals a
+    /// history that only got the last 3; a view drawn at 80 then 60 columns equals one drawn
+    /// at 60 from the start.
+    #[test]
+    fn row_heights_follow_evictions_and_width() {
+        // drawn after each line, like live RX, so heights are counted before the evictions
+        // (lines of different lengths, so a misaligned height shows)
+        let feed = |h: &mut Harness, lines: std::ops::Range<u8>| {
+            for line in lines {
+                let mut bytes = vec![b'a' + line; 40 + 20 * line as usize];
+                bytes.extend_from_slice(b"\r\n");
+                h.feed(&bytes);
+                h.draw();
+            }
+        };
+        let small_history = |w, hgt| {
+            Harness::line_mode_with(LineDisplayMode::Binary, w, hgt, |s| {
+                s.line_mode.history_size = 3;
+            })
+        };
+
+        let mut evicted = small_history(80, 12);
+        feed(&mut evicted, 0..6);
+        evicted.draw();
+        let mut fresh = small_history(80, 12);
+        feed(&mut fresh, 3..6);
+        fresh.draw();
+        assert_eq!(evicted.app.scroll_status(), fresh.app.scroll_status());
+
+        evicted.terminal.backend_mut().resize(60, 12);
+        evicted.draw();
+        let mut narrow = small_history(60, 12);
+        feed(&mut narrow, 3..6);
+        narrow.draw();
+        assert_eq!(evicted.app.scroll_status(), narrow.app.scroll_status());
+        assert!(narrow.app.scroll_status().max_scroll > fresh.app.scroll_status().max_scroll);
     }
 }
