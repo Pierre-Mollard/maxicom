@@ -152,7 +152,7 @@ mod tests {
             KeyBindingsConfig, KeyResolver, LineDisplayMode, RawSideView, RxNewlineMode,
             SettingsConfig, TextEncoding,
         },
-        inputs::{Action, HistoryAction},
+        inputs::{Action, CopyModeAction, HistoryAction, SearchModeAction},
         serial::SerialConfig,
     };
     use ratatui::{Terminal, backend::TestBackend};
@@ -430,5 +430,91 @@ mod tests {
         narrow.draw();
         assert_eq!(evicted.app.scroll_status(), narrow.app.scroll_status());
         assert!(narrow.app.scroll_status().max_scroll > fresh.app.scroll_status().max_scroll);
+    }
+
+    /// Six tall Hex entries (~7 rows each) on a 60x12 view, Binary side panel: entry `k` is its
+    /// letter repeated, `E` (second from the bottom) holds "in" (69 6E), `F` starts with "ZZ".
+    fn tall_hex_lines() -> Harness {
+        tall_lines(LineDisplayMode::Hex, RawSideView::Binary, |_| {})
+    }
+
+    /// The same entries in another main view / side panel setup
+    fn tall_lines(
+        mode: LineDisplayMode,
+        raw: RawSideView,
+        tweak: impl FnOnce(&mut SettingsConfig),
+    ) -> Harness {
+        let mut h = Harness::line_mode_with(mode, 60, 12, tweak);
+        h.app.settings_mut().raw_side.view = raw;
+        for letter in b"ABCDEF" {
+            let mut bytes = vec![*letter; 120];
+            if *letter == b'E' {
+                bytes[50..52].copy_from_slice(b"in");
+            }
+            if *letter == b'F' {
+                bytes[..2].copy_from_slice(b"ZZ");
+            }
+            bytes.extend_from_slice(b"\r\n");
+            h.feed(&bytes);
+        }
+        h.draw();
+        h
+    }
+
+    fn shows(rows: &[String], text: &str) -> bool {
+        rows.iter().any(|row| row.contains(text))
+    }
+
+    /// MAX-123: copy mode entered from a search match keeps the cursor's row on screen when the
+    /// cursor moves, with tall entries near the bottom of the history.
+    /// How: search "69 6e" (only in `E`), confirm with Enter, move right: the match must still be
+    /// shown, before and after each move. Two setups: Hex main view with a Binary side panel and
+    /// a text search; Binary main view with timestamps and an indent prefix, a Hex side panel
+    /// and a raw bytes search (the ticket's)
+    #[test]
+    fn copy_mode_from_search_keeps_cursor_row_in_view() {
+        let ticket_setup = |s: &mut SettingsConfig| {
+            s.show_timestamps = true;
+            s.line_mode.wrap_indent = crate::configs::settings::PrefixWrapBehavior::Prefix;
+        };
+        let setups = [
+            (tall_hex_lines(), false, "69 6E"),
+            (
+                tall_lines(LineDisplayMode::Binary, RawSideView::Hex, ticket_setup),
+                true,
+                "01101001 01101110",
+            ),
+        ];
+        for (mut h, raw_search, shown) in setups {
+            h.app.update(Action::Search(SearchModeAction::Start));
+            if raw_search {
+                h.app.update(Action::Search(SearchModeAction::Kind));
+            }
+            let query = String::from("69 6e");
+            h.app.update(Action::Search(SearchModeAction::Paste(query)));
+            h.draw();
+            h.app.update(Action::Search(SearchModeAction::Confirm));
+            let rows = h.draw();
+            assert!(shows(&rows, shown), "after Enter: {rows:#?}");
+            for _ in 0..3 {
+                h.app.update(Action::CopyMode(CopyModeAction::MoveRight));
+                let rows = h.draw();
+                assert!(shows(&rows, shown), "after a move: {rows:#?}");
+            }
+        }
+    }
+
+    /// MAX-123: entering copy mode at the bottom puts the cursor on the first row of the last
+    /// entry, which must be on screen even when that entry is taller than the view.
+    /// How: copy mode entered on the tall `F` entry, which starts with "ZZ" (5A 5A).
+    #[test]
+    fn copy_mode_at_bottom_shows_the_cursor_row() {
+        let mut h = tall_hex_lines();
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        let rows = h.draw();
+        assert!(shows(&rows, "5A 5A"), "{rows:#?}");
+        h.app.update(Action::CopyMode(CopyModeAction::MoveRight));
+        let rows = h.draw();
+        assert!(shows(&rows, "5A 5A"), "{rows:#?}");
     }
 }

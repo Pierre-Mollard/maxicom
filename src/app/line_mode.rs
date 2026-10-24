@@ -388,18 +388,17 @@ impl LineMode {
         }
     }
 
+    /// Scrolls to the cursor's entry. While in copy mode the render centers the view on the
+    /// cursor whatever this offset is; it decides where the view stays once copy mode is left.
+    /// It used to subtract half the view height (rows) from an entry count, which hit 0 with
+    /// tall entries near the bottom (MAX-123)
     fn sync_scroll_with_cursor(&mut self) {
         let total_lines = self.local_history.len();
         if total_lines == 0 {
             return;
         }
-
         let line_from_bottom = (total_lines - 1).saturating_sub(self.copy_state.cursor.line_idx);
-        let view_h = self.scroller.view_height;
-        let half = view_h / 2;
-
-        let target_scroll = line_from_bottom.saturating_sub(half);
-        self.scroller.scroll_to(target_scroll);
+        self.scroll_to(line_from_bottom);
     }
 
     fn sync_pan_with_cursor(&mut self, display_mode: LineDisplayMode, gutter_width: usize) {

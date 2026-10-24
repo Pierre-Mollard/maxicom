@@ -159,20 +159,19 @@ pub fn render_monitor(
 
     // ---- What this frame shows ----
     //
-    // Three ways of choosing the visible rows, decided below once the window is laid out:
+    // Two ways of choosing the visible rows, decided below once the window is laid out:
     // - plain scrolling (no search, no copy mode): the view's bottom row is a position kept by
     //   `LineMode` (#36): an entry counted from the bottom, and how many of its rows are hidden
-    //   below the view. Scroll keys only add rows to a pending count, applied here
-    // - search or copy mode: the view is centered on the focused row (match or cursor)
-    // - live (scroll offset 0, no search): the view is aligned to the bottom of the history
+    //   below the view. Scroll keys only add rows to a pending count, applied here. Offset 0
+    //   is the live view, aligned to the bottom of the history
+    // - search or copy mode: the view is centered on the focused row (match or cursor),
+    //   clamped to the rows laid out, so near the end it still ends on the last row. Copy mode
+    //   is never aligned to the bottom instead: with entries taller than half the view that
+    //   pushed the cursor's row out of view (MAX-123)
     let row_scrolling = !is_search_active && !app.line_mode.copy_state().active;
-    // The entry the window is built around: the last one for a bottom-aligned view (live, or
-    // copy mode still at offset 0), else the scrolled-to entry or the focused one
-    let anchor_entry = if clamped_scroll == 0 && !is_search_active {
-        total_entries - 1
-    } else {
-        focus_entry
-    };
+    // The entry the window is built around: the scrolled-to one (the last one when live), or
+    // the focused one
+    let anchor_entry = focus_entry;
 
     // Rows scrolled since the last frame (#36): positive is up. Taken now, before layout, so the
     // window below lays out exactly what this frame needs. Capped at a view height either way
@@ -470,12 +469,9 @@ pub fn render_monitor(
             // the view ends on `bottom`: its top line is a view height above
             (bottom + 1).saturating_sub(content_height)
         }
-    } else if clamped_scroll == 0 && !is_search_active {
-        // Copy mode still at offset 0: aligned to the bottom, like the live view
-        total_visual_rows.saturating_sub(content_height)
     } else {
-        // Search or scrolled copy mode: the focused row (the sub-line holding the focused char of
-        // the focused entry) goes to the middle of the view, clamped so the view stays filled
+        // Search or copy mode: the focused row (the sub-line holding the focused char of the
+        // focused entry) goes to the middle of the view, clamped so the view stays filled
         let focus_local = focus_entry.saturating_sub(start_idx);
         let target_visual_row = if let Some(meta) = layout.line_layouts.get(focus_local) {
             let target_char = active_focus.map(|(_, c)| c).unwrap_or(0);
