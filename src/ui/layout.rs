@@ -232,6 +232,29 @@ pub struct PreparedLayout {
     pub max_line_width: usize,
 }
 
+impl PreparedLayout {
+    /// One layout from layouts made separately, in order: the row starts follow on (#5a)
+    pub fn concat(parts: impl IntoIterator<Item = PreparedLayout>) -> Self {
+        let mut joined = PreparedLayout {
+            visual_lines: Vec::new(),
+            line_layouts: Vec::new(),
+            max_line_width: 0,
+        };
+        for part in parts {
+            let row_offset = joined.visual_lines.len();
+            joined.visual_lines.extend(part.visual_lines);
+            joined
+                .line_layouts
+                .extend(part.line_layouts.into_iter().map(|mut line| {
+                    line.visual_row_start += row_offset;
+                    line
+                }));
+            joined.max_line_width = joined.max_line_width.max(part.max_line_width);
+        }
+        joined
+    }
+}
+
 struct WordToken {
     parts: Vec<(String, Style)>,
     is_whitespace: bool,
@@ -856,6 +879,42 @@ mod tests {
             let subs = wrap(Line::default(), 10, 0, 0);
             assert_eq!(subs.len(), 1, "{name}");
             assert_eq!(subs[0].content_char_len, 0, "{name}");
+        }
+    }
+
+    /// Lines laid out one at a time then joined give the layout of all of them at once (#5a).
+    /// How: wrapped, multi-row and empty lines, word wrap with an indent prefix and timestamps.
+    #[test]
+    fn concat_of_single_layouts_matches_one_layout() {
+        let theme = ThemeConfig::default();
+        let mut settings = SettingsConfig::default();
+        settings.show_timestamps = true;
+        settings.line_mode.wrap_indent = PrefixWrapBehavior::Prefix;
+        let lines = [
+            line(&["short"]),
+            line(&[
+                "a much longer line that wraps ",
+                "over several rows ",
+                "of the view",
+            ]),
+            line(&[""]),
+            line(&["mid ", "sized line"]),
+        ];
+        let all = prepare_view_layout(lines.to_vec(), &settings, &theme, 16);
+        let joined = PreparedLayout::concat(
+            lines
+                .iter()
+                .map(|l| prepare_view_layout(vec![l.clone()], &settings, &theme, 16)),
+        );
+        assert_eq!(joined.visual_lines, all.visual_lines);
+        assert_eq!(joined.max_line_width, all.max_line_width);
+        assert_eq!(joined.line_layouts.len(), all.line_layouts.len());
+        for (j, a) in joined.line_layouts.iter().zip(&all.line_layouts) {
+            assert_eq!(j.visual_row_start, a.visual_row_start);
+            let chars = |l: &LogicalLineLayout| -> Vec<usize> {
+                l.sub_lines.iter().map(|s| s.content_char_len).collect()
+            };
+            assert_eq!(chars(j), chars(a));
         }
     }
 }

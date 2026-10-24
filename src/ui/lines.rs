@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use ratatui::{
     Frame,
     layout::Rect,
@@ -148,67 +150,160 @@ pub fn render_monitor(
         (total_entries.saturating_sub(1)).saturating_sub(clamped_scroll)
     };
 
-    // Overscan window centered around focus_entry:
-    // Large enough so heavy sub-line modes (Binary/Raw) have plenty of buffer, and so a scroll of
-    // up to a view height of rows always lands inside it (every entry is at least one row)
-    let overscan = (content_height * 2).max(35);
-    let start_idx = focus_entry.saturating_sub(overscan);
-    let end_idx = (focus_entry + overscan + 1).min(total_entries);
+    // ---- What this frame shows ----
+    //
+    // Three ways of choosing the visible rows, decided below once the window is laid out:
+    // - plain scrolling (no search, no copy mode): the view's bottom row is a position kept by
+    //   `LineMode` (#36): an entry counted from the bottom, and how many of its rows are hidden
+    //   below the view. Scroll keys only add rows to a pending count, applied here
+    // - search or copy mode: the view is centered on the focused row (match or cursor)
+    // - live (scroll offset 0, no search): the view is aligned to the bottom of the history
+    let row_scrolling = !is_search_active && !app.line_mode.copy_state().active;
+    // The entry the window is built around: the last one for a bottom-aligned view (live, or
+    // copy mode still at offset 0), else the scrolled-to entry or the focused one
+    let anchor_entry = if clamped_scroll == 0 && !is_search_active {
+        total_entries - 1
+    } else {
+        focus_entry
+    };
 
+    // Rows scrolled since the last frame (#36): positive is up. Taken now, before layout, so the
+    // window below lays out exactly what this frame needs. Capped at a view height either way
+    // (a page is a view height minus one; more keys between two frames are dropped)
+    let limit = content_height as isize;
+    let pending_rows = app
+        .line_mode
+        .take_pending_scroll_rows()
+        .clamp(-limit, limit);
+
+    // ---- Laying out one entry ----
+    //
+    // Builds the styled line of one history entry (timestamp, prefix, content, with its search
+    // matches and selection range) and wraps it to the view width. The result has one visual
+    // row per wrapped sub-line, so its `visual_lines.len()` is the entry's height on screen.
+    // Laying out entries one at a time is what lets the window stop as soon as it has enough
+    // rows; `PreparedLayout::concat` then joins them as if they had been laid out together
     let search = app.line_mode.search();
     let line_prefix_cached = app.settings().line_mode.line_prefix.clone();
+    let lay_out_entry = |global_idx: usize| {
+        let entry = &app.line_mode.history()[global_idx];
+        let line_matches: Vec<(usize, &SearchMatch)> = if is_search_active {
+            let start = search.matches.partition_point(|m| m.line_idx < global_idx);
+            let end = search.matches.partition_point(|m| m.line_idx <= global_idx);
+            search.matches[start..end]
+                .iter()
+                .enumerate()
+                .map(|(offset, m)| (start + offset, m))
+                .collect()
+        } else {
+            Vec::new()
+        };
 
-    let mut visible_lines: Vec<Line> = app
-        .line_mode
-        .history()
-        .range(start_idx..end_idx)
-        .enumerate()
-        .map(|(local_idx, entry)| {
-            let global_idx = start_idx + local_idx;
-
-            let line_matches: Vec<(usize, &SearchMatch)> = if is_search_active {
-                let start = search.matches.partition_point(|m| m.line_idx < global_idx);
-                let end = search.matches.partition_point(|m| m.line_idx <= global_idx);
-                search.matches[start..end]
-                    .iter()
-                    .enumerate()
-                    .map(|(offset, m)| (start + offset, m))
-                    .collect()
+        let sel_range = copy_range.and_then(|(start, end)| {
+            if global_idx < start.line_idx || global_idx > end.line_idx {
+                None
             } else {
-                Vec::new()
-            };
-
-            let sel_range = copy_range.and_then(|(start, end)| {
-                if global_idx < start.line_idx || global_idx > end.line_idx {
-                    None
+                let from = if global_idx == start.line_idx {
+                    start.char_idx
                 } else {
-                    let from = if global_idx == start.line_idx {
-                        start.char_idx
-                    } else {
-                        0
-                    };
-                    let to = if global_idx == end.line_idx {
-                        end.char_idx
-                    } else {
-                        usize::MAX
-                    };
-                    Some((from, to))
-                }
-            });
+                    0
+                };
+                let to = if global_idx == end.line_idx {
+                    end.char_idx
+                } else {
+                    usize::MAX
+                };
+                Some((from, to))
+            }
+        });
 
-            history_entry_to_line(
-                entry,
-                app.settings(),
-                &line_matches,
-                active_match_idx,
-                sel_range,
-                theme,
-                &line_prefix_cached,
-            )
-        })
-        .collect();
+        let line = history_entry_to_line(
+            entry,
+            app.settings(),
+            &line_matches,
+            active_match_idx,
+            sel_range,
+            theme,
+            &line_prefix_cached,
+        );
+        prepare_view_layout(vec![line], app.settings(), theme, content_width)
+    };
 
-    if app.settings().line_mode.show_partial_rx && !app.line_mode.partial_rx().is_empty() {
+    // ---- The window: only the entries this frame can show (#5a) ----
+    // Entries are laid out one at a time, outward from the anchor, and the walk stops as soon
+    // as the rows this frame needs are covered, counted in rows
+    // (an entry can be one row or dozens):
+    //
+    // - plain scrolling: the view's bottom row must be able to move up by the pending rows and
+    //   still have a full view above it, so above it we need `view height + rows scrolled up`;
+    //   below it, only the rows scrolled down
+    // - centering a search / copy focus: up to a view height on each side (the focused row can
+    //   end up anywhere from the top to the bottom of the view once clamped)
+    //
+    // Example, plain scrolling, view of 10 rows, 3 rows scrolled up, anchor of 6 rows with 2
+    // hidden below the view: 4 anchor rows are already above the bottom row, 13 are needed, so
+    // entries above are added until at least 9 more rows are counted; below, the 2 hidden rows
+    // already cover the 0 rows needed
+    let (rows_above_needed, rows_below_needed) = if row_scrolling {
+        (
+            content_height + pending_rows.max(0) as usize,
+            (-pending_rows).max(0) as usize,
+        )
+    } else {
+        (content_height, content_height)
+    };
+    // The window is the history range `start_idx..end_idx`, laid out in order in `window`
+    let mut start_idx = anchor_entry;
+    let mut end_idx = anchor_entry + 1;
+    let mut window: VecDeque<PreparedLayout> = VecDeque::new();
+
+    let anchor = lay_out_entry(anchor_entry);
+    let anchor_rows = anchor.visual_lines.len();
+    // Rows already covered by the anchor itself. In plain scrolling the view's bottom row can be
+    // inside a tall anchor: its rows above that bottom row count as "above", the ones hidden
+    // below the view as "below" (`rows_below` is capped so at least one row stays above). When
+    // centering a focus, where the focused row falls in the anchor is only known later, so
+    // nothing is counted and a full view height is laid out on each side
+    let (mut rows_above, mut rows_below) = if row_scrolling {
+        let hidden = app
+            .line_mode
+            .rows_below()
+            .min(anchor_rows.saturating_sub(1));
+        (anchor_rows - hidden, hidden)
+    } else {
+        (0, 0)
+    };
+    window.push_back(anchor);
+
+    // Walk up: lay out the entry before the window and put it in front, until enough rows are
+    // above the view's bottom row or the history starts
+    while rows_above < rows_above_needed && start_idx > 0 {
+        start_idx -= 1;
+        let entry = lay_out_entry(start_idx);
+        rows_above += entry.visual_lines.len();
+        window.push_front(entry);
+    }
+
+    // Walking up stopped short at the start of the history: the view can't go that high, so
+    // the top clamp (below) moves it down instead, onto rows after the anchor. Those rows are
+    // needed too (e.g. scroll to top with a first entry shorter than the view)
+    let rows_below_needed = rows_below_needed + rows_above_needed.saturating_sub(rows_above);
+
+    // Walk down: lay out the entry after the window and append it, until enough rows are below
+    // or the history ends
+    while rows_below < rows_below_needed && end_idx < total_entries {
+        let entry = lay_out_entry(end_idx);
+        rows_below += entry.visual_lines.len();
+        window.push_back(entry);
+        end_idx += 1;
+    }
+
+    // The partial RX line (received but not ended yet) is drawn after the last entry, so only
+    // when the window reaches the last entry: otherwise it would land in the middle of history
+    if end_idx == total_entries
+        && app.settings().line_mode.show_partial_rx
+        && !app.line_mode.partial_rx().is_empty()
+    {
         let partial_bytes = app.line_mode.partial_rx();
         let trimmed_bytes = partial_bytes.trim_ascii_end();
 
@@ -231,11 +326,19 @@ pub fn render_monitor(
             let partial_prefix_style = *theme.line_mode.line_partial_prefix;
             partial_spans.push(Span::styled(partial_prefix, partial_prefix_style));
             partial_spans.extend(format_line_content(&partial_raw, display_mode, theme));
-            visible_lines.push(Line::from(partial_spans));
+            let partial_line = Line::from(partial_spans);
+            window.push_back(prepare_view_layout(
+                vec![partial_line],
+                app.settings(),
+                theme,
+                content_width,
+            ));
         }
     }
 
-    let layout = prepare_view_layout(visible_lines, app.settings(), theme, content_width);
+    // One layout for the window: its row indexes start at 0 on `start_idx`'s first row, and
+    // `layout.line_layouts[i]` is the entry `start_idx + i` (then the partial RX line, if any)
+    let layout = PreparedLayout::concat(window);
     let max_pan = match wrap_mode {
         WrapMode::Word | WrapMode::Char => 0,
         WrapMode::Truncate => layout.max_line_width.saturating_sub(content_width),
@@ -245,48 +348,59 @@ pub fn render_monitor(
 
     let total_visual_rows = layout.visual_lines.len();
 
-    // plain scrolling moves by rows (#36), search and copy mode keep centering their target
-    let row_scrolling = !is_search_active && !app.line_mode.copy_state().active;
-    let pending_rows = app.line_mode.take_pending_scroll_rows();
-
+    // ---- Which rows of the window are on screen ----
+    //
+    // `paragraph_y_offset` is the window row drawn on the top line of the view. All the rows
+    // below are window rows (`layout.visual_lines`), so positions stay valid for the copy
+    // cursor, the selection, the search highlights and the raw panel
     let paragraph_y_offset: usize = if row_scrolling {
-        // entries of the window only, the partial RX line is drawn after them
+        // Plain scrolling (#36). Only the window's entries count here, not the partial RX line
+        // drawn after them
         let entries = &layout.line_layouts[..end_idx - start_idx];
         let rows_of = |meta: &LogicalLineLayout| meta.sub_lines.len().max(1);
         let last_row = entries
             .last()
             .map_or(0, |meta| meta.visual_row_start + rows_of(meta) - 1);
 
-        // the view's bottom row, moved by the rows scrolled since the last frame
+        // Where the view's bottom row was (the anchor's last row, minus its rows hidden below),
+        // then moved up by the rows scrolled since the last frame (down when negative)
         let anchor = &entries[focus_entry - start_idx];
         let rows_below = app.line_mode.rows_below().min(rows_of(anchor) - 1);
         let anchor_bottom = anchor.visual_row_start + rows_of(anchor) - 1 - rows_below;
-        let limit = content_height as isize;
-        let bottom = anchor_bottom as isize - pending_rows.clamp(-limit, limit);
+        let bottom = anchor_bottom as isize - pending_rows;
 
         if end_idx == total_entries && bottom >= last_row as isize {
+            // Reached the last entry's last row: back to the live view, aligned to the bottom
+            // of everything laid out (partial RX line included)
             app.line_mode.scroll_to_bottom();
             clamped_scroll = 0;
             total_visual_rows.saturating_sub(content_height)
         } else {
-            // at the top of the history, the first row stays at the top of the view
+            // Top clamp: when the window starts at the first entry, the bottom row can't be
+            // higher than a view height down, so the first row stays on the top line
             let min_bottom = if start_idx == 0 {
                 content_height.saturating_sub(1).min(last_row)
             } else {
                 0
             };
             let bottom = bottom.clamp(min_bottom as isize, last_row as isize) as usize;
+            // Store the new position back as (entry, rows hidden below): find the entry holding
+            // the bottom row (the last one starting at or before it) and count its rows after it
             let local = entries.partition_point(|meta| meta.visual_row_start <= bottom) - 1;
             let meta = &entries[local];
             let rows_below = meta.visual_row_start + rows_of(meta) - 1 - bottom;
             clamped_scroll = total_entries - 1 - (start_idx + local);
             app.line_mode
                 .set_scroll_position(clamped_scroll, rows_below);
+            // the view ends on `bottom`: its top line is a view height above
             (bottom + 1).saturating_sub(content_height)
         }
     } else if clamped_scroll == 0 && !is_search_active {
+        // Copy mode still at offset 0: aligned to the bottom, like the live view
         total_visual_rows.saturating_sub(content_height)
     } else {
+        // Search or scrolled copy mode: the focused row (the sub-line holding the focused char of
+        // the focused entry) goes to the middle of the view, clamped so the view stays filled
         let focus_local = focus_entry.saturating_sub(start_idx);
         let target_visual_row = if let Some(meta) = layout.line_layouts.get(focus_local) {
             let target_char = active_focus.map(|(_, c)| c).unwrap_or(0);
@@ -419,12 +533,14 @@ pub fn render_monitor(
         );
     }
 
-    let history_paragraph = Paragraph::new(layout.visual_lines)
+    let mut visible_rows = layout.visual_lines;
+    let first_row = paragraph_y_offset.min(visible_rows.len());
+    let last_row = (first_row + content_height).min(visible_rows.len());
+    visible_rows.truncate(last_row);
+    visible_rows.drain(..first_row);
+    let history_paragraph = Paragraph::new(visible_rows)
         .style(*theme.line_mode.history)
-        .scroll((
-            paragraph_y_offset.min(u16::MAX as usize) as u16,
-            line_x_offset.min(u16::MAX as usize) as u16,
-        ));
+        .scroll((0, line_x_offset.min(u16::MAX as usize) as u16));
     frame.render_widget(history_paragraph, content_area);
 
     apply_keyword_highlights(frame.buffer_mut(), content_area, highlights);

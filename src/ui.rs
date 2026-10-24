@@ -314,4 +314,32 @@ mod tests {
             "{rows:#?}"
         );
     }
+
+    /// Truncate mode scrolled up and panned right shows the same rows and columns once the
+    /// paragraph only gets the visible rows (#5b).
+    /// How: 40 numbered lines wider than the view, scroll up 5 rows, pan right 3 columns (the
+    /// line numbers stay in view).
+    #[test]
+    fn truncate_scrolled_and_panned_view() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 60, 12);
+        h.app.settings_mut().line_mode.wrap_mode = crate::configs::WrapMode::Truncate;
+        for i in 0..40 {
+            h.feed(format!("line {i:02} {}\r\n", "abcdefghij".repeat(8)).as_bytes());
+        }
+        h.draw();
+        for _ in 0..5 {
+            h.scroll(HistoryAction::ScrollUp(1));
+        }
+        h.scroll(HistoryAction::PanRight(3));
+        let rows = h.draw();
+        // the 59 text columns (the last one is the scrollbar): "│ line NN abc…" panned by 3
+        let shown: Vec<String> = rows[..9]
+            .iter()
+            .map(|row| row.chars().take(59).collect())
+            .collect();
+        let expected: Vec<String> = (25..34)
+            .map(|i| format!("ine {i:02} {}ab", "abcdefghij".repeat(5)))
+            .collect();
+        assert_eq!(shown, expected);
+    }
 }
