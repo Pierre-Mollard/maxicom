@@ -517,4 +517,56 @@ mod tests {
         let rows = h.draw();
         assert!(shows(&rows, "5A 5A"), "{rows:#?}");
     }
+
+    /// MAX-124: a view scrolled up into the history keeps showing the same rows when new lines
+    /// arrive, also when old ones are evicted; the live view still follows the new lines.
+    /// How: 20 numbered lines with a history of 15, scrolled up 3 rows, then 2 more lines
+    #[test]
+    fn scrolled_view_stays_put_when_lines_arrive() {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 60, 12, |s| {
+            s.line_mode.history_size = 15;
+        });
+        let line_rows = |rows: &[String]| -> Vec<String> {
+            rows.iter()
+                .filter(|row| row.contains("line "))
+                .map(|row| row.chars().take(59).collect())
+                .collect()
+        };
+        for i in 0..20 {
+            h.feed(format!("line {i:02}\r\n").as_bytes());
+        }
+        h.draw();
+        for _ in 0..3 {
+            h.scroll(HistoryAction::ScrollUp(1));
+        }
+        let before = line_rows(&h.draw());
+        h.feed(b"line 20\r\nline 21\r\n");
+        assert_eq!(line_rows(&h.draw()), before);
+
+        h.scroll(HistoryAction::ScrollToBottom);
+        h.draw();
+        h.feed(b"line 22\r\n");
+        assert!(shows(&h.draw(), "line 22"));
+
+        // a scroll not drawn yet when a line arrives: 2 rows up from "line 22", not from the
+        // new line
+        h.scroll(HistoryAction::ScrollUp(2));
+        h.feed(b"line 23\r\n");
+        let rows = line_rows(&h.draw());
+        assert!(rows.last().unwrap().contains("line 20"), "{rows:#?}");
+    }
+
+    /// MAX-124, with rows: scrolled up one row inside the last tall entry (the entry offset is
+    /// still 0, only rows are hidden below), a new tall line leaves the view where it was.
+    #[test]
+    fn view_scrolled_inside_the_last_entry_stays_put() {
+        let mut h = tall_binary_lines();
+        h.draw();
+        h.scroll(HistoryAction::ScrollUp(1));
+        let before = binary_rows(&h.draw());
+        let mut bytes = vec![b'~'; 120];
+        bytes.extend_from_slice(b"\r\n");
+        h.feed(&bytes);
+        assert_eq!(binary_rows(&h.draw()), before);
+    }
 }

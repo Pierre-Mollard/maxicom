@@ -180,6 +180,14 @@ impl LineMode {
         self.local_history.push_back(entry);
         self.row_heights.push_back(0);
 
+        // A view scrolled up (by entries, by rows of the last entry, or by a scroll not drawn
+        // yet) keeps showing the same rows: its position counts from the bottom, so it moves up
+        // by the new entry. Only the live view follows the new lines (MAX-124)
+        let is_scrolled =
+            self.scroller.offset_y > 0 || self.rows_below > 0 || self.pending_scroll_rows > 0;
+        if is_scrolled {
+            self.scroller.offset_y = self.scroller.offset_y.saturating_add(1);
+        }
         self.scroller.on_rx_received();
         while self.local_history.len() > self.max_lines {
             self.local_history.pop_front();
