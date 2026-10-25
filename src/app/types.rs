@@ -1,4 +1,7 @@
 use chrono::{DateTime, Local};
+use ratatui::layout::Rect;
+
+use crate::{app::selection::LogicalPosition, overlays::PopupTarget};
 
 // we no longer cache the timestamp string because there is less lines to render
 // and it cost alloc and space when in the 10 of thousands of lines
@@ -80,6 +83,166 @@ impl ViewportSize {
             rows: rows as usize,
         }
     }
+}
+
+/// Where the last frame drew the history and the raw side panel, for the mouse (MAX-113)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FrameAreas {
+    pub content: Rect,
+    pub raw_side: Option<Rect>,
+}
+
+/// What the last frame showed where, for mouse clicks (MAX-113): per screen row of the history
+/// its line and where its chars are, per row of the raw panel its line and its bytes. Rows
+/// showing nothing a copy cursor can go to are `None`
+#[derive(Debug, Default)]
+pub struct FrameMap {
+    pub text_area: Rect,
+    pub text_rows: Vec<Option<TextRow>>,
+    pub raw_area: Rect,
+    pub raw_rows: Vec<Option<RawRow>>,
+    /// Raw panel pan (columns) and width of one byte (columns), as drawn
+    pub raw_pan_x: usize,
+    pub raw_stride: usize,
+    /// The open popup's area, and the parts of it a click picks
+    pub popup: Option<Rect>,
+    pub popup_targets: Vec<(Rect, PopupTarget)>,
+    /// The TX input's text, as drawn
+    pub prompt: Option<PromptMap>,
+}
+
+/// Where the TX input's text is drawn: its area (after the prompt prefix) and how many columns
+/// of it are scrolled out on the left
+#[derive(Debug, Clone, Copy)]
+pub struct PromptMap {
+    pub text_area: Rect,
+    pub scroll: usize,
+}
+
+#[derive(Debug)]
+pub struct TextRow {
+    pub line_idx: usize,
+    pub chars: RowChars,
+}
+
+#[derive(Debug)]
+pub enum RowChars {
+    /// One char per column, the first column showing char `first` (the vt100 grid)
+    Grid { first: usize },
+    /// Where each char shown starts (column in the area) and its index, in order; `first` is
+    /// the row's first char, for a row showing none (an empty line, or panned past its end)
+    Cols {
+        first: usize,
+        cols: Vec<(u16, usize)>,
+    },
+}
+
+#[derive(Debug)]
+pub struct RawRow {
+    pub line_idx: usize,
+    pub byte_start: usize,
+    pub byte_count: usize,
+}
+
+impl FrameMap {
+    pub fn clear(&mut self) {
+        self.text_area = Rect::default();
+        self.text_rows.clear();
+        self.raw_area = Rect::default();
+        self.raw_rows.clear();
+        self.popup = None;
+        self.popup_targets.clear();
+        self.prompt = None;
+    }
+
+    /// The popup part under a screen cell
+    pub fn popup_target(&self, x: u16, y: u16) -> Option<PopupTarget> {
+        let at = ratatui::layout::Position::new(x, y);
+        self.popup_targets
+            .iter()
+            .find(|(area, _)| area.contains(at))
+            .map(|&(_, target)| target)
+    }
+
+    /// The TX input column (counted from the text's start, scroll included) under a cell
+    pub fn prompt_column(&self, x: u16, y: u16) -> Option<usize> {
+        let prompt = self.prompt?;
+        let area = prompt.text_area;
+        if y < area.top() || y >= area.bottom() || x >= area.right() {
+            return None;
+        }
+        // a click on the prompt prefix goes to the text's start
+        Some(x.saturating_sub(area.left()) as usize + prompt.scroll)
+    }
+
+    /// The text position under a screen cell. `clamp` (a drag) brings a cell out of the
+    /// history to the nearest row and char shown; without it such a cell has none
+    pub fn text_position(&self, x: u16, y: u16, clamp: bool) -> Option<LogicalPosition> {
+        let (col, row) = cell_in(self.text_area, x, y, clamp)?;
+        let text_row = pick_row(&self.text_rows, row, clamp)?;
+        let char_idx = match &text_row.chars {
+            RowChars::Grid { first } => first + col,
+            RowChars::Cols { first, cols } => {
+                // the last char starting at or before the column, else the first one shown
+                let shown = cols.partition_point(|&(start, _)| start as usize <= col);
+                match shown
+                    .checked_sub(1)
+                    .and_then(|idx| cols.get(idx))
+                    .or(cols.first())
+                {
+                    Some(&(_, char_idx)) => char_idx,
+                    None => *first,
+                }
+            }
+        };
+        Some(LogicalPosition {
+            line_idx: text_row.line_idx,
+            char_idx,
+            preferred_col: char_idx,
+            byte_idx: 0,
+        })
+    }
+
+    /// The raw position (byte) under a screen cell of the raw panel, `clamp` as for the text
+    pub fn raw_position(&self, x: u16, y: u16, clamp: bool) -> Option<LogicalPosition> {
+        let (col, row) = cell_in(self.raw_area, x, y, clamp)?;
+        let raw_row = pick_row(&self.raw_rows, row, clamp)?;
+        let stride = self.raw_stride.max(1);
+        let byte_in_row = (col + self.raw_pan_x) / stride;
+        let byte_idx = raw_row.byte_start + byte_in_row.min(raw_row.byte_count.saturating_sub(1));
+        Some(LogicalPosition {
+            line_idx: raw_row.line_idx,
+            char_idx: 0,
+            preferred_col: byte_idx,
+            byte_idx,
+        })
+    }
+}
+
+/// The cell's column and row in `area`, or with `clamp` the nearest cell of it
+fn cell_in(area: Rect, x: u16, y: u16, clamp: bool) -> Option<(usize, usize)> {
+    if area.is_empty() {
+        return None;
+    }
+    let inside = area.contains(ratatui::layout::Position::new(x, y));
+    if !inside && !clamp {
+        return None;
+    }
+    let col = x.clamp(area.left(), area.right() - 1) - area.left();
+    let row = y.clamp(area.top(), area.bottom() - 1) - area.top();
+    Some((col as usize, row as usize))
+}
+
+/// The row's map, or with `clamp` the nearest row above showing something (else below)
+fn pick_row<T>(rows: &[Option<T>], row: usize, clamp: bool) -> Option<&T> {
+    if let Some(Some(found)) = rows.get(row) {
+        return Some(found);
+    }
+    if !clamp {
+        return None;
+    }
+    let above = rows[..row.min(rows.len())].iter().rev().flatten().next();
+    above.or_else(|| rows.iter().skip(row).flatten().next())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

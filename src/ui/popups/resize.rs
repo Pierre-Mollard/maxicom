@@ -1,5 +1,6 @@
 use ratatui::{
     Frame,
+    layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Clear, Paragraph},
@@ -7,8 +8,8 @@ use ratatui::{
 
 use crate::{
     configs::{KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
-    overlays::{ResizeDialog, ResizeField},
-    ui::popups::{FORM_WIDTH, form_area, key_hints, popup_block, section},
+    overlays::{PopupTarget, ResizeDialog, ResizeField},
+    ui::popups::{FORM_WIDTH, form_area, key_hints, popup_block, row_area, section},
 };
 
 pub fn render_resize_popup(
@@ -16,7 +17,8 @@ pub fn render_resize_popup(
     resolver: &KeyResolver,
     frame: &mut Frame,
     theme: &ThemeConfig,
-) {
+    targets: &mut Vec<(Rect, PopupTarget)>,
+) -> Rect {
     let active = dialog.active_field;
 
     let row_style = if active == ResizeField::Rows {
@@ -106,4 +108,15 @@ pub fn render_resize_popup(
     let cursor_y = inner.y + line_y_offset;
 
     frame.set_cursor_position((cursor_x, cursor_y));
+
+    // the field rows, under the header and its blank line (MAX-113)
+    targets.push((
+        row_area(inner, 2),
+        PopupTarget::ResizeField(ResizeField::Rows),
+    ));
+    targets.push((
+        row_area(inner, 3),
+        PopupTarget::ResizeField(ResizeField::Cols),
+    ));
+    area
 }

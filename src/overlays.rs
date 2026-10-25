@@ -28,6 +28,15 @@ pub enum Overlay {
     Error(ErrorDialog),
 }
 
+/// A part of a popup the mouse picks (MAX-113)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PopupTarget {
+    HelpTab(HelpCategory),
+    Setting(SettingKey),
+    SerialField(SerialSettingField),
+    ResizeField(ResizeField),
+}
+
 pub enum OverlayResponse {
     Handled,
     Close,
@@ -42,6 +51,13 @@ pub enum OverlayResponse {
 impl Overlay {
     pub fn is_text_input(&self) -> bool {
         matches!(self, Overlay::FilePath(_) | Overlay::TerminalSize(_))
+    }
+
+    pub fn closes_on_click_outside(&self) -> bool {
+        !matches!(
+            self,
+            Overlay::DeviceDisconnected(_) | Overlay::DeviceDetached(_)
+        )
     }
 
     pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
@@ -65,6 +81,9 @@ impl Overlay {
             },
             Overlay::Settings => match action {
                 DialogAction::Close => OverlayResponse::Close,
+                DialogAction::Pick(PopupTarget::Setting(key)) => {
+                    OverlayResponse::ToggleSetting(key)
+                }
                 DialogAction::HandleKey(key) => match key.code {
                     KeyCode::Char('e' | 'E') => {
                         OverlayResponse::ToggleSetting(SettingKey::LocalEcho)
@@ -88,6 +107,7 @@ impl Overlay {
                     KeyCode::Char('x' | 'X') => {
                         OverlayResponse::ToggleSetting(SettingKey::TextEncoding)
                     }
+                    KeyCode::Char('u' | 'U') => OverlayResponse::ToggleSetting(SettingKey::Mouse),
                     _ => OverlayResponse::Handled,
                 },
                 _ => OverlayResponse::Handled,
@@ -97,7 +117,7 @@ impl Overlay {
 }
 
 /// All settings types
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingKey {
     LocalEcho,
     Mode,
@@ -107,4 +127,5 @@ pub enum SettingKey {
     TextEncoding,
     DisplayMode,
     DisplayRaw,
+    Mouse,
 }

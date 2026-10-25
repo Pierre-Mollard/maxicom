@@ -1,5 +1,6 @@
 use ratatui::{
     Frame,
+    layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Clear, Paragraph},
@@ -16,7 +17,7 @@ pub fn render_filepath_popup(
     resolver: &KeyResolver,
     frame: &mut Frame,
     theme: &ThemeConfig,
-) {
+) -> Rect {
     let style = Style::default()
         .fg(theme.palette.secondary)
         .add_modifier(Modifier::BOLD);
@@ -65,4 +66,5 @@ pub fn render_filepath_popup(
     let cursor_y = inner.y + line_y_offset;
 
     frame.set_cursor_position((cursor_x, cursor_y));
+    area
 }

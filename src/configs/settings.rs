@@ -446,6 +446,7 @@ pub struct UiConfig {
     pub show_borders: bool,
     pub show_scrollbar: bool,
     pub show_status_bar: bool,
+    pub mouse: bool,
     pub status_bar: StatusBarConfig,
 }
 
@@ -455,6 +456,7 @@ impl Default for UiConfig {
             show_borders: false,
             show_scrollbar: true,
             show_status_bar: true,
+            mouse: true,
             status_bar: StatusBarConfig::default(),
         }
     }

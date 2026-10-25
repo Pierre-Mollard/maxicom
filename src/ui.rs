@@ -15,7 +15,10 @@ use ratatui::{
 };
 
 use crate::{
-    app::{App, types::ViewportSize},
+    app::{
+        App,
+        types::{FrameAreas, ViewportSize},
+    },
     configs::{KeywordHighlight, Mode, ThemeConfig},
     overlays::Overlay,
     ui::{
@@ -55,6 +58,11 @@ pub fn render(
     frame.render_widget(root_backdrop, root_area);
 
     let layout = ScreenLayout::compute(root_area, app);
+    app.set_frame_areas(FrameAreas {
+        content: layout.content_area,
+        raw_side: layout.raw_side_area,
+    });
+    app.frame_map_mut().clear();
     app.update_viewport(ViewportSize::new(
         layout.content_area.width,
         layout.content_area.height,
@@ -127,28 +135,29 @@ pub fn render(
     }
 }
 
-fn render_active_overlay(app: &App, frame: &mut Frame, theme: &ThemeConfig) {
-    match app.overlay() {
-        Some(Overlay::Settings) => render_settings_popup(app, frame, theme),
-        Some(Overlay::Help(dialog)) => render_help_popup(app, dialog, frame, theme),
+fn render_active_overlay(app: &mut App, frame: &mut Frame, theme: &ThemeConfig) {
+    let mut targets = std::mem::take(&mut app.frame_map_mut().popup_targets);
+    let resolver = &app.key_resolver;
+    let area = match app.overlay() {
+        Some(Overlay::Settings) => render_settings_popup(app, frame, theme, &mut targets),
+        Some(Overlay::Help(dialog)) => render_help_popup(app, dialog, frame, theme, &mut targets),
         Some(Overlay::TerminalSize(dialog)) => {
-            render_resize_popup(dialog, &app.key_resolver, frame, theme)
+            render_resize_popup(dialog, resolver, frame, theme, &mut targets)
         }
         Some(Overlay::SerialSettings(dialog)) => {
-            render_reconfigure_popup(dialog, &app.key_resolver, frame, theme)
+            render_reconfigure_popup(dialog, resolver, frame, theme, &mut targets)
         }
-        Some(Overlay::FilePath(dialog)) => {
-            render_filepath_popup(dialog, &app.key_resolver, frame, theme)
-        }
+        Some(Overlay::FilePath(dialog)) => render_filepath_popup(dialog, resolver, frame, theme),
         Some(Overlay::DeviceDisconnected(port)) => {
-            render_disconnected_popup(port, &app.key_resolver, frame, theme)
+            render_disconnected_popup(port, resolver, frame, theme)
         }
-        Some(Overlay::DeviceDetached(port)) => {
-            render_detached_popup(port, &app.key_resolver, frame, theme)
-        }
-        Some(Overlay::Error(err)) => render_error_popup(err, &app.key_resolver, frame, theme),
-        None => {}
-    }
+        Some(Overlay::DeviceDetached(port)) => render_detached_popup(port, resolver, frame, theme),
+        Some(Overlay::Error(err)) => render_error_popup(err, resolver, frame, theme),
+        None => return,
+    };
+    let map = app.frame_map_mut();
+    map.popup = Some(area);
+    map.popup_targets = targets;
 }
 
 #[cfg(test)]
@@ -157,7 +166,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        app::UpdateEffect,
+        app::{UpdateEffect, selection::CopySide},
         configs::{
             KeyBindingsConfig, KeyResolver, LineDisplayMode, RawSideView, RxNewlineMode,
             SettingsConfig, TextEncoding,
@@ -168,6 +177,7 @@ mod tests {
         overlays::{ErrorDialog, FilePathDialog, HelpDialog, ResizeDialog, SerialConfigDialog},
         serial::SerialConfig,
     };
+    use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use ratatui::{Terminal, backend::TestBackend};
 
     struct Harness {
@@ -1086,5 +1096,450 @@ mod tests {
         let rows = h.draw();
         assert!(has(&rows, "(1/1)  Ctrl-n/Ctrl-p Match "), "{rows:#?}");
         assert!(!has(&rows, "Match ·"), "{rows:#?}");
+    }
+
+    /// A mouse event at a screen cell
+    fn mouse(kind: MouseEventKind, (x, y): (u16, u16), modifiers: KeyModifiers) -> Event {
+        Event::Mouse(MouseEvent {
+            kind,
+            column: x,
+            row: y,
+            modifiers,
+        })
+    }
+
+    /// The wheel scrolls the history, and pans it with Shift or sideways; over the raw panel
+    /// Shift+wheel pans the panel. In copy mode it moves the copy cursor (the view follows
+    /// it), and in a popup it moves up and down (MAX-113).
+    /// How: line mode with the Hex panel, events on the history and on the panel, as they
+    /// were last drawn.
+    #[test]
+    fn mouse_wheel_scrolls_and_pans() {
+        use crate::inputs::{DialogAction, SideViewAction, handle_event};
+        use MouseEventKind::{ScrollDown, ScrollLeft, ScrollRight, ScrollUp};
+
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 12);
+        h.app.settings_mut().raw_side.view = RawSideView::Hex;
+        for i in 0..30 {
+            h.feed(format!("line {i:02} with some text\r\n").as_bytes());
+        }
+        h.draw();
+        let areas = h.app.frame_areas();
+        let text = (areas.content.x + 1, areas.content.y + 1);
+        let raw = areas.raw_side.unwrap();
+        let raw = (raw.x + 1, raw.y + 1);
+        let none = KeyModifiers::NONE;
+        let shift = KeyModifiers::SHIFT;
+        let wheel =
+            |h: &Harness, kind, at, modifiers| handle_event(mouse(kind, at, modifiers), &h.app);
+
+        assert!(matches!(
+            wheel(&h, ScrollUp, text, none),
+            Action::History(HistoryAction::ScrollUp(3))
+        ));
+        assert!(matches!(
+            wheel(&h, ScrollDown, raw, none),
+            Action::History(HistoryAction::ScrollDown(3))
+        ));
+        assert!(matches!(
+            wheel(&h, ScrollDown, text, shift),
+            Action::History(HistoryAction::PanRight(4))
+        ));
+        assert!(matches!(
+            wheel(&h, ScrollLeft, text, none),
+            Action::History(HistoryAction::PanLeft(4))
+        ));
+        assert!(matches!(
+            wheel(&h, ScrollUp, raw, shift),
+            Action::App(AppAction::SideView(SideViewAction::PanLeft(2)))
+        ));
+        assert!(matches!(
+            wheel(&h, ScrollRight, raw, none),
+            Action::App(AppAction::SideView(SideViewAction::PanRight(2)))
+        ));
+
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        assert!(matches!(
+            wheel(&h, ScrollUp, text, none),
+            Action::CopyMode(CopyModeAction::MoveUp)
+        ));
+        h.app.update(Action::CopyMode(CopyModeAction::Exit));
+
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::Help(
+                HelpDialog::new(),
+            ))));
+        assert!(matches!(
+            wheel(&h, ScrollDown, text, none),
+            Action::Overlay(DialogAction::Down)
+        ));
+    }
+
+    /// A mouse event through the input path, applied
+    fn mouse_do(h: &mut Harness, kind: MouseEventKind, at: (u16, u16)) -> UpdateEffect {
+        let action = crate::inputs::handle_event(mouse(kind, at, KeyModifiers::NONE), &h.app);
+        h.app.update(action)
+    }
+
+    fn click(h: &mut Harness, at: (u16, u16)) {
+        mouse_do(h, MouseEventKind::Down(MouseButton::Left), at);
+        mouse_do(h, MouseEventKind::Up(MouseButton::Left), at);
+    }
+
+    fn cursor_cell(h: &mut Harness) -> (u16, u16) {
+        let pos = h.terminal.get_cursor_position().unwrap();
+        (pos.x, pos.y)
+    }
+
+    /// Wrapped lines with a timestamp gutter, in line mode
+    fn wrapped_lines() -> Harness {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 40, 12, |settings| {
+            settings.show_timestamps = true;
+        });
+        for i in 0..30 {
+            h.feed(
+                format!("line {i:02} alpha beta gamma delta epsilon zeta eta theta\r\n").as_bytes(),
+            );
+        }
+        h
+    }
+
+    /// A click in the history puts the copy cursor on the clicked char, on a first row or a
+    /// wrapped one, and the view stays where it was (MAX-113).
+    /// How: wrapped lines with timestamps; click a char of a first row, then one of a
+    /// continuation row while in copy mode; the cursor is drawn on the clicked cell and the
+    /// history rows don't move.
+    #[test]
+    fn mouse_click_puts_the_copy_cursor_there() {
+        let mut h = wrapped_lines();
+        let before = h.draw();
+        let height = h.app.frame_areas().content.height as usize;
+
+        let (x, y) = cell_of(&before, "alpha");
+        click(&mut h, (x + 2, y));
+        let after = h.draw();
+        assert!(h.app.line_mode.copy_state().active);
+        assert_eq!(cursor_cell(&mut h), (x + 2, y), "{after:#?}");
+        assert_eq!(before[..height], after[..height]);
+
+        let (x, y) = cell_of(&after, "theta");
+        click(&mut h, (x + 4, y));
+        let again = h.draw();
+        assert_eq!(cursor_cell(&mut h), (x + 4, y), "{again:#?}");
+        assert_eq!(before[..height], again[..height]);
+
+        // a key moves the cursor again as before: the view follows it
+        h.app.update(Action::CopyMode(CopyModeAction::MoveUp));
+        h.draw();
+        assert!(!h.app.line_mode.is_mouse_view());
+    }
+
+    /// A drag selects from the press, and the release yanks the selection and leaves copy
+    /// mode; a drag out of the history keeps to its edge.
+    #[test]
+    fn mouse_drag_selects_and_release_yanks() {
+        let mut h = wrapped_lines();
+        let rows = h.draw();
+        let (x, y) = cell_of(&rows, "alpha");
+        mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), (x, y));
+        mouse_do(&mut h, MouseEventKind::Drag(MouseButton::Left), (x + 4, y));
+        match mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), (x + 4, y)) {
+            UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "alpha"),
+            _ => panic!("expected a yank"),
+        }
+        assert!(!h.app.line_mode.copy_state().active);
+
+        // dragged to the right of the history: up to the row's last char shown
+        let rows = h.draw();
+        let (x, y) = cell_of(&rows, "zeta");
+        mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), (x, y));
+        mouse_do(&mut h, MouseEventKind::Drag(MouseButton::Left), (200, y));
+        match mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), (200, y)) {
+            UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "zeta eta theta"),
+            _ => panic!("expected a yank"),
+        }
+
+        // a click without a drag yanks nothing
+        let rows = h.draw();
+        let at = cell_of(&rows, "beta");
+        mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), at);
+        let release = mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), at);
+        assert!(matches!(release, UpdateEffect::None));
+        assert!(h.app.line_mode.copy_state().active);
+    }
+
+    /// A click on a byte of the raw panel puts the raw copy cursor on it, ESC bytes included,
+    /// and a drag there yanks bytes (MAX-113, raw side of MAX-71).
+    #[test]
+    fn mouse_click_on_a_raw_byte() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+        h.app.settings_mut().raw_side.view = RawSideView::Hex;
+        h.feed(b"\x1b[32mok\x1b[0m\r\nabc\r\n");
+        let rows = h.draw();
+
+        let (x, y) = cell_of(&rows, "6F 6B");
+        click(&mut h, (x + 1, y));
+        let rows = h.draw();
+        assert_eq!(h.app.copy_side(), Some(CopySide::Raw));
+        assert_eq!(under_cursor(&mut h, &rows), "6F");
+
+        let (x, y) = cell_of(&rows, "5B 33");
+        mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), (x, y));
+        mouse_do(&mut h, MouseEventKind::Drag(MouseButton::Left), (x + 9, y));
+        match mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), (x + 9, y)) {
+            UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "5B 33 32 6D"),
+            _ => panic!("expected a yank"),
+        }
+
+        // the panel panned by 2 bytes: the click counts them
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+        h.app.settings_mut().raw_side.view = RawSideView::Hex;
+        h.feed(b"\x1b[32mok\x1b[0m and a line far wider than the raw panel\r\n");
+        h.draw();
+        h.app.update(Action::App(AppAction::SideView(
+            crate::inputs::SideViewAction::PanRight(2),
+        )));
+        let rows = h.draw();
+        assert_eq!(h.app.line_mode.raw_pan_x(), 6);
+        let (x, y) = cell_of(&rows, "6F 6B");
+        click(&mut h, (x, y));
+        let rows = h.draw();
+        assert_eq!(under_cursor(&mut h, &rows), "6F");
+    }
+
+    /// Terminal mode: a click puts the copy cursor on the grid cell, a drag yanks the text.
+    #[test]
+    fn mouse_in_terminal_mode() {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+            s.mode = Mode::Terminal;
+        });
+        let mut bytes = b"\r\n".repeat(20);
+        bytes.extend_from_slice(b"first row\r\nsecond row");
+        h.app.terminal_mode.process_rx(TextEncoding::Utf8, &bytes);
+        let rows = h.draw();
+
+        let (x, y) = cell_of(&rows, "second");
+        click(&mut h, (x + 3, y));
+        h.draw();
+        assert!(h.app.terminal_mode.copy_state().active);
+        assert_eq!(cursor_cell(&mut h), (x + 3, y));
+
+        let (x, y) = cell_of(&rows, "first");
+        mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), (x, y));
+        mouse_do(
+            &mut h,
+            MouseEventKind::Drag(MouseButton::Left),
+            (x + 2, y + 1),
+        );
+        match mouse_do(
+            &mut h,
+            MouseEventKind::Up(MouseButton::Left),
+            (x + 2, y + 1),
+        ) {
+            UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "first row\nsec"),
+            _ => panic!("expected a yank"),
+        }
+    }
+
+    /// A click in the history while searching leaves the search for copy mode there; a click
+    /// below the history does nothing.
+    #[test]
+    fn mouse_click_while_searching_and_off_the_history() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 60, 12);
+        h.feed(b"one\r\ntwo\r\n");
+        search(&mut h, "two");
+        let rows = h.draw();
+
+        let (x, y) = cell_of(&rows, "one");
+        let below = (x, y + 3);
+        click(&mut h, below);
+        assert!(!h.app.line_mode.copy_state().active);
+        assert!(h.app.is_search_active());
+
+        click(&mut h, (x + 1, y));
+        assert!(!h.app.is_search_active());
+        h.draw();
+        assert_eq!(cursor_cell(&mut h), (x + 1, y));
+    }
+
+    /// A click in a copy view the keys centered keeps that view, and in truncate mode the pan
+    /// counts: the cursor lands on the char shown under the click.
+    #[test]
+    fn mouse_click_keeps_a_centered_view_and_counts_the_pan() {
+        let mut h = wrapped_lines();
+        h.draw();
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        for _ in 0..8 {
+            h.app.update(Action::CopyMode(CopyModeAction::MoveUp));
+        }
+        let centered = h.draw();
+        let height = h.app.frame_areas().content.height as usize;
+        let (x, y) = cell_of(&centered, "delta");
+        click(&mut h, (x, y));
+        let after = h.draw();
+        assert_eq!(centered[..height], after[..height]);
+        assert_eq!(cursor_cell(&mut h), (x, y));
+
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 30, 8);
+        h.app.settings_mut().line_mode.wrap_mode = crate::configs::WrapMode::Truncate;
+        h.feed(b"0123456789abcdefghijklmnopqrstuvwxyz ABCDEFGHIJ\r\n");
+        h.draw();
+        h.scroll(HistoryAction::PanRight(10));
+        let rows = h.draw();
+        let (x, y) = cell_of(&rows, "uvw");
+        click(&mut h, (x + 1, y));
+        h.draw();
+        assert_eq!(h.app.line_mode.copy_state().cursor.char_idx, 31);
+        assert_eq!(cursor_cell(&mut h), (x + 1, y));
+    }
+
+    /// A click in a popup picks the part under it: a help tab, a setting (toggled), a serial
+    /// field (a second click cycles it), a resize field. A click outside closes the popup, but
+    /// not a connection alert, where closing quits (MAX-113).
+    #[test]
+    fn mouse_clicks_in_popups() {
+        use crate::overlays::{HelpCategory, ResizeField, SerialSettingField};
+        use crate::serial::Parity;
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        let open = |h: &mut Harness, overlay| {
+            h.app.update(Action::App(AppAction::OpenOverlay(overlay)));
+            h.draw()
+        };
+
+        let rows = open(&mut h, Overlay::Help(HelpDialog::new()));
+        click(&mut h, cell_of(&rows, "Search"));
+        assert!(
+            matches!(h.app.overlay(), Some(Overlay::Help(d)) if d.category == HelpCategory::Search)
+        );
+        let (x, y) = cell_of(&rows, "Dialogs");
+        click(&mut h, (x + 6, y));
+        assert!(
+            matches!(h.app.overlay(), Some(Overlay::Help(d)) if d.category == HelpCategory::Dialog)
+        );
+        click(&mut h, (0, 0));
+        assert!(h.app.overlay().is_none());
+
+        let rows = open(&mut h, Overlay::Settings);
+        assert!(!h.app.settings().local_echo);
+        click(&mut h, cell_of(&rows, "Local Echo"));
+        assert!(h.app.settings().local_echo);
+        assert!(h.app.overlay().is_some());
+
+        let rows = open(
+            &mut h,
+            Overlay::SerialSettings(SerialConfigDialog::new(&SerialConfig::default())),
+        );
+        let parity = cell_of(&rows, "Parity");
+        click(&mut h, parity);
+        click(&mut h, parity);
+        match h.app.overlay() {
+            Some(Overlay::SerialSettings(d)) => {
+                assert_eq!(d.selected_field, SerialSettingField::Parity);
+                assert_ne!(d.config.parity, Parity::None);
+            }
+            _ => panic!("serial popup closed"),
+        }
+
+        let rows = open(&mut h, Overlay::TerminalSize(ResizeDialog::new(24, 80)));
+        click(&mut h, cell_of(&rows, "Columns"));
+        assert!(
+            matches!(h.app.overlay(), Some(Overlay::TerminalSize(d)) if d.active_field == ResizeField::Cols)
+        );
+
+        open(&mut h, Overlay::DeviceDisconnected("/dev/x".into()));
+        click(&mut h, (0, 0));
+        assert!(matches!(
+            h.app.overlay(),
+            Some(Overlay::DeviceDisconnected(_))
+        ));
+    }
+
+    /// A click in the TX input moves its cursor to the clicked char (the end past the text),
+    /// and leaves copy mode for it.
+    #[test]
+    fn mouse_click_in_the_tx_input() {
+        use crate::inputs::LineInputAction;
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 60, 12);
+        h.feed(b"one\r\n");
+        h.app.update(Action::LineInput(LineInputAction::Paste(
+            "hello world".into(),
+        )));
+        let rows = h.draw();
+        let (x, y) = cell_of(&rows, "world");
+
+        click(&mut h, (x, y));
+        assert_eq!(h.app.line_mode.input().cursor(), 6);
+        h.draw();
+        assert_eq!(cursor_cell(&mut h), (x, y));
+
+        click(&mut h, (x + 30, y));
+        assert_eq!(h.app.line_mode.input().cursor(), 11);
+
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        h.draw();
+        click(&mut h, (x + 1, y));
+        assert!(!h.app.line_mode.copy_state().active);
+        assert_eq!(h.app.line_mode.input().cursor(), 7);
+
+        // an input wider than the prompt is scrolled: the click counts the scroll
+        let long: String = (0..30).map(|i| format!("a{i:02} ")).collect();
+        h.app.update(Action::LineInput(LineInputAction::ClearLine));
+        h.app
+            .update(Action::LineInput(LineInputAction::Paste(long.clone())));
+        let rows = h.draw();
+        click(&mut h, cell_of(&rows, "a27"));
+        assert_eq!(h.app.line_mode.input().cursor(), long.find("a27").unwrap());
+    }
+
+    /// Terminal mode: once the remote program asks for the mouse (here DECSET 1000 + 1006),
+    /// events on the grid are sent to it as SGR reports; with copy mode on, scrolled into the
+    /// history, or before it asks, the mouse acts on maxicom (MAX-113).
+    #[test]
+    fn mouse_forwarded_to_a_remote_program() {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 30, |s| {
+            s.mode = Mode::Terminal;
+        });
+        let feed = |h: &mut Harness, bytes: &[u8]| {
+            h.app.terminal_mode.process_rx(TextEncoding::Utf8, bytes);
+            h.draw();
+        };
+        feed(&mut h, b"hello");
+        let area = h.app.frame_areas().content;
+        let at = (area.x + 4, area.y + 2);
+        let press = MouseEventKind::Down(MouseButton::Left);
+        let sent = |h: &mut Harness, kind| match mouse_do(h, kind, at) {
+            UpdateEffect::Transmit(bytes) => Some(bytes),
+            _ => None,
+        };
+
+        assert_eq!(sent(&mut h, press), None);
+        assert!(h.app.terminal_mode.copy_state().active);
+        h.app.update(Action::CopyMode(CopyModeAction::Exit));
+
+        feed(&mut h, b"\x1b[?1000h\x1b[?1006h");
+        assert_eq!(sent(&mut h, press).unwrap(), b"\x1b[<0;5;3M");
+        let release = MouseEventKind::Up(MouseButton::Left);
+        assert_eq!(sent(&mut h, release).unwrap(), b"\x1b[<0;5;3m");
+        assert_eq!(
+            sent(&mut h, MouseEventKind::ScrollUp).unwrap(),
+            b"\x1b[<64;5;3M"
+        );
+        // not reported in this mode, and not acted on locally either
+        let drag = MouseEventKind::Drag(MouseButton::Left);
+        assert_eq!(sent(&mut h, drag), None);
+        assert!(!h.app.terminal_mode.copy_state().active);
+
+        // copy mode on: the mouse is maxicom's
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        h.draw();
+        assert_eq!(sent(&mut h, press), None);
+        h.app.update(Action::CopyMode(CopyModeAction::Exit));
+
+        // scrolled into the history: the wheel scrolls it
+        feed(&mut h, &b"line\r\n".repeat(40));
+        h.app.update(Action::History(HistoryAction::ScrollUp(3)));
+        h.draw();
+        assert_eq!(sent(&mut h, MouseEventKind::ScrollUp), None);
+        assert!(h.app.terminal_mode.vt100_screen().scrollback() > 0);
     }
 }

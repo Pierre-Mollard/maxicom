@@ -67,6 +67,12 @@ pub struct LineMode {
     raw_scroller: RawSideScroller,
     vi_state_copymode: Option<ViPending>,
     evicted_lines: usize,
+    /// The copy cursor was last moved by the mouse: the view stays where it was clicked
+    /// instead of centering on the cursor, until a key moves it (MAX-113)
+    mouse_view: bool,
+    /// The scroll position of the last centered copy view (`None`: the live view), for a mouse
+    /// press to keep that view
+    copy_view_position: Option<(usize, usize)>,
 }
 
 impl LineMode {
@@ -100,6 +106,8 @@ impl LineMode {
             raw_scroller,
             vi_state_copymode: None,
             evicted_lines: 0,
+            mouse_view: false,
+            copy_view_position: None,
         }
     }
 
@@ -310,6 +318,21 @@ impl LineMode {
                 self.user_input.reset();
                 UpdateEffect::None
             }
+            LineInputAction::ClickAt(column) => {
+                // the char drawn on that column, else the end of the text
+                let mut start = 0;
+                let cursor = self
+                    .user_input
+                    .value()
+                    .chars()
+                    .position(|ch| {
+                        start += unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+                        start > column
+                    })
+                    .unwrap_or(self.user_input.value().chars().count());
+                self.user_input = std::mem::take(&mut self.user_input).with_cursor(cursor);
+                UpdateEffect::None
+            }
             LineInputAction::HandleKey(key_event) => {
                 self.history_index = None;
                 dispatch_input_key_vi(&mut self.user_input, &mut self.vi_state_prompt, key_event);
@@ -366,6 +389,27 @@ impl LineMode {
             return None;
         }
 
+        let is_mouse = matches!(
+            action,
+            CopyModeAction::MousePress(..)
+                | CopyModeAction::MouseDrag(_)
+                | CopyModeAction::MouseRelease
+        );
+        if let CopyModeAction::MousePress(..) = action {
+            // keep the view that was clicked: a centered copy view becomes the scroll position
+            if self.copy_state.active && !self.mouse_view {
+                match self.copy_view_position {
+                    Some((entries_from_bottom, rows_below)) => {
+                        self.set_scroll_position(entries_from_bottom, rows_below)
+                    }
+                    None => self.scroll_to_bottom(),
+                }
+            }
+            self.mouse_view = true;
+        } else if !is_mouse {
+            self.mouse_view = false;
+        }
+
         if action == CopyModeAction::Enter {
             let max_line = self.local_history.len().saturating_sub(1);
             self.copy_state.enter_at(max_line, 0);
@@ -383,6 +427,8 @@ impl LineMode {
 
         let result = self.copy_state.apply_action(action, &mut source);
         match result {
+            // the mouse moves the cursor to where it is shown
+            CopyActionResult::Moved if is_mouse => None,
             CopyActionResult::Moved => {
                 self.sync_scroll_with_cursor();
 
@@ -630,6 +676,15 @@ impl LineMode {
     #[inline]
     pub fn take_pending_scroll_rows(&mut self) -> isize {
         std::mem::take(&mut self.pending_scroll_rows)
+    }
+    /// The copy cursor was last moved by the mouse: the render keeps the view (MAX-113)
+    #[inline]
+    pub fn is_mouse_view(&self) -> bool {
+        self.mouse_view
+    }
+    /// The scroll position of the centered copy view drawn (`None`: the live view)
+    pub fn set_copy_view_position(&mut self, position: Option<(usize, usize)>) {
+        self.copy_view_position = position;
     }
     /// Where the render resolved the scroll to
     pub fn set_scroll_position(&mut self, entries_from_bottom: usize, rows_below: usize) {

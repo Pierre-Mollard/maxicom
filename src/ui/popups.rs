@@ -43,6 +43,11 @@ pub fn form_area(parent: Rect, width: u16, lines: usize) -> Rect {
     popup_area(parent, width, lines as u16 + 4)
 }
 
+/// Row `y` of a popup's inner area, as a click target (MAX-113): cut to the area
+pub fn row_area(inner: Rect, y: usize) -> Rect {
+    Rect::new(inner.x, inner.y + y as u16, inner.width, 1).intersection(inner)
+}
+
 /// A section header inside a popup
 pub fn section<'a>(title: &'a str, theme: &ThemeConfig) -> Line<'a> {
     Line::from(Span::styled(

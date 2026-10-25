@@ -441,6 +441,7 @@ impl TerminalMode {
 
     pub fn update_action_terminal(&mut self, action: TerminalAction) -> UpdateEffect {
         match action {
+            TerminalAction::MouseReport(bytes) => UpdateEffect::Transmit(bytes),
             TerminalAction::AutoResizeRemoteToViewer => {
                 let rows = self.scroller.view_height as u16;
                 let cols = self.scroller.view_width as u16;

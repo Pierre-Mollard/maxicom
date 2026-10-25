@@ -51,6 +51,7 @@
 //! | `pan_left`                      | `can_pan_left`                             | Horizontal panning to the left is possible               |
 //! | `pan_right`                     | `can_pan_right`                            | Horizontal panning to the right is possible              |
 //! | `pan_right_alert`               | `pan_alert`                                | New unread content arrived further to the right (Line)   |
+//! | `mouse`                         | —                                          | Mouse capture is on (`ui.mouse`)                         |
 //!
 //! ## Style Keywords
 //! - **Modifiers**: `bold`, `dim`, `italic`, `underlined` (`underline`), `reversed` (`reverse`), `reset` (`default`), `crossed`, `slow_blink` (`sblink`), `rapid_blink` (`rblink`)
@@ -245,6 +246,7 @@ enum Cond {
     PanRight,
     PanRightAlert,
     Panned,
+    Mouse,
     /// Unknown condition name, always false
     Unknown,
 }
@@ -271,6 +273,7 @@ impl Cond {
             "pan_right" | "can_pan_right" => Self::PanRight,
             "pan_right_alert" | "pan_alert" => Self::PanRightAlert,
             "panned" | "pan" | "panning" => Self::Panned,
+            "mouse" => Self::Mouse,
             _ => Self::Unknown,
         }
     }
@@ -304,6 +307,7 @@ impl Cond {
                     })
             }
             Self::Panned => app.pan_left_status().is_some_and(|c| c > 0),
+            Self::Mouse => app.settings().ui.mouse,
             Self::Unknown => false,
         }
     }
@@ -778,6 +782,21 @@ mod tests {
                 span(" LINE ", "Some(Black)", "Some(Red)", "BOLD"),
                 span(" RAW", "Some(Red)", BG, "BOLD"),
             ]
+        );
+    }
+
+    /// `mouse` is true while the mouse capture setting is on (MAX-113).
+    #[test]
+    fn mouse_condition() {
+        let mut l = app(Mode::Line);
+        assert_eq!(
+            render("[m](mouse?red:blue)", &l),
+            [span("m", "Some(Red)", BG, "NONE")]
+        );
+        l.settings_mut().ui.mouse = false;
+        assert_eq!(
+            render("[m](mouse?red:blue)", &l),
+            [span("m", "Some(Blue)", BG, "NONE")]
         );
     }
 

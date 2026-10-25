@@ -2,7 +2,7 @@ use tui_input::Input;
 
 use crate::{
     inputs::{DialogAction, dispatch_input_key, paste_into_input},
-    overlays::OverlayResponse,
+    overlays::{OverlayResponse, PopupTarget},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +30,10 @@ impl ResizeDialog {
     pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
         match action {
             DialogAction::Close => OverlayResponse::Close,
+            DialogAction::Pick(PopupTarget::ResizeField(field)) => {
+                self.active_field = field;
+                OverlayResponse::Handled
+            }
             DialogAction::CycleNext | DialogAction::Down => {
                 self.active_field = match self.active_field {
                     ResizeField::Rows => ResizeField::Cols,

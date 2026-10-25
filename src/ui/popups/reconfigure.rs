@@ -1,5 +1,6 @@
 use ratatui::{
     Frame,
+    layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Clear, Paragraph},
@@ -7,8 +8,8 @@ use ratatui::{
 
 use crate::{
     configs::{KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
-    overlays::{SerialConfigDialog, SerialSettingField},
-    ui::popups::{FORM_WIDTH, form_area, key_hints, popup_block},
+    overlays::{PopupTarget, SerialConfigDialog, SerialSettingField},
+    ui::popups::{FORM_WIDTH, form_area, key_hints, popup_block, row_area},
 };
 
 pub fn render_reconfigure_popup(
@@ -16,7 +17,8 @@ pub fn render_reconfigure_popup(
     resolver: &KeyResolver,
     frame: &mut Frame,
     theme: &ThemeConfig,
-) {
+    targets: &mut Vec<(Rect, PopupTarget)>,
+) -> Rect {
     let [data_bits, _, stop_bits] = dialog.config.compact_notation();
     let mut lines = Vec::new();
 
@@ -48,6 +50,7 @@ pub fn render_reconfigure_popup(
         ),
     ];
 
+    let field_rows: Vec<SerialSettingField> = fields.iter().map(|(field, ..)| *field).collect();
     for (field, label, value) in fields {
         let is_selected = dialog.selected_field == field;
 
@@ -90,4 +93,9 @@ pub fn render_reconfigure_popup(
     let inner = block.inner(area);
     frame.render_widget(block, area);
     frame.render_widget(Paragraph::new(lines), inner);
+    // one row per field, in order (MAX-113)
+    for (y, field) in field_rows.into_iter().enumerate() {
+        targets.push((row_area(inner, y), PopupTarget::SerialField(field)));
+    }
+    area
 }

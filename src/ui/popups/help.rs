@@ -1,6 +1,8 @@
+use unicode_width::UnicodeWidthStr;
+
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Margin},
+    layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Modifier, Style},
     symbols,
     text::{Line, Span},
@@ -10,14 +12,20 @@ use ratatui::{
 use crate::{
     app::App,
     configs::{ThemeConfig, keybindings::KeyBindingDialogAction},
-    overlays::{HelpCategory, HelpDialog},
+    overlays::{HelpCategory, HelpDialog, PopupTarget},
     ui::{
         common::popup_area,
         popups::{key_hints, popup_block},
     },
 };
 
-pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, theme: &ThemeConfig) {
+pub fn render_help_popup(
+    app: &App,
+    dialog: &HelpDialog,
+    frame: &mut Frame,
+    theme: &ThemeConfig,
+    targets: &mut Vec<(Rect, PopupTarget)>,
+) -> Rect {
     let area = popup_area(frame.area(), 74, 20);
     frame.render_widget(Clear, area);
 
@@ -94,6 +102,15 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
                 .add_modifier(Modifier::UNDERLINED),
         );
     frame.render_widget(tabs, tabs_area);
+
+    // each tab as `Tabs` draws it: a space, the title, a space, then the divider (MAX-113)
+    let mut x = tabs_area.x;
+    for category in HelpCategory::ALL {
+        let width = category.title().width() as u16 + 2;
+        let tab = Rect::new(x, tabs_area.y, width, 1).intersection(tabs_area);
+        targets.push((tab, PopupTarget::HelpTab(category)));
+        x = x.saturating_add(width + 1);
+    }
 
     let prefix_str = format!("{}", app.key_resolver.prefix);
     let mut lines = Vec::new();
@@ -243,4 +260,5 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
             &mut scrollbar_state,
         );
     }
+    area
 }

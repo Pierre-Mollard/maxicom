@@ -1,6 +1,9 @@
 use std::cell::Cell;
 
-use crate::{inputs::DialogAction, overlays::OverlayResponse};
+use crate::{
+    inputs::DialogAction,
+    overlays::{OverlayResponse, PopupTarget},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HelpCategory {
@@ -79,6 +82,12 @@ impl HelpDialog {
 
         match action {
             DialogAction::Close => OverlayResponse::Close,
+            DialogAction::Pick(PopupTarget::HelpTab(category)) => {
+                self.category = category;
+                self.scroll = 0;
+                self.max_scroll.set(0);
+                OverlayResponse::Handled
+            }
             DialogAction::Right | DialogAction::CycleNext => {
                 self.category = self.category.next();
                 self.scroll = 0;

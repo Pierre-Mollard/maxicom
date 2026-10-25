@@ -7,7 +7,10 @@ use std::{
 };
 
 use crossterm::{
-    event::{DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste, EnableFocusChange},
+    event::{
+        DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+        EnableFocusChange, EnableMouseCapture,
+    },
     execute,
 };
 use ratatui::DefaultTerminal;
@@ -66,7 +69,12 @@ impl TerminalGuard {
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = execute!(stdout(), DisableBracketedPaste, DisableFocusChange);
+        let _ = execute!(
+            stdout(),
+            DisableMouseCapture,
+            DisableBracketedPaste,
+            DisableFocusChange
+        );
         ratatui::restore();
     }
 }
@@ -167,6 +175,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     };
 
     let mut guard = TerminalGuard::init()?;
+    // set from `ui.mouse` in the loop, so its toggle and a reload apply it too (MAX-113)
+    let mut mouse_captured = false;
 
     let mut running: bool = true;
     let is_replay = matches!(run_mode, RunMode::Replay { .. });
@@ -294,8 +304,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         {
             poll_timeout = Duration::ZERO;
             handled_events += 1;
-            needs_redraw = true;
             let action = inputs::handle_event(event, &app);
+            // the mouse capture reports every move: one that does nothing draws nothing
+            needs_redraw |= !matches!(action, inputs::Action::Ignore);
             match app.update(action) {
                 UpdateEffect::Quit => running = false,
                 UpdateEffect::ToggleAttachSerial => {
@@ -393,6 +404,15 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     }
                 },
             }
+        }
+
+        if app.settings().ui.mouse != mouse_captured {
+            mouse_captured = app.settings().ui.mouse;
+            let _ = if mouse_captured {
+                execute!(stdout(), EnableMouseCapture)
+            } else {
+                execute!(stdout(), DisableMouseCapture)
+            };
         }
 
         needs_redraw |= app.tick();

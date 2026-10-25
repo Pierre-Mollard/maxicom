@@ -86,6 +86,9 @@ impl KeyBindingAction {
             KeyBindingAction::ExitPrefix => Action::App(AppAction::SetPrefix(false)),
             KeyBindingAction::DetachSerial => Action::App(AppAction::DetachSerial),
             KeyBindingAction::ReloadConfig => Action::App(AppAction::ReloadConfig),
+            KeyBindingAction::ToggleMouse => {
+                Action::App(AppAction::ToggleSetting(SettingKey::Mouse))
+            }
         }
     }
 }

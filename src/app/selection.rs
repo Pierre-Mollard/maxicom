@@ -70,6 +70,7 @@ pub struct CopyModeState {
     pub cursor: LogicalPosition,
     pub selection_anchor: Option<LogicalPosition>,
     pub side: CopySide,
+    pub mouse_drag: Option<bool>,
 }
 
 impl CopyModeState {
@@ -77,6 +78,7 @@ impl CopyModeState {
         self.active = false;
         self.selection_anchor = None;
         self.side = CopySide::Text;
+        self.mouse_drag = None;
     }
 
     pub fn toggle_selection(&mut self) {
@@ -97,6 +99,7 @@ impl CopyModeState {
         };
         self.selection_anchor = None;
         self.side = CopySide::Text;
+        self.mouse_drag = None;
     }
 
     /// The `evicted` oldest lines of the source were dropped: keep cursor and anchor on the
@@ -159,8 +162,34 @@ impl CopyModeState {
         let max_line = total_lines.saturating_sub(1);
         let view_height = source.view_height().saturating_sub(1).max(1);
 
-        if action == CopyModeAction::ToggleSide {
-            return self.toggle_side(source);
+        match action {
+            CopyModeAction::MousePress(pos, side) => {
+                self.active = true;
+                self.side = side;
+                self.selection_anchor = None;
+                self.mouse_drag = Some(false);
+                self.move_to(pos, source, max_line);
+                return CopyActionResult::Moved;
+            }
+            CopyModeAction::MouseDrag(pos) => {
+                let Some(dragged) = self.mouse_drag else {
+                    return CopyActionResult::None;
+                };
+                if !dragged {
+                    self.selection_anchor = Some(self.cursor);
+                    self.mouse_drag = Some(true);
+                }
+                self.move_to(pos, source, max_line);
+                return CopyActionResult::Moved;
+            }
+            CopyModeAction::MouseRelease => {
+                return match self.mouse_drag.take() {
+                    Some(true) => self.apply_action(CopyModeAction::Yank, source),
+                    _ => CopyActionResult::None,
+                };
+            }
+            CopyModeAction::ToggleSide => return self.toggle_side(source),
+            _ => {}
         }
         if self.side == CopySide::Raw {
             return self.apply_raw_action(action, source, max_line, view_height);
@@ -521,6 +550,31 @@ impl CopyModeState {
         }
         self.cursor.char_idx = byte_to_char(source, self.cursor.line_idx, self.cursor.byte_idx);
         CopyActionResult::Moved
+    }
+
+    /// Puts the cursor on a position the mouse gave, on the current side: a char of the text,
+    /// or a byte with the char showing it as its ghost (MAX-113)
+    fn move_to<S: TextSource>(&mut self, pos: LogicalPosition, source: &mut S, max_line: usize) {
+        let line_idx = pos.line_idx.min(max_line);
+        self.cursor = match self.side {
+            CopySide::Text => {
+                let char_idx = pos
+                    .char_idx
+                    .min(source.get_line_len(line_idx).saturating_sub(1));
+                LogicalPosition {
+                    line_idx,
+                    char_idx,
+                    preferred_col: char_idx,
+                    byte_idx: 0,
+                }
+            }
+            CopySide::Raw => LogicalPosition {
+                line_idx,
+                char_idx: byte_to_char(source, line_idx, pos.byte_idx),
+                preferred_col: pos.byte_idx,
+                byte_idx: pos.byte_idx,
+            },
+        };
     }
 
     /// The selected bytes (raw side), in the raw panel's format, one line per source line

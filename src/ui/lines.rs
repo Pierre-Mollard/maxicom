@@ -19,7 +19,7 @@ use crate::{
         scroller::ScrollStatus,
         search::SearchMatch,
         selection::CopySide,
-        types::{FocusTarget, LogEntry},
+        types::{FocusTarget, LogEntry, PromptMap, RawRow, RowChars, TextRow},
     },
     configs::{
         KeywordHighlight, LineDisplayMode, SettingsConfig, ThemeConfig, WrapMode,
@@ -140,7 +140,10 @@ pub fn render_monitor(
     }
 
     let is_copy_active = app.line_mode.copy_state().active;
-    let active_focus = if is_copy_active {
+    // a copy cursor moved by the mouse is where it was clicked: the view stays (MAX-113)
+    let active_focus = if is_copy_active && app.line_mode.is_mouse_view() {
+        None
+    } else if is_copy_active {
         Some((
             app.line_mode.copy_state().cursor.line_idx,
             app.line_mode.copy_state().cursor.char_idx,
@@ -443,17 +446,21 @@ pub fn render_monitor(
     // Stores the view ending on window row `bottom` as the scroll position: back to the live
     // view when it is the last entry's last row, else (entry, rows hidden below): the entry
     // holding the bottom row (the last one starting at or before it) and its rows after it
-    let store_position = |app: &mut App, bottom: usize| {
+    let position_of = |bottom: usize| {
         if end_idx == total_entries && bottom >= last_row {
-            app.line_mode.scroll_to_bottom();
-            return;
+            return None;
         }
         let local = entries.partition_point(|meta| meta.visual_row_start <= bottom) - 1;
         let meta = &entries[local];
         let rows_below = meta.visual_row_start + rows_of(meta) - 1 - bottom;
         let entries_from_bottom = total_entries - 1 - (start_idx + local);
-        app.line_mode
-            .set_scroll_position(entries_from_bottom, rows_below);
+        Some((entries_from_bottom, rows_below))
+    };
+    let store_position = |app: &mut App, bottom: usize| match position_of(bottom) {
+        Some((entries_from_bottom, rows_below)) => app
+            .line_mode
+            .set_scroll_position(entries_from_bottom, rows_below),
+        None => app.line_mode.scroll_to_bottom(),
     };
 
     let paragraph_y_offset: usize = if row_scrolling {
@@ -507,9 +514,12 @@ pub fn render_monitor(
         let ideal_offset = target_visual_row.saturating_sub(half);
         let max_offset = total_visual_rows.saturating_sub(content_height);
         let offset = ideal_offset.min(max_offset);
-        // a search jump: the next frames scroll from this view
-        if !is_copy_active {
-            let bottom = (offset + content_height).saturating_sub(1).min(last_row);
+        // a search jump: the next frames scroll from this view. A copy view is kept aside, for
+        // a mouse press to stay on it (MAX-113)
+        let bottom = (offset + content_height).saturating_sub(1).min(last_row);
+        if is_copy_active {
+            app.line_mode.set_copy_view_position(position_of(bottom));
+        } else {
             store_position(app, bottom);
         }
         offset
@@ -638,6 +648,18 @@ pub fn render_monitor(
         }
     }
 
+    if app.settings().ui.mouse {
+        map_text_rows(
+            app,
+            &layout,
+            end_idx - start_idx,
+            start_idx,
+            paragraph_y_offset,
+            line_x_offset,
+            content_area,
+        );
+    }
+
     if let Some(raw_area) = raw_side_area {
         render_raw_side_panel(
             app,
@@ -667,19 +689,7 @@ pub fn render_monitor(
         let cursor_line = copy_state.cursor.line_idx;
         let cursor_char = copy_state.cursor.char_idx;
 
-        let indent_width = match app.settings().line_mode.wrap_indent {
-            PrefixWrapBehavior::None => 0,
-            PrefixWrapBehavior::Prefix => app.settings().line_mode.line_indent_prefix.width(),
-            PrefixWrapBehavior::Timestamp => {
-                let prefix_w = app.settings().line_mode.line_prefix.width();
-                let ts_width = if app.settings().show_timestamps {
-                    app.settings().line_gutter_width().saturating_sub(prefix_w)
-                } else {
-                    0
-                };
-                ts_width + app.settings().line_mode.line_indent_prefix.width()
-            }
-        };
+        let indent_width = continuation_indent_width(app.settings());
 
         if cursor_line >= start_idx
             && cursor_line < end_idx
@@ -786,7 +796,7 @@ pub fn render_monitor(
     PostRenderEffect::None
 }
 
-pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect, theme: &ThemeConfig) {
+pub fn render_input_prompt(app: &mut App, frame: &mut Frame, area: Rect, theme: &ThemeConfig) {
     let input = app.line_mode.input();
 
     let prompt_prefix = if app.line_mode.is_prompt_vi() {
@@ -841,6 +851,17 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect, theme: &The
 
     frame.render_widget(input_widget, inner_area);
 
+    // where the text is, for mouse clicks (MAX-113)
+    app.frame_map_mut().prompt = Some(PromptMap {
+        text_area: Rect {
+            x: inner_area.x + prefix_width,
+            width: inner_area.width.saturating_sub(prefix_width),
+            ..inner_area
+        },
+        scroll,
+    });
+
+    let input = app.line_mode.input();
     if !app.line_mode.search().active && !app.line_mode.copy_state().active {
         let cursor_x =
             inner_area.x + prefix_width + (input.visual_cursor().saturating_sub(scroll)) as u16;
@@ -852,6 +873,88 @@ pub fn render_input_prompt(app: &App, frame: &mut Frame, area: Rect, theme: &The
             buf[(cursor_x, cursor_y)].set_symbol(&app.settings().line_mode.unfocused_cursor_glyph);
         }
         frame.set_cursor_position((cursor_x, cursor_y));
+    }
+}
+
+/// Columns a continuation row (a wrapped entry's second row and after) starts in, before its
+/// spans: where the copy cursor and a mouse click count from
+fn continuation_indent_width(settings: &SettingsConfig) -> usize {
+    match settings.line_mode.wrap_indent {
+        PrefixWrapBehavior::None => 0,
+        PrefixWrapBehavior::Prefix => settings.line_mode.line_indent_prefix.width(),
+        PrefixWrapBehavior::Timestamp => {
+            let prefix_w = settings.line_mode.line_prefix.width();
+            let ts_width = if settings.show_timestamps {
+                settings.line_gutter_width().saturating_sub(prefix_w)
+            } else {
+                0
+            };
+            ts_width + settings.line_mode.line_indent_prefix.width()
+        }
+    }
+}
+
+/// Where each screen row's chars are, for mouse clicks (MAX-113): the same walk as the copy
+/// cursor's, from the window row on the view's top line and the pan
+fn map_text_rows(
+    app: &mut App,
+    layout: &PreparedLayout,
+    entries_shown: usize,
+    start_idx: usize,
+    paragraph_y_offset: usize,
+    line_x_offset: usize,
+    content_area: Rect,
+) {
+    let indent_width = continuation_indent_width(app.settings());
+    let entries = &layout.line_layouts[..entries_shown];
+    let content_width = content_area.width as usize;
+    let map = app.frame_map_mut();
+    map.text_area = content_area;
+
+    for screen_row in 0..content_area.height as usize {
+        let window_row = paragraph_y_offset + screen_row;
+        let local = entries.partition_point(|meta| meta.visual_row_start <= window_row);
+        let row = local.checked_sub(1).and_then(|local| {
+            let meta = &entries[local];
+            let line_idx = start_idx + local;
+            let sub_idx = window_row - meta.visual_row_start;
+            let Some(sub) = meta.sub_lines.get(sub_idx) else {
+                // an empty entry still takes a row
+                return (sub_idx == 0).then_some(TextRow {
+                    line_idx,
+                    chars: RowChars::Cols {
+                        first: 0,
+                        cols: Vec::new(),
+                    },
+                });
+            };
+            let first: usize = meta.sub_lines[..sub_idx]
+                .iter()
+                .map(|sub| sub.content_char_len)
+                .sum();
+            let mut col = if sub_idx > 0 { indent_width } else { 0 };
+            let mut gutter_left = sub.gutter_chars;
+            let mut char_idx = first;
+            let mut cols = Vec::new();
+            for ch in sub.spans.iter().flat_map(|span| span.content.chars()) {
+                if gutter_left > 0 {
+                    gutter_left -= 1;
+                } else if char_idx < first + sub.content_char_len {
+                    if col >= line_x_offset && col - line_x_offset < content_width {
+                        cols.push(((col - line_x_offset) as u16, char_idx));
+                    }
+                    char_idx += 1;
+                } else {
+                    break;
+                }
+                col += UnicodeWidthChar::width(ch).unwrap_or(0);
+            }
+            Some(TextRow {
+                line_idx,
+                chars: RowChars::Cols { first, cols },
+            })
+        });
+        map.text_rows.push(row);
     }
 }
 
@@ -896,6 +999,9 @@ pub fn render_raw_side_panel(
     let raw_ghost = (copy_state.active && !raw_side)
         .then_some((copy_state.cursor.line_idx, copy_state.cursor.char_idx));
     let mut current_visual_row = 0;
+    // the bytes of each panel row, for mouse clicks (MAX-113)
+    let map_rows = app.settings().ui.mouse;
+    let mut raw_rows = Vec::new();
 
     for (local_layout_idx, entry_layout) in layout.line_layouts.iter().enumerate() {
         let global_idx = start_idx + local_layout_idx;
@@ -1064,6 +1170,13 @@ pub fn render_raw_side_panel(
                         let col = (cursor_byte - raw_byte_start) * raw_view.stride();
                         raw_cursor_cell = Some((visible_raw_lines.len(), col));
                     }
+                    if map_rows {
+                        raw_rows.push(Some(RawRow {
+                            line_idx: global_idx,
+                            byte_start: raw_byte_start,
+                            byte_count: sub_raw_bytes.len(),
+                        }));
+                    }
                     visible_raw_lines.push(format_raw_bytes_with_highlights(
                         sub_raw_bytes,
                         raw_display_mode,
@@ -1102,6 +1215,14 @@ pub fn render_raw_side_panel(
         .update_raw_limits(max_visible_raw_width.saturating_sub(usable_width), raw_view);
 
     let raw_pan_x = app.line_mode.raw_pan_x().min(app.line_mode.raw_pan_x_max());
+
+    if map_rows {
+        let map = app.frame_map_mut();
+        map.raw_area = inner_area;
+        map.raw_rows = raw_rows;
+        map.raw_pan_x = raw_pan_x;
+        map.raw_stride = raw_view.stride();
+    }
 
     if let Some((row, col)) = raw_cursor_cell
         && col >= raw_pan_x

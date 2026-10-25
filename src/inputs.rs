@@ -5,13 +5,18 @@ use std::{io, time::Duration};
 use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
 
 use crate::{
-    app::{App, InputContext},
+    app::{
+        App, InputContext,
+        selection::{CopySide, LogicalPosition},
+    },
     configs::{KeyPattern, Mode},
-    overlays::{Overlay, SettingKey},
+    inputs::mouse::handle_mouse,
+    overlays::{Overlay, PopupTarget, SettingKey},
 };
 
 pub mod global_dispatchers;
 pub mod local_dispatchers;
+pub mod mouse;
 pub mod vi;
 
 // Re-exports
@@ -53,6 +58,7 @@ pub enum LineInputAction {
     HistoryDown,
     AutoResizeRemoteToWidth,
     ClearLine,
+    ClickAt(usize),
     HandleKey(KeyEvent),
     Paste(String),
 }
@@ -65,6 +71,7 @@ pub enum TerminalAction {
     ScreenshotTxt,
     Key(KeyEvent),
     Paste(String),
+    MouseReport(Vec<u8>),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -124,6 +131,9 @@ pub enum CopyModeAction {
     Yank,
     YankRaw,
     ToggleSide,
+    MousePress(LogicalPosition, CopySide),
+    MouseDrag(LogicalPosition),
+    MouseRelease,
     HandleKey(KeyEvent),
     Exit,
 }
@@ -144,6 +154,7 @@ pub enum DialogAction {
     End,
     HandleKey(KeyEvent),
     Paste(String),
+    Pick(PopupTarget),
 }
 
 /// Using crossterm's event API instead of stdin.read() to handle multi-byte ANSI sequence like
@@ -167,6 +178,7 @@ pub fn handle_event(event: Event, app: &App) -> Action {
             return Action::App(AppAction::FocusGained(false));
         }
         Event::Paste(text) => return handle_paste(text, app),
+        Event::Mouse(mouse_event) => return handle_mouse(mouse_event, app),
         _ => {}
     }
 

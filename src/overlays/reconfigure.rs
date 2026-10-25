@@ -2,7 +2,7 @@ use tui_input::Input;
 
 use crate::{
     inputs::DialogAction,
-    overlays::OverlayResponse,
+    overlays::{OverlayResponse, PopupTarget},
     serial::{CharSize, FlowControl, Parity, SerialConfig, StopBits},
 };
 
@@ -148,6 +148,14 @@ impl SerialConfigDialog {
     pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
         match action {
             DialogAction::Close => OverlayResponse::Close,
+            DialogAction::Pick(PopupTarget::SerialField(field)) => {
+                if self.selected_field == field {
+                    self.cycle_next();
+                } else {
+                    self.selected_field = field;
+                }
+                OverlayResponse::Handled
+            }
             DialogAction::Down => {
                 self.selected_field = self.selected_field.next();
                 OverlayResponse::Handled

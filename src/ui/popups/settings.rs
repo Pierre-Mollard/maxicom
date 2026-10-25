@@ -1,5 +1,6 @@
 use ratatui::{
     Frame,
+    layout::Rect,
     style::Style,
     text::{Line, Span},
     widgets::{Clear, Paragraph},
@@ -8,10 +9,16 @@ use ratatui::{
 use crate::{
     app::App,
     configs::{PrefixWrapBehavior, ThemeConfig, keybindings::KeyBindingDialogAction},
-    ui::popups::{FORM_WIDTH, form_area, key_hints, popup_block, section},
+    overlays::{PopupTarget, SettingKey},
+    ui::popups::{FORM_WIDTH, form_area, key_hints, popup_block, row_area, section},
 };
 
-pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) {
+pub fn render_settings_popup(
+    app: &App,
+    frame: &mut Frame,
+    theme: &ThemeConfig,
+    targets: &mut Vec<(Rect, PopupTarget)>,
+) -> Rect {
     let mode_str = match app.settings().mode {
         crate::configs::Mode::Line => "Line Mode",
         crate::configs::Mode::Terminal => "Terminal Mode",
@@ -51,18 +58,39 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
         ])
     };
 
-    let text = vec![
-        section("General", theme),
-        row("M", "Input Mode", mode_str),
-        row("E", "Local Echo", echo_str),
-        row("T", "Timestamps", timestamp_str),
-        row("X", "Rx Encoding", encoding_str),
-        row("B", "Byte Inspect", raw_display_str),
-        Line::from(""),
-        section("Line Mode", theme),
-        row("W", "Line Wrap", wrap_str),
-        row("I", "Indent Wrap", indent_str),
-        row("D", "Display Mode", display_mode_str),
+    let mouse_str = if app.settings().ui.mouse { "ON" } else { "OFF" };
+    // each row with the setting a click on it toggles (MAX-113)
+    let rows = [
+        (None, section("General", theme)),
+        (Some(SettingKey::Mode), row("M", "Input Mode", mode_str)),
+        (
+            Some(SettingKey::LocalEcho),
+            row("E", "Local Echo", echo_str),
+        ),
+        (
+            Some(SettingKey::DisplayTimestamp),
+            row("T", "Timestamps", timestamp_str),
+        ),
+        (
+            Some(SettingKey::TextEncoding),
+            row("X", "Rx Encoding", encoding_str),
+        ),
+        (
+            Some(SettingKey::DisplayRaw),
+            row("B", "Byte Inspect", raw_display_str),
+        ),
+        (Some(SettingKey::Mouse), row("U", "Mouse", mouse_str)),
+        (None, Line::from("")),
+        (None, section("Line Mode", theme)),
+        (Some(SettingKey::LineWrap), row("W", "Line Wrap", wrap_str)),
+        (
+            Some(SettingKey::IdentWrap),
+            row("I", "Indent Wrap", indent_str),
+        ),
+        (
+            Some(SettingKey::DisplayMode),
+            row("D", "Display Mode", display_mode_str),
+        ),
     ];
 
     let block = popup_block(
@@ -76,9 +104,16 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
         theme,
     );
 
-    let area = form_area(frame.area(), FORM_WIDTH, text.len());
+    let area = form_area(frame.area(), FORM_WIDTH, rows.len());
     frame.render_widget(Clear, area);
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    for (y, (key, _)) in rows.iter().enumerate() {
+        if let Some(key) = key {
+            targets.push((row_area(inner, y), PopupTarget::Setting(*key)));
+        }
+    }
+    let text: Vec<Line> = rows.into_iter().map(|(_, line)| line).collect();
     frame.render_widget(Paragraph::new(text), inner);
+    area
 }

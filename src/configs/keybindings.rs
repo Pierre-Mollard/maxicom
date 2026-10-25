@@ -55,6 +55,7 @@ pub enum KeyBindingAction {
     DetachSerial,
     ExitPrefix,
     ReloadConfig,
+    ToggleMouse,
 }
 
 impl FromStr for KeyBindingAction {
@@ -97,6 +98,7 @@ impl FromStr for KeyBindingAction {
             "exit_prefix" => Ok(KeyBindingAction::ExitPrefix),
             "detach_serial" => Ok(KeyBindingAction::DetachSerial),
             "reload_config" => Ok(KeyBindingAction::ReloadConfig),
+            "toggle_mouse" => Ok(KeyBindingAction::ToggleMouse),
             other => Err(UnknownActionError(other.to_string())),
         }
     }
@@ -140,6 +142,7 @@ impl std::fmt::Display for KeyBindingAction {
             Self::ExitPrefix => "exit_prefix",
             Self::DetachSerial => "detach_serial",
             Self::ReloadConfig => "reload_config",
+            Self::ToggleMouse => "toggle_mouse",
         };
         write!(f, "{s}")
     }
@@ -872,6 +875,7 @@ impl Default for KeyBindingsConfig {
             "m"     => KeyBindingAction::SKInputMode,
             "o"     => KeyBindingAction::SKTextEncoding,
             "B"     => KeyBindingAction::SKDisplayRaw,
+            "M"     => KeyBindingAction::ToggleMouse,
             "z"     => KeyBindingAction::Help,
             "s"     => KeyBindingAction::Settings,
             "l"     => KeyBindingAction::ToggleLogging,
@@ -1124,6 +1128,16 @@ mod tests {
             KeyBindingAction::ReloadConfig
         );
         assert_eq!(KeyBindingAction::ReloadConfig.to_string(), "reload_config");
+    }
+
+    /// The mouse toggle is on prefix + M (MAX-113).
+    #[test]
+    fn mouse_toggle_default_key() {
+        let resolver = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
+        let action = resolver.prefix_actions[&"M".parse().unwrap()];
+        assert_eq!(action, KeyBindingAction::ToggleMouse);
+        assert_eq!(action.to_string(), "toggle_mouse");
+        assert_eq!("toggle_mouse".parse::<KeyBindingAction>().unwrap(), action);
     }
 
     /// Keys a text input popup still sends to `[dialog_actions]`: the others are typed.

@@ -11,7 +11,7 @@ use crate::{
         App,
         data_processing::{build_display_to_raw_byte_map, map_disp_byte_to_raw},
         selection::CopySide,
-        types::FocusTarget,
+        types::{FocusTarget, RawRow, RowChars, TextRow},
     },
     configs::{KeywordHighlight, RawSideView, ThemeConfig, settings::raw_view_to_display_mode},
     terminal::{MaxicomCursor, MaxicomTerminal, vt100_size},
@@ -74,6 +74,20 @@ pub fn render_vt100_terminal(
     } else {
         max_sb
     };
+
+    // the grid rows shown, for mouse clicks (MAX-113): one char per column
+    if app.settings().ui.mouse {
+        let shown_rows =
+            (content_area.height as usize).min((grid_rows as usize).saturating_sub(pan_y));
+        let map = app.frame_map_mut();
+        map.text_area = content_area;
+        map.text_rows.extend((0..shown_rows).map(|r| {
+            Some(TextRow {
+                line_idx: top_visible_world_line + pan_y + r,
+                chars: RowChars::Grid { first: pan_x },
+            })
+        }));
+    }
 
     let is_search_active =
         app.terminal_mode.search().active && !app.terminal_mode.search().matches.is_empty();
@@ -447,6 +461,9 @@ pub fn render_vt100_raw_side_panel(
 
     let rows_to_render = view_height.min((grid_rows as usize).saturating_sub(pan_y));
     let mut raw_lines = Vec::with_capacity(rows_to_render);
+    // the bytes of each panel row, for mouse clicks (MAX-113)
+    let map_rows = app.settings().ui.mouse;
+    let mut raw_rows = Vec::new();
 
     // formatted bytes and plain text (for column -> byte resolution) walked together in one pass
     for (r, (row_raw_bytes, plain_text)) in screen
@@ -569,6 +586,13 @@ pub fn render_vt100_raw_side_panel(
         {
             raw_cursor_cell = Some((r, cursor_byte * raw_view.stride()));
         }
+        if map_rows {
+            raw_rows.push(Some(RawRow {
+                line_idx: world_row,
+                byte_start: 0,
+                byte_count: raw_bytes_slice.len(),
+            }));
+        }
 
         raw_lines.push(format_raw_bytes_with_highlights(
             raw_bytes_slice,
@@ -586,6 +610,14 @@ pub fn render_vt100_raw_side_panel(
         .terminal_mode
         .raw_pan_x()
         .min(app.terminal_mode.raw_pan_x_max());
+
+    if map_rows {
+        let map = app.frame_map_mut();
+        map.raw_area = inner_area;
+        map.raw_rows = raw_rows;
+        map.raw_pan_x = raw_pan_x;
+        map.raw_stride = raw_view.stride();
+    }
 
     if let Some((row, col)) = raw_cursor_cell
         && col >= raw_pan_x

@@ -1,5 +1,6 @@
 use ratatui::{
     Frame,
+    layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Clear, Padding, Paragraph, Wrap},
@@ -19,7 +20,7 @@ pub fn render_disconnected_popup(
     resolver: &KeyResolver,
     frame: &mut Frame,
     theme: &ThemeConfig,
-) {
+) -> Rect {
     let text = vec![
         Line::from(Span::styled(
             "⚠ SERIAL DEVICE DISCONNECTED ⚠",
@@ -49,7 +50,7 @@ pub fn render_disconnected_popup(
         ),
     ];
 
-    render_alert("Connection Lost", text, frame, theme);
+    render_alert("Connection Lost", text, frame, theme)
 }
 
 pub fn render_detached_popup(
@@ -57,7 +58,7 @@ pub fn render_detached_popup(
     resolver: &KeyResolver,
     frame: &mut Frame,
     theme: &ThemeConfig,
-) {
+) -> Rect {
     let text = vec![
         Line::from(Span::styled(
             "⚠ SERIAL DEVICE DETACHED ⚠",
@@ -84,7 +85,7 @@ pub fn render_detached_popup(
         ),
     ];
 
-    render_alert("Connection Lost", text, frame, theme);
+    render_alert("Connection Lost", text, frame, theme)
 }
 
 pub fn render_error_popup(
@@ -92,7 +93,7 @@ pub fn render_error_popup(
     resolver: &KeyResolver,
     frame: &mut Frame,
     theme: &ThemeConfig,
-) {
+) -> Rect {
     let mut lines = vec![
         Line::from(Span::styled(
             format!("⚠  {}  ⚠", err.title),
@@ -129,12 +130,12 @@ pub fn render_error_popup(
         theme,
     ));
 
-    render_alert(err.title, lines, frame, theme);
+    render_alert(err.title, lines, frame, theme)
 }
 
 /// A warning box sized to `lines` once wrapped at its width (a long port path or error cause
 /// wraps)
-fn render_alert(title: &str, lines: Vec<Line>, frame: &mut Frame, theme: &ThemeConfig) {
+fn render_alert(title: &str, lines: Vec<Line>, frame: &mut Frame, theme: &ThemeConfig) -> Rect {
     let warn = Style::default().fg(theme.palette.text_warn);
     let block = Block::bordered()
         .title(Span::styled(
@@ -160,4 +161,5 @@ fn render_alert(title: &str, lines: Vec<Line>, frame: &mut Frame, theme: &ThemeC
         .alignment(ratatui::layout::Alignment::Center)
         .wrap(Wrap { trim: true });
     frame.render_widget(popup, inner);
+    area
 }

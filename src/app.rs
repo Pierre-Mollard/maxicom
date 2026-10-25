@@ -4,12 +4,15 @@ use crate::{
     app::{
         scroller::ScrollStatus,
         selection::CopySide,
-        types::{FocusTarget, ViewportSize},
+        types::{FocusTarget, FrameAreas, FrameMap, ViewportSize},
     },
     configs::{
         DualBufferMode, KeyResolver, Mode, SettingsConfig, WrapMode, settings::PrefixWrapBehavior,
     },
-    inputs::{Action, AppAction, CopyModeAction, HistoryAction, SearchModeAction, SideViewAction},
+    inputs::{
+        Action, AppAction, CopyModeAction, HistoryAction, LineInputAction, SearchModeAction,
+        SideViewAction,
+    },
     logger::{LineLogger, TerminalLogger},
     notification::{NotificationManager, ToastLevel},
     overlays::{ErrorDialog, FilePathDialog, Overlay, OverlayResponse, SettingKey},
@@ -66,6 +69,8 @@ pub struct App {
     overlay: Option<Overlay>,
     pub notifications: NotificationManager,
     pub viewport: ViewportSize,
+    frame_areas: FrameAreas,
+    frame_map: FrameMap,
     pub line_mode: LineMode,
     pub terminal_mode: TerminalMode,
     pub is_window_focused: bool,
@@ -113,6 +118,8 @@ impl App {
             overlay: None,
             notifications: NotificationManager::new(),
             viewport: ViewportSize::default(),
+            frame_areas: FrameAreas::default(),
+            frame_map: FrameMap::default(),
             line_mode: line_view,
             terminal_mode: terminal_view,
             is_window_focused: true,
@@ -121,6 +128,25 @@ impl App {
                 sent_bytes: 0,
             },
         }
+    }
+
+    /// Where the last frame drew the history and the raw panel, set by `render`
+    pub fn frame_areas(&self) -> FrameAreas {
+        self.frame_areas
+    }
+
+    pub fn set_frame_areas(&mut self, areas: FrameAreas) {
+        self.frame_areas = areas;
+    }
+
+    /// What the last frame showed where, for mouse clicks (MAX-113)
+    pub fn frame_map(&self) -> &FrameMap {
+        &self.frame_map
+    }
+
+    /// For the renderers to fill, cleared by `render` at the start of each frame
+    pub fn frame_map_mut(&mut self) -> &mut FrameMap {
+        &mut self.frame_map
     }
 
     pub fn update_viewport(&mut self, viewport: ViewportSize) {
@@ -197,9 +223,19 @@ impl App {
                 }
                 UpdateEffect::Transmit(bytes)
             }
-            Action::LineInput(action) => self
-                .line_mode
-                .update_action_lineinput(&self.settings, action),
+            Action::LineInput(action) => {
+                // a click in the input leaves the history for it (MAX-113)
+                if let LineInputAction::ClickAt(_) = action {
+                    if self.is_copy_mode_active() {
+                        self.update_action_copy_mode(CopyModeAction::Exit);
+                    }
+                    if self.is_search_active() {
+                        self.update_action_search_mode(SearchModeAction::Cancel);
+                    }
+                }
+                self.line_mode
+                    .update_action_lineinput(&self.settings, action)
+            }
             Action::Terminal(action) => self.terminal_mode.update_action_terminal(action),
             Action::History(action) => self.update_action_history(action),
             Action::CopyMode(action) => self.update_action_copy_mode(action),
@@ -334,6 +370,10 @@ impl App {
     }
 
     fn update_action_copy_mode(&mut self, action: CopyModeAction) -> UpdateEffect {
+        // a click in the history leaves the search for copy mode there (MAX-113)
+        if matches!(action, CopyModeAction::MousePress(..)) && self.is_search_active() {
+            self.update_action_search_mode(SearchModeAction::Cancel);
+        }
         match self.settings.mode {
             Mode::Terminal => {
                 if let Some(text) = self
@@ -523,6 +563,11 @@ impl App {
                     "Display Mode is {}",
                     self.settings.line_mode.display_mode.as_str()
                 ));
+            }
+            SettingKey::Mouse => {
+                self.settings.ui.mouse = !self.settings.ui.mouse;
+                let state = if self.settings.ui.mouse { "ON" } else { "OFF" };
+                self.notify_info(format!("Mouse capture {state}"));
             }
             SettingKey::DisplayRaw => {
                 self.settings.raw_side.view.toggle();
@@ -799,5 +844,15 @@ mod tests {
               terminal_mode.logging"
             ]
         );
+    }
+
+    /// The mouse toggle flips the capture setting and says so (MAX-113).
+    #[test]
+    fn mouse_toggle_flips_the_setting() {
+        let mut app = app();
+        assert!(app.settings.ui.mouse);
+        app.toggle_setting(SettingKey::Mouse);
+        assert!(!app.settings.ui.mouse);
+        assert_eq!(toasts(&app), ["Mouse capture OFF"]);
     }
 }
