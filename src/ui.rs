@@ -859,6 +859,43 @@ mod tests {
         }
     }
 
+    /// MAX-127: `V` through the default keymap selects whole lines in line mode: every char of
+    /// them is highlighted, in the text and in the raw panel, whatever the cursor's column.
+    /// How: copy mode on the last line, `l` twice, `V`, `k`: both lines are highlighted from
+    /// their first char to their last, and their bytes in the panel.
+    #[test]
+    fn select_line_key_highlights_whole_lines() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        h.app.settings_mut().raw_side.view = RawSideView::Hex;
+        h.feed(b"first line\r\nsecond line\r\n");
+        h.draw();
+        let key = |h: &mut Harness, code, modifiers| {
+            let event = Event::Key(crossterm::event::KeyEvent::new(code, modifiers));
+            let action = crate::inputs::handle_event(event, &h.app);
+            h.app.update(action);
+        };
+        use crossterm::event::KeyCode::Char;
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        key(&mut h, Char('l'), KeyModifiers::NONE);
+        key(&mut h, Char('l'), KeyModifiers::NONE);
+        key(&mut h, Char('V'), KeyModifiers::SHIFT);
+        key(&mut h, Char('k'), KeyModifiers::NONE);
+        assert!(h.app.line_mode.copy_state().line_select);
+        let rows = h.draw();
+
+        let selection = h_theme().ui.selection.bg;
+        for (text, len) in [("first line", 10), ("second line", 11)] {
+            let (x, y) = cell_of(&rows, text);
+            assert_eq!(bg_at(&h, (x, y)), selection, "{text}");
+            assert_eq!(bg_at(&h, (x + len - 1, y)), selection, "{text}");
+        }
+        // "fi" and "ne" of "first line", in the panel
+        let (x, y) = cell_of(&rows, "66 69");
+        assert_eq!(bg_at(&h, (x, y)), selection);
+        let (x, y) = cell_of(&rows, "6E 65");
+        assert_eq!(bg_at(&h, (x + 3, y)), selection);
+    }
+
     /// Rows of a frame drawn with `overlay` open and the `[dialog_actions]` of `keymap`
     /// (the default ones when empty)
     fn popup_rows(overlay: Overlay, keymap: &[(&str, &str)]) -> Vec<String> {

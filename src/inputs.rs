@@ -127,6 +127,7 @@ pub enum CopyModeAction {
     JumpToTop,
     JumpToBottom,
     Select,
+    SelectLine,
     SelectRange(usize, usize),
     Yank,
     YankRaw,

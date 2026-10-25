@@ -42,6 +42,7 @@ pub fn dispatch_copy_key_vi(
 
     match key.code {
         KeyCode::Char('v') | KeyCode::Char(' ') => Some(CopyModeAction::Select),
+        KeyCode::Char('V') => Some(CopyModeAction::SelectLine),
         KeyCode::Char('y') | KeyCode::Enter => Some(CopyModeAction::Yank),
         KeyCode::Esc | KeyCode::Char('q') => Some(CopyModeAction::Exit),
         _ => None,

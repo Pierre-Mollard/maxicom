@@ -127,7 +127,12 @@ pub struct CopyModeState {
     pub selection_anchor: Option<LogicalPosition>,
     pub side: CopySide,
     pub mouse_drag: Option<MouseSelect>,
+    pub line_select: bool,
 }
+
+/// A column past the end of any line, as a line-wise selection's end: the selection's users
+/// clamp it to the line, and it leaves room for their `+ 1` (MAX-127)
+const PAST_LINE_END: usize = usize::MAX / 2;
 
 impl CopyModeState {
     pub fn exit(&mut self) {
@@ -135,13 +140,18 @@ impl CopyModeState {
         self.selection_anchor = None;
         self.side = CopySide::Text;
         self.mouse_drag = None;
+        self.line_select = false;
     }
 
-    pub fn toggle_selection(&mut self) {
-        if self.selection_anchor.is_some() {
+    /// `v` (char-wise) or `V` (line-wise), as in vim: starts a selection at the cursor, the
+    /// same key again ends it, the other one switches the selection to its kind
+    pub fn toggle_selection(&mut self, lines: bool) {
+        if self.selection_anchor.is_some() && self.line_select == lines {
             self.selection_anchor = None;
+            self.line_select = false;
         } else {
-            self.selection_anchor = Some(self.cursor);
+            self.selection_anchor.get_or_insert(self.cursor);
+            self.line_select = lines;
         }
     }
 
@@ -156,6 +166,7 @@ impl CopyModeState {
         self.selection_anchor = None;
         self.side = CopySide::Text;
         self.mouse_drag = None;
+        self.line_select = false;
     }
 
     /// The `evicted` oldest lines of the source were dropped: keep cursor and anchor on the
@@ -173,13 +184,18 @@ impl CopyModeState {
             CopySide::Text => pos.char_idx,
             CopySide::Raw => pos.byte_idx,
         };
-        if anchor.line_idx < self.cursor.line_idx
+        let (mut start, mut end) = if anchor.line_idx < self.cursor.line_idx
             || (anchor.line_idx == self.cursor.line_idx && col(&anchor) <= col(&self.cursor))
         {
-            Some((anchor, self.cursor))
+            (anchor, self.cursor)
         } else {
-            Some((self.cursor, anchor))
+            (self.cursor, anchor)
+        };
+        if self.line_select {
+            (start.char_idx, start.byte_idx) = (0, 0);
+            (end.char_idx, end.byte_idx) = (PAST_LINE_END, PAST_LINE_END);
         }
+        Some((start, end))
     }
 
     pub fn is_selected(&self, row: usize, col: usize) -> bool {
@@ -223,6 +239,7 @@ impl CopyModeState {
                 self.active = true;
                 self.side = side;
                 self.selection_anchor = None;
+                self.line_select = false;
                 self.move_to(pos, source, max_line);
                 // the raw side has no words
                 let unit = if side == CopySide::Raw {
@@ -415,8 +432,8 @@ impl CopyModeState {
                     self.move_word(source, big, find_prev_word_end)
                 }
             }
-            CopyModeAction::Select => {
-                self.toggle_selection();
+            CopyModeAction::Select | CopyModeAction::SelectLine => {
+                self.toggle_selection(action == CopyModeAction::SelectLine);
                 CopyActionResult::Moved
             }
             CopyModeAction::SelectRange(start, end) => {
@@ -424,6 +441,7 @@ impl CopyModeState {
                 let max_char = source.get_line_len(line_idx).saturating_sub(1);
                 let clamped_start = start.min(max_char);
                 let clamped_end = end.saturating_sub(1).min(max_char);
+                self.line_select = false;
 
                 self.selection_anchor = Some(LogicalPosition {
                     line_idx,
@@ -505,8 +523,13 @@ impl CopyModeState {
                                 .unwrap_or(text.len());
 
                             let disp_map = source.get_line_raw_map(idx, &raw_bytes);
-                            let raw_from_byte =
-                                map_disp_byte_to_raw(disp_from_byte, &disp_map, raw_bytes.len());
+                            // from the line's start: its leading escape sequences too, as the
+                            // panel highlights them (MAX-127)
+                            let raw_from_byte = if from_char == 0 {
+                                0
+                            } else {
+                                map_disp_byte_to_raw(disp_from_byte, &disp_map, raw_bytes.len())
+                            };
                             let raw_to_byte = if to_char >= len {
                                 raw_bytes.len()
                             } else {
@@ -629,7 +652,9 @@ impl CopyModeState {
                 cursor.byte_idx = last_byte(max_line);
                 cursor.preferred_col = cursor.byte_idx;
             }
-            CopyModeAction::Select => self.toggle_selection(),
+            CopyModeAction::Select | CopyModeAction::SelectLine => {
+                self.toggle_selection(action == CopyModeAction::SelectLine)
+            }
             CopyModeAction::Exit => {
                 self.exit();
                 return CopyActionResult::Exited;
@@ -1192,5 +1217,76 @@ mod tests {
             clicks.press(ms(1800), (0, 2), CopySide::Raw),
             MouseUnit::Word
         );
+    }
+
+    /// MAX-127: `V` selects whole lines from the first one's start to the last one's end,
+    /// whatever the columns of the cursor and the anchor; on one line too.
+    /// How: `V` on line 1 col 3, up to line 0 col 3: both lines selected and yanked whole.
+    #[test]
+    fn select_line_takes_whole_lines() {
+        let mut state = CopyModeState::default();
+        state.enter_at(0, 4);
+        state.apply_action(CopyModeAction::SelectLine, &mut source());
+        match state.apply_action(CopyModeAction::Yank, &mut source()) {
+            CopyActionResult::Yanked(text) => assert_eq!(text, "hello world"),
+            _ => panic!("expected a yank"),
+        }
+
+        state.enter_at(1, 3);
+        state.apply_action(CopyModeAction::SelectLine, &mut source());
+        state.apply_action(CopyModeAction::MoveUp, &mut source());
+        assert!(state.is_selected(0, 0));
+        assert!(state.is_selected(1, 10));
+        match state.apply_action(CopyModeAction::Yank, &mut source()) {
+            CopyActionResult::Yanked(text) => assert_eq!(text, "hello world\nsecond line"),
+            _ => panic!("expected a yank"),
+        }
+        assert!(!state.line_select);
+    }
+
+    /// MAX-127: as in vim, `v` and `V` switch the selection to their kind and keep its
+    /// anchor; the same key again ends it.
+    /// How: `V`, `v`, `v`, then `V`, `V`, from a cursor on line 0.
+    #[test]
+    fn select_and_select_line_switch_and_toggle() {
+        let mut state = CopyModeState::default();
+        state.enter_at(0, 2);
+        state.apply_action(CopyModeAction::SelectLine, &mut source());
+        state.apply_action(CopyModeAction::MoveRight, &mut source());
+        state.apply_action(CopyModeAction::Select, &mut source());
+        assert_eq!(state.selection_anchor, Some(pos(0, 2)));
+        assert!(!state.line_select);
+        assert!(!state.is_selected(0, 0));
+        state.apply_action(CopyModeAction::Select, &mut source());
+        assert_eq!(state.selection_anchor, None);
+
+        state.apply_action(CopyModeAction::SelectLine, &mut source());
+        assert!(state.line_select);
+        state.apply_action(CopyModeAction::SelectLine, &mut source());
+        assert_eq!(state.selection_anchor, None);
+        assert!(!state.line_select);
+    }
+
+    /// MAX-127: a line-wise raw yank takes every byte of the lines, from the text side or the
+    /// raw side, the escape sequences and the line ending included.
+    /// How: colored source ("ok" in `ESC[32m` ... `\r\n`), `V` on the "k".
+    #[test]
+    fn select_line_raw_yank_takes_every_byte() {
+        let whole = "1B 5B 33 32 6D 6F 6B 1B 5B 30 6D 0D 0A";
+        let mut state = CopyModeState::default();
+        state.enter_at(0, 1);
+        state.apply_action(CopyModeAction::SelectLine, &mut colored());
+        match state.apply_action(CopyModeAction::YankRaw, &mut colored()) {
+            CopyActionResult::Yanked(text) => assert_eq!(text, whole),
+            _ => panic!("expected a raw yank"),
+        }
+
+        state.enter_at(0, 1);
+        state.apply_action(CopyModeAction::ToggleSide, &mut colored());
+        state.apply_action(CopyModeAction::SelectLine, &mut colored());
+        match state.apply_action(CopyModeAction::Yank, &mut colored()) {
+            CopyActionResult::Yanked(text) => assert_eq!(text, whole),
+            _ => panic!("expected a raw yank"),
+        }
     }
 }

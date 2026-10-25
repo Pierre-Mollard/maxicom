@@ -285,6 +285,7 @@ pub enum KeyBindingCopyAction {
     StartOfLine,
     EndOfLine,
     Select,
+    SelectLine,
     Yank,
     YankSideInspector,
     ToggleSide,
@@ -305,6 +306,7 @@ impl std::str::FromStr for KeyBindingCopyAction {
             "start_of_line" => Ok(Self::StartOfLine),
             "end_of_line" => Ok(Self::EndOfLine),
             "select" => Ok(Self::Select),
+            "select_line" => Ok(Self::SelectLine),
             "yank" => Ok(Self::Yank),
             "yank_side_inspector" => Ok(Self::YankSideInspector),
             "toggle_side" => Ok(Self::ToggleSide),
@@ -326,6 +328,7 @@ impl std::fmt::Display for KeyBindingCopyAction {
             Self::StartOfLine => "start_of_line",
             Self::EndOfLine => "end_of_line",
             Self::Select => "select",
+            Self::SelectLine => "select_line",
             Self::Yank => "yank",
             Self::YankSideInspector => "yank_side_inspector",
             Self::ToggleSide => "toggle_side",
@@ -934,6 +937,7 @@ impl Default for KeyBindingsConfig {
             "$"         => KeyBindingCopyAction::EndOfLine,
             "v"         => KeyBindingCopyAction::Select,
             "space"     => KeyBindingCopyAction::Select,
+            "V"         => KeyBindingCopyAction::SelectLine,
             "y"         => KeyBindingCopyAction::Yank,
             "enter"     => KeyBindingCopyAction::Yank,
             "Y"         => KeyBindingCopyAction::YankSideInspector,
@@ -1130,7 +1134,19 @@ mod tests {
         assert_eq!(KeyBindingAction::ReloadConfig.to_string(), "reload_config");
     }
 
-    /// The mouse toggle is on prefix + M (MAX-113).
+    /// MAX-127: `V` selects whole lines in copy mode by default.
+    #[test]
+    fn select_line_default_key() {
+        let resolver = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
+        let action = resolver.copy_actions[&"V".parse().unwrap()];
+        assert_eq!(action, KeyBindingCopyAction::SelectLine);
+        assert_eq!(action.to_string(), "select_line");
+        assert_eq!(
+            "select_line".parse::<KeyBindingCopyAction>().unwrap(),
+            action
+        );
+    }
+
     #[test]
     fn mouse_toggle_default_key() {
         let resolver = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();

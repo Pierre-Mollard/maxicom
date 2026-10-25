@@ -144,6 +144,7 @@ impl KeyBindingCopyAction {
             Self::StartOfLine => Action::CopyMode(CopyModeAction::StartOfLine),
             Self::EndOfLine => Action::CopyMode(CopyModeAction::EndOfLine),
             Self::Select => Action::CopyMode(CopyModeAction::Select),
+            Self::SelectLine => Action::CopyMode(CopyModeAction::SelectLine),
             Self::Yank => Action::CopyMode(CopyModeAction::Yank),
             Self::YankSideInspector => Action::CopyMode(CopyModeAction::YankRaw),
             Self::ToggleSide => Action::CopyMode(CopyModeAction::ToggleSide),
