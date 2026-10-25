@@ -37,7 +37,8 @@ pub fn render_vt100_terminal(
     let is_terminal_focused = focus == FocusTarget::Terminal;
     let raw_view = app.settings().raw_side.view;
 
-    if let Some((target_row, target_col)) = app.terminal_mode.search_mut().target_jump.take() {
+    let search_jump = app.terminal_mode.search_mut().target_jump.take();
+    if let Some((target_row, target_col)) = search_jump {
         app.terminal_mode.center_on_target_match(
             target_row,
             target_col,
@@ -82,7 +83,7 @@ pub fn render_vt100_terminal(
             app.terminal_mode.copy_state().cursor.line_idx,
             app.terminal_mode.copy_state().cursor.char_idx,
         ))
-    } else if is_search_active {
+    } else if is_search_active && search_jump.is_some() {
         app.terminal_mode.search().current_match_position()
     } else {
         None

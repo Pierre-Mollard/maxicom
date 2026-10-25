@@ -124,7 +124,8 @@ pub fn render_monitor(
 
     let global_max_scroll = total_entries.saturating_sub(1);
 
-    if let Some((target_line, target_col)) = app.line_mode.search_mut().target_jump.take() {
+    let search_jump = app.line_mode.search_mut().target_jump.take();
+    if let Some((target_line, target_col)) = search_jump {
         let line_from_bottom = (total_entries.saturating_sub(1)).saturating_sub(target_line);
         app.line_mode
             .scroll_to(line_from_bottom.min(global_max_scroll));
@@ -137,12 +138,13 @@ pub fn render_monitor(
         }
     }
 
-    let active_focus = if app.line_mode.copy_state().active {
+    let is_copy_active = app.line_mode.copy_state().active;
+    let active_focus = if is_copy_active {
         Some((
             app.line_mode.copy_state().cursor.line_idx,
             app.line_mode.copy_state().cursor.char_idx,
         ))
-    } else if is_search_active {
+    } else if is_search_active && search_jump.is_some() {
         app.line_mode.search().current_match_position()
     } else {
         None
@@ -160,15 +162,16 @@ pub fn render_monitor(
     // ---- What this frame shows ----
     //
     // Two ways of choosing the visible rows, decided below once the window is laid out:
-    // - plain scrolling (no search, no copy mode): the view's bottom row is a position kept by
-    //   `LineMode` (#36): an entry counted from the bottom, and how many of its rows are hidden
-    //   below the view. Scroll keys only add rows to a pending count, applied here. Offset 0
-    //   is the live view, aligned to the bottom of the history
-    // - search or copy mode: the view is centered on the focused row (match or cursor),
-    //   clamped to the rows laid out, so near the end it still ends on the last row. Copy mode
-    //   is never aligned to the bottom instead: with entries taller than half the view that
-    //   pushed the cursor's row out of view (MAX-123)
-    let row_scrolling = !is_search_active && !app.line_mode.copy_state().active;
+    // - plain scrolling (no copy mode, and no search jump this frame): the view's bottom row is
+    //   a position kept by `LineMode` (#36): an entry counted from the bottom, and how many of
+    //   its rows are hidden below the view. Scroll keys only add rows to a pending count,
+    //   applied here. Offset 0 is the live view, aligned to the bottom of the history
+    // - copy mode, or a search jump: the view is centered on the focused row (cursor or
+    //   match), clamped to the rows laid out, so near the end it still ends on the last row.
+    //   Copy mode is never aligned to the bottom instead: with entries taller than half the
+    //   view that pushed the cursor's row out of view (MAX-123). A search jump stores the
+    //   centered view as the scroll position, so the next frames scroll from there (MAX-72)
+    let row_scrolling = active_focus.is_none();
     // The entry the window is built around: the scrolled-to one (the last one when live), or
     // the focused one
     let anchor_entry = focus_entry;
@@ -428,17 +431,34 @@ pub fn render_monitor(
     // `paragraph_y_offset` is the window row drawn on the top line of the view. All the rows
     // below are window rows (`layout.visual_lines`), so positions stay valid for the copy
     // cursor, the selection, the search highlights and the raw panel
-    let paragraph_y_offset: usize = if row_scrolling {
-        // Plain scrolling (#36). Only the window's entries count here, not the partial RX line
-        // drawn after them
-        let entries = &layout.line_layouts[..end_idx - start_idx];
-        let rows_of = |meta: &LogicalLineLayout| meta.sub_lines.len().max(1);
-        let last_row = entries
-            .last()
-            .map_or(0, |meta| meta.visual_row_start + rows_of(meta) - 1);
+    //
+    // Only the window's entries count for the scroll position, not the partial RX line drawn
+    // after them
+    let entries = &layout.line_layouts[..end_idx - start_idx];
+    let rows_of = |meta: &LogicalLineLayout| meta.sub_lines.len().max(1);
+    let last_row = entries
+        .last()
+        .map_or(0, |meta| meta.visual_row_start + rows_of(meta) - 1);
+    // Stores the view ending on window row `bottom` as the scroll position: back to the live
+    // view when it is the last entry's last row, else (entry, rows hidden below): the entry
+    // holding the bottom row (the last one starting at or before it) and its rows after it
+    let store_position = |app: &mut App, bottom: usize| {
+        if end_idx == total_entries && bottom >= last_row {
+            app.line_mode.scroll_to_bottom();
+            return;
+        }
+        let local = entries.partition_point(|meta| meta.visual_row_start <= bottom) - 1;
+        let meta = &entries[local];
+        let rows_below = meta.visual_row_start + rows_of(meta) - 1 - bottom;
+        let entries_from_bottom = total_entries - 1 - (start_idx + local);
+        app.line_mode
+            .set_scroll_position(entries_from_bottom, rows_below);
+    };
 
-        // Where the view's bottom row was (the anchor's last row, minus its rows hidden below),
-        // then moved up by the rows scrolled since the last frame (down when negative)
+    let paragraph_y_offset: usize = if row_scrolling {
+        // Plain scrolling (#36): where the view's bottom row was (the anchor's last row, minus
+        // its rows hidden below), then moved up by the rows scrolled since the last frame (down
+        // when negative)
         let anchor = &entries[focus_entry - start_idx];
         let rows_below = app.line_mode.rows_below().min(rows_of(anchor) - 1);
         let anchor_bottom = anchor.visual_row_start + rows_of(anchor) - 1 - rows_below;
@@ -458,20 +478,13 @@ pub fn render_monitor(
                 0
             };
             let bottom = bottom.clamp(min_bottom as isize, last_row as isize) as usize;
-            // Store the new position back as (entry, rows hidden below): find the entry holding
-            // the bottom row (the last one starting at or before it) and count its rows after it
-            let local = entries.partition_point(|meta| meta.visual_row_start <= bottom) - 1;
-            let meta = &entries[local];
-            let rows_below = meta.visual_row_start + rows_of(meta) - 1 - bottom;
-            let entries_from_bottom = total_entries - 1 - (start_idx + local);
-            app.line_mode
-                .set_scroll_position(entries_from_bottom, rows_below);
+            store_position(app, bottom);
             // the view ends on `bottom`: its top line is a view height above
             (bottom + 1).saturating_sub(content_height)
         }
     } else {
-        // Search or copy mode: the focused row (the sub-line holding the focused char of the
-        // focused entry) goes to the middle of the view, clamped so the view stays filled
+        // Copy mode or a search jump: the focused row (the sub-line holding the focused char of
+        // the focused entry) goes to the middle of the view, clamped so the view stays filled
         let focus_local = focus_entry.saturating_sub(start_idx);
         let target_visual_row = if let Some(meta) = layout.line_layouts.get(focus_local) {
             let target_char = active_focus.map(|(_, c)| c).unwrap_or(0);
@@ -492,7 +505,13 @@ pub fn render_monitor(
         let half = content_height / 2;
         let ideal_offset = target_visual_row.saturating_sub(half);
         let max_offset = total_visual_rows.saturating_sub(content_height);
-        ideal_offset.min(max_offset)
+        let offset = ideal_offset.min(max_offset);
+        // a search jump: the next frames scroll from this view
+        if !is_copy_active {
+            let bottom = (offset + content_height).saturating_sub(1).min(last_row);
+            store_position(app, bottom);
+        }
+        offset
     };
 
     // ---- Scroll position in rows (#5d) ----

@@ -569,4 +569,120 @@ mod tests {
         h.feed(&bytes);
         assert_eq!(binary_rows(&h.draw()), before);
     }
+
+    fn search(h: &mut Harness, query: &str) {
+        h.app.update(Action::Search(SearchModeAction::Start));
+        h.app
+            .update(Action::Search(SearchModeAction::Paste(query.to_string())));
+    }
+
+    /// MAX-72: a search jump centers the view on the match once; after that the view scrolls
+    /// freely and stays where it was moved, until the next jump.
+    /// How: 40 numbered lines, search "line 20", scroll down 3 rows, draw twice, then Next
+    #[test]
+    fn search_view_scrolls_freely_after_the_jump() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 60, 12);
+        for i in 0..40 {
+            h.feed(format!("line {i:02}\r\n").as_bytes());
+        }
+        h.draw();
+        let line_rows = |rows: &[String]| -> Vec<String> {
+            rows.iter()
+                .filter(|row| row.starts_with("│ line"))
+                .map(|row| row.chars().take(9).collect())
+                .collect()
+        };
+        search(&mut h, "line 20");
+        let centered = line_rows(&h.draw());
+        assert!(centered.contains(&"│ line 20".to_string()), "{centered:#?}");
+
+        h.scroll(HistoryAction::ScrollDown(3));
+        let moved = line_rows(&h.draw());
+        assert_eq!(
+            moved[..moved.len() - 3],
+            centered[3..],
+            "{centered:#?} {moved:#?}"
+        );
+        assert_eq!(line_rows(&h.draw()), moved);
+
+        h.app.update(Action::Search(SearchModeAction::Next));
+        assert_eq!(line_rows(&h.draw()), centered);
+    }
+
+    /// MAX-72: the raw panel pan is centered on the match by the jump, then follows the side
+    /// pan keys, in line mode and in terminal mode.
+    /// How: a line of 100 bytes with "QQ" at 90 (far right in the Hex panel), search "QQ",
+    /// pan the side panel left by 6, draw twice
+    #[test]
+    fn search_raw_pan_moves_after_the_jump() {
+        let mut line = vec![b'a'; 100];
+        line[90..92].copy_from_slice(b"QQ");
+        line.extend_from_slice(b"\r\n");
+
+        let mut lm = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+        lm.app.settings_mut().raw_side.view = RawSideView::Hex;
+        lm.app.settings_mut().line_mode.wrap_mode = crate::configs::WrapMode::Truncate;
+        lm.feed(&line);
+        lm.draw();
+        let mut tm = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+            s.mode = Mode::Terminal;
+            s.terminal_mode.cols = 120;
+        });
+        tm.app.settings_mut().raw_side.view = RawSideView::Hex;
+        tm.app.terminal_mode.process_rx(TextEncoding::Utf8, &line);
+        tm.draw();
+
+        let raw_pan = |h: &Harness| match h.app.settings().mode {
+            Mode::Line => h.app.line_mode.raw_pan_x(),
+            Mode::Terminal => h.app.terminal_mode.raw_pan_x(),
+        };
+        for mut h in [lm, tm] {
+            search(&mut h, "QQ");
+            h.draw();
+            let centered = raw_pan(&h);
+            assert!(centered >= 6, "{centered}");
+            h.app.update(Action::App(crate::inputs::AppAction::SideView(
+                crate::inputs::SideViewAction::PanLeft(6),
+            )));
+            h.draw();
+            h.draw();
+            assert_eq!(raw_pan(&h), centered - 6, "{:?}", h.app.settings().mode);
+        }
+    }
+
+    /// MAX-72: terminal mode scrolls while the search bar is open (the scroller's offset counts
+    /// the rows panned inside the grid, then the scrollback).
+    #[test]
+    fn terminal_scrolls_during_a_search() {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+            s.mode = Mode::Terminal;
+        });
+        for i in 0..60 {
+            let line = format!("line {i:02}\r\n");
+            h.app
+                .terminal_mode
+                .process_rx(TextEncoding::Utf8, line.as_bytes());
+        }
+        h.draw();
+        search(&mut h, "line 50");
+        h.draw();
+        let before = h.app.terminal_mode.scroller().offset_y;
+        h.scroll(HistoryAction::ScrollUp(3));
+        h.draw();
+        assert_eq!(h.app.terminal_mode.scroller().offset_y, before + 3);
+    }
+
+    /// MAX-72: the view stored by a search jump is the centered one, also inside tall entries:
+    /// the next frame (plain scrolling from that position) shows the same rows.
+    /// How: the tall Hex lines, search "69 6e" (inside `E`), draw twice; then the same at the
+    /// bottom (`F` holds "ZZ", the view ends on the last row: back to the live view)
+    #[test]
+    fn search_jump_view_is_kept_with_tall_entries() {
+        for query in ["69 6e", "ZZ"] {
+            let mut h = tall_hex_lines();
+            search(&mut h, query);
+            let jumped = h.draw();
+            assert_eq!(h.draw(), jumped, "{query}");
+        }
+    }
 }

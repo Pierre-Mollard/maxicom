@@ -212,9 +212,27 @@ pub fn handle_event(event: Event, app: &App) -> Action {
         InputContext::Search => {
             if let Some(search_action_binding) = resolver.search_actions.get(&pattern) {
                 return search_action_binding.to_action();
-            } else {
+            }
+            if pattern == resolver.prefix {
+                return Action::App(AppAction::SetPrefix(true));
+            }
+            if let Some(action_binding) = resolver.direct_actions.get(&pattern)
+                && action_binding.is_navigation()
+            {
+                return action_binding.to_action(app);
+            }
+            return Action::Search(SearchModeAction::HandleKey(key_event));
+        }
+        InputContext::Prefix if app.is_search_active() => {
+            if pattern == resolver.prefix {
                 return Action::Search(SearchModeAction::HandleKey(key_event));
             }
+            return match resolver.prefix_actions.get(&pattern) {
+                Some(action_binding) if action_binding.is_navigation() => {
+                    action_binding.to_action(app)
+                }
+                _ => Action::App(AppAction::SetPrefix(false)),
+            };
         }
         InputContext::Prefix => {
             // Prefix pressed twice (terminal send, line mode forward)
@@ -294,5 +312,97 @@ fn handle_paste(text: String, app: &App) -> Action {
         InputContext::CopyMode => Action::Ignore,
         InputContext::LineInput => Action::LineInput(LineInputAction::Paste(text)),
         InputContext::Terminal => Action::Terminal(TerminalAction::Paste(text)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Keys reaching navigation while the search bar is open (MAX-72).
+
+    use super::*;
+    use crate::{
+        configs::{KeyBindingsConfig, KeyResolver, SettingsConfig},
+        serial::SerialConfig,
+    };
+
+    fn app() -> App {
+        App::new(
+            SettingsConfig::default(),
+            KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap(),
+            SerialConfig::default(),
+        )
+    }
+
+    fn key(code: KeyCode, modifiers: KeyModifiers) -> Event {
+        Event::Key(KeyEvent::new(code, modifiers))
+    }
+
+    fn ctrl(c: char) -> Event {
+        key(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    fn plain(code: KeyCode) -> Event {
+        key(code, KeyModifiers::NONE)
+    }
+
+    /// In search mode the global navigation keys (direct and after the prefix) scroll and pan;
+    /// other global actions are not reachable, and the other keys still edit the query.
+    #[test]
+    fn navigation_keys_work_in_search_mode() {
+        let mut app = app();
+        app.update(Action::Search(SearchModeAction::Start));
+        assert!(app.is_search_active());
+
+        let pageup = handle_event(plain(KeyCode::PageUp), &app);
+        assert!(matches!(
+            pageup,
+            Action::History(HistoryAction::ScrollUpPage)
+        ));
+        let side = handle_event(key(KeyCode::Right, KeyModifiers::CONTROL), &app);
+        assert!(matches!(
+            side,
+            Action::App(AppAction::SideView(SideViewAction::PanRight(6)))
+        ));
+        let typed = handle_event(plain(KeyCode::Char('x')), &app);
+        assert!(matches!(
+            typed,
+            Action::Search(SearchModeAction::HandleKey(_))
+        ));
+        // ctrl-f is a direct action, but not navigation: it edits the query
+        let search = handle_event(ctrl('f'), &app);
+        assert!(matches!(
+            search,
+            Action::Search(SearchModeAction::HandleKey(_))
+        ));
+
+        let prefix = handle_event(ctrl('a'), &app);
+        assert!(matches!(prefix, Action::App(AppAction::SetPrefix(true))));
+        app.update(prefix);
+        let up = handle_event(plain(KeyCode::Up), &app);
+        assert!(matches!(up, Action::History(HistoryAction::ScrollUp(1))));
+        // repeatable: the prefix stays on after a scroll
+        app.update(up);
+        let left = handle_event(plain(KeyCode::Left), &app);
+        assert!(matches!(left, Action::History(HistoryAction::PanLeft(1))));
+        // not navigation: dropped, not Quit
+        let quit = handle_event(plain(KeyCode::Char('q')), &app);
+        assert!(matches!(quit, Action::App(AppAction::SetPrefix(false))));
+        // prefix twice: to the query, not the TX input
+        let twice = handle_event(ctrl('a'), &app);
+        assert!(matches!(
+            twice,
+            Action::Search(SearchModeAction::HandleKey(_))
+        ));
+    }
+
+    /// Outside search mode the same keys keep their global actions.
+    #[test]
+    fn global_keys_unchanged_outside_search() {
+        let mut app = app();
+        let search = handle_event(ctrl('f'), &app);
+        assert!(matches!(search, Action::Search(SearchModeAction::Start)));
+        app.update(Action::App(AppAction::SetPrefix(true)));
+        let quit = handle_event(plain(KeyCode::Char('q')), &app);
+        assert!(matches!(quit, Action::App(AppAction::Quit)));
     }
 }

@@ -506,8 +506,11 @@ impl LineMode {
         display_mode: LineDisplayMode,
         raw_view: RawSideView,
     ) {
+        let before = self.search_state.query.value().to_owned();
         dispatch_input_key(&mut self.search_state.query, key_event);
-        self.update_search_matches(display_mode, raw_view);
+        if self.search_state.query.value() != before {
+            self.update_search_matches(display_mode, raw_view);
+        }
     }
 
     pub fn handle_side_view_action(&mut self, action: SideViewAction) {
@@ -779,6 +782,7 @@ mod tests {
 
     use super::*;
     use crate::{app::search::SearchModeKind, configs::LineLogConfig};
+    use crossterm::event::{KeyCode, KeyModifiers};
 
     fn line_mode(max_lines: usize) -> LineMode {
         LineMode::new(max_lines, 1000, LineLogger::new(LineLogConfig::default()))
@@ -1035,5 +1039,37 @@ mod tests {
         found("E9");
         let m = &lm.search_state.matches[0];
         assert_eq!((m.col_idx, m.byte_offset, m.byte_len), (1, 1, 1));
+    }
+
+    /// MAX-72: keys that only move the query cursor don't re-run the search, so the current
+    /// match and the view stay; a key that changes the query does re-run it.
+    /// How: two matches, Next, then Left and Right in the query; then a typed space.
+    #[test]
+    fn query_cursor_keys_keep_the_current_match() {
+        let mut lm = line_mode(10);
+        lm.feed_rx(
+            RxNewlineMode::Auto,
+            TextEncoding::Utf8,
+            TS,
+            b"hit a\nhit b\n",
+        );
+        lm.search_state.active = true;
+        lm.search_state.query = tui_input::Input::new("hit".to_string());
+        lm.update_search_matches(LineDisplayMode::Pretty, RawSideView::Hex);
+        lm.search_state.next_match();
+        lm.search_state.target_jump = None;
+
+        let press = |lm: &mut LineMode, code| {
+            let key = KeyEvent::new(code, KeyModifiers::NONE);
+            lm.handle_input_search(key, LineDisplayMode::Pretty, RawSideView::Hex);
+        };
+        press(&mut lm, KeyCode::Left);
+        assert_eq!(lm.search_state.current_match, 1);
+        assert_eq!(lm.search_state.target_jump, None);
+
+        press(&mut lm, KeyCode::Right);
+        press(&mut lm, KeyCode::Char(' '));
+        assert_eq!(lm.search_state.current_match, 0);
+        assert!(lm.search_state.target_jump.is_some());
     }
 }

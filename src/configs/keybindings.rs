@@ -142,6 +142,24 @@ impl std::fmt::Display for KeyBindingAction {
     }
 }
 
+impl KeyBindingAction {
+    pub fn is_navigation(self) -> bool {
+        matches!(
+            self,
+            Self::ScrollUp
+                | Self::ScrollDown
+                | Self::ScrollToTop
+                | Self::ScrollToBottom
+                | Self::PageUp
+                | Self::PageDown
+                | Self::PanLeft
+                | Self::PanRight
+                | Self::PanSideLeft
+                | Self::PanSideRight
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyBindingLineAction {
     Submit,

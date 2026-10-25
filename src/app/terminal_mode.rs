@@ -638,8 +638,11 @@ impl TerminalMode {
     }
 
     pub fn handle_input_search(&mut self, key_event: KeyEvent, raw_view: RawSideView) {
+        let before = self.search_state.query.value().to_owned();
         dispatch_input_key(&mut self.search_state.query, key_event);
-        self.update_search_matches(raw_view);
+        if self.search_state.query.value() != before {
+            self.update_search_matches(raw_view);
+        }
     }
 
     pub fn handle_side_view_action(&mut self, action: SideViewAction) {
@@ -1313,5 +1316,27 @@ mod tests {
     #[test]
     fn terminal_paste_keeps_utf8() {
         assert_eq!(terminal_paste_bytes("é", false), "é".as_bytes());
+    }
+
+    /// MAX-72: keys that only move the query cursor don't re-run the search (same as line
+    /// mode); a key that changes the query does.
+    #[test]
+    fn query_cursor_keys_keep_the_current_match() {
+        let mut tm = terminal(3);
+        feed_lines(&mut tm, &["hit a", "hit b"]);
+        tm.search_state.active = true;
+        tm.search_state.query = tui_input::Input::new("hit".to_string());
+        tm.update_search_matches(RawSideView::default());
+        tm.search_state.next_match();
+        tm.search_state.target_jump = None;
+
+        tm.handle_input_search(key(KeyCode::Left), RawSideView::default());
+        assert_eq!(tm.search_state.current_match, 1);
+        assert_eq!(tm.search_state.target_jump, None);
+
+        tm.handle_input_search(key(KeyCode::Right), RawSideView::default());
+        tm.handle_input_search(key(KeyCode::Char(' ')), RawSideView::default());
+        assert_eq!(tm.search_state.current_match, 0);
+        assert!(tm.search_state.target_jump.is_some());
     }
 }
