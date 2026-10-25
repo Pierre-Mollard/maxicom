@@ -131,12 +131,22 @@ fn render_active_overlay(app: &App, frame: &mut Frame, theme: &ThemeConfig) {
     match app.overlay() {
         Some(Overlay::Settings) => render_settings_popup(app, frame, theme),
         Some(Overlay::Help(dialog)) => render_help_popup(app, dialog, frame, theme),
-        Some(Overlay::TerminalSize(dialog)) => render_resize_popup(dialog, frame, theme),
-        Some(Overlay::SerialSettings(dialog)) => render_reconfigure_popup(dialog, frame, theme),
-        Some(Overlay::FilePath(dialog)) => render_filepath_popup(dialog, frame, theme),
-        Some(Overlay::DeviceDisconnected(port)) => render_disconnected_popup(port, frame, theme),
-        Some(Overlay::DeviceDetached(port)) => render_detached_popup(port, frame, theme),
-        Some(Overlay::Error(err)) => render_error_popup(err, frame, theme),
+        Some(Overlay::TerminalSize(dialog)) => {
+            render_resize_popup(dialog, &app.key_resolver, frame, theme)
+        }
+        Some(Overlay::SerialSettings(dialog)) => {
+            render_reconfigure_popup(dialog, &app.key_resolver, frame, theme)
+        }
+        Some(Overlay::FilePath(dialog)) => {
+            render_filepath_popup(dialog, &app.key_resolver, frame, theme)
+        }
+        Some(Overlay::DeviceDisconnected(port)) => {
+            render_disconnected_popup(port, &app.key_resolver, frame, theme)
+        }
+        Some(Overlay::DeviceDetached(port)) => {
+            render_detached_popup(port, &app.key_resolver, frame, theme)
+        }
+        Some(Overlay::Error(err)) => render_error_popup(err, &app.key_resolver, frame, theme),
         None => {}
     }
 }
@@ -152,7 +162,10 @@ mod tests {
             KeyBindingsConfig, KeyResolver, LineDisplayMode, RawSideView, RxNewlineMode,
             SettingsConfig, TextEncoding,
         },
-        inputs::{Action, CopyModeAction, HistoryAction, SearchModeAction},
+        inputs::{
+            Action, AppAction, CopyModeAction, DialogAction, HistoryAction, SearchModeAction,
+        },
+        overlays::{ErrorDialog, FilePathDialog, HelpDialog, ResizeDialog, SerialConfigDialog},
         serial::SerialConfig,
     };
     use ratatui::{Terminal, backend::TestBackend};
@@ -834,5 +847,244 @@ mod tests {
             UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "1B 5B 33 32 6D"),
             _ => panic!("expected a yank"),
         }
+    }
+
+    /// Rows of a frame drawn with `overlay` open and the `[dialog_actions]` of `keymap`
+    /// (the default ones when empty)
+    fn popup_rows(overlay: Overlay, keymap: &[(&str, &str)]) -> Vec<String> {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        if !keymap.is_empty() {
+            let config = KeyBindingsConfig {
+                dialog_actions: keymap
+                    .iter()
+                    .map(|(k, a)| (k.to_string(), a.to_string()))
+                    .collect(),
+                ..Default::default()
+            };
+            h.app.key_resolver = KeyResolver::try_new(&config).unwrap();
+        }
+        h.app.update(Action::App(AppAction::OpenOverlay(overlay)));
+        h.draw()
+    }
+
+    fn has(rows: &[String], text: &str) -> bool {
+        rows.iter().any(|row| row.contains(text))
+    }
+
+    /// Popup hints show the keys of the user's keymap (MAX-73).
+    #[test]
+    fn popup_hints_follow_the_keymap() {
+        let serial = || Overlay::SerialSettings(SerialConfigDialog::new(&SerialConfig::default()));
+
+        let rows = popup_rows(serial(), &[]);
+        assert!(has(&rows, "Enter Apply · Esc Cancel"), "{rows:#?}");
+
+        let rows = popup_rows(serial(), &[("x", "close"), ("ctrl-s", "confirm")]);
+        assert!(has(&rows, "Ctrl-s Apply · x Cancel"), "{rows:#?}");
+
+        let rows = popup_rows(Overlay::Help(HelpDialog::new()), &[]);
+        assert!(
+            has(&rows, "Left/Right Category · Up/Down Move · Esc Close"),
+            "{rows:#?}"
+        );
+
+        let rows = popup_rows(Overlay::Settings, &[("x", "close")]);
+        assert!(has(&rows, "x Return"), "{rows:#?}");
+    }
+
+    /// A text input popup types the keys that are not Esc, Enter, Tab or modified, so they
+    /// are not hints there.
+    /// How: Cancel bound to `q` only, then to `q` and Ctrl-q (`q` comes first in the order).
+    #[test]
+    fn text_input_popups_hint_only_keys_they_route() {
+        let file = || Overlay::FilePath(FilePathDialog::new("log.txt"));
+        let resize = || Overlay::TerminalSize(ResizeDialog::new(24, 80));
+
+        let rows = popup_rows(file(), &[("q", "close"), ("enter", "confirm")]);
+        assert!(has(&rows, "Enter Apply"), "{rows:#?}");
+        assert!(!has(&rows, "Cancel"), "{rows:#?}");
+
+        let rows = popup_rows(file(), &[("q", "close"), ("ctrl-q", "close")]);
+        assert!(has(&rows, "Ctrl-q Cancel"), "{rows:#?}");
+
+        let rows = popup_rows(resize(), &[]);
+        assert!(
+            has(&rows, "Tab Switch · Enter Apply · Esc Cancel"),
+            "{rows:#?}"
+        );
+    }
+
+    /// The alerts name the keys that answer them, and no longer Ctrl+C, which nothing binds.
+    /// Their text wraps, and they grow to show all of it.
+    #[test]
+    fn alert_hints_follow_the_keymap() {
+        let rows = popup_rows(Overlay::DeviceDisconnected("/dev/x".into()), &[]);
+        assert!(has(&rows, "Esc/Enter Quit"), "{rows:#?}");
+        assert!(!has(&rows, "Ctrl"), "{rows:#?}");
+
+        // a long port path wraps instead of being cut
+        let port = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A50285BI-if00-port0";
+        let rows = popup_rows(Overlay::DeviceDisconnected(port.into()), &[]);
+        assert!(has(&rows, "if00-port0"), "{rows:#?}");
+        assert!(has(&rows, "Esc/Enter Quit"), "{rows:#?}");
+
+        let rows = popup_rows(Overlay::DeviceDetached("/dev/x".into()), &[]);
+        assert!(has(&rows, "Enter Reattach · Esc Quit"), "{rows:#?}");
+
+        let error = ErrorDialog::new("Oops", "it broke");
+        let rows = popup_rows(Overlay::Error(error), &[("x", "close")]);
+        assert!(has(&rows, "x Dismiss"), "{rows:#?}");
+    }
+
+    /// The help popup has a tab for the popup bindings, the last one (MAX-73).
+    /// How: back one tab from the first, with Close also on Ctrl-x.
+    #[test]
+    fn help_lists_the_popup_bindings() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        let mut config = KeyBindingsConfig::default();
+        config
+            .dialog_actions
+            .insert("ctrl-x".to_string(), "close".to_string());
+        h.app.key_resolver = KeyResolver::try_new(&config).unwrap();
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::Help(
+                HelpDialog::new(),
+            ))));
+        h.app.update(Action::Overlay(DialogAction::CyclePrev));
+        let rows = h.draw();
+
+        assert!(has(&rows, "Dialogs"), "{rows:#?}");
+        let bound_to_close = |rows: &[String], key: &str| {
+            let line = rows.iter().find(|row| row.contains(&format!(" {key} ")));
+            line.is_some_and(|row| row.contains("-> close"))
+        };
+        assert!(bound_to_close(&rows, "Esc"), "{rows:#?}");
+        assert!(bound_to_close(&rows, "Ctrl-x"), "{rows:#?}");
+        assert!(has(&rows, "-> cycle_next"), "{rows:#?}");
+
+        // the letters come last, below the view
+        h.app.update(Action::Overlay(DialogAction::End));
+        let rows = h.draw();
+        assert!(bound_to_close(&rows, "q"), "{rows:#?}");
+    }
+
+    /// Rows inside the popup frame (between its top and bottom borders), without the borders
+    fn popup_inside(rows: &[String]) -> Vec<String> {
+        let top = rows.iter().position(|row| row.contains('┌')).unwrap();
+        let bottom = rows.iter().position(|row| row.contains('└')).unwrap();
+        rows[top + 1..bottom]
+            .iter()
+            .map(|row| {
+                let chars: Vec<char> = row.chars().collect();
+                let left = chars.iter().position(|&c| c == '│').unwrap();
+                let right = chars.iter().rposition(|&c| c == '│').unwrap();
+                chars[left + 1..right].iter().collect()
+            })
+            .collect()
+    }
+
+    /// The form popups are as tall as their content: one padding row above and below it, no
+    /// empty rows left over, and one padding column on each side.
+    #[test]
+    fn popups_fit_their_content() {
+        let popups = [
+            Overlay::Settings,
+            Overlay::SerialSettings(SerialConfigDialog::new(&SerialConfig::default())),
+            Overlay::FilePath(FilePathDialog::new("log.txt")),
+            Overlay::TerminalSize(ResizeDialog::new(24, 80)),
+        ];
+        for overlay in popups {
+            let rows = popup_rows(overlay, &[]);
+            let inside = popup_inside(&rows);
+            let blank = |row: &String| row.trim().is_empty();
+            assert!(blank(&inside[0]), "{rows:#?}");
+            assert!(blank(&inside[inside.len() - 1]), "{rows:#?}");
+            assert!(!blank(&inside[1]), "{rows:#?}");
+            assert!(!blank(&inside[inside.len() - 2]), "{rows:#?}");
+            assert!(
+                inside
+                    .iter()
+                    .all(|row| row.starts_with(' ') && row.ends_with(' ')),
+                "{rows:#?}"
+            );
+        }
+    }
+
+    /// The serial popup shows the data and stop bits as numbers.
+    #[test]
+    fn serial_popup_values_are_readable() {
+        let dialog = SerialConfigDialog::new(&SerialConfig::default());
+        let rows = popup_rows(Overlay::SerialSettings(dialog), &[]);
+        assert!(has(&rows, "< 8 >"), "{rows:#?}");
+        assert!(has(&rows, "< 1 >"), "{rows:#?}");
+    }
+
+    /// The text cursor of the text input popups sits right after the typed text.
+    #[test]
+    fn text_input_cursor_follows_the_text() {
+        let popups = [
+            (Overlay::FilePath(FilePathDialog::new("log.txt")), "log.txt"),
+            (Overlay::TerminalSize(ResizeDialog::new(24, 80)), "24"),
+        ];
+        for (overlay, text) in popups {
+            let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+            h.app.update(Action::App(AppAction::OpenOverlay(overlay)));
+            let rows = h.draw();
+            let (x, y) = cell_of(&rows, text);
+            let cursor = h.terminal.get_cursor_position().unwrap();
+            assert_eq!(
+                (cursor.x, cursor.y),
+                (x + text.len() as u16, y),
+                "{rows:#?}"
+            );
+        }
+    }
+
+    /// The search bar hint names the keys of the user's `[search_mode]` (MAX-73), with or
+    /// without borders, and only the hints that fit whole.
+    /// How: the default keymap, then Next on F3, Previous on Shift-F3 and Cancel on Ctrl-g only
+    /// (Kind and Confirm unbound: no hint).
+    #[test]
+    fn search_bar_hint_follows_the_keymap() {
+        for show_borders in [true, false] {
+            let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 90, 10, |settings| {
+                settings.ui.show_borders = show_borders;
+            });
+            h.feed(b"hi there\r\n");
+            search(&mut h, "hi");
+            let rows = h.draw();
+            assert!(
+                has(
+                    &rows,
+                    "Ctrl-n/Ctrl-p Match · Esc Exit · Enter Copy · Tab Mode"
+                ),
+                "{rows:#?}"
+            );
+
+            let config = KeyBindingsConfig {
+                search_mode: [
+                    ("f3", "next"),
+                    ("shift-f3", "previous"),
+                    ("ctrl-g", "cancel"),
+                ]
+                .iter()
+                .map(|(k, a)| (k.to_string(), a.to_string()))
+                .collect(),
+                ..Default::default()
+            };
+            h.app.key_resolver = KeyResolver::try_new(&config).unwrap();
+            let rows = h.draw();
+            assert!(has(&rows, "F3/Shift-F3 Match · Ctrl-g Exit"), "{rows:#?}");
+            assert!(!has(&rows, "Tab"), "{rows:#?}");
+        }
+
+        // a narrow bar shows the hints that fit whole, Match first: Esc Exit would end on
+        // column 58
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 56, 10);
+        h.feed(b"hi there\r\n");
+        search(&mut h, "hi");
+        let rows = h.draw();
+        assert!(has(&rows, "(1/1)  Ctrl-n/Ctrl-p Match "), "{rows:#?}");
+        assert!(!has(&rows, "Match ·"), "{rows:#?}");
     }
 }

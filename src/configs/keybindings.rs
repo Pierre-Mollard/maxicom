@@ -411,6 +411,15 @@ impl KeyPattern {
         Self { code, modifiers }
     }
 
+    pub fn is_modal(&self) -> bool {
+        matches!(
+            self.code,
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Tab | KeyCode::BackTab
+        ) || self
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    }
+
     pub fn to_raw_bytes(self) -> Vec<u8> {
         if self.modifiers.contains(KeyModifiers::CONTROL) {
             match self.code {
@@ -658,7 +667,35 @@ impl std::fmt::Display for KeymapError {
 
 impl std::error::Error for KeymapError {}
 
+/// The keys bound to `action` in a fixed order (the map's changes between runs): plain keys
+/// before modified ones, named keys before letters, then by name
+fn keys_of<A: Copy + PartialEq>(map: &HashMap<KeyPattern, A>, action: A) -> Vec<KeyPattern> {
+    let mut keys: Vec<KeyPattern> = map
+        .iter()
+        .filter(|&(_, &bound)| bound == action)
+        .map(|(&key, _)| key)
+        .collect();
+    keys.sort_by_cached_key(|key| {
+        (
+            key.modifiers.bits().count_ones(),
+            matches!(key.code, KeyCode::Char(_)),
+            key.to_string(),
+        )
+    });
+    keys
+}
+
 impl KeyResolver {
+    /// The keys bound to a dialog action, for hints (MAX-73)
+    pub fn dialog_keys(&self, action: KeyBindingDialogAction) -> Vec<KeyPattern> {
+        keys_of(&self.dialog_actions, action)
+    }
+
+    /// The keys bound to a search action, for the search bar hint (MAX-73)
+    pub fn search_keys(&self, action: KeyBindingSearchAction) -> Vec<KeyPattern> {
+        keys_of(&self.search_actions, action)
+    }
+
     pub fn try_new(config: &KeyBindingsConfig) -> Result<Self, KeymapError> {
         let prefix = config
             .prefix
@@ -1031,6 +1068,54 @@ impl std::error::Error for KeymapFileError {
             Self::Io { source, .. } => Some(source),
             Self::TomlParse { source, .. } => Some(source),
             Self::Mapping { source, .. } => Some(source),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn keys(resolver: &KeyResolver, action: KeyBindingDialogAction) -> Vec<String> {
+        resolver
+            .dialog_keys(action)
+            .iter()
+            .map(|k| k.to_string())
+            .collect()
+    }
+
+    /// The keys of an action come in the same order whatever the map's: plain keys before
+    /// modified ones, named keys before letters (MAX-73).
+    /// How: several resolvers from the default keymap, each map with its own random seed.
+    #[test]
+    fn dialog_keys_in_a_fixed_order() {
+        for _ in 0..8 {
+            let resolver = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
+            assert_eq!(keys(&resolver, KeyBindingDialogAction::Close), ["Esc", "q"]);
+            assert_eq!(
+                keys(&resolver, KeyBindingDialogAction::CycleNext),
+                ["Tab", "Space", "Ctrl-n"]
+            );
+            assert_eq!(
+                keys(&resolver, KeyBindingDialogAction::CyclePrev),
+                ["Shift-Tab", "Ctrl-p"]
+            );
+        }
+
+        let mut config = KeyBindingsConfig::default();
+        config.dialog_actions.retain(|_, action| action != "close");
+        let resolver = KeyResolver::try_new(&config).unwrap();
+        assert!(keys(&resolver, KeyBindingDialogAction::Close).is_empty());
+    }
+
+    /// Keys a text input popup still sends to `[dialog_actions]`: the others are typed.
+    #[test]
+    fn modal_keys() {
+        for key in ["esc", "enter", "tab", "backtab", "ctrl-n", "alt-x"] {
+            assert!(key.parse::<KeyPattern>().unwrap().is_modal(), "{key}");
+        }
+        for key in ["q", "space", "down", "shift-x"] {
+            assert!(!key.parse::<KeyPattern>().unwrap().is_modal(), "{key}");
         }
     }
 }

@@ -2,19 +2,21 @@ use ratatui::{
     Frame,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Clear, Paragraph},
 };
 
 use crate::{
-    configs::ThemeConfig,
+    configs::{KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
     overlays::{ResizeDialog, ResizeField},
-    ui::common::popup_area,
+    ui::popups::{FORM_WIDTH, form_area, key_hints, popup_block, section},
 };
 
-pub fn render_resize_popup(dialog: &ResizeDialog, frame: &mut Frame, theme: &ThemeConfig) {
-    let area = popup_area(frame.area(), 50, 8, 52, 7);
-    frame.render_widget(Clear, area);
-
+pub fn render_resize_popup(
+    dialog: &ResizeDialog,
+    resolver: &KeyResolver,
+    frame: &mut Frame,
+    theme: &ThemeConfig,
+) {
     let active = dialog.active_field;
 
     let row_style = if active == ResizeField::Rows {
@@ -37,19 +39,14 @@ pub fn render_resize_popup(dialog: &ResizeDialog, frame: &mut Frame, theme: &The
     let cols_str = dialog.cols_input.value();
 
     let text = vec![
-        Line::from(Span::styled(
-            "--- Terminal Dimensions ---",
-            Style::default()
-                .fg(theme.palette.main)
-                .add_modifier(Modifier::BOLD),
-        )),
+        section("Terminal Dimensions", theme),
         Line::from(""),
         Line::from(vec![
             Span::styled(
                 if active == ResizeField::Rows {
-                    " ▶ "
+                    "▶ "
                 } else {
-                    "   "
+                    "  "
                 },
                 row_style,
             ),
@@ -63,9 +60,9 @@ pub fn render_resize_popup(dialog: &ResizeDialog, frame: &mut Frame, theme: &The
         Line::from(vec![
             Span::styled(
                 if active == ResizeField::Cols {
-                    " ▶ "
+                    "▶ "
                 } else {
-                    "   "
+                    "  "
                 },
                 col_style,
             ),
@@ -76,34 +73,36 @@ pub fn render_resize_popup(dialog: &ResizeDialog, frame: &mut Frame, theme: &The
                 Style::default().fg(theme.palette.text_muted),
             ),
         ]),
-        Line::from(""),
     ];
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(*theme.popup.border)
-        .style(*theme.popup.background)
-        .title(Span::styled(" Resize VT100 Screen ", *theme.popup.title))
-        .title_bottom(Line::from(vec![
-            Span::styled("[Tab]: ", Style::default().fg(theme.palette.text_muted)),
-            Span::raw("Switch"),
-            Span::styled(" [Enter]: ", Style::default().fg(theme.palette.text_muted)),
-            Span::raw("Apply"),
-            Span::styled(" [Esc]: ", Style::default().fg(theme.palette.text_muted)),
-            Span::raw("Cancel"),
-        ]));
+    let block = popup_block(
+        "Resize VT100 Screen",
+        key_hints(
+            resolver,
+            true,
+            &[
+                (&[KeyBindingDialogAction::CycleNext], "Switch"),
+                (&[KeyBindingDialogAction::Confirm], "Apply"),
+                (&[KeyBindingDialogAction::Close], "Cancel"),
+            ],
+            theme,
+        ),
+        theme,
+    );
 
+    let area = form_area(frame.area(), FORM_WIDTH, text.len());
+    frame.render_widget(Clear, area);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    frame.render_widget(Paragraph::new(text).style(*theme.popup.background), inner);
+    frame.render_widget(Paragraph::new(text), inner);
 
     let (cursor_input, line_y_offset) = match active {
         ResizeField::Rows => (&dialog.rows_input, 2),
         ResizeField::Cols => (&dialog.cols_input, 3),
     };
 
-    // inner.x + 3 (" ▶ ") + 10 ("Rows    : ") + cursor_offset
-    let cursor_x = inner.x + 3 + 10 + cursor_input.visual_cursor() as u16;
+    // inner.x + 2 ("▶ ") + 10 ("Rows    : ") + cursor_offset
+    let cursor_x = inner.x + 2 + 10 + cursor_input.visual_cursor() as u16;
     let cursor_y = inner.y + line_y_offset;
 
     frame.set_cursor_position((cursor_x, cursor_y));

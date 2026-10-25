@@ -1,20 +1,17 @@
 use ratatui::{
     Frame,
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Clear, Paragraph},
 };
 
 use crate::{
     app::App,
-    configs::{PrefixWrapBehavior, ThemeConfig},
-    ui::common::popup_area,
+    configs::{PrefixWrapBehavior, ThemeConfig, keybindings::KeyBindingDialogAction},
+    ui::popups::{FORM_WIDTH, form_area, key_hints, popup_block, section},
 };
 
 pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) {
-    let area = popup_area(frame.area(), 40, 17, 42, 19);
-    frame.render_widget(Clear, area);
-
     let mode_str = match app.settings().mode {
         crate::configs::Mode::Line => "Line Mode",
         crate::configs::Mode::Terminal => "Terminal Mode",
@@ -43,78 +40,45 @@ pub fn render_settings_popup(app: &App, frame: &mut Frame, theme: &ThemeConfig) 
     let display_mode_str = app.settings().line_mode.display_mode.as_str();
     let raw_display_str = app.settings().raw_side.view.as_str();
 
+    let row = |key: &'static str, label: &'static str, value: &'static str| {
+        Line::from(vec![
+            Span::styled(
+                format!("[{key}] "),
+                Style::default().fg(theme.palette.secondary),
+            ),
+            Span::raw(format!("{label:<13}: ")),
+            Span::styled(value, Style::default().fg(theme.palette.main)),
+        ])
+    };
+
     let text = vec![
-        Line::from(Span::styled(
-            "--- Configuration Dashboard ---",
-            Style::default()
-                .fg(theme.palette.ternary)
-                .add_modifier(Modifier::BOLD),
-        )),
+        section("General", theme),
+        row("M", "Input Mode", mode_str),
+        row("E", "Local Echo", echo_str),
+        row("T", "Timestamps", timestamp_str),
+        row("X", "Rx Encoding", encoding_str),
+        row("B", "Byte Inspect", raw_display_str),
         Line::from(""),
-        Line::from(vec![
-            Span::styled(" [M] ", Style::default().fg(theme.palette.secondary)),
-            Span::raw(" Input Mode  : "),
-            Span::styled(mode_str, Style::default().fg(theme.palette.main)),
-        ]),
-        Line::from(vec![
-            Span::styled(" [E] ", Style::default().fg(theme.palette.secondary)),
-            Span::raw(" Local Echo  : "),
-            Span::styled(echo_str, Style::default().fg(theme.palette.main)),
-        ]),
-        Line::from(vec![
-            Span::styled(" [T] ", Style::default().fg(theme.palette.secondary)),
-            Span::raw(" Timestamps  : "),
-            Span::styled(timestamp_str, Style::default().fg(theme.palette.main)),
-        ]),
-        Line::from(vec![
-            Span::styled(" [X] ", Style::default().fg(theme.palette.secondary)),
-            Span::raw(" Rx Encoding : "),
-            Span::styled(encoding_str, Style::default().fg(theme.palette.main)),
-        ]),
-        Line::from(vec![
-            Span::styled(" [B] ", Style::default().fg(theme.palette.secondary)),
-            Span::raw(" Byte Inspect: "),
-            Span::styled(raw_display_str, Style::default().fg(theme.palette.main)),
-        ]),
-        Line::from(""),
-        Line::from(Span::styled(
-            "--- Line Mode Specifics ---",
-            Style::default()
-                .fg(theme.palette.ternary)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(" [W] ", Style::default().fg(theme.palette.secondary)),
-            Span::raw(" Line Wrap   : "),
-            Span::styled(wrap_str, Style::default().fg(theme.palette.main)),
-        ]),
-        Line::from(vec![
-            Span::styled(" [I] ", Style::default().fg(theme.palette.secondary)),
-            Span::raw(" Indent Wrap : "),
-            Span::styled(indent_str, Style::default().fg(theme.palette.main)),
-        ]),
-        Line::from(vec![
-            Span::styled(" [D] ", Style::default().fg(theme.palette.secondary)),
-            Span::raw(" Display Mode : "),
-            Span::styled(display_mode_str, Style::default().fg(theme.palette.main)),
-        ]),
+        section("Line Mode", theme),
+        row("W", "Line Wrap", wrap_str),
+        row("I", "Indent Wrap", indent_str),
+        row("D", "Display Mode", display_mode_str),
     ];
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(*theme.popup.border)
-        .style(*theme.popup.background)
-        .title(Span::styled(
-            " Settings [Toggle Hotkeys] ",
-            *theme.popup.title,
-        ))
-        .title_bottom(Line::from(vec![
-            Span::styled("[Esc]: ", Style::default().fg(theme.palette.text_muted)),
-            Span::raw("Return"),
-        ]));
+    let block = popup_block(
+        "Settings",
+        key_hints(
+            &app.key_resolver,
+            false,
+            &[(&[KeyBindingDialogAction::Close], "Return")],
+            theme,
+        ),
+        theme,
+    );
 
+    let area = form_area(frame.area(), FORM_WIDTH, text.len());
+    frame.render_widget(Clear, area);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    frame.render_widget(Paragraph::new(text).style(*theme.popup.background), inner);
+    frame.render_widget(Paragraph::new(text), inner);
 }

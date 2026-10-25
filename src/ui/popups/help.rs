@@ -4,46 +4,53 @@ use ratatui::{
     style::{Modifier, Style},
     symbols,
     text::{Line, Span},
-    widgets::{
-        Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs,
-    },
+    widgets::{Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs},
 };
 
 use crate::{
     app::App,
-    configs::ThemeConfig,
+    configs::{ThemeConfig, keybindings::KeyBindingDialogAction},
     overlays::{HelpCategory, HelpDialog},
-    ui::common::popup_area,
+    ui::{
+        common::popup_area,
+        popups::{key_hints, popup_block},
+    },
 };
 
 pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, theme: &ThemeConfig) {
-    let area = popup_area(frame.area(), 74, 20, 32, 14);
+    let area = popup_area(frame.area(), 74, 20);
     frame.render_widget(Clear, area);
 
     let is_compact_vertical = area.height < 14;
 
-    let mut outer_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(*theme.popup.border)
-        .style(*theme.popup.background)
-        .title(Span::styled(" Help [Keybindings] ", *theme.popup.title));
-
-    if !is_compact_vertical {
-        outer_block = outer_block.title_bottom(Line::from(vec![
-            Span::styled(
-                "Tab/Arrows: ",
-                Style::default().fg(theme.palette.text_muted),
-            ),
-            Span::raw("Category  "),
-            Span::styled(
-                "j/k/Scroll: ",
-                Style::default().fg(theme.palette.text_muted),
-            ),
-            Span::raw("Move  "),
-            Span::styled("Esc/q: ", Style::default().fg(theme.palette.text_muted)),
-            Span::raw("Close"),
-        ]));
-    }
+    let hints = if is_compact_vertical {
+        Line::default()
+    } else {
+        key_hints(
+            &app.key_resolver,
+            false,
+            &[
+                (
+                    &[
+                        KeyBindingDialogAction::NavLeft,
+                        KeyBindingDialogAction::NavRight,
+                    ],
+                    "Category",
+                ),
+                (
+                    &[
+                        KeyBindingDialogAction::NavUp,
+                        KeyBindingDialogAction::NavDown,
+                    ],
+                    "Move",
+                ),
+                (&[KeyBindingDialogAction::Close], "Close"),
+            ],
+            theme,
+        )
+    };
+    // the tabs row starts the content, no top padding needed
+    let outer_block = popup_block("Help", hints, theme).padding(Padding::horizontal(1));
 
     let inner_area = outer_block.inner(area);
     frame.render_widget(outer_block, area);
@@ -94,7 +101,7 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
     match dialog.category {
         HelpCategory::Prefix => {
             lines.push(Line::from(Span::styled(
-                format!("Prefix Leader Key: <{prefix_str}>"),
+                format!(" Prefix Leader Key: <{prefix_str}>"),
                 Style::default()
                     .fg(theme.palette.main)
                     .add_modifier(Modifier::BOLD),
@@ -172,6 +179,20 @@ pub fn render_help_popup(app: &App, dialog: &HelpDialog, frame: &mut Frame, them
         }
         HelpCategory::TerminalMode => {
             let mut sorted_keys: Vec<_> = app.key_resolver.terminal_actions.iter().collect();
+            sorted_keys.sort_by_key(|(k, _)| format!("{k}"));
+
+            for (pattern, action) in sorted_keys {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!(" {:<18} ", format!("{pattern}")),
+                        Style::default().fg(theme.palette.secondary),
+                    ),
+                    Span::raw(format!("-> {}", action)),
+                ]));
+            }
+        }
+        HelpCategory::Dialog => {
+            let mut sorted_keys: Vec<_> = app.key_resolver.dialog_actions.iter().collect();
             sorted_keys.sort_by_key(|(k, _)| format!("{k}"));
 
             for (pattern, action) in sorted_keys {

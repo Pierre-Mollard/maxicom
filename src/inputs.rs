@@ -2,7 +2,7 @@
 /// Using the 'crossterm' crate
 use std::{io, time::Duration};
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
 
 use crate::{
     app::{App, InputContext},
@@ -189,13 +189,7 @@ pub fn handle_event(event: Event, app: &App) -> Action {
             let is_text_input = app.overlay().map_or_else(|| false, |o| o.is_text_input());
 
             if is_text_input {
-                let is_modal_command = matches!(
-                    key_event.code,
-                    KeyCode::Esc | KeyCode::Enter | KeyCode::Tab | KeyCode::BackTab
-                ) || key_event.modifiers.contains(KeyModifiers::CONTROL)
-                    || key_event.modifiers.contains(KeyModifiers::ALT);
-
-                if is_modal_command
+                if pattern.is_modal()
                     && let Some(dialog_action_binding) = resolver.dialog_actions.get(&pattern)
                 {
                     return dialog_action_binding.to_action();
@@ -318,13 +312,14 @@ fn handle_paste(text: String, app: &App) -> Action {
 
 #[cfg(test)]
 mod tests {
-    //! Keys reaching navigation while the search bar is open (MAX-72).
+    //! Keys reaching navigation while the search bar is open (MAX-72), and popup keys (MAX-73).
 
     use super::*;
     use crate::{
         configs::{KeyBindingsConfig, KeyResolver, SettingsConfig},
         serial::SerialConfig,
     };
+    use crossterm::event::{KeyCode, KeyModifiers};
 
     fn app() -> App {
         App::new(
@@ -405,5 +400,37 @@ mod tests {
         app.update(Action::App(AppAction::SetPrefix(true)));
         let quit = handle_event(plain(KeyCode::Char('q')), &app);
         assert!(matches!(quit, Action::App(AppAction::Quit)));
+    }
+
+    /// A text input popup gets its `[dialog_actions]` only from modal keys, the others are
+    /// typed; other popups get them from every key.
+    #[test]
+    fn text_input_popups_type_non_modal_keys() {
+        let mut app = app();
+        let file = crate::overlays::FilePathDialog::new("log.txt");
+        app.update(Action::App(AppAction::OpenOverlay(Overlay::FilePath(file))));
+        let dialog = |event| handle_event(event, &app);
+
+        let typed = |action| matches!(action, Action::Overlay(DialogAction::HandleKey(_)));
+        assert!(typed(dialog(plain(KeyCode::Char('q')))));
+        assert!(typed(dialog(plain(KeyCode::Char('j')))));
+        assert!(matches!(
+            dialog(plain(KeyCode::Esc)),
+            Action::Overlay(DialogAction::Close)
+        ));
+        assert!(matches!(
+            dialog(ctrl('n')),
+            Action::Overlay(DialogAction::CycleNext)
+        ));
+        assert!(matches!(
+            dialog(key(KeyCode::BackTab, KeyModifiers::SHIFT)),
+            Action::Overlay(DialogAction::CyclePrev)
+        ));
+
+        app.update(Action::App(AppAction::OpenOverlay(Overlay::Settings)));
+        assert!(matches!(
+            handle_event(plain(KeyCode::Char('q')), &app),
+            Action::Overlay(DialogAction::Close)
+        ));
     }
 }

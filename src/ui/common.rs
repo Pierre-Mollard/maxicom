@@ -11,7 +11,8 @@ use std::fmt::Write;
 
 use crate::{
     app::{App, search::SearchModeKind, types::FocusTarget},
-    configs::{KeywordHighlight, Mode, ThemeConfig},
+    configs::{KeyBindingSearchAction, KeywordHighlight, Mode, ThemeConfig},
+    ui::popups::hints_line,
 };
 
 pub fn monitor_title(app: &App, area: &Rect) -> String {
@@ -153,7 +154,7 @@ pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, theme: &Theme
         SearchModeKind::RawBytes => "byte",
     };
 
-    let spans = vec![
+    let mut spans = vec![
         Span::styled(format!(" [{}]", kind_str), *theme.search.search_indicator),
         Span::styled(" SEARCH: ", *theme.search.search_indicator),
         Span::styled(
@@ -163,11 +164,39 @@ pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, theme: &Theme
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(format!("({}/{})", current_pos, match_count), stats_style),
-        Span::styled(
-            " [ ←/→, Tab: Mode, Esc: Exit ] ",
-            Style::default().fg(theme.palette.text_muted),
-        ),
     ];
+
+    // one key per action, like the popups; the hints that don't fit whole are left out, the
+    // least needed ones first
+    let first_key = |action| app.key_resolver.search_keys(action).into_iter().take(1);
+    let hints = [
+        (
+            first_key(KeyBindingSearchAction::Next)
+                .chain(first_key(KeyBindingSearchAction::Previous))
+                .collect(),
+            "Match",
+        ),
+        (first_key(KeyBindingSearchAction::Cancel).collect(), "Exit"),
+        (first_key(KeyBindingSearchAction::Confirm).collect(), "Copy"),
+        (first_key(KeyBindingSearchAction::Kind).collect(), "Mode"),
+    ];
+    // the bar starts 2 columns in and keeps a space before the corner with borders
+    let room = if has_borders {
+        area.width.saturating_sub(4)
+    } else {
+        area.width
+    } as usize;
+    let used: usize = spans.iter().map(|span| span.width()).sum::<usize>() + 3;
+    let hints = (0..=hints.len())
+        .rev()
+        .map(|count| hints_line(hints[..count].iter().cloned(), theme))
+        .find(|line| line.width() + used <= room)
+        .unwrap_or_default();
+    if !hints.spans.is_empty() {
+        spans.push(Span::raw("  "));
+        spans.extend(hints.spans);
+        spans.push(Span::raw(" "));
+    }
     let line = Line::from(spans);
 
     let (cursor_x, cursor_y) = if has_borders {
@@ -208,30 +237,13 @@ pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, theme: &Theme
     frame.set_cursor_position((cursor_x, cursor_y));
 }
 
-pub fn popup_area(
-    parent: Rect,
-    preferred_width: u16,
-    preferred_height: u16,
-    min_width: u16,
-    min_height: u16,
-) -> Rect {
-    if parent.width <= min_width || parent.height <= min_height {
-        return parent; // fullscreen fallback
-    }
-
-    let max_w = parent.width.saturating_sub(2);
-    let max_h = parent.height.saturating_sub(2);
-    if max_w <= min_width || max_h <= min_height {
-        return parent; // fullscreen fallback
-    }
-
-    let target_w = preferred_width.clamp(min_width, max_w);
-    let target_h = preferred_height.clamp(min_height, max_h);
-
-    let x = parent.x + (parent.width.saturating_sub(target_w)) / 2;
-    let y = parent.y + (parent.height.saturating_sub(target_h)) / 2;
-
-    Rect::new(x, y, target_w, target_h)
+/// A centered `width` x `height` popup, cut to the screen when it is smaller
+pub fn popup_area(parent: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(parent.width);
+    let height = height.min(parent.height);
+    let x = parent.x + (parent.width - width) / 2;
+    let y = parent.y + (parent.height - height) / 2;
+    Rect::new(x, y, width, height)
 }
 
 pub fn border_style_for(

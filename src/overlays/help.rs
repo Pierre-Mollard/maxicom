@@ -11,16 +11,18 @@ pub enum HelpCategory {
     Search,
     LineMode,
     TerminalMode,
+    Dialog,
 }
 
 impl HelpCategory {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Prefix,
         Self::Direct,
         Self::CopyMode,
         Self::Search,
         Self::LineMode,
         Self::TerminalMode,
+        Self::Dialog,
     ];
 
     pub fn title(self) -> &'static str {
@@ -31,6 +33,7 @@ impl HelpCategory {
             Self::Search => "Search",
             Self::LineMode => "Line",
             Self::TerminalMode => "Terminal",
+            Self::Dialog => "Dialogs",
         }
     }
 
@@ -41,18 +44,20 @@ impl HelpCategory {
             Self::CopyMode => Self::Search,
             Self::Search => Self::LineMode,
             Self::LineMode => Self::TerminalMode,
-            Self::TerminalMode => Self::Prefix,
+            Self::TerminalMode => Self::Dialog,
+            Self::Dialog => Self::Prefix,
         }
     }
 
     pub fn prev(self) -> Self {
         match self {
-            Self::Prefix => Self::TerminalMode,
+            Self::Prefix => Self::Dialog,
             Self::Direct => Self::Prefix,
             Self::CopyMode => Self::Direct,
             Self::Search => Self::CopyMode,
             Self::LineMode => Self::Search,
             Self::TerminalMode => Self::LineMode,
+            Self::Dialog => Self::TerminalMode,
         }
     }
 }

@@ -2,41 +2,22 @@ use ratatui::{
     Frame,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Clear, Paragraph},
 };
 
 use crate::{
-    configs::ThemeConfig,
+    configs::{KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
     overlays::{SerialConfigDialog, SerialSettingField},
-    ui::common::popup_area,
+    ui::popups::{FORM_WIDTH, form_area, key_hints, popup_block},
 };
 
 pub fn render_reconfigure_popup(
     dialog: &SerialConfigDialog,
+    resolver: &KeyResolver,
     frame: &mut Frame,
     theme: &ThemeConfig,
 ) {
-    let area = popup_area(frame.area(), 40, 11, 42, 10);
-    frame.render_widget(Clear, area);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(*theme.popup.border)
-        .style(*theme.popup.background)
-        .title(Span::styled(
-            " Serial Port Configuration ",
-            *theme.popup.title,
-        ))
-        .title_bottom(Line::from(vec![
-            Span::styled("[Enter]: ", Style::default().fg(theme.palette.text_muted)),
-            Span::raw("Apply  "),
-            Span::styled("[Esc]: ", Style::default().fg(theme.palette.text_muted)),
-            Span::raw("Cancel"),
-        ]));
-
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
+    let [data_bits, _, stop_bits] = dialog.config.compact_notation();
     let mut lines = Vec::new();
 
     let fields = [
@@ -48,7 +29,7 @@ pub fn render_reconfigure_popup(
         (
             SerialSettingField::CharSize,
             "Data Bits",
-            format!("< {:?} >", dialog.config.char_size),
+            format!("< {data_bits} >"),
         ),
         (
             SerialSettingField::Parity,
@@ -58,7 +39,7 @@ pub fn render_reconfigure_popup(
         (
             SerialSettingField::StopBits,
             "Stop Bits",
-            format!("< {:?} >", dialog.config.stop_bits),
+            format!("< {stop_bits} >"),
         ),
         (
             SerialSettingField::FlowControl,
@@ -90,5 +71,23 @@ pub fn render_reconfigure_popup(
         ]));
     }
 
-    frame.render_widget(Paragraph::new(lines).style(*theme.popup.background), inner);
+    let block = popup_block(
+        "Serial Port",
+        key_hints(
+            resolver,
+            false,
+            &[
+                (&[KeyBindingDialogAction::Confirm], "Apply"),
+                (&[KeyBindingDialogAction::Close], "Cancel"),
+            ],
+            theme,
+        ),
+        theme,
+    );
+
+    let area = form_area(frame.area(), FORM_WIDTH, lines.len());
+    frame.render_widget(Clear, area);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    frame.render_widget(Paragraph::new(lines), inner);
 }

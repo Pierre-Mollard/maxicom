@@ -153,7 +153,7 @@ pub struct SerialConfig {
 }
 
 impl SerialConfig {
-    fn compact_notation(&self) -> [char; 3] {
+    pub fn compact_notation(&self) -> [char; 3] {
         let d = match self.char_size {
             CharSize::Bits5 => '5',
             CharSize::Bits6 => '6',
