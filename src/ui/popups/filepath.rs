@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::{
     configs::{KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
-    overlays::FilePathDialog,
+    overlays::{FilePathDialog, PopupTarget},
     ui::popups::{form_area, key_hints, popup_block, section},
 };
 
@@ -17,6 +17,7 @@ pub fn render_filepath_popup(
     resolver: &KeyResolver,
     frame: &mut Frame,
     theme: &ThemeConfig,
+    targets: &mut Vec<(Rect, PopupTarget)>,
 ) -> Rect {
     let style = Style::default()
         .fg(theme.palette.secondary)
@@ -38,19 +39,16 @@ pub fn render_filepath_popup(
         ]),
     ];
 
-    let block = popup_block(
-        "Logging",
-        key_hints(
-            resolver,
-            true,
-            &[
-                (&[KeyBindingDialogAction::Confirm], "Apply"),
-                (&[KeyBindingDialogAction::Close], "Cancel"),
-            ],
-            theme,
-        ),
+    let hints = key_hints(
+        resolver,
+        true,
+        &[
+            (&[KeyBindingDialogAction::Confirm], "Apply"),
+            (&[KeyBindingDialogAction::Close], "Cancel"),
+        ],
         theme,
     );
+    let block = popup_block("Logging", &hints, theme);
 
     // wider than the other forms: paths are long
     let area = form_area(frame.area(), 64, text.len());
@@ -58,6 +56,7 @@ pub fn render_filepath_popup(
     let inner = block.inner(area);
     frame.render_widget(block, area);
     frame.render_widget(Paragraph::new(text), inner);
+    hints.push_block_targets(area, targets);
 
     let cursor_input = &dialog.file_input;
     let line_y_offset = 2; // relative to inner area

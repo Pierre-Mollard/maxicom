@@ -3,7 +3,9 @@ use std::path::PathBuf;
 /// Module to reduce inter modules exchange or something
 use crossterm::event::KeyCode;
 
-use crate::{inputs::DialogAction, serial::SerialConfig};
+use crate::{
+    configs::keybindings::KeyBindingDialogAction, inputs::DialogAction, serial::SerialConfig,
+};
 
 // Re-exports
 pub use help::{HelpCategory, HelpDialog};
@@ -26,6 +28,7 @@ pub enum Overlay {
     DeviceDisconnected(String),
     DeviceDetached(String),
     Error(ErrorDialog),
+    ConfirmQuit,
 }
 
 /// A part of a popup the mouse picks (MAX-113)
@@ -35,6 +38,7 @@ pub enum PopupTarget {
     Setting(SettingKey),
     SerialField(SerialSettingField),
     ResizeField(ResizeField),
+    Hint(KeyBindingDialogAction),
 }
 
 pub enum OverlayResponse {
@@ -68,6 +72,16 @@ impl Overlay {
             Overlay::FilePath(dialog) => dialog.handle_action(action),
             Overlay::Error(_) => match action {
                 DialogAction::Close | DialogAction::Confirm => OverlayResponse::Close,
+                _ => OverlayResponse::Handled,
+            },
+            Overlay::ConfirmQuit => match action {
+                DialogAction::Confirm => OverlayResponse::Quit,
+                DialogAction::Close => OverlayResponse::Close,
+                DialogAction::HandleKey(key) => match key.code {
+                    KeyCode::Char('y' | 'Y') => OverlayResponse::Quit,
+                    KeyCode::Char('n' | 'N') => OverlayResponse::Close,
+                    _ => OverlayResponse::Handled,
+                },
                 _ => OverlayResponse::Handled,
             },
             Overlay::DeviceDisconnected(_) => match action {

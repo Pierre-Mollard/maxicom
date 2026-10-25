@@ -9,12 +9,14 @@ use crate::{
     app::{
         App, InputContext,
         selection::{CopySide, MouseUnit},
+        types::ClickAction,
     },
     configs::Mode,
     inputs::{
         Action, AppAction, CopyModeAction, DialogAction, HistoryAction, LineInputAction,
         SideViewAction, TerminalAction,
     },
+    overlays::PopupTarget,
 };
 
 /// Rows a wheel notch scrolls
@@ -89,8 +91,8 @@ pub fn handle_mouse(event: MouseEvent, app: &App) -> Action {
     }
 }
 
-/// The left button. In a popup a press picks the part under it, or closes the popup from
-/// outside it. In the TX input it moves the input cursor. In the history and the raw panel a
+/// The left button. In a popup a press picks the part under it (a key hint runs its action),
+/// or closes the popup from outside it. On the status bar it runs the block under it. In the TX input it moves the input cursor. In the history and the raw panel a
 /// press puts the copy cursor under it, a drag selects from there, a release after a drag
 /// yanks (`CopyModeState::apply_action`)
 fn handle_left_button(event: MouseEvent, app: &App) -> Action {
@@ -103,12 +105,22 @@ fn handle_left_button(event: MouseEvent, app: &App) -> Action {
             let outside = map
                 .popup
                 .is_some_and(|area| !area.contains(Position::new(x, y)));
-            return if let Some(target) = map.popup_target(x, y) {
+            return if let Some(PopupTarget::Hint(action)) = map.popup_target(x, y) {
+                // a key hint runs as its key would (MAX-125)
+                action.to_action()
+            } else if let Some(target) = map.popup_target(x, y) {
                 Action::Overlay(DialogAction::Pick(target))
             } else if outside && app.overlay().is_some_and(|o| o.closes_on_click_outside()) {
                 Action::Overlay(DialogAction::Close)
             } else {
                 Action::Ignore
+            };
+        }
+        // a status bar block, whatever the mode (MAX-125)
+        _ if is_press && let Some(click) = map.click_target(x, y) => {
+            return match click {
+                ClickAction::Run(action) => action.to_action(app),
+                ClickAction::ToggleSide => Action::CopyMode(CopyModeAction::ToggleSide),
             };
         }
         InputContext::Overlay | InputContext::Prefix => return Action::Ignore,

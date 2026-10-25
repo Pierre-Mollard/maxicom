@@ -8,10 +8,10 @@ use ratatui::{
 
 use crate::{
     configs::{KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
-    overlays::ErrorDialog,
+    overlays::{ErrorDialog, PopupTarget},
     ui::{
         common::popup_area,
-        popups::{FORM_WIDTH, key_hints},
+        popups::{FORM_WIDTH, Hints, key_hints},
     },
 };
 
@@ -20,6 +20,7 @@ pub fn render_disconnected_popup(
     resolver: &KeyResolver,
     frame: &mut Frame,
     theme: &ThemeConfig,
+    targets: &mut Vec<(Rect, PopupTarget)>,
 ) -> Rect {
     let text = vec![
         Line::from(Span::styled(
@@ -36,21 +37,21 @@ pub fn render_disconnected_popup(
         ]),
         Line::from("Waiting for port to reconnect..."),
         Line::from(""),
-        key_hints(
-            resolver,
-            false,
-            &[(
-                &[
-                    KeyBindingDialogAction::Close,
-                    KeyBindingDialogAction::Confirm,
-                ],
-                "Quit",
-            )],
-            theme,
-        ),
     ];
+    let hints = key_hints(
+        resolver,
+        false,
+        &[(
+            &[
+                KeyBindingDialogAction::Close,
+                KeyBindingDialogAction::Confirm,
+            ],
+            "Quit",
+        )],
+        theme,
+    );
 
-    render_alert("Connection Lost", text, frame, theme)
+    render_alert("Connection Lost", text, hints, frame, theme, targets)
 }
 
 pub fn render_detached_popup(
@@ -58,6 +59,7 @@ pub fn render_detached_popup(
     resolver: &KeyResolver,
     frame: &mut Frame,
     theme: &ThemeConfig,
+    targets: &mut Vec<(Rect, PopupTarget)>,
 ) -> Rect {
     let text = vec![
         Line::from(Span::styled(
@@ -74,18 +76,18 @@ pub fn render_detached_popup(
         ]),
         Line::from("The serial port is free..."),
         Line::from(""),
-        key_hints(
-            resolver,
-            false,
-            &[
-                (&[KeyBindingDialogAction::Confirm], "Reattach"),
-                (&[KeyBindingDialogAction::Close], "Quit"),
-            ],
-            theme,
-        ),
     ];
+    let hints = key_hints(
+        resolver,
+        false,
+        &[
+            (&[KeyBindingDialogAction::Confirm], "Reattach"),
+            (&[KeyBindingDialogAction::Close], "Quit"),
+        ],
+        theme,
+    );
 
-    render_alert("Connection Lost", text, frame, theme)
+    render_alert("Connection Lost", text, hints, frame, theme, targets)
 }
 
 pub fn render_error_popup(
@@ -93,6 +95,7 @@ pub fn render_error_popup(
     resolver: &KeyResolver,
     frame: &mut Frame,
     theme: &ThemeConfig,
+    targets: &mut Vec<(Rect, PopupTarget)>,
 ) -> Rect {
     let mut lines = vec![
         Line::from(Span::styled(
@@ -117,7 +120,7 @@ pub fn render_error_popup(
     }
 
     lines.push(Line::from(""));
-    lines.push(key_hints(
+    let hints = key_hints(
         resolver,
         false,
         &[(
@@ -128,14 +131,49 @@ pub fn render_error_popup(
             "Dismiss",
         )],
         theme,
-    ));
+    );
 
-    render_alert(err.title, lines, frame, theme)
+    render_alert(err.title, lines, hints, frame, theme, targets)
 }
 
-/// A warning box sized to `lines` once wrapped at its width (a long port path or error cause
-/// wraps)
-fn render_alert(title: &str, lines: Vec<Line>, frame: &mut Frame, theme: &ThemeConfig) -> Rect {
+pub fn render_confirm_quit_popup(
+    resolver: &KeyResolver,
+    frame: &mut Frame,
+    theme: &ThemeConfig,
+    targets: &mut Vec<(Rect, PopupTarget)>,
+) -> Rect {
+    let text = vec![
+        Line::from(Span::styled(
+            "Quit MaxiCom?",
+            Style::default()
+                .fg(theme.palette.text)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+    let hints = key_hints(
+        resolver,
+        false,
+        &[
+            (&[KeyBindingDialogAction::Confirm], "Quit"),
+            (&[KeyBindingDialogAction::Close], "Cancel"),
+        ],
+        theme,
+    );
+
+    render_alert("Quit", text, hints, frame, theme, targets)
+}
+
+/// A warning box sized to `lines` and the `hints` under them once wrapped at its width (a long
+/// port path or error cause wraps). The hints are click targets (MAX-125)
+fn render_alert<'a>(
+    title: &str,
+    mut lines: Vec<Line<'a>>,
+    hints: Hints<'a>,
+    frame: &mut Frame,
+    theme: &ThemeConfig,
+    targets: &mut Vec<(Rect, PopupTarget)>,
+) -> Rect {
     let warn = Style::default().fg(theme.palette.text_warn);
     let block = Block::bordered()
         .title(Span::styled(
@@ -145,6 +183,9 @@ fn render_alert(title: &str, lines: Vec<Line>, frame: &mut Frame, theme: &ThemeC
         .border_style(warn)
         .style(*theme.popup.background)
         .padding(Padding::horizontal(1));
+
+    let hints_width = hints.line.width() as u16;
+    lines.push(hints.line.clone());
 
     // border and padding on each side
     let inner_width = FORM_WIDTH.min(frame.area().width).saturating_sub(4).max(1) as usize;
@@ -157,6 +198,9 @@ fn render_alert(title: &str, lines: Vec<Line>, frame: &mut Frame, theme: &ThemeC
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    // the last row, centered as ratatui's paragraph centers it
+    let hints_x = inner.x + (inner.width / 2).saturating_sub(hints_width / 2);
+    hints.push_targets((hints_x, inner.bottom().saturating_sub(1)), inner, targets);
     let popup = Paragraph::new(lines)
         .alignment(ratatui::layout::Alignment::Center)
         .wrap(Wrap { trim: true });

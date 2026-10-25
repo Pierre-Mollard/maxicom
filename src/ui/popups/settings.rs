@@ -93,16 +93,13 @@ pub fn render_settings_popup(
         ),
     ];
 
-    let block = popup_block(
-        "Settings",
-        key_hints(
-            &app.key_resolver,
-            false,
-            &[(&[KeyBindingDialogAction::Close], "Return")],
-            theme,
-        ),
+    let hints = key_hints(
+        &app.key_resolver,
+        false,
+        &[(&[KeyBindingDialogAction::Close], "Return")],
         theme,
     );
+    let block = popup_block("Settings", &hints, theme);
 
     let area = form_area(frame.area(), FORM_WIDTH, rows.len());
     frame.render_widget(Clear, area);
@@ -113,6 +110,7 @@ pub fn render_settings_popup(
             targets.push((row_area(inner, y), PopupTarget::Setting(*key)));
         }
     }
+    hints.push_block_targets(area, targets);
     let text: Vec<Line> = rows.into_iter().map(|(_, line)| line).collect();
     frame.render_widget(Paragraph::new(text), inner);
     area

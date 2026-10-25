@@ -9,7 +9,7 @@ use crate::{
         App, InputContext,
         selection::{CopySide, LogicalPosition, MouseUnit},
     },
-    configs::{KeyPattern, Mode},
+    configs::{KeyBindingAction, KeyPattern, Mode},
     inputs::mouse::handle_mouse,
     overlays::{Overlay, PopupTarget, SettingKey},
 };
@@ -200,6 +200,12 @@ pub fn handle_event(event: Event, app: &App) -> Action {
     // Actions using or ignoring with prefix
     match ctx {
         InputContext::Overlay => {
+            // a quit key again confirms the quit: Ctrl-C twice still quits fast (MAX-125)
+            if matches!(app.overlay(), Some(Overlay::ConfirmQuit))
+                && resolver.direct_actions.get(&pattern) == Some(&KeyBindingAction::Quit)
+            {
+                return Action::Overlay(DialogAction::Confirm);
+            }
             let is_text_input = app.overlay().map_or_else(|| false, |o| o.is_text_input());
 
             if is_text_input {

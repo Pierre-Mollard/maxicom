@@ -412,10 +412,10 @@ impl Default for StatusBarConfig {
                 "[ {mode} ](prefix?(bg=secondary fg=black bold):copy_raw?(bg=red fg=black bold):copy?(bg=magenta fg=black bold):search?(bg=blue fg=white bold):(fg=primary bold))[ {copy_side}](copy_raw?(fg=red bold):copy?(fg=magenta bold):hide) {port} | [{baud}](primary) {framing}",
             ),
             center: String::from(
-                " [  REC ](rec?(fg=warn bold):hide)[ {pan_left} ](pan_left?warn:hide)[ {pan_right} ](pan_right_alert?(bg=warn fg=black bold):(pan_right?warn:hide))",
+                " [ ● REC ](rec?(fg=warn bold):hide click=toggle_logging)[ {pan_left} ](pan_left?warn:hide)[ {pan_right} ](pan_right_alert?(bg=warn fg=black bold):(pan_right?warn:hide))",
             ),
             right: String::from(
-                "[{scroll_pos_up} ](has_scroll?muted:hide)[RX: {rx_bytes}](muted) | [TX: {tx_bytes}](muted) | [{time}](secondary)",
+                "[{scroll_pos_up} ](has_scroll?muted:hide)[RX: {rx_bytes}](muted) | [TX: {tx_bytes}](muted) | [{time}](secondary) [?](muted click=help) [≡](muted click=settings) ",
             ),
             time_format: String::from("%H:%M:%S"),
         }

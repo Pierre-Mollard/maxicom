@@ -403,7 +403,10 @@ impl App {
                 self.overlay = Some(overlay);
                 UpdateEffect::None
             }
-            AppAction::Quit => UpdateEffect::Quit,
+            AppAction::Quit => {
+                self.overlay = Some(Overlay::ConfirmQuit);
+                UpdateEffect::None
+            }
             AppAction::DetachSerial => UpdateEffect::ToggleAttachSerial,
             AppAction::ReloadConfig => UpdateEffect::ReloadConfig,
             AppAction::SideView(action) => self.update_side_view(action),

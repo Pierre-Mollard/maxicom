@@ -3,6 +3,7 @@ use ratatui::layout::Rect;
 
 use crate::{
     app::selection::{CopySide, LogicalPosition},
+    configs::KeyBindingAction,
     overlays::PopupTarget,
 };
 
@@ -112,6 +113,17 @@ pub struct FrameMap {
     pub popup_targets: Vec<(Rect, PopupTarget)>,
     /// The TX input's text, as drawn
     pub prompt: Option<PromptMap>,
+    /// The status bar blocks a click runs, in drawing order (MAX-125)
+    pub click_targets: Vec<(Rect, ClickAction)>,
+}
+
+/// What a click on a status bar block runs (MAX-125)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClickAction {
+    /// An action of the keymap, by its name in `click=<action>` or implied by a variable
+    Run(KeyBindingAction),
+    /// The copy cursor's panel (`{copy_side}`), a copy mode action
+    ToggleSide,
 }
 
 /// Where the TX input's text is drawn: its area (after the prompt prefix) and how many columns
@@ -156,6 +168,18 @@ impl FrameMap {
         self.popup = None;
         self.popup_targets.clear();
         self.prompt = None;
+        self.click_targets.clear();
+    }
+
+    /// The click action under a screen cell: of the block drawn last there, the status bar's
+    /// right part over its center over its left
+    pub fn click_target(&self, x: u16, y: u16) -> Option<ClickAction> {
+        let at = ratatui::layout::Position::new(x, y);
+        self.click_targets
+            .iter()
+            .rev()
+            .find(|(area, _)| area.contains(at))
+            .map(|&(_, click)| click)
     }
 
     /// The popup part under a screen cell

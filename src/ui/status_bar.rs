@@ -61,6 +61,21 @@
 //! - **Explicit Foregrounds**: `fg=<color>` or simply `<color>`
 //! - **Explicit Backgrounds**: `bg=<color>` (e.g. `bg=main`, `bg=red`, `bg=#1e1e2e`)
 //! - **Clearing**: `fg=none` / `fg=reset`, `bg=none` / `bg=reset`
+//! - **Mouse**: `click=<action>` runs a keymap action (`help`, `settings`, `quit`, ...) when the
+//!   block is clicked. Not a style: it is the same in every branch of a ternary
+//!
+//! ## Clicks
+//! A block without `click=` runs what its first variable implies; a variable in plain text is
+//! clickable on its own. The others (`{rx_bytes}`, `{tx_bytes}`, `{time}`, `{scroll_max}`) do
+//! nothing.
+//!
+//! | Variable                                                   | Click                     |
+//! |------------------------------------------------------------|---------------------------|
+//! | `{mode}`                                                   | `toggle_input_mode`       |
+//! | `{port}`, `{baud}`, `{framing}`                            | `serial_settings`         |
+//! | `{copy_side}`                                              | the copy cursor's panel   |
+//! | `{pan_left}`, `{pan_right}`                                | `pan_left`, `pan_right`   |
+//! | `{scroll_pos}` `{scroll_pos_up}` `{scroll_percent}` `{scroll_offset}` | `scroll_to_bottom` |
 //!
 //! ## Examples
 //! ```toml
@@ -71,12 +86,14 @@
 //! # Center scroll indicator and pan arrows with warning states:
 //! center = "[{pan_left} ](pan_left?warn:hide)[{scroll_pos}](has_scroll?muted:hide)[ {pan_right}](pan_right_alert?(bg=warn fg=black bold):(pan_right?warn:hide))"
 //!
-//! # Right-aligned status with a dedicated red badge for recording:
-//! right = "[  REC ](rec?(bg=warn fg=white bold):hide) [{scroll_pos_up}](has_scroll?muted:hide) [RX: {rx_bytes}](muted) | [TX: {tx_bytes}](muted) | [{time}](secondary)"
+//! # Right-aligned status with a red badge for recording (a click stops it) and a help button:
+//! right = "[ ● REC ](rec?(bg=warn fg=white bold):hide click=toggle_logging) [{scroll_pos_up}](has_scroll?muted:hide) [RX: {rx_bytes}](muted) | [TX: {tx_bytes}](muted) | [{time}](secondary) [?](muted click=help)"
 //! ```
 
 use std::borrow::Cow;
 use std::fmt::Write as _;
+
+use unicode_width::UnicodeWidthStr;
 
 use ratatui::{
     Frame,
@@ -87,8 +104,8 @@ use ratatui::{
 };
 
 use crate::{
-    app::{App, InputContext, selection::CopySide},
-    configs::{Mode, StatusBarConfig, ThemeConfig},
+    app::{App, InputContext, selection::CopySide, types::ClickAction},
+    configs::{KeyBindingAction, Mode, StatusBarConfig, ThemeConfig},
     ui::common::{pan_left_indicator, pan_right_indicator},
 };
 
@@ -117,10 +134,12 @@ pub struct CompiledTemplate {
 enum Segment {
     /// Text in the base style
     Plain(Vec<TextPart>),
-    /// `[text](style_spec)`, omitted when its style resolves to `hide` or its text is empty
+    /// `[text](style_spec)`, omitted when its style resolves to `hide` or its text is empty.
+    /// A click on it runs `click`: its `click=<action>`, else what its first variable implies
     Styled {
         text: Vec<TextPart>,
         style: Vec<StyleExpr>,
+        click: Option<ClickAction>,
     },
 }
 
@@ -168,6 +187,22 @@ impl Var {
             "copy_side" => Self::CopySide,
             _ => return None,
         })
+    }
+
+    /// What a click on the variable runs (MAX-125)
+    fn click(self) -> Option<ClickAction> {
+        let action = match self {
+            Self::Mode => KeyBindingAction::SKInputMode,
+            Self::Port | Self::Baud | Self::Framing => KeyBindingAction::SerialSettings,
+            Self::PanLeft => KeyBindingAction::PanLeft,
+            Self::PanRight => KeyBindingAction::PanRight,
+            Self::ScrollPos | Self::ScrollPosUp | Self::ScrollPercent | Self::ScrollOffset => {
+                KeyBindingAction::ScrollToBottom
+            }
+            Self::CopySide => return Some(ClickAction::ToggleSide),
+            Self::RxBytes | Self::TxBytes | Self::Time | Self::ScrollMax => return None,
+        };
+        Some(ClickAction::Run(action))
     }
 
     fn write(self, out: &mut String, app: &App, time_format: &str) {
@@ -353,12 +388,30 @@ impl CompiledTemplate {
 
                 if let Some(paren_idx) = close_paren {
                     let style_end = style_start + paren_idx;
+                    let text = parse_text_parts(&template[text_start..text_end]);
+                    // `click=<action>` is no style: an unknown action is dropped like an
+                    // unknown style word
+                    let (clicks, style): (Vec<&str>, Vec<&str>) =
+                        tokenize_spec(&template[style_start..style_end])
+                            .into_iter()
+                            .partition(|token| token.starts_with("click="));
+                    let click = clicks
+                        .iter()
+                        .find_map(|token| token["click=".len()..].parse().ok())
+                        .map(ClickAction::Run)
+                        .or_else(|| {
+                            text.iter().find_map(|part| match part {
+                                TextPart::Var(var) => var.click(),
+                                TextPart::Literal(_) => None,
+                            })
+                        });
                     segments.push(Segment::Styled {
-                        text: parse_text_parts(&template[text_start..text_end]),
-                        style: tokenize_spec(&template[style_start..style_end])
+                        text,
+                        style: style
                             .into_iter()
                             .map(|token| compile_expression(token.trim(), theme))
                             .collect(),
+                        click,
                     });
                     cursor = style_end + 1;
                     continue;
@@ -372,25 +425,66 @@ impl CompiledTemplate {
         Self { segments }
     }
 
+    #[cfg(test)]
     pub fn spans(&self, app: &App, base_style: Style, time_format: &str) -> Vec<Span<'_>> {
+        self.spans_and_clicks(app, base_style, time_format).0
+    }
+
+    /// The spans, and where the clickable ones are in the line (start column, width) with what
+    /// a click runs (MAX-125). In plain text each variable is clickable on its own, not the
+    /// text around it
+    fn spans_and_clicks(
+        &self,
+        app: &App,
+        base_style: Style,
+        time_format: &str,
+    ) -> (Vec<Span<'_>>, Vec<(u16, u16, ClickAction)>) {
         let mut spans = Vec::with_capacity(self.segments.len());
+        let mut clicks = Vec::new();
+        let mut col: u16 = 0;
         for segment in &self.segments {
             match segment {
                 Segment::Plain(parts) => {
-                    spans.push(Span::styled(fill_text(parts, app, time_format), base_style));
+                    let mut part_col = col;
+                    for part in parts {
+                        let width = match part {
+                            TextPart::Literal(text) => text.width(),
+                            TextPart::Var(var) => {
+                                let mut out = String::new();
+                                var.write(&mut out, app, time_format);
+                                out.width()
+                            }
+                        } as u16;
+                        if let TextPart::Var(var) = part
+                            && let Some(click) = var.click()
+                            && width > 0
+                        {
+                            clicks.push((part_col, width, click));
+                        }
+                        part_col = part_col.saturating_add(width);
+                    }
+                    let span = Span::styled(fill_text(parts, app, time_format), base_style);
+                    col = col.saturating_add(span.width() as u16);
+                    spans.push(span);
                 }
-                Segment::Styled { text, style } => {
+                Segment::Styled { text, style, click } => {
                     let Some(span_style) = resolve_style(style, base_style, app) else {
                         continue;
                     };
                     let content = fill_text(text, app, time_format);
                     if !content.is_empty() {
-                        spans.push(Span::styled(content, span_style));
+                        let span = Span::styled(content, span_style);
+                        let width = span.width() as u16;
+                        if let Some(click) = *click {
+                            clicks.push((col, width, click));
+                        }
+                        col = col.saturating_add(width);
+                        spans.push(span);
                     }
                 }
             }
         }
-        spans
+        (spans, clicks)
     }
 }
 
@@ -635,39 +729,52 @@ fn tokenize_spec(spec: &str) -> Vec<&str> {
     tokens
 }
 
+/// Draws the status bar; returns where its clickable blocks are, the left part's first, then
+/// the center's, then the right's, as they are drawn over each other (MAX-125)
 pub fn render_status_bar(
     app: &App,
     frame: &mut Frame,
     area: Rect,
     theme: &ThemeConfig,
     status_bar: &CompiledStatusBar,
-) {
+) -> Vec<(Rect, ClickAction)> {
+    let mut targets = Vec::new();
     if !app.settings().ui.show_status_bar {
-        return;
+        return targets;
     }
 
     let base_style = *theme.ui.status_bar;
     frame.render_widget(Block::default().style(base_style), area);
 
     let time_format = &status_bar.time_format;
-    let left_spans = status_bar.left.spans(app, base_style, time_format);
-    let center_spans = status_bar.center.spans(app, base_style, time_format);
-    let right_spans = status_bar.right.spans(app, base_style, time_format);
-
-    if !left_spans.is_empty() {
-        let left_p = Paragraph::new(Line::from(left_spans)).alignment(Alignment::Left);
-        frame.render_widget(left_p, area);
+    let parts = [
+        (&status_bar.left, Alignment::Left),
+        (&status_bar.center, Alignment::Center),
+        (&status_bar.right, Alignment::Right),
+    ];
+    for (template, alignment) in parts {
+        let (spans, clicks) = template.spans_and_clicks(app, base_style, time_format);
+        if spans.is_empty() {
+            continue;
+        }
+        let line = Line::from(spans);
+        // where the paragraph starts the line, as ratatui works it out
+        let width = line.width() as u16;
+        let start = area.x
+            + match alignment {
+                Alignment::Left => 0,
+                Alignment::Center => (area.width / 2).saturating_sub(width / 2),
+                Alignment::Right => area.width.saturating_sub(width),
+            };
+        for (col, width, click) in clicks {
+            let cell = Rect::new(start.saturating_add(col), area.y, width, 1).intersection(area);
+            if !cell.is_empty() {
+                targets.push((cell, click));
+            }
+        }
+        frame.render_widget(Paragraph::new(line).alignment(alignment), area);
     }
-
-    if !center_spans.is_empty() {
-        let center_p = Paragraph::new(Line::from(center_spans)).alignment(Alignment::Center);
-        frame.render_widget(center_p, area);
-    }
-
-    if !right_spans.is_empty() {
-        let right_p = Paragraph::new(Line::from(right_spans)).alignment(Alignment::Right);
-        frame.render_widget(right_p, area);
-    }
+    targets
 }
 
 #[cfg(test)]
@@ -815,6 +922,11 @@ mod tests {
                 span("TX: 0", "Some(DarkGray)", BG, "NONE"),
                 plain(" | "),
                 span("TIME", "Some(Yellow)", BG, "NONE"),
+                plain(" "),
+                span("?", "Some(DarkGray)", BG, "NONE"),
+                plain(" "),
+                span("≡", "Some(DarkGray)", BG, "NONE"),
+                plain(" "),
             ]
         );
     }
@@ -908,6 +1020,65 @@ mod tests {
         assert_eq!(
             render("[](bold)[empty text above]", &a),
             [plain("["), plain("empty text above]")]
+        );
+    }
+
+    /// Where a template's clickable blocks are (start column, width) and what they run
+    fn clicks(template: &str, app: &App) -> Vec<(u16, u16, ClickAction)> {
+        let theme = ThemeConfig::default();
+        CompiledTemplate::new(template, &theme)
+            .spans_and_clicks(app, *theme.ui.status_bar, "TIME")
+            .1
+    }
+
+    /// MAX-125: `click=<action>` makes a block clickable and is no style word; an unknown
+    /// action is dropped and a hidden block isn't clickable.
+    /// How: the same block with and without `click=help`, `click=nope`, a `hide` one.
+    #[test]
+    fn click_keyword() {
+        use KeyBindingAction::{Help, Settings};
+        let a = app(Mode::Terminal);
+        assert_eq!(
+            render("[ ? ](muted bold click=help)", &a),
+            render("[ ? ](muted bold)", &a)
+        );
+        assert_eq!(
+            clicks("ab [ ? ](muted click=help)[x](click=settings)", &a),
+            [
+                (3, 3, ClickAction::Run(Help)),
+                (6, 1, ClickAction::Run(Settings))
+            ]
+        );
+        assert_eq!(clicks("[ ? ](click=nope)", &a), []);
+        assert_eq!(clicks("[ ? ](hide click=help)", &a), []);
+    }
+
+    /// MAX-125: a block takes the click its first variable implies, unless it has its own
+    /// `click=`; in plain text only the variable is clickable, not the text around it.
+    /// How: `{mode}`, `{port}`/`{baud}` in plain text, `{rx_bytes}` (no click), `{copy_side}`.
+    #[test]
+    fn variables_imply_clicks() {
+        use KeyBindingAction::{Help, SKInputMode, SerialSettings};
+        let mut a = app(Mode::Terminal);
+        a.serial_config.port = "/dev/x".to_string();
+        let run = ClickAction::Run;
+        assert_eq!(clicks("[ {mode} ](bold)", &a), [(0, 6, run(SKInputMode))]);
+        assert_eq!(clicks("[{mode}](click=help)", &a), [(0, 4, run(Help))]);
+        assert_eq!(
+            clicks("[{mode}](click=nope)", &a),
+            [(0, 4, run(SKInputMode))]
+        );
+        let baud = a.serial_config.baudrate.to_string().len() as u16;
+        assert_eq!(
+            clicks("port {port} | {baud} {rx_bytes}", &a),
+            [(5, 6, run(SerialSettings)), (14, baud, run(SerialSettings))]
+        );
+        assert_eq!(clicks("[RX {rx_bytes}](muted)", &a), []);
+
+        a.update(Action::CopyMode(CopyModeAction::Enter));
+        assert_eq!(
+            clicks("[{copy_side}](bold)", &a),
+            [(0, 3, ClickAction::ToggleSide)]
         );
     }
 }

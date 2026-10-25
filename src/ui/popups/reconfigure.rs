@@ -74,25 +74,23 @@ pub fn render_reconfigure_popup(
         ]));
     }
 
-    let block = popup_block(
-        "Serial Port",
-        key_hints(
-            resolver,
-            false,
-            &[
-                (&[KeyBindingDialogAction::Confirm], "Apply"),
-                (&[KeyBindingDialogAction::Close], "Cancel"),
-            ],
-            theme,
-        ),
+    let hints = key_hints(
+        resolver,
+        false,
+        &[
+            (&[KeyBindingDialogAction::Confirm], "Apply"),
+            (&[KeyBindingDialogAction::Close], "Cancel"),
+        ],
         theme,
     );
+    let block = popup_block("Serial Port", &hints, theme);
 
     let area = form_area(frame.area(), FORM_WIDTH, lines.len());
     frame.render_widget(Clear, area);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     frame.render_widget(Paragraph::new(lines), inner);
+    hints.push_block_targets(area, targets);
     // one row per field, in order (MAX-113)
     for (y, field) in field_rows.into_iter().enumerate() {
         targets.push((row_area(inner, y), PopupTarget::SerialField(field)));

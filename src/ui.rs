@@ -26,7 +26,10 @@ use crate::{
         layout::{LayoutWarning, ScreenLayout},
         lines::{render_input_prompt, render_monitor},
         popups::{
-            alert::{render_detached_popup, render_disconnected_popup, render_error_popup},
+            alert::{
+                render_confirm_quit_popup, render_detached_popup, render_disconnected_popup,
+                render_error_popup,
+            },
             filepath::render_filepath_popup,
             help::render_help_popup,
             notifications::render_notifications,
@@ -121,7 +124,8 @@ pub fn render(
     }
 
     if let Some(status_rect) = layout.status_bar_area {
-        render_status_bar(app, frame, status_rect, theme, status_bar);
+        let targets = render_status_bar(app, frame, status_rect, theme, status_bar);
+        app.frame_map_mut().click_targets = targets;
     }
 
     render_active_overlay(app, frame, theme);
@@ -147,12 +151,19 @@ fn render_active_overlay(app: &mut App, frame: &mut Frame, theme: &ThemeConfig) 
         Some(Overlay::SerialSettings(dialog)) => {
             render_reconfigure_popup(dialog, resolver, frame, theme, &mut targets)
         }
-        Some(Overlay::FilePath(dialog)) => render_filepath_popup(dialog, resolver, frame, theme),
-        Some(Overlay::DeviceDisconnected(port)) => {
-            render_disconnected_popup(port, resolver, frame, theme)
+        Some(Overlay::FilePath(dialog)) => {
+            render_filepath_popup(dialog, resolver, frame, theme, &mut targets)
         }
-        Some(Overlay::DeviceDetached(port)) => render_detached_popup(port, resolver, frame, theme),
-        Some(Overlay::Error(err)) => render_error_popup(err, resolver, frame, theme),
+        Some(Overlay::DeviceDisconnected(port)) => {
+            render_disconnected_popup(port, resolver, frame, theme, &mut targets)
+        }
+        Some(Overlay::DeviceDetached(port)) => {
+            render_detached_popup(port, resolver, frame, theme, &mut targets)
+        }
+        Some(Overlay::Error(err)) => render_error_popup(err, resolver, frame, theme, &mut targets),
+        Some(Overlay::ConfirmQuit) => {
+            render_confirm_quit_popup(resolver, frame, theme, &mut targets)
+        }
         None => return,
     };
     let map = app.frame_map_mut();
@@ -1584,6 +1595,165 @@ mod tests {
         h.draw();
         assert_eq!(h.app.line_mode.copy_state().cursor.char_idx, 31);
         assert_eq!(cursor_cell(&mut h), (x + 1, y));
+    }
+
+    /// A key through the input path, applied
+    fn key_do(
+        h: &mut Harness,
+        code: crossterm::event::KeyCode,
+        mods: KeyModifiers,
+    ) -> UpdateEffect {
+        let event = Event::Key(crossterm::event::KeyEvent::new(code, mods));
+        let action = crate::inputs::handle_event(event, &h.app);
+        h.app.update(action)
+    }
+
+    /// MAX-125: quitting asks first, by key or by mouse: Esc or `n` cancels; Enter, `y`, the
+    /// quit key again or a click on Quit quits.
+    /// How: Ctrl-Q through the default keymap, answered each way.
+    #[test]
+    fn quit_asks_first() {
+        use crossterm::event::KeyCode::{Char, Enter, Esc};
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        let ctrl = KeyModifiers::CONTROL;
+        let none = KeyModifiers::NONE;
+        let is_quit = |effect| matches!(effect, UpdateEffect::Quit);
+
+        assert!(!is_quit(key_do(&mut h, Char('q'), ctrl)));
+        assert!(matches!(h.app.overlay(), Some(Overlay::ConfirmQuit)));
+        assert!(!is_quit(key_do(&mut h, Esc, none)));
+        assert!(h.app.overlay().is_none());
+
+        key_do(&mut h, Char('q'), ctrl);
+        assert!(!is_quit(key_do(&mut h, Char('n'), none)));
+        assert!(h.app.overlay().is_none());
+
+        for answer in [
+            (Enter, none),
+            (Char('y'), none),
+            (Char('q'), ctrl),
+            (Char('c'), ctrl),
+        ] {
+            key_do(&mut h, Char('q'), ctrl);
+            assert!(is_quit(key_do(&mut h, answer.0, answer.1)), "{answer:?}");
+        }
+
+        key_do(&mut h, Char('q'), ctrl);
+        let rows = h.draw();
+        assert!(rows.iter().any(|row| row.contains("Quit MaxiCom?")));
+        let effect = mouse_do(
+            &mut h,
+            MouseEventKind::Down(MouseButton::Left),
+            cell_of(&rows, "Quit ·"),
+        );
+        assert!(is_quit(effect));
+    }
+
+    /// The cell of the last `text` in the status bar (the last row): the buttons are at its
+    /// end, after a port name that may hold the same letter
+    fn status_cell(rows: &[String], text: &str) -> (u16, u16) {
+        let y = rows.len() - 1;
+        let x = rows[y].rfind(text).unwrap();
+        (rows[y][..x].chars().count() as u16, y as u16)
+    }
+
+    /// MAX-125: a click on a status bar block runs it, in its left, center and right parts:
+    /// `{mode}` switches mode, `{baud}` opens the serial popup, `?` help and `≡` settings by
+    /// their `click=`; a click between blocks does nothing.
+    /// How: the default status bar, and a center part with its own `click=`.
+    #[test]
+    fn status_bar_clicks() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        let rows = h.draw();
+        click(&mut h, status_cell(&rows, "LINE"));
+        assert_eq!(h.app.settings().mode, Mode::Terminal);
+
+        let rows = h.draw();
+        let baud = h.app.serial_config.baudrate.to_string();
+        click(&mut h, status_cell(&rows, &baud));
+        assert!(matches!(h.app.overlay(), Some(Overlay::SerialSettings(_))));
+        h.app.close_overlay();
+
+        for (text, help) in [("?", true), ("≡", false)] {
+            let rows = h.draw();
+            click(&mut h, status_cell(&rows, text));
+            match h.app.overlay() {
+                Some(Overlay::Help(_)) => assert!(help, "{text}"),
+                Some(Overlay::Settings) => assert!(!help, "{text}"),
+                _ => panic!("{text}: no popup"),
+            }
+            h.app.close_overlay();
+        }
+
+        let mut config = h.app.settings().ui.status_bar.clone();
+        config.center = "[ mid ](click=settings)".to_string();
+        h.status_bar = CompiledStatusBar::new(&config, &h.theme);
+        let rows = h.draw();
+        let (x, y) = status_cell(&rows, "mid");
+        click(&mut h, (x - 2, y));
+        assert!(h.app.overlay().is_none());
+        click(&mut h, (x + 3, y));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+    }
+
+    /// MAX-125: a click on a popup's key hint runs it as its key would: Apply and Cancel in
+    /// the forms (Cancel in the text input one, whose Apply would start a log), Close in Help,
+    /// Quit and Reattach in the alerts.
+    /// How: each popup opened, its hint label found in the drawn rows and clicked.
+    #[test]
+    fn mouse_clicks_on_popup_hints() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        let open = |h: &mut Harness, overlay| {
+            h.app.update(Action::App(AppAction::OpenOverlay(overlay)));
+            h.draw()
+        };
+        let press = |h: &mut Harness, at| {
+            let effect = mouse_do(h, MouseEventKind::Down(MouseButton::Left), at);
+            mouse_do(h, MouseEventKind::Up(MouseButton::Left), at);
+            effect
+        };
+        let serial = || Overlay::SerialSettings(SerialConfigDialog::new(&SerialConfig::default()));
+
+        let rows = open(&mut h, serial());
+        click(&mut h, cell_of(&rows, "Parity"));
+        click(&mut h, cell_of(&rows, "Parity"));
+        let rows = h.draw();
+        assert!(matches!(
+            press(&mut h, cell_of(&rows, "Apply")),
+            UpdateEffect::Reconfigure(_)
+        ));
+        assert!(h.app.overlay().is_none());
+
+        let rows = open(&mut h, serial());
+        assert!(matches!(
+            press(&mut h, cell_of(&rows, "Cancel")),
+            UpdateEffect::None
+        ));
+        assert!(h.app.overlay().is_none());
+
+        let rows = open(&mut h, Overlay::Help(HelpDialog::new()));
+        press(&mut h, cell_of(&rows, "Close"));
+        assert!(h.app.overlay().is_none());
+
+        let rows = open(&mut h, Overlay::FilePath(FilePathDialog::new("x.log")));
+        press(&mut h, cell_of(&rows, "Cancel"));
+        assert!(h.app.overlay().is_none());
+
+        let rows = open(&mut h, Overlay::DeviceDisconnected("/dev/x".into()));
+        assert!(matches!(
+            press(&mut h, cell_of(&rows, "Quit")),
+            UpdateEffect::Quit
+        ));
+
+        let rows = open(&mut h, Overlay::DeviceDetached("/dev/x".into()));
+        assert!(matches!(
+            press(&mut h, cell_of(&rows, "Reattach")),
+            UpdateEffect::ToggleAttachSerial
+        ));
+        // the last cell of an odd-width centered hint line: the paragraph's own centering
+        let rows = open(&mut h, Overlay::DeviceDetached("/dev/x".into()));
+        let (x, y) = cell_of(&rows, "Quit");
+        assert!(matches!(press(&mut h, (x + 3, y)), UpdateEffect::Quit));
     }
 
     /// A click in a popup picks the part under it: a help tab, a setting (toggled), a serial

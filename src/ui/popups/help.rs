@@ -32,7 +32,7 @@ pub fn render_help_popup(
     let is_compact_vertical = area.height < 14;
 
     let hints = if is_compact_vertical {
-        Line::default()
+        Default::default()
     } else {
         key_hints(
             &app.key_resolver,
@@ -58,7 +58,8 @@ pub fn render_help_popup(
         )
     };
     // the tabs row starts the content, no top padding needed
-    let outer_block = popup_block("Help", hints, theme).padding(Padding::horizontal(1));
+    let outer_block = popup_block("Help", &hints, theme).padding(Padding::horizontal(1));
+    hints.push_block_targets(area, targets);
 
     let inner_area = outer_block.inner(area);
     frame.render_widget(outer_block, area);

@@ -77,20 +77,17 @@ pub fn render_resize_popup(
         ]),
     ];
 
-    let block = popup_block(
-        "Resize VT100 Screen",
-        key_hints(
-            resolver,
-            true,
-            &[
-                (&[KeyBindingDialogAction::CycleNext], "Switch"),
-                (&[KeyBindingDialogAction::Confirm], "Apply"),
-                (&[KeyBindingDialogAction::Close], "Cancel"),
-            ],
-            theme,
-        ),
+    let hints = key_hints(
+        resolver,
+        true,
+        &[
+            (&[KeyBindingDialogAction::CycleNext], "Switch"),
+            (&[KeyBindingDialogAction::Confirm], "Apply"),
+            (&[KeyBindingDialogAction::Close], "Cancel"),
+        ],
         theme,
     );
+    let block = popup_block("Resize VT100 Screen", &hints, theme);
 
     let area = form_area(frame.area(), FORM_WIDTH, text.len());
     frame.render_widget(Clear, area);
@@ -109,6 +106,7 @@ pub fn render_resize_popup(
 
     frame.set_cursor_position((cursor_x, cursor_y));
 
+    hints.push_block_targets(area, targets);
     // the field rows, under the header and its blank line (MAX-113)
     targets.push((
         row_area(inner, 2),

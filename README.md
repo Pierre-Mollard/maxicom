@@ -111,3 +111,15 @@ cargo deny check
     sblink (slow blink), rblink (rapid blink), reset
   - Visibility:
     hide, hidden, none
+  - Mouse:
+    `click=<action>` runs a keymap action (e.g. `help`, `settings`, `quit`,
+    `toggle_logging`) when the block is clicked
+
+- Clicks: a block without `click=` runs what its first variable implies:
+  - {mode}                       Switch between LINE and TERM
+  - {port}, {baud}, {framing}    Open the serial port settings
+  - {copy_side}                  Switch the copy cursor's panel
+  - {pan_left}, {pan_right}      Pan left / right
+  - {scroll_pos}, {scroll_pos_up}, {scroll_percent}, {scroll_offset}
+                                 Back to the live tail
+  A variable in plain text (outside `[...]`) is clickable on its own.
