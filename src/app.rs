@@ -80,6 +80,7 @@ pub enum UpdateEffect {
     CopyToClipboard(String),
     Screenshot(Result<String, String>),
     ToggleAttachSerial,
+    ReloadConfig,
     Quit,
 }
 
@@ -313,6 +314,7 @@ impl App {
             }
             AppAction::Quit => UpdateEffect::Quit,
             AppAction::DetachSerial => UpdateEffect::ToggleAttachSerial,
+            AppAction::ReloadConfig => UpdateEffect::ReloadConfig,
             AppAction::SideView(action) => self.update_side_view(action),
         }
     }
@@ -422,6 +424,60 @@ impl App {
         }
 
         UpdateEffect::None
+    }
+
+    /// Applies reloaded config files (MAX-112): their settings win over the session toggles,
+    /// except the ones only read at startup (history sizes, emulator size, logging), which keep
+    /// their running value and are named in the notice
+    pub fn apply_reload(&mut self, mut settings: SettingsConfig, key_resolver: KeyResolver) {
+        let old = &self.settings;
+        let mut restart_needed = Vec::new();
+        let mut keep = |name: &'static str, is_changed: bool| {
+            if is_changed {
+                restart_needed.push(name);
+            }
+        };
+        let (line, new_line) = (&old.line_mode, &mut settings.line_mode);
+        keep(
+            "line_mode.history_size",
+            line.history_size != new_line.history_size,
+        );
+        keep(
+            "line_mode.send_history_size",
+            line.send_history_size != new_line.send_history_size,
+        );
+        keep("line_mode.logging", line.logging != new_line.logging);
+        new_line.history_size = line.history_size;
+        new_line.send_history_size = line.send_history_size;
+        new_line.logging = line.logging.clone();
+
+        let (term, new_term) = (&old.terminal_mode, &mut settings.terminal_mode);
+        keep(
+            "terminal_mode.history_size",
+            term.history_size != new_term.history_size,
+        );
+        keep("terminal_mode.rows", term.rows != new_term.rows);
+        keep("terminal_mode.cols", term.cols != new_term.cols);
+        keep("terminal_mode.logging", term.logging != new_term.logging);
+        new_term.history_size = term.history_size;
+        new_term.rows = term.rows;
+        new_term.cols = term.cols;
+        new_term.logging = term.logging.clone();
+
+        settings.refresh_timestamp_width();
+        self.settings = settings;
+        self.key_resolver = key_resolver;
+        self.prefix_active = false;
+        self.update_viewport(self.viewport);
+
+        if restart_needed.is_empty() {
+            self.notify_info("Config reloaded");
+        } else {
+            self.notify_warn(format!(
+                "Config reloaded; restart to apply: {}",
+                restart_needed.join(", ")
+            ));
+        }
     }
 
     fn toggle_setting(&mut self, key: SettingKey) {
@@ -621,7 +677,7 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    //! App-level wiring of the viewport (#35).
+    //! App-level wiring of the viewport (#35) and of a config reload (MAX-112).
 
     use super::*;
     use crate::configs::KeyBindingsConfig;
@@ -652,5 +708,96 @@ mod tests {
         assert_eq!(app.settings.mode, Mode::Terminal);
         let scroller = app.terminal_mode.scroller();
         assert_eq!((scroller.view_width, scroller.view_height), (100, 30));
+    }
+
+    fn toasts(app: &App) -> Vec<String> {
+        app.notifications
+            .active_toasts()
+            .iter()
+            .map(|toast| toast.message.clone())
+            .collect()
+    }
+
+    /// The reload action asks `main` for the I/O.
+    #[test]
+    fn reload_action_gives_the_effect() {
+        let mut app = app();
+        let effect = app.update(Action::App(AppAction::ReloadConfig));
+        assert!(matches!(effect, UpdateEffect::ReloadConfig));
+    }
+
+    /// A reload takes the file's settings over the session toggles, the new keymap, and the
+    /// new timestamp format's width; the view is laid out again and the prefix dropped.
+    #[test]
+    fn reload_takes_the_files_settings() {
+        let mut app = app();
+        // only the terminal view is laid out yet: the reload into line mode lays out that one
+        app.settings.mode = Mode::Terminal;
+        app.update_viewport(ViewportSize::new(100, 30));
+        app.toggle_setting(SettingKey::LocalEcho);
+        app.toggle_setting(SettingKey::DisplayTimestamp);
+        app.update(Action::App(AppAction::SetPrefix(true)));
+
+        let mut settings = SettingsConfig::default();
+        settings.mode = Mode::Line;
+        settings.line_mode.wrap_mode = WrapMode::Truncate;
+        settings.timestamp_format = "%H:%M".to_string();
+        let keymap = KeyBindingsConfig {
+            prefix: "ctrl-b".to_string(),
+            ..Default::default()
+        };
+        app.apply_reload(settings, KeyResolver::try_new(&keymap).unwrap());
+
+        assert_eq!(app.settings.mode, Mode::Line);
+        assert!(!app.settings.local_echo);
+        assert!(!app.settings.show_timestamps);
+        assert_eq!(app.settings.timestamp_width(), 5);
+        assert_eq!(app.key_resolver.prefix.to_string(), "Ctrl-b");
+        assert!(!app.is_prefix_active());
+        let scroller = app.line_mode.scroller();
+        assert_eq!((scroller.view_width, scroller.view_height), (100, 30));
+        assert_eq!(toasts(&app), ["Config reloaded"]);
+    }
+
+    /// Settings only read at startup keep their running value and are named in a notice;
+    /// the cheap ones (inactivity timeout, RX buffer) are taken.
+    #[test]
+    fn reload_keeps_startup_only_settings() {
+        let mut app = app();
+        let mut settings = SettingsConfig::default();
+        settings.line_mode.history_size = 7;
+        settings.terminal_mode.rows = 50;
+        settings.terminal_mode.logging.path = "other.log".into();
+        settings.inactivity_detach_timeout = Duration::from_secs(9);
+        settings.rx_buffer_size = 512;
+        settings.encoding.toggle();
+        app.apply_reload(
+            settings,
+            KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap(),
+        );
+
+        let defaults = SettingsConfig::default();
+        assert_eq!(
+            app.settings.line_mode.history_size,
+            defaults.line_mode.history_size
+        );
+        assert_eq!(app.settings.terminal_mode.rows, defaults.terminal_mode.rows);
+        assert_eq!(
+            app.settings.terminal_mode.logging,
+            defaults.terminal_mode.logging
+        );
+        assert_eq!(
+            app.settings.inactivity_detach_timeout,
+            Duration::from_secs(9)
+        );
+        assert_eq!(app.settings.rx_buffer_size, 512);
+        assert_ne!(app.settings.encoding, defaults.encoding);
+        assert_eq!(
+            toasts(&app),
+            [
+                "Config reloaded; restart to apply: line_mode.history_size, terminal_mode.rows, \
+              terminal_mode.logging"
+            ]
+        );
     }
 }

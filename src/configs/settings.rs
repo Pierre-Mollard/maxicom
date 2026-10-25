@@ -603,8 +603,7 @@ impl SettingsConfig {
         Ok(())
     }
 
-    /// WARN: Must be called again if `timestamp_format` changes (it is only set at load for now)
-    fn refresh_timestamp_width(&mut self) {
+    pub fn refresh_timestamp_width(&mut self) {
         let sample = chrono::Local::now()
             .format(&self.timestamp_format)
             .to_string();

@@ -1,6 +1,7 @@
 use std::{
     fs::File,
     io::{self, ErrorKind, stdout},
+    path::Path,
     process::ExitCode,
     time::{Duration, Instant},
 };
@@ -15,7 +16,9 @@ use crate::{
     app::{App, UpdateEffect, selection::copy_via_osc52},
     args::{ParseOutcome, RunMode, parse_args, print_help},
     bytesource::ByteSource,
-    configs::{AppConfig, KeyResolver, Mode},
+    configs::{
+        AppConfig, ConfigsError, KeyResolver, KeywordHighlight, Mode, SettingsConfig, ThemeConfig,
+    },
     overlays::{ErrorDialog, Overlay},
     serial::{SerialConfig, SerialDevice, SerialError},
     ui::{PostRenderEffect, layout::LayoutWarning, render, status_bar::CompiledStatusBar},
@@ -78,25 +81,44 @@ fn main() -> ExitCode {
     }
 }
 
+/// The config files, loaded and compiled for the app and the renderer
+struct RuntimeConfig {
+    settings: SettingsConfig,
+    theme: ThemeConfig,
+    key_resolver: KeyResolver,
+    highlight_rules: Vec<KeywordHighlight>,
+    status_bar: CompiledStatusBar,
+}
+
+fn load_runtime_config(config_path: &Path) -> Result<RuntimeConfig, ConfigsError> {
+    let configs = AppConfig::load_or_create_default(config_path)?;
+    let key_resolver = KeyResolver::try_new(&configs.keybindings)
+        .expect("keybindings were already validated during config loading");
+    let status_bar = CompiledStatusBar::new(&configs.settings.ui.status_bar, &configs.theme);
+    Ok(RuntimeConfig {
+        highlight_rules: configs.highlights.compile_rules(),
+        settings: configs.settings,
+        theme: configs.theme,
+        key_resolver,
+        status_bar,
+    })
+}
+
 fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let config_path = AppConfig::default_config_path();
-    let configs = match AppConfig::load_or_create_default(&config_path) {
-        Ok(c) => c,
+    let RuntimeConfig {
+        settings,
+        mut theme,
+        key_resolver,
+        mut highlight_rules,
+        mut status_bar,
+    } = match load_runtime_config(&config_path) {
+        Ok(config) => config,
         Err(err) => {
             eprintln!("maxicom: {err}");
             return Ok(ExitCode::FAILURE);
         }
     };
-
-    let settings = configs.settings;
-    let theme = configs.theme;
-    let keybindings = configs.keybindings;
-    let highlights = configs.highlights;
-
-    let key_resolver = KeyResolver::try_new(&keybindings)
-        .expect("keybindings were already validated during config loading");
-    let highlight_rules = highlights.compile_rules();
-    let status_bar = CompiledStatusBar::new(&settings.ui.status_bar, &theme);
 
     let run_mode = match parse_args() {
         Ok(ParseOutcome::Run(mode)) => mode,
@@ -148,9 +170,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
     let mut running: bool = true;
     let is_replay = matches!(run_mode, RunMode::Replay { .. });
-    let buffer_size = settings.rx_buffer_size;
-    let inactivity_timeout = settings.inactivity_detach_timeout;
-    let mut input_buffer = vec![0u8; buffer_size];
+    let mut input_buffer = vec![0u8; settings.rx_buffer_size];
 
     let serial_config = match &run_mode {
         RunMode::Live(cfg) => cfg.clone(),
@@ -224,6 +244,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
 
         if device.is_some() {
+            let inactivity_timeout = app.settings().inactivity_detach_timeout;
             if !is_replay
                 && !inactivity_timeout.is_zero()
                 && last_rx_activity.elapsed() >= inactivity_timeout
@@ -342,6 +363,26 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 UpdateEffect::CopyToClipboard(text) => {
                     execute_clipboard_copy(&mut app, &text);
                 }
+                UpdateEffect::ReloadConfig => match load_runtime_config(&config_path) {
+                    Ok(mut config) => {
+                        if is_replay {
+                            config.settings.mode = Mode::Terminal;
+                        }
+                        input_buffer.resize(config.settings.rx_buffer_size, 0);
+                        theme = config.theme;
+                        highlight_rules = config.highlight_rules;
+                        status_bar = config.status_bar;
+                        app.apply_reload(config.settings, config.key_resolver);
+                    }
+                    // the running config stays
+                    Err(err) => app.open_overlay(Overlay::Error(
+                        ErrorDialog::new(
+                            "Config Reload Failed",
+                            "The config files were not applied",
+                        )
+                        .with_details(err),
+                    )),
+                },
                 UpdateEffect::None => {}
                 UpdateEffect::Screenshot(filename) => match filename {
                     Ok(name) => {

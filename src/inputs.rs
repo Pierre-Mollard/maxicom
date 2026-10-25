@@ -40,6 +40,7 @@ pub enum AppAction {
     ToggleSetting(SettingKey),
     ToggleLogging,
     DetachSerial,
+    ReloadConfig,
     OpenOverlay(Overlay),
     SideView(SideViewAction),
     Quit,

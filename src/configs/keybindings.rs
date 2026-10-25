@@ -54,6 +54,7 @@ pub enum KeyBindingAction {
     ClearHistory,
     DetachSerial,
     ExitPrefix,
+    ReloadConfig,
 }
 
 impl FromStr for KeyBindingAction {
@@ -95,6 +96,7 @@ impl FromStr for KeyBindingAction {
             "clear_history" => Ok(KeyBindingAction::ClearHistory),
             "exit_prefix" => Ok(KeyBindingAction::ExitPrefix),
             "detach_serial" => Ok(KeyBindingAction::DetachSerial),
+            "reload_config" => Ok(KeyBindingAction::ReloadConfig),
             other => Err(UnknownActionError(other.to_string())),
         }
     }
@@ -137,6 +139,7 @@ impl std::fmt::Display for KeyBindingAction {
             Self::ClearHistory => "clear_history",
             Self::ExitPrefix => "exit_prefix",
             Self::DetachSerial => "detach_serial",
+            Self::ReloadConfig => "reload_config",
         };
         write!(f, "{s}")
     }
@@ -872,7 +875,8 @@ impl Default for KeyBindingsConfig {
             "z"     => KeyBindingAction::Help,
             "s"     => KeyBindingAction::Settings,
             "l"     => KeyBindingAction::ToggleLogging,
-            "r"     => KeyBindingAction::ResizeDialog,
+            "r"     => KeyBindingAction::ReloadConfig,
+            "w"     => KeyBindingAction::ResizeDialog,
             "v"     => KeyBindingAction::AutoResizeRemote,
             "b"     => KeyBindingAction::AutoResizeRemoteLine,
             "t"     => KeyBindingAction::AutoResizeEmulator,
@@ -1106,6 +1110,20 @@ mod tests {
         config.dialog_actions.retain(|_, action| action != "close");
         let resolver = KeyResolver::try_new(&config).unwrap();
         assert!(keys(&resolver, KeyBindingDialogAction::Close).is_empty());
+    }
+
+    /// Reload is on prefix + r, and the resize dialog moved to prefix + w (MAX-112).
+    #[test]
+    fn reload_and_resize_default_keys() {
+        let resolver = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
+        let prefix_action = |key: &str| resolver.prefix_actions[&key.parse().unwrap()];
+        assert_eq!(prefix_action("r"), KeyBindingAction::ReloadConfig);
+        assert_eq!(prefix_action("w"), KeyBindingAction::ResizeDialog);
+        assert_eq!(
+            "reload_config".parse::<KeyBindingAction>().unwrap(),
+            KeyBindingAction::ReloadConfig
+        );
+        assert_eq!(KeyBindingAction::ReloadConfig.to_string(), "reload_config");
     }
 
     /// Keys a text input popup still sends to `[dialog_actions]`: the others are typed.
