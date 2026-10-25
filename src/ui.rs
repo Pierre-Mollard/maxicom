@@ -1608,6 +1608,40 @@ mod tests {
         h.app.update(action)
     }
 
+    /// MAX-129: Ctrl-C goes to the device. In terminal mode it is sent as ^C; in line mode it
+    /// clears what is typed first, then sends ^C with a toast. It no longer quits.
+    /// How: Ctrl-C through the default keymap in each mode, with and without typed text.
+    #[test]
+    fn ctrl_c_goes_to_the_device() {
+        use crossterm::event::KeyCode::Char;
+        let ctrl = KeyModifiers::CONTROL;
+        let sent_etx =
+            |effect: &UpdateEffect| matches!(effect, UpdateEffect::Transmit(b) if b == &[0x03]);
+
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 24, |s| {
+            s.mode = Mode::Terminal;
+        });
+        assert!(sent_etx(&key_do(&mut h, Char('c'), ctrl)));
+        assert!(h.app.overlay().is_none());
+
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        for ch in "ls".chars() {
+            key_do(&mut h, Char(ch), KeyModifiers::NONE);
+        }
+        assert_eq!(h.app.line_mode.input().value(), "ls");
+        assert!(matches!(
+            key_do(&mut h, Char('c'), ctrl),
+            UpdateEffect::None
+        ));
+        assert_eq!(h.app.line_mode.input().value(), "");
+        assert!(h.app.notifications.active_toasts().is_empty());
+
+        assert!(sent_etx(&key_do(&mut h, Char('c'), ctrl)));
+        let toasts = h.app.notifications.active_toasts();
+        assert!(toasts.iter().any(|t| t.message == "^C sent"));
+        assert!(h.app.overlay().is_none());
+    }
+
     /// MAX-125: quitting asks first, by key or by mouse: Esc or `n` cancels; Enter, `y`, the
     /// quit key again or a click on Quit quits.
     /// How: Ctrl-Q through the default keymap, answered each way.
@@ -1628,12 +1662,7 @@ mod tests {
         assert!(!is_quit(key_do(&mut h, Char('n'), none)));
         assert!(h.app.overlay().is_none());
 
-        for answer in [
-            (Enter, none),
-            (Char('y'), none),
-            (Char('q'), ctrl),
-            (Char('c'), ctrl),
-        ] {
+        for answer in [(Enter, none), (Char('y'), none), (Char('q'), ctrl)] {
             key_do(&mut h, Char('q'), ctrl);
             assert!(is_quit(key_do(&mut h, answer.0, answer.1)), "{answer:?}");
         }

@@ -318,6 +318,14 @@ impl LineMode {
                 self.user_input.reset();
                 UpdateEffect::None
             }
+            LineInputAction::Interrupt if self.user_input.value().is_empty() => {
+                UpdateEffect::Transmit(vec![0x03])
+            }
+            LineInputAction::Interrupt => {
+                self.user_input.reset();
+                self.history_index = None;
+                UpdateEffect::None
+            }
             LineInputAction::ClickAt(column) => {
                 // the char drawn on that column, else the end of the text
                 let mut start = 0;

@@ -244,8 +244,14 @@ impl App {
                         self.update_action_search_mode(SearchModeAction::Cancel);
                     }
                 }
-                self.line_mode
-                    .update_action_lineinput(&self.settings, action)
+                let is_interrupt = matches!(action, LineInputAction::Interrupt);
+                let effect = self
+                    .line_mode
+                    .update_action_lineinput(&self.settings, action);
+                if is_interrupt && matches!(effect, UpdateEffect::Transmit(_)) {
+                    self.notify_info("^C sent");
+                }
+                effect
             }
             Action::Terminal(action) => self.terminal_mode.update_action_terminal(action),
             Action::History(action) => self.update_action_history(action),

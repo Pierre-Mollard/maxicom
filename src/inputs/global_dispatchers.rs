@@ -103,6 +103,7 @@ impl KeyBindingLineAction {
                 Action::LineInput(LineInputAction::AutoResizeRemoteToWidth)
             }
             Self::ClearLine => Action::LineInput(LineInputAction::ClearLine),
+            Self::Interrupt => Action::LineInput(LineInputAction::Interrupt),
             Self::Quit => Action::App(AppAction::Quit),
         }
     }

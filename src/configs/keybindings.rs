@@ -173,6 +173,7 @@ pub enum KeyBindingLineAction {
     HistoryNext,
     AutoResizeRemoteLine,
     ClearLine,
+    Interrupt,
     Quit,
 }
 
@@ -186,6 +187,7 @@ impl std::str::FromStr for KeyBindingLineAction {
             "history_next" => Ok(Self::HistoryNext),
             "auto_resize_remote_line" => Ok(Self::AutoResizeRemoteLine),
             "clear_line" => Ok(Self::ClearLine),
+            "interrupt" => Ok(Self::Interrupt),
             "quit" => Ok(Self::Quit),
             other => Err(UnknownActionError(other.to_string())),
         }
@@ -200,6 +202,7 @@ impl std::fmt::Display for KeyBindingLineAction {
             Self::HistoryNext => "history_next",
             Self::AutoResizeRemoteLine => "auto_resize_remote_line",
             Self::ClearLine => "clear_line",
+            Self::Interrupt => "interrupt",
             Self::Quit => "quit",
         };
         write!(f, "{s}")
@@ -861,7 +864,6 @@ impl Default for KeyBindingsConfig {
     fn default() -> Self {
         let direct_actions = default_bindings! {
             "ctrl-q"     => KeyBindingAction::Quit,
-            "ctrl-c"     => KeyBindingAction::Quit,
             "ctrl-f"     => KeyBindingAction::EnterSearch,
             "ctrl-d"     => KeyBindingAction::ClearHistory,
             "pageup"     => KeyBindingAction::PageUp,
@@ -903,7 +905,7 @@ impl Default for KeyBindingsConfig {
             "enter"  => KeyBindingLineAction::Submit,
             "up"     => KeyBindingLineAction::HistoryPrev,
             "down"   => KeyBindingLineAction::HistoryNext,
-            "ctrl-c" => KeyBindingLineAction::Quit,
+            "ctrl-c" => KeyBindingLineAction::Interrupt,
             "ctrl-u" => KeyBindingLineAction::ClearLine,
             "alt-r"  => KeyBindingLineAction::AutoResizeRemoteLine,
         };
@@ -1132,6 +1134,24 @@ mod tests {
             KeyBindingAction::ReloadConfig
         );
         assert_eq!(KeyBindingAction::ReloadConfig.to_string(), "reload_config");
+    }
+
+    /// MAX-129: Ctrl-C is no global quit key: in line mode it is `interrupt`, in terminal mode
+    /// unbound so it is sent to the device. Ctrl-Q still quits.
+    #[test]
+    fn ctrl_c_default_key() {
+        let resolver = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
+        let ctrl_c = "ctrl-c".parse().unwrap();
+        assert!(!resolver.direct_actions.contains_key(&ctrl_c));
+        assert!(!resolver.terminal_actions.contains_key(&ctrl_c));
+        let action = resolver.line_actions[&ctrl_c];
+        assert_eq!(action, KeyBindingLineAction::Interrupt);
+        assert_eq!(action.to_string(), "interrupt");
+        assert_eq!("interrupt".parse::<KeyBindingLineAction>().unwrap(), action);
+        assert_eq!(
+            resolver.direct_actions[&"ctrl-q".parse().unwrap()],
+            KeyBindingAction::Quit
+        );
     }
 
     /// MAX-127: `V` selects whole lines in copy mode by default.

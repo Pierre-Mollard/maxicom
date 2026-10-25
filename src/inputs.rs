@@ -58,6 +58,7 @@ pub enum LineInputAction {
     HistoryDown,
     AutoResizeRemoteToWidth,
     ClearLine,
+    Interrupt,
     ClickAt(usize),
     HandleKey(KeyEvent),
     Paste(String),
