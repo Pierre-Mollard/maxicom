@@ -1,11 +1,17 @@
-use std::io::{self, Write};
+use std::{
+    io::{self, Write},
+    time::{Duration, Instant},
+};
 
 use crate::{
     app::data_processing::{
         build_display_to_raw_byte_map, map_disp_byte_to_raw, raw_byte_to_display_col,
     },
     configs::{LineDisplayMode, RawSideView, settings::raw_view_to_display_mode},
-    inputs::{CopyModeAction, find_next_word, find_prev_word, find_prev_word_end, find_word_end},
+    inputs::{
+        CopyModeAction, find_next_word, find_prev_word, find_prev_word_end, find_word_end,
+        vi::find_word_bounds,
+    },
     ui::raw_side::format_raw_bytes_to_plain_string,
 };
 
@@ -57,6 +63,56 @@ pub enum CopySide {
     Raw,
 }
 
+/// What a mouse press selects: the char under it (one click), its word (two quick clicks) or
+/// its line (three). A drag after it extends the selection by the same unit (MAX-126)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MouseUnit {
+    #[default]
+    Char,
+    Word,
+    Line,
+}
+
+/// The mouse selection a press started: its unit, the first unit selected (first and last
+/// char) and whether the release yanks (a drag, or a word or line press)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MouseSelect {
+    pub unit: MouseUnit,
+    pub origin: (LogicalPosition, LogicalPosition),
+    pub dragged: bool,
+}
+
+/// Longest time between two presses of a double or triple click
+const MULTI_CLICK: Duration = Duration::from_millis(400);
+
+/// Tells a double or triple click from quick presses on the same cell and side, which crossterm
+/// doesn't report. The count goes back to one after three, as in xterm (MAX-126)
+#[derive(Debug, Default)]
+pub struct ClickCounter {
+    last: Option<(Instant, (usize, usize), CopySide)>,
+    count: u8,
+}
+
+impl ClickCounter {
+    /// A press at `(line, column)` on `side`: the unit it selects
+    pub fn press(&mut self, now: Instant, at: (usize, usize), side: CopySide) -> MouseUnit {
+        let repeat = self.last.is_some_and(|(time, last_at, last_side)| {
+            now.duration_since(time) <= MULTI_CLICK && last_at == at && last_side == side
+        });
+        self.count = if repeat { self.count % 3 + 1 } else { 1 };
+        self.last = Some((now, at, side));
+        match self.count {
+            2 => MouseUnit::Word,
+            3 => MouseUnit::Line,
+            _ => MouseUnit::Char,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
 pub enum CopyActionResult {
     Moved,
     Exited,
@@ -70,7 +126,7 @@ pub struct CopyModeState {
     pub cursor: LogicalPosition,
     pub selection_anchor: Option<LogicalPosition>,
     pub side: CopySide,
-    pub mouse_drag: Option<bool>,
+    pub mouse_drag: Option<MouseSelect>,
 }
 
 impl CopyModeState {
@@ -163,28 +219,61 @@ impl CopyModeState {
         let view_height = source.view_height().saturating_sub(1).max(1);
 
         match action {
-            CopyModeAction::MousePress(pos, side) => {
+            CopyModeAction::MousePress(pos, side, unit) => {
                 self.active = true;
                 self.side = side;
                 self.selection_anchor = None;
-                self.mouse_drag = Some(false);
                 self.move_to(pos, source, max_line);
+                // the raw side has no words
+                let unit = if side == CopySide::Raw {
+                    MouseUnit::Char
+                } else {
+                    unit
+                };
+                let origin = unit_bounds(source, self.cursor, unit);
+                let dragged = unit != MouseUnit::Char;
+                if dragged {
+                    self.selection_anchor = Some(origin.0);
+                    self.cursor = origin.1;
+                }
+                self.mouse_drag = Some(MouseSelect {
+                    unit,
+                    origin,
+                    dragged,
+                });
                 return CopyActionResult::Moved;
             }
-            CopyModeAction::MouseDrag(pos) => {
-                let Some(dragged) = self.mouse_drag else {
+            CopyModeAction::MouseDrag(pos, _) => {
+                let Some(mut select) = self.mouse_drag else {
                     return CopyActionResult::None;
                 };
-                if !dragged {
+                if select.unit == MouseUnit::Char && !select.dragged {
                     self.selection_anchor = Some(self.cursor);
-                    self.mouse_drag = Some(true);
                 }
+                select.dragged = true;
+                self.mouse_drag = Some(select);
                 self.move_to(pos, source, max_line);
+                if select.unit != MouseUnit::Char {
+                    // whole units from the first one to the one under the pointer
+                    let (start, end) = unit_bounds(source, self.cursor, select.unit);
+                    let (origin_start, origin_end) = select.origin;
+                    if (start.line_idx, start.char_idx)
+                        < (origin_start.line_idx, origin_start.char_idx)
+                    {
+                        self.selection_anchor = Some(origin_end);
+                        self.cursor = start;
+                    } else {
+                        self.selection_anchor = Some(origin_start);
+                        self.cursor = end;
+                    }
+                }
                 return CopyActionResult::Moved;
             }
             CopyModeAction::MouseRelease => {
                 return match self.mouse_drag.take() {
-                    Some(true) => self.apply_action(CopyModeAction::Yank, source),
+                    Some(MouseSelect { dragged: true, .. }) => {
+                        self.apply_action(CopyModeAction::Yank, source)
+                    }
                     _ => CopyActionResult::None,
                 };
             }
@@ -621,6 +710,49 @@ impl CopyModeState {
     }
 }
 
+/// The first and last char of the word or line holding a text position (MAX-126). A word is a vi
+/// `iw` word; on whitespace it is the run of whitespace, as xterm selects
+fn unit_bounds<S: TextSource>(
+    source: &mut S,
+    pos: LogicalPosition,
+    unit: MouseUnit,
+) -> (LogicalPosition, LogicalPosition) {
+    let last = source.get_line_len(pos.line_idx).saturating_sub(1);
+    let (start, end) = match unit {
+        MouseUnit::Char => (pos.char_idx, pos.char_idx),
+        MouseUnit::Line => (0, last),
+        MouseUnit::Word => {
+            let text = source.get_line_text(pos.line_idx).unwrap_or_default();
+            let chars: Vec<char> = text.chars().collect();
+            match chars.get(pos.char_idx) {
+                Some(c) if c.is_whitespace() => {
+                    let start = chars[..pos.char_idx]
+                        .iter()
+                        .rposition(|c| !c.is_whitespace())
+                        .map_or(0, |i| i + 1);
+                    let end = chars[pos.char_idx..]
+                        .iter()
+                        .position(|c| !c.is_whitespace())
+                        .map_or(chars.len(), |i| pos.char_idx + i);
+                    (start, end - 1)
+                }
+                Some(_) => {
+                    let (start, end) = find_word_bounds(&text, pos.char_idx, false, true);
+                    (start, end - 1)
+                }
+                None => (pos.char_idx, pos.char_idx),
+            }
+        }
+    };
+    let at = |char_idx: usize| LogicalPosition {
+        line_idx: pos.line_idx,
+        char_idx: char_idx.min(last),
+        preferred_col: char_idx.min(last),
+        byte_idx: 0,
+    };
+    (at(start), at(end))
+}
+
 /// The first raw byte of char `char_idx` of a line (the last byte when past the end)
 pub fn char_to_byte<S: TextSource>(source: &mut S, line_idx: usize, char_idx: usize) -> usize {
     let text = source.get_line_text(line_idx).unwrap_or_default();
@@ -938,5 +1070,127 @@ mod tests {
             CopyActionResult::Yanked(text) => assert_eq!(text, "ok"),
             _ => panic!("expected a yank"),
         }
+    }
+
+    fn words() -> MockSource {
+        MockSource {
+            lines: vec!["foo.bar  baz", "next line here"],
+            raw_view: RawSideView::Hex,
+        }
+    }
+
+    fn press(state: &mut CopyModeState, src: &mut MockSource, at: (usize, usize), unit: MouseUnit) {
+        let action = CopyModeAction::MousePress(pos(at.0, at.1), CopySide::Text, unit);
+        state.apply_action(action, src);
+    }
+
+    fn release_yank(state: &mut CopyModeState, src: &mut MockSource) -> String {
+        match state.apply_action(CopyModeAction::MouseRelease, src) {
+            CopyActionResult::Yanked(text) => text,
+            _ => panic!("expected a yank"),
+        }
+    }
+
+    /// MAX-126: a word press selects the vi `iw` word under it, or the run of whitespace; the
+    /// release yanks it without a drag.
+    /// How: presses on a word char, on punctuation and on whitespace of "foo.bar  baz".
+    #[test]
+    fn mouse_word_press_selects_the_word() {
+        let mut src = words();
+        let mut state = CopyModeState::default();
+        for (col, word) in [(1, "foo"), (3, "."), (6, "bar"), (7, "  "), (11, "baz")] {
+            press(&mut state, &mut src, (0, col), MouseUnit::Word);
+            assert_eq!(release_yank(&mut state, &mut src), word, "col {col}");
+            assert!(!state.active);
+        }
+    }
+
+    /// MAX-126: a line press selects the whole line.
+    /// How: press in the middle of line 1, release.
+    #[test]
+    fn mouse_line_press_selects_the_line() {
+        let mut src = words();
+        let mut state = CopyModeState::default();
+        press(&mut state, &mut src, (1, 6), MouseUnit::Line);
+        assert_eq!(release_yank(&mut state, &mut src), "next line here");
+    }
+
+    /// MAX-126: a drag after a word press extends by whole words both ways, across lines, and
+    /// always keeps the first word.
+    /// How: press on "bar", drag into "baz", into "foo", then to "line" on the next line.
+    #[test]
+    fn mouse_word_drag_extends_by_words() {
+        let mut src = words();
+        let mut state = CopyModeState::default();
+        let drag = |state: &mut CopyModeState, src: &mut MockSource, at: (usize, usize)| {
+            state.apply_action(CopyModeAction::MouseDrag(pos(at.0, at.1), (0, 0)), src);
+        };
+
+        press(&mut state, &mut src, (0, 5), MouseUnit::Word);
+        drag(&mut state, &mut src, (0, 10));
+        assert_eq!(release_yank(&mut state, &mut src), "bar  baz");
+
+        press(&mut state, &mut src, (0, 5), MouseUnit::Word);
+        drag(&mut state, &mut src, (0, 10));
+        drag(&mut state, &mut src, (0, 1));
+        assert_eq!(release_yank(&mut state, &mut src), "foo.bar");
+
+        press(&mut state, &mut src, (0, 5), MouseUnit::Word);
+        drag(&mut state, &mut src, (1, 6));
+        assert_eq!(release_yank(&mut state, &mut src), "bar  baz\nnext line");
+    }
+
+    /// MAX-126: a drag after a line press extends by whole lines, upward too; the raw side
+    /// keeps char presses.
+    /// How: line press on line 1 dragged to line 0; a word press on the raw side yanks nothing.
+    #[test]
+    fn mouse_line_drag_and_raw_side() {
+        let mut src = words();
+        let mut state = CopyModeState::default();
+        press(&mut state, &mut src, (1, 6), MouseUnit::Line);
+        state.apply_action(CopyModeAction::MouseDrag(pos(0, 4), (0, 0)), &mut src);
+        assert_eq!(
+            release_yank(&mut state, &mut src),
+            "foo.bar  baz\nnext line here"
+        );
+
+        let action = CopyModeAction::MousePress(pos(0, 1), CopySide::Raw, MouseUnit::Word);
+        state.apply_action(action, &mut src);
+        assert!(state.selection_anchor.is_none());
+        assert!(matches!(
+            state.apply_action(CopyModeAction::MouseRelease, &mut src),
+            CopyActionResult::None
+        ));
+    }
+
+    /// MAX-126: quick presses on the same cell and side count 2 (word) and 3 (line), then start
+    /// over; a slow press, another cell, the other side or a reset count 1.
+    /// How: made-up instants around the 400 ms limit.
+    #[test]
+    fn click_counter_counts_quick_presses() {
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let text = CopySide::Text;
+        let mut clicks = ClickCounter::default();
+        assert_eq!(clicks.press(ms(0), (0, 1), text), MouseUnit::Char);
+        assert_eq!(clicks.press(ms(300), (0, 1), text), MouseUnit::Word);
+        assert_eq!(clicks.press(ms(600), (0, 1), text), MouseUnit::Line);
+        assert_eq!(clicks.press(ms(900), (0, 1), text), MouseUnit::Char);
+
+        assert_eq!(clicks.press(ms(1400), (0, 1), text), MouseUnit::Char);
+        assert_eq!(clicks.press(ms(1500), (0, 2), text), MouseUnit::Char);
+        assert_eq!(
+            clicks.press(ms(1600), (0, 2), CopySide::Raw),
+            MouseUnit::Char
+        );
+        clicks.reset();
+        assert_eq!(
+            clicks.press(ms(1700), (0, 2), CopySide::Raw),
+            MouseUnit::Char
+        );
+        assert_eq!(
+            clicks.press(ms(1800), (0, 2), CopySide::Raw),
+            MouseUnit::Word
+        );
     }
 }

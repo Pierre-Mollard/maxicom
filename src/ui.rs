@@ -1268,6 +1268,162 @@ mod tests {
         assert!(h.app.line_mode.copy_state().active);
     }
 
+    /// The smallest `<prefix>NN` number in the rows
+    fn first_number(rows: &[String], prefix: &str) -> usize {
+        rows.iter()
+            .filter_map(|row| {
+                let at = row.find(prefix)? + prefix.len();
+                row.get(at..at + 2)?.parse().ok()
+            })
+            .min()
+            .unwrap()
+    }
+
+    /// Holds a drag on the history's top row for `ticks` drag scroll ticks, drawing between
+    /// them as the main loop does, then releases: the yanked text
+    fn drag_scroll_up(h: &mut Harness, from: (u16, u16), ticks: u64) -> String {
+        let top = (from.0, h.app.frame_map().text_area.top());
+        mouse_do(h, MouseEventKind::Down(MouseButton::Left), from);
+        mouse_do(h, MouseEventKind::Drag(MouseButton::Left), top);
+        let t0 = std::time::Instant::now();
+        for tick in 0..ticks {
+            let now = t0 + std::time::Duration::from_millis(60 * tick);
+            assert!(h.app.drag_scroll(now), "tick {tick}");
+            // too soon for the next one
+            assert!(!h.app.drag_scroll(now));
+            h.draw();
+        }
+        match mouse_do(h, MouseEventKind::Up(MouseButton::Left), top) {
+            UpdateEffect::CopyToClipboard(text) => text,
+            _ => panic!("expected a yank"),
+        }
+    }
+
+    /// MAX-126: a drag held on the history's top row scrolls it up on a timer and the selection
+    /// follows onto the rows coming into view; inside the history, or once released, it stops.
+    /// In line and terminal mode.
+    /// How: drag scroll ticks at made-up times; the yank reaches lines above the first view.
+    #[test]
+    fn mouse_drag_at_the_edge_scrolls() {
+        let mut h = wrapped_lines();
+        let rows = h.draw();
+        let first = first_number(&rows, "line ");
+        let from = cell_of(&rows, "theta");
+        let text = drag_scroll_up(&mut h, from, 6);
+        assert!(text.contains(&format!("line {:02}", first - 1)), "{text}");
+        assert!(!h.app.drag_scroll(std::time::Instant::now()));
+
+        // held inside: no scroll
+        h.draw();
+        let area = h.app.frame_map().text_area;
+        let (x, y) = (area.x + 1, area.y + area.height / 2);
+        mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), (x, y));
+        mouse_do(&mut h, MouseEventKind::Drag(MouseButton::Left), (x, y - 1));
+        assert!(!h.app.drag_scroll(std::time::Instant::now()));
+        mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), (x, y - 1));
+
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+            s.mode = Mode::Terminal;
+        });
+        let bytes: String = (0..40).map(|i| format!("\r\nrow {i:02}")).collect();
+        h.app
+            .terminal_mode
+            .process_rx(TextEncoding::Utf8, bytes.as_bytes());
+        let rows = h.draw();
+        let first = first_number(&rows, "row ");
+        let last = cell_of(&rows, "row 39");
+        let text = drag_scroll_up(&mut h, last, 3);
+        // the selection is a tick behind: on the row the last scroll brought in
+        assert!(text.starts_with(&format!("row {:02}", first - 2)), "{text}");
+        assert!(text.ends_with("row 38\nr"), "{text}");
+    }
+
+    /// MAX-126: in terminal mode with a grid taller than the view (24 rows shown in 11), the
+    /// copy cursor reaching the view's top row keeps the view; one row further centers the view
+    /// on it, as before. The live view is panned into the grid, which the in-view check left out: the view
+    /// jumped to center the cursor.
+    /// How: copy mode from the remote cursor on the last row, moved up with keys.
+    #[test]
+    fn terminal_copy_cursor_on_the_top_row_keeps_the_view() {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+            s.mode = Mode::Terminal;
+        });
+        let bytes: String = (0..40).map(|i| format!("\r\nrow {i:02}")).collect();
+        h.app
+            .terminal_mode
+            .process_rx(TextEncoding::Utf8, bytes.as_bytes());
+        let before = h.draw();
+        let height = h.app.frame_areas().content.height as usize;
+        assert!(before[0].starts_with("row 29"), "{before:#?}");
+
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        for _ in 0..10 {
+            h.app.update(Action::CopyMode(CopyModeAction::MoveUp));
+        }
+        let rows = h.draw();
+        assert_eq!(before[..height], rows[..height]);
+        assert_eq!(cursor_cell(&mut h).1, 0);
+
+        h.app.update(Action::CopyMode(CopyModeAction::MoveUp));
+        let rows = h.draw();
+        assert!(rows[0].starts_with("row 23"), "{rows:#?}");
+        assert!(rows[cursor_cell(&mut h).1 as usize].starts_with("row 28"));
+    }
+
+    /// MAX-126: a double click yanks the word under it, a triple click the whole line, and a
+    /// drag after a double click extends by words; in terminal mode too.
+    /// How: quick clicks through the input path (well under the 400 ms limit).
+    #[test]
+    fn mouse_double_and_triple_click() {
+        let mut h = wrapped_lines();
+        let rows = h.draw();
+        let (x, y) = cell_of(&rows, "alpha");
+        click(&mut h, (x + 1, y));
+        mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), (x + 1, y));
+        match mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), (x + 1, y)) {
+            UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "alpha"),
+            _ => panic!("expected a yank"),
+        }
+
+        let rows = h.draw();
+        let (x, y) = cell_of(&rows, "alpha");
+        click(&mut h, (x, y));
+        click(&mut h, (x, y));
+        mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), (x, y));
+        match mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), (x, y)) {
+            UpdateEffect::CopyToClipboard(text) => {
+                assert!(text.starts_with("line "), "{text}");
+                assert!(text.ends_with(" alpha beta gamma delta epsilon zeta eta theta"));
+            }
+            _ => panic!("expected a yank"),
+        }
+
+        let rows = h.draw();
+        let (x, y) = cell_of(&rows, "alpha");
+        click(&mut h, (x, y));
+        mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), (x, y));
+        mouse_do(&mut h, MouseEventKind::Drag(MouseButton::Left), (x + 7, y));
+        match mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), (x + 7, y)) {
+            UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "alpha beta"),
+            _ => panic!("expected a yank"),
+        }
+
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+            s.mode = Mode::Terminal;
+        });
+        let mut bytes = b"\r\n".repeat(20);
+        bytes.extend_from_slice(b"first row\r\nsecond row");
+        h.app.terminal_mode.process_rx(TextEncoding::Utf8, &bytes);
+        let rows = h.draw();
+        let (x, y) = cell_of(&rows, "second");
+        click(&mut h, (x + 2, y));
+        mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), (x + 2, y));
+        match mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), (x + 2, y)) {
+            UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "second"),
+            _ => panic!("expected a yank"),
+        }
+    }
+
     /// A click on a byte of the raw panel puts the raw copy cursor on it, ESC bytes included,
     /// and a drag there yanks bytes (MAX-113, raw side of MAX-71).
     #[test]

@@ -7,7 +7,7 @@ use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
 use crate::{
     app::{
         App, InputContext,
-        selection::{CopySide, LogicalPosition},
+        selection::{CopySide, LogicalPosition, MouseUnit},
     },
     configs::{KeyPattern, Mode},
     inputs::mouse::handle_mouse,
@@ -131,8 +131,8 @@ pub enum CopyModeAction {
     Yank,
     YankRaw,
     ToggleSide,
-    MousePress(LogicalPosition, CopySide),
-    MouseDrag(LogicalPosition),
+    MousePress(LogicalPosition, CopySide, MouseUnit),
+    MouseDrag(LogicalPosition, (u16, u16)),
     MouseRelease,
     HandleKey(KeyEvent),
     Exit,

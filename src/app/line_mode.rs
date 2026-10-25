@@ -392,7 +392,7 @@ impl LineMode {
         let is_mouse = matches!(
             action,
             CopyModeAction::MousePress(..)
-                | CopyModeAction::MouseDrag(_)
+                | CopyModeAction::MouseDrag(..)
                 | CopyModeAction::MouseRelease
         );
         if let CopyModeAction::MousePress(..) = action {

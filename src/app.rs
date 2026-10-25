@@ -1,9 +1,9 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::{
     app::{
         scroller::ScrollStatus,
-        selection::CopySide,
+        selection::{ClickCounter, CopySide},
         types::{FocusTarget, FrameAreas, FrameMap, ViewportSize},
     },
     configs::{
@@ -61,6 +61,9 @@ impl Stats {
     }
 }
 
+/// How often a drag held at the history's edge scrolls it (MAX-126)
+const DRAG_SCROLL_EVERY: Duration = Duration::from_millis(50);
+
 pub struct App {
     settings: SettingsConfig,
     pub key_resolver: KeyResolver,
@@ -71,6 +74,11 @@ pub struct App {
     pub viewport: ViewportSize,
     frame_areas: FrameAreas,
     frame_map: FrameMap,
+    clicks: ClickCounter,
+    /// The screen cell of a drag in the history while the button is held, and when the drag
+    /// scroll last ran (MAX-126)
+    drag_hold: Option<(u16, u16)>,
+    last_drag_scroll: Option<Instant>,
     pub line_mode: LineMode,
     pub terminal_mode: TerminalMode,
     pub is_window_focused: bool,
@@ -120,6 +128,9 @@ impl App {
             viewport: ViewportSize::default(),
             frame_areas: FrameAreas::default(),
             frame_map: FrameMap::default(),
+            clicks: ClickCounter::default(),
+            drag_hold: None,
+            last_drag_scroll: None,
             line_mode: line_view,
             terminal_mode: terminal_view,
             is_window_focused: true,
@@ -323,7 +334,51 @@ impl App {
         self.terminal_mode.flush_logger_if_due();
 
         let toasts_expired = self.notifications.tick();
-        toasts_expired || self.terminal_mode.has_pending_flash()
+        let drag_scrolled = self.drag_scroll(Instant::now());
+        toasts_expired || self.terminal_mode.has_pending_flash() || drag_scrolled
+    }
+
+    /// A drag held on the top or bottom row of the history (or the raw panel), or past it,
+    /// scrolls it that way every `DRAG_SCROLL_EVERY`, one row more per row past, and the
+    /// selection follows onto the rows coming into view, as in tmux (MAX-126). The edge row
+    /// counts because the history often touches the window's edge, where the pointer stops.
+    /// Returns true when it scrolled
+    pub fn drag_scroll(&mut self, now: Instant) -> bool {
+        let Some((x, y)) = self.drag_hold else {
+            return false;
+        };
+        let Some(side) = self.copy_side() else {
+            self.drag_hold = None;
+            return false;
+        };
+        if self
+            .last_drag_scroll
+            .is_some_and(|last| now.duration_since(last) < DRAG_SCROLL_EVERY)
+        {
+            return false;
+        }
+        let area = match side {
+            CopySide::Text => self.frame_map.text_area,
+            CopySide::Raw => self.frame_map.raw_area,
+        };
+        if area.is_empty() {
+            return false;
+        }
+        let (top, bottom) = (area.top(), area.bottom() - 1);
+        let scroll = if y <= top {
+            HistoryAction::ScrollUp(usize::from(top - y) + 1)
+        } else if y >= bottom {
+            HistoryAction::ScrollDown(usize::from(y - bottom) + 1)
+        } else {
+            return false;
+        };
+        // onto the edge row the last scroll brought in, then the next one
+        if let Some(pos) = self.frame_map.copy_position(side, x, y, true) {
+            self.update_action_copy_mode(CopyModeAction::MouseDrag(pos, (x, y)));
+        }
+        self.update_action_history(scroll);
+        self.last_drag_scroll = Some(now);
+        true
     }
 
     fn update_action_app(&mut self, action: AppAction) -> UpdateEffect {
@@ -374,6 +429,28 @@ impl App {
         if matches!(action, CopyModeAction::MousePress(..)) && self.is_search_active() {
             self.update_action_search_mode(SearchModeAction::Cancel);
         }
+        // quick presses on the same cell select its word, then its line (MAX-126)
+        let action = match action {
+            CopyModeAction::MousePress(pos, side, _) => {
+                let col = match side {
+                    CopySide::Text => pos.char_idx,
+                    CopySide::Raw => pos.byte_idx,
+                };
+                let unit = self.clicks.press(Instant::now(), (pos.line_idx, col), side);
+                self.drag_hold = None;
+                CopyModeAction::MousePress(pos, side, unit)
+            }
+            CopyModeAction::MouseDrag(_, at) => {
+                self.clicks.reset();
+                self.drag_hold = Some(at);
+                action
+            }
+            CopyModeAction::MouseRelease => {
+                self.drag_hold = None;
+                action
+            }
+            action => action,
+        };
         match self.settings.mode {
             Mode::Terminal => {
                 if let Some(text) = self

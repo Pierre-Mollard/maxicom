@@ -1,7 +1,10 @@
 use chrono::{DateTime, Local};
 use ratatui::layout::Rect;
 
-use crate::{app::selection::LogicalPosition, overlays::PopupTarget};
+use crate::{
+    app::selection::{CopySide, LogicalPosition},
+    overlays::PopupTarget,
+};
 
 // we no longer cache the timestamp string because there is less lines to render
 // and it cost alloc and space when in the 10 of thousands of lines
@@ -201,6 +204,20 @@ impl FrameMap {
             preferred_col: char_idx,
             byte_idx: 0,
         })
+    }
+
+    /// The position under a screen cell of the text or the raw panel, `clamp` as for the text
+    pub fn copy_position(
+        &self,
+        side: CopySide,
+        x: u16,
+        y: u16,
+        clamp: bool,
+    ) -> Option<LogicalPosition> {
+        match side {
+            CopySide::Text => self.text_position(x, y, clamp),
+            CopySide::Raw => self.raw_position(x, y, clamp),
+        }
     }
 
     /// The raw position (byte) under a screen cell of the raw panel, `clamp` as for the text

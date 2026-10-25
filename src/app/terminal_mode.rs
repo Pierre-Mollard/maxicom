@@ -604,10 +604,12 @@ impl TerminalMode {
         let (grid_rows, grid_cols) = self.get_vt100_size();
 
         let current_sb = self.vt100_screen().scrollback();
+        // on the live screen the view starts `pan_offset_y` rows into a grid taller than it: a
+        // cursor on its top rows was taken as out of view and the view jumped (MAX-126)
         let top_visible = if current_sb > 0 {
             self.max_content_scrollback.saturating_sub(current_sb)
         } else {
-            self.max_content_scrollback
+            self.max_content_scrollback + self.pan_offset_y
         };
         let effective_h = (grid_rows as usize).min(view_h);
         let bottom_visible = top_visible + effective_h.saturating_sub(1);

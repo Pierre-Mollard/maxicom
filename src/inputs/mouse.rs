@@ -6,7 +6,10 @@ use ratatui::layout::Position;
 use vt100::{MouseProtocolEncoding, MouseProtocolMode};
 
 use crate::{
-    app::{App, InputContext, selection::CopySide},
+    app::{
+        App, InputContext,
+        selection::{CopySide, MouseUnit},
+    },
     configs::Mode,
     inputs::{
         Action, AppAction, CopyModeAction, DialogAction, HistoryAction, LineInputAction,
@@ -117,22 +120,28 @@ fn handle_left_button(event: MouseEvent, app: &App) -> Action {
             if let Some(column) = map.prompt_column(x, y) {
                 Action::LineInput(LineInputAction::ClickAt(column))
             } else if let Some(pos) = map.raw_position(x, y, false) {
-                Action::CopyMode(CopyModeAction::MousePress(pos, CopySide::Raw))
+                Action::CopyMode(CopyModeAction::MousePress(
+                    pos,
+                    CopySide::Raw,
+                    MouseUnit::Char,
+                ))
             } else if let Some(pos) = map.text_position(x, y, false) {
-                Action::CopyMode(CopyModeAction::MousePress(pos, CopySide::Text))
+                Action::CopyMode(CopyModeAction::MousePress(
+                    pos,
+                    CopySide::Text,
+                    MouseUnit::Char,
+                ))
             } else {
                 Action::Ignore
             }
         }
         // on the side the press chose, brought back into it when the pointer leaves it
         MouseEventKind::Drag(_) => {
-            let pos = match app.copy_side() {
-                Some(CopySide::Raw) => map.raw_position(x, y, true),
-                Some(CopySide::Text) => map.text_position(x, y, true),
-                None => None,
-            };
+            let pos = app
+                .copy_side()
+                .and_then(|side| map.copy_position(side, x, y, true));
             pos.map_or(Action::Ignore, |pos| {
-                Action::CopyMode(CopyModeAction::MouseDrag(pos))
+                Action::CopyMode(CopyModeAction::MouseDrag(pos, (x, y)))
             })
         }
         _ if app.copy_side().is_some() => Action::CopyMode(CopyModeAction::MouseRelease),
