@@ -3,6 +3,7 @@ use std::time::Duration;
 use crate::{
     app::{
         scroller::ScrollStatus,
+        selection::CopySide,
         types::{FocusTarget, ViewportSize},
     },
     configs::{
@@ -317,12 +318,13 @@ impl App {
     }
 
     fn update_side_view(&mut self, action: SideViewAction) -> UpdateEffect {
+        let raw_view = self.settings.raw_side.view;
         match self.settings.mode {
             Mode::Terminal => {
-                self.terminal_mode.handle_side_view_action(action);
+                self.terminal_mode.handle_side_view_action(action, raw_view);
             }
             Mode::Line => {
-                self.line_mode.handle_side_view_action(action);
+                self.line_mode.handle_side_view_action(action, raw_view);
             }
         }
 
@@ -554,6 +556,14 @@ impl App {
             Mode::Line => self.line_mode.copy_state().active,
             Mode::Terminal => self.terminal_mode.copy_state().active,
         }
+    }
+
+    pub fn copy_side(&self) -> Option<CopySide> {
+        let copy_state = match self.settings.mode {
+            Mode::Line => self.line_mode.copy_state(),
+            Mode::Terminal => self.terminal_mode.copy_state(),
+        };
+        copy_state.active.then_some(copy_state.side)
     }
 
     #[inline]

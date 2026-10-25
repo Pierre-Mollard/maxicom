@@ -513,15 +513,19 @@ impl LineMode {
         }
     }
 
-    pub fn handle_side_view_action(&mut self, action: SideViewAction) {
+    pub fn handle_side_view_action(&mut self, action: SideViewAction, raw_view: RawSideView) {
         match action {
-            SideViewAction::PanLeft(amount) => {
-                self.raw_scroller.pan_left(amount);
+            SideViewAction::PanLeft(bytes) => {
+                self.raw_scroller.pan_left(bytes, raw_view);
             }
-            SideViewAction::PanRight(amount) => {
-                self.raw_scroller.pan_right(amount);
+            SideViewAction::PanRight(bytes) => {
+                self.raw_scroller.pan_right(bytes, raw_view);
             }
         }
+    }
+
+    pub fn update_raw_limits(&mut self, overflow: usize, raw_view: RawSideView) {
+        self.raw_scroller.set_limit(overflow, raw_view);
     }
 
     pub fn start_logging(&mut self, path: PathBuf) -> io::Result<()> {
@@ -558,10 +562,6 @@ impl LineMode {
 
     pub fn update_limits(&mut self, max_scroll: usize, max_pan: usize) {
         self.scroller.update_limits(max_scroll, max_pan);
-    }
-
-    pub fn update_raw_limits(&mut self, amount: usize) {
-        self.raw_scroller.max_pan_x = amount;
     }
 
     #[inline]

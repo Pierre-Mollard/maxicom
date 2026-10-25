@@ -122,6 +122,7 @@ pub enum CopyModeAction {
     SelectRange(usize, usize),
     Yank,
     YankRaw,
+    ToggleSide,
     HandleKey(KeyEvent),
     Exit,
 }
@@ -361,7 +362,7 @@ mod tests {
         let side = handle_event(key(KeyCode::Right, KeyModifiers::CONTROL), &app);
         assert!(matches!(
             side,
-            Action::App(AppAction::SideView(SideViewAction::PanRight(6)))
+            Action::App(AppAction::SideView(SideViewAction::PanRight(2)))
         ));
         let typed = handle_event(plain(KeyCode::Char('x')), &app);
         assert!(matches!(

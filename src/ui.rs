@@ -642,7 +642,7 @@ mod tests {
             let centered = raw_pan(&h);
             assert!(centered >= 6, "{centered}");
             h.app.update(Action::App(crate::inputs::AppAction::SideView(
-                crate::inputs::SideViewAction::PanLeft(6),
+                crate::inputs::SideViewAction::PanLeft(2),
             )));
             h.draw();
             h.draw();
@@ -683,6 +683,156 @@ mod tests {
             search(&mut h, query);
             let jumped = h.draw();
             assert_eq!(h.draw(), jumped, "{query}");
+        }
+    }
+
+    /// MAX-71: terminal mode's raw panel pan stops at its widest row (it had no limit), on a
+    /// byte start.
+    /// How: a 40 byte row in a Binary panel, pan right by 100 bytes
+    #[test]
+    fn terminal_raw_pan_stops_at_the_widest_row() {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+            s.mode = Mode::Terminal;
+        });
+        h.app.settings_mut().raw_side.view = RawSideView::Binary;
+        // on the grid's last row (24 rows), which the 12 row view shows
+        let mut bytes = b"\r\n".repeat(23);
+        bytes.extend_from_slice(&[b'a'; 40]);
+        h.app.terminal_mode.process_rx(TextEncoding::Utf8, &bytes);
+        h.draw();
+        h.app.update(Action::App(crate::inputs::AppAction::SideView(
+            crate::inputs::SideViewAction::PanRight(100),
+        )));
+        let max = h.app.terminal_mode.raw_pan_x_max();
+        assert!(max > 0 && max.is_multiple_of(9), "{max}");
+        assert_eq!(h.app.terminal_mode.raw_pan_x(), max);
+        // the last byte is still on screen
+        assert!(shows(&h.draw(), "01100001"));
+    }
+
+    /// The two hex digits under the frame's cursor (MAX-71)
+    fn under_cursor(h: &mut Harness, rows: &[String]) -> String {
+        let pos = h.terminal.get_cursor_position().unwrap();
+        rows[pos.y as usize]
+            .chars()
+            .skip(pos.x as usize)
+            .take(2)
+            .collect()
+    }
+
+    /// MAX-71: on the raw side the copy cursor is drawn on its byte in the raw panel, also on
+    /// bytes the text does not show.
+    /// How: a green "ok" line and "abc", Hex panel; copy mode (on "abc"), Tab: on 61 ("a"); up:
+    /// on 1B, the ESC starting the line; Tab back: the cursor is on the "o" of the text
+    #[test]
+    fn raw_copy_cursor_is_drawn_in_the_panel() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+        h.app.settings_mut().raw_side.view = RawSideView::Hex;
+        h.feed(b"\x1b[32mok\x1b[0m\r\nabc\r\n");
+        h.draw();
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        h.app.update(Action::CopyMode(CopyModeAction::ToggleSide));
+        let rows = h.draw();
+        assert_eq!(under_cursor(&mut h, &rows), "61");
+        h.app.update(Action::CopyMode(CopyModeAction::MoveUp));
+        let rows = h.draw();
+        assert_eq!(under_cursor(&mut h, &rows), "1B");
+        h.app.update(Action::CopyMode(CopyModeAction::ToggleSide));
+        let rows = h.draw();
+        assert_eq!(under_cursor(&mut h, &rows), "ok");
+    }
+
+    /// Screen cell (x, y) where `text` starts, searched in chars (single-width cells)
+    fn cell_of(rows: &[String], text: &str) -> (u16, u16) {
+        let needle: Vec<char> = text.chars().collect();
+        for (y, row) in rows.iter().enumerate() {
+            let chars: Vec<char> = row.chars().collect();
+            if let Some(x) = chars.windows(needle.len()).position(|w| w == needle) {
+                return (x as u16, y as u16);
+            }
+        }
+        panic!("{text} not on screen: {rows:#?}");
+    }
+
+    fn bg_at(h: &Harness, (x, y): (u16, u16)) -> Option<ratatui::style::Color> {
+        Some(h.terminal.backend().buffer()[(x, y)].bg)
+    }
+
+    /// MAX-71: the panel the cursor is not in shows a ghost of it, and a selection made on the
+    /// raw side covers its bytes, the ones the text does not show included.
+    /// How: green "ok" and "abc", Hex panel. Copy mode on "abc": ghost on 61. Raw side, up to
+    /// 1B: ghost on the "o" of "ok". Select 1B to 6D (the 5 bytes of ESC[32m): selected, 6F not
+    #[test]
+    fn copy_ghosts_and_raw_selection() {
+        let ghost = h_theme().ui.cursor_ghost.bg;
+        let selection = h_theme().ui.selection.bg;
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+        h.app.settings_mut().raw_side.view = RawSideView::Hex;
+        h.feed(b"\x1b[32mok\x1b[0m\r\nabc\r\n");
+        h.draw();
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        let rows = h.draw();
+        assert_eq!(bg_at(&h, cell_of(&rows, "61 62")), ghost);
+
+        h.app.update(Action::CopyMode(CopyModeAction::ToggleSide));
+        h.app.update(Action::CopyMode(CopyModeAction::MoveUp));
+        let rows = h.draw();
+        assert_eq!(bg_at(&h, cell_of(&rows, "ok")), ghost);
+        assert_ne!(bg_at(&h, cell_of(&rows, "61 62")), ghost);
+
+        h.app.update(Action::CopyMode(CopyModeAction::Select));
+        for _ in 0..4 {
+            h.app.update(Action::CopyMode(CopyModeAction::MoveRight));
+        }
+        let rows = h.draw();
+        let (x, y) = cell_of(&rows, "1B 5B 33 32 6D 6F");
+        assert_eq!(bg_at(&h, (x, y)), selection);
+        assert_eq!(bg_at(&h, (x + 12, y)), selection);
+        assert_ne!(bg_at(&h, (x + 15, y)), selection);
+    }
+
+    fn h_theme() -> ThemeConfig {
+        ThemeConfig::default()
+    }
+
+    /// MAX-71: terminal mode's raw copy cursor walks the bytes its panel shows (the formatted
+    /// row, escape sequences included), with the ghost in the screen, and yanks them.
+    /// How: a green "ok" on the grid's last row, Hex panel. Copy mode on that row, start of
+    /// line, toggle: on 6F ("o", after the color sequence), ghost on the "o"; start of the raw
+    /// row: on 1B; select to 6D and yank: the color sequence
+    #[test]
+    fn terminal_raw_copy_cursor() {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+            s.mode = Mode::Terminal;
+        });
+        h.app.settings_mut().raw_side.view = RawSideView::Hex;
+        let mut bytes = b"\r\n".repeat(23);
+        bytes.extend_from_slice(b"\x1b[32mok\x1b[0m");
+        h.app.terminal_mode.process_rx(TextEncoding::Utf8, &bytes);
+        h.draw();
+        let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+
+        copy(&mut h, CopyModeAction::Enter);
+        copy(&mut h, CopyModeAction::StartOfLine);
+        copy(&mut h, CopyModeAction::ToggleSide);
+        let rows = h.draw();
+        assert_eq!(under_cursor(&mut h, &rows), "6F");
+        assert_eq!(
+            bg_at(&h, cell_of(&rows, "ok")),
+            h_theme().ui.cursor_ghost.bg
+        );
+
+        copy(&mut h, CopyModeAction::StartOfLine);
+        let rows = h.draw();
+        assert_eq!(under_cursor(&mut h, &rows), "1B");
+
+        copy(&mut h, CopyModeAction::Select);
+        for _ in 0..4 {
+            copy(&mut h, CopyModeAction::MoveRight);
+        }
+        match copy(&mut h, CopyModeAction::Yank) {
+            UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "1B 5B 33 32 6D"),
+            _ => panic!("expected a yank"),
         }
     }
 }

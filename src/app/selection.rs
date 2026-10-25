@@ -1,7 +1,9 @@
 use std::io::{self, Write};
 
 use crate::{
-    app::data_processing::{build_display_to_raw_byte_map, map_disp_byte_to_raw},
+    app::data_processing::{
+        build_display_to_raw_byte_map, map_disp_byte_to_raw, raw_byte_to_display_col,
+    },
     configs::{LineDisplayMode, RawSideView, settings::raw_view_to_display_mode},
     inputs::{CopyModeAction, find_next_word, find_prev_word, find_prev_word_end, find_word_end},
     ui::raw_side::format_raw_bytes_to_plain_string,
@@ -41,8 +43,18 @@ pub trait TextSource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct LogicalPosition {
     pub line_idx: usize,
-    pub char_idx: usize,
     pub preferred_col: usize,
+    pub char_idx: usize,
+    pub byte_idx: usize,
+}
+
+/// Which panel the copy cursor moves in: the text, or the raw side panel's bytes (MAX-71).
+/// The other panel shows where it is as a ghost cursor
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CopySide {
+    #[default]
+    Text,
+    Raw,
 }
 
 pub enum CopyActionResult {
@@ -57,12 +69,14 @@ pub struct CopyModeState {
     pub active: bool,
     pub cursor: LogicalPosition,
     pub selection_anchor: Option<LogicalPosition>,
+    pub side: CopySide,
 }
 
 impl CopyModeState {
     pub fn exit(&mut self) {
         self.active = false;
         self.selection_anchor = None;
+        self.side = CopySide::Text;
     }
 
     pub fn toggle_selection(&mut self) {
@@ -79,8 +93,10 @@ impl CopyModeState {
             line_idx,
             char_idx,
             preferred_col: char_idx,
+            byte_idx: 0,
         };
         self.selection_anchor = None;
+        self.side = CopySide::Text;
     }
 
     /// The `evicted` oldest lines of the source were dropped: keep cursor and anchor on the
@@ -94,8 +110,12 @@ impl CopyModeState {
 
     pub fn normalized_selection(&self) -> Option<(LogicalPosition, LogicalPosition)> {
         let anchor = self.selection_anchor?;
+        let col = |pos: &LogicalPosition| match self.side {
+            CopySide::Text => pos.char_idx,
+            CopySide::Raw => pos.byte_idx,
+        };
         if anchor.line_idx < self.cursor.line_idx
-            || (anchor.line_idx == self.cursor.line_idx && anchor.char_idx <= self.cursor.char_idx)
+            || (anchor.line_idx == self.cursor.line_idx && col(&anchor) <= col(&self.cursor))
         {
             Some((anchor, self.cursor))
         } else {
@@ -138,6 +158,13 @@ impl CopyModeState {
 
         let max_line = total_lines.saturating_sub(1);
         let view_height = source.view_height().saturating_sub(1).max(1);
+
+        if action == CopyModeAction::ToggleSide {
+            return self.toggle_side(source);
+        }
+        if self.side == CopySide::Raw {
+            return self.apply_raw_action(action, source, max_line, view_height);
+        }
 
         match action {
             CopyModeAction::Exit => {
@@ -284,6 +311,7 @@ impl CopyModeState {
                     line_idx,
                     char_idx: clamped_start,
                     preferred_col: clamped_start,
+                    byte_idx: 0,
                 });
                 self.cursor.char_idx = clamped_end;
                 self.cursor.preferred_col = clamped_end;
@@ -385,6 +413,143 @@ impl CopyModeState {
         }
     }
 
+    /// Switches the cursor between the text and the raw panel (no raw panel: nothing). The
+    /// cursor and the selection anchor are converted: a char goes to its first byte, a byte to
+    /// the char showing it (MAX-71)
+    fn toggle_side<S: TextSource>(&mut self, source: &mut S) -> CopyActionResult {
+        if source.raw_view() == RawSideView::Off {
+            return CopyActionResult::None;
+        }
+        match self.side {
+            CopySide::Text => {
+                self.side = CopySide::Raw;
+                for pos in std::iter::once(&mut self.cursor).chain(&mut self.selection_anchor) {
+                    pos.byte_idx = char_to_byte(source, pos.line_idx, pos.char_idx);
+                    pos.preferred_col = pos.byte_idx;
+                }
+            }
+            CopySide::Raw => {
+                // the chars are kept in sync on the raw side
+                self.side = CopySide::Text;
+                for pos in std::iter::once(&mut self.cursor).chain(&mut self.selection_anchor) {
+                    pos.preferred_col = pos.char_idx;
+                }
+            }
+        }
+        CopyActionResult::Moved
+    }
+
+    /// Copy mode actions on the raw side: the cursor moves over the line's raw bytes, then its
+    /// char follows (the ghost in the text). Word motions and text objects don't apply
+    fn apply_raw_action<S: TextSource>(
+        &mut self,
+        action: CopyModeAction,
+        source: &mut S,
+        max_line: usize,
+        view_height: usize,
+    ) -> CopyActionResult {
+        let mut last_byte = |line_idx| {
+            source
+                .get_line_raw_bytes(line_idx)
+                .map_or(0, |bytes| bytes.len().saturating_sub(1))
+        };
+        let cursor = &mut self.cursor;
+        let vertical = |cursor: &mut LogicalPosition, line_idx, last: usize| {
+            cursor.line_idx = line_idx;
+            cursor.byte_idx = cursor.preferred_col.min(last);
+        };
+        match action {
+            CopyModeAction::MoveLeft => {
+                if cursor.byte_idx > 0 {
+                    cursor.byte_idx -= 1;
+                } else if cursor.line_idx > 0 {
+                    cursor.line_idx -= 1;
+                    cursor.byte_idx = last_byte(cursor.line_idx);
+                }
+                cursor.preferred_col = cursor.byte_idx;
+            }
+            CopyModeAction::MoveRight => {
+                if cursor.byte_idx < last_byte(cursor.line_idx) {
+                    cursor.byte_idx += 1;
+                } else if cursor.line_idx < max_line {
+                    cursor.line_idx += 1;
+                    cursor.byte_idx = 0;
+                }
+                cursor.preferred_col = cursor.byte_idx;
+            }
+            CopyModeAction::MoveUp => {
+                let line_idx = cursor.line_idx.saturating_sub(1);
+                vertical(cursor, line_idx, last_byte(line_idx));
+            }
+            CopyModeAction::MoveDown => {
+                let line_idx = (cursor.line_idx + 1).min(max_line);
+                vertical(cursor, line_idx, last_byte(line_idx));
+            }
+            CopyModeAction::PageUp => {
+                let line_idx = cursor.line_idx.saturating_sub(view_height);
+                vertical(cursor, line_idx, last_byte(line_idx));
+            }
+            CopyModeAction::PageDown => {
+                let line_idx = (cursor.line_idx + view_height).min(max_line);
+                vertical(cursor, line_idx, last_byte(line_idx));
+            }
+            CopyModeAction::StartOfLine => {
+                cursor.byte_idx = 0;
+                cursor.preferred_col = 0;
+            }
+            CopyModeAction::EndOfLine => {
+                cursor.byte_idx = last_byte(cursor.line_idx);
+                cursor.preferred_col = cursor.byte_idx;
+            }
+            CopyModeAction::JumpToTop => {
+                cursor.line_idx = 0;
+                cursor.byte_idx = 0;
+                cursor.preferred_col = 0;
+            }
+            CopyModeAction::JumpToBottom => {
+                cursor.line_idx = max_line;
+                cursor.byte_idx = last_byte(max_line);
+                cursor.preferred_col = cursor.byte_idx;
+            }
+            CopyModeAction::Select => self.toggle_selection(),
+            CopyModeAction::Exit => {
+                self.exit();
+                return CopyActionResult::Exited;
+            }
+            CopyModeAction::Yank | CopyModeAction::YankRaw => return self.yank_raw_bytes(source),
+            _ => return CopyActionResult::None,
+        }
+        self.cursor.char_idx = byte_to_char(source, self.cursor.line_idx, self.cursor.byte_idx);
+        CopyActionResult::Moved
+    }
+
+    /// The selected bytes (raw side), in the raw panel's format, one line per source line
+    fn yank_raw_bytes<S: TextSource>(&mut self, source: &mut S) -> CopyActionResult {
+        let Some((start, end)) = self.normalized_selection() else {
+            self.exit();
+            return CopyActionResult::Exited;
+        };
+        let display_mode = raw_view_to_display_mode(source.raw_view());
+        let mut raw_lines = Vec::new();
+        for idx in start.line_idx..=end.line_idx {
+            let raw_bytes = source.get_line_raw_bytes(idx).unwrap_or_default();
+            let from = if idx == start.line_idx {
+                start.byte_idx
+            } else {
+                0
+            };
+            let to = if idx == end.line_idx {
+                end.byte_idx + 1
+            } else {
+                raw_bytes.len()
+            };
+            let slice = &raw_bytes[from.min(raw_bytes.len())..to.min(raw_bytes.len())];
+            raw_lines.push(format_raw_bytes_to_plain_string(slice, display_mode));
+        }
+        self.exit();
+        CopyActionResult::Yanked(raw_lines.join("\n"))
+    }
+
     fn move_word<S, F>(&mut self, source: &mut S, big: bool, finder: F) -> CopyActionResult
     where
         S: TextSource,
@@ -400,6 +565,28 @@ impl CopyModeState {
             CopyActionResult::None
         }
     }
+}
+
+/// The first raw byte of char `char_idx` of a line (the last byte when past the end)
+pub fn char_to_byte<S: TextSource>(source: &mut S, line_idx: usize, char_idx: usize) -> usize {
+    let text = source.get_line_text(line_idx).unwrap_or_default();
+    let raw_bytes = source.get_line_raw_bytes(line_idx).unwrap_or_default();
+    let map = source.get_line_raw_map(line_idx, &raw_bytes);
+    let disp_byte = text
+        .char_indices()
+        .nth(char_idx)
+        .map_or(text.len(), |(byte, _)| byte);
+    map_disp_byte_to_raw(disp_byte, &map, raw_bytes.len()).min(raw_bytes.len().saturating_sub(1))
+}
+
+/// The char of a line showing raw byte `byte_idx`: the char holding it, or for a byte not shown
+/// (escape sequence, control byte) the next char shown, or the last char for the line ending
+pub fn byte_to_char<S: TextSource>(source: &mut S, line_idx: usize, byte_idx: usize) -> usize {
+    let text = source.get_line_text(line_idx).unwrap_or_default();
+    let raw_bytes = source.get_line_raw_bytes(line_idx).unwrap_or_default();
+    let map = source.get_line_raw_map(line_idx, &raw_bytes);
+    let max_char = source.get_line_len(line_idx).saturating_sub(1);
+    raw_byte_to_display_col(byte_idx, &map, &text).min(max_char)
 }
 
 /// copies text via ANSI OSC 52 escape code
@@ -469,6 +656,7 @@ mod tests {
             line_idx,
             char_idx,
             preferred_col: char_idx,
+            byte_idx: 0,
         }
     }
 
@@ -565,5 +753,136 @@ mod tests {
         assert_eq!((state.cursor.line_idx, state.cursor.char_idx), (1, 1));
         state.apply_action(CopyModeAction::MoveDown, &mut src);
         assert_eq!((state.cursor.line_idx, state.cursor.char_idx), (2, 10));
+    }
+
+    /// A source whose raw bytes differ from its text, like a received colored line: text "ok",
+    /// bytes `ESC[32m` `ok` `ESC[0m` `\r\n` (13 bytes, "o" is byte 5), then a plain line
+    struct ColoredSource {
+        raw_view: RawSideView,
+    }
+
+    impl TextSource for ColoredSource {
+        fn total_lines(&mut self) -> usize {
+            2
+        }
+        fn get_line_text(&mut self, line_idx: usize) -> Option<String> {
+            ["ok", "abc"].get(line_idx).map(|s| s.to_string())
+        }
+        fn get_line_raw_bytes(&mut self, line_idx: usize) -> Option<Vec<u8>> {
+            let raw: [&[u8]; 2] = [b"\x1b[32mok\x1b[0m\r\n", b"abc\r\n"];
+            raw.get(line_idx).map(|bytes| bytes.to_vec())
+        }
+        fn raw_view(&mut self) -> RawSideView {
+            self.raw_view
+        }
+    }
+
+    fn colored() -> ColoredSource {
+        ColoredSource {
+            raw_view: RawSideView::Hex,
+        }
+    }
+
+    fn at(state: &CopyModeState) -> (usize, usize, usize) {
+        (
+            state.cursor.line_idx,
+            state.cursor.char_idx,
+            state.cursor.byte_idx,
+        )
+    }
+
+    /// MAX-71: the toggle moves the cursor to the raw side on its char's first byte and back;
+    /// with no raw panel it does nothing.
+    #[test]
+    fn toggle_side_converts_the_cursor() {
+        let mut state = CopyModeState::default();
+        state.enter_at(0, 1);
+        state.apply_action(CopyModeAction::ToggleSide, &mut colored());
+        assert_eq!(state.side, CopySide::Raw);
+        assert_eq!(at(&state), (0, 1, 6));
+        state.apply_action(CopyModeAction::ToggleSide, &mut colored());
+        assert_eq!(state.side, CopySide::Text);
+        assert_eq!(at(&state), (0, 1, 6));
+
+        let mut no_panel = ColoredSource {
+            raw_view: RawSideView::Off,
+        };
+        state.apply_action(CopyModeAction::ToggleSide, &mut no_panel);
+        assert_eq!(state.side, CopySide::Text);
+    }
+
+    /// MAX-71: on the raw side the cursor steps over every byte, the escape sequences and the
+    /// line ending included; its char (the ghost in the text) is the char holding the byte, the
+    /// next char shown for a byte not shown, the last char for the line ending.
+    #[test]
+    fn raw_cursor_steps_over_every_byte() {
+        let mut state = CopyModeState::default();
+        state.enter_at(0, 0);
+        let src = &mut colored();
+        state.apply_action(CopyModeAction::ToggleSide, src);
+        assert_eq!(at(&state), (0, 0, 5));
+        state.apply_action(CopyModeAction::MoveLeft, src);
+        // "m" of ESC[32m: not shown, the ghost is on "o"
+        assert_eq!(at(&state), (0, 0, 4));
+        state.apply_action(CopyModeAction::EndOfLine, src);
+        // the "\n": the ghost is on the last char "k"
+        assert_eq!(at(&state), (0, 1, 12));
+        state.apply_action(CopyModeAction::MoveRight, src);
+        assert_eq!(at(&state), (1, 0, 0));
+        state.apply_action(CopyModeAction::MoveLeft, src);
+        assert_eq!(at(&state), (0, 1, 12));
+
+        // vertical moves keep the byte column, clamped to the line's bytes
+        state.apply_action(CopyModeAction::MoveDown, src);
+        assert_eq!(at(&state), (1, 2, 4));
+        state.apply_action(CopyModeAction::MoveUp, src);
+        assert_eq!(at(&state), (0, 1, 12));
+        // word motions don't apply to bytes
+        assert!(matches!(
+            state.apply_action(CopyModeAction::NextWord, src),
+            CopyActionResult::None
+        ));
+    }
+
+    /// MAX-71: a selection made on the raw side yanks its bytes in the panel's format, `y` and
+    /// `Y` alike, whatever the direction it was made in.
+    /// How: select from byte 4 back to byte 0 (the whole ESC[32m, no char of its own).
+    #[test]
+    fn raw_selection_yanks_its_bytes() {
+        for yank in [CopyModeAction::Yank, CopyModeAction::YankRaw] {
+            let mut state = CopyModeState::default();
+            state.enter_at(0, 0);
+            let src = &mut colored();
+            state.apply_action(CopyModeAction::ToggleSide, src);
+            state.apply_action(CopyModeAction::MoveLeft, src);
+            state.apply_action(CopyModeAction::Select, src);
+            state.apply_action(CopyModeAction::StartOfLine, src);
+            match state.apply_action(yank, src) {
+                CopyActionResult::Yanked(text) => assert_eq!(text, "1B 5B 33 32 6D"),
+                _ => panic!("expected a yank"),
+            }
+            assert!(!state.active);
+            assert_eq!(state.side, CopySide::Text);
+        }
+    }
+
+    /// MAX-71: the selection anchor is converted with the cursor, both ways.
+    /// How: select "ok" in text, to the raw side (the anchor on byte 5), back to text.
+    #[test]
+    fn toggle_side_converts_the_anchor() {
+        let mut state = CopyModeState::default();
+        state.enter_at(0, 0);
+        let src = &mut colored();
+        state.apply_action(CopyModeAction::Select, src);
+        state.apply_action(CopyModeAction::MoveRight, src);
+        state.apply_action(CopyModeAction::ToggleSide, src);
+        let anchor = state.selection_anchor.unwrap();
+        assert_eq!((anchor.char_idx, anchor.byte_idx), (0, 5));
+        assert_eq!(at(&state), (0, 1, 6));
+        state.apply_action(CopyModeAction::ToggleSide, src);
+        match state.apply_action(CopyModeAction::Yank, src) {
+            CopyActionResult::Yanked(text) => assert_eq!(text, "ok"),
+            _ => panic!("expected a yank"),
+        }
     }
 }

@@ -281,6 +281,7 @@ pub enum KeyBindingCopyAction {
     Select,
     Yank,
     YankSideInspector,
+    ToggleSide,
     Exit,
 }
 
@@ -300,6 +301,7 @@ impl std::str::FromStr for KeyBindingCopyAction {
             "select" => Ok(Self::Select),
             "yank" => Ok(Self::Yank),
             "yank_side_inspector" => Ok(Self::YankSideInspector),
+            "toggle_side" => Ok(Self::ToggleSide),
             "exit" => Ok(Self::Exit),
             other => Err(UnknownActionError(other.to_string())),
         }
@@ -320,6 +322,7 @@ impl std::fmt::Display for KeyBindingCopyAction {
             Self::Select => "select",
             Self::Yank => "yank",
             Self::YankSideInspector => "yank_side_inspector",
+            Self::ToggleSide => "toggle_side",
             Self::Exit => "exit",
         };
         write!(f, "{s}")
@@ -889,6 +892,7 @@ impl Default for KeyBindingsConfig {
             "y"         => KeyBindingCopyAction::Yank,
             "enter"     => KeyBindingCopyAction::Yank,
             "Y"         => KeyBindingCopyAction::YankSideInspector,
+            "tab"       => KeyBindingCopyAction::ToggleSide,
             "q"         => KeyBindingCopyAction::Exit,
             "esc"       => KeyBindingCopyAction::Exit,
         };

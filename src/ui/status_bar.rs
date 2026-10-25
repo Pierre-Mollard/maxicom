@@ -27,6 +27,7 @@
 //! | `{scroll_percent}`  | Scroll position as numeric percentage (0-100)           | `42`             |
 //! | `{scroll_offset}`   | Lines scrolled up from the bottom                       | `15`             |
 //! | `{scroll_max}`      | Maximum total scrollback lines available                | `500`            |
+//! | `{copy_side}`       | Copy cursor panel (`TXT` or `RAW`), empty out of copy  | `RAW`            |
 //!
 //! ## Conditional States (`?`)
 //! | State / Keyword                 | Aliases                                    | Matches When...                                          |
@@ -36,6 +37,7 @@
 //! | `line`                          | `linemode`                                 | Line Input mode is active                                |
 //! | `term`                          | `terminal`                                 | Direct Terminal mode is active                           |
 //! | `copy`                          | `copymode`                                 | Copy / Backlog Scrollback mode is active                 |
+//! | `copy_raw`                      | `raw_cursor`                               | Copy mode cursor is in the raw side panel                |
 //! | `search`                        | —                                          | Search mode is active                                    |
 //! | `overlay`                       | `popup`                                    | A modal dialog or popup is open                          |
 //! | `focused`                       | —                                          | Terminal window has OS desktop focus                     |
@@ -84,7 +86,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{App, InputContext},
+    app::{App, InputContext, selection::CopySide},
     configs::{Mode, StatusBarConfig, ThemeConfig},
     ui::common::{pan_left_indicator, pan_right_indicator},
 };
@@ -142,6 +144,7 @@ enum Var {
     ScrollPercent,
     ScrollOffset,
     ScrollMax,
+    CopySide,
 }
 
 impl Var {
@@ -161,6 +164,7 @@ impl Var {
             "scroll_percent" => Self::ScrollPercent,
             "scroll_offset" => Self::ScrollOffset,
             "scroll_max" => Self::ScrollMax,
+            "copy_side" => Self::CopySide,
             _ => return None,
         })
     }
@@ -189,6 +193,15 @@ impl Var {
             Self::ScrollPercent => write!(out, "{}", scroll.percent()),
             Self::ScrollOffset => write!(out, "{}", scroll.offset_from_bottom),
             Self::ScrollMax => write!(out, "{}", scroll.max_scroll),
+            Self::CopySide => write!(
+                out,
+                "{}",
+                match app.copy_side() {
+                    Some(CopySide::Text) => "TXT",
+                    Some(CopySide::Raw) => "RAW",
+                    None => "",
+                }
+            ),
         };
     }
 }
@@ -215,6 +228,7 @@ enum StyleWord {
 enum Cond {
     Prefix,
     Copy,
+    CopyRaw,
     Search,
     Line,
     Term,
@@ -240,6 +254,7 @@ impl Cond {
         match name.trim().to_ascii_lowercase().as_str() {
             "prefix" => Self::Prefix,
             "copy" | "copymode" => Self::Copy,
+            "copy_raw" | "raw_cursor" => Self::CopyRaw,
             "search" => Self::Search,
             "line" | "linemode" => Self::Line,
             "term" | "terminal" => Self::Term,
@@ -266,6 +281,7 @@ impl Cond {
         match self {
             Self::Prefix => ctx == InputContext::Prefix || app.is_prefix_active(),
             Self::Copy => ctx == InputContext::CopyMode || app.is_copy_mode_active(),
+            Self::CopyRaw => app.copy_side() == Some(CopySide::Raw),
             Self::Search => ctx == InputContext::Search || app.is_search_active(),
             Self::Line => ctx == InputContext::LineInput,
             Self::Term => ctx == InputContext::Terminal,
@@ -729,6 +745,39 @@ mod tests {
         assert_eq!(
             render(&d.left, &l)[0],
             span(" LINE ", "Some(Black)", "Some(Magenta)", "BOLD")
+        );
+    }
+
+    /// MAX-71: `{copy_side}` and `copy_raw` follow the copy cursor's panel; the default left
+    /// template shows the side next to the mode pill in copy mode only.
+    /// How: line mode with a Hex raw panel and one line, copy mode, then the toggle.
+    #[test]
+    fn copy_side_variable_and_condition() {
+        let d = StatusBarConfig::default();
+        let template = "[{copy_side}](copy_raw?red:blue)";
+        let mut l = app(Mode::Line);
+        l.settings_mut().raw_side.view = crate::configs::RawSideView::Hex;
+        l.feed_rx(b"abc\r\n");
+        assert_eq!(render(&d.left, &l).len(), 4);
+
+        l.update(Action::CopyMode(CopyModeAction::Enter));
+        assert_eq!(
+            render(template, &l),
+            [span("TXT", "Some(Blue)", BG, "NONE")]
+        );
+        assert_eq!(
+            render(&d.left, &l)[1],
+            span(" TXT", "Some(Magenta)", BG, "BOLD")
+        );
+
+        l.update(Action::CopyMode(CopyModeAction::ToggleSide));
+        assert_eq!(render(template, &l), [span("RAW", "Some(Red)", BG, "NONE")]);
+        assert_eq!(
+            render(&d.left, &l)[..2],
+            [
+                span(" LINE ", "Some(Black)", "Some(Red)", "BOLD"),
+                span(" RAW", "Some(Red)", BG, "BOLD"),
+            ]
         );
     }
 

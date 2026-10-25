@@ -645,15 +645,19 @@ impl TerminalMode {
         }
     }
 
-    pub fn handle_side_view_action(&mut self, action: SideViewAction) {
+    pub fn handle_side_view_action(&mut self, action: SideViewAction, raw_view: RawSideView) {
         match action {
-            SideViewAction::PanLeft(amount) => {
-                self.raw_scroller.pan_left(amount);
+            SideViewAction::PanLeft(bytes) => {
+                self.raw_scroller.pan_left(bytes, raw_view);
             }
-            SideViewAction::PanRight(amount) => {
-                self.raw_scroller.pan_right(amount);
+            SideViewAction::PanRight(bytes) => {
+                self.raw_scroller.pan_right(bytes, raw_view);
             }
         }
+    }
+
+    pub fn update_raw_limits(&mut self, overflow: usize, raw_view: RawSideView) {
+        self.raw_scroller.set_limit(overflow, raw_view);
     }
 
     pub fn start_logging(&mut self, path: PathBuf) -> io::Result<()> {
@@ -699,6 +703,11 @@ impl TerminalMode {
     #[inline]
     pub fn raw_pan_x(&self) -> usize {
         self.raw_scroller.pan_x
+    }
+
+    #[inline]
+    pub fn raw_pan_x_max(&self) -> usize {
+        self.raw_scroller.max_pan_x
     }
 
     pub fn save_screenshot_txt(&self) -> std::io::Result<String> {
@@ -809,6 +818,38 @@ pub fn read_vt100_world_line_text(
     max_sb: usize,
     world_row: usize,
 ) -> Option<String> {
+    // vt100's own row text, like search and the selection read it: the gaps a tab or a cursor
+    // move leave are spaces, so a char index is a screen column (#33)
+    with_world_row(parser, max_sb, world_row, |screen, view_row, cols| {
+        screen.rows(0, cols).nth(view_row).unwrap_or_default()
+    })
+}
+
+/// The bytes of a world row as the raw side panel shows them: vt100's formatted row (its text
+/// with the escape sequences of its styles), so the raw copy cursor walks the panel's bytes
+/// (MAX-71)
+pub fn read_vt100_world_line_formatted(
+    parser: &mut TerminalParser,
+    max_sb: usize,
+    world_row: usize,
+) -> Option<Vec<u8>> {
+    with_world_row(parser, max_sb, world_row, |screen, view_row, cols| {
+        screen
+            .rows_formatted(0, cols)
+            .nth(view_row)
+            .unwrap_or_default()
+            .into_bytes()
+    })
+}
+
+/// Reads world row `world_row` (history first, then the screen) from the screen scrolled back
+/// so the row is shown, then restores the scrollback
+fn with_world_row<T>(
+    parser: &mut TerminalParser,
+    max_sb: usize,
+    world_row: usize,
+    read: impl FnOnce(&vt100::Screen, usize, u16) -> T,
+) -> Option<T> {
     // this function is not a member to simlify ownership with TerminalModeTextSource
     let (rows, cols) = vt100_size(parser.screen());
     let total_world = max_sb + rows as usize;
@@ -829,19 +870,14 @@ pub fn read_vt100_world_line_text(
         parser.screen_mut().set_scrollback(target_sb);
     }
 
-    // vt100's own row text, like search and the selection read it: the gaps a tab or a cursor
-    // move leave are spaces, so a char index is a screen column (#33). `rows()` is lazy but builds
-    // every row before `view_row`: one row for history (always at the top), a screen at most
-    let line_str = parser
-        .screen()
-        .rows(0, cols)
-        .nth(view_row as usize)
-        .unwrap_or_default();
+    // `rows()` / `rows_formatted()` are lazy but build every row before `view_row`: one row for
+    // history (always at the top), a screen at most
+    let value = read(parser.screen(), view_row as usize, cols);
     if current_sb != target_sb {
         parser.screen_mut().set_scrollback(current_sb);
     }
 
-    Some(line_str)
+    Some(value)
 }
 
 /// Bytes sent to the remote for a key typed in terminal mode (legacy xterm encoding). When the
@@ -904,6 +940,10 @@ impl<'a> TextSource for TerminalModeTextSource<'a> {
 
     fn get_line_text(&mut self, line_idx: usize) -> Option<String> {
         read_vt100_world_line_text(self.parser, self.max_content_scrollback, line_idx)
+    }
+
+    fn get_line_raw_bytes(&mut self, line_idx: usize) -> Option<Vec<u8>> {
+        read_vt100_world_line_formatted(self.parser, self.max_content_scrollback, line_idx)
     }
 
     #[inline]

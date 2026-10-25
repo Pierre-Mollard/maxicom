@@ -77,10 +77,10 @@ impl KeyBindingAction {
             KeyBindingAction::EnterCopyMode => Action::CopyMode(CopyModeAction::Enter),
             KeyBindingAction::EnterSearch => Action::Search(SearchModeAction::Start),
             KeyBindingAction::PanSideRight => {
-                Action::App(AppAction::SideView(SideViewAction::PanRight(6)))
+                Action::App(AppAction::SideView(SideViewAction::PanRight(2)))
             }
             KeyBindingAction::PanSideLeft => {
-                Action::App(AppAction::SideView(SideViewAction::PanLeft(6)))
+                Action::App(AppAction::SideView(SideViewAction::PanLeft(2)))
             }
             KeyBindingAction::ClearHistory => Action::History(HistoryAction::Clear),
             KeyBindingAction::ExitPrefix => Action::App(AppAction::SetPrefix(false)),
@@ -142,6 +142,7 @@ impl KeyBindingCopyAction {
             Self::Select => Action::CopyMode(CopyModeAction::Select),
             Self::Yank => Action::CopyMode(CopyModeAction::Yank),
             Self::YankSideInspector => Action::CopyMode(CopyModeAction::YankRaw),
+            Self::ToggleSide => Action::CopyMode(CopyModeAction::ToggleSide),
             Self::Exit => Action::CopyMode(CopyModeAction::Exit),
         }
     }

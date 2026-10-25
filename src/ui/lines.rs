@@ -18,6 +18,7 @@ use crate::{
         data_processing::{entry_display_text, entry_display_to_wire_map, map_disp_byte_to_raw},
         scroller::ScrollStatus,
         search::SearchMatch,
+        selection::CopySide,
         types::{FocusTarget, LogEntry},
     },
     configs::{
@@ -563,6 +564,8 @@ pub fn render_monitor(
                     .get(active_match_idx)
                     .map(|m| m.byte_offset)
                     .unwrap_or(0)
+            } else if app.line_mode.copy_state().side == CopySide::Raw {
+                app.line_mode.copy_state().cursor.byte_idx
             } else {
                 let disp_b = display_text
                     .char_indices()
@@ -732,11 +735,17 @@ pub fn render_monitor(
                         let screen_y = content_area.y + viewer_row as u16;
 
                         let buf = frame.buffer_mut();
-                        if !app.is_app_focused() {
-                            buf[(screen_x, screen_y)]
-                                .set_style(Style::default().add_modifier(Modifier::REVERSED));
+                        if copy_state.side == CopySide::Raw {
+                            // the real cursor is in the raw panel, the text shows its ghost
+                            // (MAX-71)
+                            buf[(screen_x, screen_y)].set_style(*theme.ui.cursor_ghost);
+                        } else {
+                            if !app.is_app_focused() {
+                                buf[(screen_x, screen_y)]
+                                    .set_style(Style::default().add_modifier(Modifier::REVERSED));
+                            }
+                            frame.set_cursor_position((screen_x, screen_y));
                         }
-                        frame.set_cursor_position((screen_x, screen_y));
                     }
                 }
             }
@@ -877,6 +886,15 @@ pub fn render_raw_side_panel(
     let active_style = *theme.search.search_match_active;
 
     let mut visible_raw_lines = Vec::with_capacity(view_height);
+    // copy cursor on the raw side: its byte's panel row and column, before the pan (MAX-71)
+    let copy_state = app.line_mode.copy_state();
+    let raw_side = copy_state.side == CopySide::Raw;
+    let raw_cursor = (copy_state.active && raw_side)
+        .then_some((copy_state.cursor.line_idx, copy_state.cursor.byte_idx));
+    let mut raw_cursor_cell = None;
+    // copy cursor on the text side: its ghost in the panel
+    let raw_ghost = (copy_state.active && !raw_side)
+        .then_some((copy_state.cursor.line_idx, copy_state.cursor.char_idx));
     let mut current_visual_row = 0;
 
     for (local_layout_idx, entry_layout) in layout.line_layouts.iter().enumerate() {
@@ -978,7 +996,10 @@ pub fn render_raw_side_panel(
                         let is_first_line = global_idx == sel_start.line_idx;
                         let is_last_line = global_idx == sel_end.line_idx;
 
-                        let raw_from_byte = if !is_first_line || sel_start.char_idx == 0 {
+                        let raw_from_byte = if raw_side {
+                            // a raw side selection is a byte range (MAX-71)
+                            if is_first_line { sel_start.byte_idx } else { 0 }
+                        } else if !is_first_line || sel_start.char_idx == 0 {
                             0 // Include ALL leading escape codes!
                         } else {
                             let disp_from_b = disp_char_to_byte
@@ -990,6 +1011,8 @@ pub fn render_raw_side_panel(
 
                         let raw_to_byte = if !is_last_line {
                             raw_bytes.len() // Include ALL trailing bytes, \r, \n!
+                        } else if raw_side {
+                            sel_end.byte_idx + 1
                         } else {
                             let to_char = sel_end.char_idx + 1;
                             if to_char >= display_text.chars().count() {
@@ -1012,6 +1035,35 @@ pub fn render_raw_side_panel(
                         }
                     }
 
+                    // 3. Ghost of the text cursor: its char's first byte (MAX-71)
+                    if let Some((ghost_line, ghost_char)) = raw_ghost
+                        && ghost_line == global_idx
+                    {
+                        let disp_b = disp_char_to_byte
+                            .get(ghost_char)
+                            .copied()
+                            .unwrap_or(display_text.len());
+                        let ghost_byte = map_disp_byte_to_raw(disp_b, &disp_map, raw_bytes.len())
+                            .min(raw_bytes.len().saturating_sub(1));
+                        if ghost_byte >= raw_byte_start
+                            && (ghost_byte < raw_byte_end || is_last_sub)
+                        {
+                            highlights.push(CharHighlight {
+                                start_col: ghost_byte - raw_byte_start,
+                                end_col: ghost_byte - raw_byte_start + 1,
+                                style: *theme.ui.cursor_ghost,
+                            });
+                        }
+                    }
+
+                    if let Some((cursor_line, cursor_byte)) = raw_cursor
+                        && cursor_line == global_idx
+                        && (cursor_byte < raw_byte_end || is_last_sub)
+                        && cursor_byte >= raw_byte_start
+                    {
+                        let col = (cursor_byte - raw_byte_start) * raw_view.stride();
+                        raw_cursor_cell = Some((visible_raw_lines.len(), col));
+                    }
                     visible_raw_lines.push(format_raw_bytes_with_highlights(
                         sub_raw_bytes,
                         raw_display_mode,
@@ -1047,9 +1099,17 @@ pub fn render_raw_side_panel(
 
     let usable_width = inner_area.width as usize;
     app.line_mode
-        .update_raw_limits(max_visible_raw_width.saturating_sub(usable_width));
+        .update_raw_limits(max_visible_raw_width.saturating_sub(usable_width), raw_view);
 
     let raw_pan_x = app.line_mode.raw_pan_x().min(app.line_mode.raw_pan_x_max());
+
+    if let Some((row, col)) = raw_cursor_cell
+        && col >= raw_pan_x
+        && col - raw_pan_x < usable_width
+    {
+        let x = inner_area.x + (col - raw_pan_x) as u16;
+        frame.set_cursor_position((x, inner_area.y + row as u16));
+    }
 
     render_raw_panel_widget(
         frame,

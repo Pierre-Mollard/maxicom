@@ -10,6 +10,7 @@ use crate::{
     app::{
         App,
         data_processing::{build_display_to_raw_byte_map, map_disp_byte_to_raw},
+        selection::CopySide,
         types::FocusTarget,
     },
     configs::{KeywordHighlight, RawSideView, ThemeConfig, settings::raw_view_to_display_mode},
@@ -121,8 +122,12 @@ pub fn render_vt100_terminal(
                 .map(|(b, _)| b)
                 .unwrap_or(plain_text.len());
 
-            let raw_byte_offset =
-                map_disp_byte_to_raw(plain_byte_offset, &disp_map, row_raw_bytes.len());
+            let copy_state = app.terminal_mode.copy_state();
+            let raw_byte_offset = if copy_state.active && copy_state.side == CopySide::Raw {
+                copy_state.cursor.byte_idx
+            } else {
+                map_disp_byte_to_raw(plain_byte_offset, &disp_map, row_raw_bytes.len())
+            };
 
             if let Some(raw_area) = raw_side_area {
                 let usable_width = (raw_area.width as usize).saturating_sub(1);
@@ -250,11 +255,15 @@ pub fn render_vt100_terminal(
                         let screen_x = content_area.x + viewer_col as u16;
                         let screen_y = content_area.y + viewer_row as u16;
 
-                        if !app.is_app_focused() {
-                            buf[(screen_x, screen_y)]
-                                .set_style(Style::default().add_modifier(Modifier::REVERSED));
+                        if copy_state.side == CopySide::Raw {
+                            buf[(screen_x, screen_y)].set_style(*theme.ui.cursor_ghost);
+                        } else {
+                            if !app.is_app_focused() {
+                                buf[(screen_x, screen_y)]
+                                    .set_style(Style::default().add_modifier(Modifier::REVERSED));
+                            }
+                            frame.set_cursor_position((screen_x, screen_y));
                         }
-                        frame.set_cursor_position((screen_x, screen_y));
                     }
                 }
             }
@@ -390,7 +399,7 @@ pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect, theme: 
 }
 
 pub fn render_vt100_raw_side_panel(
-    app: &App,
+    app: &mut App,
     frame: &mut Frame,
     raw_area: Rect,
     theme: &ThemeConfig,
@@ -422,6 +431,12 @@ pub fn render_vt100_raw_side_panel(
     } else {
         None
     };
+    let raw_side = copy_state.side == CopySide::Raw;
+    let raw_cursor = (copy_state.active && raw_side)
+        .then_some((copy_state.cursor.line_idx, copy_state.cursor.byte_idx));
+    let raw_ghost = (copy_state.active && !raw_side)
+        .then_some((copy_state.cursor.line_idx, copy_state.cursor.char_idx));
+    let mut raw_cursor_cell = None;
 
     let search = app.terminal_mode.search();
     let is_search_active = search.active && !search.matches.is_empty();
@@ -496,7 +511,9 @@ pub fn render_vt100_raw_side_panel(
             let is_first_line = world_row == start_pos.line_idx;
             let is_last_line = world_row == end_pos.line_idx;
 
-            let raw_from_b = if !is_first_line || start_pos.char_idx == 0 {
+            let raw_from_b = if raw_side {
+                if is_first_line { start_pos.byte_idx } else { 0 }
+            } else if !is_first_line || start_pos.char_idx == 0 {
                 0
             } else {
                 let disp_from_b = plain_char_to_byte
@@ -508,6 +525,8 @@ pub fn render_vt100_raw_side_panel(
 
             let raw_to_b = if !is_last_line {
                 raw_bytes_slice.len()
+            } else if raw_side {
+                end_pos.byte_idx + 1
             } else {
                 let to_char = end_pos.char_idx + 1;
                 if to_char >= plain_text.chars().count() {
@@ -530,6 +549,27 @@ pub fn render_vt100_raw_side_panel(
             }
         }
 
+        if let Some((ghost_row, ghost_char)) = raw_ghost
+            && ghost_row == world_row
+        {
+            let disp_b = plain_char_to_byte
+                .get(ghost_char)
+                .copied()
+                .unwrap_or(plain_text.len());
+            let ghost_byte = map_disp_byte_to_raw(disp_b, &disp_map, raw_bytes_slice.len())
+                .min(raw_bytes_slice.len().saturating_sub(1));
+            highlights.push(CharHighlight {
+                start_col: ghost_byte,
+                end_col: ghost_byte + 1,
+                style: *theme.ui.cursor_ghost,
+            });
+        }
+        if let Some((cursor_row, cursor_byte)) = raw_cursor
+            && cursor_row == world_row
+        {
+            raw_cursor_cell = Some((r, cursor_byte * raw_view.stride()));
+        }
+
         raw_lines.push(format_raw_bytes_with_highlights(
             raw_bytes_slice,
             display_mode,
@@ -538,12 +578,22 @@ pub fn render_vt100_raw_side_panel(
         ));
     }
 
-    render_raw_panel_widget(
-        frame,
-        raw_area,
-        inner_area,
-        block,
-        raw_lines,
-        app.terminal_mode.raw_pan_x(),
-    );
+    // the pan stops at the widest row shown, on a byte start (MAX-71)
+    let max_raw_width = raw_lines.iter().map(|l| l.width()).max().unwrap_or(0);
+    let overflow = max_raw_width.saturating_sub(inner_area.width as usize);
+    app.terminal_mode.update_raw_limits(overflow, raw_view);
+    let raw_pan_x = app
+        .terminal_mode
+        .raw_pan_x()
+        .min(app.terminal_mode.raw_pan_x_max());
+
+    if let Some((row, col)) = raw_cursor_cell
+        && col >= raw_pan_x
+        && col - raw_pan_x < inner_area.width as usize
+    {
+        let x = inner_area.x + (col - raw_pan_x) as u16;
+        frame.set_cursor_position((x, inner_area.y + row as u16));
+    }
+
+    render_raw_panel_widget(frame, raw_area, inner_area, block, raw_lines, raw_pan_x);
 }

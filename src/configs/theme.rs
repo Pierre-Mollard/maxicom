@@ -98,6 +98,7 @@ pub struct UiStyles {
     pub border_panel_focused: ConfigStyle,
     pub border_app_unfocused: ConfigStyle,
     pub cursor_unfocused: ConfigStyle,
+    pub cursor_ghost: ConfigStyle,
     pub selection: ConfigStyle,
     pub status_bar: ConfigStyle,
     pub scrollbar_thumb: ConfigStyle,
@@ -112,6 +113,11 @@ impl Default for UiStyles {
             border_panel_focused: ConfigStyle::from_fg(Color::Cyan),
             border_app_unfocused: ConfigStyle::from_fg(Color::DarkGray),
             cursor_unfocused: ConfigStyle::from_fg(Color::DarkGray),
+            cursor_ghost: ConfigStyle::new(
+                Style::default()
+                    .bg(Color::Rgb(0x4a, 0x4a, 0x5a))
+                    .fg(Color::White),
+            ),
             selection: ConfigStyle::new(
                 Style::default()
                     .bg(Color::Rgb(0x28, 0x50, 0x96))
