@@ -96,12 +96,19 @@ pub fn render(
             .style(*theme.ui.background)
             .title(monitor_title(app, &layout.monitor_outer));
 
-        for bottom_title in monitor_bottom_title(app, theme) {
-            block = block.title_bottom(bottom_title);
+        // in terminal mode the status bar can be in this bottom border, where it shows the pan
+        // itself (MAX-135)
+        let outer = layout.monitor_outer;
+        let bar_in_border = layout
+            .status_bar_area
+            .is_some_and(|bar| bar.y + 1 == outer.bottom());
+        if !bar_in_border {
+            for bottom_title in monitor_bottom_title(app, theme) {
+                block = block.title_bottom(bottom_title);
+            }
         }
 
         // right-aligned in the top border, inside its corner
-        let outer = layout.monitor_outer;
         let buttons: String = BORDER_BUTTONS.iter().map(|(text, _)| *text).collect();
         let mut x = outer
             .right()
@@ -156,11 +163,6 @@ pub fn render(
 
     if let Some(status_rect) = layout.status_bar_area {
         let targets = render_status_bar(app, frame, status_rect, theme, status_bar);
-        let targets = targets.into_iter().map(|(area, action)| ClickTarget {
-            area,
-            action,
-            hover: None,
-        });
         app.frame_map_mut().click_targets.extend(targets);
     }
 
@@ -1854,6 +1856,304 @@ mod tests {
                 assert!(!reversed(&h, (x + 3, y)));
             }
         }
+    }
+
+    /// MAX-131: a status bar block under the pointer takes the `hover` option, on its own
+    /// cells only, or its own `hover=` (the default `?` and `≡` have theirs); `hover = "none"`
+    /// turns it off, and a popup open stops it. The port is no button.
+    /// How: hover on `{mode}` with the default bar, a bar with `hover=(bg=red)` on a block and
+    /// `hover = "none"`, then a popup open.
+    #[test]
+    fn status_bar_hover() {
+        use ratatui::style::{Color, Modifier};
+        let moved = |h: &mut Harness, at| {
+            let event = mouse(MouseEventKind::Moved, at, KeyModifiers::NONE);
+            let action = crate::inputs::handle_event(event, &h.app);
+            h.app.update(action);
+            h.draw();
+        };
+        let cell = |h: &Harness, (x, y): (u16, u16)| h.terminal.backend().buffer()[(x, y)].clone();
+
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        let rows = h.draw();
+        let (x, y) = status_cell(&rows, "LINE");
+        moved(&mut h, (x + 1, y));
+        // the block is " LINE ", one column each side of the text
+        assert!((x - 1..x + 5).all(|x| cell(&h, (x, y)).modifier.contains(Modifier::REVERSED)));
+        assert!(!cell(&h, (x + 6, y)).modifier.contains(Modifier::REVERSED));
+
+        // the default buttons: help on the primary color, settings on the secondary; the port
+        // isn't clickable
+        let palette = h.theme.palette;
+        for (text, bg) in [("?", palette.main), ("≡", palette.secondary)] {
+            let at = status_cell(&rows, text);
+            moved(&mut h, at);
+            assert_eq!(cell(&h, at).bg, bg, "{text}");
+        }
+        click(&mut h, status_cell(&rows, "/dev/"));
+        assert!(h.app.overlay().is_none());
+
+        let mut config = h.app.settings().ui.status_bar.clone();
+        config.right = "[ A ](click=help hover=(bg=red)) [ B ](click=settings)".to_string();
+        config.hover = "none".to_string();
+        h.status_bar = CompiledStatusBar::new(&config, &h.theme);
+        let rows = h.draw();
+        let a = status_cell(&rows, "A");
+        moved(&mut h, a);
+        assert_eq!(cell(&h, a).bg, Color::Red);
+        let b = status_cell(&rows, "B");
+        moved(&mut h, b);
+        assert!(!cell(&h, b).modifier.contains(Modifier::REVERSED));
+        assert_ne!(cell(&h, b).bg, Color::Red);
+
+        moved(&mut h, a);
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::Settings)));
+        h.draw();
+        assert_ne!(cell(&h, a).bg, Color::Red);
+    }
+
+    /// MAX-135: with borders on, the status bar is a footer inset one column each side; its
+    /// plain text is on the UI background unless the layout is `band`, with or without borders.
+    /// The mode pill in copy mode and the hover keep their bg, and clicks and hovers land on
+    /// the moved blocks.
+    /// How: line mode with borders, the cells around the bar, copy mode, a hover on `?` and
+    /// clicks on `≡` and `LINE`; then borders off, and `band` with each.
+    #[test]
+    fn status_bar_inset_and_background() {
+        use crate::configs::StatusBarLayout;
+        let moved = |h: &mut Harness, at| {
+            let event = mouse(MouseEventKind::Moved, at, KeyModifiers::NONE);
+            let action = crate::inputs::handle_event(event, &h.app);
+            h.app.update(action);
+            h.draw();
+        };
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 24, |s| {
+            s.ui.show_borders = true;
+            s.ui.status_bar.layout = StatusBarLayout::Line;
+        });
+        h.feed(b"one\r\n");
+        let background = h.theme.ui.background.bg.unwrap();
+        let band = h.theme.ui.status_bar.bg.unwrap();
+        assert_ne!(background, band);
+
+        let rows = h.draw();
+        let y = 23;
+        let last = rows[y].chars().count() as u16 - 1;
+        for x in [0, last] {
+            assert_eq!(rows[y].chars().nth(x as usize), Some(' '));
+            assert_eq!(bg_at(&h, (x, y as u16)), Some(background));
+        }
+        // " LINE " starts in the second column
+        assert_eq!(status_cell(&rows, "LINE"), (2, 23));
+        assert_eq!(bg_at(&h, status_cell(&rows, "/dev/")), Some(background));
+
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        let rows = h.draw();
+        assert_eq!(
+            bg_at(&h, status_cell(&rows, "LINE")),
+            Some(ratatui::style::Color::Magenta)
+        );
+        h.app.update(Action::CopyMode(CopyModeAction::Exit));
+
+        let rows = h.draw();
+        let help = status_cell(&rows, "?");
+        moved(&mut h, help);
+        assert_eq!(bg_at(&h, help), Some(h.theme.palette.main));
+        click(&mut h, status_cell(&rows, "≡"));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+        h.app.close_overlay();
+        click(&mut h, status_cell(&rows, "LINE"));
+        assert_eq!(h.app.settings().mode, Mode::Terminal);
+
+        h.app.settings_mut().mode = Mode::Line;
+        for (borders, layout, line_x, bg) in [
+            (false, StatusBarLayout::Line, 1, background),
+            (false, StatusBarLayout::Band, 1, band),
+            (true, StatusBarLayout::Band, 2, band),
+        ] {
+            let ui = &mut h.app.settings_mut().ui;
+            ui.show_borders = borders;
+            ui.status_bar.layout = layout;
+            let rows = h.draw();
+            assert_eq!(
+                status_cell(&rows, "LINE"),
+                (line_x, 23),
+                "{borders} {layout:?}"
+            );
+            for x in [0, last] {
+                assert_eq!(bg_at(&h, (x, 23)), Some(bg), "{borders} {layout:?}");
+            }
+            assert_eq!(bg_at(&h, status_cell(&rows, "/dev/")), Some(bg));
+        }
+    }
+
+    /// MAX-135: the `border` layout draws the status bar in the TX box's bottom border in line
+    /// mode, so the history gets its row; the border's `└─`, `─┘` and the dashes between the
+    /// parts stay, a space apart from the text, and the clicks work there. Borders off, it is
+    /// the `line` layout.
+    /// How: line mode at 80x24 with `line` then `border`: where the TX box starts, its bottom
+    /// row, clicks on `≡` and `LINE`; then borders off with each.
+    #[test]
+    fn status_bar_in_the_tx_border() {
+        use crate::configs::StatusBarLayout;
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 24, |s| {
+            s.ui.show_borders = true;
+            s.ui.status_bar.layout = StatusBarLayout::Line;
+        });
+        let tx_top = |rows: &[String]| cell_of(rows, "Transmit").1;
+        let line_tx = tx_top(&h.draw());
+
+        h.app.settings_mut().ui.status_bar.layout = StatusBarLayout::Border;
+        let rows = h.draw();
+        assert_eq!(tx_top(&rows), line_tx + 1);
+        let bottom = &rows[23];
+        assert!(bottom.starts_with("└─ LINE "), "{bottom:?}");
+        assert!(bottom.ends_with(" ─┘"), "{bottom:?}");
+        assert!(bottom.contains("8N1 ──"), "{bottom:?}");
+        assert!(bottom.contains("── RX: "), "{bottom:?}");
+        let background = h.theme.ui.background.bg;
+        assert_eq!(bg_at(&h, status_cell(&rows, "/dev/")), background);
+
+        click(&mut h, status_cell(&rows, "≡"));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+        h.app.close_overlay();
+        click(&mut h, status_cell(&rows, "LINE"));
+        assert_eq!(h.app.settings().mode, Mode::Terminal);
+
+        h.app.settings_mut().mode = Mode::Line;
+        h.app.settings_mut().ui.show_borders = false;
+        let border_rows = h.draw();
+        h.app.settings_mut().ui.status_bar.layout = StatusBarLayout::Line;
+        assert_eq!(border_rows, h.draw());
+    }
+
+    /// MAX-135: in terminal mode, the `border` layout draws the status bar in the history's
+    /// bottom border, without the pan arrows; an open search takes the border, and the bar
+    /// and its clicks come back when it closes.
+    /// How: terminal mode with `border`, the last row and a click on `≡`, before, during and
+    /// after a search.
+    #[test]
+    fn status_bar_in_the_history_border() {
+        use crate::configs::StatusBarLayout;
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 24, |s| {
+            s.mode = Mode::Terminal;
+            s.ui.show_borders = true;
+            s.ui.status_bar.layout = StatusBarLayout::Border;
+        });
+        let rows = h.draw();
+        let bottom = &rows[23];
+        assert!(bottom.starts_with("└─ TERM "), "{bottom:?}");
+        assert!(bottom.ends_with(" ─┘"), "{bottom:?}");
+        let settings = status_cell(&rows, "≡");
+
+        h.app.update(Action::Search(SearchModeAction::Start));
+        let rows = h.draw();
+        assert!(rows[23].contains("SEARCH"), "{:?}", rows[23]);
+        assert!(!rows[23].contains("TERM "), "{:?}", rows[23]);
+        click(&mut h, settings);
+        assert!(!matches!(h.app.overlay(), Some(Overlay::Settings)));
+
+        h.app.update(Action::Search(SearchModeAction::Cancel));
+        let rows = h.draw();
+        assert!(rows[23].starts_with("└─ TERM "), "{:?}", rows[23]);
+        click(&mut h, settings);
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+    }
+
+    /// MAX-135: the terminal's pan arrows are in the history's bottom border with the `line`
+    /// layout; with `border` the bar takes that border and shows the pan itself, in the
+    /// secondary color, so the built-in arrows are left out.
+    /// How: a 200-column terminal in a 120-column screen (the bar's parts overlap when narrower),
+    /// panned right by 3: the history's bottom row with `line`, then the last row with `border`.
+    #[test]
+    fn terminal_pan_arrows_and_the_border_layout() {
+        use crate::configs::StatusBarLayout;
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 120, 24, |s| {
+            s.mode = Mode::Terminal;
+            s.terminal_mode.cols = 200;
+            s.ui.show_borders = true;
+            s.ui.status_bar.layout = StatusBarLayout::Line;
+        });
+        h.draw();
+        h.scroll(HistoryAction::PanRight(3));
+        let rows = h.draw();
+        let history_bottom = &rows[22];
+        assert!(history_bottom.starts_with("└ ◀ (3)"), "{history_bottom:?}");
+        assert!(history_bottom.ends_with("▶ ┘"), "{history_bottom:?}");
+
+        h.app.settings_mut().ui.status_bar.layout = StatusBarLayout::Border;
+        let rows = h.draw();
+        let bottom = &rows[23];
+        assert_eq!(bottom.matches('◀').count(), 1, "{bottom:?}");
+        assert_eq!(bottom.matches('▶').count(), 1, "{bottom:?}");
+        assert!(bottom.contains(" ◀ (3) "), "{bottom:?}");
+        let secondary = h.theme.palette.secondary;
+        for arrow in ["◀", "▶"] {
+            let (x, y) = status_cell(&rows, arrow);
+            assert_eq!(
+                h.terminal.backend().buffer()[(x, y)].fg,
+                secondary,
+                "{arrow}"
+            );
+        }
+    }
+
+    /// MAX-135: the `box` layout draws the status bar in a box of its own under the TX box,
+    /// 2 rows taller than `line`, its text inside on the UI background; clicks and hovers land
+    /// on it. Borders off, it is the `line` layout.
+    /// How: line mode at 80x24 with `line` then `box`: where the TX box starts, the last three
+    /// rows, a hover on `?` and a click on `≡`; then borders off with each.
+    #[test]
+    fn status_bar_box_layout() {
+        use crate::configs::StatusBarLayout;
+        let moved = |h: &mut Harness, at| {
+            let event = mouse(MouseEventKind::Moved, at, KeyModifiers::NONE);
+            let action = crate::inputs::handle_event(event, &h.app);
+            h.app.update(action);
+            h.draw();
+        };
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 24, |s| {
+            s.ui.show_borders = true;
+            s.ui.status_bar.layout = StatusBarLayout::Line;
+        });
+        let tx_top = |rows: &[String]| cell_of(rows, "Transmit").1;
+        let line_tx = tx_top(&h.draw());
+
+        h.app.settings_mut().ui.status_bar.layout = StatusBarLayout::Box;
+        let rows = h.draw();
+        assert_eq!(tx_top(&rows), line_tx - 2);
+        assert!(
+            rows[21].starts_with("┌──") && rows[21].ends_with("──┐"),
+            "{:?}",
+            rows[21]
+        );
+        assert!(rows[22].starts_with("│ LINE "), "{:?}", rows[22]);
+        assert!(rows[22].ends_with(" │"), "{:?}", rows[22]);
+        assert!(
+            rows[23].starts_with("└──") && rows[23].ends_with("──┘"),
+            "{:?}",
+            rows[23]
+        );
+        let background = h.theme.ui.background.bg;
+        assert_eq!(bg_at(&h, cell_of(&rows, "/dev/")), background);
+
+        // in the box's middle row, not the border buttons of the top row
+        let bar_cell = |text: &str| {
+            let x = rows[22].rfind(text).unwrap();
+            (rows[22][..x].chars().count() as u16, 22)
+        };
+        let help = bar_cell("?");
+        moved(&mut h, help);
+        assert_eq!(bg_at(&h, help), Some(h.theme.palette.main));
+        click(&mut h, bar_cell("≡"));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+        h.app.close_overlay();
+
+        h.app.settings_mut().ui.show_borders = false;
+        let box_rows = h.draw();
+        h.app.settings_mut().ui.status_bar.layout = StatusBarLayout::Line;
+        assert_eq!(box_rows, h.draw());
     }
 
     /// MAX-131: mouse moves don't cancel a pending prefix: a move over nothing (ignored) or a

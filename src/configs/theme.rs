@@ -38,7 +38,7 @@ impl Default for PaletteColors {
             secondary: Color::Yellow,
             ternary: Color::Green,
             text: Color::White,
-            text_muted: Color::DarkGray,
+            text_muted: Color::Rgb(0x8c, 0x92, 0x9e),
             text_warn: Color::Red,
             text_good: Color::Green,
             unselected: Color::White,

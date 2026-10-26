@@ -53,7 +53,8 @@ cargo deny check
 #### STATUS BAR FORMAT
 
 - Syntax:
-  - `plain text`                  Base theme style
+  - `plain text`                  Base theme style (`status_bar`), on the UI
+                                background unless the layout is `band`
   - `{variable}`                  Dynamic runtime value
   - `[content](style)`            Styled text span
   - `[content](cond?true:false)`  Conditional style
@@ -114,12 +115,25 @@ cargo deny check
   - Mouse:
     `click=<action>` runs a keymap action (e.g. `help`, `settings`, `quit`,
     `toggle_logging`) when the block is clicked
+    `hover=<style>` styles the block under the mouse pointer, e.g.
+    `hover=(bg=main fg=black)`, or `hover=none`; blocks without it take
+    `hover` in `[ui.status_bar]` (default "reversed", "none" for no hover)
 
 - Clicks: a block without `click=` runs what its first variable implies:
   - {mode}                       Switch between LINE and TERM
-  - {port}, {baud}, {framing}    Open the serial port settings
+  - {baud}, {framing}            Open the serial port settings ({port} does nothing)
   - {copy_side}                  Switch the copy cursor's panel
   - {pan_left}, {pan_right}      Pan left / right
   - {scroll_pos}, {scroll_pos_up}, {scroll_percent}, {scroll_offset}
                                  Back to the live tail
   A variable in plain text (outside `[...]`) is clickable on its own.
+
+- Layout: `layout` in `[ui.status_bar]`
+  - `line`             A row of its own, plain text on the UI background
+  - `band`             A row filled with the `status_bar` bg
+  - `border` (default) In the bottom border of the last box (TX box in line
+                     mode, history in terminal mode, where a search takes
+                     its place while open)
+  - `box`              In a box of its own, 3 rows high
+  `border` and `box` need borders, else they are `line`. With borders on,
+  `line` and `band` are inset one column each side.

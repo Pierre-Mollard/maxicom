@@ -4,11 +4,24 @@
 //! conditional ternaries, and element visibility toggling.
 //!
 //! ## Syntax
-//! - **Plain Text**: Rendered using the base theme style `status_bar`.
+//! - **Plain Text**: Rendered using the base theme style `status_bar`, on the UI background
+//!   unless the layout is `band`. Blocks with their own `bg=` keep it.
 //! - **Variables**: `{variable_name}` replaced dynamically at runtime.
 //! - **Styled Blocks**: `[content](style_spec)`
 //! - **Conditionals**: `[content](condition?true_style:false_style)`
 //! - **Grouping**: Parentheses `(style1 style2)` group styles in conditional branches.
+//!
+//! ## Layouts
+//! `layout` in `[ui.status_bar]`:
+//! - `line`: a row of its own, plain text on the UI background
+//! - `band`: a row filled with the `status_bar` bg
+//! - `border` (default): in the bottom border of the last box (the TX box in line mode, the
+//!   history in terminal mode, where a search takes its place while open)
+//! - `box`: in a box of its own, 3 rows high
+//!
+//! `border` and `box` need borders, else they are `line`.
+//!
+//! With borders on, `line` and `band` are inset one column each side.
 //!
 //! ## Available Variables
 //! | Variable            | Description                                             | Example          |
@@ -62,17 +75,20 @@
 //! - **Explicit Backgrounds**: `bg=<color>` (e.g. `bg=main`, `bg=red`, `bg=#1e1e2e`)
 //! - **Clearing**: `fg=none` / `fg=reset`, `bg=none` / `bg=reset`
 //! - **Mouse**: `click=<action>` runs a keymap action (`help`, `settings`, `quit`, ...) when the
-//!   block is clicked. Not a style: it is the same in every branch of a ternary
+//!   block is clicked. `hover=<style>` styles a clickable block under the mouse pointer
+//!   (`hover=(bg=main fg=black)`, `hover=none` for none), over the `hover` option of
+//!   `[ui.status_bar]` (default `reversed`). Neither is a style: they are the same in every
+//!   branch of a ternary
 //!
 //! ## Clicks
 //! A block without `click=` runs what its first variable implies; a variable in plain text is
-//! clickable on its own. The others (`{rx_bytes}`, `{tx_bytes}`, `{time}`, `{scroll_max}`) do
-//! nothing.
+//! clickable on its own. The others (`{port}`, `{rx_bytes}`, `{tx_bytes}`, `{time}`,
+//! `{scroll_max}`) do nothing: the port isn't changed while running.
 //!
 //! | Variable                                                   | Click                     |
 //! |------------------------------------------------------------|---------------------------|
 //! | `{mode}`                                                   | `toggle_input_mode`       |
-//! | `{port}`, `{baud}`, `{framing}`                            | `serial_settings`         |
+//! | `{baud}`, `{framing}`                                      | `serial_settings`         |
 //! | `{copy_side}`                                              | the copy cursor's panel   |
 //! | `{pan_left}`, `{pan_right}`                                | `pan_left`, `pan_right`   |
 //! | `{scroll_pos}` `{scroll_pos_up}` `{scroll_percent}` `{scroll_offset}` | `scroll_to_bottom` |
@@ -97,15 +113,19 @@ use unicode_width::UnicodeWidthStr;
 
 use ratatui::{
     Frame,
-    layout::{Alignment, Rect},
+    layout::{Alignment, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Paragraph},
+    widgets::{Block, Borders, Paragraph},
 };
 
 use crate::{
-    app::{App, InputContext, selection::CopySide, types::ClickAction},
-    configs::{KeyBindingAction, Mode, StatusBarConfig, ThemeConfig},
+    app::{
+        App, InputContext,
+        selection::CopySide,
+        types::{ClickAction, ClickTarget},
+    },
+    configs::{KeyBindingAction, Mode, StatusBarConfig, StatusBarLayout, ThemeConfig},
     ui::common::{pan_left_indicator, pan_right_indicator},
 };
 
@@ -114,6 +134,7 @@ pub struct CompiledStatusBar {
     center: CompiledTemplate,
     right: CompiledTemplate,
     time_format: String,
+    hover: Option<Style>,
 }
 
 impl CompiledStatusBar {
@@ -123,8 +144,37 @@ impl CompiledStatusBar {
             center: CompiledTemplate::new(&config.center, theme),
             right: CompiledTemplate::new(&config.right, theme),
             time_format: config.time_format.clone(),
+            hover: compile_hover(&config.hover, theme),
         }
     }
+}
+
+/// A block's own `hover=`: `None` takes the bar's `hover` option, `Some(None)` is no hover
+type HoverOverride = Option<Option<Style>>;
+
+/// Where a clickable block is in its line (start column, width), what a click runs, and its
+/// own hover style
+type ClickSpot = (u16, u16, ClickAction, HoverOverride);
+
+/// A hover style from style words, a group in parentheses too; `None` for `none` or `hide`
+/// (MAX-131)
+fn compile_hover(words: &str, theme: &ThemeConfig) -> Option<Style> {
+    let words = words.trim();
+    let words = words
+        .strip_prefix('(')
+        .and_then(|inner| inner.strip_suffix(')'))
+        .unwrap_or(words);
+    let mut style = Style::default();
+    for word in compile_style_words(words, theme) {
+        style = match word {
+            StyleWord::Hide => return None,
+            StyleWord::Modifier(modifier) => style.add_modifier(modifier),
+            StyleWord::Reset => Style::default(),
+            StyleWord::Fg(color) => style.fg(color),
+            StyleWord::Bg(color) => style.bg(color),
+        };
+    }
+    Some(style)
 }
 
 pub struct CompiledTemplate {
@@ -135,11 +185,13 @@ enum Segment {
     /// Text in the base style
     Plain(Vec<TextPart>),
     /// `[text](style_spec)`, omitted when its style resolves to `hide` or its text is empty.
-    /// A click on it runs `click`: its `click=<action>`, else what its first variable implies
+    /// A click on it runs `click`: its `click=<action>`, else what its first variable implies.
+    /// Under the pointer it takes its `hover=`, else the bar's
     Styled {
         text: Vec<TextPart>,
         style: Vec<StyleExpr>,
         click: Option<ClickAction>,
+        hover: HoverOverride,
     },
 }
 
@@ -193,14 +245,16 @@ impl Var {
     fn click(self) -> Option<ClickAction> {
         let action = match self {
             Self::Mode => KeyBindingAction::SKInputMode,
-            Self::Port | Self::Baud | Self::Framing => KeyBindingAction::SerialSettings,
+            Self::Baud | Self::Framing => KeyBindingAction::SerialSettings,
             Self::PanLeft => KeyBindingAction::PanLeft,
             Self::PanRight => KeyBindingAction::PanRight,
             Self::ScrollPos | Self::ScrollPosUp | Self::ScrollPercent | Self::ScrollOffset => {
                 KeyBindingAction::ScrollToBottom
             }
             Self::CopySide => return Some(ClickAction::ToggleSide),
-            Self::RxBytes | Self::TxBytes | Self::Time | Self::ScrollMax => return None,
+            Self::Port | Self::RxBytes | Self::TxBytes | Self::Time | Self::ScrollMax => {
+                return None;
+            }
         };
         Some(ClickAction::Run(action))
     }
@@ -389,15 +443,24 @@ impl CompiledTemplate {
                 if let Some(paren_idx) = close_paren {
                     let style_end = style_start + paren_idx;
                     let text = parse_text_parts(&template[text_start..text_end]);
-                    // `click=<action>` is no style: an unknown action is dropped like an
-                    // unknown style word
-                    let (clicks, style): (Vec<&str>, Vec<&str>) =
+                    // `click=<action>` and `hover=<style>` are no style: an unknown action is
+                    // dropped like an unknown style word
+                    let (mouse, style): (Vec<&str>, Vec<&str>) =
                         tokenize_spec(&template[style_start..style_end])
                             .into_iter()
-                            .partition(|token| token.starts_with("click="));
-                    let click = clicks
+                            .partition(|token| {
+                                token.starts_with("click=") || token.starts_with("hover=")
+                            });
+                    let clicks = mouse
                         .iter()
-                        .find_map(|token| token["click=".len()..].parse().ok())
+                        .filter_map(|token| token.strip_prefix("click="));
+                    let hover = mouse
+                        .iter()
+                        .find_map(|token| token.strip_prefix("hover="))
+                        .map(|words| compile_hover(words, theme));
+                    let click = clicks
+                        .into_iter()
+                        .find_map(|action| action.parse().ok())
                         .map(ClickAction::Run)
                         .or_else(|| {
                             text.iter().find_map(|part| match part {
@@ -412,6 +475,7 @@ impl CompiledTemplate {
                             .map(|token| compile_expression(token.trim(), theme))
                             .collect(),
                         click,
+                        hover,
                     });
                     cursor = style_end + 1;
                     continue;
@@ -438,7 +502,7 @@ impl CompiledTemplate {
         app: &App,
         base_style: Style,
         time_format: &str,
-    ) -> (Vec<Span<'_>>, Vec<(u16, u16, ClickAction)>) {
+    ) -> (Vec<Span<'_>>, Vec<ClickSpot>) {
         let mut spans = Vec::with_capacity(self.segments.len());
         let mut clicks = Vec::new();
         let mut col: u16 = 0;
@@ -459,7 +523,7 @@ impl CompiledTemplate {
                             && let Some(click) = var.click()
                             && width > 0
                         {
-                            clicks.push((part_col, width, click));
+                            clicks.push((part_col, width, click, None));
                         }
                         part_col = part_col.saturating_add(width);
                     }
@@ -467,7 +531,12 @@ impl CompiledTemplate {
                     col = col.saturating_add(span.width() as u16);
                     spans.push(span);
                 }
-                Segment::Styled { text, style, click } => {
+                Segment::Styled {
+                    text,
+                    style,
+                    click,
+                    hover,
+                } => {
                     let Some(span_style) = resolve_style(style, base_style, app) else {
                         continue;
                     };
@@ -476,7 +545,7 @@ impl CompiledTemplate {
                         let span = Span::styled(content, span_style);
                         let width = span.width() as u16;
                         if let Some(click) = *click {
-                            clicks.push((col, width, click));
+                            clicks.push((col, width, click, *hover));
                         }
                         col = col.saturating_add(width);
                         spans.push(span);
@@ -729,22 +798,44 @@ fn tokenize_spec(spec: &str) -> Vec<&str> {
     tokens
 }
 
-/// Draws the status bar; returns where its clickable blocks are, the left part's first, then
-/// the center's, then the right's, as they are drawn over each other (MAX-125)
+/// Draws the status bar; returns its clickable blocks with their hover style (MAX-131), the
+/// left part's first, then the center's, then the right's, as they are drawn over each other
+/// (MAX-125)
 pub fn render_status_bar(
     app: &App,
     frame: &mut Frame,
     area: Rect,
     theme: &ThemeConfig,
     status_bar: &CompiledStatusBar,
-) -> Vec<(Rect, ClickAction)> {
+) -> Vec<ClickTarget> {
     let mut targets = Vec::new();
     if !app.settings().ui.show_status_bar {
         return targets;
     }
 
-    let base_style = *theme.ui.status_bar;
-    frame.render_widget(Block::default().style(base_style), area);
+    // only the band layout fills the row with its colour; the others put the text on the UI
+    // background (MAX-135)
+    let layout = app.settings().ui.status_bar_layout();
+    let mut base_style = *theme.ui.status_bar;
+    if layout != StatusBarLayout::Band {
+        base_style.bg = theme.ui.background.bg;
+    }
+    let in_border = layout == StatusBarLayout::Border;
+    let mut parts_area = area;
+    if layout == StatusBarLayout::Box {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(*theme.ui.border_panel)
+            .style(base_style);
+        parts_area = block.inner(area);
+        frame.render_widget(block, area);
+    } else if !in_border {
+        // with borders, inset one column each side to line up with the boxes' edges
+        if app.settings().ui.show_borders {
+            parts_area = area.inner(Margin::new(1, 0));
+        }
+        frame.render_widget(Block::default().style(base_style), area);
+    }
 
     let time_format = &status_bar.time_format;
     let parts = [
@@ -753,26 +844,48 @@ pub fn render_status_bar(
         (&status_bar.right, Alignment::Right),
     ];
     for (template, alignment) in parts {
-        let (spans, clicks) = template.spans_and_clicks(app, base_style, time_format);
-        if spans.is_empty() {
+        let (mut spans, clicks) = template.spans_and_clicks(app, base_style, time_format);
+        // in the border, the cells left unwritten keep the `─`: a part of blanks would cut it
+        let blank = || spans.iter().all(|span| span.content.trim().is_empty());
+        if spans.is_empty() || (in_border && blank()) {
             continue;
+        }
+        // and a space keeps the text off the dashes, unless the part has one there
+        let mut lead = 0;
+        if in_border {
+            let space = || Span::styled(" ", base_style);
+            if !spans[0].content.starts_with(char::is_whitespace) {
+                spans.insert(0, space());
+                lead = 1;
+            }
+            if !spans[spans.len() - 1]
+                .content
+                .ends_with(char::is_whitespace)
+            {
+                spans.push(space());
+            }
         }
         let line = Line::from(spans);
         // where the paragraph starts the line, as ratatui works it out
         let width = line.width() as u16;
-        let start = area.x
+        let start = parts_area.x
             + match alignment {
                 Alignment::Left => 0,
-                Alignment::Center => (area.width / 2).saturating_sub(width / 2),
-                Alignment::Right => area.width.saturating_sub(width),
+                Alignment::Center => (parts_area.width / 2).saturating_sub(width / 2),
+                Alignment::Right => parts_area.width.saturating_sub(width),
             };
-        for (col, width, click) in clicks {
-            let cell = Rect::new(start.saturating_add(col), area.y, width, 1).intersection(area);
+        for (col, width, action, hover) in clicks {
+            let cell = Rect::new(start.saturating_add(lead + col), parts_area.y, width, 1)
+                .intersection(parts_area);
             if !cell.is_empty() {
-                targets.push((cell, click));
+                targets.push(ClickTarget {
+                    area: cell,
+                    action,
+                    hover: hover.unwrap_or(status_bar.hover),
+                });
             }
         }
-        frame.render_widget(Paragraph::new(line).alignment(alignment), area);
+        frame.render_widget(Paragraph::new(line).alignment(alignment), parts_area);
     }
     targets
 }
@@ -813,6 +926,7 @@ mod tests {
     }
 
     const BG: &str = "Some(Rgb(30, 35, 45))";
+    const MUTED: &str = "Some(Rgb(140, 146, 158))";
 
     fn span(text: &str, fg: &str, bg: &str, mods: &str) -> String {
         format!("{text}|{fg}|{bg}|{mods}")
@@ -832,7 +946,9 @@ mod tests {
             render(&d.left, &a),
             [
                 span(" TERM ", "Some(Cyan)", BG, "BOLD"),
-                plain(" /dev/ttyUSB0 | "),
+                plain(" /dev/ttyUSB0 "),
+                span("|", MUTED, BG, "NONE"),
+                plain(" "),
                 span("115200", "Some(Cyan)", BG, "NONE"),
                 plain(" 8N1"),
             ]
@@ -869,7 +985,7 @@ mod tests {
         let mut l = app(Mode::Line);
         l.settings_mut().raw_side.view = crate::configs::RawSideView::Hex;
         l.feed_rx(b"abc\r\n");
-        assert_eq!(render(&d.left, &l).len(), 4);
+        assert_eq!(render(&d.left, &l).len(), 6);
 
         l.update(Action::CopyMode(CopyModeAction::Enter));
         assert_eq!(
@@ -917,15 +1033,19 @@ mod tests {
         assert_eq!(
             render(&d.right, &a),
             [
-                span("RX: 0", "Some(DarkGray)", BG, "NONE"),
-                plain(" | "),
-                span("TX: 0", "Some(DarkGray)", BG, "NONE"),
-                plain(" | "),
+                span("RX: 0", MUTED, BG, "NONE"),
+                plain(" "),
+                span("|", MUTED, BG, "NONE"),
+                plain(" "),
+                span("TX: 0", MUTED, BG, "NONE"),
+                plain(" "),
+                span("|", MUTED, BG, "NONE"),
+                plain(" "),
                 span("TIME", "Some(Yellow)", BG, "NONE"),
                 plain(" "),
-                span("?", "Some(DarkGray)", BG, "NONE"),
+                span("?", MUTED, BG, "NONE"),
                 plain(" "),
-                span("≡", "Some(DarkGray)", BG, "NONE"),
+                span("≡", MUTED, BG, "NONE"),
                 plain(" "),
             ]
         );
@@ -1025,6 +1145,13 @@ mod tests {
 
     /// Where a template's clickable blocks are (start column, width) and what they run
     fn clicks(template: &str, app: &App) -> Vec<(u16, u16, ClickAction)> {
+        spots(template, app)
+            .into_iter()
+            .map(|(col, width, click, _)| (col, width, click))
+            .collect()
+    }
+
+    fn spots(template: &str, app: &App) -> Vec<ClickSpot> {
         let theme = ThemeConfig::default();
         CompiledTemplate::new(template, &theme)
             .spans_and_clicks(app, *theme.ui.status_bar, "TIME")
@@ -1055,7 +1182,8 @@ mod tests {
 
     /// MAX-125: a block takes the click its first variable implies, unless it has its own
     /// `click=`; in plain text only the variable is clickable, not the text around it.
-    /// How: `{mode}`, `{port}`/`{baud}` in plain text, `{rx_bytes}` (no click), `{copy_side}`.
+    /// How: `{mode}`, `{port}` (no click) and `{baud}` in plain text, `{rx_bytes}` (no click),
+    /// `{copy_side}`.
     #[test]
     fn variables_imply_clicks() {
         use KeyBindingAction::{Help, SKInputMode, SerialSettings};
@@ -1071,7 +1199,7 @@ mod tests {
         let baud = a.serial_config.baudrate.to_string().len() as u16;
         assert_eq!(
             clicks("port {port} | {baud} {rx_bytes}", &a),
-            [(5, 6, run(SerialSettings)), (14, baud, run(SerialSettings))]
+            [(14, baud, run(SerialSettings))]
         );
         assert_eq!(clicks("[RX {rx_bytes}](muted)", &a), []);
 
@@ -1080,5 +1208,31 @@ mod tests {
             clicks("[{copy_side}](bold)", &a),
             [(0, 3, ClickAction::ToggleSide)]
         );
+    }
+
+    /// MAX-131: a block's `hover=` is no style word: its own style, `none` to have none, or
+    /// nothing to take the bar's `hover` option; the option is read the same way.
+    /// How: `hover=(bg=red bold)`, `hover=none`, no `hover=`, and `compile_hover` alone.
+    #[test]
+    fn hover_keyword_and_option() {
+        let a = app(Mode::Terminal);
+        let theme = ThemeConfig::default();
+        assert_eq!(
+            render("[ ? ](muted hover=(bg=red bold) click=help)", &a),
+            render("[ ? ](muted)", &a)
+        );
+        let red_bold = Style::default().bg(Color::Red).add_modifier(Modifier::BOLD);
+        let hover = |template| spots(template, &a)[0].3;
+        assert_eq!(
+            hover("[?](click=help hover=(bg=red bold))"),
+            Some(Some(red_bold))
+        );
+        assert_eq!(hover("[?](click=help hover=none)"), Some(None));
+        assert_eq!(hover("[?](click=help)"), None);
+
+        let reversed = Style::default().add_modifier(Modifier::REVERSED);
+        assert_eq!(compile_hover("reversed", &theme), Some(reversed));
+        assert_eq!(compile_hover(" (bg=red bold) ", &theme), Some(red_bold));
+        assert_eq!(compile_hover("none", &theme), None);
     }
 }

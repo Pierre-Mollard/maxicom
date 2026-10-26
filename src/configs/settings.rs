@@ -396,6 +396,18 @@ impl Default for TerminalModeConfig {
     }
 }
 
+/// How the status bar is drawn: a plain row, one filled with the theme's `status_bar` bg, in
+/// the last box's bottom border, or in a box of its own (MAX-135)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StatusBarLayout {
+    Line,
+    Band,
+    #[default]
+    Border,
+    Box,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StatusBarConfig {
@@ -403,21 +415,25 @@ pub struct StatusBarConfig {
     pub center: String,
     pub right: String,
     pub time_format: String,
+    pub hover: String,
+    pub layout: StatusBarLayout,
 }
 
 impl Default for StatusBarConfig {
     fn default() -> Self {
         Self {
             left: String::from(
-                "[ {mode} ](prefix?(bg=secondary fg=black bold):copy_raw?(bg=red fg=black bold):copy?(bg=magenta fg=black bold):search?(bg=blue fg=white bold):(fg=primary bold))[ {copy_side}](copy_raw?(fg=red bold):copy?(fg=magenta bold):hide) {port} | [{baud}](primary) {framing}",
+                "[ {mode} ](prefix?(bg=secondary fg=black bold):copy_raw?(bg=red fg=black bold):copy?(bg=magenta fg=black bold):search?(bg=blue fg=white bold):(fg=primary bold))[ {copy_side}](copy_raw?(fg=red bold):copy?(fg=magenta bold):hide) {port} [|](muted) [{baud}](primary) {framing}",
             ),
             center: String::from(
-                " [ ● REC ](rec?(fg=warn bold):hide click=toggle_logging)[ {pan_left} ](pan_left?warn:hide)[ {pan_right} ](pan_right_alert?(bg=warn fg=black bold):(pan_right?warn:hide))",
+                " [ ● REC ](rec?(fg=warn bold):hide click=toggle_logging)[ {pan_left} ](pan_left?secondary:hide)[ {pan_right} ](pan_right_alert?(bg=warn fg=black bold):(pan_right?secondary:hide))",
             ),
             right: String::from(
-                "[{scroll_pos_up} ](has_scroll?muted:hide)[RX: {rx_bytes}](muted) | [TX: {tx_bytes}](muted) | [{time}](secondary) [?](muted click=help) [≡](muted click=settings) ",
+                "[{scroll_pos_up} ](has_scroll?muted:hide)[RX: {rx_bytes}](muted) [|](muted) [TX: {tx_bytes}](muted) [|](muted) [{time}](secondary) [?](muted click=help hover=(bg=primary fg=black)) [≡](muted click=settings hover=(bg=secondary fg=black)) ",
             ),
             time_format: String::from("%H:%M:%S"),
+            hover: String::from("reversed"),
+            layout: StatusBarLayout::Border,
         }
     }
 }
@@ -463,6 +479,16 @@ impl Default for UiConfig {
 }
 
 impl UiConfig {
+    /// The status bar layout in use: `border` and `box` need borders, else it's `line`
+    pub fn status_bar_layout(&self) -> StatusBarLayout {
+        match self.status_bar.layout {
+            StatusBarLayout::Border | StatusBarLayout::Box if !self.show_borders => {
+                StatusBarLayout::Line
+            }
+            layout => layout,
+        }
+    }
+
     pub fn validate(&self) -> Result<(), ConfigValidationError> {
         self.status_bar.validate()
     }

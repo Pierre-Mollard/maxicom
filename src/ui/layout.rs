@@ -9,7 +9,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::{
     app::{App, types::FocusTarget},
     configs::{
-        Mode, RawSideView, SettingsConfig, ThemeConfig, WrapMode,
+        Mode, RawSideView, SettingsConfig, StatusBarLayout, ThemeConfig, WrapMode,
         settings::{PrefixWrapBehavior, RawSideOrientation},
     },
 };
@@ -50,7 +50,15 @@ impl ScreenLayout {
         let show_scrollbar = ui.show_scrollbar;
         let input_mode = app.settings().mode;
 
-        let status_height = if show_status_bar { 1 } else { 0 };
+        // in the border layout, the status bar takes no row of its own (MAX-135)
+        let status_in_border = show_status_bar && ui.status_bar_layout() == StatusBarLayout::Border;
+        let status_height = if !show_status_bar || status_in_border {
+            0
+        } else if ui.status_bar_layout() == StatusBarLayout::Box {
+            3
+        } else {
+            1
+        };
         let prompt_height = match input_mode {
             Mode::Terminal => 0,
             Mode::Line => {
@@ -86,7 +94,20 @@ impl ScreenLayout {
         } else {
             None
         };
-        let status_bar_area = if show_status_bar {
+        let status_bar_area = if status_in_border {
+            // the last box's bottom border, inside its `└─` and `─┘`; in terminal mode it's the
+            // history's, which the search bar takes while it's open
+            let last_box = prompt_area.unwrap_or(monitor_outer);
+            let searching = prompt_area.is_none() && app.is_search_active();
+            (!searching).then(|| {
+                Rect::new(
+                    last_box.x.saturating_add(2),
+                    last_box.bottom().saturating_sub(1),
+                    last_box.width.saturating_sub(4),
+                    1,
+                )
+            })
+        } else if show_status_bar {
             Some(v_chunks[2])
         } else {
             None

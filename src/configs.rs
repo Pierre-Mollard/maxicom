@@ -14,8 +14,8 @@ pub use keybindings::{
 };
 pub use settings::{
     DualBufferMode, LineDisplayMode, LineLogConfig, Mode, PrefixWrapBehavior, RawSideView,
-    RxNewlineMode, SettingsConfig, SettingsError, StatusBarConfig, TerminalDimensionMode,
-    TerminalLogConfig, TextEncoding, WrapMode,
+    RxNewlineMode, SettingsConfig, SettingsError, StatusBarConfig, StatusBarLayout,
+    TerminalDimensionMode, TerminalLogConfig, TextEncoding, WrapMode,
 };
 pub use theme::{ThemeConfig, ThemeError};
 
