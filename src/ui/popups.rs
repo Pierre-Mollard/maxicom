@@ -117,20 +117,10 @@ pub fn key_hints<'a>(
     Hints { line, spots }
 }
 
-/// Each hint's keys then its label, the hints apart by ` · `; a hint with no key is left out
-pub fn hints_line<'a>(
-    hints: impl IntoIterator<Item = (Vec<KeyPattern>, &'a str)>,
-    theme: &ThemeConfig,
-) -> Line<'a> {
-    let hints = hints
-        .into_iter()
-        .map(|(keys, label)| (keys.into_iter().map(|key| (key, ())).collect(), label));
-    hint_spans(hints, theme).0
-}
-
-/// The hints line, and where each key and label of it is with the value of its key (the
-/// label takes the first key's)
-fn hint_spans<'a, T: Copy>(
+/// Each hint's keys then its label, the hints apart by ` · `; a hint with no key is left out.
+/// Also where each key and label is in the line with the value of its key (the label takes the
+/// first key's), for the mouse
+pub fn hint_spans<'a, T: Copy>(
     hints: impl IntoIterator<Item = (Vec<(KeyPattern, T)>, &'a str)>,
     theme: &ThemeConfig,
 ) -> (Line<'a>, Vec<(u16, u16, T)>) {

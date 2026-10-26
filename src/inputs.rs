@@ -48,6 +48,7 @@ pub enum AppAction {
     ReloadConfig,
     OpenOverlay(Overlay),
     SideView(SideViewAction),
+    Hover(u16, u16),
     Quit,
 }
 

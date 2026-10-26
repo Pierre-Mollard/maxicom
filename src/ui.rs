@@ -19,10 +19,10 @@ use ratatui::{
 use crate::{
     app::{
         App,
-        types::{ClickAction, FrameAreas, ViewportSize},
+        types::{ClickAction, ClickTarget, FrameAreas, ViewportSize},
     },
     configs::{KeyBindingAction, KeywordHighlight, Mode, ThemeConfig},
-    overlays::Overlay,
+    overlays::{Overlay, PopupTarget},
     ui::{
         common::{border_style_for, monitor_bottom_title, monitor_title},
         layout::{LayoutWarning, ScreenLayout},
@@ -111,9 +111,11 @@ pub fn render(
             let width = text.chars().count() as u16;
             let cell = Rect::new(x, outer.y, width, 1).intersection(outer);
             if !cell.is_empty() {
-                app.frame_map_mut()
-                    .click_targets
-                    .push((cell, ClickAction::Run(action)));
+                app.frame_map_mut().click_targets.push(ClickTarget {
+                    area: cell,
+                    action: ClickAction::Run(action),
+                    hover: Some(*theme.ui.hover),
+                });
             }
             x += width;
         }
@@ -154,10 +156,32 @@ pub fn render(
 
     if let Some(status_rect) = layout.status_bar_area {
         let targets = render_status_bar(app, frame, status_rect, theme, status_bar);
+        let targets = targets.into_iter().map(|(area, action)| ClickTarget {
+            area,
+            action,
+            hover: None,
+        });
         app.frame_map_mut().click_targets.extend(targets);
     }
 
     render_active_overlay(app, frame, theme);
+
+    // the part under the pointer: of the popup when one is open, the menu showing it as its
+    // selection; else a border button or search bar hint (MAX-131)
+    if let Some((x, y)) = app.pointer() {
+        let map = app.frame_map();
+        let hovered = if map.popup.is_some() {
+            map.popup_target_at(x, y)
+                .filter(|(_, target)| !matches!(target, PopupTarget::MenuItem(_)))
+                .map(|(area, _)| (area, *theme.ui.hover))
+        } else {
+            map.click_target_at(x, y)
+                .and_then(|target| Some((target.area, target.hover?)))
+        };
+        if let Some((area, style)) = hovered {
+            frame.buffer_mut().set_style(area, style);
+        }
+    }
 
     render_notifications(&app.notifications, frame, theme);
 
@@ -1781,6 +1805,135 @@ mod tests {
         // the status bar, the last row
         mouse_do(&mut h, right, (2, 29));
         assert!(matches!(h.app.overlay(), Some(Overlay::ActionMenu(_))));
+    }
+
+    /// MAX-131: the search bar's hints run on a click like their keys, in the border or on
+    /// the last row; they and the border buttons are drawn in the hover style under the
+    /// pointer, each on its own cells.
+    /// How: a search opened with borders off then on; hover and clicks on its hints, then hover
+    /// on `[≡]`.
+    #[test]
+    fn search_hints_and_border_buttons_hover() {
+        use crate::app::search::SearchModeKind;
+        use ratatui::style::Modifier;
+        let moved = |h: &mut Harness, at| {
+            let event = mouse(MouseEventKind::Moved, at, KeyModifiers::NONE);
+            let action = crate::inputs::handle_event(event, &h.app);
+            h.app.update(action);
+            h.draw();
+        };
+        let reversed = |h: &Harness, (x, y): (u16, u16)| {
+            h.terminal.backend().buffer()[(x, y)]
+                .modifier
+                .contains(Modifier::REVERSED)
+        };
+
+        for borders in [false, true] {
+            let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 100, 24, |s| {
+                s.ui.show_borders = borders;
+            });
+            h.feed(b"hi there\r\n");
+            h.app.update(Action::Search(SearchModeAction::Start));
+            let rows = h.draw();
+            let mode = cell_of(&rows, "Mode");
+            moved(&mut h, mode);
+            assert!(reversed(&h, mode), "borders {borders}");
+            assert!(!reversed(&h, cell_of(&rows, "Exit")), "borders {borders}");
+            click(&mut h, mode);
+            assert_eq!(h.app.line_mode.search().mode_kind, SearchModeKind::RawBytes);
+            let rows = h.draw();
+            click(&mut h, cell_of(&rows, "Exit"));
+            assert!(!h.app.line_mode.search().active, "borders {borders}");
+
+            if borders {
+                let rows = h.draw();
+                let (x, y) = cell_of(&rows, "[≡]");
+                moved(&mut h, (x + 1, y));
+                assert!((x..x + 3).all(|x| reversed(&h, (x, y))));
+                assert!(!reversed(&h, (x - 1, y)));
+                assert!(!reversed(&h, (x + 3, y)));
+            }
+        }
+    }
+
+    /// MAX-131: mouse moves don't cancel a pending prefix: a move over nothing (ignored) or a
+    /// hover between Ctrl-A and its key still lets the key run.
+    /// How: Ctrl-A, moves over the history and onto the status bar's `?`, then `s`.
+    #[test]
+    fn mouse_moves_keep_the_prefix() {
+        use crossterm::event::KeyCode::Char;
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        let rows = h.draw();
+        let moved = |h: &mut Harness, at| {
+            let event = mouse(MouseEventKind::Moved, at, KeyModifiers::NONE);
+            let action = crate::inputs::handle_event(event, &h.app);
+            h.app.update(action);
+        };
+        key_do(&mut h, Char('a'), KeyModifiers::CONTROL);
+        moved(&mut h, (5, 5));
+        moved(&mut h, (6, 5));
+        moved(&mut h, status_cell(&rows, "?"));
+        assert!(h.app.is_prefix_active());
+        key_do(&mut h, Char('s'), KeyModifiers::NONE);
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+    }
+
+    /// MAX-131: the menu's selection follows the pointer, so Enter runs the row under it; in
+    /// the other popups the part under it is drawn in the hover style and the keyboard
+    /// selection stays; a move within the same part is ignored, so it doesn't redraw.
+    /// How: moves over the menu, the settings popup and the serial popup.
+    #[test]
+    fn hover() {
+        use ratatui::style::Modifier;
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        let moved = |h: &mut Harness, at| {
+            let action = crate::inputs::handle_event(
+                mouse(MouseEventKind::Moved, at, KeyModifiers::NONE),
+                &h.app,
+            );
+            let ignored = matches!(action, Action::Ignore);
+            h.app.update(action);
+            ignored
+        };
+        let reversed = |h: &Harness, (x, y): (u16, u16)| {
+            h.terminal.backend().buffer()[(x, y)]
+                .modifier
+                .contains(Modifier::REVERSED)
+        };
+
+        mouse_do(&mut h, MouseEventKind::Down(MouseButton::Right), (10, 3));
+        let rows = h.draw();
+        assert!(!moved(&mut h, cell_of(&rows, "Settings")));
+        let rows = h.draw();
+        assert!(rows[5].contains("▶ Settings"), "{:?}", rows[5]);
+        h.app.update(Action::Overlay(DialogAction::Confirm));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+
+        let rows = h.draw();
+        let echo = cell_of(&rows, "Local Echo");
+        assert!(!moved(&mut h, echo));
+        h.draw();
+        assert!(reversed(&h, echo));
+        assert!(moved(&mut h, (echo.0 + 2, echo.1)));
+        assert!(!moved(&mut h, (0, 0)));
+        h.draw();
+        assert!(!reversed(&h, echo));
+        h.app.close_overlay();
+
+        h.app.update(Action::App(AppAction::OpenOverlay(
+            Overlay::SerialSettings(SerialConfigDialog::new(&SerialConfig::default())),
+        )));
+        let rows = h.draw();
+        let before = match h.app.overlay() {
+            Some(Overlay::SerialSettings(d)) => d.selected_field,
+            _ => unreachable!(),
+        };
+        moved(&mut h, cell_of(&rows, "Parity"));
+        h.draw();
+        match h.app.overlay() {
+            Some(Overlay::SerialSettings(d)) => assert_eq!(d.selected_field, before),
+            _ => panic!("serial popup closed"),
+        }
     }
 
     /// MAX-128: with borders on, the history border's top-right has `[?][≡][×]` inside its

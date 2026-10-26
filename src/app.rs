@@ -15,7 +15,7 @@ use crate::{
     },
     logger::{LineLogger, TerminalLogger},
     notification::{NotificationManager, ToastLevel},
-    overlays::{ErrorDialog, FilePathDialog, Overlay, OverlayResponse, SettingKey},
+    overlays::{ErrorDialog, FilePathDialog, Overlay, OverlayResponse, PopupTarget, SettingKey},
     serial::SerialConfig,
 };
 
@@ -82,6 +82,7 @@ pub struct App {
     pub line_mode: LineMode,
     pub terminal_mode: TerminalMode,
     pub is_window_focused: bool,
+    pointer: Option<(u16, u16)>,
     pub stats: Stats,
 }
 
@@ -134,6 +135,7 @@ impl App {
             line_mode: line_view,
             terminal_mode: terminal_view,
             is_window_focused: true,
+            pointer: None,
             stats: Stats {
                 received_bytes: 0,
                 sent_bytes: 0,
@@ -151,6 +153,10 @@ impl App {
     }
 
     /// What the last frame showed where, for mouse clicks (MAX-113)
+    pub fn pointer(&self) -> Option<(u16, u16)> {
+        self.pointer
+    }
+
     pub fn frame_map(&self) -> &FrameMap {
         &self.frame_map
     }
@@ -220,7 +226,12 @@ impl App {
                 )
             );
 
-        if !matches!(action, Action::App(AppAction::SetPrefix(true))) && !is_repeatable_history {
+        // a mouse move (ignored, or a hover) between the prefix and its key keeps it (MAX-131)
+        let keeps_prefix = matches!(
+            action,
+            Action::App(AppAction::SetPrefix(true) | AppAction::Hover(..)) | Action::Ignore
+        );
+        if !keeps_prefix && !is_repeatable_history {
             self.prefix_active = false;
         }
 
@@ -420,6 +431,18 @@ impl App {
             AppAction::DetachSerial => UpdateEffect::ToggleAttachSerial,
             AppAction::ReloadConfig => UpdateEffect::ReloadConfig,
             AppAction::SideView(action) => self.update_side_view(action),
+            // the menu's selection follows the pointer, the other parts are only drawn
+            // highlighted (`ui::render`)
+            AppAction::Hover(x, y) => {
+                self.pointer = Some((x, y));
+                if let Some(Overlay::ActionMenu(menu)) = &mut self.overlay
+                    && let Some((_, PopupTarget::MenuItem(idx))) =
+                        self.frame_map.popup_target_at(x, y)
+                {
+                    menu.selected = idx;
+                }
+                UpdateEffect::None
+            }
         }
     }
 

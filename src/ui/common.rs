@@ -10,9 +10,13 @@ use ratatui::{
 use std::fmt::Write;
 
 use crate::{
-    app::{App, search::SearchModeKind, types::FocusTarget},
+    app::{
+        App,
+        search::SearchModeKind,
+        types::{ClickAction, ClickTarget, FocusTarget},
+    },
     configs::{KeyBindingSearchAction, KeywordHighlight, Mode, ThemeConfig},
-    ui::popups::hints_line,
+    ui::popups::hint_spans,
 };
 
 pub fn monitor_title(app: &App, area: &Rect) -> String {
@@ -126,7 +130,13 @@ pub fn pan_right_indicator(app: &App) -> Option<String> {
     })
 }
 
-pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, theme: &ThemeConfig) {
+/// Draws the search bar; returns its hints as click targets (MAX-131)
+pub fn render_search_bar(
+    app: &App,
+    frame: &mut Frame,
+    area: Rect,
+    theme: &ThemeConfig,
+) -> Vec<ClickTarget> {
     let has_borders = app.settings().ui.show_borders;
     let is_terminal = app.settings().mode == Mode::Terminal;
 
@@ -167,9 +177,12 @@ pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, theme: &Theme
     ];
 
     // one key per action, like the popups; the hints that don't fit whole are left out, the
-    // least needed ones first
-    let first_key = |action| app.key_resolver.search_keys(action).into_iter().take(1);
-    let hints = [
+    // least needed ones first. A click on a key runs its action, on a label the first one
+    let first_key = |action| {
+        let keys = app.key_resolver.search_keys(action).into_iter().take(1);
+        keys.map(move |key| (key, action))
+    };
+    let hints: [(Vec<_>, &str); 4] = [
         (
             first_key(KeyBindingSearchAction::Next)
                 .chain(first_key(KeyBindingSearchAction::Previous))
@@ -187,17 +200,32 @@ pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, theme: &Theme
         area.width
     } as usize;
     let used: usize = spans.iter().map(|span| span.width()).sum::<usize>() + 3;
-    let hints = (0..=hints.len())
+    let (hints, spots) = (0..=hints.len())
         .rev()
-        .map(|count| hints_line(hints[..count].iter().cloned(), theme))
-        .find(|line| line.width() + used <= room)
+        .map(|count| hint_spans(hints[..count].iter().cloned(), theme))
+        .find(|(line, _)| line.width() + used <= room)
         .unwrap_or_default();
+    // where the hints start in the bar, after the two spaces before them
+    let hints_col = spans.iter().map(|span| span.width()).sum::<usize>() as u16 + 2;
     if !hints.spans.is_empty() {
         spans.push(Span::raw("  "));
         spans.extend(hints.spans);
         spans.push(Span::raw(" "));
     }
     let line = Line::from(spans);
+    let (bar_x, bar_y) = if has_borders {
+        (area.x + 2, area.y + area.height)
+    } else {
+        (area.x, area.y + area.height.saturating_sub(1))
+    };
+    let targets = spots
+        .into_iter()
+        .map(|(col, width, action)| ClickTarget {
+            area: Rect::new(bar_x + hints_col + col, bar_y, width, 1),
+            action: ClickAction::Search(action),
+            hover: Some(*theme.ui.hover),
+        })
+        .collect();
 
     let (cursor_x, cursor_y) = if has_borders {
         let border_y = area.y + area.height;
@@ -235,6 +263,7 @@ pub fn render_search_bar(app: &App, frame: &mut Frame, area: Rect, theme: &Theme
         }
     }
     frame.set_cursor_position((cursor_x, cursor_y));
+    targets
 }
 
 /// A centered `width` x `height` popup, cut to the screen when it is smaller

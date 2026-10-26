@@ -47,6 +47,7 @@ pub fn handle_mouse(event: MouseEvent, app: &App) -> Action {
         | MouseEventKind::Drag(MouseButton::Left)
         | MouseEventKind::Up(MouseButton::Left) => return handle_left_button(event, app),
         MouseEventKind::Down(MouseButton::Right) => return open_menu(event, app),
+        MouseEventKind::Moved => return hover(event, app),
         _ => return Action::Ignore,
     };
     // Shift turns the vertical wheel sideways
@@ -90,6 +91,17 @@ pub fn handle_mouse(event: MouseEvent, app: &App) -> Action {
             }
         }
     }
+}
+
+/// A move onto another clickable part, or off one, is a hover (MAX-131). Within the same part
+/// it does nothing, so moves don't redraw
+fn hover(event: MouseEvent, app: &App) -> Action {
+    let map = app.frame_map();
+    let before = app.pointer().and_then(|(x, y)| map.hover_area(x, y));
+    if before == map.hover_area(event.column, event.row) {
+        return Action::Ignore;
+    }
+    Action::App(AppAction::Hover(event.column, event.row))
 }
 
 /// The right button opens the action menu at the pointer (MAX-130), or moves the open menu
@@ -139,6 +151,7 @@ fn handle_left_button(event: MouseEvent, app: &App) -> Action {
             return match click {
                 ClickAction::Run(action) => action.to_action(app),
                 ClickAction::ToggleSide => Action::CopyMode(CopyModeAction::ToggleSide),
+                ClickAction::Search(action) => action.to_action(),
             };
         }
         InputContext::Overlay | InputContext::Prefix => return Action::Ignore,

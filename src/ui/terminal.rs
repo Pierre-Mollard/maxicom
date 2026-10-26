@@ -345,7 +345,8 @@ pub fn render_vt100_terminal(
 
     // search input
     if app.terminal_mode.search().active {
-        render_search_bar(app, frame, content_area, theme);
+        let targets = render_search_bar(app, frame, content_area, theme);
+        app.frame_map_mut().click_targets.extend(targets);
     }
 
     // flash for screenshot

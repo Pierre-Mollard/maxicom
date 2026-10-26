@@ -1,9 +1,9 @@
 use chrono::{DateTime, Local};
-use ratatui::layout::Rect;
+use ratatui::{layout::Rect, style::Style};
 
 use crate::{
     app::selection::{CopySide, LogicalPosition},
-    configs::KeyBindingAction,
+    configs::{KeyBindingAction, KeyBindingSearchAction},
     overlays::PopupTarget,
 };
 
@@ -113,18 +113,28 @@ pub struct FrameMap {
     pub popup_targets: Vec<(Rect, PopupTarget)>,
     /// The TX input's text, as drawn
     pub prompt: Option<PromptMap>,
-    /// The status bar blocks and border buttons a click runs, in drawing order (MAX-125,
-    /// MAX-128)
-    pub click_targets: Vec<(Rect, ClickAction)>,
+    /// The status bar blocks, border buttons and search bar hints a click runs, in drawing
+    /// order (MAX-125, MAX-128)
+    pub click_targets: Vec<ClickTarget>,
 }
 
-/// What a click on a status bar block or a border button runs (MAX-125)
+/// A part a click runs, outside the popups, drawn in `hover` under the pointer (MAX-131)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClickTarget {
+    pub area: Rect,
+    pub action: ClickAction,
+    pub hover: Option<Style>,
+}
+
+/// What a click on a status bar block, a border button or a search bar hint runs (MAX-125)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClickAction {
     /// An action of the keymap, by its name in `click=<action>` or implied by a variable
     Run(KeyBindingAction),
     /// The copy cursor's panel (`{copy_side}`), a copy mode action
     ToggleSide,
+    /// A search bar hint (MAX-131)
+    Search(KeyBindingSearchAction),
 }
 
 /// Where the TX input's text is drawn: its area (after the prompt prefix) and how many columns
@@ -172,24 +182,43 @@ impl FrameMap {
         self.click_targets.clear();
     }
 
-    /// The click action under a screen cell: of the block drawn last there, the status bar's
-    /// right part over its center over its left
+    /// The click action under a screen cell
     pub fn click_target(&self, x: u16, y: u16) -> Option<ClickAction> {
+        self.click_target_at(x, y).map(|target| target.action)
+    }
+
+    /// The part a click runs under a screen cell: of the ones drawn last there, the status
+    /// bar's right part over its center over its left
+    pub fn click_target_at(&self, x: u16, y: u16) -> Option<ClickTarget> {
         let at = ratatui::layout::Position::new(x, y);
         self.click_targets
             .iter()
             .rev()
-            .find(|(area, _)| area.contains(at))
-            .map(|&(_, click)| click)
+            .find(|target| target.area.contains(at))
+            .copied()
     }
 
     /// The popup part under a screen cell
     pub fn popup_target(&self, x: u16, y: u16) -> Option<PopupTarget> {
+        self.popup_target_at(x, y).map(|(_, target)| target)
+    }
+
+    /// The popup part under a screen cell, with its cells
+    pub fn popup_target_at(&self, x: u16, y: u16) -> Option<(Rect, PopupTarget)> {
         let at = ratatui::layout::Position::new(x, y);
         self.popup_targets
             .iter()
             .find(|(area, _)| area.contains(at))
-            .map(|&(_, target)| target)
+            .copied()
+    }
+
+    /// The cells of the clickable part under a screen cell (MAX-131): of the popup when one is
+    /// open, else a status bar block, border button or search bar hint
+    pub fn hover_area(&self, x: u16, y: u16) -> Option<Rect> {
+        if self.popup.is_some() {
+            return self.popup_target_at(x, y).map(|(area, _)| area);
+        }
+        self.click_target_at(x, y).map(|target| target.area)
     }
 
     /// The TX input column (counted from the text's start, scroll included) under a cell

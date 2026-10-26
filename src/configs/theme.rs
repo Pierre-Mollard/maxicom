@@ -100,6 +100,7 @@ pub struct UiStyles {
     pub cursor_unfocused: ConfigStyle,
     pub cursor_ghost: ConfigStyle,
     pub selection: ConfigStyle,
+    pub hover: ConfigStyle,
     pub status_bar: ConfigStyle,
     pub scrollbar_thumb: ConfigStyle,
     pub scrollbar_track: ConfigStyle,
@@ -123,6 +124,7 @@ impl Default for UiStyles {
                     .bg(Color::Rgb(0x28, 0x50, 0x96))
                     .fg(Color::White),
             ),
+            hover: ConfigStyle::new(Style::new().add_modifier(Modifier::REVERSED)),
             status_bar: ConfigStyle::new(
                 Style::default()
                     .bg(Color::Rgb(0x1e, 0x23, 0x2d))
