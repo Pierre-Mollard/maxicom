@@ -16,7 +16,7 @@ use crate::{
         Action, AppAction, CopyModeAction, DialogAction, HistoryAction, LineInputAction,
         SideViewAction, TerminalAction,
     },
-    overlays::PopupTarget,
+    overlays::{ActionMenu, Overlay, PopupTarget},
 };
 
 /// Rows a wheel notch scrolls
@@ -46,6 +46,7 @@ pub fn handle_mouse(event: MouseEvent, app: &App) -> Action {
         MouseEventKind::Down(MouseButton::Left)
         | MouseEventKind::Drag(MouseButton::Left)
         | MouseEventKind::Up(MouseButton::Left) => return handle_left_button(event, app),
+        MouseEventKind::Down(MouseButton::Right) => return open_menu(event, app),
         _ => return Action::Ignore,
     };
     // Shift turns the vertical wheel sideways
@@ -89,6 +90,23 @@ pub fn handle_mouse(event: MouseEvent, app: &App) -> Action {
             }
         }
     }
+}
+
+/// The right button opens the action menu at the pointer (MAX-130), or moves the open menu
+/// there; with another popup open it does nothing
+fn open_menu(event: MouseEvent, app: &App) -> Action {
+    if app
+        .overlay()
+        .is_some_and(|overlay| !matches!(overlay, Overlay::ActionMenu(_)))
+    {
+        return Action::Ignore;
+    }
+    let menu = ActionMenu::new(
+        (event.column, event.row),
+        app.settings().mode,
+        app.is_logging_active(),
+    );
+    Action::App(AppAction::OpenOverlay(Overlay::ActionMenu(menu)))
 }
 
 /// The left button. In a popup a press picks the part under it (a key hint runs its action),

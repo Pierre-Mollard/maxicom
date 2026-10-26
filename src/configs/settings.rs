@@ -453,7 +453,7 @@ pub struct UiConfig {
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
-            show_borders: false,
+            show_borders: true,
             show_scrollbar: true,
             show_status_bar: true,
             mouse: true,

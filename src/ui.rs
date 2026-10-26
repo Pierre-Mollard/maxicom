@@ -11,15 +11,17 @@ pub mod terminal;
 
 use ratatui::{
     Frame,
+    layout::Rect,
+    text::Line,
     widgets::{Block, Borders},
 };
 
 use crate::{
     app::{
         App,
-        types::{FrameAreas, ViewportSize},
+        types::{ClickAction, FrameAreas, ViewportSize},
     },
-    configs::{KeywordHighlight, Mode, ThemeConfig},
+    configs::{KeyBindingAction, KeywordHighlight, Mode, ThemeConfig},
     overlays::Overlay,
     ui::{
         common::{border_style_for, monitor_bottom_title, monitor_title},
@@ -32,6 +34,7 @@ use crate::{
             },
             filepath::render_filepath_popup,
             help::render_help_popup,
+            menu::render_action_menu,
             notifications::render_notifications,
             reconfigure::render_reconfigure_popup,
             resize::render_resize_popup,
@@ -41,6 +44,14 @@ use crate::{
         terminal::{render_timestamp_gutter, render_vt100_terminal},
     },
 };
+
+/// The buttons in the history border's top-right, with what a click runs: for the mouse,
+/// with the status bar hidden too (MAX-128). Plain glyphs every font has
+const BORDER_BUTTONS: [(&str, KeyBindingAction); 3] = [
+    ("[?]", KeyBindingAction::Help),
+    ("[≡]", KeyBindingAction::Settings),
+    ("[×]", KeyBindingAction::Quit),
+];
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum PostRenderEffect {
@@ -89,6 +100,24 @@ pub fn render(
             block = block.title_bottom(bottom_title);
         }
 
+        // right-aligned in the top border, inside its corner
+        let outer = layout.monitor_outer;
+        let buttons: String = BORDER_BUTTONS.iter().map(|(text, _)| *text).collect();
+        let mut x = outer
+            .right()
+            .saturating_sub(1 + buttons.chars().count() as u16);
+        block = block.title(Line::styled(buttons, border_style).right_aligned());
+        for (text, action) in BORDER_BUTTONS {
+            let width = text.chars().count() as u16;
+            let cell = Rect::new(x, outer.y, width, 1).intersection(outer);
+            if !cell.is_empty() {
+                app.frame_map_mut()
+                    .click_targets
+                    .push((cell, ClickAction::Run(action)));
+            }
+            x += width;
+        }
+
         frame.render_widget(block, layout.monitor_outer);
     }
 
@@ -125,7 +154,7 @@ pub fn render(
 
     if let Some(status_rect) = layout.status_bar_area {
         let targets = render_status_bar(app, frame, status_rect, theme, status_bar);
-        app.frame_map_mut().click_targets = targets;
+        app.frame_map_mut().click_targets.extend(targets);
     }
 
     render_active_overlay(app, frame, theme);
@@ -163,6 +192,9 @@ fn render_active_overlay(app: &mut App, frame: &mut Frame, theme: &ThemeConfig) 
         Some(Overlay::Error(err)) => render_error_popup(err, resolver, frame, theme, &mut targets),
         Some(Overlay::ConfirmQuit) => {
             render_confirm_quit_popup(resolver, frame, theme, &mut targets)
+        }
+        Some(Overlay::ActionMenu(menu)) => {
+            render_action_menu(menu, resolver, frame, theme, &mut targets)
         }
         None => return,
     };
@@ -214,6 +246,8 @@ mod tests {
             let mut settings = SettingsConfig::default();
             settings.mode = Mode::Line;
             settings.show_timestamps = false;
+            // the rows the tests expect have no border, whatever the default
+            settings.ui.show_borders = false;
             settings.line_mode.display_mode = display_mode;
             tweak(&mut settings);
             let theme = ThemeConfig::default();
@@ -1676,6 +1710,109 @@ mod tests {
             cell_of(&rows, "Quit ·"),
         );
         assert!(is_quit(effect));
+    }
+
+    /// MAX-130: a right-click opens the action menu at the pointer, moved back inside the
+    /// screen at its corner; a click or Enter runs a row as its key would ("Quit…" asks
+    /// first), and with another popup open a right-click does nothing.
+    /// How: right-clicks in the history and at the bottom-right corner.
+    #[test]
+    fn right_click_menu() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        let right_click = |h: &mut Harness, at| {
+            mouse_do(h, MouseEventKind::Down(MouseButton::Right), at);
+            h.draw()
+        };
+
+        let rows = right_click(&mut h, (10, 3));
+        assert!(matches!(h.app.overlay(), Some(Overlay::ActionMenu(_))));
+        assert_eq!(cell_of(&rows, "┌ Menu"), (10, 3));
+        // the first row is selected, and shows its key
+        assert!(rows[4].contains("▶ Help"), "{:?}", rows[4]);
+        click(&mut h, cell_of(&rows, "Settings"));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+
+        right_click(&mut h, (10, 3));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+        h.app.close_overlay();
+
+        right_click(&mut h, (10, 3));
+        h.app.update(Action::Overlay(DialogAction::Confirm));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Help(_))));
+        h.app.close_overlay();
+
+        let rows = right_click(&mut h, (79, 23));
+        let area = h.app.frame_map().popup.unwrap();
+        assert_eq!((area.right(), area.bottom()), (80, 24));
+        click(&mut h, cell_of(&rows, "Quit…"));
+        assert!(matches!(h.app.overlay(), Some(Overlay::ConfirmQuit)));
+    }
+
+    /// MAX-130: in terminal mode a right-click on the grid opens the menu only while the
+    /// remote hasn't asked for the mouse (a shell); once it has (DECSET 1000, as htop or vim
+    /// do), the right-click is reported to it and no menu opens, while one on the status bar
+    /// still opens it.
+    /// How: right-clicks before and after the remote turns mouse reporting on.
+    #[test]
+    fn right_click_goes_to_a_remote_using_the_mouse() {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 30, |s| {
+            s.mode = Mode::Terminal;
+        });
+        let feed = |h: &mut Harness, bytes: &[u8]| {
+            h.app.terminal_mode.process_rx(TextEncoding::Utf8, bytes);
+            h.draw();
+        };
+        let right = MouseEventKind::Down(MouseButton::Right);
+        feed(&mut h, b"$ ");
+        let area = h.app.frame_areas().content;
+        let grid = (area.x + 4, area.y + 2);
+
+        mouse_do(&mut h, right, grid);
+        assert!(matches!(h.app.overlay(), Some(Overlay::ActionMenu(_))));
+        h.app.close_overlay();
+
+        feed(&mut h, b"\x1b[?1000h\x1b[?1006h");
+        match mouse_do(&mut h, right, grid) {
+            UpdateEffect::Transmit(bytes) => assert_eq!(bytes, b"\x1b[<2;5;3M"),
+            _ => panic!("expected a report to the remote"),
+        }
+        assert!(h.app.overlay().is_none());
+
+        // the status bar, the last row
+        mouse_do(&mut h, right, (2, 29));
+        assert!(matches!(h.app.overlay(), Some(Overlay::ActionMenu(_))));
+    }
+
+    /// MAX-128: with borders on, the history border's top-right has `[?][≡][×]` inside its
+    /// corner: help, settings, and quit through the confirm popup; with borders off they are
+    /// neither drawn nor clickable.
+    /// How: each button clicked in line mode, then the same cell with borders off.
+    #[test]
+    fn border_buttons() {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 24, |s| {
+            s.ui.show_borders = true;
+        });
+        let rows = h.draw();
+        assert!(rows[0].ends_with("[?][≡][×]┐"), "{:?}", rows[0]);
+
+        let (x, y) = cell_of(&rows, "[?]");
+        for (dx, expected) in [(1, "help"), (4, "settings"), (7, "quit")] {
+            click(&mut h, (x + dx, y));
+            let opened = match h.app.overlay() {
+                Some(Overlay::Help(_)) => "help",
+                Some(Overlay::Settings) => "settings",
+                Some(Overlay::ConfirmQuit) => "quit",
+                _ => "none",
+            };
+            assert_eq!(opened, expected);
+            h.app.close_overlay();
+        }
+
+        h.app.settings_mut().ui.show_borders = false;
+        let rows = h.draw();
+        assert!(!rows[0].contains("[?]"));
+        click(&mut h, (x + 1, y));
+        assert!(h.app.overlay().is_none());
     }
 
     /// The cell of the last `text` in the status bar (the last row): the buttons are at its

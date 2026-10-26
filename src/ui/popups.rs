@@ -14,6 +14,7 @@ use crate::{
 pub mod alert;
 pub mod filepath;
 pub mod help;
+pub mod menu;
 pub mod notifications;
 pub mod reconfigure;
 pub mod resize;

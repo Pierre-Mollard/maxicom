@@ -113,11 +113,12 @@ pub struct FrameMap {
     pub popup_targets: Vec<(Rect, PopupTarget)>,
     /// The TX input's text, as drawn
     pub prompt: Option<PromptMap>,
-    /// The status bar blocks a click runs, in drawing order (MAX-125)
+    /// The status bar blocks and border buttons a click runs, in drawing order (MAX-125,
+    /// MAX-128)
     pub click_targets: Vec<(Rect, ClickAction)>,
 }
 
-/// What a click on a status bar block runs (MAX-125)
+/// What a click on a status bar block or a border button runs (MAX-125)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClickAction {
     /// An action of the keymap, by its name in `click=<action>` or implied by a variable

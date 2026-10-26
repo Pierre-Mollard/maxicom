@@ -703,6 +703,17 @@ impl KeyResolver {
         keys_of(&self.dialog_actions, action)
     }
 
+    /// The keys bound to an action, the direct ones first, then the prefix ones, for the
+    /// right-click menu (MAX-130). A prefix key is shown after the prefix
+    pub fn action_keys(&self, action: KeyBindingAction) -> Vec<String> {
+        let direct = keys_of(&self.direct_actions, action).into_iter();
+        let prefixed = keys_of(&self.prefix_actions, action).into_iter();
+        direct
+            .map(|key| key.to_string())
+            .chain(prefixed.map(|key| format!("{} {key}", self.prefix)))
+            .collect()
+    }
+
     /// The keys bound to a search action, for the search bar hint (MAX-73)
     pub fn search_keys(&self, action: KeyBindingSearchAction) -> Vec<KeyPattern> {
         keys_of(&self.search_actions, action)

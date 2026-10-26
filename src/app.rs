@@ -283,6 +283,10 @@ impl App {
                             UpdateEffect::Reconfigure(new_cfg)
                         }
                         OverlayResponse::ReconnectSerial => UpdateEffect::ToggleAttachSerial,
+                        OverlayResponse::Run(action) => {
+                            let action = action.to_action(self);
+                            self.update(action)
+                        }
                         OverlayResponse::StartCapture(path) => {
                             let result = match self.settings.mode {
                                 Mode::Line => self.line_mode.start_logging(path),

@@ -4,16 +4,20 @@ use std::path::PathBuf;
 use crossterm::event::KeyCode;
 
 use crate::{
-    configs::keybindings::KeyBindingDialogAction, inputs::DialogAction, serial::SerialConfig,
+    configs::{KeyBindingAction, keybindings::KeyBindingDialogAction},
+    inputs::DialogAction,
+    serial::SerialConfig,
 };
 
 // Re-exports
 pub use help::{HelpCategory, HelpDialog};
+pub use menu::ActionMenu;
 pub use misc::{ErrorDialog, FilePathDialog};
 pub use reconfigure::{SerialConfigDialog, SerialSettingField};
 pub use resize::{ResizeDialog, ResizeField};
 
 pub mod help;
+pub mod menu;
 pub mod misc;
 pub mod reconfigure;
 pub mod resize;
@@ -29,6 +33,7 @@ pub enum Overlay {
     DeviceDetached(String),
     Error(ErrorDialog),
     ConfirmQuit,
+    ActionMenu(ActionMenu),
 }
 
 /// A part of a popup the mouse picks (MAX-113)
@@ -39,6 +44,7 @@ pub enum PopupTarget {
     SerialField(SerialSettingField),
     ResizeField(ResizeField),
     Hint(KeyBindingDialogAction),
+    MenuItem(usize),
 }
 
 pub enum OverlayResponse {
@@ -50,6 +56,7 @@ pub enum OverlayResponse {
     ReconnectSerial,
     StartCapture(PathBuf),
     Quit,
+    Run(KeyBindingAction),
 }
 
 impl Overlay {
@@ -70,6 +77,7 @@ impl Overlay {
             Overlay::SerialSettings(dialog) => dialog.handle_action(action),
             Overlay::TerminalSize(dialog) => dialog.handle_action(action),
             Overlay::FilePath(dialog) => dialog.handle_action(action),
+            Overlay::ActionMenu(menu) => menu.handle_action(action),
             Overlay::Error(_) => match action {
                 DialogAction::Close | DialogAction::Confirm => OverlayResponse::Close,
                 _ => OverlayResponse::Handled,
