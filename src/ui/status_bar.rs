@@ -85,6 +85,7 @@
 //! | `pan_right`                     | `can_pan_right`                            | Horizontal panning to the right is possible              |
 //! | `pan_right_alert`               | `pan_alert`                                | New unread content arrived further to the right (Line)   |
 //! | `wide`                          | `pannable`                                 | The content is wider than the view: it can pan           |
+//! | `new_data`                      | `unread`, `missed`                         | Data arrived while scrolled up, not seen yet             |
 //! | `mouse`                         | —                                          | Mouse capture is on (`ui.mouse`)                         |
 //!
 //! ## Style Keywords
@@ -575,6 +576,7 @@ enum Cond {
     PanRightAlert,
     Panned,
     Wide,
+    NewData,
     Mouse,
     /// Unknown condition name, always false
     Unknown,
@@ -603,6 +605,7 @@ impl Cond {
             "pan_right_alert" | "pan_alert" => Self::PanRightAlert,
             "panned" | "pan" | "panning" => Self::Panned,
             "wide" | "pannable" => Self::Wide,
+            "new_data" | "unread" | "missed" => Self::NewData,
             "mouse" => Self::Mouse,
             _ => Self::Unknown,
         }
@@ -638,6 +641,7 @@ impl Cond {
             }
             Self::Panned => app.pan_left_status().is_some_and(|c| c > 0),
             Self::Wide => app.pan_right_status().is_some(),
+            Self::NewData => app.is_new_content_missed(),
             Self::Mouse => app.settings().ui.mouse,
             Self::Unknown => false,
         }

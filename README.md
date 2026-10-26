@@ -73,6 +73,9 @@ cargo deny check
   - `fixed`                `rows` x `cols`
   A size set from the resize popup applies as asked. The settings popup
   cycles the mode with `S` (Terminal Mode section).
+- Scrolling: what is sent to the device (a key in terminal mode, a line on
+  Enter in line mode) brings the view back to the live screen; what the device
+  sends never moves a view scrolled up (`new_data` in the status bar).
 
 ### THEME
 
@@ -140,6 +143,7 @@ cargo deny check
     - pan_right      Can pan right (alias: can_pan_right)
     - pan_alert      Unread content to right (alias: pan_right_alert)
     - wide           Content wider than the view (alias: pannable)
+    - new_data       Data arrived while scrolled up (aliases: unread, missed)
 
 - Styles:
   - Colors:

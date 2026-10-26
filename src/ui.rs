@@ -183,6 +183,7 @@ pub fn render(
         } else {
             map.click_target_at(x, y)
                 .and_then(|target| Some((target.area, target.hover?)))
+                .or_else(|| Some((map.scrollbar?.part_at(x, y)?, *theme.ui.hover)))
         };
         if let Some((area, style)) = hovered {
             frame.buffer_mut().set_style(area, style);
@@ -2916,6 +2917,208 @@ mod tests {
             wheel(&mut h, MouseEventKind::ScrollLeft, KeyModifiers::NONE);
         }
         assert_eq!(rows_value(&h), "1");
+    }
+
+    /// MAX-141: sending returns to the live view, receiving never moves a scrolled one; the
+    /// `new_data` condition is on while data arrived scrolled up, unseen. Line mode: typing in
+    /// the TX box keeps the view, Enter returns. Terminal mode: a key or a paste returns, a key
+    /// that sends nothing doesn't. The default templates don't use it.
+    /// How: a bar showing `NEW` on `new_data`, 30 lines, scrolled up 3, then RX, keys, Enter,
+    /// paste, in each mode.
+    #[test]
+    fn sending_returns_receiving_doesnt() {
+        use crate::inputs::{LineInputAction, TerminalAction};
+        use crossterm::event::{KeyCode, KeyEvent};
+        let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        for mode in [Mode::Line, Mode::Terminal] {
+            let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 10, |s| {
+                s.mode = mode;
+            });
+            let mut config = h.app.settings().ui.status_bar.clone();
+            config.center = "[NEW](new_data?warn:hide)".to_string();
+            h.status_bar = CompiledStatusBar::new(&config, &h.theme);
+            for i in 0..30 {
+                h.app.feed_rx(format!("line {i}\r\n").as_bytes());
+            }
+            let new_data = |h: &mut Harness| h.draw()[9].contains("NEW");
+            let offset = |h: &Harness| h.app.scroll_status().offset_from_bottom;
+            assert!(!new_data(&mut h), "{mode:?} live");
+            h.scroll(HistoryAction::ScrollUp(3));
+            assert!(!new_data(&mut h), "{mode:?} scrolled, nothing new");
+            assert!(offset(&h) > 0, "{mode:?}");
+            let shown = h.draw()[..9].to_vec();
+
+            h.app.feed_rx(b"more\r\nand more\r\n");
+            assert!(new_data(&mut h), "{mode:?} new data");
+            assert_eq!(h.draw()[..9], shown, "{mode:?} the view stays");
+
+            match mode {
+                Mode::Line => {
+                    h.app
+                        .update(Action::LineInput(LineInputAction::HandleKey(key(
+                            KeyCode::Char('x'),
+                        ))));
+                    assert!(new_data(&mut h) && offset(&h) > 0, "typing keeps it");
+                    h.app.update(Action::LineInput(LineInputAction::Submit));
+                }
+                Mode::Terminal => {
+                    let caps = h.app.update(Action::Terminal(TerminalAction::Key(key(
+                        KeyCode::CapsLock,
+                    ))));
+                    assert!(matches!(caps, UpdateEffect::None));
+                    assert!(new_data(&mut h) && offset(&h) > 0, "nothing sent");
+                    h.app
+                        .update(Action::Terminal(TerminalAction::Key(key(KeyCode::Char(
+                            'x',
+                        )))));
+                }
+            }
+            assert!(!new_data(&mut h), "{mode:?} seen");
+            assert_eq!(offset(&h), 0, "{mode:?} back live");
+
+            if mode == Mode::Terminal {
+                h.scroll(HistoryAction::ScrollUp(3));
+                h.draw();
+                assert!(offset(&h) > 0);
+                h.app
+                    .update(Action::Terminal(TerminalAction::Paste("ls".to_string())));
+                assert_eq!(offset(&h), 0, "a paste returns");
+            }
+        }
+
+        let d = crate::configs::StatusBarConfig::default();
+        for template in [&d.left, &d.center, &d.right] {
+            assert!(!template.contains("new_data"));
+        }
+    }
+
+    /// MAX-142: the history's scrollbar takes the mouse: `▲` / `▼` scroll a row and repeat
+    /// while held, a press on the track puts the thumb there (its top row: the top, its bottom
+    /// row: the live view), the thumb dragged moves the view, off the scrollbar's column and
+    /// past its ends too; the arrows and the thumb take the hover style.
+    /// How: 40 lines in line mode, 80x12 without borders, then 60 lines in terminal mode.
+    #[test]
+    fn scrollbar_mouse() {
+        use ratatui::style::Modifier;
+        use std::time::{Duration, Instant};
+        for mode in [Mode::Line, Mode::Terminal] {
+            let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+                s.mode = mode;
+            });
+            for i in 0..60 {
+                h.app.feed_rx(format!("line {i:02}\r\n").as_bytes());
+            }
+            h.draw();
+            let bar = h.app.frame_map().scrollbar.expect("a scrollbar");
+            let (x, top, bottom) = (bar.area.x, bar.area.y, bar.area.bottom() - 1);
+            let offset = |h: &mut Harness| {
+                h.draw();
+                h.app.scroll_status().offset_from_bottom
+            };
+            let press =
+                |h: &mut Harness, at| mouse_do(h, MouseEventKind::Down(MouseButton::Left), at);
+            let release =
+                |h: &mut Harness, at| mouse_do(h, MouseEventKind::Up(MouseButton::Left), at);
+
+            click(&mut h, (x, top));
+            assert_eq!(offset(&mut h), 1, "{mode:?} ▲");
+            click(&mut h, (x, bottom));
+            assert_eq!(offset(&mut h), 0, "{mode:?} ▼");
+
+            // held, it repeats after a while
+            press(&mut h, (x, top));
+            assert!(!h.app.scrollbar_repeat(Instant::now()));
+            assert!(
+                h.app
+                    .scrollbar_repeat(Instant::now() + Duration::from_millis(400))
+            );
+            release(&mut h, (x, top));
+            assert!(!h.app.is_scrollbar_held());
+            assert_eq!(offset(&mut h), 2, "{mode:?} repeated");
+
+            click(&mut h, (x, top + 1));
+            let max = h.app.scroll_status().max_scroll;
+            assert_eq!(offset(&mut h), max, "{mode:?} track top");
+            assert!(
+                h.draw().iter().any(|row| row.contains("line 00")),
+                "{mode:?}"
+            );
+            click(&mut h, (x, bottom - 1));
+            assert_eq!(offset(&mut h), 0, "{mode:?} track bottom");
+
+            // the thumb, at the bottom while live, dragged
+            let bar = h.app.frame_map().scrollbar.unwrap();
+            let (first, _) = bar.thumb();
+            let thumb = top + 1 + first as u16;
+            press(&mut h, (x, thumb));
+            mouse_do(
+                &mut h,
+                MouseEventKind::Drag(MouseButton::Left),
+                (x, top + 3),
+            );
+            let middle = offset(&mut h);
+            assert!(0 < middle && middle < max, "{mode:?} {middle}/{max}");
+            mouse_do(
+                &mut h,
+                MouseEventKind::Drag(MouseButton::Left),
+                (5, top + 3),
+            );
+            assert_eq!(offset(&mut h), middle, "{mode:?} off the column");
+            mouse_do(&mut h, MouseEventKind::Drag(MouseButton::Left), (5, 0));
+            assert_eq!(offset(&mut h), max, "{mode:?} above");
+            mouse_do(&mut h, MouseEventKind::Drag(MouseButton::Left), (5, 11));
+            assert_eq!(offset(&mut h), 0, "{mode:?} below");
+            release(&mut h, (5, 11));
+            assert!(!h.app.is_scrollbar_held());
+
+            // the hover: the arrow, then the whole thumb
+            let reversed = |h: &Harness, y| {
+                h.terminal.backend().buffer()[(x, y)]
+                    .modifier
+                    .contains(Modifier::REVERSED)
+            };
+            let moved = |h: &mut Harness, at| {
+                let event = mouse(MouseEventKind::Moved, at, KeyModifiers::NONE);
+                let action = crate::inputs::handle_event(event, &h.app);
+                h.app.update(action);
+                h.draw();
+            };
+            moved(&mut h, (x, top));
+            assert!(reversed(&h, top) && !reversed(&h, top + 1), "{mode:?}");
+            let (first, length) = h.app.frame_map().scrollbar.unwrap().thumb();
+            moved(&mut h, (x, top + 1 + first as u16));
+            for row in 0..length as u16 {
+                assert!(reversed(&h, top + 1 + first as u16 + row), "{mode:?} thumb");
+            }
+        }
+
+        // line mode with entries 3 rows high: a press on the track lands on the exact row
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+        for i in 0..20 {
+            h.feed(format!("{i:02} {}\r\n", "x".repeat(150)).as_bytes());
+        }
+        h.draw();
+        let bar = h.app.frame_map().scrollbar.unwrap();
+        for row in 1..bar.area.height - 1 {
+            click(&mut h, (bar.area.x, bar.area.y + row));
+            h.draw();
+            let (_, length) = bar.thumb();
+            let first = row as isize - 1 - (length / 2) as isize;
+            let expected = bar.max - bar.position_at(first);
+            assert_eq!(
+                h.app.scroll_status().offset_from_bottom,
+                expected,
+                "row {row}"
+            );
+        }
+
+        // nothing to scroll: no scrollbar, a click there goes to the history as before
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+        h.feed(b"one\r\n");
+        h.draw();
+        assert!(h.app.frame_map().scrollbar.is_none());
+        click(&mut h, (79, 0));
+        assert!(!h.app.is_scrollbar_held());
     }
 
     /// A click in the search bar's query moves its cursor to the clicked char, the end past

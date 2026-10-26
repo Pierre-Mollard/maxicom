@@ -115,6 +115,8 @@ pub struct FrameMap {
     pub prompt: Option<PromptMap>,
     /// The search bar's query, as drawn
     pub search_query: Option<PromptMap>,
+    /// The history's scrollbar, as drawn
+    pub scrollbar: Option<ScrollbarMap>,
     /// The status bar blocks, border buttons and search bar hints a click runs, in drawing
     /// order (MAX-125, MAX-128)
     pub click_targets: Vec<ClickTarget>,
@@ -137,6 +139,67 @@ pub enum ClickAction {
     ToggleSide,
     /// A search bar hint (MAX-131)
     Search(KeyBindingSearchAction),
+}
+
+/// The history's scrollbar as drawn (MAX-142): its column, `▲` on top and `▼` at the bottom
+/// with the track between them, the positions it goes through (`0` the top, `max` the live view),
+/// the one it shows and the rows the view shows. The thumb is placed as ratatui's `Scrollbar`
+/// places it, so a pointer lands where it is drawn
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScrollbarMap {
+    pub area: Rect,
+    pub max: usize,
+    pub position: usize,
+    pub view: usize,
+}
+
+impl ScrollbarMap {
+    pub fn track(&self) -> usize {
+        self.area.height.saturating_sub(2) as usize
+    }
+
+    /// The thumb's first row in the track and its length
+    pub fn thumb(&self) -> (usize, usize) {
+        let track = self.track();
+        let max_position = self.max.saturating_sub(1);
+        let max_viewport = max_position + self.view;
+        if track == 0 || max_viewport == 0 {
+            return (0, track);
+        }
+        let round = |n: usize, d: usize| (n + d / 2) / d;
+        let length = round(self.view * track, max_viewport).clamp(1, track);
+        let first = round(self.position.min(max_position) * track, max_viewport);
+        (first.min(track - length), length)
+    }
+
+    /// The position that draws the thumb from track row `first` (out of the track: its end);
+    /// the thumb at the bottom is the live view
+    pub fn position_at(&self, first: isize) -> usize {
+        let track = self.track();
+        let (_, length) = self.thumb();
+        let first = first.clamp(0, (track - length) as isize) as usize;
+        if track == 0 || first + length >= track {
+            return self.max;
+        }
+        let max_viewport = self.max.saturating_sub(1) + self.view;
+        ((first * max_viewport + track / 2) / track).min(self.max)
+    }
+
+    /// The cells of the arrow or the thumb under a screen cell, for the hover
+    pub fn part_at(&self, x: u16, y: u16) -> Option<Rect> {
+        if !self.area.contains(ratatui::layout::Position::new(x, y)) {
+            return None;
+        }
+        let row = y - self.area.y;
+        if row == 0 || row + 1 == self.area.height {
+            return Some(Rect::new(x, y, 1, 1));
+        }
+        let (first, length) = self.thumb();
+        let in_track = row as usize - 1;
+        (first..first + length)
+            .contains(&in_track)
+            .then(|| Rect::new(x, self.area.y + 1 + first as u16, 1, length as u16))
+    }
 }
 
 /// Where an input's text is drawn (the TX input, the search query): its area (after a prefix)
@@ -182,6 +245,7 @@ impl FrameMap {
         self.popup_targets.clear();
         self.prompt = None;
         self.search_query = None;
+        self.scrollbar = None;
         self.click_targets.clear();
     }
 
@@ -221,7 +285,9 @@ impl FrameMap {
         if self.popup.is_some() {
             return self.popup_target_at(x, y).map(|(area, _)| area);
         }
-        self.click_target_at(x, y).map(|target| target.area)
+        self.click_target_at(x, y)
+            .map(|target| target.area)
+            .or_else(|| self.scrollbar?.part_at(x, y))
     }
 
     /// The TX input column (counted from the text's start, scroll included) under a cell

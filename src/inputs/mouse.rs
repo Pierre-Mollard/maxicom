@@ -14,7 +14,7 @@ use crate::{
     configs::Mode,
     inputs::{
         Action, AppAction, CopyModeAction, DialogAction, HistoryAction, LineInputAction,
-        SearchModeAction, SideViewAction, TerminalAction,
+        ScrollbarAction, SearchModeAction, SideViewAction, TerminalAction,
     },
     overlays::{ActionMenu, Overlay, PopupTarget},
 };
@@ -156,6 +156,28 @@ fn handle_left_button(event: MouseEvent, app: &App) -> Action {
         }
         InputContext::Overlay | InputContext::Prefix => return Action::Ignore,
         _ => {}
+    }
+
+    // the history's scrollbar, from a press on it to the release; not in copy mode, where the
+    // view follows the copy cursor (MAX-142)
+    let scrollbar = |action| Action::App(AppAction::Scrollbar(action));
+    if app.is_scrollbar_held() {
+        match event.kind {
+            MouseEventKind::Drag(_) => {
+                return map.scrollbar.map_or(Action::Ignore, |bar| {
+                    scrollbar(ScrollbarAction::Drag(i32::from(y) - i32::from(bar.area.y)))
+                });
+            }
+            MouseEventKind::Up(_) => return scrollbar(ScrollbarAction::Release),
+            _ => {}
+        }
+    }
+    if is_press
+        && app.input_context() != InputContext::CopyMode
+        && let Some(bar) = map.scrollbar
+        && bar.area.contains(Position::new(x, y))
+    {
+        return scrollbar(ScrollbarAction::Press(y - bar.area.y));
     }
 
     match event.kind {

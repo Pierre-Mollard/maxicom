@@ -11,8 +11,8 @@ use crate::{
         settings::PrefixWrapBehavior,
     },
     inputs::{
-        Action, AppAction, CopyModeAction, HistoryAction, LineInputAction, SearchModeAction,
-        SideViewAction,
+        Action, AppAction, CopyModeAction, HistoryAction, LineInputAction, ScrollbarAction,
+        SearchModeAction, SideViewAction,
     },
     logger::{LineLogger, TerminalLogger},
     notification::{NotificationManager, ToastLevel},
@@ -64,6 +64,17 @@ impl Stats {
 
 /// How often a drag held at the history's edge scrolls it (MAX-126)
 const DRAG_SCROLL_EVERY: Duration = Duration::from_millis(50);
+/// How long the scrollbar's `▲` or `▼` is held before it repeats (MAX-142)
+const SCROLLBAR_REPEAT_AFTER: Duration = Duration::from_millis(300);
+
+/// What the left button holds on the scrollbar since its press (MAX-142): an arrow, or the thumb
+/// by one of its rows
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScrollbarHold {
+    Up,
+    Down,
+    Thumb { grab: usize },
+}
 
 pub struct App {
     settings: SettingsConfig,
@@ -80,6 +91,9 @@ pub struct App {
     /// scroll last ran (MAX-126)
     drag_hold: Option<(u16, u16)>,
     last_drag_scroll: Option<Instant>,
+    scrollbar_hold: Option<ScrollbarHold>,
+    /// When a held scrollbar arrow scrolls again
+    scrollbar_repeat_at: Option<Instant>,
     pub line_mode: LineMode,
     pub terminal_mode: TerminalMode,
     pub is_window_focused: bool,
@@ -135,6 +149,8 @@ impl App {
             clicks: ClickCounter::default(),
             drag_hold: None,
             last_drag_scroll: None,
+            scrollbar_hold: None,
+            scrollbar_repeat_at: None,
             line_mode: line_view,
             terminal_mode: terminal_view,
             is_window_focused: true,
@@ -383,8 +399,70 @@ impl App {
         self.terminal_mode.flush_logger_if_due();
 
         let toasts_expired = self.notifications.tick();
-        let drag_scrolled = self.drag_scroll(Instant::now());
+        let now = Instant::now();
+        let drag_scrolled = self.drag_scroll(now) || self.scrollbar_repeat(now);
         toasts_expired || self.terminal_mode.has_pending_flash() || drag_scrolled
+    }
+
+    /// The left button is on the scrollbar, from its press to its release (MAX-142)
+    pub fn is_scrollbar_held(&self) -> bool {
+        self.scrollbar_hold.is_some()
+    }
+
+    /// The left button on the history's scrollbar, as the last frame drew it (MAX-142): `▲` or
+    /// `▼` scrolls a row, then again every `DRAG_SCROLL_EVERY` while held; a press on the thumb
+    /// grabs it by that row, on the rest of the track it puts the thumb's middle there first;
+    /// a drag then moves the thumb with the pointer
+    fn scrollbar(&mut self, action: ScrollbarAction, now: Instant) {
+        let Some(bar) = self.frame_map.scrollbar else {
+            self.scrollbar_hold = None;
+            return;
+        };
+        let to_thumb = |first: isize| HistoryAction::ScrollTo(bar.max - bar.position_at(first));
+        match action {
+            ScrollbarAction::Press(row) => {
+                let (hold, scroll) = if row == 0 {
+                    (ScrollbarHold::Up, HistoryAction::ScrollUp(1))
+                } else if row + 1 >= bar.area.height {
+                    (ScrollbarHold::Down, HistoryAction::ScrollDown(1))
+                } else {
+                    let in_track = usize::from(row - 1);
+                    let (first, length) = bar.thumb();
+                    let grab = if (first..first + length).contains(&in_track) {
+                        in_track - first
+                    } else {
+                        length / 2
+                    };
+                    let scroll = to_thumb(in_track as isize - grab as isize);
+                    (ScrollbarHold::Thumb { grab }, scroll)
+                };
+                self.scrollbar_hold = Some(hold);
+                self.scrollbar_repeat_at = Some(now + SCROLLBAR_REPEAT_AFTER);
+                self.update_action_history(scroll);
+            }
+            ScrollbarAction::Drag(row) => {
+                if let Some(ScrollbarHold::Thumb { grab }) = self.scrollbar_hold {
+                    let first = row as isize - 1 - grab as isize;
+                    self.update_action_history(to_thumb(first));
+                }
+            }
+            ScrollbarAction::Release => self.scrollbar_hold = None,
+        }
+    }
+
+    /// A scrollbar arrow held scrolls again; returns true when it did
+    pub fn scrollbar_repeat(&mut self, now: Instant) -> bool {
+        let scroll = match self.scrollbar_hold {
+            Some(ScrollbarHold::Up) => HistoryAction::ScrollUp(1),
+            Some(ScrollbarHold::Down) => HistoryAction::ScrollDown(1),
+            _ => return false,
+        };
+        if self.scrollbar_repeat_at.is_some_and(|at| now < at) {
+            return false;
+        }
+        self.scrollbar_repeat_at = Some(now + DRAG_SCROLL_EVERY);
+        self.update_action_history(scroll);
+        true
     }
 
     /// A drag held on the top or bottom row of the history (or the raw panel), or past it,
@@ -461,6 +539,10 @@ impl App {
             AppAction::SideView(action) => self.update_side_view(action),
             // the menu's selection follows the pointer, the other parts are only drawn
             // highlighted (`ui::render`)
+            AppAction::Scrollbar(action) => {
+                self.scrollbar(action, Instant::now());
+                UpdateEffect::None
+            }
             AppAction::Hover(x, y) => {
                 self.pointer = Some((x, y));
                 if let Some(Overlay::ActionMenu(menu)) = &mut self.overlay
@@ -602,6 +684,10 @@ impl App {
                 self.terminal_mode.pan_to_left(cols, self.viewport.cols);
             }
             (Mode::Terminal, HistoryAction::Clear) => self.terminal_mode.clear_history(),
+            (Mode::Line, HistoryAction::ScrollTo(rows)) => self.line_mode.scroll_to_row(rows),
+            (Mode::Terminal, HistoryAction::ScrollTo(rows)) => {
+                self.terminal_mode.scroll_to_row(rows)
+            }
         }
 
         UpdateEffect::None
@@ -829,6 +915,14 @@ impl App {
         match self.settings().mode {
             Mode::Terminal => self.terminal_mode.scroller().status(),
             Mode::Line => self.line_mode.scroll_status(),
+        }
+    }
+
+    /// Data arrived while the view was scrolled up, not seen yet (MAX-141)
+    pub fn is_new_content_missed(&self) -> bool {
+        match self.settings().mode {
+            Mode::Terminal => self.terminal_mode.is_new_content_missed(),
+            Mode::Line => self.line_mode.is_new_content_missed(),
         }
     }
 

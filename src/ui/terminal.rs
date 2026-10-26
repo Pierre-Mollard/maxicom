@@ -11,7 +11,7 @@ use crate::{
         App,
         data_processing::{build_display_to_raw_byte_map, map_disp_byte_to_raw},
         selection::CopySide,
-        types::{FocusTarget, RawRow, RowChars, TextRow},
+        types::{FocusTarget, RawRow, RowChars, ScrollbarMap, TextRow},
     },
     configs::{KeywordHighlight, RawSideView, ThemeConfig, settings::raw_view_to_display_mode},
     terminal::{MaxicomCursor, MaxicomTerminal, vt100_size},
@@ -308,6 +308,13 @@ pub fn render_vt100_terminal(
                 .end_style(*theme.ui.scrollbar_thumb);
 
             frame.render_stateful_widget(scrollbar, sb_area, &mut scrollbar_state);
+            // for the mouse (MAX-142)
+            app.frame_map_mut().scrollbar = Some(ScrollbarMap {
+                area: sb_area,
+                max: max_vertical,
+                position: position_from_top,
+                view: view_height,
+            });
         } else if !has_borders {
             let blank = Paragraph::new(" ");
             frame.render_widget(blank, sb_area);

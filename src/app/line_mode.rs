@@ -663,6 +663,33 @@ impl LineMode {
     }
     /// Scrolls to the last row of the entry `lines` entries from the bottom
     #[inline]
+    /// To `rows` above the live view, as the scroll status counts them (MAX-142): the entry
+    /// holding the view's bottom row then, and its rows below it, from the heights the last
+    /// frame counted. If they aren't all counted, by rows from where the last frame was (the
+    /// render moves at most a view height per frame)
+    pub fn scroll_to_row(&mut self, rows: usize) {
+        let rows = rows.min(self.row_scroll_status.max_scroll);
+        if rows == 0 {
+            self.scroll_to_bottom();
+            return;
+        }
+        let mut below = 0;
+        for (idx, &height) in self.row_heights.iter().enumerate().rev() {
+            let height = height as usize;
+            if height == 0 {
+                break;
+            }
+            if below + height > rows {
+                self.set_scroll_position(self.row_heights.len() - 1 - idx, rows - below);
+                self.pending_scroll_rows = 0;
+                return;
+            }
+            below += height;
+        }
+        let drawn = self.row_scroll_status.offset_from_bottom;
+        self.pending_scroll_rows = rows as isize - drawn as isize;
+    }
+
     pub fn scroll_to(&mut self, lines: usize) {
         self.scroller.scroll_to(lines);
         self.rows_below = 0;

@@ -51,7 +51,17 @@ pub enum AppAction {
     OpenOverlay(Overlay),
     SideView(SideViewAction),
     Hover(u16, u16),
+    Scrollbar(ScrollbarAction),
     Quit,
+}
+
+/// The left button on the history's scrollbar (MAX-142): a press on one of its rows (`0` the
+/// `▲`), a drag held from it on a row (above or below it too), the release
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrollbarAction {
+    Press(u16),
+    Drag(i32),
+    Release,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -89,6 +99,7 @@ pub enum HistoryAction {
     PanLeft(usize),
     PanRight(usize),
     Clear,
+    ScrollTo(usize),
 }
 
 #[derive(Debug, PartialEq, Eq)]

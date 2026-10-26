@@ -19,7 +19,7 @@ use crate::{
         scroller::ScrollStatus,
         search::SearchMatch,
         selection::CopySide,
-        types::{FocusTarget, LogEntry, PromptMap, RawRow, RowChars, TextRow},
+        types::{FocusTarget, LogEntry, PromptMap, RawRow, RowChars, ScrollbarMap, TextRow},
     },
     configs::{
         KeywordHighlight, LineDisplayMode, SettingsConfig, ThemeConfig, WrapMode,
@@ -783,6 +783,13 @@ pub fn render_monitor(
                 .end_style(*theme.ui.scrollbar_thumb);
 
             frame.render_stateful_widget(scrollbar, sb_area, &mut scrollbar_state);
+            // for the mouse (MAX-142)
+            app.frame_map_mut().scrollbar = Some(ScrollbarMap {
+                area: sb_area,
+                max: max_scroll,
+                position: scrollbar_pos,
+                view: content_height,
+            });
         } else if !has_borders {
             let blank = Paragraph::new(" ");
             frame.render_widget(blank, sb_area);

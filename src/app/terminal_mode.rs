@@ -84,6 +84,7 @@ impl TerminalMode {
 
         let started_on_main = !self.vt100_parser.screen().alternate_screen();
         let cursor_row_before = self.vt100_parser.screen().cursor_position().0 as usize;
+        let live_rows_before = self.live_rows();
 
         let utf8_bytes = encoding.to_utf8_bytes(raw_bytes);
         self.vt100_parser.process(&utf8_bytes);
@@ -118,6 +119,15 @@ impl TerminalMode {
         // one slot per world row whatever happened above (back from the alternate screen, or a
         // case not tracked), so the range below can't go past the end
         self.row_timestamps.resize(scrollback + rows, None);
+
+        // a view scrolled up stays on the rows it shows: its offset, counted from the live
+        // view's last row, grows by the rows that came in below it (MAX-141)
+        if started_on_main && self.scroller.offset_y > 0 {
+            let added = (scrollback + self.live_rows() + evicted)
+                .saturating_sub(scrollback_before + live_rows_before);
+            self.scroller.offset_y += added;
+            self.reconcile_both_vertical_scroll();
+        }
 
         // every row the cursor went through gets this chunk's time, if it has none yet
         let now = Local::now();
@@ -402,6 +412,13 @@ impl TerminalMode {
         self.reconcile_both_vertical_scroll();
     }
 
+    /// To `rows` above the live view (MAX-142)
+    pub fn scroll_to_row(&mut self, rows: usize) {
+        self.scroller.max_scroll_y = self.max_vertical_scroll();
+        self.scroller.scroll_to(rows);
+        self.reconcile_both_vertical_scroll();
+    }
+
     pub fn scroll_to_top(&mut self) {
         self.scroller.max_scroll_y = self.max_vertical_scroll();
         self.scroller.scroll_to_top();
@@ -552,14 +569,20 @@ impl TerminalMode {
                 }
                 Err(e) => UpdateEffect::Screenshot(Err(e.to_string())),
             },
+            // what is sent to the remote brings the view back to the live screen, as typing
+            // there blind is no use; what it sends never moves a scrolled view (MAX-141)
             TerminalAction::Key(key_event) => {
                 let application_cursor = self.vt100_screen().application_cursor();
                 match encode_terminal_key(key_event, application_cursor) {
-                    Some(bytes) => UpdateEffect::Transmit(bytes),
+                    Some(bytes) => {
+                        self.scroll_to_bottom();
+                        UpdateEffect::Transmit(bytes)
+                    }
                     None => UpdateEffect::None,
                 }
             }
             TerminalAction::Paste(text) => {
+                self.scroll_to_bottom();
                 let bracketed = self.vt100_screen().bracketed_paste();
                 UpdateEffect::Transmit(terminal_paste_bytes(&text, bracketed))
             }
