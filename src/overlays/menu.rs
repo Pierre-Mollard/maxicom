@@ -37,7 +37,10 @@ impl ActionMenu {
             ("Search", KeyBindingAction::EnterSearch),
         ];
         if mode == Mode::Terminal {
-            items.push(("Screenshot", KeyBindingAction::ScreenshotTxt));
+            items.extend([
+                ("Screenshot", KeyBindingAction::ScreenshotTxt),
+                ("Terminal size", KeyBindingAction::ResizeDialog),
+            ]);
         }
         items.extend([
             ("Clear history", KeyBindingAction::ClearHistory),
@@ -78,7 +81,8 @@ mod tests {
 
     use super::*;
 
-    /// The rows follow the mode and the recording state; the mouse toggle is never one.
+    /// The rows follow the mode and the recording state; the mouse toggle is never one. The
+    /// screenshot and the terminal size are terminal mode's only (MAX-132).
     /// How: a menu per mode, recording on and off.
     #[test]
     fn rows_follow_the_state() {
@@ -87,11 +91,13 @@ mod tests {
         assert!(labels(&line).contains(&"Switch to TERM"));
         assert!(labels(&line).contains(&"Start recording"));
         assert!(!labels(&line).contains(&"Screenshot"));
+        assert!(!labels(&line).contains(&"Terminal size"));
 
         let term = ActionMenu::new((0, 0), Mode::Terminal, true);
         assert!(labels(&term).contains(&"Switch to LINE"));
         assert!(labels(&term).contains(&"Stop recording"));
         assert!(labels(&term).contains(&"Screenshot"));
+        assert!(labels(&term).contains(&"Terminal size"));
         assert!(
             !term
                 .items

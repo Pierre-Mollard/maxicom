@@ -670,11 +670,16 @@ impl CopyModeState {
     /// or a byte with the char showing it as its ghost (MAX-113)
     fn move_to<S: TextSource>(&mut self, pos: LogicalPosition, source: &mut S, max_line: usize) {
         let line_idx = pos.line_idx.min(max_line);
+        // below the last line is the end of it, as in an editor (MAX-138)
+        let past_end = pos.line_idx > max_line;
         self.cursor = match self.side {
             CopySide::Text => {
-                let char_idx = pos
-                    .char_idx
-                    .min(source.get_line_len(line_idx).saturating_sub(1));
+                let last = source.get_line_len(line_idx).saturating_sub(1);
+                let char_idx = if past_end {
+                    last
+                } else {
+                    pos.char_idx.min(last)
+                };
                 LogicalPosition {
                     line_idx,
                     char_idx,

@@ -130,6 +130,9 @@ impl Overlay {
                         OverlayResponse::ToggleSetting(SettingKey::TextEncoding)
                     }
                     KeyCode::Char('u' | 'U') => OverlayResponse::ToggleSetting(SettingKey::Mouse),
+                    KeyCode::Char('s' | 'S') => {
+                        OverlayResponse::ToggleSetting(SettingKey::DimensionMode)
+                    }
                     _ => OverlayResponse::Handled,
                 },
                 _ => OverlayResponse::Handled,
@@ -150,4 +153,5 @@ pub enum SettingKey {
     DisplayMode,
     DisplayRaw,
     Mouse,
+    DimensionMode,
 }

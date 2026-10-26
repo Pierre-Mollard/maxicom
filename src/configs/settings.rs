@@ -264,6 +264,26 @@ pub enum TerminalDimensionMode {
     Fixed,
 }
 
+impl TerminalDimensionMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            TerminalDimensionMode::GrowOnly => "Grow Only",
+            TerminalDimensionMode::MatchView => "Match View",
+            TerminalDimensionMode::FixedCols => "Fixed Cols",
+            TerminalDimensionMode::Fixed => "Fixed",
+        }
+    }
+
+    pub fn toggle(&mut self) {
+        *self = match *self {
+            TerminalDimensionMode::GrowOnly => TerminalDimensionMode::MatchView,
+            TerminalDimensionMode::MatchView => TerminalDimensionMode::FixedCols,
+            TerminalDimensionMode::FixedCols => TerminalDimensionMode::Fixed,
+            TerminalDimensionMode::Fixed => TerminalDimensionMode::GrowOnly,
+        };
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {

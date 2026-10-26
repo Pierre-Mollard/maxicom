@@ -710,6 +710,14 @@ impl App {
                 let state = if self.settings.ui.mouse { "ON" } else { "OFF" };
                 self.notify_info(format!("Mouse capture {state}"));
             }
+            SettingKey::DimensionMode => {
+                self.settings.terminal_mode.dimension_mode.toggle();
+                self.update_viewport(self.viewport);
+                self.notify_info(format!(
+                    "Terminal Size Mode is {}",
+                    self.settings.terminal_mode.dimension_mode.as_str()
+                ));
+            }
             SettingKey::DisplayRaw => {
                 self.settings.raw_side.view.toggle();
                 self.notify_info(format!(

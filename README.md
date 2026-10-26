@@ -59,6 +59,21 @@ cargo deny check
   status bar and scrollbar, to leave the room to the content. The settings
   stay as they are: a bigger window brings them back. `0` turns a side off.
 
+### TERMINAL
+
+- `dimension_mode` in `[terminal_mode]`: the size of the emulated screen. The
+  device never learns it (there is no resize signal on a serial line), so it
+  only changes what can be shown, and an automatic resize never loses data:
+  - `grow_only` (default)  Grows with the view, never shrinks. When the window
+                         gets smaller, the view follows the cursor
+  - `match_view`           The view's size, but never smaller than the content
+                         below the cursor or the widest row
+  - `fixed_cols`           The view's rows, but never fewer than the content
+                         below the cursor; `cols` columns
+  - `fixed`                `rows` x `cols`
+  A size set from the resize popup applies as asked. The settings popup
+  cycles the mode with `S` (Terminal Mode section).
+
 ### THEME
 
 #### STATUS BAR FORMAT

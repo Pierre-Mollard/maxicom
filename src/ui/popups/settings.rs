@@ -46,6 +46,7 @@ pub fn render_settings_popup(
     let encoding_str = app.settings().encoding.as_str();
     let display_mode_str = app.settings().line_mode.display_mode.as_str();
     let raw_display_str = app.settings().raw_side.view.as_str();
+    let dimension_str = app.settings().terminal_mode.dimension_mode.as_str();
 
     let row = |key: &'static str, label: &'static str, value: &'static str| {
         Line::from(vec![
@@ -90,6 +91,12 @@ pub fn render_settings_popup(
         (
             Some(SettingKey::DisplayMode),
             row("D", "Display Mode", display_mode_str),
+        ),
+        (None, Line::from("")),
+        (None, section("Terminal Mode", theme)),
+        (
+            Some(SettingKey::DimensionMode),
+            row("S", "Size Mode", dimension_str),
         ),
     ];
 

@@ -1382,6 +1382,38 @@ mod tests {
         assert!(h.app.line_mode.copy_state().active);
     }
 
+    /// MAX-138: in terminal mode the rows below the cursor and the last content never had any,
+    /// so a drag into them stops at the end of the last line, and the copy cursor doesn't go
+    /// down into them.
+    /// How: three lines on a 24-row grid; a drag from "one" to a blank row far below; copy
+    /// mode and Down 20 times.
+    #[test]
+    fn terminal_selection_stops_at_the_last_content() {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 24, |s| {
+            s.mode = Mode::Terminal;
+        });
+        h.draw();
+        h.app
+            .terminal_mode
+            .process_rx(TextEncoding::Utf8, b"one\r\ntwo\r\n$ ");
+        let rows = h.draw();
+        let (x, y) = cell_of(&rows, "one");
+        mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), (x, y));
+        mouse_do(&mut h, MouseEventKind::Drag(MouseButton::Left), (5, 15));
+        match mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), (5, 15)) {
+            UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "one\ntwo\n$"),
+            _ => panic!("expected a yank"),
+        }
+
+        h.app.update(Action::CopyMode(CopyModeAction::Exit));
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        for _ in 0..20 {
+            h.app.update(Action::CopyMode(CopyModeAction::MoveDown));
+        }
+        let last = h.app.terminal_mode.get_max_scrollback() + 2;
+        assert_eq!(h.app.terminal_mode.copy_state().cursor.line_idx, last);
+    }
+
     /// The smallest `<prefix>NN` number in the rows
     fn first_number(rows: &[String], prefix: &str) -> usize {
         rows.iter()
@@ -1778,6 +1810,64 @@ mod tests {
         assert_eq!((area.right(), area.bottom()), (80, 24));
         click(&mut h, cell_of(&rows, "Quit…"));
         assert!(matches!(h.app.overlay(), Some(Overlay::ConfirmQuit)));
+    }
+
+    /// MAX-132: in terminal mode the menu has "Terminal size", which opens the resize popup on
+    /// the grid's size, as its key does.
+    /// How: a right-click in terminal mode, a click on the row.
+    #[test]
+    fn right_click_menu_opens_the_resize_popup() {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 30, |s| {
+            s.mode = Mode::Terminal;
+        });
+        h.draw();
+        mouse_do(&mut h, MouseEventKind::Down(MouseButton::Right), (10, 3));
+        let rows = h.draw();
+        click(&mut h, cell_of(&rows, "Terminal size"));
+        let (grid_rows, grid_cols) = h.app.terminal_mode.get_vt100_size();
+        match h.app.overlay() {
+            Some(Overlay::TerminalSize(d)) => {
+                assert_eq!(d.rows_input.value(), grid_rows.to_string());
+                assert_eq!(d.cols_input.value(), grid_cols.to_string());
+            }
+            _ => panic!("no resize popup"),
+        }
+    }
+
+    /// MAX-133: the settings popup has a "Terminal Mode" section with the size mode; its key
+    /// `S` and a click cycle it (grow only, match view, fixed cols, fixed) and the grid follows
+    /// at once.
+    /// How: terminal mode at 80x24, the grid grown on a 100-column screen first; the
+    /// popup, `S` (match view: the blank grid shrinks to the view), a click (fixed cols).
+    #[test]
+    fn settings_popup_size_mode() {
+        use crate::configs::TerminalDimensionMode::{FixedCols, MatchView};
+        use crossterm::event::KeyCode::Char;
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 100, 24, |s| {
+            s.mode = Mode::Terminal;
+        });
+        h.draw();
+        h.terminal.backend_mut().resize(80, 24);
+        h.draw();
+        // the view is a column narrower than the screen: the scrollbar's
+        assert_eq!(h.app.terminal_mode.get_vt100_size().1, 99);
+
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::Settings)));
+        let rows = h.draw();
+        assert!(rows.iter().any(|row| row.contains("Terminal Mode")));
+        let size_mode = cell_of(&rows, "Size Mode");
+        assert!(rows[size_mode.1 as usize].contains("Grow Only"));
+
+        key_do(&mut h, Char('s'), KeyModifiers::NONE);
+        let rows = h.draw();
+        assert_eq!(h.app.settings().terminal_mode.dimension_mode, MatchView);
+        assert!(rows[size_mode.1 as usize].contains("Match View"));
+        assert_eq!(h.app.terminal_mode.get_vt100_size().1, 79);
+
+        click(&mut h, size_mode);
+        assert_eq!(h.app.settings().terminal_mode.dimension_mode, FixedCols);
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
     }
 
     /// MAX-130: in terminal mode a right-click on the grid opens the menu only while the
@@ -2397,6 +2487,71 @@ mod tests {
         h.app.settings_mut().mode = Mode::Terminal;
         assert!(!at(&mut h, 40, 24));
         assert_eq!(content(&h), Rect::new(0, 0, 40, 24));
+    }
+
+    /// MAX-140: a `grow_only` grid taller than the view (the window shrank) shows its rows down
+    /// to the cursor, not its blank bottom: the prompt on the grid's first row stays on the
+    /// view's first row, the view follows the cursor down, and once the grid is full it is the
+    /// bottom view as before. Scrolling up reaches the top rows and back down the live view.
+    /// How: terminal mode grown to 49 rows on an 80x50 screen, then an 80x21 screen (20 rows of
+    /// view): a prompt, 25 lines, scroll up and down, then 60 lines.
+    #[test]
+    fn terminal_view_follows_the_cursor_in_a_taller_grid() {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 50, |s| {
+            s.mode = Mode::Terminal;
+        });
+        h.draw();
+        assert_eq!(h.app.terminal_mode.get_vt100_size().0, 49);
+        let feed = |h: &mut Harness, bytes: &[u8]| {
+            h.app.terminal_mode.process_rx(TextEncoding::Utf8, bytes);
+        };
+        feed(&mut h, b"$ ");
+        h.terminal.backend_mut().resize(80, 21);
+        let rows = h.draw();
+        assert_eq!(h.app.terminal_mode.get_vt100_size().0, 49);
+        assert!(rows[0].starts_with("$ "), "{:?}", &rows[..3]);
+        assert_eq!(cursor_cell(&mut h), (2, 0));
+
+        for i in 1..=25 {
+            feed(&mut h, format!("\r\nline {i:02}").as_bytes());
+        }
+        let rows = h.draw();
+        assert!(rows[19].starts_with("line 25"), "{rows:#?}");
+        assert!(rows[0].starts_with("line 06"), "{rows:#?}");
+        assert_eq!(cursor_cell(&mut h), (7, 19));
+
+        h.scroll(HistoryAction::ScrollToTop);
+        let rows = h.draw();
+        assert!(rows[0].starts_with("$ "), "{rows:#?}");
+        h.scroll(HistoryAction::ScrollToBottom);
+        let rows = h.draw();
+        assert!(rows[19].starts_with("line 25"), "{rows:#?}");
+
+        for i in 26..=60 {
+            feed(&mut h, format!("\r\nline {i:02}").as_bytes());
+        }
+        let rows = h.draw();
+        assert!(rows[19].starts_with("line 60"), "{rows:#?}");
+        assert_eq!(cursor_cell(&mut h), (7, 19));
+    }
+
+    /// MAX-140: content the remote drew below the cursor stays in the live view while it fits
+    /// with the cursor.
+    /// How: a 49-row grid in a 20-row view, "menu" drawn on row 16, the prompt back on row 1.
+    #[test]
+    fn terminal_content_below_the_cursor_stays_in_view() {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 50, |s| {
+            s.mode = Mode::Terminal;
+        });
+        h.draw();
+        h.app
+            .terminal_mode
+            .process_rx(TextEncoding::Utf8, b"\x1b[16;1Hmenu\x1b[1;1H$ ");
+        h.terminal.backend_mut().resize(80, 21);
+        let rows = h.draw();
+        assert!(rows[0].starts_with("$ "), "{rows:#?}");
+        assert!(rows[15].starts_with("menu"), "{rows:#?}");
+        assert_eq!(cursor_cell(&mut h), (2, 0));
     }
 
     /// The cell of the last `text` in the status bar (the last row): the buttons are at its

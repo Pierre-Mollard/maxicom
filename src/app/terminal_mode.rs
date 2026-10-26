@@ -38,6 +38,11 @@ pub struct TerminalMode {
     scroller: ViewportScroller,
     raw_scroller: RawSideScroller,
     pan_offset_y: usize,
+    /// The grid rows down to the cursor or the lowest row with content (MAX-140)
+    live_bottom: usize,
+    /// The grid columns up to the rightmost cell with content, measured when a shrink needs it
+    /// and forgotten when the grid changes (MAX-140)
+    content_cols: Option<u16>,
     vi_pending_copy: Option<ViPending>,
     flash_until: Option<Instant>,
     row_timestamps: VecDeque<Option<DateTime<Local>>>,
@@ -62,6 +67,8 @@ impl TerminalMode {
             scroller,
             raw_scroller,
             pan_offset_y: 0,
+            live_bottom: 1,
+            content_cols: None,
             vi_pending_copy: None,
             flash_until: None,
             row_timestamps: VecDeque::from(vec![None; rows as usize]),
@@ -80,6 +87,8 @@ impl TerminalMode {
         let utf8_bytes = encoding.to_utf8_bytes(raw_bytes);
         self.vt100_parser.process(&utf8_bytes);
         let evicted = std::mem::take(&mut self.vt100_parser.callbacks_mut().count);
+        self.update_live_bottom();
+        self.content_cols = None;
 
         // the alternate screen has no scrollback and leaves the main one as it is: its rows are
         // synced once the remote is back on the main screen
@@ -143,7 +152,7 @@ impl TerminalMode {
                     }
                 }
                 TerminalDimensionMode::FixedCols => {
-                    let target_rows = avail_h;
+                    let target_rows = self.rows_to_keep(avail_h);
                     let target_cols = conf_cols;
                     if (target_rows, target_cols) != (cur_rows, cur_cols) {
                         self.set_vt100_size(target_rows, target_cols);
@@ -151,8 +160,10 @@ impl TerminalMode {
                 }
 
                 TerminalDimensionMode::MatchView => {
-                    if (avail_h, avail_w) != (cur_rows, cur_cols) {
-                        self.set_vt100_size(avail_h, avail_w);
+                    let target_rows = self.rows_to_keep(avail_h);
+                    let target_cols = self.cols_to_keep(avail_w);
+                    if (target_rows, target_cols) != (cur_rows, cur_cols) {
+                        self.set_vt100_size(target_rows, target_cols);
                     }
                 }
 
@@ -206,6 +217,8 @@ impl TerminalMode {
 
         self.max_content_scrollback = 0;
         self.pan_offset_y = 0;
+        self.live_bottom = 1;
+        self.content_cols = None;
 
         self.scroller.scroll_to_bottom();
         self.scroller.max_scroll_y = 0;
@@ -264,9 +277,72 @@ impl TerminalMode {
         self.scroller.can_pan_left()
     }
 
+    /// Updates `live_bottom` from the screen as the remote left it, whatever the view is
+    /// scrolled to WARN: move scrollback to get line number then reset it
+    fn update_live_bottom(&mut self) {
+        let scrolled = self.vt100_parser.screen().scrollback();
+        self.vt100_parser.screen_mut().set_scrollback(0);
+        let rows = self.get_vt100_size().0;
+        let cursor = self.vt100_parser.screen().cursor_position().0;
+        let last = (cursor + 1..rows)
+            .rev()
+            .find(|&row| self.row_has_content(row))
+            .unwrap_or(cursor);
+        self.live_bottom = last as usize + 1;
+        self.vt100_parser.screen_mut().set_scrollback(scrolled);
+    }
+
+    /// The rows a view of `rows` can shrink the grid to without losing any: vt100 drops the rows
+    /// below the cursor first, so never fewer than the content there; the rows above the cursor
+    /// go to scrollback. The grid shrinks the rest of the way once that content is gone (MAX-140)
+    fn rows_to_keep(&self, rows: u16) -> u16 {
+        let cursor = self.vt100_parser.screen().cursor_position().0 as usize;
+        if self.live_bottom > cursor + 1 {
+            rows.max(self.live_bottom as u16)
+        } else {
+            rows
+        }
+    }
+
+    /// The columns a view of `cols` can shrink the grid to without losing any: vt100 cuts every
+    /// row at the new width, so never fewer than the rightmost cell with content; the pan shows
+    /// the rest (MAX-140) WARN: use scroll back then reset to get line number
+    fn cols_to_keep(&mut self, cols: u16) -> u16 {
+        let (rows, grid_cols) = self.get_vt100_size();
+        if cols >= grid_cols {
+            return cols;
+        }
+        if self.content_cols.is_none() {
+            // the grid as the remote left it, whatever the view is scrolled to
+            let scrolled = self.vt100_parser.screen().scrollback();
+            self.vt100_parser.screen_mut().set_scrollback(0);
+            let screen = self.vt100_parser.screen();
+            let widest = (0..rows)
+                .filter_map(|row| {
+                    (0..grid_cols)
+                        .rev()
+                        .find(|&col| screen.cell(row, col).is_some_and(|c| c.has_contents()))
+                })
+                .max()
+                .map_or(0, |col| col + 1);
+            self.content_cols = Some(widest);
+            self.vt100_parser.screen_mut().set_scrollback(scrolled);
+        }
+        cols.max(self.content_cols.unwrap_or(0))
+    }
+
+    /// The grid rows the live view ends at: down to the cursor or the lowest row with content,
+    /// and at least the view's height. The rows below are blank, so a grid taller than the view
+    /// (`grow_only` after the window shrank) shows the cursor, not its blank bottom (MAX-140)
+    fn live_rows(&self) -> usize {
+        let grid_rows = self.get_vt100_size().0 as usize;
+        self.live_bottom
+            .max(self.scroller.view_height)
+            .min(grid_rows)
+    }
+
     pub fn max_screen_pan_y(&self) -> usize {
-        let vt_rows = vt100_size(self.vt100_parser.screen()).0 as usize;
-        vt_rows.saturating_sub(self.scroller.view_height)
+        self.live_rows().saturating_sub(self.scroller.view_height)
     }
 
     pub fn max_vertical_scroll(&self) -> usize {
@@ -334,7 +410,8 @@ impl TerminalMode {
     pub fn scroll_to_target_line(&mut self, target_line_idx: usize, view_height: usize) {
         let (grid_rows, _) = self.get_vt100_size();
         let max_sb = self.max_content_scrollback;
-        let total_world_lines = max_sb + (grid_rows as usize);
+        // the offsets count from the live view's last row, not the grid's
+        let total_world_lines = max_sb + self.live_rows();
 
         if total_world_lines == 0 || target_line_idx >= total_world_lines {
             return;
@@ -369,6 +446,8 @@ impl TerminalMode {
         // the parser's `set_size` (not the screen's) reports the rows it evicts
         self.vt100_parser.set_size(vt100_dim(rows), vt100_dim(cols));
         let evicted = std::mem::take(&mut self.vt100_parser.callbacks_mut().count);
+        self.update_live_bottom();
+        self.content_cols = None;
         // in the alternate screen the main rows can't be measured: the next RX on the main
         // screen fixes the slot count (see `process_rx`)
         if self.vt100_parser.screen().alternate_screen() {
@@ -581,6 +660,7 @@ impl TerminalMode {
         let mut source = TerminalModeTextSource {
             parser: &mut self.vt100_parser,
             max_content_scrollback: self.max_content_scrollback,
+            live_bottom: self.live_bottom,
             raw_view: settings.raw_side.view,
             view_height: self.scroller.view_height,
         };
@@ -793,7 +873,8 @@ impl TerminalMode {
     ) {
         let (grid_rows, grid_cols) = self.get_vt100_size();
         let max_sb = self.max_content_scrollback;
-        let total_world_lines = max_sb + (grid_rows as usize);
+        // the offsets count from the live view's last row, not the grid's
+        let total_world_lines = max_sb + self.live_rows();
 
         if total_world_lines == 0 || target_row >= total_world_lines {
             return;
@@ -931,14 +1012,17 @@ fn terminal_paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
 struct TerminalModeTextSource<'a> {
     pub parser: &'a mut TerminalParser,
     pub max_content_scrollback: usize,
+    pub live_bottom: usize,
     pub raw_view: RawSideView,
     pub view_height: usize,
 }
 
 impl<'a> TextSource for TerminalModeTextSource<'a> {
+    /// The rows down to the cursor or the last one with content: the blank rows below never had
+    /// any, so the copy cursor and a selection stop above them (MAX-138)
     fn total_lines(&mut self) -> usize {
         let (rows, _) = vt100_size(self.parser.screen());
-        self.max_content_scrollback + (rows as usize)
+        self.max_content_scrollback + self.live_bottom.min(rows as usize)
     }
 
     fn get_line_text(&mut self, line_idx: usize) -> Option<String> {
@@ -1381,5 +1465,71 @@ mod tests {
         tm.handle_input_search(key(KeyCode::Char(' ')), RawSideView::default());
         assert_eq!(tm.search_state.current_match, 0);
         assert!(tm.search_state.target_jump.is_some());
+    }
+
+    /// A view of `cols`x`rows` in `mode`, the configured size 24x80
+    fn view(tm: &mut TerminalMode, mode: TerminalDimensionMode, cols: u16, rows: u16) {
+        tm.update_viewport(ViewportSize::new(cols, rows), mode, 24, 80);
+    }
+
+    /// MAX-140: `match_view` and `fixed_cols` don't shrink the grid past the content below
+    /// the cursor (vt100 would drop those rows), and finish shrinking once it is gone.
+    /// How: a 30-row grid with "menu" on row 20 and the prompt on row 1, a 10-row view in each
+    /// mode, then the screen cleared.
+    #[test]
+    fn shrinking_keeps_the_rows_below_the_cursor() {
+        use TerminalDimensionMode::{FixedCols, MatchView};
+        for mode in [MatchView, FixedCols] {
+            let mut tm = terminal(30);
+            tm.process_rx(TextEncoding::Utf8, b"\x1b[20;1Hmenu\x1b[1;1H$ ");
+            view(&mut tm, mode, 80, 10);
+            assert_eq!(tm.get_vt100_size(), (20, 80), "{mode:?}");
+            let menu = tm.get_max_scrollback() + 19;
+            assert_eq!(row_text(&mut tm, menu), "menu", "{mode:?}");
+
+            tm.process_rx(TextEncoding::Utf8, b"\x1b[2J");
+            view(&mut tm, mode, 80, 10);
+            assert_eq!(tm.get_vt100_size(), (10, 80), "{mode:?}");
+        }
+    }
+
+    /// MAX-140: `match_view` doesn't make the grid narrower than its widest row (vt100 would cut
+    /// the rows), and finishes once that row is gone; with blank rows and columns only it
+    /// matches the view.
+    /// How: a 70-column row on an 80-column grid and a 40x10 view, then the screen cleared; a
+    /// fresh grid with a prompt only.
+    #[test]
+    fn shrinking_keeps_the_widest_row() {
+        let mut tm = terminal(10);
+        let long = "x".repeat(70);
+        tm.process_rx(TextEncoding::Utf8, long.as_bytes());
+        view(&mut tm, TerminalDimensionMode::MatchView, 40, 10);
+        assert_eq!(tm.get_vt100_size(), (10, 70));
+        let row = tm.get_max_scrollback();
+        assert_eq!(row_text(&mut tm, row), long);
+
+        tm.process_rx(TextEncoding::Utf8, b"\x1b[2J");
+        view(&mut tm, TerminalDimensionMode::MatchView, 40, 10);
+        assert_eq!(tm.get_vt100_size(), (10, 40));
+
+        let mut tm = terminal(30);
+        tm.process_rx(TextEncoding::Utf8, b"$ ");
+        view(&mut tm, TerminalDimensionMode::MatchView, 40, 10);
+        assert_eq!(tm.get_vt100_size(), (10, 40));
+    }
+
+    /// MAX-140: a size the user asks for (the resize popup, fit to the view) applies exactly,
+    /// content or not; only the automatic resizes keep the content.
+    /// How: a 70-column row and "menu" below the cursor, then a 5x40 size.
+    #[test]
+    fn an_explicit_size_applies_as_asked() {
+        let mut tm = terminal(30);
+        let long = "x".repeat(70);
+        tm.process_rx(
+            TextEncoding::Utf8,
+            format!("{long}\x1b[20;1Hmenu\x1b[1;1H").as_bytes(),
+        );
+        tm.set_vt100_size(5, 40);
+        assert_eq!(tm.get_vt100_size(), (5, 40));
     }
 }
