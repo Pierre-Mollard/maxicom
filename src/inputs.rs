@@ -20,7 +20,9 @@ pub mod mouse;
 pub mod vi;
 
 // Re-exports
-pub use local_dispatchers::{dispatch_input_key, dispatch_input_key_vi, paste_into_input};
+pub use local_dispatchers::{
+    click_input_at, dispatch_input_key, dispatch_input_key_vi, paste_into_input,
+};
 pub use vi::{
     ViMode, ViPending, ViState, find_next_word, find_prev_word, find_prev_word_end, find_word_end,
 };
@@ -105,6 +107,7 @@ pub enum SearchModeAction {
     Kind,
     HandleKey(KeyEvent),
     Paste(String),
+    ClickAt(usize),
 }
 
 #[derive(Debug, PartialEq, Eq)]

@@ -42,6 +42,8 @@ pub enum PopupTarget {
     HelpTab(HelpCategory),
     Setting(SettingKey),
     SerialField(SerialSettingField),
+    SerialPrev(SerialSettingField),
+    SerialNext(SerialSettingField),
     ResizeField(ResizeField),
     Hint(KeyBindingDialogAction),
     MenuItem(usize),

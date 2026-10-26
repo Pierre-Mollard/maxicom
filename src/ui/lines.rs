@@ -790,8 +790,10 @@ pub fn render_monitor(
     }
 
     if app.line_mode.search().active {
-        let targets = render_search_bar(app, frame, content_area, theme);
-        app.frame_map_mut().click_targets.extend(targets);
+        let (targets, query) = render_search_bar(app, frame, content_area, theme);
+        let map = app.frame_map_mut();
+        map.click_targets.extend(targets);
+        map.search_query = Some(query);
     }
 
     PostRenderEffect::None

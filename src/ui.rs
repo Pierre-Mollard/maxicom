@@ -2825,6 +2825,139 @@ mod tests {
         ));
     }
 
+    /// MAX-134: in the serial popup, a click on a field's `<` or `>` selects it and steps its
+    /// value back or forth; a click elsewhere on the row still selects, then cycles.
+    /// How: the parity row's `>` twice and `<` once, from the baud rate selected; then the
+    /// stop bits' `<`.
+    #[test]
+    fn serial_popup_arrows() {
+        use crate::overlays::SerialSettingField;
+        use crate::serial::Parity;
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        h.app.update(Action::App(AppAction::OpenOverlay(
+            Overlay::SerialSettings(SerialConfigDialog::new(&SerialConfig::default())),
+        )));
+        let rows = h.draw();
+        // the arrows of a row: its first `<` and its last `>`
+        let arrows = |rows: &[String], label: &str| {
+            let y = cell_of(rows, label).1;
+            let row: Vec<char> = rows[y as usize].chars().collect();
+            let left = row.iter().position(|&c| c == '<').unwrap() as u16;
+            let right = row.iter().rposition(|&c| c == '>').unwrap() as u16;
+            ((left, y), (right, y))
+        };
+        let dialog = |h: &Harness| match h.app.overlay() {
+            Some(Overlay::SerialSettings(d)) => d.clone(),
+            _ => panic!("serial popup closed"),
+        };
+        let parity = dialog(&h).config.parity;
+        assert_eq!(parity, Parity::None);
+
+        let (left, right) = arrows(&rows, "Parity");
+        click(&mut h, right);
+        assert_eq!(dialog(&h).selected_field, SerialSettingField::Parity);
+        assert_eq!(dialog(&h).config.parity, Parity::Even);
+        click(&mut h, right);
+        assert_eq!(dialog(&h).config.parity, Parity::Odd);
+        click(&mut h, left);
+        assert_eq!(dialog(&h).config.parity, Parity::Even);
+
+        let rows = h.draw();
+        let (left, _) = arrows(&rows, "Stop Bits");
+        let stop_bits = dialog(&h).config.stop_bits;
+        click(&mut h, left);
+        assert_eq!(dialog(&h).selected_field, SerialSettingField::StopBits);
+        assert_ne!(dialog(&h).config.stop_bits, stop_bits);
+    }
+
+    /// MAX-134: in the resize popup the sideways wheel (Shift + wheel too) steps the active
+    /// number, kept from 1 up, and only digits can be typed or pasted.
+    /// How: Shift + wheel down and up, the side wheel, on the rows field at 24; a letter and a
+    /// digit typed, a mixed paste, then down to 1.
+    #[test]
+    fn resize_popup_wheel_and_digits() {
+        use crossterm::event::KeyCode::Char;
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::TerminalSize(
+                ResizeDialog::new(24, 80),
+            ))));
+        let rows = h.draw();
+        let at = cell_of(&rows, "Rows");
+        let rows_value = |h: &Harness| match h.app.overlay() {
+            Some(Overlay::TerminalSize(d)) => d.rows_input.value().to_string(),
+            _ => panic!("resize popup closed"),
+        };
+        let wheel = |h: &mut Harness, kind, modifiers| {
+            let action = crate::inputs::handle_event(mouse(kind, at, modifiers), &h.app);
+            h.app.update(action);
+        };
+
+        wheel(&mut h, MouseEventKind::ScrollDown, KeyModifiers::SHIFT);
+        assert_eq!(rows_value(&h), "25");
+        wheel(&mut h, MouseEventKind::ScrollUp, KeyModifiers::SHIFT);
+        wheel(&mut h, MouseEventKind::ScrollLeft, KeyModifiers::NONE);
+        assert_eq!(rows_value(&h), "23");
+        wheel(&mut h, MouseEventKind::ScrollRight, KeyModifiers::NONE);
+        assert_eq!(rows_value(&h), "24");
+
+        key_do(&mut h, Char('x'), KeyModifiers::NONE);
+        key_do(&mut h, Char('0'), KeyModifiers::NONE);
+        assert_eq!(rows_value(&h), "240");
+        h.app
+            .update(Action::Overlay(DialogAction::Paste("1a2".to_string())));
+        assert_eq!(rows_value(&h), "24012");
+
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::TerminalSize(
+                ResizeDialog::new(2, 80),
+            ))));
+        for _ in 0..3 {
+            wheel(&mut h, MouseEventKind::ScrollLeft, KeyModifiers::NONE);
+        }
+        assert_eq!(rows_value(&h), "1");
+    }
+
+    /// A click in the search bar's query moves its cursor to the clicked char, the end past
+    /// the text; a click on the bar's label leaves it. Without borders in line mode, and in the
+    /// history's bottom border in terminal mode.
+    /// How: "hello world" pasted in the query, clicks on "world", past its end and on
+    /// "SEARCH", the cursor's index and its cell on screen.
+    #[test]
+    fn mouse_click_in_the_search_query() {
+        for (mode, borders) in [(Mode::Line, false), (Mode::Terminal, true)] {
+            let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+                s.mode = mode;
+                s.ui.show_borders = borders;
+            });
+            h.feed(b"one\r\n");
+            h.app
+                .terminal_mode
+                .process_rx(TextEncoding::Utf8, b"one\r\n");
+            h.draw();
+            h.app.update(Action::Search(SearchModeAction::Start));
+            h.app.update(Action::Search(SearchModeAction::Paste(
+                "hello world".to_string(),
+            )));
+            let cursor = |h: &Harness| match mode {
+                Mode::Line => h.app.line_mode.search().query.cursor(),
+                Mode::Terminal => h.app.terminal_mode.search().query.cursor(),
+            };
+            let rows = h.draw();
+            let world = cell_of(&rows, "world");
+            click(&mut h, world);
+            assert_eq!(cursor(&h), 6, "{mode:?}");
+            h.draw();
+            assert_eq!(cursor_cell(&mut h), world, "{mode:?}");
+
+            click(&mut h, (world.0 + 5, world.1));
+            assert_eq!(cursor(&h), 11, "{mode:?}");
+            click(&mut h, cell_of(&rows, "SEARCH"));
+            assert_eq!(cursor(&h), 11, "{mode:?}");
+            assert!(h.app.is_search_active(), "{mode:?}");
+        }
+    }
+
     /// A click in the TX input moves its cursor to the clicked char (the end past the text),
     /// and leaves copy mode for it.
     #[test]

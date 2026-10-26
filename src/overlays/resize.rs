@@ -1,3 +1,4 @@
+use crossterm::event::KeyCode;
 use tui_input::Input;
 
 use crate::{
@@ -25,6 +26,20 @@ impl ResizeDialog {
             cols_input: Input::new(current_cols.to_string()),
             active_field: ResizeField::Rows,
         }
+    }
+
+    fn active_input(&mut self) -> &mut Input {
+        match self.active_field {
+            ResizeField::Rows => &mut self.rows_input,
+            ResizeField::Cols => &mut self.cols_input,
+        }
+    }
+
+    fn step(&mut self, by: i32) {
+        let input = self.active_input();
+        let value = input.value().parse::<i32>().unwrap_or(0);
+        let value = (value + by).clamp(1, u16::MAX.into());
+        *input = Input::new(value.to_string());
     }
 
     pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
@@ -60,20 +75,23 @@ impl ResizeDialog {
                     OverlayResponse::Close
                 }
             }
+            DialogAction::Right => {
+                self.step(1);
+                OverlayResponse::Handled
+            }
+            DialogAction::Left => {
+                self.step(-1);
+                OverlayResponse::Handled
+            }
             DialogAction::HandleKey(raw_key) => {
-                let input = match self.active_field {
-                    ResizeField::Rows => &mut self.rows_input,
-                    ResizeField::Cols => &mut self.cols_input,
-                };
-                dispatch_input_key(input, raw_key);
+                if !matches!(raw_key.code, KeyCode::Char(c) if !c.is_ascii_digit()) {
+                    dispatch_input_key(self.active_input(), raw_key);
+                }
                 OverlayResponse::Handled
             }
             DialogAction::Paste(text) => {
-                let input = match self.active_field {
-                    ResizeField::Rows => &mut self.rows_input,
-                    ResizeField::Cols => &mut self.cols_input,
-                };
-                paste_into_input(input, &text);
+                let digits: String = text.chars().filter(char::is_ascii_digit).collect();
+                paste_into_input(self.active_input(), &digits);
                 OverlayResponse::Handled
             }
             _ => OverlayResponse::Handled,

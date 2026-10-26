@@ -22,7 +22,8 @@ use crate::{
     configs::{SettingsConfig, TerminalDimensionMode, TextEncoding, settings::RawSideView},
     inputs::{
         CopyModeAction, SearchModeAction, SideViewAction, TerminalAction, ViPending,
-        dispatch_input_key, local_dispatchers::dispatch_copy_key_vi, paste_into_input,
+        click_input_at, dispatch_input_key, local_dispatchers::dispatch_copy_key_vi,
+        paste_into_input,
     },
     logger::TerminalLogger,
     terminal::{TerminalParser, new_parser, vt100_dim, vt100_size},
@@ -618,6 +619,9 @@ impl TerminalMode {
             SearchModeAction::Kind => {
                 self.search_state.toggle_mode();
                 self.update_search_matches(raw_view);
+            }
+            SearchModeAction::ClickAt(column) => {
+                click_input_at(&mut self.search_state.query, column);
             }
         }
     }

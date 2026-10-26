@@ -6,6 +6,8 @@ use ratatui::{
     widgets::{Clear, Paragraph},
 };
 
+use unicode_width::UnicodeWidthStr;
+
 use crate::{
     configs::{KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
     overlays::{PopupTarget, SerialConfigDialog, SerialSettingField},
@@ -50,7 +52,11 @@ pub fn render_reconfigure_popup(
         ),
     ];
 
-    let field_rows: Vec<SerialSettingField> = fields.iter().map(|(field, ..)| *field).collect();
+    // each field with the width of its `< value >`
+    let field_rows: Vec<(SerialSettingField, u16)> = fields
+        .iter()
+        .map(|(field, _, value)| (*field, value.width() as u16))
+        .collect();
     for (field, label, value) in fields {
         let is_selected = dialog.selected_field == field;
 
@@ -91,8 +97,19 @@ pub fn render_reconfigure_popup(
     frame.render_widget(block, area);
     frame.render_widget(Paragraph::new(lines), inner);
     hints.push_block_targets(area, targets);
-    // one row per field, in order (MAX-113)
-    for (y, field) in field_rows.into_iter().enumerate() {
+    // one row per field, in order (MAX-113); before them, as the first target under the pointer
+    // wins, the `< ` and ` >` around the value, after the pointer and the label (MAX-134)
+    for (y, &(field, width)) in field_rows.iter().enumerate() {
+        let row = row_area(inner, y);
+        let value_x = row.x + 2 + 14;
+        let arrow = |x| Rect::new(x, row.y, 2, 1).intersection(row);
+        targets.push((arrow(value_x), PopupTarget::SerialPrev(field)));
+        targets.push((
+            arrow(value_x + width.saturating_sub(2)),
+            PopupTarget::SerialNext(field),
+        ));
+    }
+    for (y, (field, _)) in field_rows.into_iter().enumerate() {
         targets.push((row_area(inner, y), PopupTarget::SerialField(field)));
     }
     area

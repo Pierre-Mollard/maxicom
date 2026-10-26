@@ -113,6 +113,8 @@ pub struct FrameMap {
     pub popup_targets: Vec<(Rect, PopupTarget)>,
     /// The TX input's text, as drawn
     pub prompt: Option<PromptMap>,
+    /// The search bar's query, as drawn
+    pub search_query: Option<PromptMap>,
     /// The status bar blocks, border buttons and search bar hints a click runs, in drawing
     /// order (MAX-125, MAX-128)
     pub click_targets: Vec<ClickTarget>,
@@ -137,8 +139,8 @@ pub enum ClickAction {
     Search(KeyBindingSearchAction),
 }
 
-/// Where the TX input's text is drawn: its area (after the prompt prefix) and how many columns
-/// of it are scrolled out on the left
+/// Where an input's text is drawn (the TX input, the search query): its area (after a prefix)
+/// and how many columns of it are scrolled out on the left
 #[derive(Debug, Clone, Copy)]
 pub struct PromptMap {
     pub text_area: Rect,
@@ -179,6 +181,7 @@ impl FrameMap {
         self.popup = None;
         self.popup_targets.clear();
         self.prompt = None;
+        self.search_query = None;
         self.click_targets.clear();
     }
 
@@ -230,6 +233,14 @@ impl FrameMap {
         }
         // a click on the prompt prefix goes to the text's start
         Some(x.saturating_sub(area.left()) as usize + prompt.scroll)
+    }
+
+    /// The search query's column under a cell: on the query only, the bar's labels before it
+    /// aren't a prefix of it
+    pub fn search_column(&self, x: u16, y: u16) -> Option<usize> {
+        let area = self.search_query?.text_area;
+        area.contains(ratatui::layout::Position::new(x, y))
+            .then(|| (x - area.x) as usize)
     }
 
     /// The text position under a screen cell. `clamp` (a drag) brings a cell out of the

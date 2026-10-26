@@ -15,7 +15,7 @@ use crate::{
     app::{
         App,
         search::SearchModeKind,
-        types::{ClickAction, ClickTarget, FocusTarget},
+        types::{ClickAction, ClickTarget, FocusTarget, PromptMap},
     },
     configs::{KeyBindingSearchAction, KeywordHighlight, Mode, ThemeConfig},
     ui::popups::hint_spans,
@@ -147,13 +147,14 @@ pub fn pan_right_indicator(app: &App) -> Option<String> {
     })
 }
 
-/// Draws the search bar; returns its hints as click targets (MAX-131)
+/// Draws the search bar; returns its hints as click targets (MAX-131), and where its query is
+/// for a click in it
 pub fn render_search_bar(
     app: &App,
     frame: &mut Frame,
     area: Rect,
     theme: &ThemeConfig,
-) -> Vec<ClickTarget> {
+) -> (Vec<ClickTarget>, PromptMap) {
     let has_borders = app.show_borders();
     let is_terminal = app.settings().mode == Mode::Terminal;
 
@@ -243,6 +244,12 @@ pub fn render_search_bar(
             hover: Some(*theme.ui.hover),
         })
         .collect();
+    // the query, after the kind, the label and a space, and a column past it for its end
+    let query_x = bar_x + line.spans[..2].iter().map(Span::width).sum::<usize>() as u16 + 1;
+    let query = PromptMap {
+        text_area: Rect::new(query_x, bar_y, query_str.width() as u16 + 1, 1),
+        scroll: 0,
+    };
 
     let (cursor_x, cursor_y) = if has_borders {
         let border_y = area.y + area.height;
@@ -280,7 +287,7 @@ pub fn render_search_bar(
         }
     }
     frame.set_cursor_position((cursor_x, cursor_y));
-    targets
+    (targets, query)
 }
 
 /// A centered `width` x `height` popup, cut to the screen when it is smaller

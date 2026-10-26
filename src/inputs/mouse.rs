@@ -14,7 +14,7 @@ use crate::{
     configs::Mode,
     inputs::{
         Action, AppAction, CopyModeAction, DialogAction, HistoryAction, LineInputAction,
-        SideViewAction, TerminalAction,
+        SearchModeAction, SideViewAction, TerminalAction,
     },
     overlays::{ActionMenu, Overlay, PopupTarget},
 };
@@ -61,8 +61,8 @@ pub fn handle_mouse(event: MouseEvent, app: &App) -> Action {
         InputContext::Overlay => match wheel {
             Wheel::Up => Action::Overlay(DialogAction::Up),
             Wheel::Down => Action::Overlay(DialogAction::Down),
-            Wheel::Right => Action::Overlay(DialogAction::CycleNext),
-            Wheel::Left => Action::Overlay(DialogAction::CyclePrev),
+            Wheel::Right => Action::Overlay(DialogAction::Right),
+            Wheel::Left => Action::Overlay(DialogAction::Left),
         },
         // the view follows the copy cursor: the wheel moves it
         InputContext::CopyMode => Action::CopyMode(match wheel {
@@ -160,7 +160,9 @@ fn handle_left_button(event: MouseEvent, app: &App) -> Action {
 
     match event.kind {
         MouseEventKind::Down(_) => {
-            if let Some(column) = map.prompt_column(x, y) {
+            if let Some(column) = map.search_column(x, y) {
+                Action::Search(SearchModeAction::ClickAt(column))
+            } else if let Some(column) = map.prompt_column(x, y) {
                 Action::LineInput(LineInputAction::ClickAt(column))
             } else if let Some(pos) = map.raw_position(x, y, false) {
                 Action::CopyMode(CopyModeAction::MousePress(

@@ -20,8 +20,8 @@ use crate::{
     },
     inputs::{
         CopyModeAction, LineInputAction, SearchModeAction, SideViewAction, ViMode, ViState,
-        dispatch_input_key, dispatch_input_key_vi, local_dispatchers::dispatch_copy_key_vi,
-        paste_into_input, vi::ViPending,
+        click_input_at, dispatch_input_key, dispatch_input_key_vi,
+        local_dispatchers::dispatch_copy_key_vi, paste_into_input, vi::ViPending,
     },
     logger::LineLogger,
 };
@@ -327,18 +327,7 @@ impl LineMode {
                 UpdateEffect::None
             }
             LineInputAction::ClickAt(column) => {
-                // the char drawn on that column, else the end of the text
-                let mut start = 0;
-                let cursor = self
-                    .user_input
-                    .value()
-                    .chars()
-                    .position(|ch| {
-                        start += unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-                        start > column
-                    })
-                    .unwrap_or(self.user_input.value().chars().count());
-                self.user_input = std::mem::take(&mut self.user_input).with_cursor(cursor);
+                click_input_at(&mut self.user_input, column);
                 UpdateEffect::None
             }
             LineInputAction::HandleKey(key_event) => {
@@ -550,6 +539,9 @@ impl LineMode {
             SearchModeAction::Kind => {
                 self.search_state.toggle_mode();
                 self.update_search_matches(display_mode, raw_view);
+            }
+            SearchModeAction::ClickAt(column) => {
+                click_input_at(&mut self.search_state.query, column);
             }
         }
     }

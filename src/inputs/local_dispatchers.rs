@@ -116,6 +116,21 @@ pub fn dispatch_input_key(input: &mut Input, key: KeyEvent) {
     input.handle_event(&Event::Key(key));
 }
 
+/// Puts an input field's cursor on the char drawn on `column` (counted from the text's start),
+/// else at the end of the text: a click in it (MAX-113)
+pub fn click_input_at(input: &mut Input, column: usize) {
+    let mut start = 0;
+    let cursor = input
+        .value()
+        .chars()
+        .position(|ch| {
+            start += unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            start > column
+        })
+        .unwrap_or(input.value().chars().count());
+    *input = std::mem::take(input).with_cursor(cursor);
+}
+
 /// Inserts pasted text at the cursor of a single line input field. Line breaks and tabs become
 /// spaces (trailing line breaks are dropped), other control chars are skipped
 pub fn paste_into_input(input: &mut Input, text: &str) {

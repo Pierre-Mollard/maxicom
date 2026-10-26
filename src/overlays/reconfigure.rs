@@ -148,6 +148,16 @@ impl SerialConfigDialog {
     pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
         match action {
             DialogAction::Close => OverlayResponse::Close,
+            DialogAction::Pick(PopupTarget::SerialPrev(field)) => {
+                self.selected_field = field;
+                self.cycle_prev();
+                OverlayResponse::Handled
+            }
+            DialogAction::Pick(PopupTarget::SerialNext(field)) => {
+                self.selected_field = field;
+                self.cycle_next();
+                OverlayResponse::Handled
+            }
             DialogAction::Pick(PopupTarget::SerialField(field)) => {
                 if self.selected_field == field {
                     self.cycle_next();
