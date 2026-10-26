@@ -96,11 +96,24 @@ cargo deny check
   - {time}           Local time (via time_format)
   - {pan_left}       Left pan amount (`◀ (3)`)
   - {pan_right}      Right pan amount (`!(2) ▶`)
+  - {pan_offset}     Columns panned from the left edge (`3`)
+  - {pan_max}        Columns the view can pan in all (`117`)
   - {scroll_pos}     Position: "All", "Bot", "Top", "42%"
   - {scroll_pos_up}  Uppercase position: "ALL", "BOT", "TOP"
   - {scroll_percent} Numeric percent: 0..100
   - {scroll_offset}  Lines scrolled away from tail
   - {scroll_max}     Total scrollback depth
+
+- Formats: `{name:spec}`, spec `[<>^][0][width][h]`
+  - `{rx_bytes:8}`    Pad to 8 columns (numbers right, text left)
+  - `{port:<12}`      Align with `<`, `>` or `^` (center)
+  - `{rx_bytes:08}`   Pad a number with zeros
+  - `{rx_bytes:4h}`   Short size with a unit letter (`1.0K`, `12K`, `1.2M`), 4 columns
+  A longer value is never cut; a malformed spec stays as written.
+
+- The pan shows once: in the bar when a template has a pan variable, else as
+  arrows in the history's bottom border. The default center part is
+  `◀ offset/max ▶`, padded so it doesn't move while panning.
 
 - Conditions:
   - Modes & Focus:
@@ -126,6 +139,7 @@ cargo deny check
     - pan_left       Can pan left (alias: can_pan_left)
     - pan_right      Can pan right (alias: can_pan_right)
     - pan_alert      Unread content to right (alias: pan_right_alert)
+    - wide           Content wider than the view (alias: pannable)
 
 - Styles:
   - Colors:
@@ -144,6 +158,13 @@ cargo deny check
     `hover=<style>` styles the block under the mouse pointer, e.g.
     `hover=(bg=main fg=black)`, or `hover=none`; blocks without it take
     `hover` in `[ui.status_bar]` (default "reversed", "none" for no hover)
+
+- When it doesn't fit: `prio=N` on a block (`1` most important). The bar
+  tries the compact forms (`{port}` as `ttyUSB0`, byte counts as `1.2K`, the
+  pan as `◀3`), then without the blocks of the highest `prio`, the next one,
+  and so on (the same `prio` goes together: give a separator its block's),
+  then without the center, then the right part cut from its left. Blocks
+  without `prio=` and plain text always stay.
 
 - Clicks: a block without `click=` runs what its first variable implies:
   - {mode}                       Switch between LINE and TERM

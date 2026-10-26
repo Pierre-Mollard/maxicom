@@ -103,12 +103,13 @@ pub fn render(
             .style(*theme.ui.background)
             .title(monitor_title(app, &outer, room));
 
-        // in terminal mode the status bar can be in this bottom border, where it shows the pan
-        // itself (MAX-135)
+        // the pan shows once: in the status bar when it is drawn with a pan variable, else here;
+        // and in terminal mode the bar can take this bottom border (MAX-135, MAX-139)
         let bar_in_border = layout
             .status_bar_area
             .is_some_and(|bar| bar.y + 1 == outer.bottom());
-        if !bar_in_border {
+        let pan_in_bar = layout.status_bar_area.is_some() && status_bar.shows_pan();
+        if !bar_in_border && !pan_in_bar {
             for bottom_title in monitor_bottom_title(app, theme) {
                 block = block.title_bottom(bottom_title);
             }
@@ -1414,6 +1415,76 @@ mod tests {
         assert_eq!(h.app.terminal_mode.copy_state().cursor.line_idx, last);
     }
 
+    /// MAX-139: the default status bar fits by steps as the screen narrows: the full text, then
+    /// the compact forms, then without `prio` 4 (framing, time), 3 (port, RX/TX), 2 (baud), and
+    /// at last the right part cut from its left; the mode and the buttons stay, and the clicks
+    /// land on what is drawn.
+    /// How: line mode without borders at widths where each step starts, the last row read;
+    /// clicks on the baud rate at 30 columns and on `≡` at 11.
+    #[test]
+    fn status_bar_fits_by_steps() {
+        let bar_at = |width| {
+            let mut h = Harness::line_mode(LineDisplayMode::Pretty, width, 10);
+            let rows = h.draw();
+            (h, rows[9].clone())
+        };
+        let (_, full) = bar_at(68);
+        for text in ["/dev/ttyUSB0", "8N1", "RX:    0 | TX:    0 | "] {
+            assert!(full.contains(text), "{full:?}");
+        }
+        let (_, compact) = bar_at(67);
+        assert!(compact.contains(" ttyUSB0 |") && !compact.contains("/dev/"));
+        assert!(compact.contains("8N1"), "{compact:?}");
+        let (_, without_4) = bar_at(50);
+        assert!(!without_4.contains("8N1") && !without_4.contains("TX:    0 | "));
+        assert!(without_4.contains("ttyUSB0") && without_4.contains("TX:"));
+        let (mut h, without_3) = bar_at(30);
+        assert!(!without_3.contains("ttyUSB0") && !without_3.contains("RX:"));
+        assert!(without_3.contains(" LINE  115200"), "{without_3:?}");
+        let baud = h.app.serial_config.baudrate.to_string();
+        let rows = h.draw();
+        click(&mut h, status_cell(&rows, &baud));
+        assert!(matches!(h.app.overlay(), Some(Overlay::SerialSettings(_))));
+
+        let (_, without_2) = bar_at(15);
+        assert!(without_2.starts_with(" LINE ") && !without_2.contains("115200"));
+        assert!(without_2.ends_with("? ≡ "), "{without_2:?}");
+        let (mut h, cut) = bar_at(11);
+        assert_eq!(cut, " LINE  ? ≡ ");
+        let rows = h.draw();
+        click(&mut h, status_cell(&rows, "≡"));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+    }
+
+    /// MAX-139: whatever the width, the bar's parts never write over each other, in every
+    /// layout: the mode and the `?` and `≡` buttons, never dropped, are always whole.
+    /// How: line and terminal mode, each layout (borders on for `border` and `box`), every width
+    /// from 120 down to 16.
+    #[test]
+    fn status_bar_parts_never_overlap() {
+        use crate::configs::StatusBarLayout;
+        for (mode, label) in [(Mode::Line, " LINE "), (Mode::Terminal, " TERM ")] {
+            for layout in [
+                StatusBarLayout::Line,
+                StatusBarLayout::Band,
+                StatusBarLayout::Border,
+                StatusBarLayout::Box,
+            ] {
+                for width in (16..=120).rev() {
+                    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, width, 16, |s| {
+                        s.mode = mode;
+                        s.ui.show_borders = layout != StatusBarLayout::Line;
+                        s.ui.status_bar.layout = layout;
+                    });
+                    let rows = h.draw();
+                    let bar = rows.iter().rev().find(|row| row.contains(label));
+                    let bar = bar.unwrap_or_else(|| panic!("{layout:?} {width}: {rows:#?}"));
+                    assert!(bar.contains("? ≡"), "{mode:?} {layout:?} {width}: {bar:?}");
+                }
+            }
+        }
+    }
+
     /// The smallest `<prefix>NN` number in the rows
     fn first_number(rows: &[String], prefix: &str) -> usize {
         rows.iter()
@@ -2157,13 +2228,15 @@ mod tests {
         assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
     }
 
-    /// MAX-135: the terminal's pan arrows are in the history's bottom border with the `line`
-    /// layout; with `border` the bar takes that border and shows the pan itself, in the
-    /// secondary color, so the built-in arrows are left out.
-    /// How: a 200-column terminal in a 120-column screen (the bar's parts overlap when narrower),
-    /// panned right by 3: the history's bottom row with `line`, then the last row with `border`.
+    /// MAX-139: the pan shows once, in the status bar's center as `◀ offset/max ▶`, the numbers
+    /// padded so the center doesn't move while panning, each arrow in the secondary color while
+    /// it can pan that way (muted else) and panning on a click; the history's border arrows are
+    /// only there when the bar has no pan variable. With the `border` layout too.
+    /// How: a 200-column terminal in a 120-column screen panned right by 3, `line` layout: the
+    /// history's bottom row and the bar; a click on `◀`; a bar without the pan; `border`; then
+    /// line mode with a 200-char line.
     #[test]
-    fn terminal_pan_arrows_and_the_border_layout() {
+    fn the_pan_shows_once_in_the_status_bar() {
         use crate::configs::StatusBarLayout;
         let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 120, 24, |s| {
             s.mode = Mode::Terminal;
@@ -2174,25 +2247,55 @@ mod tests {
         h.draw();
         h.scroll(HistoryAction::PanRight(3));
         let rows = h.draw();
-        let history_bottom = &rows[22];
-        assert!(history_bottom.starts_with("└ ◀ (3)"), "{history_bottom:?}");
-        assert!(history_bottom.ends_with("▶ ┘"), "{history_bottom:?}");
+        let max = h.app.pan_right_status().unwrap().0 + 3;
+        assert!(
+            !rows[22].contains('◀') && !rows[22].contains('▶'),
+            "{:?}",
+            rows[22]
+        );
+        let pan = format!("◀ {:>3}/{:<3} ▶", 3, max);
+        assert!(rows[23].contains(&pan), "{:?}", rows[23]);
+        let fg = |h: &Harness, (x, y): (u16, u16)| h.terminal.backend().buffer()[(x, y)].fg;
+        let (left, right) = (status_cell(&rows, "◀"), status_cell(&rows, "▶"));
+        assert_eq!(fg(&h, left), h.theme.palette.secondary);
+        assert_eq!(fg(&h, right), h.theme.palette.secondary);
 
+        // the same place once back at the left edge, the left arrow muted
+        click(&mut h, left);
+        assert!(h.app.pan_left_status().unwrap_or(0) < 3);
+        h.scroll(HistoryAction::PanLeft(10));
+        let rows = h.draw();
+        assert_eq!(status_cell(&rows, "◀"), left);
+        assert!(rows[23].contains(&format!("◀ {:>3}/{:<3} ▶", 0, max)));
+        assert_eq!(fg(&h, left), h.theme.palette.text_muted);
+
+        // a bar without a pan variable leaves it to the border
+        let mut config = h.app.settings().ui.status_bar.clone();
+        config.center = "[ mid ]()".to_string();
+        h.status_bar = CompiledStatusBar::new(&config, &h.theme);
+        h.scroll(HistoryAction::PanRight(3));
+        let rows = h.draw();
+        assert!(rows[22].starts_with("└ ◀ (3)"), "{:?}", rows[22]);
+
+        h.status_bar = CompiledStatusBar::new(&h.app.settings().ui.status_bar.clone(), &h.theme);
         h.app.settings_mut().ui.status_bar.layout = StatusBarLayout::Border;
         let rows = h.draw();
         let bottom = &rows[23];
         assert_eq!(bottom.matches('◀').count(), 1, "{bottom:?}");
-        assert_eq!(bottom.matches('▶').count(), 1, "{bottom:?}");
-        assert!(bottom.contains(" ◀ (3) "), "{bottom:?}");
-        let secondary = h.theme.palette.secondary;
-        for arrow in ["◀", "▶"] {
-            let (x, y) = status_cell(&rows, arrow);
-            assert_eq!(
-                h.terminal.backend().buffer()[(x, y)].fg,
-                secondary,
-                "{arrow}"
-            );
-        }
+        assert!(bottom.contains(&pan), "{bottom:?}");
+
+        // line mode, where the bar is in the TX box's border: the history's has no arrows
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 24, |s| {
+            s.ui.show_borders = true;
+            s.line_mode.wrap_mode = crate::configs::WrapMode::Truncate;
+        });
+        h.feed(format!("{}\r\n", "x".repeat(200)).as_bytes());
+        h.draw();
+        h.scroll(HistoryAction::PanRight(3));
+        let rows = h.draw();
+        let pans = rows.iter().filter(|row| row.contains('◀')).count();
+        assert_eq!(pans, 1, "{rows:#?}");
+        assert!(rows[23].contains("◀   3/"), "{:?}", rows[23]);
     }
 
     /// MAX-135: the `box` layout draws the status bar in a box of its own under the TX box,

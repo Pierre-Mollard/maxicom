@@ -35,12 +35,32 @@
 //! | `{time}`            | Current local time (format in config)                   | `21:45:00`       |
 //! | `{pan_left}`        | Left pan amount possible                                | `◀ (3)`          |
 //! | `{pan_right}`       | Right pan amount possible with alert indicator          | `!(2) ▶`         |
+//! | `{pan_offset}`      | Columns panned from the left edge                       | `3`              |
+//! | `{pan_max}`         | Columns the view can pan in all                         | `117`            |
 //! | `{scroll_pos}`      | Scroll position indicator (`Top`, `Bot`, `All`, or `%`) | `42%`            |
 //! | `{scroll_pos_up}`   | Uppercase scroll position indicator                     | `BOT`            |
 //! | `{scroll_percent}`  | Scroll position as numeric percentage (0-100)           | `42`             |
 //! | `{scroll_offset}`   | Lines scrolled up from the bottom                       | `15`             |
 //! | `{scroll_max}`      | Maximum total scrollback lines available                | `500`            |
 //! | `{copy_side}`       | Copy cursor panel (`TXT` or `RAW`), empty out of copy  | `RAW`            |
+//!
+//! ## Formats
+//! `{name:spec}` with spec `[<>^][0][width][h]`, close to Rust's and C's:
+//! - `{rx_bytes:8}` pads to 8 columns, numbers on the right and text on the left
+//! - `<`, `>`, `^` align left, right, center: `{port:<12}`
+//! - `0` pads a number with zeros: `{rx_bytes:08}`
+//! - `h` writes a number as a short human-readable size with a unit letter (`999`, `1.0K`,
+//!   `12K`, `1.2M`), never wider than 4 columns: `{rx_bytes:4h}`
+//!
+//! The numbers are `{baud}`, `{rx_bytes}`, `{tx_bytes}`, `{scroll_percent}`, `{scroll_offset}`,
+//! `{scroll_max}`, `{pan_offset}` and `{pan_max}`. A longer value is never cut; a malformed spec
+//! stays as written.
+//!
+//! ## The pan
+//! It shows once: in the bar when it is drawn and a template has a pan variable (`{pan_left}`,
+//! `{pan_right}`, `{pan_offset}`, `{pan_max}`), else as arrows in the history's bottom border.
+//! The default center part is `◀ offset/max ▶`, the numbers padded so it doesn't move while
+//! panning, shown while the content is wider than the view (`wide`).
 //!
 //! ## Conditional States (`?`)
 //! | State / Keyword                 | Aliases                                    | Matches When...                                          |
@@ -64,6 +84,7 @@
 //! | `pan_left`                      | `can_pan_left`                             | Horizontal panning to the left is possible               |
 //! | `pan_right`                     | `can_pan_right`                            | Horizontal panning to the right is possible              |
 //! | `pan_right_alert`               | `pan_alert`                                | New unread content arrived further to the right (Line)   |
+//! | `wide`                          | `pannable`                                 | The content is wider than the view: it can pan           |
 //! | `mouse`                         | —                                          | Mouse capture is on (`ui.mouse`)                         |
 //!
 //! ## Style Keywords
@@ -79,6 +100,16 @@
 //!   (`hover=(bg=main fg=black)`, `hover=none` for none), over the `hover` option of
 //!   `[ui.status_bar]` (default `reversed`). Neither is a style: they are the same in every
 //!   branch of a ternary
+//!
+//! ## When it doesn't fit
+//! A block can take `prio=N` (no style either, like `click=`): `1` is the most important.
+//! When the three parts don't fit side by side, the bar tries, in order:
+//! 1. the variables without a format of their own in a compact form: `{port}` as its file name
+//!    (`ttyUSB0`), `{rx_bytes}`/`{tx_bytes}` as sizes (`1.2K`), the pan as `◀3` / `!2▶`;
+//! 2. without the blocks of the highest `prio`, then the next one, and so on; the blocks with
+//!    the same `prio` go together, so a separator goes with its block. A block without `prio=`
+//!    and plain text always stay;
+//! 3. without the center part, then the right part cut from its left, whole blocks only.
 //!
 //! ## Clicks
 //! A block without `click=` runs what its first variable implies; a variable in plain text is
@@ -135,18 +166,64 @@ pub struct CompiledStatusBar {
     right: CompiledTemplate,
     time_format: String,
     hover: Option<Style>,
+    prios: Vec<u8>,
+    shows_pan: bool,
 }
 
 impl CompiledStatusBar {
     pub fn new(config: &StatusBarConfig, theme: &ThemeConfig) -> Self {
+        let left = CompiledTemplate::new(&config.left, theme);
+        let center = CompiledTemplate::new(&config.center, theme);
+        let right = CompiledTemplate::new(&config.right, theme);
+        let mut prios: Vec<u8> = [&left, &center, &right]
+            .iter()
+            .flat_map(|template| &template.segments)
+            .filter_map(|segment| match segment {
+                Segment::Styled { prio, .. } => *prio,
+                Segment::Plain(_) => None,
+            })
+            .collect();
+        prios.sort_unstable_by(|a, b| b.cmp(a));
+        prios.dedup();
+        let shows_pan = [&left, &center, &right]
+            .iter()
+            .flat_map(|template| &template.segments)
+            .flat_map(|segment| match segment {
+                Segment::Plain(parts) | Segment::Styled { text: parts, .. } => parts,
+            })
+            .any(|part| {
+                matches!(
+                    part,
+                    TextPart::Var(
+                        Var::PanLeft | Var::PanRight | Var::PanOffset | Var::PanMax,
+                        _
+                    )
+                )
+            });
         Self {
-            left: CompiledTemplate::new(&config.left, theme),
-            center: CompiledTemplate::new(&config.center, theme),
-            right: CompiledTemplate::new(&config.right, theme),
+            left,
+            center,
+            right,
             time_format: config.time_format.clone(),
             hover: compile_hover(&config.hover, theme),
+            prios,
+            shows_pan,
         }
     }
+
+    /// The bar has a pan variable: drawn, it is where the pan shows, not the history's border
+    /// (MAX-139)
+    pub fn shows_pan(&self) -> bool {
+        self.shows_pan
+    }
+}
+
+/// How hard the bar is squeezed to fit (MAX-139): the variables in their compact form, and the
+/// blocks with a `prio=` of `drop_from` or more left out
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Fit {
+    compact: bool,
+    drop_from: Option<u8>,
 }
 
 /// A block's own `hover=`: `None` takes the bar's `hover` option, `Some(None)` is no hover
@@ -186,18 +263,113 @@ enum Segment {
     Plain(Vec<TextPart>),
     /// `[text](style_spec)`, omitted when its style resolves to `hide` or its text is empty.
     /// A click on it runs `click`: its `click=<action>`, else what its first variable implies.
-    /// Under the pointer it takes its `hover=`, else the bar's
+    /// Under the pointer it takes its `hover=`, else the bar's. With a `prio=N` it is left out
+    /// when the bar doesn't fit, the highest `N` first; without, never
     Styled {
         text: Vec<TextPart>,
         style: Vec<StyleExpr>,
         click: Option<ClickAction>,
         hover: HoverOverride,
+        prio: Option<u8>,
     },
 }
 
 enum TextPart {
     Literal(String),
-    Var(Var),
+    Var(Var, VarFormat),
+}
+
+/// A variable's `{name:spec}` (MAX-139): `[<>^][0][width][h]`. The width pads the value to that
+/// many columns, aligned by `<`, `>` or `^` (numbers right and text left by default), with
+/// zeros for a number with `0`; `h` writes a number as a human size. A longer value is never
+/// cut
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct VarFormat {
+    align: Option<Align>,
+    zero: bool,
+    width: u8,
+    human: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Align {
+    Left,
+    Right,
+    Center,
+}
+
+impl VarFormat {
+    /// `None` for a malformed spec, which leaves `{name:spec}` as written
+    fn parse(spec: &str) -> Option<Self> {
+        let (align, rest) = match spec.chars().next()? {
+            '<' => (Some(Align::Left), &spec[1..]),
+            '>' => (Some(Align::Right), &spec[1..]),
+            '^' => (Some(Align::Center), &spec[1..]),
+            _ => (None, spec),
+        };
+        let (human, rest) = match rest.strip_suffix('h') {
+            Some(rest) => (true, rest),
+            None => (false, rest),
+        };
+        let zero = rest.len() > 1 && rest.starts_with('0');
+        if !rest.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let width = if rest.is_empty() {
+            0
+        } else {
+            rest.parse().ok()?
+        };
+        Some(Self {
+            align,
+            zero,
+            width,
+            human,
+        })
+    }
+
+    /// Pads the value written in `out` from `start`
+    fn pad(self, out: &mut String, start: usize, number: bool) {
+        let fill = (self.width as usize).saturating_sub(out[start..].width());
+        if fill == 0 {
+            return;
+        }
+        if self.zero && number {
+            out.insert_str(start, &"0".repeat(fill));
+            return;
+        }
+        let align = self
+            .align
+            .unwrap_or(if number { Align::Right } else { Align::Left });
+        let left = match align {
+            Align::Left => 0,
+            Align::Right => fill,
+            Align::Center => fill / 2,
+        };
+        out.insert_str(start, &" ".repeat(left));
+        out.push_str(&" ".repeat(fill - left));
+    }
+}
+
+/// A byte count like `ls -h`: up to 999 as is, then `1.0K`..`9.9K`, `10K`..`999K`, `1.0M`, ...,
+/// at most 4 columns (base 1024)
+fn write_human(out: &mut String, bytes: u64) {
+    if bytes < 1000 {
+        let _ = write!(out, "{bytes}");
+        return;
+    }
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 999.5 && unit < 6 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    let suffix = ["", "K", "M", "G", "T", "P", "E"][unit];
+    let _ = if value < 9.95 {
+        write!(out, "{value:.1}{suffix}")
+    } else {
+        write!(out, "{value:.0}{suffix}")
+    };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,6 +383,8 @@ enum Var {
     Time,
     PanLeft,
     PanRight,
+    PanOffset,
+    PanMax,
     ScrollPos,
     ScrollPosUp,
     ScrollPercent,
@@ -231,6 +405,8 @@ impl Var {
             "time" => Self::Time,
             "pan_left" => Self::PanLeft,
             "pan_right" => Self::PanRight,
+            "pan_offset" => Self::PanOffset,
+            "pan_max" => Self::PanMax,
             "scroll_pos" => Self::ScrollPos,
             "scroll_pos_up" => Self::ScrollPosUp,
             "scroll_percent" => Self::ScrollPercent,
@@ -252,14 +428,74 @@ impl Var {
                 KeyBindingAction::ScrollToBottom
             }
             Self::CopySide => return Some(ClickAction::ToggleSide),
-            Self::Port | Self::RxBytes | Self::TxBytes | Self::Time | Self::ScrollMax => {
+            Self::Port
+            | Self::RxBytes
+            | Self::TxBytes
+            | Self::Time
+            | Self::ScrollMax
+            | Self::PanOffset
+            | Self::PanMax => {
                 return None;
             }
         };
         Some(ClickAction::Run(action))
     }
 
-    fn write(self, out: &mut String, app: &App, time_format: &str) {
+    /// The value of a number variable, which a format pads right or with zeros, or writes as a
+    /// human size
+    fn number(self, app: &App) -> Option<u64> {
+        let scroll = app.scroll_status();
+        Some(match self {
+            Self::Baud => app.serial_config.baudrate as u64,
+            Self::RxBytes => app.stats.rx() as u64,
+            Self::TxBytes => app.stats.tx() as u64,
+            Self::ScrollPercent => scroll.percent() as u64,
+            Self::ScrollOffset => scroll.offset_from_bottom as u64,
+            Self::ScrollMax => scroll.max_scroll as u64,
+            Self::PanOffset => app.pan_left_status().unwrap_or(0) as u64,
+            Self::PanMax => app
+                .pan_right_status()
+                .map_or(0, |(cols, _)| cols + app.pan_left_status().unwrap_or(0))
+                as u64,
+            _ => return None,
+        })
+    }
+
+    /// Writes the value in its format; `compact`, when the bar doesn't fit, writes a variable
+    /// without a format of its own in its short form (MAX-139): the port's file name, the byte
+    /// counts as sizes, the pan without its spaces and parentheses
+    fn write(
+        self,
+        format: VarFormat,
+        compact: bool,
+        out: &mut String,
+        app: &App,
+        time_format: &str,
+    ) {
+        let start = out.len();
+        let compact = compact && format == VarFormat::default();
+        let human = format.human || (compact && matches!(self, Self::RxBytes | Self::TxBytes));
+        let number = self.number(app);
+        match number {
+            Some(value) if human => write_human(out, value),
+            Some(value) => {
+                let _ = write!(out, "{value}");
+            }
+            None if compact && self == Self::Port => {
+                let port = &app.serial_config.port;
+                out.push_str(port.rsplit(['/', '\\']).next().unwrap_or(port));
+            }
+            None if compact && matches!(self, Self::PanLeft | Self::PanRight) => {
+                let mut full = String::new();
+                self.write_text(&mut full, app, time_format);
+                out.extend(full.chars().filter(|c| !matches!(c, ' ' | '(' | ')')));
+            }
+            None => self.write_text(out, app, time_format),
+        }
+        format.pad(out, start, number.is_some());
+    }
+
+    fn write_text(self, out: &mut String, app: &App, time_format: &str) {
         let scroll = app.scroll_status();
         let _ = match self {
             Self::Mode => write!(
@@ -271,18 +507,12 @@ impl Var {
                 }
             ),
             Self::Port => write!(out, "{}", app.serial_config.port),
-            Self::Baud => write!(out, "{}", app.serial_config.baudrate),
             Self::Framing => write!(out, "{}", app.serial_config),
-            Self::RxBytes => write!(out, "{}", app.stats.rx()),
-            Self::TxBytes => write!(out, "{}", app.stats.tx()),
             Self::Time => write!(out, "{}", chrono::Local::now().format(time_format)),
             Self::PanLeft => write!(out, "{}", pan_left_indicator(app).unwrap_or_default()),
             Self::PanRight => write!(out, "{}", pan_right_indicator(app).unwrap_or_default()),
             Self::ScrollPos => write!(out, "{}", scroll.position_display()),
             Self::ScrollPosUp => write!(out, "{}", scroll.position_display().to_uppercase()),
-            Self::ScrollPercent => write!(out, "{}", scroll.percent()),
-            Self::ScrollOffset => write!(out, "{}", scroll.offset_from_bottom),
-            Self::ScrollMax => write!(out, "{}", scroll.max_scroll),
             Self::CopySide => write!(
                 out,
                 "{}",
@@ -292,6 +522,15 @@ impl Var {
                     None => "",
                 }
             ),
+            // the numbers, written by `write`
+            Self::Baud
+            | Self::RxBytes
+            | Self::TxBytes
+            | Self::ScrollPercent
+            | Self::ScrollOffset
+            | Self::ScrollMax
+            | Self::PanOffset
+            | Self::PanMax => Ok(()),
         };
     }
 }
@@ -335,6 +574,7 @@ enum Cond {
     PanRight,
     PanRightAlert,
     Panned,
+    Wide,
     Mouse,
     /// Unknown condition name, always false
     Unknown,
@@ -362,6 +602,7 @@ impl Cond {
             "pan_right" | "can_pan_right" => Self::PanRight,
             "pan_right_alert" | "pan_alert" => Self::PanRightAlert,
             "panned" | "pan" | "panning" => Self::Panned,
+            "wide" | "pannable" => Self::Wide,
             "mouse" => Self::Mouse,
             _ => Self::Unknown,
         }
@@ -396,6 +637,7 @@ impl Cond {
                     })
             }
             Self::Panned => app.pan_left_status().is_some_and(|c| c > 0),
+            Self::Wide => app.pan_right_status().is_some(),
             Self::Mouse => app.settings().ui.mouse,
             Self::Unknown => false,
         }
@@ -443,14 +685,20 @@ impl CompiledTemplate {
                 if let Some(paren_idx) = close_paren {
                     let style_end = style_start + paren_idx;
                     let text = parse_text_parts(&template[text_start..text_end]);
-                    // `click=<action>` and `hover=<style>` are no style: an unknown action is
-                    // dropped like an unknown style word
+                    // `click=<action>`, `hover=<style>` and `prio=N` are no style: an unknown
+                    // action or a bad number is dropped like an unknown style word
                     let (mouse, style): (Vec<&str>, Vec<&str>) =
                         tokenize_spec(&template[style_start..style_end])
                             .into_iter()
                             .partition(|token| {
-                                token.starts_with("click=") || token.starts_with("hover=")
+                                ["click=", "hover=", "prio="]
+                                    .iter()
+                                    .any(|keyword| token.starts_with(keyword))
                             });
+                    let prio = mouse
+                        .iter()
+                        .find_map(|token| token.strip_prefix("prio="))
+                        .and_then(|n| n.parse().ok());
                     let clicks = mouse
                         .iter()
                         .filter_map(|token| token.strip_prefix("click="));
@@ -464,7 +712,7 @@ impl CompiledTemplate {
                         .map(ClickAction::Run)
                         .or_else(|| {
                             text.iter().find_map(|part| match part {
-                                TextPart::Var(var) => var.click(),
+                                TextPart::Var(var, _) => var.click(),
                                 TextPart::Literal(_) => None,
                             })
                         });
@@ -476,6 +724,7 @@ impl CompiledTemplate {
                             .collect(),
                         click,
                         hover,
+                        prio,
                     });
                     cursor = style_end + 1;
                     continue;
@@ -491,7 +740,8 @@ impl CompiledTemplate {
 
     #[cfg(test)]
     pub fn spans(&self, app: &App, base_style: Style, time_format: &str) -> Vec<Span<'_>> {
-        self.spans_and_clicks(app, base_style, time_format).0
+        self.spans_and_clicks(app, base_style, time_format, Fit::default())
+            .0
     }
 
     /// The spans, and where the clickable ones are in the line (start column, width) with what
@@ -502,6 +752,7 @@ impl CompiledTemplate {
         app: &App,
         base_style: Style,
         time_format: &str,
+        fit: Fit,
     ) -> (Vec<Span<'_>>, Vec<ClickSpot>) {
         let mut spans = Vec::with_capacity(self.segments.len());
         let mut clicks = Vec::new();
@@ -513,13 +764,13 @@ impl CompiledTemplate {
                     for part in parts {
                         let width = match part {
                             TextPart::Literal(text) => text.width(),
-                            TextPart::Var(var) => {
+                            TextPart::Var(var, format) => {
                                 let mut out = String::new();
-                                var.write(&mut out, app, time_format);
+                                var.write(*format, fit.compact, &mut out, app, time_format);
                                 out.width()
                             }
                         } as u16;
-                        if let TextPart::Var(var) = part
+                        if let TextPart::Var(var, _) = part
                             && let Some(click) = var.click()
                             && width > 0
                         {
@@ -527,7 +778,8 @@ impl CompiledTemplate {
                         }
                         part_col = part_col.saturating_add(width);
                     }
-                    let span = Span::styled(fill_text(parts, app, time_format), base_style);
+                    let span =
+                        Span::styled(fill_text(parts, app, time_format, fit.compact), base_style);
                     col = col.saturating_add(span.width() as u16);
                     spans.push(span);
                 }
@@ -536,11 +788,18 @@ impl CompiledTemplate {
                     style,
                     click,
                     hover,
+                    prio,
                 } => {
+                    if prio
+                        .zip(fit.drop_from)
+                        .is_some_and(|(prio, from)| prio >= from)
+                    {
+                        continue;
+                    }
                     let Some(span_style) = resolve_style(style, base_style, app) else {
                         continue;
                     };
-                    let content = fill_text(text, app, time_format);
+                    let content = fill_text(text, app, time_format, fit.compact);
                     if !content.is_empty() {
                         let span = Span::styled(content, span_style);
                         let width = span.width() as u16;
@@ -557,7 +816,8 @@ impl CompiledTemplate {
     }
 }
 
-/// Splits text into literals and known `{variables}`; an unknown `{name}` stays as written
+/// Splits text into literals and known `{variables}`, with their `{name:spec}` format; an
+/// unknown `{name}` or a malformed spec stays as written
 fn parse_text_parts(text: &str) -> Vec<TextPart> {
     let mut parts = Vec::new();
     let mut literal = String::new();
@@ -566,15 +826,23 @@ fn parse_text_parts(text: &str) -> Vec<TextPart> {
     while let Some(open) = rest.find('{') {
         literal.push_str(&rest[..open]);
         let after = &rest[open + 1..];
-        match after
-            .find('}')
-            .and_then(|close| Some((close, Var::from_name(&after[..close])?)))
-        {
-            Some((close, var)) => {
+        let var = after.find('}').and_then(|close| {
+            let (name, spec) = match after[..close].split_once(':') {
+                Some((name, spec)) => (name, Some(spec)),
+                None => (&after[..close], None),
+            };
+            let format = match spec {
+                Some(spec) => VarFormat::parse(spec)?,
+                None => VarFormat::default(),
+            };
+            Some((close, Var::from_name(name)?, format))
+        });
+        match var {
+            Some((close, var, format)) => {
                 if !literal.is_empty() {
                     parts.push(TextPart::Literal(std::mem::take(&mut literal)));
                 }
-                parts.push(TextPart::Var(var));
+                parts.push(TextPart::Var(var, format));
                 rest = &after[close + 1..];
             }
             None => {
@@ -591,7 +859,12 @@ fn parse_text_parts(text: &str) -> Vec<TextPart> {
 }
 
 /// Borrows the text when it is a single literal, builds it only when variables are involved
-fn fill_text<'a>(parts: &'a [TextPart], app: &App, time_format: &str) -> Cow<'a, str> {
+fn fill_text<'a>(
+    parts: &'a [TextPart],
+    app: &App,
+    time_format: &str,
+    compact: bool,
+) -> Cow<'a, str> {
     match parts {
         [] => Cow::Borrowed(""),
         [TextPart::Literal(text)] => Cow::Borrowed(text),
@@ -600,7 +873,9 @@ fn fill_text<'a>(parts: &'a [TextPart], app: &App, time_format: &str) -> Cow<'a,
             for part in parts {
                 match part {
                     TextPart::Literal(text) => out.push_str(text),
-                    TextPart::Var(var) => var.write(&mut out, app, time_format),
+                    TextPart::Var(var, format) => {
+                        var.write(*format, compact, &mut out, app, time_format)
+                    }
                 }
             }
             Cow::Owned(out)
@@ -801,12 +1076,37 @@ fn tokenize_spec(spec: &str) -> Vec<&str> {
 /// Draws the status bar; returns its clickable blocks with their hover style (MAX-131), the
 /// left part's first, then the center's, then the right's, as they are drawn over each other
 /// (MAX-125)
-pub fn render_status_bar(
-    app: &App,
+/// A part of the bar as drawn: its spans, and its clickable blocks
+type DrawnPart<'a> = (Vec<Span<'a>>, Vec<ClickSpot>);
+
+/// The widths of the left, center and right parts
+fn widths(parts: &[Option<DrawnPart>; 3]) -> [u16; 3] {
+    parts.each_ref().map(|part| {
+        part.as_ref().map_or(0, |(spans, _)| {
+            spans.iter().map(Span::width).sum::<usize>() as u16
+        })
+    })
+}
+
+/// Whether the parts fit in `room` columns as they are drawn, the left one at the start, the
+/// right one at the end and the center one in the middle, a column apart (MAX-139)
+fn fits(room: u16, [left, center, right]: [u16; 3]) -> bool {
+    let [room, left, center, right] = [room, left, center, right].map(u32::from);
+    let gap = |a: u32, b: u32| u32::from(a > 0 && b > 0);
+    if center == 0 {
+        return left + gap(left, right) + right <= room;
+    }
+    let start = (room / 2).saturating_sub(center / 2);
+    let end = start + center;
+    left + gap(left, center) <= start && end + gap(center, right) + right <= room
+}
+
+pub fn render_status_bar<'a>(
+    app: &'a App,
     frame: &mut Frame,
     area: Rect,
     theme: &ThemeConfig,
-    status_bar: &CompiledStatusBar,
+    status_bar: &'a CompiledStatusBar,
 ) -> Vec<ClickTarget> {
     let mut targets = Vec::new();
     if !app.show_status_bar() {
@@ -838,25 +1138,22 @@ pub fn render_status_bar(
     }
 
     let time_format = &status_bar.time_format;
-    let parts = [
-        (&status_bar.left, Alignment::Left),
-        (&status_bar.center, Alignment::Center),
-        (&status_bar.right, Alignment::Right),
-    ];
-    for (template, alignment) in parts {
-        let (mut spans, clicks) = template.spans_and_clicks(app, base_style, time_format);
-        // in the border, the cells left unwritten keep the `─`: a part of blanks would cut it
-        let blank = || spans.iter().all(|span| span.content.trim().is_empty());
-        if spans.is_empty() || (in_border && blank()) {
-            continue;
+    // a part as drawn: none when empty or blank (it would take room, and cut the `─` of the
+    // border), and in the border a space keeps the text off the dashes unless the part has one
+    // there
+    let part = |template: &'a CompiledTemplate, fit: Fit| -> Option<DrawnPart<'a>> {
+        let (mut spans, mut clicks) = template.spans_and_clicks(app, base_style, time_format, fit);
+        let blank = spans.iter().all(|span| span.content.trim().is_empty());
+        if blank {
+            return None;
         }
-        // and a space keeps the text off the dashes, unless the part has one there
-        let mut lead = 0;
         if in_border {
             let space = || Span::styled(" ", base_style);
             if !spans[0].content.starts_with(char::is_whitespace) {
                 spans.insert(0, space());
-                lead = 1;
+                for click in &mut clicks {
+                    click.0 += 1;
+                }
             }
             if !spans[spans.len() - 1]
                 .content
@@ -865,17 +1162,62 @@ pub fn render_status_bar(
                 spans.push(space());
             }
         }
+        Some((spans, clicks))
+    };
+    let templates = [&status_bar.left, &status_bar.center, &status_bar.right];
+    let room = parts_area.width;
+
+    // the full text, then the compact forms, then without the `prio=` levels from the highest:
+    // the first that fits (MAX-139)
+    let compact = |drop_from| Fit {
+        compact: true,
+        drop_from,
+    };
+    let tries = std::iter::once(Fit::default())
+        .chain(std::iter::once(compact(None)))
+        .chain(status_bar.prios.iter().map(|&prio| compact(Some(prio))));
+    let mut parts = [None, None, None];
+    for fit in tries {
+        parts = templates.map(|template| part(template, fit));
+        if fits(room, widths(&parts)) {
+            break;
+        }
+    }
+    // still too wide: the center goes, then the right part's blocks from its left side
+    if !fits(room, widths(&parts)) {
+        parts[1] = None;
+        while !fits(room, widths(&parts)) {
+            let Some((spans, clicks)) = &mut parts[2] else {
+                break;
+            };
+            // the cut block's clicks go, the others move left with the part
+            let cut = spans.remove(0).width() as u16;
+            clicks.retain(|click| click.0 >= cut);
+            for click in clicks.iter_mut() {
+                click.0 -= cut;
+            }
+            if spans.is_empty() {
+                parts[2] = None;
+            }
+        }
+    }
+
+    let alignments = [Alignment::Left, Alignment::Center, Alignment::Right];
+    for (drawn, alignment) in parts.into_iter().zip(alignments) {
+        let Some((spans, clicks)) = drawn else {
+            continue;
+        };
         let line = Line::from(spans);
         // where the paragraph starts the line, as ratatui works it out
         let width = line.width() as u16;
         let start = parts_area.x
             + match alignment {
                 Alignment::Left => 0,
-                Alignment::Center => (parts_area.width / 2).saturating_sub(width / 2),
-                Alignment::Right => parts_area.width.saturating_sub(width),
+                Alignment::Center => (room / 2).saturating_sub(width / 2),
+                Alignment::Right => room.saturating_sub(width),
             };
         for (col, width, action, hover) in clicks {
-            let cell = Rect::new(start.saturating_add(lead + col), parts_area.y, width, 1)
+            let cell = Rect::new(start.saturating_add(col), parts_area.y, width, 1)
                 .intersection(parts_area);
             if !cell.is_empty() {
                 targets.push(ClickTarget {
@@ -946,11 +1288,12 @@ mod tests {
             render(&d.left, &a),
             [
                 span(" TERM ", "Some(Cyan)", BG, "BOLD"),
-                plain(" /dev/ttyUSB0 "),
-                span("|", MUTED, BG, "NONE"),
+                plain(" /dev/ttyUSB0"),
+                span(" |", MUTED, BG, "NONE"),
                 plain(" "),
                 span("115200", "Some(Cyan)", BG, "NONE"),
-                plain(" 8N1"),
+                plain(" "),
+                plain("8N1"),
             ]
         );
     }
@@ -985,7 +1328,7 @@ mod tests {
         let mut l = app(Mode::Line);
         l.settings_mut().raw_side.view = crate::configs::RawSideView::Hex;
         l.feed_rx(b"abc\r\n");
-        assert_eq!(render(&d.left, &l).len(), 6);
+        assert_eq!(render(&d.left, &l).len(), 7);
 
         l.update(Action::CopyMode(CopyModeAction::Enter));
         assert_eq!(
@@ -1029,18 +1372,14 @@ mod tests {
     fn default_center_and_right() {
         let a = app(Mode::Terminal);
         let d = StatusBarConfig::default();
-        assert_eq!(render(&d.center, &a), [plain(" ")]);
+        assert!(render(&d.center, &a).is_empty());
         assert_eq!(
             render(&d.right, &a),
             [
-                span("RX: 0", MUTED, BG, "NONE"),
-                plain(" "),
-                span("|", MUTED, BG, "NONE"),
-                plain(" "),
-                span("TX: 0", MUTED, BG, "NONE"),
-                plain(" "),
-                span("|", MUTED, BG, "NONE"),
-                plain(" "),
+                span("RX:    0", MUTED, BG, "NONE"),
+                span(" | ", MUTED, BG, "NONE"),
+                span("TX:    0", MUTED, BG, "NONE"),
+                span(" | ", MUTED, BG, "NONE"),
                 span("TIME", "Some(Yellow)", BG, "NONE"),
                 plain(" "),
                 span("?", MUTED, BG, "NONE"),
@@ -1154,7 +1493,7 @@ mod tests {
     fn spots(template: &str, app: &App) -> Vec<ClickSpot> {
         let theme = ThemeConfig::default();
         CompiledTemplate::new(template, &theme)
-            .spans_and_clicks(app, *theme.ui.status_bar, "TIME")
+            .spans_and_clicks(app, *theme.ui.status_bar, "TIME", Fit::default())
             .1
     }
 
@@ -1234,5 +1573,136 @@ mod tests {
         assert_eq!(compile_hover("reversed", &theme), Some(reversed));
         assert_eq!(compile_hover(" (bg=red bold) ", &theme), Some(red_bold));
         assert_eq!(compile_hover("none", &theme), None);
+    }
+
+    /// MAX-139: `{name:spec}` pads a variable: numbers right and text left by default, `<` `>`
+    /// `^` to align, `0` for zeros (numbers only), `h` for a human size; a longer value isn't
+    /// cut, and a malformed spec stays as written.
+    /// How: the baud rate (115200) and the port with each spec, RX at 1536 bytes.
+    #[test]
+    fn variable_formats() {
+        let mut a = app(Mode::Terminal);
+        for (template, out) in [
+            ("{baud:8}", "  115200"),
+            ("{baud:08}", "00115200"),
+            ("{baud:<8}", "115200  "),
+            ("{baud:^9}", " 115200  "),
+            ("{baud:3}", "115200"),
+            ("{port:14}", "/dev/ttyUSB0  "),
+            ("{port:>14}", "  /dev/ttyUSB0"),
+            ("{port:014}", "/dev/ttyUSB0  "),
+            ("{baud:x}", "{baud:x}"),
+            ("{baud:}", "{baud:}"),
+            ("{baud:8x}", "{baud:8x}"),
+            ("{baud:+8}", "{baud:+8}"),
+        ] {
+            assert_eq!(render(template, &a), [plain(out)], "{template}");
+        }
+        a.stats.update_rx(1536);
+        assert_eq!(render("{rx_bytes:h}", &a), [plain("1.5K")]);
+        assert_eq!(render("{rx_bytes:>6h}", &a), [plain("  1.5K")]);
+        assert_eq!(render("{rx_bytes:06}", &a), [plain("001536")]);
+    }
+
+    /// MAX-139: a human size is the number up to 999, then one decimal below 10 and none above,
+    /// in units of 1024, never more than 4 columns.
+    #[test]
+    fn human_sizes() {
+        let human = |bytes| {
+            let mut out = String::new();
+            write_human(&mut out, bytes);
+            out
+        };
+        for (bytes, out) in [
+            (0, "0"),
+            (999, "999"),
+            (1000, "1.0K"),
+            (1023, "1.0K"),
+            (1024, "1.0K"),
+            (1536, "1.5K"),
+            (10 * 1024, "10K"),
+            (999 * 1024, "999K"),
+            (1024 * 1024 - 1, "1.0M"),
+            (5_000_000, "4.8M"),
+            (u64::MAX, "16E"),
+        ] {
+            assert_eq!(human(bytes), out, "{bytes}");
+        }
+    }
+
+    /// MAX-139: a padded variable is clickable over its whole width.
+    #[test]
+    fn padded_variable_click() {
+        use KeyBindingAction::SerialSettings;
+        let a = app(Mode::Terminal);
+        assert_eq!(
+            clicks("{baud:10}", &a),
+            [(0, 10, ClickAction::Run(SerialSettings))]
+        );
+    }
+
+    /// Text of a template's spans in one string, squeezed by `fit`
+    fn text_with(template: &str, app: &App, fit: Fit) -> String {
+        let theme = ThemeConfig::default();
+        CompiledTemplate::new(template, &theme)
+            .spans_and_clicks(app, *theme.ui.status_bar, "TIME", fit)
+            .0
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
+    }
+
+    /// MAX-139: `prio=N` is no style word; squeezed, the blocks of a level and above are left
+    /// out, the ones without `prio=` never; the bar's levels are listed from the highest.
+    /// How: a template with prio 1, 2, 3 and none, then `drop_from` 3, 2 and 1.
+    #[test]
+    fn prio_keyword() {
+        let a = app(Mode::Terminal);
+        assert_eq!(render("[a](bold prio=2)", &a), render("[a](bold)", &a));
+        let template = "[a](prio=1)[b](prio=2)[c]()[d](prio=3)[e](prio=x)";
+        let drop = |from| Fit {
+            compact: false,
+            drop_from: from,
+        };
+        assert_eq!(text_with(template, &a, drop(None)), "abcde");
+        assert_eq!(text_with(template, &a, drop(Some(3))), "abce");
+        assert_eq!(text_with(template, &a, drop(Some(2))), "ace");
+        assert_eq!(text_with(template, &a, drop(Some(1))), "ce");
+
+        let config = StatusBarConfig {
+            left: "[a](prio=2)[b](prio=4)".into(),
+            center: String::new(),
+            right: "[c](prio=2)[d](prio=1)".into(),
+            ..StatusBarConfig::default()
+        };
+        let bar = CompiledStatusBar::new(&config, &ThemeConfig::default());
+        assert_eq!(bar.prios, [4, 2, 1]);
+    }
+
+    /// MAX-139: squeezed, a variable without a format of its own takes its compact form: the
+    /// port's file name, a byte count as a size, the pan without spaces and parentheses; one
+    /// with a format keeps it.
+    /// How: the port, RX at 1536 with and without `:6`, a 200-column terminal panned by 3.
+    #[test]
+    fn compact_forms() {
+        use crate::{configs::TerminalDimensionMode, inputs::HistoryAction};
+        let compact = Fit {
+            compact: true,
+            drop_from: None,
+        };
+        let mut a = app(Mode::Terminal);
+        a.stats.update_rx(1536);
+        assert_eq!(text_with("{port}", &a, Fit::default()), "/dev/ttyUSB0");
+        assert_eq!(text_with("{port}", &a, compact), "ttyUSB0");
+        assert_eq!(text_with("{rx_bytes}", &a, compact), "1.5K");
+        assert_eq!(text_with("{rx_bytes:6}", &a, compact), "  1536");
+
+        a.settings_mut().terminal_mode.dimension_mode = TerminalDimensionMode::Fixed;
+        a.settings_mut().terminal_mode.cols = 200;
+        a.update_viewport(crate::app::types::ViewportSize::new(80, 20));
+        a.update(Action::History(HistoryAction::PanRight(3)));
+        assert_eq!(text_with("{pan_left}", &a, Fit::default()), "◀ (3)");
+        assert_eq!(text_with("{pan_left}", &a, compact), "◀3");
+        assert_eq!(text_with("{pan_right}", &a, compact), "117▶");
     }
 }

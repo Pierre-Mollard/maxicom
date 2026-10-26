@@ -443,13 +443,13 @@ impl Default for StatusBarConfig {
     fn default() -> Self {
         Self {
             left: String::from(
-                "[ {mode} ](prefix?(bg=secondary fg=black bold):copy_raw?(bg=red fg=black bold):copy?(bg=magenta fg=black bold):search?(bg=blue fg=white bold):(fg=primary bold))[ {copy_side}](copy_raw?(fg=red bold):copy?(fg=magenta bold):hide) {port} [|](muted) [{baud}](primary) {framing}",
+                "[ {mode} ](prefix?(bg=secondary fg=black bold):copy_raw?(bg=red fg=black bold):copy?(bg=magenta fg=black bold):search?(bg=blue fg=white bold):(fg=primary bold))[ {copy_side}](copy_raw?(fg=red bold):copy?(fg=magenta bold):hide)[ {port}](prio=3)[ |](muted prio=3)[ ](prio=2)[{baud}](primary prio=2)[ ](prio=4)[{framing}](prio=4)",
             ),
             center: String::from(
-                " [ ● REC ](rec?(fg=warn bold):hide click=toggle_logging)[ {pan_left} ](pan_left?secondary:hide)[ {pan_right} ](pan_right_alert?(bg=warn fg=black bold):(pan_right?secondary:hide))",
+                "[● REC ](rec?(fg=warn bold):hide click=toggle_logging)[◀ ](wide?(pan_left?secondary:muted):hide click=pan_left)[{pan_offset:>3}/{pan_max:<3}](wide?muted:hide)[ ▶](wide?(pan_alert?(fg=warn bold):(pan_right?secondary:muted)):hide click=pan_right)",
             ),
             right: String::from(
-                "[{scroll_pos_up} ](has_scroll?muted:hide)[RX: {rx_bytes}](muted) [|](muted) [TX: {tx_bytes}](muted) [|](muted) [{time}](secondary) [?](muted click=help hover=(bg=primary fg=black)) [≡](muted click=settings hover=(bg=secondary fg=black)) ",
+                "[{scroll_pos_up} ](has_scroll?muted:hide prio=2)[RX: {rx_bytes:4h}](muted prio=3)[ | ](muted prio=3)[TX: {tx_bytes:4h}](muted prio=3)[ | ](muted prio=4)[{time}](secondary prio=4) [?](muted click=help hover=(bg=primary fg=black)) [≡](muted click=settings hover=(bg=secondary fg=black)) ",
             ),
             time_format: String::from("%H:%M:%S"),
             hover: String::from("reversed"),
