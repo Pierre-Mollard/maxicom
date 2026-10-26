@@ -109,7 +109,7 @@ pub fn parse_args() -> Result<ParseOutcome, ParseError> {
 pub fn print_help() {
     println!(
         "\
-MaxiCom — serial terminal
+maxicom — serial terminal
 
 Usage:
   maxicom [OPTIONS]

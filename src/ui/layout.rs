@@ -44,17 +44,17 @@ pub struct ScreenLayout {
 impl ScreenLayout {
     pub fn compute(screen: Rect, app: &App) -> Self {
         let mut warnings = Vec::new();
-        let ui = &app.settings().ui;
-        let show_borders = ui.show_borders;
-        let show_status_bar = ui.show_status_bar;
-        let show_scrollbar = ui.show_scrollbar;
+        let show_borders = app.show_borders();
+        let show_status_bar = app.show_status_bar();
+        let show_scrollbar = app.show_scrollbar();
         let input_mode = app.settings().mode;
 
         // in the border layout, the status bar takes no row of its own (MAX-135)
-        let status_in_border = show_status_bar && ui.status_bar_layout() == StatusBarLayout::Border;
+        let status_in_border =
+            show_status_bar && app.status_bar_layout() == StatusBarLayout::Border;
         let status_height = if !show_status_bar || status_in_border {
             0
-        } else if ui.status_bar_layout() == StatusBarLayout::Box {
+        } else if app.status_bar_layout() == StatusBarLayout::Box {
             3
         } else {
             1

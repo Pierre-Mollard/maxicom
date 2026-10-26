@@ -287,7 +287,7 @@ pub fn render_vt100_terminal(
     // scrollbar
     if let Some(sb_area) = scrollbar_area {
         let max_vertical = app.terminal_mode.max_vertical_scroll();
-        let has_borders = app.settings().ui.show_borders;
+        let has_borders = app.show_borders();
 
         if max_vertical > 0 && view_height > 0 {
             let position_from_top =

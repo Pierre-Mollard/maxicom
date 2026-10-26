@@ -763,7 +763,7 @@ pub fn render_monitor(
     }
 
     if let Some(sb_area) = scrollbar_area {
-        let has_borders = app.settings().ui.show_borders;
+        let has_borders = app.show_borders();
 
         // in rows (#5d): the thumb moves one step per row scrolled
         if total_rows > content_height {
@@ -815,7 +815,7 @@ pub fn render_input_prompt(app: &mut App, frame: &mut Frame, area: Rect, theme: 
         theme,
     );
 
-    let has_borders = app.settings().ui.show_borders;
+    let has_borders = app.show_borders();
 
     let (block, inner_area) = if has_borders {
         let b = Block::default()

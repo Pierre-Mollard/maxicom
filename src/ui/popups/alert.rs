@@ -144,7 +144,7 @@ pub fn render_confirm_quit_popup(
 ) -> Rect {
     let text = vec![
         Line::from(Span::styled(
-            "Quit MaxiCom?",
+            "Quit maxicom?",
             Style::default()
                 .fg(theme.palette.text)
                 .add_modifier(Modifier::BOLD),

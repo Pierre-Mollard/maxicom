@@ -71,6 +71,7 @@ pub fn render(
     let root_backdrop = Block::default().style(*theme.ui.background);
     frame.render_widget(root_backdrop, root_area);
 
+    app.set_screen_size(root_area.width, root_area.height);
     let layout = ScreenLayout::compute(root_area, app);
     app.set_frame_areas(FrameAreas {
         content: layout.content_area,
@@ -82,7 +83,7 @@ pub fn render(
         layout.content_area.height,
     ));
 
-    if app.settings().ui.show_borders {
+    if app.show_borders() {
         let border_style = border_style_for(
             layout.focus_target,
             app.focus_target(),
@@ -90,15 +91,20 @@ pub fn render(
             theme,
         );
 
+        // the title gets the top border between its corners, but for the buttons and a dash
+        // before them (MAX-137)
+        let outer = layout.monitor_outer;
+        let buttons: String = BORDER_BUTTONS.iter().map(|(text, _)| *text).collect();
+        let buttons_width = buttons.chars().count() as u16;
+        let room = outer.width.saturating_sub(3 + buttons_width);
         let mut block = Block::default()
             .borders(Borders::ALL)
             .border_style(border_style)
             .style(*theme.ui.background)
-            .title(monitor_title(app, &layout.monitor_outer));
+            .title(monitor_title(app, &outer, room));
 
         // in terminal mode the status bar can be in this bottom border, where it shows the pan
         // itself (MAX-135)
-        let outer = layout.monitor_outer;
         let bar_in_border = layout
             .status_bar_area
             .is_some_and(|bar| bar.y + 1 == outer.bottom());
@@ -109,10 +115,7 @@ pub fn render(
         }
 
         // right-aligned in the top border, inside its corner
-        let buttons: String = BORDER_BUTTONS.iter().map(|(text, _)| *text).collect();
-        let mut x = outer
-            .right()
-            .saturating_sub(1 + buttons.chars().count() as u16);
+        let mut x = outer.right().saturating_sub(1 + buttons_width);
         block = block.title(Line::styled(buttons, border_style).right_aligned());
         for (text, action) in BORDER_BUTTONS {
             let width = text.chars().count() as u16;
@@ -272,8 +275,11 @@ mod tests {
             let mut settings = SettingsConfig::default();
             settings.mode = Mode::Line;
             settings.show_timestamps = false;
-            // the rows the tests expect have no border, whatever the default
+            // the rows the tests expect have no border, whatever the default, and their small
+            // screens aren't compact (MAX-136)
             settings.ui.show_borders = false;
+            settings.ui.compact_cols = 0;
+            settings.ui.compact_rows = 0;
             settings.line_mode.display_mode = display_mode;
             tweak(&mut settings);
             let theme = ThemeConfig::default();
@@ -1729,7 +1735,7 @@ mod tests {
 
         key_do(&mut h, Char('q'), ctrl);
         let rows = h.draw();
-        assert!(rows.iter().any(|row| row.contains("Quit MaxiCom?")));
+        assert!(rows.iter().any(|row| row.contains("Quit maxicom?")));
         let effect = mouse_do(
             &mut h,
             MouseEventKind::Down(MouseButton::Left),
@@ -2266,6 +2272,131 @@ mod tests {
         assert!(!rows[0].contains("[?]"));
         click(&mut h, (x + 1, y));
         assert!(h.app.overlay().is_none());
+    }
+
+    /// MAX-137: the history's title is ` maxicom LINE ` / ` maxicom TERMINAL `; with
+    /// `title_details` the sizes, scroll and prefix follow.
+    /// How: line then terminal mode at 120x24, details off then on, the prefix active.
+    #[test]
+    fn border_title_details() {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 120, 24, |s| {
+            s.ui.show_borders = true;
+        });
+        let title = |h: &mut Harness| {
+            let rows = h.draw();
+            rows[0]
+                .trim_start_matches('┌')
+                .split('─')
+                .next()
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(title(&mut h), " maxicom LINE ");
+        h.app.settings_mut().ui.title_details = true;
+        assert_eq!(title(&mut h), " maxicom LINE [VIEW 118x19 | LIVE] ");
+        h.app.update(Action::App(AppAction::SetPrefix(true)));
+        assert_eq!(
+            title(&mut h),
+            " maxicom LINE [VIEW 118x19 | LIVE] | PREFIX "
+        );
+
+        h.app.update(Action::App(AppAction::SetPrefix(false)));
+        h.app.settings_mut().mode = Mode::Terminal;
+        assert_eq!(
+            title(&mut h),
+            " maxicom TERMINAL [VT 118x24 | VIEW 118x22 | LIVE] "
+        );
+        h.app.settings_mut().ui.title_details = false;
+        assert_eq!(title(&mut h), " maxicom TERMINAL ");
+    }
+
+    /// MAX-137: a title that doesn't fit loses whole details from the last one, then the
+    /// prefix, then everything but the name, and is gone without room for the name; it is never
+    /// cut inside a word, and the border buttons stay.
+    /// How: line mode with details and the prefix at each width from 120 down to 20; then the
+    /// exact titles at a few widths.
+    #[test]
+    fn border_title_fits_whole() {
+        let title_at = |width| {
+            let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, width, 24, |s| {
+                s.ui.show_borders = true;
+                s.ui.title_details = true;
+            });
+            h.app.update(Action::App(AppAction::SetPrefix(true)));
+            let rows = h.draw();
+            assert!(rows[0].ends_with("[?][≡][×]┐"), "{width}: {:?}", rows[0]);
+            let title = rows[0].trim_start_matches('┌').split('─').next().unwrap();
+            title.to_string()
+        };
+        let full = " maxicom LINE [VIEW 118x19 | LIVE] | PREFIX ";
+        assert_eq!(title_at(120), full);
+        for width in 20..=120 {
+            let title = title_at(width);
+            assert!(
+                title.is_empty()
+                    || [" maxicom LINE ", "] ", "] | PREFIX ", "LINE | PREFIX "]
+                        .iter()
+                        .any(|end| title.ends_with(end)),
+                "{width}: {title:?}"
+            );
+        }
+        // 40 columns leave 28 for the title: the details go before the prefix
+        assert_eq!(title_at(40), " maxicom LINE | PREFIX ");
+        assert_eq!(title_at(30), " maxicom LINE ");
+        assert_eq!(title_at(20), "");
+    }
+
+    /// MAX-136: a screen narrower than `compact_cols` or shorter than `compact_rows` is drawn
+    /// without borders, status bar and scrollbar, the history and TX input taking their room;
+    /// the settings are left as they are, so a bigger screen brings everything back. A `0`
+    /// turns its side off. The border buttons aren't clickable while hidden.
+    /// How: line mode with borders at 80x24, then 40x24, 80x12 and back; the thresholds at
+    /// `0`; terminal mode at 40x24.
+    #[test]
+    fn compact_screen() {
+        use ratatui::layout::Rect;
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 24, |s| {
+            s.ui.show_borders = true;
+        });
+        h.app.settings_mut().ui.compact_cols = 50;
+        h.app.settings_mut().ui.compact_rows = 14;
+        let at = |h: &mut Harness, w, rows| {
+            h.terminal.backend_mut().resize(w, rows);
+            let drawn = h.draw();
+            drawn[0].starts_with('┌')
+        };
+        let content = |h: &Harness| h.app.frame_areas().content;
+
+        assert!(at(&mut h, 80, 24));
+        for (w, rows) in [(40, 24), (80, 12)] {
+            assert!(!at(&mut h, w, rows), "{w}x{rows}");
+            let layout = ScreenLayout::compute(Rect::new(0, 0, w, rows), &h.app);
+            assert_eq!(layout.status_bar_area, None, "{w}x{rows}");
+            assert_eq!(layout.scrollbar_area, None, "{w}x{rows}");
+            assert_eq!(layout.prompt_area.map(|p| p.height), Some(1));
+            assert_eq!(content(&h), Rect::new(0, 0, w, rows - 1), "{w}x{rows}");
+        }
+        let ui = &h.app.settings().ui;
+        assert!(ui.show_borders && ui.show_status_bar && ui.show_scrollbar);
+
+        // where `[≡]` is at 40 columns with borders
+        at(&mut h, 40, 24);
+        click(&mut h, (33, 0));
+        assert!(h.app.overlay().is_none());
+
+        assert!(at(&mut h, 80, 24));
+        h.app.settings_mut().ui.compact_cols = 0;
+        assert!(at(&mut h, 40, 24));
+        assert!(!at(&mut h, 80, 12));
+        h.app.settings_mut().ui.compact_rows = 0;
+        assert!(at(&mut h, 40, 12));
+
+        let ui = &mut h.app.settings_mut().ui;
+        ui.compact_cols = 50;
+        ui.compact_rows = 14;
+        h.app.settings_mut().mode = Mode::Terminal;
+        assert!(!at(&mut h, 40, 24));
+        assert_eq!(content(&h), Rect::new(0, 0, 40, 24));
     }
 
     /// The cell of the last `text` in the status bar (the last row): the buttons are at its

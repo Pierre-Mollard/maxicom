@@ -460,9 +460,12 @@ impl StatusBarConfig {
 #[serde(default)]
 pub struct UiConfig {
     pub show_borders: bool,
+    pub title_details: bool,
     pub show_scrollbar: bool,
     pub show_status_bar: bool,
     pub mouse: bool,
+    pub compact_cols: u16,
+    pub compact_rows: u16,
     pub status_bar: StatusBarConfig,
 }
 
@@ -470,9 +473,12 @@ impl Default for UiConfig {
     fn default() -> Self {
         Self {
             show_borders: true,
+            title_details: false,
             show_scrollbar: true,
             show_status_bar: true,
             mouse: true,
+            compact_cols: 50,
+            compact_rows: 14,
             status_bar: StatusBarConfig::default(),
         }
     }
@@ -480,9 +486,9 @@ impl Default for UiConfig {
 
 impl UiConfig {
     /// The status bar layout in use: `border` and `box` need borders, else it's `line`
-    pub fn status_bar_layout(&self) -> StatusBarLayout {
+    pub fn status_bar_layout(&self, show_borders: bool) -> StatusBarLayout {
         match self.status_bar.layout {
-            StatusBarLayout::Border | StatusBarLayout::Box if !self.show_borders => {
+            StatusBarLayout::Border | StatusBarLayout::Box if !show_borders => {
                 StatusBarLayout::Line
             }
             layout => layout,
@@ -494,7 +500,7 @@ impl UiConfig {
     }
 }
 
-/// MaxiCom UI & session settings
+/// maxicom UI & session settings
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SettingsConfig {

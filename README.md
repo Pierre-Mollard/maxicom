@@ -48,6 +48,17 @@ cargo deny check
 
 ## CONFIG
 
+### UI
+
+- `title_details` in `[ui]` (default `false`): the history box's title shows
+  only ` maxicom LINE ` or ` maxicom TERMINAL `. With `true` it also shows the
+  alerts (`!`, `● REC`), the VT and view sizes, the scroll, the pan and the
+  prefix. What doesn't fit in the border is left out whole, never cut.
+- `compact_cols` and `compact_rows` in `[ui]` (default `50` and `14`): while
+  the screen is narrower or shorter than that, it is drawn without borders,
+  status bar and scrollbar, to leave the room to the content. The settings
+  stay as they are: a bigger window brings them back. `0` turns a side off.
+
 ### THEME
 
 #### STATUS BAR FORMAT

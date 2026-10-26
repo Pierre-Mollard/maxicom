@@ -809,13 +809,13 @@ pub fn render_status_bar(
     status_bar: &CompiledStatusBar,
 ) -> Vec<ClickTarget> {
     let mut targets = Vec::new();
-    if !app.settings().ui.show_status_bar {
+    if !app.show_status_bar() {
         return targets;
     }
 
     // only the band layout fills the row with its colour; the others put the text on the UI
     // background (MAX-135)
-    let layout = app.settings().ui.status_bar_layout();
+    let layout = app.status_bar_layout();
     let mut base_style = *theme.ui.status_bar;
     if layout != StatusBarLayout::Band {
         base_style.bg = theme.ui.background.bg;
@@ -831,7 +831,7 @@ pub fn render_status_bar(
         frame.render_widget(block, area);
     } else if !in_border {
         // with borders, inset one column each side to line up with the boxes' edges
-        if app.settings().ui.show_borders {
+        if app.show_borders() {
             parts_area = area.inner(Margin::new(1, 0));
         }
         frame.render_widget(Block::default().style(base_style), area);

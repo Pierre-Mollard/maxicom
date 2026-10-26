@@ -7,7 +7,8 @@ use crate::{
         types::{FocusTarget, FrameAreas, FrameMap, ViewportSize},
     },
     configs::{
-        DualBufferMode, KeyResolver, Mode, SettingsConfig, WrapMode, settings::PrefixWrapBehavior,
+        DualBufferMode, KeyResolver, Mode, SettingsConfig, StatusBarLayout, WrapMode,
+        settings::PrefixWrapBehavior,
     },
     inputs::{
         Action, AppAction, CopyModeAction, HistoryAction, LineInputAction, SearchModeAction,
@@ -83,6 +84,8 @@ pub struct App {
     pub terminal_mode: TerminalMode,
     pub is_window_focused: bool,
     pointer: Option<(u16, u16)>,
+    /// The last frame was smaller than `compact_cols` x `compact_rows` (MAX-136)
+    compact: bool,
     pub stats: Stats,
 }
 
@@ -136,11 +139,36 @@ impl App {
             terminal_mode: terminal_view,
             is_window_focused: true,
             pointer: None,
+            compact: false,
             stats: Stats {
                 received_bytes: 0,
                 sent_bytes: 0,
             },
         }
+    }
+
+    /// Draws the next frames compact while the screen is smaller than `compact_cols` x
+    /// `compact_rows` (a `0` never is): no borders, status bar or scrollbar, the settings left
+    /// as they are (MAX-136). Set by `render`, so the mouse sees what the last frame drew
+    pub fn set_screen_size(&mut self, cols: u16, rows: u16) {
+        let ui = &self.settings.ui;
+        self.compact = cols < ui.compact_cols || rows < ui.compact_rows;
+    }
+
+    pub fn show_borders(&self) -> bool {
+        self.settings.ui.show_borders && !self.compact
+    }
+
+    pub fn show_status_bar(&self) -> bool {
+        self.settings.ui.show_status_bar && !self.compact
+    }
+
+    pub fn show_scrollbar(&self) -> bool {
+        self.settings.ui.show_scrollbar && !self.compact
+    }
+
+    pub fn status_bar_layout(&self) -> StatusBarLayout {
+        self.settings.ui.status_bar_layout(self.show_borders())
     }
 
     /// Where the last frame drew the history and the raw panel, set by `render`

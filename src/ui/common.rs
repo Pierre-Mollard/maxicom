@@ -9,6 +9,8 @@ use ratatui::{
 
 use std::fmt::Write;
 
+use unicode_width::UnicodeWidthStr;
+
 use crate::{
     app::{
         App,
@@ -19,71 +21,86 @@ use crate::{
     ui::popups::hint_spans,
 };
 
-pub fn monitor_title(app: &App, area: &Rect) -> String {
-    let mut title = String::with_capacity(80);
-
-    let (scroll_offset, pan_offset) = match app.settings().mode {
+/// The history box's title, ` maxicom LINE `; with `title_details` also the alerts (`!` for
+/// missed content, `● REC`), the sizes, the scroll, the pan and the prefix. What doesn't fit in
+/// `room` columns is left out whole, never cut: the details from the last one, then the
+/// prefix, then the alerts; without room for the name, no title (MAX-137)
+pub fn monitor_title(app: &App, area: &Rect, room: u16) -> String {
+    let view = format!(
+        "VIEW {}x{}",
+        area.width.saturating_sub(2),
+        area.height.saturating_sub(2)
+    );
+    let (mode, mut details, missed, logging, scroll_offset, pan_offset) = match app.settings().mode
+    {
         Mode::Terminal => {
-            let screen = app.terminal_mode.vt100_screen();
-            if app.terminal_mode.is_new_content_missed() {
-                let _ = write!(title, "! ");
-            }
-            if app.terminal_mode.is_logging() {
-                let _ = write!(title, "● REC ");
-            }
-            let _ = write!(
-                title,
-                " MaxiCom TERMINAL [VT {}x{} | VIEW {}x{}",
-                screen.size().1,
-                screen.size().0,
-                area.width.saturating_sub(2),
-                area.height.saturating_sub(2),
-            );
+            let tm = &app.terminal_mode;
+            let (rows, cols) = tm.vt100_screen().size();
             (
-                app.terminal_mode.vt100_screen().scrollback(),
-                app.terminal_mode.pan_offset(),
+                "TERMINAL",
+                vec![format!("VT {cols}x{rows}"), view],
+                tm.is_new_content_missed(),
+                tm.is_logging(),
+                tm.vt100_screen().scrollback(),
+                tm.pan_offset(),
             )
         }
         Mode::Line => {
-            if app.line_mode.is_new_content_missed() {
-                let _ = write!(title, "! ");
-            }
-            if app.line_mode.is_logging() {
-                let _ = write!(title, "● REC ");
-            }
-            let _ = write!(
-                title,
-                " MaxiCom LINE [VIEW {}x{}",
-                area.width.saturating_sub(2),
-                area.height.saturating_sub(2),
-            );
+            let lm = &app.line_mode;
             (
-                app.line_mode.scroll_status().offset_from_bottom,
-                app.line_mode.x_offset(),
+                "LINE",
+                vec![view],
+                lm.is_new_content_missed(),
+                lm.is_logging(),
+                lm.scroll_status().offset_from_bottom,
+                lm.x_offset(),
             )
         }
     };
+    let name = format!("maxicom {mode}");
+    let compose = |alerts: &[&str], details: &[String], prefix: bool| {
+        let mut title = String::from(" ");
+        for alert in alerts {
+            title.push_str(alert);
+            title.push(' ');
+        }
+        title.push_str(&name);
+        if !details.is_empty() {
+            let _ = write!(title, " [{}]", details.join(" | "));
+        }
+        if prefix {
+            title.push_str(" | PREFIX");
+        }
+        title.push(' ');
+        title
+    };
+    let fits = |title: &String| title.width() <= room as usize;
 
-    // Append scroll state
-    if scroll_offset > 0 {
-        let _ = write!(title, " | SCROLL +{scroll_offset}");
+    if !app.settings().ui.title_details {
+        return Some(compose(&[], &[], false))
+            .filter(fits)
+            .unwrap_or_default();
+    }
+    let alerts: Vec<&str> = [(missed, "!"), (logging, "● REC")]
+        .into_iter()
+        .filter_map(|(on, alert)| on.then_some(alert))
+        .collect();
+    details.push(if scroll_offset > 0 {
+        format!("SCROLL +{scroll_offset}")
     } else {
-        title.push_str(" | LIVE");
-    }
-
-    // Append pan state
+        "LIVE".to_string()
+    });
     if pan_offset > 0 {
-        let _ = write!(title, " | PAN +{pan_offset}");
+        details.push(format!("PAN +{pan_offset}"));
     }
+    let prefix = app.is_prefix_active();
 
-    title.push(']');
-
-    if app.is_prefix_active() {
-        title.push_str(" | PREFIX");
-    }
-
-    title.push(' ');
-    title
+    (0..=details.len())
+        .rev()
+        .map(|count| compose(&alerts, &details[..count], prefix))
+        .chain([compose(&alerts, &[], false), compose(&[], &[], false)])
+        .find(fits)
+        .unwrap_or_default()
 }
 
 pub fn monitor_bottom_title<'a>(app: &App, theme: &ThemeConfig) -> Vec<Line<'a>> {
@@ -137,7 +154,7 @@ pub fn render_search_bar(
     area: Rect,
     theme: &ThemeConfig,
 ) -> Vec<ClickTarget> {
-    let has_borders = app.settings().ui.show_borders;
+    let has_borders = app.show_borders();
     let is_terminal = app.settings().mode == Mode::Terminal;
 
     let s = if is_terminal {
