@@ -107,7 +107,8 @@ fn hover(event: MouseEvent, app: &App) -> Action {
 }
 
 /// The right button opens the action menu at the pointer (MAX-130), or moves the open menu
-/// there; with another popup open it does nothing
+/// there; with another popup open it does nothing. Where typed text goes it pastes the last
+/// copy instead, while there is one (MAX-144)
 fn open_menu(event: MouseEvent, app: &App) -> Action {
     if app
         .overlay()
@@ -115,12 +116,36 @@ fn open_menu(event: MouseEvent, app: &App) -> Action {
     {
         return Action::Ignore;
     }
+    if app.overlay().is_none() && app.has_paste_buffer() && is_paste_target(&event, app) {
+        return Action::App(AppAction::PasteBuffer);
+    }
     let menu = ActionMenu::new(
         (event.column, event.row),
         app.settings().mode,
         app.is_logging_active(),
     );
     Action::App(AppAction::OpenOverlay(Overlay::ActionMenu(menu)))
+}
+
+/// Where typed text goes: in line mode the TX input (from the history's copy mode too), in
+/// terminal mode the cursor's row on the live view
+fn is_paste_target(event: &MouseEvent, app: &App) -> bool {
+    let (x, y) = (event.column, event.row);
+    let map = app.frame_map();
+    match (app.settings().mode, app.input_context()) {
+        (Mode::Line, InputContext::LineInput | InputContext::CopyMode) => {
+            map.prompt_column(x, y).is_some()
+        }
+        (Mode::Terminal, InputContext::Terminal) => {
+            let screen = app.terminal_mode.vt100_screen();
+            let area = map.text_area;
+            screen.scrollback() == 0
+                && area.contains(Position::new(x, y))
+                && (y - area.y) as usize + app.terminal_mode.pan_offset_y()
+                    == screen.cursor_position().0 as usize
+        }
+        _ => false,
+    }
 }
 
 /// The left button. In a popup a press picks the part under it (a key hint runs its action),

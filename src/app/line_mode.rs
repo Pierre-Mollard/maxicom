@@ -44,6 +44,9 @@ pub struct LineMode {
     partial_line_timestamp: Option<DateTime<Local>>,
     /// Current line being typed by user as futur device input
     user_input: Input,
+    /// Columns of the TX input scrolled out on the left, kept from frame to frame by the
+    /// render: the view moves only when the cursor pushes past an edge (MAX-145)
+    prompt_scroll: usize,
     vi_state_prompt: ViState,
     /// Waiting to receive carriage return
     pending_carriage_return: bool,
@@ -92,6 +95,7 @@ impl LineMode {
             max_send_lines,
             partial_line: Vec::new(),
             user_input: Input::default(),
+            prompt_scroll: 0,
             vi_state_prompt: ViState::default(),
             partial_line_timestamp: None,
             pending_carriage_return: false,
@@ -696,6 +700,14 @@ impl LineMode {
     #[inline]
     pub fn take_copy_reveal(&mut self) -> Option<Reveal> {
         self.copy_reveal.take()
+    }
+    #[inline]
+    pub fn prompt_scroll(&self) -> usize {
+        self.prompt_scroll
+    }
+    #[inline]
+    pub fn set_prompt_scroll(&mut self, scroll: usize) {
+        self.prompt_scroll = scroll;
     }
     #[inline]
     pub fn set_copy_cursor_shown(&mut self, shown: bool) {

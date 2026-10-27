@@ -12,7 +12,7 @@ use crate::{
     },
     inputs::{
         Action, AppAction, ClickHoldAction, CopyModeAction, HistoryAction, LineInputAction,
-        ScrollbarAction, SearchModeAction, SideViewAction,
+        ScrollbarAction, SearchModeAction, SideViewAction, TerminalAction,
     },
     logger::{LineLogger, TerminalLogger},
     notification::{NotificationManager, ToastLevel},
@@ -103,6 +103,8 @@ pub struct App {
     pub terminal_mode: TerminalMode,
     pub is_window_focused: bool,
     pointer: Option<(u16, u16)>,
+    /// The last text copied, which a right-click pastes (MAX-144)
+    paste_buffer: Option<String>,
     /// The last frame was smaller than `compact_cols` x `compact_rows` (MAX-136)
     compact: bool,
     pub stats: Stats,
@@ -162,6 +164,7 @@ impl App {
             terminal_mode: terminal_view,
             is_window_focused: true,
             pointer: None,
+            paste_buffer: None,
             compact: false,
             stats: Stats {
                 received_bytes: 0,
@@ -297,8 +300,9 @@ impl App {
                 UpdateEffect::Transmit(bytes)
             }
             Action::LineInput(action) => {
-                // a click in the input leaves the history for it (MAX-113)
-                if let LineInputAction::ClickAt(_) = action {
+                // a click in the input leaves the history for it (MAX-113), a right-click
+                // paste too (MAX-144)
+                if let LineInputAction::ClickAt(_) | LineInputAction::Paste(_) = action {
                     if self.is_copy_mode_active() {
                         self.update_action_copy_mode(CopyModeAction::Exit);
                     }
@@ -464,6 +468,10 @@ impl App {
         self.click_hold.is_some()
     }
 
+    pub fn has_paste_buffer(&self) -> bool {
+        self.paste_buffer.is_some()
+    }
+
     /// The left button on a click target that repeats (MAX-143): its action runs on the press,
     /// then again every `DRAG_SCROLL_EVERY` while held there, as the scrollbar's arrows do
     fn click_hold(&mut self, action: ClickHoldAction, now: Instant) {
@@ -584,6 +592,16 @@ impl App {
                 self.overlay = Some(Overlay::ConfirmQuit);
                 UpdateEffect::None
             }
+            AppAction::PasteBuffer => {
+                let Some(text) = self.paste_buffer.clone() else {
+                    return UpdateEffect::None;
+                };
+                self.notify_info(format!("Pasted {} chars", text.chars().count()));
+                match self.settings.mode {
+                    Mode::Terminal => self.update(Action::Terminal(TerminalAction::Paste(text))),
+                    Mode::Line => self.update(Action::LineInput(LineInputAction::Paste(text))),
+                }
+            }
             AppAction::DetachSerial => UpdateEffect::ToggleAttachSerial,
             AppAction::ReloadConfig => UpdateEffect::ReloadConfig,
             AppAction::SideView(action) => self.update_side_view(action),
@@ -651,23 +669,19 @@ impl App {
             }
             action => action,
         };
-        match self.settings.mode {
-            Mode::Terminal => {
-                if let Some(text) = self
-                    .terminal_mode
-                    .handle_copy_action(action, &self.settings)
-                {
-                    return UpdateEffect::CopyToClipboard(text);
-                }
+        let copied = match self.settings.mode {
+            Mode::Terminal => self
+                .terminal_mode
+                .handle_copy_action(action, &self.settings),
+            Mode::Line => self.line_mode.handle_copy_action(action, &self.settings),
+        };
+        match copied {
+            Some(text) => {
+                self.paste_buffer = Some(text.clone());
+                UpdateEffect::CopyToClipboard(text)
             }
-            Mode::Line => {
-                if let Some(text) = self.line_mode.handle_copy_action(action, &self.settings) {
-                    return UpdateEffect::CopyToClipboard(text);
-                }
-            }
+            None => UpdateEffect::None,
         }
-
-        UpdateEffect::None
     }
 
     fn update_action_search_mode(&mut self, action: SearchModeAction) -> UpdateEffect {

@@ -54,6 +54,7 @@ pub enum AppAction {
     Hover(u16, u16),
     Scrollbar(ScrollbarAction),
     ClickHold(ClickHoldAction),
+    PasteBuffer,
     Quit,
 }
 

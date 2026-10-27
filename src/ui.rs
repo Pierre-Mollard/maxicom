@@ -2278,6 +2278,81 @@ mod tests {
         assert!(matches!(h.app.overlay(), Some(Overlay::ActionMenu(_))));
     }
 
+    /// Drags over `len` chars from the cell of `text`, the release yanks them
+    fn yank(h: &mut Harness, text: &str, len: u16) {
+        let rows = h.draw();
+        let (x, y) = cell_of(&rows, text);
+        mouse_do(h, MouseEventKind::Down(MouseButton::Left), (x, y));
+        mouse_do(h, MouseEventKind::Drag(MouseButton::Left), (x + len - 1, y));
+        let release = mouse_do(h, MouseEventKind::Up(MouseButton::Left), (x + len - 1, y));
+        assert!(matches!(release, UpdateEffect::CopyToClipboard(_)));
+    }
+
+    /// MAX-144: in line mode a right-click on the TX input pastes the last yank into it, from
+    /// copy mode too (which it leaves, like a click there); before any yank, and elsewhere,
+    /// it opens the menu.
+    /// How: a right-click on the input before a yank, after one, in copy mode; one in the
+    /// history.
+    #[test]
+    fn right_click_pastes_into_the_prompt() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        h.feed(b"alpha beta\r\n");
+        h.draw();
+        let right = MouseEventKind::Down(MouseButton::Right);
+        let area = h.app.frame_map().prompt.unwrap().text_area;
+        let prompt = (area.x + 2, area.y);
+
+        mouse_do(&mut h, right, prompt);
+        assert!(matches!(h.app.overlay(), Some(Overlay::ActionMenu(_))));
+        h.app.close_overlay();
+
+        yank(&mut h, "alpha", 5);
+        h.draw();
+        assert!(matches!(
+            mouse_do(&mut h, right, prompt),
+            UpdateEffect::None
+        ));
+        assert!(h.app.overlay().is_none());
+        assert_eq!(h.app.line_mode.input().value(), "alpha");
+
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        h.draw();
+        mouse_do(&mut h, right, prompt);
+        assert!(!h.app.line_mode.copy_state().active);
+        assert_eq!(h.app.line_mode.input().value(), "alphaalpha");
+
+        let rows = h.draw();
+        mouse_do(&mut h, right, cell_of(&rows, "beta"));
+        assert!(matches!(h.app.overlay(), Some(Overlay::ActionMenu(_))));
+    }
+
+    /// MAX-144: in terminal mode a right-click on the cursor's row sends the last yank to the
+    /// remote, as a paste; on another row it opens the menu.
+    /// How: a shell prompt under a line, "one" yanked; right-clicks on both rows.
+    #[test]
+    fn right_click_pastes_on_the_cursor_row() {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 30, |s| {
+            s.mode = Mode::Terminal;
+        });
+        h.draw();
+        h.app
+            .terminal_mode
+            .process_rx(TextEncoding::Utf8, b"one\r\n$ ");
+        let right = MouseEventKind::Down(MouseButton::Right);
+        yank(&mut h, "one", 3);
+
+        let rows = h.draw();
+        let (_, prompt_row) = cell_of(&rows, "$ ");
+        match mouse_do(&mut h, right, (20, prompt_row)) {
+            UpdateEffect::Transmit(bytes) => assert_eq!(bytes, b"one"),
+            _ => panic!("expected a paste"),
+        }
+        assert!(h.app.overlay().is_none());
+
+        mouse_do(&mut h, right, cell_of(&rows, "one"));
+        assert!(matches!(h.app.overlay(), Some(Overlay::ActionMenu(_))));
+    }
+
     /// MAX-131: the search bar's hints run on a click like their keys, in the border or on
     /// the last row; they and the border buttons are drawn in the hover style under the
     /// pointer, each on its own cells.
@@ -3671,6 +3746,70 @@ mod tests {
         let rows = h.draw();
         click(&mut h, cell_of(&rows, "a27"));
         assert_eq!(h.app.line_mode.input().cursor(), long.find("a27").unwrap());
+    }
+
+    /// MAX-145: an input wider than the prompt shows a mark on each edge hiding text, `◀` on
+    /// the left and `▶` on the right, never on the cursor's cell; the prefix stays. The view
+    /// stays while the cursor moves in it, and scrolls by one when the cursor pushes past an
+    /// edge. A text that fits has none.
+    /// How: 100 digits in a 36-column prompt, the cursor at the end, moved left to the left
+    /// mark and once more, at the start, then 40 columns in; the input cleared to "abc".
+    #[test]
+    fn prompt_marks_hidden_text() {
+        use crate::inputs::LineInputAction;
+        use crossterm::event::KeyCode::{Home, Left, Right};
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 38, 12);
+        let digits: String = (0..100).map(|i| char::from(b'0' + i % 10)).collect();
+        h.app
+            .update(Action::LineInput(LineInputAction::Paste(digits)));
+        // the prompt's row from its prefix, and the cursor's column in the text
+        let prompt = |h: &mut Harness| {
+            let rows = h.draw();
+            let area = h.app.frame_map().prompt.unwrap().text_area;
+            assert_eq!(area.width, 36);
+            let row: String = rows[area.y as usize]
+                .chars()
+                .skip(area.x as usize - 2)
+                .take(area.width as usize + 2)
+                .collect();
+            (row, cursor_cell(h).0 - area.x)
+        };
+
+        // the mark, the last 34 digits, the cursor after them
+        let (row, cursor) = prompt(&mut h);
+        assert_eq!(row, "> ◀6789012345678901234567890123456789 ");
+        assert_eq!(cursor, 35);
+
+        // the view stays up to the left mark, then scrolls by one
+        for _ in 0..34 {
+            key_do(&mut h, Left, KeyModifiers::NONE);
+        }
+        let (row, cursor) = prompt(&mut h);
+        assert_eq!(row, "> ◀6789012345678901234567890123456789 ");
+        assert_eq!(cursor, 1);
+        key_do(&mut h, Left, KeyModifiers::NONE);
+        let (row, cursor) = prompt(&mut h);
+        assert_eq!(row, "> ◀5678901234567890123456789012345678▶");
+        assert_eq!(cursor, 1);
+
+        key_do(&mut h, Home, KeyModifiers::NONE);
+        let (row, cursor) = prompt(&mut h);
+        assert_eq!(row, "> 01234567890123456789012345678901234▶");
+        assert_eq!(cursor, 0);
+
+        // on digit 40, in the last cell before the right mark
+        for _ in 0..40 {
+            key_do(&mut h, Right, KeyModifiers::NONE);
+        }
+        let (row, cursor) = prompt(&mut h);
+        assert_eq!(row, "> ◀7890123456789012345678901234567890▶");
+        assert_eq!(cursor, 34);
+
+        h.app.update(Action::LineInput(LineInputAction::ClearLine));
+        h.app
+            .update(Action::LineInput(LineInputAction::Paste("abc".into())));
+        let (row, _) = prompt(&mut h);
+        assert_eq!(row.trim_end(), "> abc");
     }
 
     /// Terminal mode: once the remote program asks for the mouse (here DECSET 1000 + 1006),

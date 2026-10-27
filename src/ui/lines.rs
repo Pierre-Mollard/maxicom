@@ -896,43 +896,55 @@ pub fn render_input_prompt(app: &mut App, frame: &mut Frame, area: Rect, theme: 
         (None, area)
     };
 
-    let inner_width = (inner_area.width.saturating_sub(prefix_width)) as usize;
-    let scroll = input.visual_scroll(inner_width);
-
-    let input_text = Line::from(vec![
-        Span::styled(
-            prompt_prefix,
-            Style::default()
-                .fg(theme.palette.main)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(input.value()),
-    ]);
+    let text_area = Rect {
+        x: inner_area.x + prefix_width,
+        width: inner_area.width.saturating_sub(prefix_width),
+        ..inner_area
+    };
+    let (scroll, hidden_left, hidden_right) = prompt_view(
+        input.value().width(),
+        input.visual_cursor(),
+        text_area.width as usize,
+        app.line_mode.prompt_scroll(),
+    );
+    let prefix_style = Style::default()
+        .fg(theme.palette.main)
+        .add_modifier(Modifier::BOLD);
 
     if let Some(b) = block {
         frame.render_widget(b, area);
     }
 
-    let input_widget = Paragraph::new(input_text)
+    // the prefix stays, only the text scrolls
+    let prefix_widget =
+        Paragraph::new(Span::styled(prompt_prefix, prefix_style)).style(*theme.line_mode.prompt);
+    frame.render_widget(prefix_widget, inner_area);
+    let input_widget = Paragraph::new(input.value())
         .style(*theme.line_mode.prompt)
         .scroll((0, scroll as u16));
+    frame.render_widget(input_widget, text_area);
 
-    frame.render_widget(input_widget, inner_area);
+    // marks on the edges hiding text (MAX-145)
+    let settings = &app.settings().line_mode;
+    let buf = frame.buffer_mut();
+    if hidden_left {
+        buf[(text_area.x, text_area.y)]
+            .set_symbol(&settings.prompt_hidden_left)
+            .set_style(prefix_style);
+    }
+    if hidden_right {
+        buf[(text_area.right() - 1, text_area.y)]
+            .set_symbol(&settings.prompt_hidden_right)
+            .set_style(prefix_style);
+    }
 
+    app.line_mode.set_prompt_scroll(scroll);
     // where the text is, for mouse clicks (MAX-113)
-    app.frame_map_mut().prompt = Some(PromptMap {
-        text_area: Rect {
-            x: inner_area.x + prefix_width,
-            width: inner_area.width.saturating_sub(prefix_width),
-            ..inner_area
-        },
-        scroll,
-    });
+    app.frame_map_mut().prompt = Some(PromptMap { text_area, scroll });
 
     let input = app.line_mode.input();
     if !app.line_mode.search().active && !app.line_mode.copy_state().active {
-        let cursor_x =
-            inner_area.x + prefix_width + (input.visual_cursor().saturating_sub(scroll)) as u16;
+        let cursor_x = text_area.x + (input.visual_cursor().saturating_sub(scroll)) as u16;
         let cursor_y = inner_area.y;
 
         if !app.is_app_focused() {
@@ -942,6 +954,46 @@ pub fn render_input_prompt(app: &mut App, frame: &mut Frame, area: Rect, theme: 
         }
         frame.set_cursor_position((cursor_x, cursor_y));
     }
+}
+
+/// The TX input's scroll (the text's columns hidden on the left), and whether text is hidden
+/// on the left and on the right, each shown by a mark on that edge's cell (MAX-145). The view
+/// keeps the last frame's scroll while the cursor is on one of its text cells, not under a
+/// mark, and moves just enough to bring it back otherwise: a cursor pushing past an edge
+/// scrolls by one. At the end of the text the cursor takes one more cell
+fn prompt_view(
+    text_width: usize,
+    cursor: usize,
+    width: usize,
+    last_scroll: usize,
+) -> (usize, bool, bool) {
+    let content = text_width.max(cursor + 1);
+    if content <= width {
+        return (0, false, false);
+    }
+    // too narrow for marks
+    if width < 3 {
+        let scroll = last_scroll.clamp((cursor + 1).saturating_sub(width), cursor);
+        return (scroll, false, false);
+    }
+    // at most the end of the text shown, after the left mark, with the cell after it kept
+    // whatever the cursor's place, so moving off the end doesn't scroll
+    let max_scroll = text_width + 1 - width;
+    let mut scroll = last_scroll.min(max_scroll);
+    let first = if scroll > 0 { scroll + 1 } else { 0 };
+    let last = if scroll < max_scroll {
+        scroll + width - 2
+    } else {
+        scroll + width - 1
+    };
+    if cursor < first {
+        // the cursor right after the left mark, or the text's start
+        scroll = cursor.saturating_sub(1);
+    } else if cursor > last {
+        // the cursor right before the right mark, or the text's end
+        scroll = (cursor + 2 - width).min(max_scroll);
+    }
+    (scroll, scroll > 0, scroll < max_scroll)
 }
 
 /// Columns a continuation row (a wrapped entry's second row and after) starts in, before its

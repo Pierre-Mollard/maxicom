@@ -344,6 +344,8 @@ pub struct LineModeConfig {
     pub unfocused_cursor_glyph: String,
     pub prompt_prefix: String,
     pub prompt_vi_prefix: String,
+    pub prompt_hidden_left: String,
+    pub prompt_hidden_right: String,
     pub logging: LineLogConfig,
 }
 
@@ -364,6 +366,8 @@ impl Default for LineModeConfig {
             unfocused_cursor_glyph: String::from("█"),
             prompt_prefix: String::from("> "),
             prompt_vi_prefix: String::from("< "),
+            prompt_hidden_left: String::from("◀"),
+            prompt_hidden_right: String::from("▶"),
             logging: LineLogConfig::default(),
         }
     }
