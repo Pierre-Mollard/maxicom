@@ -53,7 +53,8 @@ cargo deny check
 - `title_details` in `[ui]` (default `false`): the history box's title shows
   only ` maxicom LINE ` or ` maxicom TERMINAL `. With `true` it also shows the
   alerts (`!`, `● REC`), the VT and view sizes, the scroll, the pan and the
-  prefix. What doesn't fit in the border is left out whole, never cut.
+  prefix. What doesn't fit in the border is left out whole, never cut. A click
+  on `SCROLL +n` goes back to the live tail, on `PAN +n` to the left edge.
 - `compact_cols` and `compact_rows` in `[ui]` (default `50` and `14`): while
   the screen is narrower or shorter than that, it is drawn without borders,
   status bar and scrollbar, to leave the room to the content. The settings
@@ -175,9 +176,21 @@ cargo deny check
   - {baud}, {framing}            Open the serial port settings ({port} does nothing)
   - {copy_side}                  Switch the copy cursor's panel
   - {pan_left}, {pan_right}      Pan left / right
+  - {pan_offset}, {pan_max}      Back to the left edge
   - {scroll_pos}, {scroll_pos_up}, {scroll_percent}, {scroll_offset}
                                  Back to the live tail
   A variable in plain text (outside `[...]`) is clickable on its own.
+  The scroll and pan actions a `click=` can run: `scroll_up`, `scroll_down`,
+  `page_up`, `page_down`, `scroll_to_top`, `scroll_to_bottom`, `pan_left`,
+  `pan_right`, `pan_home` (back to the left edge). They move the view only,
+  in copy mode too: the copy cursor stays. The steps (`scroll_up`,
+  `scroll_down`, `page_up`, `page_down`, `pan_left`, `pan_right`) repeat while
+  the button is held on their block, until the pointer leaves it. The wheel
+  over a block that pans pans the history. A custom scroll block:
+  `[▲](click=page_up)[{scroll_percent:>3}%](muted)[▼](click=page_down)`
+  The history box's own indicators are clickable too: its bottom border's
+  `◀ (n)` / `(n) ▶` pan, its title's `SCROLL +n` goes back to the live tail
+  and `PAN +n` to the left edge.
 
 - Layout: `layout` in `[ui.status_bar]`
   - `line`             A row of its own, plain text on the UI background

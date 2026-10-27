@@ -17,7 +17,7 @@ use crate::{
         raw_scroller::RawSideScroller,
         scroller::ViewportScroller,
         search::SearchState,
-        selection::{CopyActionResult, CopyModeState, TextSource},
+        selection::{CopyActionResult, CopyModeState, Reveal, TextSource},
     },
     configs::{SettingsConfig, TerminalDimensionMode, TextEncoding, settings::RawSideView},
     inputs::{
@@ -427,20 +427,18 @@ impl TerminalMode {
 
     pub fn scroll_to_target_line(&mut self, target_line_idx: usize, view_height: usize) {
         let (grid_rows, _) = self.get_vt100_size();
-        let max_sb = self.max_content_scrollback;
-        // the offsets count from the live view's last row, not the grid's
-        let total_world_lines = max_sb + self.live_rows();
+        let half_canvas = (grid_rows as usize).min(view_height) / 2;
+        self.scroll_to_bottom_line(target_line_idx + half_canvas);
+    }
 
-        if total_world_lines == 0 || target_line_idx >= total_world_lines {
+    /// Scrolls so the view's last row is world row `line_idx` (clamped)
+    fn scroll_to_bottom_line(&mut self, line_idx: usize) {
+        // the offsets count from the live view's last row, not the grid's
+        let total_world_lines = self.max_content_scrollback + self.live_rows();
+        if total_world_lines == 0 {
             return;
         }
-
-        let lines_from_bottom = (total_world_lines - 1).saturating_sub(target_line_idx);
-
-        let effective_height = (grid_rows as usize).min(view_height);
-        let half_canvas = effective_height / 2;
-
-        let target_offset = lines_from_bottom.saturating_sub(half_canvas);
+        let target_offset = (total_world_lines - 1).saturating_sub(line_idx);
 
         self.scroller.max_scroll_y = self.max_vertical_scroll();
         self.scroller.scroll_to(target_offset);
@@ -627,6 +625,7 @@ impl TerminalMode {
                 } else {
                     self.copy_state.enter_at(0, 0);
                 }
+                self.reveal_copy_cursor(Reveal::Center);
             }
             SearchModeAction::HandleKey(key_event) => {
                 if self.search_state.active {
@@ -675,13 +674,19 @@ impl TerminalMode {
         if action == CopyModeAction::Enter {
             let (c_row, c_col) = self.vt100_screen().cursor_position();
             let max_col = self.get_vt100_size().1.saturating_sub(1) as usize;
-            self.copy_state.enter_at(
-                self.max_content_scrollback + (c_row as usize),
-                (c_col as usize).min(max_col),
-            );
-            self.keep_terminal_copy_cursor_in_view();
+            // entering copy mode leaves the view where it is (MAX-143): on the remote cursor
+            // from the live view, else on the start of the view's bottom row
+            if self.scroller.offset_y > 0 {
+                self.copy_state.enter_at(self.visible_lines().1, 0);
+            } else {
+                self.copy_state.enter_at(
+                    self.max_content_scrollback + (c_row as usize),
+                    (c_col as usize).min(max_col),
+                );
+            }
             return None;
         }
+        let reveal = Reveal::for_move(&action, self.copy_cursor_shown());
 
         // adapter for the TextSource trait
         let mut source = TerminalModeTextSource {
@@ -695,7 +700,7 @@ impl TerminalMode {
         let result = self.copy_state.apply_action(action, &mut source);
         match result {
             CopyActionResult::Moved => {
-                self.keep_terminal_copy_cursor_in_view();
+                self.reveal_copy_cursor(reveal);
                 None
             }
             CopyActionResult::Yanked(text) => Some(text),
@@ -703,13 +708,9 @@ impl TerminalMode {
         }
     }
 
-    fn keep_terminal_copy_cursor_in_view(&mut self) {
-        let cursor_row = self.copy_state.cursor.line_idx;
-        let cursor_col = self.copy_state.cursor.char_idx;
-        let view_h = self.scroller.view_height;
-        let view_w = self.scroller.view_width; // or passed-in visible columns width
-        let (grid_rows, grid_cols) = self.get_vt100_size();
-
+    /// The world rows on screen, first and last
+    fn visible_lines(&self) -> (usize, usize) {
+        let (grid_rows, _) = self.get_vt100_size();
         let current_sb = self.vt100_screen().scrollback();
         // on the live screen the view starts `pan_offset_y` rows into a grid taller than it: a
         // cursor on its top rows was taken as out of view and the view jumped (MAX-126)
@@ -718,11 +719,33 @@ impl TerminalMode {
         } else {
             self.max_content_scrollback + self.pan_offset_y
         };
-        let effective_h = (grid_rows as usize).min(view_h);
-        let bottom_visible = top_visible + effective_h.saturating_sub(1);
+        let effective_h = (grid_rows as usize).min(self.scroller.view_height);
+        (top_visible, top_visible + effective_h.saturating_sub(1))
+    }
 
-        if cursor_row < top_visible || cursor_row > bottom_visible {
-            self.scroll_to_target_line(cursor_row, view_h);
+    fn copy_cursor_shown(&self) -> bool {
+        let (top, bottom) = self.visible_lines();
+        (top..=bottom).contains(&self.copy_state.cursor.line_idx)
+    }
+
+    /// Brings the view to the copy cursor (MAX-143): a step out of the view moves it by the
+    /// fewest rows, a jump centers it; the pan follows the cursor's column the same way
+    fn reveal_copy_cursor(&mut self, reveal: Reveal) {
+        let cursor_row = self.copy_state.cursor.line_idx;
+        let cursor_col = self.copy_state.cursor.char_idx;
+        let view_h = self.scroller.view_height;
+        let view_w = self.scroller.view_width; // or passed-in visible columns width
+        let (_, grid_cols) = self.get_vt100_size();
+
+        let (top_visible, bottom_visible) = self.visible_lines();
+        let shown = (top_visible..=bottom_visible).contains(&cursor_row);
+        match reveal {
+            _ if shown => {}
+            Reveal::Edge if cursor_row < top_visible => {
+                self.scroll_to_bottom_line(cursor_row + (bottom_visible - top_visible));
+            }
+            Reveal::Edge => self.scroll_to_bottom_line(cursor_row),
+            Reveal::Center => self.scroll_to_target_line(cursor_row, view_h),
         }
 
         if view_w > 0 && (grid_cols as usize) > view_w {

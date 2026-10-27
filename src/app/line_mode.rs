@@ -12,7 +12,7 @@ use crate::{
         raw_scroller::RawSideScroller,
         scroller::{ScrollStatus, ViewportScroller},
         search::SearchState,
-        selection::{CopyActionResult, CopyModeState, TextSource},
+        selection::{CopyActionResult, CopyModeState, Reveal, TextSource},
         types::{LogEntry, ViewportSize},
     },
     configs::{
@@ -67,12 +67,13 @@ pub struct LineMode {
     raw_scroller: RawSideScroller,
     vi_state_copymode: Option<ViPending>,
     evicted_lines: usize,
-    /// The copy cursor was last moved by the mouse: the view stays where it was clicked
-    /// instead of centering on the cursor, until a key moves it (MAX-113)
-    mouse_view: bool,
-    /// The scroll position of the last centered copy view (`None`: the live view), for a mouse
-    /// press to keep that view
-    copy_view_position: Option<(usize, usize)>,
+    /// How the next frame brings the view to the copy cursor, which only the render can place
+    /// in rows (MAX-143)
+    copy_reveal: Option<Reveal>,
+    /// The copy cursor's row was on screen in the last frame
+    copy_cursor_shown: bool,
+    /// The entry and char starting the view's bottom row in the last frame
+    bottom_row_start: Option<(usize, usize)>,
 }
 
 impl LineMode {
@@ -106,8 +107,9 @@ impl LineMode {
             raw_scroller,
             vi_state_copymode: None,
             evicted_lines: 0,
-            mouse_view: false,
-            copy_view_position: None,
+            copy_reveal: None,
+            copy_cursor_shown: false,
+            bottom_row_start: None,
         }
     }
 
@@ -392,27 +394,25 @@ impl LineMode {
                 | CopyModeAction::MouseDrag(..)
                 | CopyModeAction::MouseRelease
         );
-        if let CopyModeAction::MousePress(..) = action {
-            // keep the view that was clicked: a centered copy view becomes the scroll position
-            if self.copy_state.active && !self.mouse_view {
-                match self.copy_view_position {
-                    Some((entries_from_bottom, rows_below)) => {
-                        self.set_scroll_position(entries_from_bottom, rows_below)
-                    }
-                    None => self.scroll_to_bottom(),
-                }
-            }
-            self.mouse_view = true;
-        } else if !is_mouse {
-            self.mouse_view = false;
-        }
 
+        // entering copy mode leaves the view where it is (MAX-143): a scrolled view gets the
+        // cursor on its bottom row. From the live view the cursor, on the first row of the last
+        // entry, is shown: that entry can be taller than the view (MAX-123)
         if action == CopyModeAction::Enter {
             let max_line = self.local_history.len().saturating_sub(1);
-            self.copy_state.enter_at(max_line, 0);
-            self.sync_scroll_with_cursor();
+            let live = self.scroller.offset_y == 0 && self.rows_below == 0;
+            match self.bottom_row_start {
+                Some((line, char_idx)) if !live && line <= max_line => {
+                    self.copy_state.enter_at(line, char_idx);
+                }
+                _ => {
+                    self.copy_state.enter_at(max_line, 0);
+                    self.copy_reveal = Some(Reveal::Edge);
+                }
+            }
             return None;
         }
+        let reveal = Reveal::for_move(&action, self.copy_cursor_shown);
 
         // adapter for the TextSource trait
         let mut source = LineModeTextSource {
@@ -427,7 +427,7 @@ impl LineMode {
             // the mouse moves the cursor to where it is shown
             CopyActionResult::Moved if is_mouse => None,
             CopyActionResult::Moved => {
-                self.sync_scroll_with_cursor();
+                self.copy_reveal = Some(reveal);
 
                 if wrap_mode == WrapMode::Truncate {
                     self.sync_pan_with_cursor(display_mode, gutter_width);
@@ -437,19 +437,6 @@ impl LineMode {
             CopyActionResult::Yanked(text) => Some(text),
             _ => None,
         }
-    }
-
-    /// Scrolls to the cursor's entry. While in copy mode the render centers the view on the
-    /// cursor whatever this offset is; it decides where the view stays once copy mode is left.
-    /// It used to subtract half the view height (rows) from an entry count, which hit 0 with
-    /// tall entries near the bottom (MAX-123)
-    fn sync_scroll_with_cursor(&mut self) {
-        let total_lines = self.local_history.len();
-        if total_lines == 0 {
-            return;
-        }
-        let line_from_bottom = (total_lines - 1).saturating_sub(self.copy_state.cursor.line_idx);
-        self.scroll_to(line_from_bottom);
     }
 
     fn sync_pan_with_cursor(&mut self, display_mode: LineDisplayMode, gutter_width: usize) {
@@ -524,6 +511,7 @@ impl LineMode {
                 } else {
                     self.copy_state.enter_at(0, 0);
                 }
+                self.copy_reveal = Some(Reveal::Center);
             }
             SearchModeAction::HandleKey(key_event) => {
                 if self.search_state.active {
@@ -704,14 +692,18 @@ impl LineMode {
     pub fn take_pending_scroll_rows(&mut self) -> isize {
         std::mem::take(&mut self.pending_scroll_rows)
     }
-    /// The copy cursor was last moved by the mouse: the render keeps the view (MAX-113)
+    /// How this frame brings the view to the copy cursor, if a move asked for it (MAX-143)
     #[inline]
-    pub fn is_mouse_view(&self) -> bool {
-        self.mouse_view
+    pub fn take_copy_reveal(&mut self) -> Option<Reveal> {
+        self.copy_reveal.take()
     }
-    /// The scroll position of the centered copy view drawn (`None`: the live view)
-    pub fn set_copy_view_position(&mut self, position: Option<(usize, usize)>) {
-        self.copy_view_position = position;
+    #[inline]
+    pub fn set_copy_cursor_shown(&mut self, shown: bool) {
+        self.copy_cursor_shown = shown;
+    }
+    #[inline]
+    pub fn set_bottom_row_start(&mut self, start: (usize, usize)) {
+        self.bottom_row_start = Some(start);
     }
     /// Where the render resolved the scroll to
     pub fn set_scroll_position(&mut self, entries_from_bottom: usize, rows_below: usize) {

@@ -7,12 +7,12 @@ use crate::{
         types::{FocusTarget, FrameAreas, FrameMap, ViewportSize},
     },
     configs::{
-        DualBufferMode, KeyResolver, Mode, SettingsConfig, StatusBarLayout, WrapMode,
-        settings::PrefixWrapBehavior,
+        DualBufferMode, KeyBindingAction, KeyResolver, Mode, SettingsConfig, StatusBarLayout,
+        WrapMode, settings::PrefixWrapBehavior,
     },
     inputs::{
-        Action, AppAction, CopyModeAction, HistoryAction, LineInputAction, ScrollbarAction,
-        SearchModeAction, SideViewAction,
+        Action, AppAction, ClickHoldAction, CopyModeAction, HistoryAction, LineInputAction,
+        ScrollbarAction, SearchModeAction, SideViewAction,
     },
     logger::{LineLogger, TerminalLogger},
     notification::{NotificationManager, ToastLevel},
@@ -64,7 +64,8 @@ impl Stats {
 
 /// How often a drag held at the history's edge scrolls it (MAX-126)
 const DRAG_SCROLL_EVERY: Duration = Duration::from_millis(50);
-/// How long the scrollbar's `▲` or `▼` is held before it repeats (MAX-142)
+/// How long the scrollbar's `▲` or `▼` (MAX-142), or a click target that repeats (MAX-143), is
+/// held before it repeats
 const SCROLLBAR_REPEAT_AFTER: Duration = Duration::from_millis(300);
 
 /// What the left button holds on the scrollbar since its press (MAX-142): an arrow, or the thumb
@@ -94,6 +95,10 @@ pub struct App {
     scrollbar_hold: Option<ScrollbarHold>,
     /// When a held scrollbar arrow scrolls again
     scrollbar_repeat_at: Option<Instant>,
+    /// The action and cells of the click target the left button holds (MAX-143), and when it
+    /// runs again
+    click_hold: Option<(KeyBindingAction, ratatui::layout::Rect)>,
+    click_repeat_at: Option<Instant>,
     pub line_mode: LineMode,
     pub terminal_mode: TerminalMode,
     pub is_window_focused: bool,
@@ -151,6 +156,8 @@ impl App {
             last_drag_scroll: None,
             scrollbar_hold: None,
             scrollbar_repeat_at: None,
+            click_hold: None,
+            click_repeat_at: None,
             line_mode: line_view,
             terminal_mode: terminal_view,
             is_window_focused: true,
@@ -400,7 +407,8 @@ impl App {
 
         let toasts_expired = self.notifications.tick();
         let now = Instant::now();
-        let drag_scrolled = self.drag_scroll(now) || self.scrollbar_repeat(now);
+        let drag_scrolled =
+            self.drag_scroll(now) || self.scrollbar_repeat(now) || self.click_repeat(now);
         toasts_expired || self.terminal_mode.has_pending_flash() || drag_scrolled
     }
 
@@ -448,6 +456,48 @@ impl App {
             }
             ScrollbarAction::Release => self.scrollbar_hold = None,
         }
+    }
+
+    /// The left button is on a click target that repeats, from its press to its release or
+    /// until the pointer leaves it (MAX-143)
+    pub fn is_click_held(&self) -> bool {
+        self.click_hold.is_some()
+    }
+
+    /// The left button on a click target that repeats (MAX-143): its action runs on the press,
+    /// then again every `DRAG_SCROLL_EVERY` while held there, as the scrollbar's arrows do
+    fn click_hold(&mut self, action: ClickHoldAction, now: Instant) {
+        match action {
+            ClickHoldAction::Press(key_action, area) => {
+                self.click_hold = Some((key_action, area));
+                self.click_repeat_at = Some(now + SCROLLBAR_REPEAT_AFTER);
+                let action = key_action.to_action(self);
+                self.update(action);
+            }
+            ClickHoldAction::Drag(x, y) => {
+                let on_it = self
+                    .click_hold
+                    .is_some_and(|(_, area)| area.contains(ratatui::layout::Position::new(x, y)));
+                if !on_it {
+                    self.click_hold = None;
+                }
+            }
+            ClickHoldAction::Release => self.click_hold = None,
+        }
+    }
+
+    /// A held click target runs again; returns true when it did
+    pub fn click_repeat(&mut self, now: Instant) -> bool {
+        let Some((key_action, _)) = self.click_hold else {
+            return false;
+        };
+        if self.click_repeat_at.is_some_and(|at| now < at) {
+            return false;
+        }
+        self.click_repeat_at = Some(now + DRAG_SCROLL_EVERY);
+        let action = key_action.to_action(self);
+        self.update(action);
+        true
     }
 
     /// A scrollbar arrow held scrolls again; returns true when it did
@@ -541,6 +591,10 @@ impl App {
             // highlighted (`ui::render`)
             AppAction::Scrollbar(action) => {
                 self.scrollbar(action, Instant::now());
+                UpdateEffect::None
+            }
+            AppAction::ClickHold(action) => {
+                self.click_hold(action, Instant::now());
                 UpdateEffect::None
             }
             AppAction::Hover(x, y) => {

@@ -3,6 +3,7 @@
 use std::{io, time::Duration};
 
 use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
+use ratatui::layout::Rect;
 
 use crate::{
     app::{
@@ -52,6 +53,7 @@ pub enum AppAction {
     SideView(SideViewAction),
     Hover(u16, u16),
     Scrollbar(ScrollbarAction),
+    ClickHold(ClickHoldAction),
     Quit,
 }
 
@@ -61,6 +63,15 @@ pub enum AppAction {
 pub enum ScrollbarAction {
     Press(u16),
     Drag(i32),
+    Release,
+}
+
+/// The left button held on a click target that repeats (MAX-143): the press on its cells runs
+/// its action, a drag off them stops the repeat, the release
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClickHoldAction {
+    Press(KeyBindingAction, Rect),
+    Drag(u16, u16),
     Release,
 }
 
@@ -300,6 +311,11 @@ pub fn handle_event(event: Event, app: &App) -> Action {
         InputContext::CopyMode => {
             if let Some(copy_action_binding) = resolver.copy_actions.get(&pattern) {
                 copy_action_binding.to_action()
+            } else if let Some(action_binding) = resolver.direct_actions.get(&pattern)
+                && action_binding.is_navigation()
+            {
+                // the direct scroll and pan keys move the view, the cursor stays (MAX-143)
+                action_binding.to_action(app)
             } else {
                 Action::CopyMode(CopyModeAction::HandleKey(key_event))
             }

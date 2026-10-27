@@ -24,7 +24,10 @@ use crate::{
     configs::{KeyBindingAction, KeywordHighlight, Mode, ThemeConfig},
     overlays::{Overlay, PopupTarget},
     ui::{
-        common::{border_style_for, monitor_bottom_title, monitor_title},
+        common::{
+            border_style_for, monitor_bottom_targets, monitor_bottom_title, monitor_title,
+            monitor_title_targets,
+        },
         layout::{LayoutWarning, ScreenLayout},
         lines::{render_input_prompt, render_monitor},
         popups::{
@@ -97,11 +100,14 @@ pub fn render(
         let buttons: String = BORDER_BUTTONS.iter().map(|(text, _)| *text).collect();
         let buttons_width = buttons.chars().count() as u16;
         let room = outer.width.saturating_sub(3 + buttons_width);
+        let title = monitor_title(app, &outer, room);
+        let targets = monitor_title_targets(&title, outer, *theme.ui.hover);
+        app.frame_map_mut().click_targets.extend(targets);
         let mut block = Block::default()
             .borders(Borders::ALL)
             .border_style(border_style)
             .style(*theme.ui.background)
-            .title(monitor_title(app, &outer, room));
+            .title(title);
 
         // the pan shows once: in the status bar when it is drawn with a pan variable, else here;
         // and in terminal mode the bar can take this bottom border (MAX-135, MAX-139)
@@ -113,6 +119,8 @@ pub fn render(
             for bottom_title in monitor_bottom_title(app, theme) {
                 block = block.title_bottom(bottom_title);
             }
+            let targets = monitor_bottom_targets(app, outer, *theme.ui.hover);
+            app.frame_map_mut().click_targets.extend(targets);
         }
 
         // right-aligned in the top border, inside its corner
@@ -240,7 +248,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        app::{UpdateEffect, selection::CopySide},
+        app::{
+            UpdateEffect,
+            selection::{CopySide, LogicalPosition},
+        },
         configs::{
             KeyBindingsConfig, KeyResolver, LineDisplayMode, RawSideView, RxNewlineMode,
             SettingsConfig, TextEncoding,
@@ -1095,6 +1106,34 @@ mod tests {
     }
 
     /// Rows inside the popup frame (between its top and bottom borders), without the borders
+    /// MAX-143: the help's copy tab lists the scroll keys apart from the move keys, last: the
+    /// copy mode's own, then the direct scroll and pan keys no copy key takes.
+    /// How: the default keymap, the copy tab (the third) scrolled to its end.
+    #[test]
+    fn help_lists_the_copy_scroll_keys_apart() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::Help(
+                HelpDialog::new(),
+            ))));
+        h.app.update(Action::Overlay(DialogAction::CycleNext));
+        h.app.update(Action::Overlay(DialogAction::CycleNext));
+        // the popup knows how far it scrolls once drawn
+        h.draw();
+        h.app.update(Action::Overlay(DialogAction::End));
+        let rows = h.draw();
+        let row_of = |text: &str| rows.iter().position(|row| row.contains(text));
+        let header = row_of("Scrolling moves the view").expect("the scroll header");
+        assert!(row_of("-> down").unwrap() < header, "{rows:#?}");
+        for scroll in ["scroll_up", "scroll_down", "scroll_to_top", "pan_side_left"] {
+            let row = row_of(&format!("-> {scroll}"));
+            assert!(row.is_some_and(|row| row > header), "{scroll}: {rows:#?}");
+        }
+        // `pageup` and `pagedown` move the copy cursor: their direct scrolls aren't listed
+        assert!(row_of("-> page_up").is_none(), "{rows:#?}");
+        assert!(row_of("Ctrl-y").is_some(), "{rows:#?}");
+    }
+
     fn popup_inside(rows: &[String]) -> Vec<String> {
         let top = rows.iter().position(|row| row.contains('┌')).unwrap();
         let bottom = rows.iter().position(|row| row.contains('└')).unwrap();
@@ -1225,8 +1264,8 @@ mod tests {
     }
 
     /// The wheel scrolls the history, and pans it with Shift or sideways; over the raw panel
-    /// Shift+wheel pans the panel. In copy mode it moves the copy cursor (the view follows
-    /// it), and in a popup it moves up and down (MAX-113).
+    /// Shift+wheel pans the panel. In copy mode too, the copy cursor stays (MAX-143), and in a
+    /// popup it moves up and down (MAX-113).
     /// How: line mode with the Hex panel, events on the history and on the panel, as they
     /// were last drawn.
     #[test]
@@ -1277,7 +1316,11 @@ mod tests {
         h.app.update(Action::CopyMode(CopyModeAction::Enter));
         assert!(matches!(
             wheel(&h, ScrollUp, text, none),
-            Action::CopyMode(CopyModeAction::MoveUp)
+            Action::History(HistoryAction::ScrollUp(3))
+        ));
+        assert!(matches!(
+            wheel(&h, ScrollUp, text, shift),
+            Action::History(HistoryAction::PanLeft(4))
         ));
         h.app.update(Action::CopyMode(CopyModeAction::Exit));
 
@@ -1344,10 +1387,11 @@ mod tests {
         assert_eq!(cursor_cell(&mut h), (x + 4, y), "{again:#?}");
         assert_eq!(before[..height], again[..height]);
 
-        // a key moves the cursor again as before: the view follows it
-        h.app.update(Action::CopyMode(CopyModeAction::MoveUp));
-        h.draw();
-        assert!(!h.app.line_mode.is_mouse_view());
+        // a key step that stays in view doesn't move it either (MAX-143)
+        h.app.update(Action::CopyMode(CopyModeAction::MoveDown));
+        let moved = h.draw();
+        assert!(cursor_cell(&mut h).1 > y, "{moved:#?}");
+        assert_eq!(before[..height], moved[..height]);
     }
 
     /// A drag selects from the press, and the release yanks the selection and leaves copy
@@ -1557,9 +1601,9 @@ mod tests {
     }
 
     /// MAX-126: in terminal mode with a grid taller than the view (24 rows shown in 11), the
-    /// copy cursor reaching the view's top row keeps the view; one row further centers the view
-    /// on it, as before. The live view is panned into the grid, which the in-view check left out: the view
-    /// jumped to center the cursor.
+    /// copy cursor reaching the view's top row keeps the view; one row further moves the view
+    /// one row (MAX-143). The live view is panned into the grid, which the in-view check left
+    /// out: the view jumped to center the cursor.
     /// How: copy mode from the remote cursor on the last row, moved up with keys.
     #[test]
     fn terminal_copy_cursor_on_the_top_row_keeps_the_view() {
@@ -1584,8 +1628,8 @@ mod tests {
 
         h.app.update(Action::CopyMode(CopyModeAction::MoveUp));
         let rows = h.draw();
-        assert!(rows[0].starts_with("row 23"), "{rows:#?}");
-        assert!(rows[cursor_cell(&mut h).1 as usize].starts_with("row 28"));
+        assert!(rows[0].starts_with("row 28"), "{rows:#?}");
+        assert_eq!(cursor_cell(&mut h).1, 0);
     }
 
     /// MAX-126: a double click yanks the word under it, a triple click the whole line, and a
@@ -1736,10 +1780,10 @@ mod tests {
         assert_eq!(cursor_cell(&mut h), (x + 1, y));
     }
 
-    /// A click in a copy view the keys centered keeps that view, and in truncate mode the pan
+    /// A click in a copy view the keys moved keeps that view, and in truncate mode the pan
     /// counts: the cursor lands on the char shown under the click.
     #[test]
-    fn mouse_click_keeps_a_centered_view_and_counts_the_pan() {
+    fn mouse_click_keeps_the_copy_view_and_counts_the_pan() {
         let mut h = wrapped_lines();
         h.draw();
         h.app.update(Action::CopyMode(CopyModeAction::Enter));
@@ -1765,6 +1809,263 @@ mod tests {
         h.draw();
         assert_eq!(h.app.line_mode.copy_state().cursor.char_idx, 31);
         assert_eq!(cursor_cell(&mut h), (x + 1, y));
+    }
+
+    /// 100 lines `line 00` to `line 99` in `mode`, drawn on a 40x12 screen, and the history's
+    /// height
+    fn numbered_lines(mode: Mode) -> (Harness, usize) {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 40, 12, |s| s.mode = mode);
+        let lines: Vec<String> = (0..100).map(|i| format!("line {i:02}")).collect();
+        match mode {
+            Mode::Line => lines
+                .iter()
+                .for_each(|line| h.feed(format!("{line}\r\n").as_bytes())),
+            Mode::Terminal => h
+                .app
+                .terminal_mode
+                .process_rx(TextEncoding::Utf8, lines.join("\r\n").as_bytes()),
+        }
+        h.draw();
+        let height = h.app.frame_areas().content.height as usize;
+        (h, height)
+    }
+
+    /// Applies a copy action and draws: the number of the history's top line
+    fn copy_top(h: &mut Harness, action: CopyModeAction, height: usize) -> usize {
+        h.app.update(Action::CopyMode(action));
+        let rows = h.draw();
+        first_number(&rows[..height], "line ")
+    }
+
+    /// MAX-143: in copy mode the view follows a cursor step by the fewest rows, in both modes:
+    /// a step out of the view moves it one row, a jump to the top or the bottom shows that end,
+    /// and a click leaves it where it is.
+    /// How: 100 numbered lines; from the live view, Up to the top row then once more, `gg`,
+    /// Down to the bottom row then once more, `G`, then a click.
+    #[test]
+    fn copy_view_follows_a_step_by_one_row() {
+        for mode in [Mode::Line, Mode::Terminal] {
+            let (mut h, height) = numbered_lines(mode);
+            let live = 100 - height;
+            assert_eq!(copy_top(&mut h, CopyModeAction::Enter, height), live);
+            for _ in 1..height {
+                assert_eq!(
+                    copy_top(&mut h, CopyModeAction::MoveUp, height),
+                    live,
+                    "{mode:?}"
+                );
+            }
+            assert_eq!(cursor_cell(&mut h).1, 0);
+            assert_eq!(copy_top(&mut h, CopyModeAction::MoveUp, height), live - 1);
+            assert_eq!(cursor_cell(&mut h).1, 0, "{mode:?}");
+
+            assert_eq!(copy_top(&mut h, CopyModeAction::JumpToTop, height), 0);
+            for _ in 1..height {
+                assert_eq!(
+                    copy_top(&mut h, CopyModeAction::MoveDown, height),
+                    0,
+                    "{mode:?}"
+                );
+            }
+            assert_eq!(
+                copy_top(&mut h, CopyModeAction::MoveDown, height),
+                1,
+                "{mode:?}"
+            );
+            assert_eq!(cursor_cell(&mut h).1 as usize, height - 1);
+
+            assert_eq!(copy_top(&mut h, CopyModeAction::JumpToBottom, height), live);
+            for _ in 0..3 {
+                copy_top(&mut h, CopyModeAction::MoveUp, height);
+            }
+            let before = h.draw();
+            let (x, y) = cell_of(&before, "line 90");
+            click(&mut h, (x + 5, y));
+            let after = h.draw();
+            assert_eq!(before[..height], after[..height], "{mode:?}");
+            assert_eq!(cursor_cell(&mut h), (x + 5, y));
+        }
+    }
+
+    /// MAX-143: a cursor out of the view (the view scrolled away from it) is brought back
+    /// centered by the next move, in both modes.
+    /// How: 100 numbered lines, copy mode, Up to line 69, the history scrolled to the top,
+    /// then Up: the cursor (line 68) is on the middle row.
+    #[test]
+    fn copy_move_out_of_view_centers() {
+        for mode in [Mode::Line, Mode::Terminal] {
+            let (mut h, height) = numbered_lines(mode);
+            h.app.update(Action::CopyMode(CopyModeAction::Enter));
+            for _ in 0..30 {
+                copy_top(&mut h, CopyModeAction::MoveUp, height);
+            }
+            h.scroll(HistoryAction::ScrollToTop);
+            h.draw();
+            let top = copy_top(&mut h, CopyModeAction::MoveUp, height);
+            assert_eq!(top, 68 - height / 2, "{mode:?}");
+            assert_eq!(cursor_cell(&mut h).1 as usize, height / 2);
+        }
+    }
+
+    /// MAX-143: copy mode entered from a scrolled view puts the cursor at the start of the
+    /// view's bottom row, and the view doesn't move, in both modes; a wrapped entry's
+    /// continuation row too. A step then follows from there.
+    /// How: 100 numbered lines scrolled to the top, then wrapped lines with timestamps
+    /// scrolled up one row; Enter, then Up.
+    #[test]
+    fn copy_mode_from_a_scrolled_view_starts_on_its_bottom_row() {
+        for mode in [Mode::Line, Mode::Terminal] {
+            let (mut h, height) = numbered_lines(mode);
+            h.scroll(HistoryAction::ScrollToTop);
+            let before = h.draw();
+            h.app.update(Action::CopyMode(CopyModeAction::Enter));
+            let rows = h.draw();
+            assert_eq!(before[..height], rows[..height], "{mode:?}");
+            let bottom = cell_of(&rows, &format!("line {:02}", height - 1));
+            assert_eq!(cursor_cell(&mut h), bottom, "{mode:?}");
+            assert_eq!(copy_top(&mut h, CopyModeAction::MoveUp, height), 0);
+            assert_eq!(cursor_cell(&mut h).1 as usize, height - 2, "{mode:?}");
+        }
+
+        let mut h = wrapped_lines();
+        h.draw();
+        h.scroll(HistoryAction::ScrollUp(1));
+        let before = h.draw();
+        let height = h.app.frame_areas().content.height as usize;
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        let rows = h.draw();
+        assert_eq!(before[..height], rows[..height]);
+        assert_eq!(cursor_cell(&mut h).1 as usize, height - 1, "{rows:#?}");
+        assert!(h.app.line_mode.copy_state().cursor.char_idx > 0);
+    }
+
+    /// The copy cursor and the selection's anchor, in the current mode
+    fn copy_spot(h: &Harness) -> (LogicalPosition, Option<LogicalPosition>) {
+        let state = match h.app.settings().mode {
+            Mode::Line => h.app.line_mode.copy_state(),
+            Mode::Terminal => h.app.terminal_mode.copy_state(),
+        };
+        (state.cursor, state.selection_anchor)
+    }
+
+    /// MAX-143: in copy mode the wheel, the scrollbar (arrow, track, thumb), `ctrl-y` /
+    /// `ctrl-e`, `shift-home` / `shift-end` and prefix + up move the view only: the cursor and
+    /// the selection stay. The next move brings the view back, centered on the cursor, and a
+    /// click still moves the cursor without moving the view; in both modes.
+    /// How: 100 numbered lines, a selection from line 94 to 92, each scroll through the input
+    /// path, the scroll offset and the copy cursor after each.
+    #[test]
+    fn copy_mode_scrolls_leave_the_cursor() {
+        use crossterm::event::KeyCode::{Char, End, Home, Up};
+        let (ctrl, shift) = (KeyModifiers::CONTROL, KeyModifiers::SHIFT);
+        for mode in [Mode::Line, Mode::Terminal] {
+            let (mut h, height) = numbered_lines(mode);
+            let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+            copy(&mut h, CopyModeAction::Enter);
+            for _ in 0..5 {
+                copy(&mut h, CopyModeAction::MoveUp);
+            }
+            copy(&mut h, CopyModeAction::Select);
+            copy(&mut h, CopyModeAction::MoveUp);
+            copy(&mut h, CopyModeAction::MoveUp);
+            h.draw();
+            let spot = copy_spot(&h);
+            let offset = |h: &mut Harness| {
+                h.draw();
+                h.app.scroll_status().offset_from_bottom
+            };
+            let start = offset(&mut h);
+            let max = h.app.scroll_status().max_scroll;
+            let text = (5, 2);
+            let bar = h.app.frame_map().scrollbar.expect("a scrollbar");
+            let (x, top) = (bar.area.x, bar.area.y);
+
+            mouse_do(&mut h, MouseEventKind::ScrollUp, text);
+            assert_eq!(offset(&mut h), start + 3, "{mode:?} wheel");
+            key_do(&mut h, Char('y'), ctrl);
+            assert_eq!(offset(&mut h), start + 4, "{mode:?} ctrl-y");
+            key_do(&mut h, Char('e'), ctrl);
+            assert_eq!(offset(&mut h), start + 3, "{mode:?} ctrl-e");
+            click(&mut h, (x, top));
+            assert_eq!(offset(&mut h), start + 4, "{mode:?} ▲");
+            key_do(&mut h, Home, shift);
+            assert_eq!(offset(&mut h), max, "{mode:?} shift-home");
+            key_do(&mut h, End, shift);
+            assert_eq!(offset(&mut h), 0, "{mode:?} shift-end");
+            key_do(&mut h, Char('a'), ctrl);
+            key_do(&mut h, Up, KeyModifiers::NONE);
+            assert_eq!(offset(&mut h), 1, "{mode:?} prefix up");
+            // the prefix stays for more scroll keys, and takes no click
+            h.app.update(Action::App(AppAction::SetPrefix(false)));
+            click(&mut h, (x, top + 1));
+            assert_eq!(offset(&mut h), max, "{mode:?} track top");
+            let (first, _) = h.app.frame_map().scrollbar.unwrap().thumb();
+            let thumb = (x, top + 1 + first as u16);
+            mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), thumb);
+            mouse_do(
+                &mut h,
+                MouseEventKind::Drag(MouseButton::Left),
+                (x, top + 3),
+            );
+            mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), (x, top + 3));
+            let dragged = offset(&mut h);
+            assert!(
+                dragged < max && dragged > start + 10,
+                "{mode:?} thumb {dragged}"
+            );
+            assert_eq!(copy_spot(&h), spot, "{mode:?}");
+            assert!(h.app.is_copy_mode_active());
+
+            // the cursor (line 92) is out of view: `j` brings it back on the middle row
+            key_do(&mut h, Char('j'), KeyModifiers::NONE);
+            let rows = h.draw();
+            assert_eq!(first_number(&rows[..height], "line "), 93 - height / 2);
+            assert_eq!(cursor_cell(&mut h).1 as usize, height / 2, "{mode:?}");
+
+            let (x, y) = cell_of(&rows, "line 90");
+            click(&mut h, (x + 5, y));
+            assert_eq!(h.draw()[..height], rows[..height], "{mode:?} click");
+            assert_eq!(cursor_cell(&mut h), (x + 5, y));
+        }
+    }
+
+    /// MAX-143: a search confirmed into copy mode brings the view back to the match, centered,
+    /// when it was scrolled away from it during the search; in both modes.
+    /// How: 100 numbered lines, search "line 50", scroll to the top, Enter.
+    #[test]
+    fn copy_mode_from_search_centers_a_scrolled_away_match() {
+        for mode in [Mode::Line, Mode::Terminal] {
+            let (mut h, height) = numbered_lines(mode);
+            search(&mut h, "line 50");
+            h.draw();
+            h.scroll(HistoryAction::ScrollToTop);
+            let rows = h.draw();
+            assert_eq!(first_number(&rows[..height], "line "), 0, "{mode:?}");
+            h.app.update(Action::Search(SearchModeAction::Confirm));
+            let rows = h.draw();
+            assert_eq!(first_number(&rows[..height], "line "), 50 - height / 2);
+            assert_eq!(cursor_cell(&mut h).1 as usize, height / 2, "{mode:?}");
+        }
+    }
+
+    /// MAX-143: with entries taller than the view, a step brings the cursor's row into view by
+    /// the fewest rows, not its whole entry.
+    /// How: tall Hex entries, copy mode on the last one (`F`), Up to `E`'s first row (above the
+    /// view): it is the top row; Down back to `F`'s first row (below it): the bottom row.
+    #[test]
+    fn copy_step_with_tall_entries_shows_the_cursor_row() {
+        let mut h = tall_hex_lines();
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        h.draw();
+        h.app.update(Action::CopyMode(CopyModeAction::MoveUp));
+        let rows = h.draw();
+        assert_eq!(cursor_cell(&mut h).1, 0, "{rows:#?}");
+        assert!(rows[0].contains("45 45"), "{rows:#?}");
+        h.app.update(Action::CopyMode(CopyModeAction::MoveDown));
+        let rows = h.draw();
+        let height = h.app.frame_areas().content.height;
+        assert_eq!(cursor_cell(&mut h).1, height - 1, "{rows:#?}");
+        assert!(rows[height as usize - 1].contains("5A 5A"), "{rows:#?}");
     }
 
     /// A key through the input path, applied
@@ -2297,6 +2598,180 @@ mod tests {
         let pans = rows.iter().filter(|row| row.contains('◀')).count();
         assert_eq!(pans, 1, "{rows:#?}");
         assert!(rows[23].contains("◀   3/"), "{:?}", rows[23]);
+    }
+
+    /// Terminal mode 200 columns wide on a 120x24 screen with borders, the status bar on a line
+    /// of its own with `center`, panned 10 columns
+    fn wide_terminal(center: Option<&str>) -> Harness {
+        use crate::configs::StatusBarLayout;
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 120, 24, |s| {
+            s.mode = Mode::Terminal;
+            s.terminal_mode.cols = 200;
+            s.ui.show_borders = true;
+            s.ui.status_bar.layout = StatusBarLayout::Line;
+            if let Some(center) = center {
+                s.ui.status_bar.center = center.to_string();
+            }
+        });
+        h.app
+            .terminal_mode
+            .process_rx(TextEncoding::Utf8, "x".repeat(190).as_bytes());
+        h.draw();
+        h.scroll(HistoryAction::PanRight(10));
+        h
+    }
+
+    fn panned(h: &Harness) -> usize {
+        h.app.pan_left_status().unwrap_or(0)
+    }
+
+    /// MAX-143: the history border's pan arrows are clickable: `◀ (n)` pans left, `(n) ▶`
+    /// right, a column each, with the hover on all of them; the wheel over them pans; in copy
+    /// mode the cursor stays.
+    /// How: a wide terminal with a status bar without the pan, clicks, hovers and wheel turns
+    /// on the arrows of the history's bottom border.
+    #[test]
+    fn border_pan_arrows_are_clickable() {
+        let mut h = wide_terminal(Some("[ mid ]()"));
+        let rows = h.draw();
+        let left = cell_of(&rows, "◀ (10)");
+        let hover = h.app.frame_map().hover_area(left.0, left.1);
+        assert_eq!(hover.map(|area| (area.x, area.width)), Some((left.0, 6)));
+        assert!(h.app.frame_map().hover_area(left.0 - 1, left.1).is_none());
+        click(&mut h, left);
+        assert_eq!(panned(&h), 9);
+
+        let rows = h.draw();
+        let right = cell_of(&rows, ") ▶");
+        let (x, y) = (right.0 + 2, right.1);
+        assert!(h.app.frame_map().hover_area(x, y).is_some());
+        click(&mut h, (x, y));
+        assert_eq!(panned(&h), 10);
+
+        h.draw();
+        mouse_do(&mut h, MouseEventKind::ScrollUp, left);
+        assert_eq!(panned(&h), 6, "the wheel up pans left");
+        h.draw();
+        mouse_do(&mut h, MouseEventKind::ScrollDown, (x, y));
+        assert_eq!(panned(&h), 10, "the wheel down pans right");
+
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        let rows = h.draw();
+        let spot = copy_spot(&h);
+        click(&mut h, cell_of(&rows, "◀ (10)"));
+        assert_eq!(panned(&h), 9);
+        assert_eq!(copy_spot(&h), spot);
+    }
+
+    /// MAX-143: a pan arrow held keeps panning, after a while, until the release or until the
+    /// pointer leaves it: the border's and the status bar's; a jump (`{pan_offset}`) doesn't
+    /// repeat.
+    /// How: a press on each arrow, `click_repeat` before and after the delay, a drag on the
+    /// arrow then off it, the release.
+    #[test]
+    fn held_pan_arrows_repeat() {
+        use std::time::{Duration, Instant};
+        let start = Instant::now();
+        let at = |ms| start + Duration::from_millis(ms);
+        let press = |h: &mut Harness, at| mouse_do(h, MouseEventKind::Down(MouseButton::Left), at);
+        let drag = |h: &mut Harness, at| mouse_do(h, MouseEventKind::Drag(MouseButton::Left), at);
+
+        let mut h = wide_terminal(Some("[ mid ]()"));
+        let rows = h.draw();
+        let left = cell_of(&rows, "◀ (10)");
+        press(&mut h, left);
+        assert_eq!(panned(&h), 9);
+        assert!(!h.app.click_repeat(at(100)));
+        assert!(h.app.click_repeat(at(400)));
+        assert_eq!(panned(&h), 8);
+        assert!(!h.app.click_repeat(at(420)), "every 50 ms");
+        drag(&mut h, (left.0 + 3, left.1));
+        assert!(h.app.click_repeat(at(450)));
+        assert_eq!(panned(&h), 7, "still on the arrow");
+        drag(&mut h, (left.0, left.1 - 1));
+        assert!(!h.app.is_click_held());
+        assert!(!h.app.click_repeat(at(1000)));
+        mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), left);
+        assert_eq!(panned(&h), 7);
+
+        let mut h = wide_terminal(None);
+        let rows = h.draw();
+        let right = status_cell(&rows, "▶");
+        press(&mut h, right);
+        assert!(h.app.click_repeat(at(1000)));
+        assert_eq!(panned(&h), 12);
+        mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), right);
+        assert!(!h.app.click_repeat(at(2000)));
+        assert_eq!(panned(&h), 12);
+
+        let rows = h.draw();
+        press(&mut h, (status_cell(&rows, " 12/").0 + 2, 23));
+        assert_eq!(panned(&h), 0);
+        assert!(!h.app.is_click_held());
+    }
+
+    /// MAX-143: the border title's `SCROLL +n` goes back to the live view and `PAN +n` to the
+    /// left edge when clicked, with the hover; in copy mode the cursor stays.
+    /// How: line mode with borders and the title details, long numbered lines truncated,
+    /// scrolled and panned, in copy mode.
+    #[test]
+    fn title_scroll_and_pan_are_clickable() {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 24, |s| {
+            s.ui.show_borders = true;
+            s.ui.title_details = true;
+            s.line_mode.wrap_mode = crate::configs::WrapMode::Truncate;
+        });
+        for i in 0..60 {
+            h.feed(format!("line {i:02} {}\r\n", "x".repeat(150)).as_bytes());
+        }
+        h.draw();
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        h.draw();
+        h.scroll(HistoryAction::ScrollUp(3));
+        h.scroll(HistoryAction::PanRight(10));
+        // the title reads the scroll the last frame resolved
+        h.draw();
+        let rows = h.draw();
+        let spot = copy_spot(&h);
+
+        let pan = cell_of(&rows, "PAN +10");
+        let hover = h.app.frame_map().hover_area(pan.0 + 6, pan.1);
+        assert_eq!(hover.map(|area| (area.x, area.width)), Some((pan.0, 7)));
+        click(&mut h, pan);
+        assert_eq!(h.app.line_mode.x_offset(), 0);
+
+        let rows = h.draw();
+        assert!(!shows(&rows, "PAN +"), "{:?}", rows[0]);
+        click(&mut h, cell_of(&rows, "SCROLL +3"));
+        h.draw();
+        let rows = h.draw();
+        assert_eq!(h.app.scroll_status().offset_from_bottom, 0);
+        assert!(shows(&rows, "LIVE"), "{:?}", rows[0]);
+        assert_eq!(copy_spot(&h), spot);
+    }
+
+    /// MAX-143: the status bar's `{pan_offset}` goes back to the left edge when clicked, and the
+    /// wheel over a pan block (its arrows, its numbers) pans; over the history it scrolls.
+    /// How: the default center part, `◀ offset/max ▶`, in a wide terminal.
+    #[test]
+    fn status_bar_pan_block_clicks_and_wheel() {
+        let mut h = wide_terminal(None);
+        let rows = h.draw();
+        let numbers = status_cell(&rows, " 10/");
+        mouse_do(&mut h, MouseEventKind::ScrollUp, (numbers.0 + 2, numbers.1));
+        assert_eq!(panned(&h), 6);
+        let rows = h.draw();
+        mouse_do(&mut h, MouseEventKind::ScrollDown, status_cell(&rows, "▶"));
+        assert_eq!(panned(&h), 10);
+        let rows = h.draw();
+        click(&mut h, (status_cell(&rows, " 10/").0 + 2, 23));
+        assert_eq!(panned(&h), 0);
+
+        // over the history the wheel scrolls, the pan stays
+        h.scroll(HistoryAction::PanRight(5));
+        h.draw();
+        mouse_do(&mut h, MouseEventKind::ScrollUp, (10, 5));
+        assert_eq!(panned(&h), 5);
     }
 
     /// MAX-135: the `box` layout draws the status bar in a box of its own under the TX box,

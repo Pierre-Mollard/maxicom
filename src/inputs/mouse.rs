@@ -11,10 +11,10 @@ use crate::{
         selection::{CopySide, MouseUnit},
         types::ClickAction,
     },
-    configs::Mode,
+    configs::{KeyBindingAction, Mode},
     inputs::{
-        Action, AppAction, CopyModeAction, DialogAction, HistoryAction, LineInputAction,
-        ScrollbarAction, SearchModeAction, SideViewAction, TerminalAction,
+        Action, AppAction, ClickHoldAction, CopyModeAction, DialogAction, HistoryAction,
+        LineInputAction, ScrollbarAction, SearchModeAction, SideViewAction, TerminalAction,
     },
     overlays::{ActionMenu, Overlay, PopupTarget},
 };
@@ -50,10 +50,19 @@ pub fn handle_mouse(event: MouseEvent, app: &App) -> Action {
         MouseEventKind::Moved => return hover(event, app),
         _ => return Action::Ignore,
     };
-    // Shift turns the vertical wheel sideways
+    // Shift turns the vertical wheel sideways, and so does a pan indicator under it: a status
+    // bar block that pans, the border's pan arrows (MAX-143)
+    let over_pan = app.input_context() != InputContext::Overlay
+        && matches!(
+            app.frame_map().click_target(event.column, event.row),
+            Some(ClickAction::Run(
+                KeyBindingAction::PanLeft | KeyBindingAction::PanRight | KeyBindingAction::PanHome
+            ))
+        );
+    let sideways = over_pan || event.modifiers.contains(KeyModifiers::SHIFT);
     let wheel = match wheel {
-        Wheel::Up if event.modifiers.contains(KeyModifiers::SHIFT) => Wheel::Left,
-        Wheel::Down if event.modifiers.contains(KeyModifiers::SHIFT) => Wheel::Right,
+        Wheel::Up if sideways => Wheel::Left,
+        Wheel::Down if sideways => Wheel::Right,
         wheel => wheel,
     };
 
@@ -64,13 +73,6 @@ pub fn handle_mouse(event: MouseEvent, app: &App) -> Action {
             Wheel::Right => Action::Overlay(DialogAction::Right),
             Wheel::Left => Action::Overlay(DialogAction::Left),
         },
-        // the view follows the copy cursor: the wheel moves it
-        InputContext::CopyMode => Action::CopyMode(match wheel {
-            Wheel::Up => CopyModeAction::MoveUp,
-            Wheel::Down => CopyModeAction::MoveDown,
-            Wheel::Left => CopyModeAction::MoveLeft,
-            Wheel::Right => CopyModeAction::MoveRight,
-        }),
         _ => {
             let at = Position::new(event.column, event.row);
             let on_raw_side = app
@@ -130,6 +132,16 @@ fn handle_left_button(event: MouseEvent, app: &App) -> Action {
     let (x, y) = (event.column, event.row);
     let is_press = matches!(event.kind, MouseEventKind::Down(_));
 
+    // a click target held, from its press to the release (MAX-143)
+    if app.is_click_held() {
+        let hold = |action| Action::App(AppAction::ClickHold(action));
+        match event.kind {
+            MouseEventKind::Drag(_) => return hold(ClickHoldAction::Drag(x, y)),
+            MouseEventKind::Up(_) => return hold(ClickHoldAction::Release),
+            _ => {}
+        }
+    }
+
     match app.input_context() {
         InputContext::Overlay if is_press => {
             let outside = map
@@ -147,8 +159,12 @@ fn handle_left_button(event: MouseEvent, app: &App) -> Action {
             };
         }
         // a status bar block, whatever the mode (MAX-125)
-        _ if is_press && let Some(click) = map.click_target(x, y) => {
-            return match click {
+        _ if is_press && let Some(target) = map.click_target_at(x, y) => {
+            return match target.action {
+                // a step repeats while held (MAX-143)
+                ClickAction::Run(action) if action.repeats_when_held() => Action::App(
+                    AppAction::ClickHold(ClickHoldAction::Press(action, target.area)),
+                ),
                 ClickAction::Run(action) => action.to_action(app),
                 ClickAction::ToggleSide => Action::CopyMode(CopyModeAction::ToggleSide),
                 ClickAction::Search(action) => action.to_action(),
@@ -158,8 +174,8 @@ fn handle_left_button(event: MouseEvent, app: &App) -> Action {
         _ => {}
     }
 
-    // the history's scrollbar, from a press on it to the release; not in copy mode, where the
-    // view follows the copy cursor (MAX-142)
+    // the history's scrollbar, from a press on it to the release (MAX-142); in copy mode too,
+    // the cursor stays (MAX-143)
     let scrollbar = |action| Action::App(AppAction::Scrollbar(action));
     if app.is_scrollbar_held() {
         match event.kind {
@@ -173,7 +189,6 @@ fn handle_left_button(event: MouseEvent, app: &App) -> Action {
         }
     }
     if is_press
-        && app.input_context() != InputContext::CopyMode
         && let Some(bar) = map.scrollbar
         && bar.area.contains(Position::new(x, y))
     {

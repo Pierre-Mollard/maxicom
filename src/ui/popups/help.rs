@@ -154,17 +154,46 @@ pub fn render_help_popup(
             }
         }
         HelpCategory::CopyMode => {
-            let mut sorted_keys: Vec<_> = app.key_resolver.copy_actions.iter().collect();
-            sorted_keys.sort_by_key(|(k, _)| format!("{k}"));
+            let resolver = &app.key_resolver;
+            let mut moves: Vec<_> = resolver.copy_actions.iter().collect();
+            moves.sort_by_key(|(k, _)| format!("{k}"));
+            let (scrolls, moves): (Vec<_>, Vec<_>) = moves
+                .into_iter()
+                .partition(|(_, action)| action.is_scroll());
+            // the direct scroll and pan keys a copy key doesn't take reach copy mode (MAX-143)
+            let mut direct: Vec<_> = resolver
+                .direct_actions
+                .iter()
+                .filter(|(k, action)| {
+                    action.is_navigation() && !resolver.copy_actions.contains_key(k)
+                })
+                .collect();
+            direct.sort_by_key(|(k, _)| format!("{k}"));
 
-            for (pattern, action) in sorted_keys {
-                lines.push(Line::from(vec![
+            let key_line = |pattern: String, action: String| {
+                Line::from(vec![
                     Span::styled(
-                        format!(" {:<18} ", format!("{pattern}")),
+                        format!(" {pattern:<18} "),
                         Style::default().fg(theme.palette.secondary),
                     ),
-                    Span::raw(format!("-> {}", action)),
-                ]));
+                    Span::raw(format!("-> {action}")),
+                ])
+            };
+            for (pattern, action) in moves {
+                lines.push(key_line(format!("{pattern}"), format!("{action}")));
+            }
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                " Scrolling moves the view, the cursor stays:",
+                Style::default()
+                    .fg(theme.palette.main)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            for (pattern, action) in scrolls {
+                lines.push(key_line(format!("{pattern}"), format!("{action}")));
+            }
+            for (pattern, action) in direct {
+                lines.push(key_line(format!("{pattern}"), format!("{action}")));
             }
         }
         HelpCategory::Search => {

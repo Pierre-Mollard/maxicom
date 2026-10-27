@@ -113,6 +113,29 @@ impl ClickCounter {
     }
 }
 
+/// How the view follows a copy cursor move (MAX-143): by the fewest rows when the cursor steps
+/// out of it, centered when it jumps (`gg`, `G`, a search match) or wasn't shown before the move
+/// (the view was scrolled away from it)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reveal {
+    Edge,
+    Center,
+}
+
+impl Reveal {
+    pub fn for_move(action: &CopyModeAction, cursor_shown: bool) -> Self {
+        let jump = matches!(
+            action,
+            CopyModeAction::JumpToTop | CopyModeAction::JumpToBottom
+        );
+        if jump || !cursor_shown {
+            Self::Center
+        } else {
+            Self::Edge
+        }
+    }
+}
+
 pub enum CopyActionResult {
     Moved,
     Exited,

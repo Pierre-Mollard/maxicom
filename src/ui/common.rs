@@ -17,7 +17,7 @@ use crate::{
         search::SearchModeKind,
         types::{ClickAction, ClickTarget, FocusTarget, PromptMap},
     },
-    configs::{KeyBindingSearchAction, KeywordHighlight, Mode, ThemeConfig},
+    configs::{KeyBindingAction, KeyBindingSearchAction, KeywordHighlight, Mode, ThemeConfig},
     ui::popups::hint_spans,
 };
 
@@ -121,6 +121,49 @@ pub fn monitor_bottom_title<'a>(app: &App, theme: &ThemeConfig) -> Vec<Line<'a>>
     }
 
     titles
+}
+
+/// The parts of the history's title a click runs (MAX-143): `SCROLL +n` back to the live view,
+/// `PAN +n` to the left edge. The title starts on the column after the border's corner
+pub fn monitor_title_targets(title: &str, outer: Rect, hover: Style) -> Vec<ClickTarget> {
+    [
+        ("SCROLL +", KeyBindingAction::ScrollToBottom),
+        ("PAN +", KeyBindingAction::PanHome),
+    ]
+    .into_iter()
+    .filter_map(|(part, action)| {
+        let start = title.find(part)?;
+        let digits = title[start + part.len()..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .count();
+        let x = outer.x + 1 + title[..start].width() as u16;
+        let width = (part.len() + digits) as u16;
+        Some(ClickTarget {
+            area: Rect::new(x, outer.y, width, 1).intersection(outer),
+            action: ClickAction::Run(action),
+            hover: Some(hover),
+        })
+    })
+    .collect()
+}
+
+/// The pan arrows of the history's bottom border (`monitor_bottom_title`) as click targets
+/// (MAX-143): `◀ (n)` pans left, `(n) ▶` right. Each is a space away from its corner
+pub fn monitor_bottom_targets(app: &App, outer: Rect, hover: Style) -> Vec<ClickTarget> {
+    let y = outer.bottom().saturating_sub(1);
+    let target = |x: u16, text: &str, action| ClickTarget {
+        area: Rect::new(x, y, text.width() as u16, 1).intersection(outer),
+        action: ClickAction::Run(action),
+        hover: Some(hover),
+    };
+    let left =
+        pan_left_indicator(app).map(|left| target(outer.x + 2, &left, KeyBindingAction::PanLeft));
+    let right = pan_right_indicator(app).map(|right| {
+        let x = outer.right().saturating_sub(2 + right.width() as u16);
+        target(x, &right, KeyBindingAction::PanRight)
+    });
+    left.into_iter().chain(right).collect()
 }
 
 pub fn pan_left_indicator(app: &App) -> Option<String> {

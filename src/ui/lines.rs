@@ -18,7 +18,7 @@ use crate::{
         data_processing::{entry_display_text, entry_display_to_wire_map, map_disp_byte_to_raw},
         scroller::ScrollStatus,
         search::SearchMatch,
-        selection::CopySide,
+        selection::{CopySide, Reveal},
         types::{FocusTarget, LogEntry, PromptMap, RawRow, RowChars, ScrollbarMap, TextRow},
     },
     configs::{
@@ -140,14 +140,21 @@ pub fn render_monitor(
     }
 
     let is_copy_active = app.line_mode.copy_state().active;
-    // a copy cursor moved by the mouse is where it was clicked: the view stays (MAX-113)
-    let active_focus = if is_copy_active && app.line_mode.is_mouse_view() {
-        None
+    let copy_cursor = (
+        app.line_mode.copy_state().cursor.line_idx,
+        app.line_mode.copy_state().cursor.char_idx,
+    );
+    // in copy mode the view moves only for a cursor move, which asked to reveal the cursor
+    // (MAX-143); a search match is a jump
+    let reveal = match app.line_mode.take_copy_reveal() {
+        _ if !is_copy_active => None,
+        _ if search_jump.is_some() => Some(Reveal::Center),
+        reveal => reveal,
+    };
+    let active_focus = if reveal.is_some() {
+        Some(copy_cursor)
     } else if is_copy_active {
-        Some((
-            app.line_mode.copy_state().cursor.line_idx,
-            app.line_mode.copy_state().cursor.char_idx,
-        ))
+        None
     } else if is_search_active && search_jump.is_some() {
         app.line_mode.search().current_match_position()
     } else {
@@ -166,15 +173,17 @@ pub fn render_monitor(
     // ---- What this frame shows ----
     //
     // Two ways of choosing the visible rows, decided below once the window is laid out:
-    // - plain scrolling (no copy mode, and no search jump this frame): the view's bottom row is
-    //   a position kept by `LineMode` (#36): an entry counted from the bottom, and how many of
-    //   its rows are hidden below the view. Scroll keys only add rows to a pending count,
-    //   applied here. Offset 0 is the live view, aligned to the bottom of the history
-    // - copy mode, or a search jump: the view is centered on the focused row (cursor or
-    //   match), clamped to the rows laid out, so near the end it still ends on the last row.
-    //   Copy mode is never aligned to the bottom instead: with entries taller than half the
-    //   view that pushed the cursor's row out of view (MAX-123). A search jump stores the
-    //   centered view as the scroll position, so the next frames scroll from there (MAX-72)
+    // - plain scrolling (no search jump or copy cursor move this frame, copy mode included):
+    //   the view's bottom row is a position kept by `LineMode` (#36): an entry counted from the
+    //   bottom, and how many of its rows are hidden below the view. Scroll keys only add rows
+    //   to a pending count, applied here. Offset 0 is the live view, aligned to the bottom of
+    //   the history
+    // - a search jump or a copy cursor move: the view is brought to the focused row (match or
+    //   cursor), clamped to the rows laid out, so near the end it still ends on the last row.
+    //   Centered for a jump; for a cursor step, the kept view moved by the fewest rows that
+    //   show the cursor's row (MAX-143), not its entry, which can be taller than the view
+    //   (MAX-123). Either way the view is stored as the scroll position, so the next frames
+    //   scroll from there (MAX-72)
     let row_scrolling = active_focus.is_none();
     // The entry the window is built around: the scrolled-to one (the last one when live), or
     // the focused one
@@ -182,7 +191,8 @@ pub fn render_monitor(
 
     // Rows scrolled since the last frame (#36): positive is up. Taken now, before layout, so the
     // window below lays out exactly what this frame needs. Capped at a view height either way
-    // (a page is a view height minus one; more keys between two frames are dropped)
+    // (a page is a view height minus one; more keys between two frames are dropped). A copy
+    // cursor move in the same frame wins over them
     let limit = content_height as isize;
     let pending_rows = app
         .line_mode
@@ -271,8 +281,10 @@ pub fn render_monitor(
     // - plain scrolling: the view's bottom row must be able to move up by the pending rows and
     //   still have a full view above it, so above it we need `view height + rows scrolled up`;
     //   below it, only the rows scrolled down
-    // - centering a search / copy focus: up to a view height on each side (the focused row can
-    //   end up anywhere from the top to the bottom of the view once clamped)
+    // - bringing the view to a search / copy focus: up to a view height on each side (the
+    //   focused row can end up anywhere from the top to the bottom of the view once clamped).
+    //   The kept view counts only when its bottom row is in those rows: farther, it can't show
+    //   the focused row
     //
     // Example, plain scrolling, view of 10 rows, 3 rows scrolled up, anchor of 6 rows with 2
     // hidden below the view: 4 anchor rows are already above the bottom row, 13 are needed, so
@@ -462,6 +474,21 @@ pub fn render_monitor(
             .set_scroll_position(entries_from_bottom, rows_below),
         None => app.line_mode.scroll_to_bottom(),
     };
+    // The window row of the sub-line holding char `char_idx` of the window's entry `local` (the
+    // last sub-line past its end), as the copy cursor is drawn
+    let row_of_char = |local: usize, char_idx: usize| {
+        let meta = layout.line_layouts.get(local)?;
+        let mut remaining = char_idx;
+        let mut sub_row = 0;
+        for (s_idx, sub) in meta.sub_lines.iter().enumerate() {
+            sub_row = s_idx;
+            if remaining < sub.content_char_len {
+                break;
+            }
+            remaining -= sub.content_char_len;
+        }
+        Some(meta.visual_row_start + sub_row)
+    };
 
     let paragraph_y_offset: usize = if row_scrolling {
         // Plain scrolling (#36): where the view's bottom row was (the anchor's last row, minus
@@ -491,39 +518,70 @@ pub fn render_monitor(
             (bottom + 1).saturating_sub(content_height)
         }
     } else {
-        // Copy mode or a search jump: the focused row (the sub-line holding the focused char of
-        // the focused entry) goes to the middle of the view, clamped so the view stays filled
-        let focus_local = focus_entry.saturating_sub(start_idx);
-        let target_visual_row = if let Some(meta) = layout.line_layouts.get(focus_local) {
-            let target_char = active_focus.map(|(_, c)| c).unwrap_or(0);
-            let mut sub_row = 0;
-            let mut char_acc = 0;
-            for (s_idx, sub) in meta.sub_lines.iter().enumerate() {
-                if target_char >= char_acc && target_char < char_acc + sub.content_char_len {
-                    sub_row = s_idx;
-                    break;
-                }
-                char_acc += sub.content_char_len;
+        // A search jump or a copy cursor move: the focused row (the sub-line holding the
+        // focused char of the focused entry) is brought into view, clamped so the view stays
+        // filled
+        let target_char = active_focus.map(|(_, c)| c).unwrap_or(0);
+        let target_visual_row = row_of_char(focus_entry - start_idx, target_char).unwrap_or(0);
+
+        // The kept view's top row, as plain scrolling would draw it, when its bottom row is in
+        // the window (else it is more than a view height away from the focus: not shown)
+        let kept_top = || {
+            let rows_below = app.line_mode.rows_below();
+            if clamped_scroll == 0 && rows_below == 0 {
+                let live_top = total_visual_rows.saturating_sub(content_height);
+                return (end_idx == total_entries).then_some(live_top);
             }
-            meta.visual_row_start + sub_row
-        } else {
-            0
+            let local = (total_entries - 1 - clamped_scroll).checked_sub(start_idx)?;
+            let meta = entries.get(local)?;
+            let bottom =
+                meta.visual_row_start + rows_of(meta) - 1 - rows_below.min(rows_of(meta) - 1);
+            let min_bottom = if start_idx == 0 {
+                content_height.saturating_sub(1).min(last_row)
+            } else {
+                0
+            };
+            Some((bottom.max(min_bottom) + 1).saturating_sub(content_height))
         };
 
-        let half = content_height / 2;
-        let ideal_offset = target_visual_row.saturating_sub(half);
+        // a copy cursor already shown keeps the view, whatever the move (MAX-143)
+        let centered = target_visual_row.saturating_sub(content_height / 2);
+        let offset = match (reveal, kept_top()) {
+            (Some(_), Some(top)) if (top..top + content_height).contains(&target_visual_row) => top,
+            (Some(Reveal::Edge), Some(top)) if target_visual_row < top => target_visual_row,
+            (Some(Reveal::Edge), Some(_)) => target_visual_row + 1 - content_height,
+            _ => centered,
+        };
         let max_offset = total_visual_rows.saturating_sub(content_height);
-        let offset = ideal_offset.min(max_offset);
-        // a search jump: the next frames scroll from this view. A copy view is kept aside, for
-        // a mouse press to stay on it (MAX-113)
+        let offset = offset.min(max_offset);
+        // the next frames scroll from this view
         let bottom = (offset + content_height).saturating_sub(1).min(last_row);
-        if is_copy_active {
-            app.line_mode.set_copy_view_position(position_of(bottom));
-        } else {
-            store_position(app, bottom);
-        }
+        store_position(app, bottom);
         offset
     };
+
+    // for the next cursor move: a cursor that isn't shown is revealed centered (MAX-143)
+    let cursor_shown = is_copy_active
+        && (start_idx..end_idx).contains(&copy_cursor.0)
+        && row_of_char(copy_cursor.0 - start_idx, copy_cursor.1).is_some_and(|row| {
+            (paragraph_y_offset..paragraph_y_offset + content_height).contains(&row)
+        });
+    app.line_mode.set_copy_cursor_shown(cursor_shown);
+
+    // where copy mode entered from a scrolled view puts its cursor: the start of the view's
+    // bottom row, or of the last entry's last row below it (the partial RX line isn't one)
+    let bottom = (paragraph_y_offset + content_height)
+        .saturating_sub(1)
+        .min(last_row);
+    let local = entries.partition_point(|meta| meta.visual_row_start <= bottom) - 1;
+    let meta = &entries[local];
+    let sub_row = (bottom - meta.visual_row_start).min(meta.sub_lines.len().saturating_sub(1));
+    let char_idx = meta.sub_lines[..sub_row]
+        .iter()
+        .map(|sub| sub.content_char_len)
+        .sum();
+    app.line_mode
+        .set_bottom_row_start((start_idx + local, char_idx));
 
     // ---- Scroll position in rows (#5d) ----
     //

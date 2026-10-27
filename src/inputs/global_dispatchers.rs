@@ -72,6 +72,7 @@ impl KeyBindingAction {
             KeyBindingAction::ScrollToTop => Action::History(HistoryAction::ScrollToTop),
             KeyBindingAction::PanLeft => Action::History(HistoryAction::PanLeft(1)),
             KeyBindingAction::PanRight => Action::History(HistoryAction::PanRight(1)),
+            KeyBindingAction::PanHome => Action::History(HistoryAction::PanLeft(usize::MAX)),
             KeyBindingAction::PageUp => Action::History(HistoryAction::ScrollUpPage),
             KeyBindingAction::PageDown => Action::History(HistoryAction::ScrollDownPage),
             KeyBindingAction::EnterCopyMode => Action::CopyMode(CopyModeAction::Enter),
@@ -150,6 +151,10 @@ impl KeyBindingCopyAction {
             Self::YankSideInspector => Action::CopyMode(CopyModeAction::YankRaw),
             Self::ToggleSide => Action::CopyMode(CopyModeAction::ToggleSide),
             Self::Exit => Action::CopyMode(CopyModeAction::Exit),
+            Self::ScrollUp => Action::History(HistoryAction::ScrollUp(1)),
+            Self::ScrollDown => Action::History(HistoryAction::ScrollDown(1)),
+            Self::ScrollPageUp => Action::History(HistoryAction::ScrollUpPage),
+            Self::ScrollPageDown => Action::History(HistoryAction::ScrollDownPage),
         }
     }
 }

@@ -49,6 +49,7 @@ pub enum KeyBindingAction {
     PageDown,
     PanRight,
     PanLeft,
+    PanHome,
     PanSideRight,
     PanSideLeft,
     ClearHistory,
@@ -92,6 +93,7 @@ impl FromStr for KeyBindingAction {
             "page_down" => Ok(KeyBindingAction::PageDown),
             "pan_right" => Ok(KeyBindingAction::PanRight),
             "pan_left" => Ok(KeyBindingAction::PanLeft),
+            "pan_home" => Ok(KeyBindingAction::PanHome),
             "pan_side_right" => Ok(KeyBindingAction::PanSideRight),
             "pan_side_left" => Ok(KeyBindingAction::PanSideLeft),
             "clear_history" => Ok(KeyBindingAction::ClearHistory),
@@ -136,6 +138,7 @@ impl std::fmt::Display for KeyBindingAction {
             Self::PageDown => "page_down",
             Self::PanRight => "pan_right",
             Self::PanLeft => "pan_left",
+            Self::PanHome => "pan_home",
             Self::PanSideRight => "pan_side_right",
             Self::PanSideLeft => "pan_side_left",
             Self::ClearHistory => "clear_history",
@@ -156,6 +159,21 @@ impl KeyBindingAction {
                 | Self::ScrollDown
                 | Self::ScrollToTop
                 | Self::ScrollToBottom
+                | Self::PageUp
+                | Self::PageDown
+                | Self::PanLeft
+                | Self::PanRight
+                | Self::PanHome
+                | Self::PanSideLeft
+                | Self::PanSideRight
+        )
+    }
+
+    pub fn repeats_when_held(self) -> bool {
+        matches!(
+            self,
+            Self::ScrollUp
+                | Self::ScrollDown
                 | Self::PageUp
                 | Self::PageDown
                 | Self::PanLeft
@@ -293,6 +311,20 @@ pub enum KeyBindingCopyAction {
     YankSideInspector,
     ToggleSide,
     Exit,
+    ScrollUp,
+    ScrollDown,
+    ScrollPageUp,
+    ScrollPageDown,
+}
+
+impl KeyBindingCopyAction {
+    /// Moves the view only, not the copy cursor (MAX-143)
+    pub fn is_scroll(self) -> bool {
+        matches!(
+            self,
+            Self::ScrollUp | Self::ScrollDown | Self::ScrollPageUp | Self::ScrollPageDown
+        )
+    }
 }
 
 impl std::str::FromStr for KeyBindingCopyAction {
@@ -314,6 +346,10 @@ impl std::str::FromStr for KeyBindingCopyAction {
             "yank_side_inspector" => Ok(Self::YankSideInspector),
             "toggle_side" => Ok(Self::ToggleSide),
             "exit" => Ok(Self::Exit),
+            "scroll_up" => Ok(Self::ScrollUp),
+            "scroll_down" => Ok(Self::ScrollDown),
+            "scroll_page_up" => Ok(Self::ScrollPageUp),
+            "scroll_page_down" => Ok(Self::ScrollPageDown),
             other => Err(UnknownActionError(other.to_string())),
         }
     }
@@ -336,6 +372,10 @@ impl std::fmt::Display for KeyBindingCopyAction {
             Self::YankSideInspector => "yank_side_inspector",
             Self::ToggleSide => "toggle_side",
             Self::Exit => "exit",
+            Self::ScrollUp => "scroll_up",
+            Self::ScrollDown => "scroll_down",
+            Self::ScrollPageUp => "scroll_page_up",
+            Self::ScrollPageDown => "scroll_page_down",
         };
         write!(f, "{s}")
     }
@@ -957,6 +997,8 @@ impl Default for KeyBindingsConfig {
             "tab"       => KeyBindingCopyAction::ToggleSide,
             "q"         => KeyBindingCopyAction::Exit,
             "esc"       => KeyBindingCopyAction::Exit,
+            "ctrl-y"    => KeyBindingCopyAction::ScrollUp,
+            "ctrl-e"    => KeyBindingCopyAction::ScrollDown,
         };
 
         let dialog_actions = default_bindings! {

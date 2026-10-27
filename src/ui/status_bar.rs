@@ -123,7 +123,16 @@
 //! | `{baud}`, `{framing}`                                      | `serial_settings`         |
 //! | `{copy_side}`                                              | the copy cursor's panel   |
 //! | `{pan_left}`, `{pan_right}`                                | `pan_left`, `pan_right`   |
+//! | `{pan_offset}`, `{pan_max}`                                | `pan_home`                |
 //! | `{scroll_pos}` `{scroll_pos_up}` `{scroll_percent}` `{scroll_offset}` | `scroll_to_bottom` |
+//!
+//! The scroll and pan actions a `click=` can run: `scroll_up`, `scroll_down`, `page_up`,
+//! `page_down`, `scroll_to_top`, `scroll_to_bottom`, `pan_left`, `pan_right`, `pan_home` (back
+//! to the left edge). They move the view only, in copy mode too: the copy cursor stays. The
+//! steps (all but `scroll_to_top`, `scroll_to_bottom` and `pan_home`) repeat while the button
+//! is held on their block, until the pointer leaves it. The wheel over a block that pans pans
+//! the history. A custom scroll block:
+//! `[▲](click=page_up)[{scroll_percent:>3}%](muted)[▼](click=page_down)`
 //!
 //! ## Examples
 //! ```toml
@@ -425,17 +434,12 @@ impl Var {
             Self::Baud | Self::Framing => KeyBindingAction::SerialSettings,
             Self::PanLeft => KeyBindingAction::PanLeft,
             Self::PanRight => KeyBindingAction::PanRight,
+            Self::PanOffset | Self::PanMax => KeyBindingAction::PanHome,
             Self::ScrollPos | Self::ScrollPosUp | Self::ScrollPercent | Self::ScrollOffset => {
                 KeyBindingAction::ScrollToBottom
             }
             Self::CopySide => return Some(ClickAction::ToggleSide),
-            Self::Port
-            | Self::RxBytes
-            | Self::TxBytes
-            | Self::Time
-            | Self::ScrollMax
-            | Self::PanOffset
-            | Self::PanMax => {
+            Self::Port | Self::RxBytes | Self::TxBytes | Self::Time | Self::ScrollMax => {
                 return None;
             }
         };
