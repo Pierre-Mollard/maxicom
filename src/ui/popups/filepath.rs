@@ -8,8 +8,9 @@ use ratatui::{
 
 use crate::{
     configs::{KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
+    logger::Stream,
     overlays::{FilePathDialog, PopupTarget},
-    ui::popups::{form_area, key_hints, popup_block, section},
+    ui::popups::{form_area, key_hints, popup_block, row_area, section},
 };
 
 pub fn render_filepath_popup(
@@ -24,9 +25,17 @@ pub fn render_filepath_popup(
         .add_modifier(Modifier::BOLD);
 
     let path_str = dialog.file_input.value();
+    let stream_span = |stream: Stream| {
+        let label = format!(" {} ", stream.as_str());
+        if stream == dialog.stream {
+            Span::styled(label, style.add_modifier(Modifier::REVERSED))
+        } else {
+            Span::styled(label, Style::default().fg(theme.palette.unselected))
+        }
+    };
 
     let text = vec![
-        section("Log File Path", theme),
+        section("Recording", theme),
         Line::from(""),
         Line::from(vec![
             Span::styled("▶ ", style),
@@ -37,18 +46,25 @@ pub fn render_filepath_popup(
                 Style::default().fg(theme.palette.text_muted),
             ),
         ]),
+        Line::from(vec![
+            Span::raw("  Stream  : "),
+            stream_span(Stream::Text),
+            Span::raw(" "),
+            stream_span(Stream::Raw),
+        ]),
     ];
 
     let hints = key_hints(
         resolver,
         true,
         &[
+            (&[KeyBindingDialogAction::CycleNext], "Stream"),
             (&[KeyBindingDialogAction::Confirm], "Apply"),
             (&[KeyBindingDialogAction::Close], "Cancel"),
         ],
         theme,
     );
-    let block = popup_block("Logging", &hints, theme);
+    let block = popup_block("Start Recording", &hints, theme);
 
     // wider than the other forms: paths are long
     let area = form_area(frame.area(), 64, text.len());
@@ -57,6 +73,8 @@ pub fn render_filepath_popup(
     frame.render_widget(block, area);
     frame.render_widget(Paragraph::new(text), inner);
     hints.push_block_targets(area, targets);
+    // the stream row, under the file row (MAX-147)
+    targets.push((row_area(inner, 3), PopupTarget::CaptureStream));
 
     let cursor_input = &dialog.file_input;
     let line_y_offset = 2; // relative to inner area

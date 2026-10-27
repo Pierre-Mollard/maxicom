@@ -31,8 +31,8 @@ pub fn monitor_title(app: &App, area: &Rect, room: u16) -> String {
         area.width.saturating_sub(2),
         area.height.saturating_sub(2)
     );
-    let (mode, mut details, missed, logging, scroll_offset, pan_offset) = match app.settings().mode
-    {
+    let logging = app.is_logging_active();
+    let (mode, mut details, missed, scroll_offset, pan_offset) = match app.settings().mode {
         Mode::Terminal => {
             let tm = &app.terminal_mode;
             let (rows, cols) = tm.vt100_screen().size();
@@ -40,7 +40,6 @@ pub fn monitor_title(app: &App, area: &Rect, room: u16) -> String {
                 "TERMINAL",
                 vec![format!("VT {cols}x{rows}"), view],
                 tm.is_new_content_missed(),
-                tm.is_logging(),
                 tm.vt100_screen().scrollback(),
                 tm.pan_offset(),
             )
@@ -51,7 +50,6 @@ pub fn monitor_title(app: &App, area: &Rect, room: u16) -> String {
                 "LINE",
                 vec![view],
                 lm.is_new_content_missed(),
-                lm.is_logging(),
                 lm.scroll_status().offset_from_bottom,
                 lm.x_offset(),
             )

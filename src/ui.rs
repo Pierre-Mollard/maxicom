@@ -259,6 +259,7 @@ mod tests {
         inputs::{
             Action, AppAction, CopyModeAction, DialogAction, HistoryAction, SearchModeAction,
         },
+        logger::Stream,
         overlays::{ErrorDialog, FilePathDialog, HelpDialog, ResizeDialog, SerialConfigDialog},
         serial::SerialConfig,
     };
@@ -318,7 +319,7 @@ mod tests {
         fn feed_as(&mut self, encoding: TextEncoding, bytes: &[u8]) {
             self.app
                 .line_mode
-                .feed_rx(RxNewlineMode::Auto, encoding, "%H", bytes);
+                .feed_rx(RxNewlineMode::Auto, encoding, bytes);
         }
 
         fn scroll(&mut self, action: HistoryAction) {
@@ -1034,7 +1035,13 @@ mod tests {
     /// How: Cancel bound to `q` only, then to `q` and Ctrl-q (`q` comes first in the order).
     #[test]
     fn text_input_popups_hint_only_keys_they_route() {
-        let file = || Overlay::FilePath(FilePathDialog::new("log.txt"));
+        let file = || {
+            Overlay::FilePath(FilePathDialog::new(
+                Stream::Text,
+                "log.txt".into(),
+                "log.raw".into(),
+            ))
+        };
         let resize = || Overlay::TerminalSize(ResizeDialog::new(24, 80));
 
         let rows = popup_rows(file(), &[("q", "close"), ("enter", "confirm")]);
@@ -1155,7 +1162,11 @@ mod tests {
         let popups = [
             Overlay::Settings,
             Overlay::SerialSettings(SerialConfigDialog::new(&SerialConfig::default())),
-            Overlay::FilePath(FilePathDialog::new("log.txt")),
+            Overlay::FilePath(FilePathDialog::new(
+                Stream::Text,
+                "log.txt".into(),
+                "log.raw".into(),
+            )),
             Overlay::TerminalSize(ResizeDialog::new(24, 80)),
         ];
         for overlay in popups {
@@ -1188,7 +1199,14 @@ mod tests {
     #[test]
     fn text_input_cursor_follows_the_text() {
         let popups = [
-            (Overlay::FilePath(FilePathDialog::new("log.txt")), "log.txt"),
+            (
+                Overlay::FilePath(FilePathDialog::new(
+                    Stream::Text,
+                    "log.txt".into(),
+                    "log.raw".into(),
+                )),
+                "log.txt",
+            ),
             (Overlay::TerminalSize(ResizeDialog::new(24, 80)), "24"),
         ];
         for (overlay, text) in popups {
@@ -3294,7 +3312,22 @@ mod tests {
         press(&mut h, cell_of(&rows, "Close"));
         assert!(h.app.overlay().is_none());
 
-        let rows = open(&mut h, Overlay::FilePath(FilePathDialog::new("x.log")));
+        let rows = open(
+            &mut h,
+            Overlay::FilePath(FilePathDialog::new(
+                Stream::Text,
+                "x.log".into(),
+                "x.raw".into(),
+            )),
+        );
+        // the stream row switches the stream (MAX-147)
+        press(&mut h, cell_of(&rows, " raw "));
+        assert!(matches!(
+            h.app.overlay(),
+            Some(Overlay::FilePath(dialog)) if dialog.stream == Stream::Raw
+        ));
+        let rows = h.draw();
+        assert!(has(&rows, "x.raw"), "{rows:#?}");
         press(&mut h, cell_of(&rows, "Cancel"));
         assert!(h.app.overlay().is_none());
 

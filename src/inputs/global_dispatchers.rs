@@ -9,6 +9,7 @@ use crate::{
         Action, AppAction, CopyModeAction, DialogAction, HistoryAction, LineInputAction,
         SearchModeAction, SideViewAction, TerminalAction,
     },
+    logger::Stream,
     overlays::{HelpDialog, Overlay, ResizeDialog, SerialConfigDialog, SettingKey},
 };
 
@@ -45,6 +46,8 @@ impl KeyBindingAction {
             }
             KeyBindingAction::Settings => Action::App(AppAction::OpenOverlay(Overlay::Settings)),
             KeyBindingAction::ToggleLogging => Action::App(AppAction::ToggleLogging),
+            KeyBindingAction::RecordText => Action::App(AppAction::ToggleRecording(Stream::Text)),
+            KeyBindingAction::RecordRaw => Action::App(AppAction::ToggleRecording(Stream::Raw)),
             KeyBindingAction::ResizeDialog => {
                 let (r, c) = app.terminal_mode.get_vt100_size();
                 Action::App(AppAction::OpenOverlay(Overlay::TerminalSize(

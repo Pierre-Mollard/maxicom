@@ -309,21 +309,31 @@ pub enum WrapMode {
     Truncate,
 }
 
+/// Recordings of what is received (MAX-147): a file is `dir` joined with the stream's strftime
+/// name, formatted when the recording dialog opens. An empty `dir` is the current directory
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct LineLogConfig {
-    pub enabled: bool,
-    pub path: PathBuf,
+pub struct CaptureConfig {
+    pub dir: PathBuf,
+    pub text_name: String,
+    pub raw_name: String,
     pub timestamp: bool,
 }
 
-impl Default for LineLogConfig {
+impl Default for CaptureConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
-            path: PathBuf::from("maxicom_lines.log"),
+            dir: PathBuf::new(),
+            text_name: String::from("maxicom_%Y%m%d_%H%M%S.log"),
+            raw_name: String::from("maxicom_%Y%m%d_%H%M%S.raw"),
             timestamp: true,
         }
+    }
+}
+
+impl CaptureConfig {
+    pub fn path_for(&self, name: &str) -> PathBuf {
+        self.dir.join(chrono::Local::now().format(name).to_string())
     }
 }
 
@@ -346,7 +356,6 @@ pub struct LineModeConfig {
     pub prompt_vi_prefix: String,
     pub prompt_hidden_left: String,
     pub prompt_hidden_right: String,
-    pub logging: LineLogConfig,
 }
 
 impl Default for LineModeConfig {
@@ -368,23 +377,6 @@ impl Default for LineModeConfig {
             prompt_vi_prefix: String::from("< "),
             prompt_hidden_left: String::from("◀"),
             prompt_hidden_right: String::from("▶"),
-            logging: LineLogConfig::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct TerminalLogConfig {
-    pub enabled: bool,
-    pub path: PathBuf,
-}
-
-impl Default for TerminalLogConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            path: PathBuf::from("maxicom_terminal.raw"),
         }
     }
 }
@@ -403,7 +395,6 @@ pub struct TerminalModeConfig {
     pub history_size: usize,
     pub empty_fill_char: String,
     pub unfocused_cursor_glyph: String,
-    pub logging: TerminalLogConfig,
 }
 
 impl Default for TerminalModeConfig {
@@ -415,7 +406,6 @@ impl Default for TerminalModeConfig {
             history_size: 2500,
             empty_fill_char: String::from("░"),
             unfocused_cursor_glyph: String::from("█"),
-            logging: TerminalLogConfig::default(),
         }
     }
 }
@@ -539,6 +529,7 @@ pub struct SettingsConfig {
     pub inactivity_detach_timeout: Duration,
     pub line_mode: LineModeConfig,
     pub terminal_mode: TerminalModeConfig,
+    pub capture: CaptureConfig,
     pub theme_path: Option<PathBuf>,
     pub keybindings_path: Option<PathBuf>,
     pub highlights_path: Option<PathBuf>,
@@ -562,6 +553,7 @@ impl Default for SettingsConfig {
             timestamp_format: String::from("[%H:%M:%S%.3f]"),
             line_mode: LineModeConfig::default(),
             terminal_mode: TerminalModeConfig::default(),
+            capture: CaptureConfig::default(),
             inactivity_detach_timeout: DEFAULT_INACTIVITY_DETACH,
             theme_path: None,
             keybindings_path: None,
@@ -656,6 +648,18 @@ impl SettingsConfig {
             });
         };
 
+        for (field, name) in [
+            ("capture.text_name", &self.capture.text_name),
+            ("capture.raw_name", &self.capture.raw_name),
+        ] {
+            if let Err(err) = StrftimeItems::new(name).parse() {
+                return Err(ConfigValidationError::InvalidCaptureName {
+                    field,
+                    err: err.to_string(),
+                });
+            }
+        }
+
         self.ui.validate()?;
 
         Ok(())
@@ -700,6 +704,10 @@ pub enum ConfigValidationError {
     InvalidStatusBarTimeFormat {
         err: String,
     },
+    InvalidCaptureName {
+        field: &'static str,
+        err: String,
+    },
     InvalidGenericField {
         name: String,
         min: usize,
@@ -723,6 +731,7 @@ impl std::fmt::Display for ConfigValidationError {
             Self::InvalidStatusBarTimeFormat { err } => {
                 write!(f, "invalid status bar time_format: {err}")
             }
+            Self::InvalidCaptureName { field, err } => write!(f, "invalid {field}: {err}"),
             Self::InvalidGenericField { name, min, max } => {
                 write!(f, "{name} is not a value between {min} and {max}")
             }

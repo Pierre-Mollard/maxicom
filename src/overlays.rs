@@ -6,6 +6,7 @@ use crossterm::event::KeyCode;
 use crate::{
     configs::{KeyBindingAction, keybindings::KeyBindingDialogAction},
     inputs::DialogAction,
+    logger::Stream,
     serial::SerialConfig,
 };
 
@@ -47,6 +48,7 @@ pub enum PopupTarget {
     ResizeField(ResizeField),
     Hint(KeyBindingDialogAction),
     MenuItem(usize),
+    CaptureStream,
 }
 
 pub enum OverlayResponse {
@@ -56,7 +58,7 @@ pub enum OverlayResponse {
     ResizeTerminal { rows: u16, cols: u16 },
     ReconfigureSerial(SerialConfig),
     ReconnectSerial,
-    StartCapture(PathBuf),
+    StartCapture { path: PathBuf, stream: Stream },
     Quit,
     Run(KeyBindingAction),
 }

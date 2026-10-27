@@ -14,7 +14,7 @@ use crate::{
         Action, AppAction, ClickHoldAction, CopyModeAction, HistoryAction, LineInputAction,
         ScrollbarAction, SearchModeAction, SideViewAction, TerminalAction,
     },
-    logger::{LineLogger, TerminalLogger},
+    logger::{Recorder, Stream},
     notification::{NotificationManager, ToastLevel},
     overlays::{ErrorDialog, FilePathDialog, Overlay, OverlayResponse, PopupTarget, SettingKey},
     serial::SerialConfig,
@@ -101,6 +101,7 @@ pub struct App {
     click_repeat_at: Option<Instant>,
     pub line_mode: LineMode,
     pub terminal_mode: TerminalMode,
+    recorder: Recorder,
     pub is_window_focused: bool,
     pointer: Option<(u16, u16)>,
     /// The last text copied, which a right-click pastes (MAX-144)
@@ -128,19 +129,14 @@ impl App {
         key_resolver: KeyResolver,
         serial_config: SerialConfig,
     ) -> Self {
-        let line_logger = LineLogger::new(settings.line_mode.logging.to_owned());
-        let terminal_logger = TerminalLogger::new(settings.terminal_mode.logging.to_owned());
-
         let line_view = LineMode::new(
             settings.line_mode.history_size,
             settings.line_mode.send_history_size,
-            line_logger,
         );
         let terminal_view = TerminalMode::new(
             settings.terminal_mode.history_size,
             settings.terminal_mode.rows,
             settings.terminal_mode.cols,
-            terminal_logger,
         );
 
         Self {
@@ -162,6 +158,7 @@ impl App {
             click_repeat_at: None,
             line_mode: line_view,
             terminal_mode: terminal_view,
+            recorder: Recorder::default(),
             is_window_focused: true,
             pointer: None,
             paste_buffer: None,
@@ -294,8 +291,7 @@ impl App {
             Action::TransmitRaw(bytes) => {
                 if self.settings.local_echo && self.settings.mode == Mode::Line {
                     let text = String::from_utf8_lossy(&bytes).into_owned();
-                    self.line_mode
-                        .push_history(text, &self.settings.timestamp_format);
+                    self.line_mode.push_history(text);
                 }
                 UpdateEffect::Transmit(bytes)
             }
@@ -353,15 +349,13 @@ impl App {
                             let action = action.to_action(self);
                             self.update(action)
                         }
-                        OverlayResponse::StartCapture(path) => {
-                            let result = match self.settings.mode {
-                                Mode::Line => self.line_mode.start_logging(path),
-                                Mode::Terminal => self.terminal_mode.start_logging(path),
-                            };
-
-                            match result {
+                        OverlayResponse::StartCapture { path, stream } => {
+                            match self.recorder.start(stream, path) {
                                 Ok(_) => {
-                                    self.notify_success("Started recording");
+                                    self.notify_success(format!(
+                                        "Started recording {}",
+                                        stream.as_str()
+                                    ));
                                 }
                                 Err(e) => {
                                     self.open_overlay(Overlay::Error(
@@ -386,18 +380,25 @@ impl App {
 
     pub fn feed_rx(&mut self, chunk: &[u8]) {
         let settings = &self.settings;
+        let timestamp_format = settings
+            .capture
+            .timestamp
+            .then_some(settings.timestamp_format.as_str());
+        self.recorder.record_rx(
+            settings.line_mode.rx_eol,
+            settings.encoding,
+            timestamp_format,
+            chunk,
+        );
+
         let feed_line = settings.dual_mode_buffering == DualBufferMode::AlwaysBoth
             || settings.mode == Mode::Line;
         let feed_terminal = settings.dual_mode_buffering == DualBufferMode::AlwaysBoth
             || settings.mode == Mode::Terminal;
 
         if feed_line {
-            self.line_mode.feed_rx(
-                settings.line_mode.rx_eol,
-                settings.encoding,
-                &settings.timestamp_format,
-                chunk,
-            );
+            self.line_mode
+                .feed_rx(settings.line_mode.rx_eol, settings.encoding, chunk);
         }
         if feed_terminal {
             self.terminal_mode.process_rx(settings.encoding, chunk);
@@ -406,8 +407,7 @@ impl App {
 
     /// Returns true when something on screen changed with time alone (needs a redraw)
     pub fn tick(&mut self) -> bool {
-        self.line_mode.flush_logger_if_due();
-        self.terminal_mode.flush_logger_if_due();
+        self.recorder.flush_if_due();
 
         let toasts_expired = self.notifications.tick();
         let now = Instant::now();
@@ -582,6 +582,10 @@ impl App {
             }
             AppAction::ToggleLogging => {
                 self.toggle_logging();
+                UpdateEffect::None
+            }
+            AppAction::ToggleRecording(stream) => {
+                self.toggle_recording(stream);
                 UpdateEffect::None
             }
             AppAction::OpenOverlay(overlay) => {
@@ -781,10 +785,8 @@ impl App {
             "line_mode.send_history_size",
             line.send_history_size != new_line.send_history_size,
         );
-        keep("line_mode.logging", line.logging != new_line.logging);
         new_line.history_size = line.history_size;
         new_line.send_history_size = line.send_history_size;
-        new_line.logging = line.logging.clone();
 
         let (term, new_term) = (&old.terminal_mode, &mut settings.terminal_mode);
         keep(
@@ -793,11 +795,9 @@ impl App {
         );
         keep("terminal_mode.rows", term.rows != new_term.rows);
         keep("terminal_mode.cols", term.cols != new_term.cols);
-        keep("terminal_mode.logging", term.logging != new_term.logging);
         new_term.history_size = term.history_size;
         new_term.rows = term.rows;
         new_term.cols = term.cols;
-        new_term.logging = term.logging.clone();
 
         settings.refresh_timestamp_width();
         self.settings = settings;
@@ -882,33 +882,41 @@ impl App {
         }
     }
 
-    fn toggle_logging(&mut self) {
-        let (is_logging, active_path) = match self.settings.mode {
-            Mode::Line => (
-                self.line_mode.is_logging(),
-                self.line_mode
-                    .logger_active_path()
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
-            Mode::Terminal => (
-                self.terminal_mode.is_logging(),
-                self.terminal_mode
-                    .logger_active_path()
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
-        };
-
-        if is_logging {
-            match self.settings.mode {
-                Mode::Line => self.line_mode.stop_logging(),
-                Mode::Terminal => self.terminal_mode.stop_logging(),
-            }
-            self.notify_info("Logging stopped");
-        } else {
-            self.open_overlay(Overlay::FilePath(FilePathDialog::new(&active_path)));
+    /// The stream the recording toggle starts in each mode: text in line mode, raw in terminal
+    /// mode
+    fn mode_stream(&self) -> Stream {
+        match self.settings.mode {
+            Mode::Line => Stream::Text,
+            Mode::Terminal => Stream::Raw,
         }
+    }
+
+    /// Stops every recording, or opens the recording dialog on the mode's stream when none is on
+    fn toggle_logging(&mut self) {
+        if self.recorder.is_any_active() {
+            self.recorder.stop(Stream::Text);
+            self.recorder.stop(Stream::Raw);
+            self.notify_info("Recording stopped");
+        } else {
+            self.open_capture_dialog(self.mode_stream());
+        }
+    }
+
+    fn toggle_recording(&mut self, stream: Stream) {
+        if self.recorder.is_active(stream) {
+            self.recorder.stop(stream);
+            self.notify_info(format!("Stopped recording {}", stream.as_str()));
+        } else {
+            self.open_capture_dialog(stream);
+        }
+    }
+
+    /// The dialog on `stream`, each stream's path made from `[capture]` now
+    fn open_capture_dialog(&mut self, stream: Stream) {
+        let capture = &self.settings.capture;
+        let path = |name| capture.path_for(name).to_string_lossy().into_owned();
+        let dialog = FilePathDialog::new(stream, path(&capture.text_name), path(&capture.raw_name));
+        self.open_overlay(Overlay::FilePath(dialog));
     }
 
     #[inline]
@@ -925,11 +933,13 @@ impl App {
         self.prefix_active
     }
 
+    /// Some recording is on, what `REC` shows
     pub fn is_logging_active(&self) -> bool {
-        match self.settings().mode {
-            Mode::Line => self.line_mode.is_logging(),
-            Mode::Terminal => self.terminal_mode.is_logging(),
-        }
+        self.recorder.is_any_active()
+    }
+
+    pub fn is_recording(&self, stream: Stream) -> bool {
+        self.recorder.is_active(stream)
     }
 
     pub fn focus_target(&self) -> FocusTarget {
@@ -1046,6 +1056,61 @@ mod tests {
         )
     }
 
+    /// MAX-147: a text recording gets what is received in terminal mode too, even when line
+    /// mode isn't fed (it used to go quiet there).
+    /// How: `ActiveOnly` buffering in terminal mode, a text recording, one line received.
+    #[test]
+    fn text_recording_follows_rx_in_terminal_mode() {
+        let mut app = app();
+        app.settings.mode = Mode::Terminal;
+        app.settings.dual_mode_buffering = DualBufferMode::ActiveOnly;
+        app.settings.capture.timestamp = false;
+        let path =
+            std::env::temp_dir().join(format!("maxicom_test_{}_app_text.log", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        app.recorder.start(Stream::Text, path.clone()).unwrap();
+
+        app.feed_rx(b"seen\r\n");
+        app.recorder.stop(Stream::Text);
+        assert!(app.line_mode.history().is_empty());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "seen\n");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// MAX-147: each stream's action opens the dialog on it or stops it alone; the
+    /// `toggle_logging` action (the `REC` click) stops both, and `REC` is on with either.
+    /// How: text and raw recordings to temp files, then each action in turn.
+    #[test]
+    fn recording_actions_per_stream() {
+        let mut app = app();
+        app.settings.mode = Mode::Line;
+        let temp = |name: &str| {
+            std::env::temp_dir().join(format!("maxicom_test_{}_{name}", std::process::id()))
+        };
+        let open_dialog = |app: &App| match app.overlay() {
+            Some(Overlay::FilePath(dialog)) => Some(dialog.stream),
+            _ => None,
+        };
+
+        app.update(Action::App(AppAction::ToggleRecording(Stream::Raw)));
+        assert_eq!(open_dialog(&app), Some(Stream::Raw));
+        app.close_overlay();
+        app.update(Action::App(AppAction::ToggleLogging));
+        assert_eq!(open_dialog(&app), Some(Stream::Text));
+        app.close_overlay();
+
+        app.recorder.start(Stream::Text, temp("act.log")).unwrap();
+        app.recorder.start(Stream::Raw, temp("act.raw")).unwrap();
+        app.update(Action::App(AppAction::ToggleRecording(Stream::Raw)));
+        assert!(app.is_logging_active() && !app.is_recording(Stream::Raw));
+        app.recorder.start(Stream::Raw, temp("act.raw")).unwrap();
+        app.update(Action::App(AppAction::ToggleLogging));
+        assert!(!app.is_logging_active());
+        assert!(app.overlay().is_none());
+        let _ = std::fs::remove_file(temp("act.log"));
+        let _ = std::fs::remove_file(temp("act.raw"));
+    }
+
     /// Setting toggles that re-lay out the view reuse the last size `render` gave, not a
     /// default one.
     /// How: a 100x30 viewport in line mode, then the wrap toggle and the mode toggle (into
@@ -1123,7 +1188,6 @@ mod tests {
         let mut settings = SettingsConfig::default();
         settings.line_mode.history_size = 7;
         settings.terminal_mode.rows = 50;
-        settings.terminal_mode.logging.path = "other.log".into();
         settings.inactivity_detach_timeout = Duration::from_secs(9);
         settings.rx_buffer_size = 512;
         settings.encoding.toggle();
@@ -1139,10 +1203,6 @@ mod tests {
         );
         assert_eq!(app.settings.terminal_mode.rows, defaults.terminal_mode.rows);
         assert_eq!(
-            app.settings.terminal_mode.logging,
-            defaults.terminal_mode.logging
-        );
-        assert_eq!(
             app.settings.inactivity_detach_timeout,
             Duration::from_secs(9)
         );
@@ -1150,10 +1210,7 @@ mod tests {
         assert_ne!(app.settings.encoding, defaults.encoding);
         assert_eq!(
             toasts(&app),
-            [
-                "Config reloaded; restart to apply: line_mode.history_size, terminal_mode.rows, \
-              terminal_mode.logging"
-            ]
+            ["Config reloaded; restart to apply: line_mode.history_size, terminal_mode.rows"]
         );
     }
 

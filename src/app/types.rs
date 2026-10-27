@@ -3,9 +3,74 @@ use ratatui::{layout::Rect, style::Style};
 
 use crate::{
     app::selection::{CopySide, LogicalPosition},
-    configs::{KeyBindingAction, KeyBindingSearchAction},
+    configs::{KeyBindingAction, KeyBindingSearchAction, RxNewlineMode},
     overlays::PopupTarget,
 };
+
+/// Received bytes cut into lines the way line mode shows them: LF ends a line, and with CrLf
+/// or Auto a CR followed by anything else starts it over. Shared by line mode and the
+/// recorder, so a recording has the same lines whatever the mode (MAX-147)
+#[derive(Debug, Default)]
+pub struct RxLineSplitter {
+    line: Vec<u8>,
+    timestamp: Option<DateTime<Local>>,
+    pending_carriage_return: bool,
+}
+
+impl RxLineSplitter {
+    pub fn push(&mut self, byte: u8, rx_eol_mode: RxNewlineMode, now: DateTime<Local>) -> bool {
+        if self.line.is_empty() {
+            self.timestamp = Some(now);
+        }
+
+        match byte {
+            b'\r' => match rx_eol_mode {
+                RxNewlineMode::CrLf | RxNewlineMode::Auto => {
+                    self.pending_carriage_return = true;
+                    self.line.push(b'\r');
+                }
+                RxNewlineMode::LfOnly => {
+                    self.line.push(b'\r');
+                }
+            },
+            b'\n' => {
+                self.line.push(b'\n');
+                self.pending_carriage_return = false;
+                return true;
+            }
+            byte => {
+                if self.pending_carriage_return {
+                    self.pending_carriage_return = false;
+                    self.line.clear();
+                    self.timestamp = Some(now);
+                }
+                self.line.push(byte);
+            }
+        }
+        false
+    }
+
+    /// The line received so far, with its EOL once ended
+    #[inline]
+    pub fn line(&self) -> &[u8] {
+        &self.line
+    }
+
+    #[inline]
+    pub fn timestamp(&self) -> Option<DateTime<Local>> {
+        self.timestamp
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.line.clear();
+    }
+
+    /// When the line started, now if nothing was received
+    pub fn take_timestamp(&mut self) -> DateTime<Local> {
+        self.timestamp.take().unwrap_or_else(Local::now)
+    }
+}
 
 // we no longer cache the timestamp string because there is less lines to render
 // and it cost alloc and space when in the 10 of thousands of lines

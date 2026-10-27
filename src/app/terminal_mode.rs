@@ -1,8 +1,7 @@
 use std::{
     collections::VecDeque,
     fs::File,
-    io::{self, Write},
-    path::PathBuf,
+    io::Write,
     time::{Duration, Instant},
 };
 
@@ -25,13 +24,11 @@ use crate::{
         click_input_at, dispatch_input_key, local_dispatchers::dispatch_copy_key_vi,
         paste_into_input,
     },
-    logger::TerminalLogger,
     terminal::{TerminalParser, new_parser, vt100_dim, vt100_size},
 };
 
 pub struct TerminalMode {
     vt100_parser: TerminalParser,
-    logger: TerminalLogger,
     max_content_scrollback: usize,
     max_history_lines: usize,
     search_state: SearchState,
@@ -51,7 +48,7 @@ pub struct TerminalMode {
 }
 
 impl TerminalMode {
-    pub fn new(max_history_lines: usize, rows: u16, cols: u16, logger: TerminalLogger) -> Self {
+    pub fn new(max_history_lines: usize, rows: u16, cols: u16) -> Self {
         let vt100_parser = new_parser(rows, cols, max_history_lines);
         let search_state = SearchState::default();
         let copy_state = CopyModeState::default();
@@ -60,7 +57,6 @@ impl TerminalMode {
 
         TerminalMode {
             vt100_parser,
-            logger,
             max_content_scrollback: 0,
             max_history_lines,
             search_state,
@@ -78,7 +74,6 @@ impl TerminalMode {
     }
 
     pub fn process_rx(&mut self, encoding: TextEncoding, raw_bytes: &[u8]) {
-        let _ = self.logger.log_raw_bytes(raw_bytes);
         self.scroller.on_rx_received();
         self.search_text = None;
 
@@ -793,26 +788,6 @@ impl TerminalMode {
         self.raw_scroller.set_limit(overflow, raw_view);
     }
 
-    pub fn start_logging(&mut self, path: PathBuf) -> io::Result<()> {
-        self.logger.start_with_path(path)
-    }
-
-    pub fn stop_logging(&mut self) {
-        self.logger.stop();
-    }
-
-    pub fn is_logging(&self) -> bool {
-        self.logger.is_active()
-    }
-
-    pub fn flush_logger_if_due(&mut self) {
-        let _ = self.logger.flush_if_due();
-    }
-
-    pub fn logger_active_path(&self) -> &PathBuf {
-        self.logger.active_path()
-    }
-
     #[inline]
     pub fn search(&self) -> &SearchState {
         &self.search_state
@@ -1098,7 +1073,6 @@ mod tests {
     //! Bytes sent in terminal mode: typed keys (#31) and bracketed paste (#28).
 
     use super::*;
-    use crate::configs::TerminalLogConfig;
     use crossterm::event::{KeyCode, KeyModifiers};
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -1148,12 +1122,7 @@ mod tests {
     }
 
     fn terminal(rows: u16) -> TerminalMode {
-        TerminalMode::new(
-            100,
-            rows,
-            80,
-            TerminalLogger::new(TerminalLogConfig::default()),
-        )
+        TerminalMode::new(100, rows, 80)
     }
 
     /// Feeds one line per chunk, 1 ms apart so every row gets a distinct timestamp.
@@ -1173,12 +1142,7 @@ mod tests {
     }
 
     fn terminal_with(history: usize, rows: u16) -> TerminalMode {
-        TerminalMode::new(
-            history,
-            rows,
-            80,
-            TerminalLogger::new(TerminalLogConfig::default()),
-        )
+        TerminalMode::new(history, rows, 80)
     }
 
     /// Feeds each line as its own chunk, 1 ms apart, and returns each line's text with the
@@ -1454,12 +1418,7 @@ mod tests {
     /// How: an Up key through `update_action_terminal` before, during and after the mode.
     #[test]
     fn cursor_mode_follows_remote() {
-        let mut tm = TerminalMode::new(
-            100,
-            24,
-            80,
-            TerminalLogger::new(TerminalLogConfig::default()),
-        );
+        let mut tm = TerminalMode::new(100, 24, 80);
         let up = |tm: &mut TerminalMode| match tm
             .update_action_terminal(TerminalAction::Key(key(KeyCode::Up)))
         {

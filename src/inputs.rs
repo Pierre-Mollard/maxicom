@@ -12,6 +12,7 @@ use crate::{
     },
     configs::{KeyBindingAction, KeyPattern, Mode},
     inputs::mouse::handle_mouse,
+    logger::Stream,
     overlays::{Overlay, PopupTarget, SettingKey},
 };
 
@@ -47,6 +48,7 @@ pub enum AppAction {
     FocusGained(bool),
     ToggleSetting(SettingKey),
     ToggleLogging,
+    ToggleRecording(Stream),
     DetachSerial,
     ReloadConfig,
     OpenOverlay(Overlay),
@@ -460,7 +462,11 @@ mod tests {
     #[test]
     fn text_input_popups_type_non_modal_keys() {
         let mut app = app();
-        let file = crate::overlays::FilePathDialog::new("log.txt");
+        let file = crate::overlays::FilePathDialog::new(
+            Stream::Text,
+            "log.txt".to_string(),
+            "log.raw".to_string(),
+        );
         app.update(Action::App(AppAction::OpenOverlay(Overlay::FilePath(file))));
         let dialog = |event| handle_event(event, &app);
 

@@ -1,6 +1,6 @@
 use chrono::{DateTime, Local};
 use crossterm::event::KeyEvent;
-use std::{collections::VecDeque, io, path::PathBuf};
+use std::collections::VecDeque;
 use tui_input::Input;
 
 use crate::{
@@ -13,7 +13,7 @@ use crate::{
         scroller::{ScrollStatus, ViewportScroller},
         search::SearchState,
         selection::{CopyActionResult, CopyModeState, Reveal, TextSource},
-        types::{LogEntry, ViewportSize},
+        types::{LogEntry, RxLineSplitter, ViewportSize},
     },
     configs::{
         LineDisplayMode, RawSideView, RxNewlineMode, SettingsConfig, TextEncoding, WrapMode,
@@ -23,7 +23,6 @@ use crate::{
         click_input_at, dispatch_input_key, dispatch_input_key_vi,
         local_dispatchers::dispatch_copy_key_vi, paste_into_input, vi::ViPending,
     },
-    logger::LineLogger,
 };
 
 pub struct LineMode {
@@ -39,18 +38,14 @@ pub struct LineMode {
     max_lines: usize,
     /// Max sent lines kept for history up/down
     max_send_lines: usize,
-    /// Current line being received from device output as bytes
-    partial_line: Vec<u8>,
-    partial_line_timestamp: Option<DateTime<Local>>,
+    /// Current line being received from device output
+    partial_line: RxLineSplitter,
     /// Current line being typed by user as futur device input
     user_input: Input,
     /// Columns of the TX input scrolled out on the left, kept from frame to frame by the
     /// render: the view moves only when the cursor pushes past an edge (MAX-145)
     prompt_scroll: usize,
     vi_state_prompt: ViState,
-    /// Waiting to receive carriage return
-    pending_carriage_return: bool,
-    logger: LineLogger,
     search_state: SearchState,
     copy_state: CopyModeState,
     scroller: ViewportScroller,
@@ -80,7 +75,7 @@ pub struct LineMode {
 }
 
 impl LineMode {
-    pub fn new(max_history_lines: usize, max_send_lines: usize, logger: LineLogger) -> Self {
+    pub fn new(max_history_lines: usize, max_send_lines: usize) -> Self {
         let search_state = SearchState::default();
         let copy_state = CopyModeState::default();
         let scroller = ViewportScroller::default();
@@ -93,13 +88,10 @@ impl LineMode {
             temp_input: Input::default(),
             max_lines: max_history_lines,
             max_send_lines,
-            partial_line: Vec::new(),
+            partial_line: RxLineSplitter::default(),
             user_input: Input::default(),
             prompt_scroll: 0,
             vi_state_prompt: ViState::default(),
-            partial_line_timestamp: None,
-            pending_carriage_return: false,
-            logger,
             search_state,
             copy_state,
             scroller,
@@ -123,74 +115,36 @@ impl LineMode {
     }
 
     pub fn partial_line_timestamp(&self) -> Option<DateTime<Local>> {
-        self.partial_line_timestamp
+        self.partial_line.timestamp()
     }
 
-    pub fn feed_rx(
-        &mut self,
-        rx_eol_mode: RxNewlineMode,
-        encoding: TextEncoding,
-        timestamp_f: &str,
-        bytes: &[u8],
-    ) {
+    pub fn feed_rx(&mut self, rx_eol_mode: RxNewlineMode, encoding: TextEncoding, bytes: &[u8]) {
         let now = Local::now();
         for &b in bytes {
-            if self.partial_line.is_empty() {
-                self.partial_line_timestamp = Some(now);
-            }
-
-            match b {
-                b'\r' => match rx_eol_mode {
-                    RxNewlineMode::CrLf | RxNewlineMode::Auto => {
-                        self.pending_carriage_return = true;
-                        self.partial_line.push(b'\r');
-                    }
-                    RxNewlineMode::LfOnly => {
-                        self.partial_line.push(b'\r');
-                    }
-                },
-                b'\n' => {
-                    self.partial_line.push(b'\n');
-                    self.pending_carriage_return = false;
-                    self.commit_partial_line(encoding, timestamp_f);
-                }
-                byte => {
-                    if self.pending_carriage_return {
-                        self.pending_carriage_return = false;
-                        self.partial_line.clear();
-                        self.partial_line_timestamp = Some(now);
-                    }
-                    self.partial_line.push(byte);
-                }
+            if self.partial_line.push(b, rx_eol_mode, now) {
+                self.commit_partial_line(encoding);
             }
         }
 
         self.rebase_line_refs();
     }
 
-    fn commit_partial_line(&mut self, encoding: TextEncoding, timestamp_f: &str) {
-        let line = encoding.decode(&self.partial_line);
-        let timestamp = self.take_line_timestamp();
-        let entry = LogEntry::received(line, &self.partial_line, timestamp);
-        self.push_entry(entry, timestamp_f);
+    fn commit_partial_line(&mut self, encoding: TextEncoding) {
+        let line = encoding.decode(self.partial_line.line());
+        let timestamp = self.partial_line.take_timestamp();
+        let entry = LogEntry::received(line, self.partial_line.line(), timestamp);
         self.partial_line.clear();
+        self.push_entry(entry);
     }
 
-    pub fn push_history(&mut self, line: String, timestamp_f: &str) {
-        let entry = LogEntry::new(line, self.take_line_timestamp());
-        self.push_entry(entry, timestamp_f);
+    pub fn push_history(&mut self, line: String) {
+        let entry = LogEntry::new(line, self.partial_line.take_timestamp());
+        self.push_entry(entry);
         self.rebase_line_refs();
     }
 
-    fn take_line_timestamp(&mut self) -> DateTime<Local> {
-        self.partial_line_timestamp
-            .take()
-            .unwrap_or_else(Local::now)
-    }
-
     /// Push without rebasing line indexes, the caller rebases once for a whole batch
-    fn push_entry(&mut self, entry: LogEntry, timestamp_f: &str) {
-        let _ = self.logger.log_entry(&entry, timestamp_f);
+    fn push_entry(&mut self, entry: LogEntry) {
         self.local_history.push_back(entry);
         self.row_heights.push_back(0);
 
@@ -233,7 +187,7 @@ impl LineMode {
     /// Read-only view of current incoming RX slice
     #[inline]
     pub fn partial_rx(&self) -> &[u8] {
-        &self.partial_line
+        self.partial_line.line()
     }
 
     pub fn history_up(&mut self) {
@@ -297,7 +251,7 @@ impl LineMode {
                 }
 
                 if settings.local_echo {
-                    self.push_history(text.clone(), &settings.timestamp_format);
+                    self.push_history(text.clone());
                 }
 
                 // consumming string!
@@ -564,26 +518,6 @@ impl LineMode {
 
     pub fn update_raw_limits(&mut self, overflow: usize, raw_view: RawSideView) {
         self.raw_scroller.set_limit(overflow, raw_view);
-    }
-
-    pub fn start_logging(&mut self, path: PathBuf) -> io::Result<()> {
-        self.logger.start_with_path(path)
-    }
-
-    pub fn stop_logging(&mut self) {
-        self.logger.stop();
-    }
-
-    pub fn is_logging(&self) -> bool {
-        self.logger.is_active()
-    }
-
-    pub fn flush_logger_if_due(&mut self) {
-        let _ = self.logger.flush_if_due();
-    }
-
-    pub fn logger_active_path(&self) -> &PathBuf {
-        self.logger.active_path()
     }
 
     #[inline]
@@ -867,25 +801,23 @@ mod tests {
     //! RX ingest: line splitting, EOL modes, history cap and known data-model bugs.
 
     use super::*;
-    use crate::{app::search::SearchModeKind, configs::LineLogConfig};
+    use crate::app::search::SearchModeKind;
     use crossterm::event::{KeyCode, KeyModifiers};
 
     fn line_mode(max_lines: usize) -> LineMode {
-        LineMode::new(max_lines, 1000, LineLogger::new(LineLogConfig::default()))
+        LineMode::new(max_lines, 1000)
     }
 
     fn texts(lm: &LineMode) -> Vec<&str> {
         lm.history().iter().map(|e| e.text.as_str()).collect()
     }
 
-    const TS: &str = "[%H:%M:%S]";
-
     /// CRLF and LF both commit a line, and the stored text keeps its EOL.
     /// How: one chunk with two lines.
     #[test]
     fn crlf_line_is_committed_with_its_eol() {
         let mut lm = line_mode(10);
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"abc\r\ndef\n");
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"abc\r\ndef\n");
         assert_eq!(texts(&lm), ["abc\r\n", "def\n"]);
         assert!(lm.partial_rx().is_empty());
     }
@@ -895,9 +827,9 @@ mod tests {
     #[test]
     fn line_split_across_chunks() {
         let mut lm = line_mode(10);
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"ab");
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"ab");
         assert_eq!(lm.partial_rx(), b"ab");
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"c\n");
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"c\n");
         assert_eq!(texts(&lm), ["abc\n"]);
     }
 
@@ -909,7 +841,6 @@ mod tests {
         lm.feed_rx(
             RxNewlineMode::Auto,
             TextEncoding::Utf8,
-            TS,
             b"progress 10%\rprogress 20%\n",
         );
         assert_eq!(texts(&lm), ["progress 20%\n"]);
@@ -920,7 +851,7 @@ mod tests {
     #[test]
     fn lone_cr_is_kept_in_lf_only_mode() {
         let mut lm = line_mode(10);
-        lm.feed_rx(RxNewlineMode::LfOnly, TextEncoding::Utf8, TS, b"a\rb\n");
+        lm.feed_rx(RxNewlineMode::LfOnly, TextEncoding::Utf8, b"a\rb\n");
         assert_eq!(texts(&lm), ["a\rb\n"]);
     }
 
@@ -929,7 +860,7 @@ mod tests {
     #[test]
     fn history_is_capped() {
         let mut lm = line_mode(2);
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"1\n2\n3\n");
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"1\n2\n3\n");
         assert_eq!(texts(&lm), ["2\n", "3\n"]);
     }
 
@@ -938,7 +869,7 @@ mod tests {
     #[test]
     fn search_matches_follow_their_line_when_history_is_full() {
         let mut lm = line_mode(2);
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"a\ntarget\n");
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"a\ntarget\n");
         *lm.search_mut() = SearchState {
             active: true,
             query: Input::from("target"),
@@ -947,12 +878,12 @@ mod tests {
         lm.update_search_matches(LineDisplayMode::Pretty, RawSideView::Hex);
         assert_eq!(lm.search().matches[0].line_idx, 1);
 
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"other\n");
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"other\n");
         let idx = lm.search().matches[0].line_idx;
         assert_eq!(lm.history()[idx].text, "target\n");
 
         // once its line is dropped too, the match is gone
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"more\n");
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"more\n");
         assert!(lm.search().matches.is_empty());
     }
 
@@ -961,9 +892,9 @@ mod tests {
     #[test]
     fn copy_cursor_follows_its_line_when_history_is_full() {
         let mut lm = line_mode(3);
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"a\nb\nc\n");
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"a\nb\nc\n");
         lm.copy_state.enter_at(1, 0);
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"d\n");
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"d\n");
         assert_eq!(lm.history()[lm.copy_state().cursor.line_idx].text, "b\n");
     }
 
@@ -980,7 +911,7 @@ mod tests {
     /// How: submits 8 lines with a cap of 3, checks size, oldest kept and history up.
     #[test]
     fn send_history_is_capped() {
-        let mut lm = LineMode::new(10, 3, LineLogger::new(LineLogConfig::default()));
+        let mut lm = LineMode::new(10, 3);
         let settings = SettingsConfig::default();
         for i in 0..8 {
             lm.user_input = Input::from(format!("cmd {i}").as_str());
@@ -997,7 +928,7 @@ mod tests {
     /// How: cap 0, one submit, then history up on an empty input.
     #[test]
     fn send_history_size_zero_keeps_nothing() {
-        let mut lm = LineMode::new(10, 0, LineLogger::new(LineLogConfig::default()));
+        let mut lm = LineMode::new(10, 0);
         lm.user_input = Input::from("cmd");
         lm.update_action_lineinput(&SettingsConfig::default(), LineInputAction::Submit);
         assert!(lm.local_send_history.is_empty());
@@ -1010,9 +941,9 @@ mod tests {
     #[test]
     fn push_history_rebases_line_refs() {
         let mut lm = line_mode(2);
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, TS, b"a\ntarget\n");
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"a\ntarget\n");
         lm.copy_state.enter_at(1, 0);
-        lm.push_history("echo".to_string(), TS);
+        lm.push_history("echo".to_string());
         assert_eq!(lm.copy_state().cursor.line_idx, 0);
     }
 
@@ -1021,12 +952,7 @@ mod tests {
     #[test]
     fn latin1_line_keeps_wire_bytes() {
         let mut lm = line_mode(10);
-        lm.feed_rx(
-            RxNewlineMode::Auto,
-            TextEncoding::Latin1,
-            TS,
-            &[0xE9, b'\n'],
-        );
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Latin1, &[0xE9, b'\n']);
         assert_eq!(lm.history()[0].text, "é\n");
         assert_eq!(lm.history()[0].wire_bytes(), [0xE9, b'\n']);
     }
@@ -1056,7 +982,7 @@ mod tests {
         let mut lm = line_mode(10);
         let mut line = wire.to_vec();
         line.push(b'\n');
-        lm.feed_rx(RxNewlineMode::Auto, encoding, TS, &line);
+        lm.feed_rx(RxNewlineMode::Auto, encoding, &line);
         lm
     }
 
@@ -1133,12 +1059,7 @@ mod tests {
     #[test]
     fn query_cursor_keys_keep_the_current_match() {
         let mut lm = line_mode(10);
-        lm.feed_rx(
-            RxNewlineMode::Auto,
-            TextEncoding::Utf8,
-            TS,
-            b"hit a\nhit b\n",
-        );
+        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"hit a\nhit b\n");
         lm.search_state.active = true;
         lm.search_state.query = tui_input::Input::new("hit".to_string());
         lm.update_search_matches(LineDisplayMode::Pretty, RawSideView::Hex);
