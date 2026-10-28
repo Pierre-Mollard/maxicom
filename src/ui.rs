@@ -1418,6 +1418,52 @@ mod tests {
         assert_eq!(before[..height], moved[..height]);
     }
 
+    /// MAX-148: a restored line without a time keeps the time column blank, its text lined up
+    /// with a timed live line, and a click and a drag on it work as on any line.
+    /// How: a session journal without timestamps restored, then a live line; timestamps shown.
+    #[test]
+    fn restored_line_without_time_lines_up_and_copies() {
+        let dir = std::env::temp_dir().join(format!(
+            "maxicom_test_{}_restored_click",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let session = crate::logger::write_test_session(
+            &dir,
+            "/dev/ttyUSB0",
+            &crate::logger::JournalText::default(),
+            b"restored words\r\n",
+            b"",
+        );
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 70, 12, |settings| {
+            settings.show_timestamps = true;
+        });
+        h.app.restore_session(&session).unwrap();
+        h.feed(b"live words\r\n");
+        let rows = h.draw();
+        let (restored_x, restored_y) = cell_of(&rows, "restored words");
+        assert_eq!(restored_x, cell_of(&rows, "live words").0, "{rows:#?}");
+        let gutter: String = rows[restored_y as usize]
+            .chars()
+            .take(restored_x as usize)
+            .collect();
+        assert!(!gutter.chars().any(|c| c.is_ascii_digit()), "{gutter:?}");
+
+        click(&mut h, (restored_x + 3, restored_y));
+        h.draw();
+        assert_eq!(cursor_cell(&mut h), (restored_x + 3, restored_y));
+        h.app.update(Action::CopyMode(CopyModeAction::Exit));
+
+        let (x, y) = cell_of(&h.draw(), "words");
+        mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), (x, y));
+        mouse_do(&mut h, MouseEventKind::Drag(MouseButton::Left), (x + 4, y));
+        match mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), (x + 4, y)) {
+            UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "words"),
+            _ => panic!("expected a yank"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A drag selects from the press, and the release yanks the selection and leaves copy
     /// mode; a drag out of the history keeps to its edge.
     #[test]

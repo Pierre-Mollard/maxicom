@@ -143,6 +143,14 @@ impl LineMode {
         self.rebase_line_refs();
     }
 
+    /// Pushes lines restored from a session journal, before any live line (MAX-148)
+    pub fn restore_entries(&mut self, entries: impl IntoIterator<Item = LogEntry>) {
+        for entry in entries {
+            self.push_entry(entry);
+        }
+        self.rebase_line_refs();
+    }
+
     /// Push without rebasing line indexes, the caller rebases once for a whole batch
     fn push_entry(&mut self, entry: LogEntry) {
         self.local_history.push_back(entry);

@@ -79,12 +79,23 @@ pub struct LogEntry {
     /// Bytes received, kept only when they differ from `text`'s UTF-8 (Latin1, CP437, ASCII or
     /// invalid UTF-8): what was on the wire for the raw panel, raw search and raw yank (#20)
     pub wire: Option<Box<[u8]>>,
-    pub timestamp: DateTime<Local>,
+    /// None for a line restored from a session journal without a time to read back (MAX-148)
+    pub timestamp: Option<DateTime<Local>>,
 }
 
 impl LogEntry {
     /// A line typed or echoed locally: its bytes are its text
     pub fn new(text: String, timestamp: DateTime<Local>) -> Self {
+        Self {
+            text,
+            wire: None,
+            timestamp: Some(timestamp),
+        }
+    }
+
+    /// A line restored from a session journal, with its time when it could be read back
+    /// (MAX-148)
+    pub fn restored(text: String, timestamp: Option<DateTime<Local>>) -> Self {
         Self {
             text,
             wire: None,
@@ -98,7 +109,7 @@ impl LogEntry {
         Self {
             text,
             wire,
-            timestamp,
+            timestamp: Some(timestamp),
         }
     }
 

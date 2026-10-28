@@ -26,6 +26,19 @@ use crate::{
     terminal::{TerminalParser, new_parser, vt100_dim, vt100_size},
 };
 
+/// The modes a restored session may have left set, reset (MAX-148): the scroll region,
+/// application cursor keys and keypad, mouse reports, bracketed paste, origin and insert modes,
+/// autowrap back on, colors, and the cursor shown. The scroll region and origin mode move the
+/// cursor home, so `TerminalMode::restore` puts it back after
+const RESTORE_RESET: &str = concat!(
+    "\x1b[r",
+    "\x1b[?1l\x1b>",
+    "\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l",
+    "\x1b[?2004l",
+    "\x1b[?6l\x1b[4l\x1b[?7h",
+    "\x1b[0m\x1b[?25h",
+);
+
 pub struct TerminalMode {
     vt100_parser: TerminalParser,
     max_content_scrollback: usize,
@@ -805,6 +818,31 @@ impl TerminalMode {
         self.raw_scroller.max_pan_x
     }
 
+    /// Replays a past session's raw bytes, then resets the modes it may have left set (the
+    /// alternate screen, application cursor keys, mouse reports, bracketed paste, a scroll
+    /// region, a hidden cursor, colors) so the keys and the mouse work, and writes `separator`
+    /// dimmed on a line of its own. The rows restored have no time: the raw bytes have none
+    /// (MAX-148)
+    pub fn restore(&mut self, encoding: TextEncoding, raw: &[u8], separator: &str) {
+        self.process_rx(encoding, raw);
+        // leaving it restores a saved cursor, so only when the session is in it
+        if self.vt100_parser.screen().alternate_screen() {
+            self.process_rx(TextEncoding::Utf8, b"\x1b[?1049l");
+        }
+        let (row, col) = self.vt100_parser.screen().cursor_position();
+        let mut end = String::from(RESTORE_RESET);
+        end.push_str(&format!("\x1b[{};{}H", row + 1, col + 1));
+        // on a line of its own: a new one only when the cursor isn't at the start of one
+        if col > 0 {
+            end.push_str("\r\n");
+        }
+        end.push_str("\x1b[2m");
+        end.push_str(separator);
+        end.push_str("\x1b[0m\r\n");
+        self.process_rx(TextEncoding::Utf8, end.as_bytes());
+        self.row_timestamps.iter_mut().for_each(|time| *time = None);
+    }
+
     /// The screen as it is now, and a flash to show it was taken
     pub fn screenshot(&mut self) -> Screenshot {
         self.trigger_flash();
@@ -1515,5 +1553,45 @@ mod tests {
         );
         tm.set_vt100_size(5, 40);
         assert_eq!(tm.get_vt100_size(), (5, 40));
+    }
+
+    /// MAX-148: a restore replays the raw bytes, then leaves a session that ended inside a
+    /// full-screen program usable: main screen, normal cursor keys, no mouse reports, no
+    /// bracketed paste, cursor shown. The separator follows on its own line, the restored rows
+    /// have no time, and a live line after them gets one.
+    #[test]
+    fn restore_resets_the_modes_left_set() {
+        let mut tm = TerminalMode::new(100, 24, 80);
+        let raw =
+            b"before\r\nkept\r\n\x1b[?1049h\x1b[?1h\x1b[?1000h\x1b[?2004h\x1b[?25l\x1b[5;10rvim";
+        tm.restore(TextEncoding::Utf8, raw, "-- restored --");
+        let screen = tm.vt100_screen();
+        assert!(!screen.alternate_screen());
+        assert!(!screen.application_cursor());
+        assert_eq!(screen.mouse_protocol_mode(), vt100::MouseProtocolMode::None);
+        assert!(!screen.bracketed_paste());
+        assert!(!screen.hide_cursor());
+        let contents = screen.contents();
+        assert!(
+            contents.starts_with("before\nkept\n-- restored --"),
+            "{contents:?}"
+        );
+        assert!(tm.row_timestamps.iter().all(Option::is_none));
+
+        tm.process_rx(TextEncoding::Utf8, b"live\r\n");
+        assert!(
+            tm.vt100_screen()
+                .contents()
+                .contains("-- restored --\nlive")
+        );
+        // the live row and the one the cursor went on to, the restored ones stay without
+        let stamped = tm.row_timestamps.iter().filter(|t| t.is_some()).count();
+        assert_eq!(stamped, 2);
+
+        // a session that ended mid-line: the separator goes on the next one
+        let mut tm = TerminalMode::new(100, 24, 80);
+        tm.restore(TextEncoding::Utf8, b"abc", "-- restored --");
+        let contents = tm.vt100_screen().contents();
+        assert!(contents.starts_with("abc\n-- restored --"), "{contents:?}");
     }
 }

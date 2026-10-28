@@ -7,7 +7,7 @@ use crate::{
     app::{
         scroller::ScrollStatus,
         selection::{ClickCounter, CopySide},
-        types::{FocusTarget, FrameAreas, FrameMap, ViewportSize},
+        types::{FocusTarget, FrameAreas, FrameMap, LogEntry, ViewportSize},
     },
     configs::{
         DualBufferMode, KeyBindingAction, KeyResolver, Mode, SettingsConfig, StatusBarLayout,
@@ -17,7 +17,11 @@ use crate::{
         Action, AppAction, ClickHoldAction, CopyModeAction, HistoryAction, LineInputAction,
         ScrollbarAction, SearchModeAction, SideViewAction, TerminalAction,
     },
-    logger::{Recorder, ScreenshotFormat, Stream, create_parent_dirs, expand_home, session_tag},
+    logger::{
+        JournalReader, JournalText, PastSession, RESTORE_RAW_TAIL, Recorder, ScreenshotFormat,
+        SessionDevice, Stream, create_parent_dirs, expand_home, read_tail_bytes, read_tail_lines,
+        restore_separator,
+    },
     notification::{NotificationManager, ToastLevel},
     overlays::{
         ErrorDialog, FilePathDialog, Overlay, OverlayResponse, PopupTarget, ScreenshotDialog,
@@ -448,23 +452,46 @@ impl App {
         self.open_overlay(Overlay::Screenshot(dialog));
     }
 
+    /// Puts a past session in the history of both modes, before any live data (MAX-148): the
+    /// last lines of its text in line mode, read back with their times and marks, the end of
+    /// its raw bytes through the terminal, then a separator where the live data starts. Not
+    /// recorded nor counted: the new session starts empty
+    // TODO(MAX-148): called at startup (step 4)
+    #[allow(dead_code)]
+    pub fn restore_session(&mut self, session: &PastSession) -> std::io::Result<()> {
+        let text = read_tail_lines(&session.text_path, self.settings.line_mode.history_size)?;
+        let raw = read_tail_bytes(&session.raw_path, RESTORE_RAW_TAIL)?;
+        let separator = restore_separator(session);
+
+        let text = String::from_utf8_lossy(&text);
+        let mut reader = JournalReader::new(&session.text, session.started);
+        let lines = text.lines().map(|line| {
+            let line = reader.parse(line);
+            LogEntry::restored(line.text.to_string(), line.time)
+        });
+        let separator_line = LogEntry::restored(separator.clone(), None);
+        self.line_mode
+            .restore_entries(lines.chain(std::iter::once(separator_line)));
+        self.terminal_mode
+            .restore(self.settings.encoding, &raw, &separator);
+        Ok(())
+    }
+
     /// Records what was sent to the text streams, in line mode only: in terminal mode the keys
     /// go one by one and the remote echoes them, so the received text has them (MAX-147)
     pub fn record_tx(&mut self, bytes: &[u8]) {
         let settings = &self.settings;
-        if !settings.capture.record_tx || settings.mode != Mode::Line {
+        if settings.mode != Mode::Line {
             return;
         }
-        let timestamp_format = settings
-            .capture
+        let capture = &settings.capture;
+        let timestamp_format = capture
             .timestamp
             .then_some(settings.timestamp_format.as_str());
-        self.recorder.record_tx(
-            settings.encoding,
-            timestamp_format,
-            &settings.capture.tx_mark,
-            bytes,
-        );
+        // the journal records them as it started, whatever `record_tx` is now (MAX-148)
+        let mark = capture.record_tx.then_some(capture.tx_mark.as_str());
+        self.recorder
+            .record_tx(settings.encoding, timestamp_format, mark, bytes);
     }
 
     /// Returns true when something on screen changed with time alone (needs a redraw)
@@ -1001,12 +1028,18 @@ impl App {
         if !capture.journal {
             return;
         }
+        let device = SessionDevice::new(&self.serial_config, self.settings.encoding);
+        // the journal's text is written as the capture settings say now, reloads aside
+        let text = JournalText {
+            timestamp: capture
+                .timestamp
+                .then(|| self.settings.timestamp_format.clone()),
+            tx_mark: capture.record_tx.then(|| capture.tx_mark.clone()),
+        };
         let result = match dir {
-            Some(dir) => self.recorder.start_journal(
-                &dir,
-                &session_tag(&self.serial_config.port),
-                capture.journal_keep,
-            ),
+            Some(dir) => self
+                .recorder
+                .start_journal(&dir, &device, &text, capture.journal_keep),
             None => Err(std::io::Error::other("no cache folder")),
         };
         if let Err(err) = result {
@@ -1416,5 +1449,55 @@ mod tests {
         )));
         assert!(app.overlay().is_none());
         assert!(!app.terminal_mode.has_pending_flash());
+    }
+
+    /// MAX-148: a restore puts the session's last lines in line mode with their times (a sent
+    /// line without its mark), then the separator without a time; the terminal gets the raw
+    /// bytes, back on the main screen. Nothing goes to the new session's journal or the stats.
+    /// How: a session with "> " marks and times, ending in the alternate screen; an app with
+    /// its own journal restores it.
+    #[test]
+    fn restore_fills_both_modes_and_records_nothing() {
+        let base =
+            std::env::temp_dir().join(format!("maxicom_test_{}_restore", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let text = JournalText {
+            timestamp: Some("[%H:%M:%S%.3f]".to_string()),
+            tx_mark: Some("> ".to_string()),
+        };
+        let session = crate::logger::write_test_session(
+            &base.join("old"),
+            "/dev/ttyUSB0",
+            &text,
+            b"one\r\ntwo\r\n\x1b[?1049h\x1b[?1hvim",
+            b"cmd\r\n",
+        );
+
+        let mut app = app();
+        app.terminal_mode.set_vt100_size(24, 80);
+        app.start_journal(Some(base.join("new")));
+        app.restore_session(&session).unwrap();
+
+        let history: Vec<_> = app.line_mode.history().iter().collect();
+        let texts: Vec<_> = history.iter().map(|e| e.text.as_str()).collect();
+        assert_eq!(texts[..3], ["one", "two", "cmd"]);
+        assert!(texts[3].starts_with("── restored: ttyUSB0, "), "{texts:?}");
+        assert!(history[..3].iter().all(|e| e.timestamp.is_some()));
+        assert_eq!(history[3].timestamp, None);
+
+        let screen = app.terminal_mode.vt100_screen();
+        assert!(!screen.alternate_screen() && !screen.application_cursor());
+        assert!(screen.contents().contains("one\ntwo\n── restored"));
+        assert!(screen.contents().contains("── restored: ttyUSB0, "));
+        assert_eq!(app.stats.rx(), 0);
+
+        drop(app);
+        for entry in std::fs::read_dir(base.join("new")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|ext| ext != "meta") {
+                assert_eq!(std::fs::read(&path).unwrap(), b"", "{path:?}");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
