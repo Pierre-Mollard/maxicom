@@ -12,7 +12,7 @@ use crate::{
     },
     configs::{KeyBindingAction, KeyPattern, Mode},
     inputs::mouse::handle_mouse,
-    logger::Stream,
+    logger::{ScreenshotFormat, Stream},
     overlays::{Overlay, PopupTarget, SettingKey},
 };
 
@@ -95,8 +95,7 @@ pub enum LineInputAction {
 pub enum TerminalAction {
     AutoResizeRemoteToViewer,
     AutoResizeEmulatorToViewer,
-    ScreenshotBytes,
-    ScreenshotTxt,
+    Screenshot(ScreenshotFormat),
     Key(KeyEvent),
     Paste(String),
     MouseReport(Vec<u8>),

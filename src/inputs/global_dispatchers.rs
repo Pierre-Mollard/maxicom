@@ -9,7 +9,7 @@ use crate::{
         Action, AppAction, CopyModeAction, DialogAction, HistoryAction, LineInputAction,
         SearchModeAction, SideViewAction, TerminalAction,
     },
-    logger::Stream,
+    logger::{ScreenshotFormat, Stream},
     overlays::{HelpDialog, Overlay, ResizeDialog, SerialConfigDialog, SettingKey},
 };
 
@@ -63,8 +63,12 @@ impl KeyBindingAction {
             KeyBindingAction::AutoResizeEmulator => {
                 Action::Terminal(TerminalAction::AutoResizeEmulatorToViewer)
             }
-            KeyBindingAction::ScreenshotBytes => Action::Terminal(TerminalAction::ScreenshotBytes),
-            KeyBindingAction::ScreenshotTxt => Action::Terminal(TerminalAction::ScreenshotTxt),
+            KeyBindingAction::ScreenshotBytes => {
+                Action::Terminal(TerminalAction::Screenshot(ScreenshotFormat::Ansi))
+            }
+            KeyBindingAction::ScreenshotTxt => {
+                Action::Terminal(TerminalAction::Screenshot(ScreenshotFormat::Text))
+            }
             KeyBindingAction::SerialSettings => {
                 let dialog = SerialConfigDialog::new(&app.serial_config);
                 Action::App(AppAction::OpenOverlay(Overlay::SerialSettings(dialog)))

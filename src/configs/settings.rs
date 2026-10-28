@@ -310,7 +310,11 @@ pub enum WrapMode {
 }
 
 /// Recordings of what is received (MAX-147): a file is `dir` joined with the stream's strftime
-/// name, formatted when the recording dialog opens. An empty `dir` is the current directory
+/// name, formatted when the recording dialog opens. An empty `dir` is the current directory.
+/// `journal` backs up every session, apart from them, in the cache folder, keeping the last
+/// `journal_keep` sessions. `record_tx` adds the lines sent in line mode to the text files, as
+/// `> line`. A screenshot is `screenshot_dir` joined with `screenshot_name` and the format's
+/// extension, prefilled in its dialog
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CaptureConfig {
@@ -318,6 +322,11 @@ pub struct CaptureConfig {
     pub text_name: String,
     pub raw_name: String,
     pub timestamp: bool,
+    pub record_tx: bool,
+    pub journal: bool,
+    pub journal_keep: usize,
+    pub screenshot_dir: PathBuf,
+    pub screenshot_name: String,
 }
 
 impl Default for CaptureConfig {
@@ -327,6 +336,11 @@ impl Default for CaptureConfig {
             text_name: String::from("maxicom_%Y%m%d_%H%M%S.log"),
             raw_name: String::from("maxicom_%Y%m%d_%H%M%S.raw"),
             timestamp: true,
+            record_tx: true,
+            journal: true,
+            journal_keep: 20,
+            screenshot_dir: PathBuf::new(),
+            screenshot_name: String::from("screen_%Y%m%d_%H%M%S"),
         }
     }
 }
@@ -334,6 +348,12 @@ impl Default for CaptureConfig {
 impl CaptureConfig {
     pub fn path_for(&self, name: &str) -> PathBuf {
         self.dir.join(chrono::Local::now().format(name).to_string())
+    }
+
+    /// The screenshot path without its extension, which comes with the format
+    pub fn screenshot_stem(&self) -> PathBuf {
+        let name = chrono::Local::now().format(&self.screenshot_name);
+        self.screenshot_dir.join(name.to_string())
     }
 }
 
@@ -651,6 +671,7 @@ impl SettingsConfig {
         for (field, name) in [
             ("capture.text_name", &self.capture.text_name),
             ("capture.raw_name", &self.capture.raw_name),
+            ("capture.screenshot_name", &self.capture.screenshot_name),
         ] {
             if let Err(err) = StrftimeItems::new(name).parse() {
                 return Err(ConfigValidationError::InvalidCaptureName {

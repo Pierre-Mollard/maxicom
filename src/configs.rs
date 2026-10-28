@@ -20,6 +20,7 @@ pub use settings::{
 pub use theme::{ThemeConfig, ThemeError};
 
 const APP_DIR: &str = "maxicom";
+const SESSION_DIR: &str = "sessions";
 const CONFIG_FILE: &str = "config.toml";
 const THEME_FILE: &str = "theme.toml";
 const KEYMAP_FILE: &str = "keymap.toml";
@@ -65,6 +66,10 @@ impl AppConfig {
         dirs::config_dir()
             .map(|p| p.join(APP_DIR).join(CONFIG_FILE))
             .unwrap_or_else(|| PathBuf::from(CONFIG_FILE))
+    }
+
+    pub fn default_journal_dir() -> Option<PathBuf> {
+        dirs::cache_dir().map(|p| p.join(APP_DIR).join(SESSION_DIR))
     }
 
     pub fn default_theme_path() -> PathBuf {

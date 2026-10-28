@@ -35,7 +35,7 @@ use crate::{
                 render_confirm_quit_popup, render_detached_popup, render_disconnected_popup,
                 render_error_popup,
             },
-            filepath::render_filepath_popup,
+            filepath::{render_filepath_popup, render_screenshot_popup},
             help::render_help_popup,
             menu::render_action_menu,
             notifications::render_notifications,
@@ -222,6 +222,9 @@ fn render_active_overlay(app: &mut App, frame: &mut Frame, theme: &ThemeConfig) 
         Some(Overlay::FilePath(dialog)) => {
             render_filepath_popup(dialog, resolver, frame, theme, &mut targets)
         }
+        Some(Overlay::Screenshot(dialog)) => {
+            render_screenshot_popup(dialog, resolver, frame, theme, &mut targets)
+        }
         Some(Overlay::DeviceDisconnected(port)) => {
             render_disconnected_popup(port, resolver, frame, theme, &mut targets)
         }
@@ -259,8 +262,11 @@ mod tests {
         inputs::{
             Action, AppAction, CopyModeAction, DialogAction, HistoryAction, SearchModeAction,
         },
-        logger::Stream,
-        overlays::{ErrorDialog, FilePathDialog, HelpDialog, ResizeDialog, SerialConfigDialog},
+        logger::{Screenshot, ScreenshotFormat, Stream},
+        overlays::{
+            ErrorDialog, FilePathDialog, HelpDialog, ResizeDialog, ScreenshotDialog,
+            SerialConfigDialog,
+        },
         serial::SerialConfig,
     };
     use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -3314,11 +3320,10 @@ mod tests {
 
         let rows = open(
             &mut h,
-            Overlay::FilePath(FilePathDialog::new(
-                Stream::Text,
-                "x.log".into(),
-                "x.raw".into(),
-            )),
+            Overlay::FilePath(
+                FilePathDialog::new(Stream::Text, "x.log".into(), "x.raw".into())
+                    .with_session_backup(),
+            ),
         );
         // the stream row switches the stream (MAX-147)
         press(&mut h, cell_of(&rows, " raw "));
@@ -3328,6 +3333,33 @@ mod tests {
         ));
         let rows = h.draw();
         assert!(has(&rows, "x.raw"), "{rows:#?}");
+        // so does the include row, with a session backup
+        press(&mut h, cell_of(&rows, "since session start"));
+        assert!(matches!(
+            h.app.overlay(),
+            Some(Overlay::FilePath(dialog)) if dialog.include_session == Some(true)
+        ));
+        let rows = h.draw();
+        assert!(has(&rows, "[x] since session start"), "{rows:#?}");
+        press(&mut h, cell_of(&rows, "Cancel"));
+        assert!(h.app.overlay().is_none());
+
+        // the screenshot format row switches the format (MAX-147)
+        let rows = open(
+            &mut h,
+            Overlay::Screenshot(ScreenshotDialog::new(
+                ScreenshotFormat::Text,
+                "shot",
+                Screenshot::default(),
+            )),
+        );
+        press(&mut h, cell_of(&rows, " ansi "));
+        assert!(matches!(
+            h.app.overlay(),
+            Some(Overlay::Screenshot(dialog)) if dialog.format == ScreenshotFormat::Ansi
+        ));
+        let rows = h.draw();
+        assert!(has(&rows, "shot.ans"), "{rows:#?}");
         press(&mut h, cell_of(&rows, "Cancel"));
         assert!(h.app.overlay().is_none());
 

@@ -1,7 +1,5 @@
 use std::{
     collections::VecDeque,
-    fs::File,
-    io::Write,
     time::{Duration, Instant},
 };
 
@@ -24,6 +22,7 @@ use crate::{
         click_input_at, dispatch_input_key, local_dispatchers::dispatch_copy_key_vi,
         paste_into_input,
     },
+    logger::Screenshot,
     terminal::{TerminalParser, new_parser, vt100_dim, vt100_size},
 };
 
@@ -539,6 +538,8 @@ impl TerminalMode {
                     format!("stty rows {rows} cols {cols}; export LINES={rows} COLUMNS={cols}\n");
                 UpdateEffect::Transmit(cmd.into_bytes())
             }
+            // taken by the app, which has the capture settings and the dialog (MAX-147)
+            TerminalAction::Screenshot(_) => UpdateEffect::None,
             TerminalAction::AutoResizeEmulatorToViewer => {
                 self.set_vt100_size(
                     self.scroller.view_height as u16,
@@ -548,20 +549,6 @@ impl TerminalMode {
                 self.scroller.max_pan_x = 0;
                 UpdateEffect::None
             }
-            TerminalAction::ScreenshotBytes => match self.save_screenshot_ansi() {
-                Ok(filename) => {
-                    self.trigger_flash();
-                    UpdateEffect::Screenshot(Ok(filename))
-                }
-                Err(e) => UpdateEffect::Screenshot(Err(e.to_string())),
-            },
-            TerminalAction::ScreenshotTxt => match self.save_screenshot_txt() {
-                Ok(filename) => {
-                    self.trigger_flash();
-                    UpdateEffect::Screenshot(Ok(filename))
-                }
-                Err(e) => UpdateEffect::Screenshot(Err(e.to_string())),
-            },
             // what is sent to the remote brings the view back to the live screen, as typing
             // there blind is no use; what it sends never moves a scrolled view (MAX-141)
             TerminalAction::Key(key_event) => {
@@ -818,26 +805,14 @@ impl TerminalMode {
         self.raw_scroller.max_pan_x
     }
 
-    pub fn save_screenshot_txt(&self) -> std::io::Result<String> {
-        let timestamp = Local::now().format("%Y%m%d_%H%M%S");
-        let filename = format!("screen_{}.txt", timestamp);
-
-        let text = self.vt100_parser.screen().contents();
-        let mut file = File::create(&filename)?;
-        file.write_all(text.as_bytes())?;
-
-        Ok(filename)
-    }
-
-    pub fn save_screenshot_ansi(&self) -> std::io::Result<String> {
-        let timestamp = Local::now().format("%Y%m%d_%H%M%S");
-        let filename = format!("screen_{}.ans", timestamp);
-
-        let contents = self.vt100_parser.screen().contents_formatted();
-        let mut file = File::create(&filename)?;
-        file.write_all(contents.as_bytes())?;
-
-        Ok(filename)
+    /// The screen as it is now, and a flash to show it was taken
+    pub fn screenshot(&mut self) -> Screenshot {
+        self.trigger_flash();
+        let screen = self.vt100_parser.screen();
+        Screenshot {
+            text: screen.contents(),
+            ansi: screen.contents_formatted(),
+        }
     }
 
     pub fn trigger_flash(&mut self) {

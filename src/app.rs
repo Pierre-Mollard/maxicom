@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use crate::{
     app::{
@@ -14,9 +17,12 @@ use crate::{
         Action, AppAction, ClickHoldAction, CopyModeAction, HistoryAction, LineInputAction,
         ScrollbarAction, SearchModeAction, SideViewAction, TerminalAction,
     },
-    logger::{Recorder, Stream},
+    logger::{Recorder, ScreenshotFormat, Stream, create_parent_dirs, expand_home, session_tag},
     notification::{NotificationManager, ToastLevel},
-    overlays::{ErrorDialog, FilePathDialog, Overlay, OverlayResponse, PopupTarget, SettingKey},
+    overlays::{
+        ErrorDialog, FilePathDialog, Overlay, OverlayResponse, PopupTarget, ScreenshotDialog,
+        SettingKey,
+    },
     serial::SerialConfig,
 };
 
@@ -117,7 +123,6 @@ pub enum UpdateEffect {
     Transmit(Vec<u8>),
     Reconfigure(SerialConfig),
     CopyToClipboard(String),
-    Screenshot(Result<String, String>),
     ToggleAttachSerial,
     ReloadConfig,
     Quit,
@@ -315,6 +320,10 @@ impl App {
                 }
                 effect
             }
+            Action::Terminal(TerminalAction::Screenshot(format)) => {
+                self.take_screenshot(format);
+                UpdateEffect::None
+            }
             Action::Terminal(action) => self.terminal_mode.update_action_terminal(action),
             Action::History(action) => self.update_action_history(action),
             Action::CopyMode(action) => self.update_action_copy_mode(action),
@@ -349,8 +358,13 @@ impl App {
                             let action = action.to_action(self);
                             self.update(action)
                         }
-                        OverlayResponse::StartCapture { path, stream } => {
-                            match self.recorder.start(stream, path) {
+                        OverlayResponse::StartCapture {
+                            path,
+                            stream,
+                            include_session,
+                        } => {
+                            let path = expand_home(&path);
+                            match self.recorder.start(stream, path, include_session) {
                                 Ok(_) => {
                                     self.notify_success(format!(
                                         "Started recording {}",
@@ -365,6 +379,21 @@ impl App {
                                         )
                                         .with_details(e),
                                     ));
+                                }
+                            }
+                            UpdateEffect::None
+                        }
+                        OverlayResponse::SaveScreenshot { path, contents } => {
+                            let path = expand_home(&path);
+                            let saved = create_parent_dirs(&path)
+                                .and_then(|()| std::fs::write(&path, contents));
+                            match saved {
+                                Ok(()) => self.notify_success(format!(
+                                    "Screenshot saved to {}",
+                                    path.display()
+                                )),
+                                Err(e) => {
+                                    self.notify_error(format!("Failed to save screenshot: {e}"))
                                 }
                             }
                             UpdateEffect::None
@@ -403,6 +432,35 @@ impl App {
         if feed_terminal {
             self.terminal_mode.process_rx(settings.encoding, chunk);
         }
+    }
+
+    /// Takes the terminal screen now, in both formats, and opens the dialog asking where to
+    /// save it and which format, `format` chosen first, so a fast screen is caught. Line mode
+    /// doesn't show that screen, so it is not taken there (MAX-147)
+    fn take_screenshot(&mut self, format: ScreenshotFormat) {
+        if self.settings.mode != Mode::Terminal {
+            self.notify_info("Screenshots are in terminal mode");
+            return;
+        }
+        let shot = self.terminal_mode.screenshot();
+        let stem = self.settings.capture.screenshot_stem();
+        let dialog = ScreenshotDialog::new(format, &stem.to_string_lossy(), shot);
+        self.open_overlay(Overlay::Screenshot(dialog));
+    }
+
+    /// Records what was sent to the text streams, in line mode only: in terminal mode the keys
+    /// go one by one and the remote echoes them, so the received text has them (MAX-147)
+    pub fn record_tx(&mut self, bytes: &[u8]) {
+        let settings = &self.settings;
+        if !settings.capture.record_tx || settings.mode != Mode::Line {
+            return;
+        }
+        let timestamp_format = settings
+            .capture
+            .timestamp
+            .then_some(settings.timestamp_format.as_str());
+        self.recorder
+            .record_tx(settings.encoding, timestamp_format, bytes);
     }
 
     /// Returns true when something on screen changed with time alone (needs a redraw)
@@ -799,6 +857,15 @@ impl App {
         new_term.rows = term.rows;
         new_term.cols = term.cols;
 
+        let (capture, new_capture) = (&old.capture, &mut settings.capture);
+        keep("capture.journal", capture.journal != new_capture.journal);
+        keep(
+            "capture.journal_keep",
+            capture.journal_keep != new_capture.journal_keep,
+        );
+        new_capture.journal = capture.journal;
+        new_capture.journal_keep = capture.journal_keep;
+
         settings.refresh_timestamp_width();
         self.settings = settings;
         self.key_resolver = key_resolver;
@@ -915,8 +982,32 @@ impl App {
     fn open_capture_dialog(&mut self, stream: Stream) {
         let capture = &self.settings.capture;
         let path = |name| capture.path_for(name).to_string_lossy().into_owned();
-        let dialog = FilePathDialog::new(stream, path(&capture.text_name), path(&capture.raw_name));
+        let mut dialog =
+            FilePathDialog::new(stream, path(&capture.text_name), path(&capture.raw_name));
+        if self.recorder.has_journal() {
+            dialog = dialog.with_session_backup();
+        }
         self.open_overlay(Overlay::FilePath(dialog));
+    }
+
+    /// Starts the session backup in `dir` when `capture.journal` is on. Without it, a toast
+    /// says so and the app runs on (MAX-147)
+    pub fn start_journal(&mut self, dir: Option<PathBuf>) {
+        let capture = &self.settings.capture;
+        if !capture.journal {
+            return;
+        }
+        let result = match dir {
+            Some(dir) => self.recorder.start_journal(
+                &dir,
+                &session_tag(&self.serial_config.port),
+                capture.journal_keep,
+            ),
+            None => Err(std::io::Error::other("no cache folder")),
+        };
+        if let Err(err) = result {
+            self.notify_warn(format!("Session backup off: {err}"));
+        }
     }
 
     #[inline]
@@ -1046,7 +1137,7 @@ mod tests {
     //! App-level wiring of the viewport (#35) and of a config reload (MAX-112).
 
     use super::*;
-    use crate::configs::KeyBindingsConfig;
+    use crate::{configs::KeyBindingsConfig, inputs::DialogAction};
 
     fn app() -> App {
         App::new(
@@ -1068,12 +1159,40 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("maxicom_test_{}_app_text.log", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        app.recorder.start(Stream::Text, path.clone()).unwrap();
+        app.recorder
+            .start(Stream::Text, path.clone(), false)
+            .unwrap();
 
         app.feed_rx(b"seen\r\n");
         app.recorder.stop(Stream::Text);
         assert!(app.line_mode.history().is_empty());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "seen\n");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// MAX-147: sent lines are recorded in line mode, not in terminal mode nor with
+    /// `capture.record_tx` off.
+    /// How: a text recording, one send in each case.
+    #[test]
+    fn tx_is_recorded_in_line_mode_only() {
+        let mut app = app();
+        app.settings.capture.timestamp = false;
+        let path =
+            std::env::temp_dir().join(format!("maxicom_test_{}_app_tx.log", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        app.recorder
+            .start(Stream::Text, path.clone(), false)
+            .unwrap();
+
+        app.settings.mode = Mode::Line;
+        app.record_tx(b"line\r\n");
+        app.settings.mode = Mode::Terminal;
+        app.record_tx(b"terminal\r");
+        app.settings.mode = Mode::Line;
+        app.settings.capture.record_tx = false;
+        app.record_tx(b"off\r\n");
+        app.recorder.stop(Stream::Text);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "> line\n");
         let _ = std::fs::remove_file(&path);
     }
 
@@ -1099,11 +1218,17 @@ mod tests {
         assert_eq!(open_dialog(&app), Some(Stream::Text));
         app.close_overlay();
 
-        app.recorder.start(Stream::Text, temp("act.log")).unwrap();
-        app.recorder.start(Stream::Raw, temp("act.raw")).unwrap();
+        app.recorder
+            .start(Stream::Text, temp("act.log"), false)
+            .unwrap();
+        app.recorder
+            .start(Stream::Raw, temp("act.raw"), false)
+            .unwrap();
         app.update(Action::App(AppAction::ToggleRecording(Stream::Raw)));
         assert!(app.is_logging_active() && !app.is_recording(Stream::Raw));
-        app.recorder.start(Stream::Raw, temp("act.raw")).unwrap();
+        app.recorder
+            .start(Stream::Raw, temp("act.raw"), false)
+            .unwrap();
         app.update(Action::App(AppAction::ToggleLogging));
         assert!(!app.is_logging_active());
         assert!(app.overlay().is_none());
@@ -1188,6 +1313,7 @@ mod tests {
         let mut settings = SettingsConfig::default();
         settings.line_mode.history_size = 7;
         settings.terminal_mode.rows = 50;
+        settings.capture.journal = false;
         settings.inactivity_detach_timeout = Duration::from_secs(9);
         settings.rx_buffer_size = 512;
         settings.encoding.toggle();
@@ -1202,6 +1328,7 @@ mod tests {
             defaults.line_mode.history_size
         );
         assert_eq!(app.settings.terminal_mode.rows, defaults.terminal_mode.rows);
+        assert!(app.settings.capture.journal);
         assert_eq!(
             app.settings.inactivity_detach_timeout,
             Duration::from_secs(9)
@@ -1210,7 +1337,10 @@ mod tests {
         assert_ne!(app.settings.encoding, defaults.encoding);
         assert_eq!(
             toasts(&app),
-            ["Config reloaded; restart to apply: line_mode.history_size, terminal_mode.rows"]
+            [
+                "Config reloaded; restart to apply: line_mode.history_size, terminal_mode.rows, \
+              capture.journal"
+            ]
         );
     }
 
@@ -1222,5 +1352,51 @@ mod tests {
         app.toggle_setting(SettingKey::Mouse);
         assert!(!app.settings.ui.mouse);
         assert_eq!(toasts(&app), ["Mouse capture OFF"]);
+    }
+
+    /// MAX-147: a screenshot action takes the screen at once, then opens its dialog prefilled
+    /// with `[capture]`'s folder, name and the format's extension; Enter saves that screen
+    /// there, creating the folders.
+    /// How: a temp `screenshot_dir` that doesn't exist, a fixed name, "hi" on the screen at
+    /// the action, " later" received while the dialog is open.
+    #[test]
+    fn screenshot_dialog_prefills_and_saves() {
+        let mut app = app();
+        app.settings.mode = Mode::Terminal;
+        let dir = std::env::temp_dir().join(format!("maxicom_test_{}_shots", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        app.settings.capture.screenshot_dir = dir.join("new");
+        app.settings.capture.screenshot_name = "shot".to_string();
+        app.terminal_mode.process_rx(app.settings.encoding, b"hi");
+
+        app.update(Action::Terminal(TerminalAction::Screenshot(
+            ScreenshotFormat::Text,
+        )));
+        let path = dir.join("new").join("shot.txt");
+        match app.overlay() {
+            Some(Overlay::Screenshot(dialog)) => {
+                assert_eq!(dialog.file_input.value(), path.to_string_lossy())
+            }
+            _ => panic!("no screenshot dialog"),
+        }
+        app.terminal_mode
+            .process_rx(app.settings.encoding, b" later");
+        app.update(Action::Overlay(DialogAction::Confirm));
+        assert!(app.overlay().is_none());
+        assert_eq!(std::fs::read_to_string(&path).unwrap().trim_end(), "hi");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// MAX-147: line mode doesn't show the terminal screen, so a screenshot there opens no
+    /// dialog and doesn't flash.
+    #[test]
+    fn screenshot_is_not_taken_in_line_mode() {
+        let mut app = app();
+        app.settings.mode = Mode::Line;
+        app.update(Action::Terminal(TerminalAction::Screenshot(
+            ScreenshotFormat::Ansi,
+        )));
+        assert!(app.overlay().is_none());
+        assert!(!app.terminal_mode.has_pending_flash());
     }
 }

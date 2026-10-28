@@ -190,8 +190,11 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         },
     };
     let mut app = App::new(settings, key_resolver, serial_config);
+    // a replay is a file already: no backup of it
     if is_replay {
         app.settings_mut().mode = Mode::Terminal;
+    } else {
+        app.start_journal(AppConfig::default_journal_dir());
     }
 
     if device.is_none() {
@@ -342,6 +345,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                                 last_rx_activity = Instant::now();
                                 if !is_replay {
                                     app.stats.update_tx(bytes.len());
+                                    app.record_tx(&bytes);
                                 }
                             }
                             Err(e) => {
@@ -395,14 +399,6 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     )),
                 },
                 UpdateEffect::None => {}
-                UpdateEffect::Screenshot(filename) => match filename {
-                    Ok(name) => {
-                        app.notify_success(format!("Screenshot saved to {name}"));
-                    }
-                    Err(err) => {
-                        app.notify_error(format!("Failed to save screenshot: {err}"));
-                    }
-                },
             }
         }
 
