@@ -157,6 +157,14 @@ impl TextEncoding {
         }
     }
 
+    /// `decode` without a copy for valid UTF-8, the common case; the other encodings decode
+    pub fn decode_cow<'a>(&self, bytes: &'a [u8]) -> Cow<'a, str> {
+        match self {
+            Self::Utf8 => String::from_utf8_lossy(bytes),
+            _ => Cow::Owned(self.decode(bytes)),
+        }
+    }
+
     pub fn to_utf8_bytes<'a>(self, bytes: &'a [u8]) -> Cow<'a, [u8]> {
         match self {
             Self::Utf8 | Self::Ascii => Cow::Borrowed(bytes),
@@ -312,9 +320,9 @@ pub enum WrapMode {
 /// Recordings of what is received (MAX-147): a file is `dir` joined with the stream's strftime
 /// name, formatted when the recording dialog opens. An empty `dir` is the current directory.
 /// `journal` backs up every session, apart from them, in the cache folder, keeping the last
-/// `journal_keep` sessions. `record_tx` adds the lines sent in line mode to the text files, as
-/// `> line`. A screenshot is `screenshot_dir` joined with `screenshot_name` and the format's
-/// extension, prefilled in its dialog
+/// `journal_keep` sessions. `record_tx` adds the lines sent in line mode to the text files,
+/// after `tx_mark` (`> line`, none when empty). A screenshot is `screenshot_dir` joined with
+/// `screenshot_name` and the format's extension, prefilled in its dialog
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CaptureConfig {
@@ -323,6 +331,7 @@ pub struct CaptureConfig {
     pub raw_name: String,
     pub timestamp: bool,
     pub record_tx: bool,
+    pub tx_mark: String,
     pub journal: bool,
     pub journal_keep: usize,
     pub screenshot_dir: PathBuf,
@@ -337,6 +346,7 @@ impl Default for CaptureConfig {
             raw_name: String::from("maxicom_%Y%m%d_%H%M%S.raw"),
             timestamp: true,
             record_tx: true,
+            tx_mark: String::from("> "),
             journal: true,
             journal_keep: 20,
             screenshot_dir: PathBuf::new(),

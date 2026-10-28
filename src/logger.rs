@@ -1,5 +1,6 @@
 use crate::app::types::RxLineSplitter;
 use crate::configs::{RxNewlineMode, TextEncoding};
+use chrono::format::{Item, StrftimeItems};
 use chrono::{DateTime, Local};
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
@@ -128,6 +129,15 @@ pub struct Recorder {
     raw: Option<LogFile>,
     journal: Option<Journal>,
     lines: RxLineSplitter,
+    timestamp: Option<TimestampFormat>,
+    line_buf: Vec<u8>,
+}
+
+/// `timestamp_format` parsed once, and again only when it changes (on reload), instead of on
+/// every line
+struct TimestampFormat {
+    format: String,
+    items: Vec<Item<'static>>,
 }
 
 impl Recorder {
@@ -226,16 +236,15 @@ impl Recorder {
             let _ = file.writer.write_all(bytes);
         }
 
+        self.set_timestamp_format(timestamp_format);
         let now = Local::now();
         for &b in bytes {
             if self.lines.push(b, rx_eol_mode, now) {
                 let timestamp = self.lines.take_timestamp();
                 if self.text.is_some() || self.journal.is_some() {
-                    let line = encoding.decode(self.lines.line());
-                    let journal_text = self.journal.as_mut().map(|j| &mut j.text);
-                    for file in self.text.iter_mut().chain(journal_text) {
-                        let _ = write_line(file, &line, timestamp, timestamp_format);
-                    }
+                    let text = encoding.decode_cow(self.lines.line());
+                    build_line(&mut self.line_buf, &self.timestamp, timestamp, "", &text);
+                    self.write_text_line();
                 }
                 self.lines.clear();
             }
@@ -243,27 +252,52 @@ impl Recorder {
         self.flush_if_due();
     }
 
-    /// Records sent bytes to the text files as `> line`, one for each line they hold (CR, LF
-    /// or CRLF ends one), at the time they are sent. Raw stays what is received, to be
-    /// replayed. An RX line still pending is written when it ends, after these
+    /// Records sent bytes to the text files after `mark` (`> line`), one for each line they
+    /// hold (CR, LF or CRLF ends one), at the time they are sent. Raw stays what is received,
+    /// to be replayed. An RX line still pending is written when it ends, after these
     pub fn record_tx(
         &mut self,
         encoding: TextEncoding,
         timestamp_format: Option<&str>,
+        mark: &str,
         bytes: &[u8],
     ) {
         if self.text.is_none() && self.journal.is_none() {
             return;
         }
+        self.set_timestamp_format(timestamp_format);
         let now = Local::now();
         for line in tx_lines(bytes) {
-            let line = format!("> {}", encoding.decode(line));
-            let journal_text = self.journal.as_mut().map(|j| &mut j.text);
-            for file in self.text.iter_mut().chain(journal_text) {
-                let _ = write_line(file, &line, now, timestamp_format);
-            }
+            let text = encoding.decode_cow(line);
+            build_line(&mut self.line_buf, &self.timestamp, now, mark, &text);
+            self.write_text_line();
         }
         self.flush_if_due();
+    }
+
+    /// Parses `format` when it isn't the one already parsed. Settings validate it, so a
+    /// format that doesn't parse gives an empty timestamp
+    fn set_timestamp_format(&mut self, format: Option<&str>) {
+        match format {
+            None => self.timestamp = None,
+            Some(format) if self.timestamp.as_ref().is_some_and(|t| t.format == format) => {}
+            Some(format) => {
+                self.timestamp = Some(TimestampFormat {
+                    format: format.to_string(),
+                    items: StrftimeItems::new(format)
+                        .parse_to_owned()
+                        .unwrap_or_default(),
+                });
+            }
+        }
+    }
+
+    /// Writes the line built in `line_buf` to every text file
+    fn write_text_line(&mut self) {
+        let journal_text = self.journal.as_mut().map(|j| &mut j.text);
+        for file in self.text.iter_mut().chain(journal_text) {
+            let _ = file.writer.write_all(&self.line_buf);
+        }
     }
 }
 
@@ -341,18 +375,25 @@ pub fn session_tag(port: &str) -> String {
         .collect()
 }
 
-fn write_line(
-    file: &mut LogFile,
-    line: &str,
-    timestamp: DateTime<Local>,
-    timestamp_format: Option<&str>,
-) -> io::Result<()> {
-    let line = line.strip_suffix('\n').unwrap_or(line);
-    let line = line.strip_suffix('\r').unwrap_or(line);
-    match timestamp_format {
-        Some(format) => writeln!(file.writer, "{} {line}", timestamp.format(format)),
-        None => writeln!(file.writer, "{line}"),
+/// Builds a text line in `buf`, reused so a line costs no allocation: the time when a format
+/// is set, `mark`, then `text` without its EOL and a single "\n". It is built once and
+/// written to every text file
+fn build_line(
+    buf: &mut Vec<u8>,
+    format: &Option<TimestampFormat>,
+    time: DateTime<Local>,
+    mark: &str,
+    text: &str,
+) {
+    buf.clear();
+    if let Some(format) = format {
+        let _ = write!(buf, "{} ", time.format_with_items(format.items.iter()));
     }
+    let text = text.strip_suffix('\n').unwrap_or(text);
+    let text = text.strip_suffix('\r').unwrap_or(text);
+    buf.extend_from_slice(mark.as_bytes());
+    buf.extend_from_slice(text.as_bytes());
+    buf.push(b'\n');
 }
 
 #[cfg(test)]
@@ -443,6 +484,23 @@ mod tests {
         assert_eq!(
             stop_and_read(&mut recorder, Stream::Text, &path),
             b"[ts] abc\n"
+        );
+    }
+
+    /// MAX-147: the parsed timestamp format follows a changed `timestamp_format` (a reload),
+    /// and turning it off writes lines without a time; invalid UTF-8 is replaced, as before.
+    /// How: "[a]" then "[b]" then none, one line each, the last with a lone 0xFF byte.
+    #[test]
+    fn timestamp_format_change_is_parsed_again() {
+        let mut recorder = Recorder::default();
+        let path = start(&mut recorder, Stream::Text, "ts_change");
+        let enc = TextEncoding::Utf8;
+        recorder.record_rx(RxNewlineMode::Auto, enc, Some("[a]"), b"one\n");
+        recorder.record_rx(RxNewlineMode::Auto, enc, Some("[b]"), b"two\n");
+        recorder.record_rx(RxNewlineMode::Auto, enc, None, b"\xFF\n");
+        assert_eq!(
+            stop_and_read(&mut recorder, Stream::Text, &path),
+            "[a] one\n[b] two\n\u{FFFD}\n".as_bytes()
         );
     }
 
@@ -549,8 +607,8 @@ mod tests {
         let text = start(&mut recorder, Stream::Text, "tx_text");
         let raw = start(&mut recorder, Stream::Raw, "tx_raw");
         record(&mut recorder, b"rx\n");
-        recorder.record_tx(TextEncoding::Utf8, None, b"a\r\nb\n\r\n");
-        recorder.record_tx(TextEncoding::Utf8, None, b"\x03");
+        recorder.record_tx(TextEncoding::Utf8, None, "> ", b"a\r\nb\n\r\n");
+        recorder.record_tx(TextEncoding::Utf8, None, "> ", b"\x03");
 
         let expected = b"rx\n> a\n> b\n> \n> \x03\n";
         assert_eq!(stop_and_read(&mut recorder, Stream::Text, &text), expected);

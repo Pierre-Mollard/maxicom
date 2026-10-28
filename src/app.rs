@@ -459,8 +459,12 @@ impl App {
             .capture
             .timestamp
             .then_some(settings.timestamp_format.as_str());
-        self.recorder
-            .record_tx(settings.encoding, timestamp_format, bytes);
+        self.recorder.record_tx(
+            settings.encoding,
+            timestamp_format,
+            &settings.capture.tx_mark,
+            bytes,
+        );
     }
 
     /// Returns true when something on screen changed with time alone (needs a redraw)
@@ -1024,6 +1028,11 @@ impl App {
         self.prefix_active
     }
 
+    /// The session backup runs, what the optional `journal` status bar condition shows
+    pub fn has_journal(&self) -> bool {
+        self.recorder.has_journal()
+    }
+
     /// Some recording is on, what `REC` shows
     pub fn is_logging_active(&self) -> bool {
         self.recorder.is_any_active()
@@ -1170,9 +1179,10 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    /// MAX-147: sent lines are recorded in line mode, not in terminal mode nor with
-    /// `capture.record_tx` off.
-    /// How: a text recording, one send in each case.
+    /// MAX-147: sent lines are recorded in line mode after `capture.tx_mark`, not in terminal
+    /// mode nor with `capture.record_tx` off.
+    /// How: a text recording, one send in each case, then one with the mark "TX: " and one
+    /// with no mark.
     #[test]
     fn tx_is_recorded_in_line_mode_only() {
         let mut app = app();
@@ -1191,8 +1201,16 @@ mod tests {
         app.settings.mode = Mode::Line;
         app.settings.capture.record_tx = false;
         app.record_tx(b"off\r\n");
+        app.settings.capture.record_tx = true;
+        app.settings.capture.tx_mark = "TX: ".to_string();
+        app.record_tx(b"marked\r\n");
+        app.settings.capture.tx_mark = String::new();
+        app.record_tx(b"bare\r\n");
         app.recorder.stop(Stream::Text);
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "> line\n");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "> line\nTX: marked\nbare\n"
+        );
         let _ = std::fs::remove_file(&path);
     }
 

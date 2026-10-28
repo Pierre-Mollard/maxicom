@@ -78,6 +78,57 @@ cargo deny check
   Enter in line mode) brings the view back to the live screen; what the device
   sends never moves a view scrolled up (`new_data` in the status bar).
 
+### CAPTURE
+
+- Recordings: what is received, in any mode, to a file of your choice.
+  - `text`  The received lines, decoded, one per line, after their time
+            (`timestamp_format`) when `timestamp` is on. In line mode, the
+            sent lines too, after `tx_mark`
+  - `raw`   The received bytes as is, replayable with `--replay <file>`
+  Text and raw record apart, both at once if you want. `toggle_logging`
+  (`Ctrl-A l`, or a click on `● REC`) stops every recording, or opens the
+  recording dialog on the mode's stream (text in line mode, raw in terminal
+  mode). `record_text` and `record_raw` (no default keys, also in the
+  right-click menu) start or stop one stream.
+- The recording dialog: the path is prefilled, Enter starts.
+  - `Tab`        Switch the stream (swaps the default path unless edited)
+  - `Shift-Tab`  Include since session start: the file starts with everything
+                 the session backup holds, then keeps recording
+- Session backup (journal): every session is recorded, text and raw, to
+  `~/.cache/maxicom/sessions/<date>_<time>_<port>.log` and `.raw`, flushed
+  every 250 ms, so a crash or a `kill` loses almost nothing. It never lights
+  `● REC`. The last `journal_keep` sessions are kept, older ones are removed at
+  startup. Not in replay mode. To recover a session, open its `.log`, or
+  replay its `.raw`:
+  `maxicom --replay ~/.cache/maxicom/sessions/20261028_141500_ttyUSB0.raw`
+  A layout can show it with the `journal` condition, e.g.
+  `[◆](journal?muted:hide)` (not in the default layout).
+- Screenshots (terminal mode): `screenshot_bytes` (`Ctrl-A k`) and
+  `screenshot_text` (no default key, Screenshot in the right-click menu) take
+  the screen at once, in both formats, then a dialog asks where to save it.
+  Enter saves to the prefilled path, Esc drops it. In line mode they only say
+  so.
+  - `Tab`  Switch the format: `text` (`.txt`, the characters) or `ansi`
+           (`.ans`, with the colors). The key's format is selected first
+- Paths: a leading `~` is the home folder, missing folders are created, an
+  empty dir is the current one. Names are strftime templates, formatted when
+  the dialog opens.
+- `[capture]` in `config.toml`, with the defaults:
+
+```toml
+[capture]
+dir = ""                                 # recordings folder
+text_name = "maxicom_%Y%m%d_%H%M%S.log"
+raw_name = "maxicom_%Y%m%d_%H%M%S.raw"
+timestamp = true                         # time on each text line
+record_tx = true                         # sent lines in the text files (line mode)
+tx_mark = "> "                           # before each sent line, "" for none
+journal = true                           # session backup (read at startup)
+journal_keep = 20                        # sessions kept
+screenshot_dir = ""
+screenshot_name = "screen_%Y%m%d_%H%M%S" # the format adds .txt or .ans
+```
+
 ### THEME
 
 #### STATUS BAR FORMAT
@@ -123,6 +174,7 @@ cargo deny check
   - Modes & Focus:
     - prefix         Prefix key (Ctrl-A) is active
     - rec            File capture is active (alias: logging)
+    - journal        Session backup is running (alias: backup)
     - line           Line input active (alias: linemode)
     - term           Terminal mode active (alias: terminal)
     - copy           Scrollback mode active (alias: copymode)
