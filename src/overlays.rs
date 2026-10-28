@@ -6,7 +6,7 @@ use crossterm::event::KeyCode;
 use crate::{
     configs::{KeyBindingAction, keybindings::KeyBindingDialogAction},
     inputs::DialogAction,
-    logger::Stream,
+    logger::{PastSession, Stream},
     serial::SerialConfig,
 };
 
@@ -36,6 +36,7 @@ pub enum Overlay {
     Error(ErrorDialog),
     ConfirmQuit,
     ActionMenu(ActionMenu),
+    RestoreSession(PastSession),
 }
 
 /// A part of a popup the mouse picks (MAX-113)
@@ -75,6 +76,7 @@ pub enum OverlayResponse {
     },
     Quit,
     Run(KeyBindingAction),
+    RestoreSession(bool),
 }
 
 impl Overlay {
@@ -88,7 +90,9 @@ impl Overlay {
     pub fn closes_on_click_outside(&self) -> bool {
         !matches!(
             self,
-            Overlay::DeviceDisconnected(_) | Overlay::DeviceDetached(_)
+            Overlay::DeviceDisconnected(_)
+                | Overlay::DeviceDetached(_)
+                | Overlay::RestoreSession(_)
         )
     }
 
@@ -102,6 +106,16 @@ impl Overlay {
             Overlay::ActionMenu(menu) => menu.handle_action(action),
             Overlay::Error(_) => match action {
                 DialogAction::Close | DialogAction::Confirm => OverlayResponse::Close,
+                _ => OverlayResponse::Handled,
+            },
+            Overlay::RestoreSession(_) => match action {
+                DialogAction::Confirm => OverlayResponse::RestoreSession(true),
+                DialogAction::Close => OverlayResponse::RestoreSession(false),
+                DialogAction::HandleKey(key) => match key.code {
+                    KeyCode::Char('y' | 'Y') => OverlayResponse::RestoreSession(true),
+                    KeyCode::Char('n' | 'N') => OverlayResponse::RestoreSession(false),
+                    _ => OverlayResponse::Handled,
+                },
                 _ => OverlayResponse::Handled,
             },
             Overlay::ConfirmQuit => match action {

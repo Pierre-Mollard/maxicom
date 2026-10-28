@@ -364,7 +364,7 @@ impl VarFormat {
 
 /// A byte count like `ls -h`: up to 999 as is, then `1.0K`..`9.9K`, `10K`..`999K`, `1.0M`, ...,
 /// at most 4 columns (base 1024)
-fn write_human(out: &mut String, bytes: u64) {
+pub fn write_human(out: &mut String, bytes: u64) {
     if bytes < 1000 {
         let _ = write!(out, "{bytes}");
         return;

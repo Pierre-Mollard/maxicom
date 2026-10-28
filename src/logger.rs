@@ -641,22 +641,33 @@ fn read_tail_lines_by(path: &Path, max: usize, chunk: u64) -> io::Result<Vec<u8>
     }
 }
 
+impl PastSession {
+    /// The port's part of the file names (`ttyUSB0`)
+    pub fn port_tag(&self) -> &str {
+        self.raw_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .and_then(|stem| stem.splitn(3, '_').nth(2))
+            .unwrap_or("session")
+    }
+
+    /// When it started and ended, the end without its date on the same day
+    pub fn time_span(&self) -> String {
+        let ended = if self.ended.date_naive() == self.started.date_naive() {
+            self.ended.format("%H:%M")
+        } else {
+            self.ended.format("%Y-%m-%d %H:%M")
+        };
+        format!("{} → {ended}", self.started.format("%Y-%m-%d %H:%M"))
+    }
+}
+
 /// The line that marks where a restored session ends and the live data starts
 pub fn restore_separator(session: &PastSession) -> String {
-    let port = session
-        .raw_path
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .and_then(|stem| stem.splitn(3, '_').nth(2))
-        .unwrap_or("session");
-    let ended = if session.ended.date_naive() == session.started.date_naive() {
-        session.ended.format("%H:%M")
-    } else {
-        session.ended.format("%Y-%m-%d %H:%M")
-    };
     format!(
-        "── restored: {port}, {} → {ended} ──",
-        session.started.format("%Y-%m-%d %H:%M")
+        "── restored: {}, {} ──",
+        session.port_tag(),
+        session.time_span()
     )
 }
 

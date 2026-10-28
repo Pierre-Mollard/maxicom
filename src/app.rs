@@ -73,6 +73,8 @@ impl Stats {
     }
 }
 
+/// The most kept while the restore dialog asks: past it, the dialog closes without a restore
+const HELD_RX_MAX: usize = 4 << 20;
 /// How often a drag held at the history's edge scrolls it (MAX-126)
 const DRAG_SCROLL_EVERY: Duration = Duration::from_millis(50);
 /// How long the scrollbar's `▲` or `▼` (MAX-142), or a click target that repeats (MAX-143), is
@@ -113,6 +115,8 @@ pub struct App {
     pub line_mode: LineMode,
     pub terminal_mode: TerminalMode,
     recorder: Recorder,
+    /// What is received while the restore dialog asks, fed after the answer (MAX-148)
+    held_rx: Option<Vec<u8>>,
     pub is_window_focused: bool,
     pointer: Option<(u16, u16)>,
     /// The last text copied, which a right-click pastes (MAX-144)
@@ -169,6 +173,7 @@ impl App {
             line_mode: line_view,
             terminal_mode: terminal_view,
             recorder: Recorder::default(),
+            held_rx: None,
             is_window_focused: true,
             pointer: None,
             paste_buffer: None,
@@ -388,6 +393,12 @@ impl App {
                             }
                             UpdateEffect::None
                         }
+                        OverlayResponse::RestoreSession(yes) => {
+                            if let Overlay::RestoreSession(session) = overlay {
+                                self.answer_restore(&session, yes);
+                            }
+                            UpdateEffect::None
+                        }
                         OverlayResponse::SaveScreenshot { path, contents } => {
                             let path = expand_home(&path);
                             let saved = create_parent_dirs(&path)
@@ -413,6 +424,9 @@ impl App {
     }
 
     pub fn feed_rx(&mut self, chunk: &[u8]) {
+        if self.hold_rx(chunk) {
+            return;
+        }
         let settings = &self.settings;
         let timestamp_format = settings
             .capture
@@ -454,20 +468,67 @@ impl App {
     }
 
     /// Restores the last session on this device found in `dir` when `restore` (`--restore` /
-    /// `--no-restore`) or else `capture.restore` says so, with a toast either way. To call
+    /// `--no-restore`) or else `capture.restore` says so, with a toast either way. With `ask`,
+    /// a dialog asks first, and what is received meanwhile waits for the answer. To call
     /// before `start_journal`, whose pruning could remove it (MAX-148)
     pub fn restore_last_session(&mut self, dir: Option<&Path>, restore: Option<bool>) {
         let capture = &self.settings.capture;
-        // TODO: (MAX-148) `ask` opens its dialog (step 5), until then it doesn't restore
-        let wanted = restore.unwrap_or(capture.restore == RestoreMode::Always);
-        let Some(dir) = dir.filter(|_| wanted) else {
+        let mode = match restore {
+            Some(true) => RestoreMode::Always,
+            Some(false) => RestoreMode::Never,
+            None => capture.restore,
+        };
+        let Some(dir) = dir.filter(|_| mode != RestoreMode::Never) else {
             return;
         };
         let max_age = (!capture.restore_max_age.is_zero()).then_some(capture.restore_max_age);
         let Some(session) = find_last_session(dir, &self.session_device(), max_age) else {
             return;
         };
-        match self.restore_session(&session) {
+        if mode == RestoreMode::Ask {
+            self.held_rx = Some(Vec::new());
+            self.open_overlay(Overlay::RestoreSession(session));
+        } else {
+            self.restore_now(&session);
+        }
+    }
+
+    /// Keeps `chunk` while the restore dialog is open, so the restored data comes before it.
+    /// When the dialog was replaced by another popup, or too much came in, what was kept is
+    /// fed without a restore, then `chunk` is not kept
+    fn hold_rx(&mut self, chunk: &[u8]) -> bool {
+        let Some(held) = &mut self.held_rx else {
+            return false;
+        };
+        let asking = matches!(self.overlay, Some(Overlay::RestoreSession(_)));
+        if asking && held.len() + chunk.len() <= HELD_RX_MAX {
+            held.extend_from_slice(chunk);
+            return true;
+        }
+        if asking {
+            self.close_overlay();
+            self.notify_warn("Session not restored: too much data came in while asking");
+        }
+        self.release_held_rx();
+        false
+    }
+
+    fn release_held_rx(&mut self) {
+        if let Some(held) = self.held_rx.take() {
+            self.feed_rx(&held);
+        }
+    }
+
+    /// The answer of the restore dialog: the session first when `yes`, then what came in
+    fn answer_restore(&mut self, session: &PastSession, yes: bool) {
+        if yes {
+            self.restore_now(session);
+        }
+        self.release_held_rx();
+    }
+
+    fn restore_now(&mut self, session: &PastSession) {
+        match self.restore_session(session) {
             Ok(()) => self.notify_info(format!(
                 "Restored the session of {}",
                 session.started.format("%Y-%m-%d %H:%M")
@@ -1529,7 +1590,7 @@ mod tests {
     }
 
     /// MAX-148: the last session restores at startup with `always` or `--restore`, not with
-    /// `never`, `ask` (no dialog yet) or `--no-restore`, nor when older than
+    /// `never`, `ask` (before its answer) or `--no-restore`, nor when older than
     /// `restore_max_age`; `0` is no limit. A session restores again on the next launch.
     /// How: one session on the app's port, then each case on a fresh app.
     #[test]
@@ -1555,6 +1616,7 @@ mod tests {
         assert!(restored(RestoreMode::Always, None, 3600));
         assert!(restored(RestoreMode::Always, None, 3600), "a second launch");
         assert!(!restored(RestoreMode::Never, None, 3600));
+        // `ask` asks first: nothing restored before the answer
         assert!(!restored(RestoreMode::Ask, None, 3600));
         assert!(restored(RestoreMode::Never, Some(true), 3600));
         assert!(!restored(RestoreMode::Always, Some(false), 3600));
@@ -1573,6 +1635,90 @@ mod tests {
         app.settings.capture.restore = RestoreMode::Always;
         app.restore_last_session(None, None);
         assert!(app.line_mode.history().is_empty(), "no cache folder");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An app whose `ask` dialog is open on a session with "old line", and its folder.
+    fn asking_app(name: &str) -> (App, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("maxicom_test_{}_{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        crate::logger::write_test_session(
+            &dir,
+            &SerialConfig::default().port,
+            &JournalText::default(),
+            b"old line\r\n",
+            b"",
+        );
+        let mut app = app();
+        app.settings.mode = Mode::Line;
+        app.settings.capture.restore = RestoreMode::Ask;
+        app.restore_last_session(Some(&dir), None);
+        assert!(matches!(app.overlay(), Some(Overlay::RestoreSession(_))));
+        (app, dir)
+    }
+
+    /// The history's texts without their EOL, the separator as its start
+    fn texts(app: &App) -> Vec<String> {
+        let history = app.line_mode.history().iter();
+        history
+            .map(|e| match e.text.trim_end_matches(['\r', '\n']) {
+                text if text.starts_with("── restored") => "── restored".to_string(),
+                text => text.to_string(),
+            })
+            .collect()
+    }
+
+    /// MAX-148: with `ask`, what comes in while the dialog is open waits; Enter (or `y`)
+    /// restores the session first, then feeds it; Esc (or `n`) feeds it without a restore.
+    /// How: "live" received while asking, then each answer on a fresh app.
+    #[test]
+    fn ask_dialog_holds_rx_until_the_answer() {
+        let key = |c| {
+            DialogAction::HandleKey(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(c),
+                crossterm::event::KeyModifiers::NONE,
+            ))
+        };
+        for (answer, restored) in [
+            (DialogAction::Confirm, true),
+            (key('y'), true),
+            (DialogAction::Close, false),
+            (key('n'), false),
+        ] {
+            let (mut app, dir) = asking_app("ask_answer");
+            app.feed_rx(b"live\r\n");
+            assert!(app.line_mode.history().is_empty());
+            app.update(Action::Overlay(answer));
+            assert!(app.overlay().is_none());
+            let expected: &[&str] = if restored {
+                &["old line", "── restored", "live"]
+            } else {
+                &["live"]
+            };
+            assert_eq!(texts(&app), expected);
+            app.feed_rx(b"after\r\n");
+            assert_eq!(texts(&app).last().unwrap(), "after");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// MAX-148: the held data is never stuck: when another popup replaced the dialog, or more
+    /// than the cap came in, it is fed without a restore.
+    #[test]
+    fn ask_dialog_never_keeps_rx_stuck() {
+        let (mut app, dir) = asking_app("ask_stuck");
+        app.feed_rx(b"held\r\n");
+        app.open_overlay(Overlay::ConfirmQuit);
+        app.feed_rx(b"next\r\n");
+        assert_eq!(texts(&app), ["held", "next"]);
+
+        let (mut app, _) = asking_app("ask_stuck");
+        app.feed_rx(b"held\r\n");
+        app.feed_rx(&vec![b'x'; HELD_RX_MAX]);
+        assert!(app.overlay().is_none());
+        assert_eq!(texts(&app), ["held"]);
+        app.feed_rx(b"\r\n");
+        assert_eq!(texts(&app)[1].len(), HELD_RX_MAX);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

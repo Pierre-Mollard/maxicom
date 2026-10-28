@@ -33,7 +33,7 @@ use crate::{
         popups::{
             alert::{
                 render_confirm_quit_popup, render_detached_popup, render_disconnected_popup,
-                render_error_popup,
+                render_error_popup, render_restore_popup,
             },
             filepath::{render_filepath_popup, render_screenshot_popup},
             help::render_help_popup,
@@ -234,6 +234,9 @@ fn render_active_overlay(app: &mut App, frame: &mut Frame, theme: &ThemeConfig) 
         Some(Overlay::Error(err)) => render_error_popup(err, resolver, frame, theme, &mut targets),
         Some(Overlay::ConfirmQuit) => {
             render_confirm_quit_popup(resolver, frame, theme, &mut targets)
+        }
+        Some(Overlay::RestoreSession(session)) => {
+            render_restore_popup(session, resolver, frame, theme, &mut targets)
         }
         Some(Overlay::ActionMenu(menu)) => {
             render_action_menu(menu, resolver, frame, theme, &mut targets)
@@ -1416,6 +1419,45 @@ mod tests {
         let moved = h.draw();
         assert!(cursor_cell(&mut h).1 > y, "{moved:#?}");
         assert_eq!(before[..height], moved[..height]);
+    }
+
+    /// MAX-148: the restore dialog names the port, the session's times and size; a click on
+    /// Restore restores it, and a click outside doesn't answer it.
+    #[test]
+    fn restore_dialog_shows_the_session() {
+        let dir = std::env::temp_dir().join(format!(
+            "maxicom_test_{}_restore_dialog",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        crate::logger::write_test_session(
+            &dir,
+            "/dev/ttyUSB0",
+            &crate::logger::JournalText::default(),
+            b"old line\r\n",
+            b"",
+        );
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        h.app.settings_mut().capture.restore = crate::configs::settings::RestoreMode::Ask;
+        h.app.restore_last_session(Some(&dir), None);
+        let rows = h.draw();
+        assert!(
+            has(&rows, "Restore the last session on ttyUSB0?"),
+            "{rows:#?}"
+        );
+        assert!(has(&rows, " → "), "{rows:#?}");
+        assert!(has(&rows, "10B received"), "{rows:#?}");
+
+        click(&mut h, (0, 0));
+        assert!(matches!(h.app.overlay(), Some(Overlay::RestoreSession(_))));
+        // the Restore hint, on the row of Skip (the text above says Restore too)
+        let hint_row = cell_of(&rows, "Skip").1;
+        let hint_col = rows[hint_row as usize].find("Restore").unwrap();
+        let hint_col = rows[hint_row as usize][..hint_col].chars().count();
+        click(&mut h, (hint_col as u16, hint_row));
+        assert!(h.app.overlay().is_none());
+        assert_eq!(h.app.line_mode.history()[0].text, "old line");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// MAX-148: a restored line without a time keeps the time column blank, its text lined up

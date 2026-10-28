@@ -200,8 +200,14 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         app.start_journal(journal_dir);
     }
 
+    // the restore question comes first, the missing device's popup once it's answered (MAX-148)
+    let mut disconnected_after_restore = false;
     if device.is_none() {
-        app.open_overlay(Overlay::DeviceDisconnected(app.serial_config.port.clone()));
+        if matches!(app.overlay(), Some(Overlay::RestoreSession(_))) {
+            disconnected_after_restore = true;
+        } else {
+            app.open_overlay(Overlay::DeviceDisconnected(app.serial_config.port.clone()));
+        }
     }
 
     let mut last_reconnect_attempt = Instant::now();
@@ -212,6 +218,14 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
     'main: while running {
         let mut rx_received = false;
+
+        if disconnected_after_restore && app.overlay().is_none() {
+            disconnected_after_restore = false;
+            if device.is_none() {
+                app.open_overlay(Overlay::DeviceDisconnected(app.serial_config.port.clone()));
+                needs_redraw = true;
+            }
+        }
 
         if let Some(ref mut dev) = device {
             // read everything already waiting (bounded), instead of one buffer per frame

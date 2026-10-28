@@ -8,10 +8,12 @@ use ratatui::{
 
 use crate::{
     configs::{KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
+    logger::PastSession,
     overlays::{ErrorDialog, PopupTarget},
     ui::{
         common::popup_area,
         popups::{FORM_WIDTH, Hints, key_hints},
+        status_bar::write_human,
     },
 };
 
@@ -162,6 +164,42 @@ pub fn render_confirm_quit_popup(
     );
 
     render_alert("Quit", text, hints, frame, theme, targets)
+}
+
+/// The startup question when a past session on this device can be restored (MAX-148)
+pub fn render_restore_popup(
+    session: &PastSession,
+    resolver: &KeyResolver,
+    frame: &mut Frame,
+    theme: &ThemeConfig,
+    targets: &mut Vec<(Rect, PopupTarget)>,
+) -> Rect {
+    let mut size = String::new();
+    write_human(&mut size, session.raw_len);
+    let text = vec![
+        Line::from(Span::styled(
+            format!("Restore the last session on {}?", session.port_tag()),
+            Style::default()
+                .fg(theme.palette.text)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            format!("{}, {size}B received", session.time_span()),
+            Style::default().fg(theme.palette.text_muted),
+        )),
+        Line::from(""),
+    ];
+    let hints = key_hints(
+        resolver,
+        false,
+        &[
+            (&[KeyBindingDialogAction::Confirm], "Restore"),
+            (&[KeyBindingDialogAction::Close], "Skip"),
+        ],
+        theme,
+    );
+
+    render_alert("Restore", text, hints, frame, theme, targets)
 }
 
 /// A warning box sized to `lines` and the `hints` under them once wrapped at its width (a long
