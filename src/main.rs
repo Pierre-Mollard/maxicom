@@ -128,8 +128,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
     };
 
-    let run_mode = match parse_args() {
-        Ok(ParseOutcome::Run(mode)) => mode,
+    let (run_mode, restore) = match parse_args() {
+        Ok(ParseOutcome::Run { mode, restore }) => (mode, restore),
         Ok(ParseOutcome::Help) => {
             print_help();
             return Ok(ExitCode::SUCCESS);
@@ -190,11 +190,14 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         },
     };
     let mut app = App::new(settings, key_resolver, serial_config);
-    // a replay is a file already: no backup of it
+    // a replay is a file already: no backup of it, nothing to restore
     if is_replay {
         app.settings_mut().mode = Mode::Terminal;
     } else {
-        app.start_journal(AppConfig::default_journal_dir());
+        // before the new journal, whose pruning could remove the last session (MAX-148)
+        let journal_dir = AppConfig::default_journal_dir();
+        app.restore_last_session(journal_dir.as_deref(), restore);
+        app.start_journal(journal_dir);
     }
 
     if device.is_none() {

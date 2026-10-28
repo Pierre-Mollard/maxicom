@@ -308,6 +308,16 @@ pub enum DualBufferMode {
     ActiveOnly,
 }
 
+/// When the last session on the same device is restored at startup (MAX-148): `ask` asks
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum RestoreMode {
+    Never,
+    #[default]
+    Ask,
+    Always,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum WrapMode {
@@ -321,8 +331,10 @@ pub enum WrapMode {
 /// name, formatted when the recording dialog opens. An empty `dir` is the current directory.
 /// `journal` backs up every session, apart from them, in the cache folder, keeping the last
 /// `journal_keep` sessions. `record_tx` adds the lines sent in line mode to the text files,
-/// after `tx_mark` (`> line`, none when empty). A screenshot is `screenshot_dir` joined with
-/// `screenshot_name` and the format's extension, prefilled in its dialog
+/// after `tx_mark` (`> line`, none when empty). `restore` puts the last session on the same
+/// device back in the history at startup, when it ended within `restore_max_age` (0: no limit,
+/// MAX-148). A screenshot is `screenshot_dir` joined with `screenshot_name` and the format's
+/// extension, prefilled in its dialog
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CaptureConfig {
@@ -336,6 +348,9 @@ pub struct CaptureConfig {
     pub journal_keep: usize,
     pub screenshot_dir: PathBuf,
     pub screenshot_name: String,
+    pub restore: RestoreMode,
+    #[serde(with = "humantime_serde")]
+    pub restore_max_age: Duration,
 }
 
 impl Default for CaptureConfig {
@@ -351,6 +366,8 @@ impl Default for CaptureConfig {
             journal_keep: 20,
             screenshot_dir: PathBuf::new(),
             screenshot_name: String::from("screen_%Y%m%d_%H%M%S"),
+            restore: RestoreMode::default(),
+            restore_max_age: Duration::from_secs(24 * 3600),
         }
     }
 }
@@ -831,6 +848,21 @@ mod tests {
     //! Settings derived at load time.
 
     use super::*;
+
+    /// MAX-148: `capture.restore` defaults to `ask` and `restore_max_age` to 24 hours; both
+    /// read from the config, the age as a human duration, `0` included.
+    #[test]
+    fn restore_settings_parse() {
+        let capture = CaptureConfig::default();
+        assert_eq!(capture.restore, RestoreMode::Ask);
+        assert_eq!(capture.restore_max_age, Duration::from_secs(24 * 3600));
+        let parse = |toml: &str| toml::from_str::<CaptureConfig>(toml).unwrap();
+        let capture = parse("restore = \"always\"\nrestore_max_age = \"2h 30m\"");
+        assert_eq!(capture.restore, RestoreMode::Always);
+        assert_eq!(capture.restore_max_age, Duration::from_secs(9000));
+        assert!(parse("restore_max_age = \"0s\"").restore_max_age.is_zero());
+        assert_eq!(parse("restore = \"never\"").restore, RestoreMode::Never);
+    }
 
     /// The cached timestamp width matches a formatted timestamp, and feeds the line gutter.
     /// How: default format "[%H:%M:%S%.3f]" is 14 chars, plus the 2-char line prefix.

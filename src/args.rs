@@ -7,9 +7,13 @@ pub enum RunMode {
     Live(SerialConfig),
     Replay { file_path: PathBuf, delay_ms: u64 },
 }
+/// `restore` is `--restore` / `--no-restore`, the last one given, over `capture.restore`
 #[derive(Debug)]
 pub enum ParseOutcome {
-    Run(RunMode),
+    Run {
+        mode: RunMode,
+        restore: Option<bool>,
+    },
     Help,
 }
 
@@ -39,10 +43,15 @@ impl std::fmt::Display for ParseError {
 }
 
 pub fn parse_args() -> Result<ParseOutcome, ParseError> {
-    let mut args = env::args().skip(1); // skip program name
+    parse_args_from(env::args().skip(1)) // skip program name
+}
+
+fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ParseOutcome, ParseError> {
+    let mut args = args.into_iter();
     let mut serial_config = SerialConfig::default();
     let mut replay_file: Option<PathBuf> = None;
     let mut replay_delay: u64 = 0;
+    let mut restore: Option<bool> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -86,6 +95,8 @@ pub fn parse_args() -> Result<ParseOutcome, ParseError> {
                 serial_config.flow_control =
                     val.parse::<FlowControl>().map_err(ParseError::BadFormat)?;
             }
+            "--restore" => restore = Some(true),
+            "--no-restore" => restore = Some(false),
             "--help" | "-h" => {
                 return Ok(ParseOutcome::Help);
             }
@@ -96,14 +107,15 @@ pub fn parse_args() -> Result<ParseOutcome, ParseError> {
         }
     }
 
-    if let Some(file_path) = replay_file {
-        Ok(ParseOutcome::Run(RunMode::Replay {
+    let mode = if let Some(file_path) = replay_file {
+        RunMode::Replay {
             file_path,
             delay_ms: replay_delay,
-        }))
+        }
     } else {
-        Ok(ParseOutcome::Run(RunMode::Live(serial_config)))
-    }
+        RunMode::Live(serial_config)
+    };
+    Ok(ParseOutcome::Run { mode, restore })
 }
 
 pub fn print_help() {
@@ -125,7 +137,37 @@ Options:
   -r, --replay <PATH>      File to replay raw bytes to terminal instead of serial device
       --delay <ms>         Time to wait between chunks in millisecond
 
+      --restore            Restore the last session on this device into the history
+      --no-restore         Start with an empty history, whatever capture.restore says
+
   -h, --help               Print help
 "
     );
+}
+
+#[cfg(test)]
+mod tests {
+    //! Command line options.
+
+    use super::*;
+
+    fn restore_of(args: &[&str]) -> Option<bool> {
+        match parse_args_from(args.iter().map(|a| a.to_string())).unwrap() {
+            ParseOutcome::Run { restore, .. } => restore,
+            ParseOutcome::Help => panic!("help"),
+        }
+    }
+
+    /// MAX-148: `--restore` and `--no-restore` override `capture.restore`, the last one given
+    /// wins, and without them the setting decides.
+    #[test]
+    fn restore_flags() {
+        assert_eq!(restore_of(&[]), None);
+        assert_eq!(restore_of(&["--restore"]), Some(true));
+        assert_eq!(restore_of(&["--no-restore"]), Some(false));
+        assert_eq!(
+            restore_of(&["--restore", "-p", "x", "--no-restore"]),
+            Some(false)
+        );
+    }
 }

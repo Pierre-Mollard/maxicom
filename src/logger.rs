@@ -537,8 +537,6 @@ fn prune_sessions(dir: &Path, keep: usize) -> io::Result<()> {
 
 /// The newest session in `dir` recorded on `device` that received something, and within
 /// `max_age` of now when given. To call before `start_journal`, whose pruning could remove it
-// TODO(MAX-148): used from the startup restore (step 4)
-#[allow(dead_code)]
 pub fn find_last_session(
     dir: &Path,
     device: &SessionDevice,

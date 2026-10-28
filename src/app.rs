@@ -1,5 +1,5 @@
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -11,7 +11,8 @@ use crate::{
     },
     configs::{
         DualBufferMode, KeyBindingAction, KeyResolver, Mode, SettingsConfig, StatusBarLayout,
-        WrapMode, settings::PrefixWrapBehavior,
+        WrapMode,
+        settings::{PrefixWrapBehavior, RestoreMode},
     },
     inputs::{
         Action, AppAction, ClickHoldAction, CopyModeAction, HistoryAction, LineInputAction,
@@ -19,8 +20,8 @@ use crate::{
     },
     logger::{
         JournalReader, JournalText, PastSession, RESTORE_RAW_TAIL, Recorder, ScreenshotFormat,
-        SessionDevice, Stream, create_parent_dirs, expand_home, read_tail_bytes, read_tail_lines,
-        restore_separator,
+        SessionDevice, Stream, create_parent_dirs, expand_home, find_last_session, read_tail_bytes,
+        read_tail_lines, restore_separator,
     },
     notification::{NotificationManager, ToastLevel},
     overlays::{
@@ -452,12 +453,38 @@ impl App {
         self.open_overlay(Overlay::Screenshot(dialog));
     }
 
+    /// Restores the last session on this device found in `dir` when `restore` (`--restore` /
+    /// `--no-restore`) or else `capture.restore` says so, with a toast either way. To call
+    /// before `start_journal`, whose pruning could remove it (MAX-148)
+    pub fn restore_last_session(&mut self, dir: Option<&Path>, restore: Option<bool>) {
+        let capture = &self.settings.capture;
+        // TODO: (MAX-148) `ask` opens its dialog (step 5), until then it doesn't restore
+        let wanted = restore.unwrap_or(capture.restore == RestoreMode::Always);
+        let Some(dir) = dir.filter(|_| wanted) else {
+            return;
+        };
+        let max_age = (!capture.restore_max_age.is_zero()).then_some(capture.restore_max_age);
+        let Some(session) = find_last_session(dir, &self.session_device(), max_age) else {
+            return;
+        };
+        match self.restore_session(&session) {
+            Ok(()) => self.notify_info(format!(
+                "Restored the session of {}",
+                session.started.format("%Y-%m-%d %H:%M")
+            )),
+            Err(err) => self.notify_warn(format!("Session not restored: {err}")),
+        }
+    }
+
+    /// What this session runs on, for its journal and to find a past one to restore
+    fn session_device(&self) -> SessionDevice {
+        SessionDevice::new(&self.serial_config, self.settings.encoding)
+    }
+
     /// Puts a past session in the history of both modes, before any live data (MAX-148): the
     /// last lines of its text in line mode, read back with their times and marks, the end of
     /// its raw bytes through the terminal, then a separator where the live data starts. Not
     /// recorded nor counted: the new session starts empty
-    // TODO(MAX-148): called at startup (step 4)
-    #[allow(dead_code)]
     pub fn restore_session(&mut self, session: &PastSession) -> std::io::Result<()> {
         let text = read_tail_lines(&session.text_path, self.settings.line_mode.history_size)?;
         let raw = read_tail_bytes(&session.raw_path, RESTORE_RAW_TAIL)?;
@@ -1028,7 +1055,7 @@ impl App {
         if !capture.journal {
             return;
         }
-        let device = SessionDevice::new(&self.serial_config, self.settings.encoding);
+        let device = self.session_device();
         // the journal's text is written as the capture settings say now, reloads aside
         let text = JournalText {
             timestamp: capture
@@ -1499,5 +1526,53 @@ mod tests {
             }
         }
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// MAX-148: the last session restores at startup with `always` or `--restore`, not with
+    /// `never`, `ask` (no dialog yet) or `--no-restore`, nor when older than
+    /// `restore_max_age`; `0` is no limit. A session restores again on the next launch.
+    /// How: one session on the app's port, then each case on a fresh app.
+    #[test]
+    fn last_session_restores_as_settings_say() {
+        let dir =
+            std::env::temp_dir().join(format!("maxicom_test_{}_restore_last", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let port = SerialConfig::default().port;
+        let session = crate::logger::write_test_session(
+            &dir,
+            &port,
+            &JournalText::default(),
+            b"old line\r\n",
+            b"",
+        );
+        let restored = |mode: RestoreMode, flag: Option<bool>, max_age: u64| {
+            let mut app = app();
+            app.settings.capture.restore = mode;
+            app.settings.capture.restore_max_age = Duration::from_secs(max_age);
+            app.restore_last_session(Some(&dir), flag);
+            app.line_mode.history().iter().any(|e| e.text == "old line")
+        };
+        assert!(restored(RestoreMode::Always, None, 3600));
+        assert!(restored(RestoreMode::Always, None, 3600), "a second launch");
+        assert!(!restored(RestoreMode::Never, None, 3600));
+        assert!(!restored(RestoreMode::Ask, None, 3600));
+        assert!(restored(RestoreMode::Never, Some(true), 3600));
+        assert!(!restored(RestoreMode::Always, Some(false), 3600));
+
+        let two_hours_ago = std::time::SystemTime::now() - Duration::from_secs(2 * 3600);
+        std::fs::File::options()
+            .write(true)
+            .open(&session.raw_path)
+            .unwrap()
+            .set_modified(two_hours_ago)
+            .unwrap();
+        assert!(!restored(RestoreMode::Always, None, 3600));
+        assert!(restored(RestoreMode::Always, None, 0));
+
+        let mut app = app();
+        app.settings.capture.restore = RestoreMode::Always;
+        app.restore_last_session(None, None);
+        assert!(app.line_mode.history().is_empty(), "no cache folder");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
