@@ -1,5 +1,4 @@
 use std::{
-    fs::File,
     io::{self, ErrorKind, stdout},
     path::Path,
     process::ExitCode,
@@ -18,24 +17,27 @@ use ratatui::DefaultTerminal;
 use crate::{
     app::{App, UpdateEffect, selection::copy_via_osc52},
     args::{ParseOutcome, RunMode, parse_args, print_help},
-    bytesource::ByteSource,
     configs::{
         AppConfig, ConfigsError, KeyResolver, KeywordHighlight, Mode, SettingsConfig, ThemeConfig,
     },
+    link::{
+        ByteSource, Opener,
+        replay::Replay,
+        serial::{SerialConfig, SerialError},
+        tcp_address,
+    },
     overlays::{ErrorDialog, Overlay},
-    serial::{SerialConfig, SerialDevice, SerialError},
     ui::{PostRenderEffect, layout::LayoutWarning, render, status_bar::CompiledStatusBar},
 };
 
 mod app;
 mod args;
-mod bytesource;
 mod capture;
 mod configs;
 mod inputs;
+mod link;
 mod notification;
 mod overlays;
-mod serial;
 mod terminal;
 mod ui;
 
@@ -152,8 +154,12 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     };
 
     let mut device: Option<ByteSource> = match &run_mode {
-        RunMode::Live(cfg) => match SerialDevice::open(cfg) {
-            Ok(dev) => Some(ByteSource::Live(dev)),
+        // connected in the loop, like a reconnect, so the UI is up and says it's connecting.
+        // The arguments refused a malformed address
+        RunMode::Live(cfg) if tcp_address(&cfg.port).is_some() => None,
+        // serial without tcp for sure here
+        RunMode::Live(cfg) => match link::open(cfg) {
+            Ok(dev) => Some(dev),
             Err(SerialError::OpenFailed { ref source, .. })
                 if source.kind() == ErrorKind::NotFound =>
             {
@@ -161,20 +167,15 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
             Err(SerialError::InputClosed) => None,
             Err(err) => {
-                eprintln!("maxicom: could not open serial device: {err}");
+                eprintln!("maxicom: could not open the device: {err}");
                 return Ok(ExitCode::FAILURE);
             }
         },
         RunMode::Replay {
             file_path,
             delay_ms,
-        } => match File::open(file_path) {
-            Ok(file) => Some(ByteSource::Replay {
-                file,
-                delay: Duration::from_millis(*delay_ms),
-                last_chunk: Instant::now(),
-                finished: false,
-            }),
+        } => match Replay::open(file_path, Duration::from_millis(*delay_ms)) {
+            Ok(replay) => Some(ByteSource::Replay(replay)),
             Err(err) => {
                 eprintln!(
                     "maxicom: could not open replay file {}: {err}",
@@ -211,9 +212,16 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         app.start_journal(journal_dir);
     }
 
+    let mut last_reconnect_attempt = Instant::now();
+    let mut opener = Opener::default();
+    let mut open_for = OpenFor::Retry;
     // the restore question comes first, the missing device's popup once it's answered (MAX-148)
     let mut disconnected_after_restore = false;
-    if device.is_none() {
+    if device.is_none() && tcp_address(&app.serial_config.port).is_some() {
+        opener.start(&app.serial_config);
+        open_for = OpenFor::Start;
+        app.notify_info(format!("Connecting to {}", app.serial_config.port));
+    } else if device.is_none() {
         if matches!(app.overlay(), Some(Overlay::RestoreSession(_))) {
             disconnected_after_restore = true;
         } else {
@@ -221,7 +229,6 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
     }
 
-    let mut last_reconnect_attempt = Instant::now();
     let mut last_layout_warnings: Vec<LayoutWarning> = Vec::default();
     let mut last_rx_activity = Instant::now();
     let mut needs_redraw = true;
@@ -314,15 +321,49 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 && last_reconnect_attempt.elapsed() >= Duration::from_millis(500)
             {
                 last_reconnect_attempt = Instant::now();
-                if let Ok(new_dev) = SerialDevice::open(&app.serial_config) {
-                    device = Some(ByteSource::Live(new_dev));
+                opener.start(&app.serial_config);
+            }
+            match opener.finished() {
+                Some(Ok(new_dev)) => {
+                    device = Some(new_dev);
                     last_rx_activity = Instant::now();
-                    if let Some(Overlay::DeviceDisconnected(_)) = app.overlay() {
-                        app.close_overlay();
+                    let port = &app.serial_config.port;
+                    match open_for {
+                        OpenFor::Start => app.notify_success(format!("Connected to {port}")),
+                        OpenFor::Attach => {
+                            app.notify_success(format!("Reconnected to {port}"));
+                            app.close_overlay();
+                        }
+                        OpenFor::Retry => {
+                            app.notify_success(format!("Device Reconnected: {port}"));
+                            if let Some(Overlay::DeviceDisconnected(_)) = app.overlay() {
+                                app.close_overlay();
+                            }
+                        }
                     }
-                    app.notify_success(format!("Device Reconnected: {}", app.serial_config.port));
+                    open_for = OpenFor::Retry;
                     needs_redraw = true;
                 }
+                Some(Err(e)) => {
+                    match open_for {
+                        // what a missing port does at start, after the restore question
+                        OpenFor::Start => {
+                            app.notify_warn(e.to_string());
+                            if matches!(app.overlay(), Some(Overlay::RestoreSession(_))) {
+                                disconnected_after_restore = true;
+                            } else {
+                                app.open_overlay(Overlay::DeviceDisconnected(
+                                    app.serial_config.port.clone(),
+                                ));
+                            }
+                        }
+                        OpenFor::Attach => app.notify_error(format!("Failed to reattach: {e}")),
+                        OpenFor::Retry => {}
+                    }
+                    open_for = OpenFor::Retry;
+                    needs_redraw = true;
+                }
+                None => {}
             }
         }
 
@@ -358,19 +399,14 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                             ));
                             app.notify_warn("Serial Port Released (Detached)");
                         } else {
-                            match SerialDevice::open(&app.serial_config) {
-                                Ok(dev) => {
-                                    device = Some(ByteSource::Live(dev));
-                                    last_rx_activity = Instant::now();
-                                    app.close_overlay();
-                                    app.notify_success(format!(
-                                        "Reconnected to {}",
-                                        app.serial_config.port
-                                    ));
-                                }
-                                Err(e) => {
-                                    app.notify_error(format!("Failed to reattach: {e}"));
-                                }
+                            // the result comes with the reconnect's, next frame for a port
+                            open_for = OpenFor::Attach;
+                            opener.start(&app.serial_config);
+                            if tcp_address(&app.serial_config.port).is_some() {
+                                app.notify_info(format!(
+                                    "Connecting to {}",
+                                    app.serial_config.port
+                                ));
                             }
                         }
                     }
@@ -496,7 +532,14 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Copies `text` and says so: the copy of `what` with the text itself, else its char count
+/// Who started the open that runs, which decides what its result shows: a retry stays quiet
+/// until it connects, the user's attach reports a failure, the start shows the popup
+enum OpenFor {
+    Start,
+    Attach,
+    Retry,
+}
+
 /// Writes `bytes` to the device, counted and recorded (not in a replay), or opens the error
 /// popup. True when written
 fn transmit(app: &mut App, dev: &mut ByteSource, bytes: &[u8], is_replay: bool) -> bool {
@@ -521,6 +564,7 @@ fn transmit(app: &mut App, dev: &mut ByteSource, bytes: &[u8], is_replay: bool) 
     }
 }
 
+/// Copies `text` and says so: the copy of `what` with the text itself, else its char count
 fn execute_clipboard_copy(app: &mut App, text: &str, what: Option<&str>) {
     if let Err(e) = copy_via_osc52(text) {
         app.notify_error(format!("Clipboard error: {e}"));

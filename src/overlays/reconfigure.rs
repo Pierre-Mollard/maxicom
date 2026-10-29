@@ -2,8 +2,11 @@ use tui_input::Input;
 
 use crate::{
     inputs::DialogAction,
+    link::{
+        has_line_settings,
+        serial::{CharSize, FlowControl, Parity, SerialConfig, StopBits},
+    },
     overlays::{OverlayResponse, PopupTarget},
-    serial::{CharSize, FlowControl, Parity, SerialConfig, StopBits},
 };
 
 const COMMON_BAUDRATES: &[u32] = &[9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
@@ -47,6 +50,9 @@ pub struct SerialConfigDialog {
     pub port_input: Input,
     pub baudrate_idx: usize,
     pub config: SerialConfig,
+    /// False for a link whose bridge owns the line settings (TCP): nothing to edit, the popup
+    /// only tells it (MAX-156)
+    pub line_settings: bool,
 }
 
 impl SerialConfigDialog {
@@ -61,6 +67,7 @@ impl SerialConfigDialog {
             port_input: Input::new(current_config.port.clone()),
             baudrate_idx: baud_idx,
             config: current_config.clone(),
+            line_settings: has_line_settings(&current_config.port),
         }
     }
 
@@ -146,6 +153,12 @@ impl SerialConfigDialog {
     }
 
     pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
+        if !self.line_settings {
+            return match action {
+                DialogAction::Close | DialogAction::Confirm => OverlayResponse::Close,
+                _ => OverlayResponse::Handled,
+            };
+        }
         match action {
             DialogAction::Close => OverlayResponse::Close,
             DialogAction::Pick(PopupTarget::SerialPrev(field)) => {

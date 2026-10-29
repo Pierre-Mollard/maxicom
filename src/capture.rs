@@ -59,7 +59,7 @@ pub mod tests {
 
     use super::*;
     use crate::configs::{RxNewlineMode, TextEncoding};
-    use crate::serial::SerialConfig;
+    use crate::link::serial::SerialConfig;
 
     pub fn record(recorder: &mut Recorder, bytes: &[u8]) {
         recorder.record_rx(RxNewlineMode::Auto, TextEncoding::Utf8, None, bytes);
@@ -122,6 +122,8 @@ pub mod tests {
         assert_eq!(expand_home(Path::new("~x")), Path::new("~x"));
         assert_eq!(session_tag("/dev/ttyUSB0"), "ttyUSB0");
         assert_eq!(session_tag("COM3"), "COM3");
+        // no ':' in a Windows file name (MAX-156)
+        assert_eq!(session_tag("tcp://192.168.1.50:4000"), "192.168.1.50_4000");
         assert_eq!(session_tag("file:///tmp/my log.raw"), "my_log.raw");
     }
 }

@@ -1,5 +1,6 @@
 use crate::configs::TextEncoding;
-use crate::serial::{CharSize, Parity, SerialConfig, StopBits};
+use crate::link::has_line_settings;
+use crate::link::serial::{CharSize, Parity, SerialConfig, StopBits};
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -21,30 +22,49 @@ pub struct JournalText {
 }
 
 /// What a session was recorded on (MAX-148): a session restores only on the same machine,
-/// port, line settings and encoding, as bytes from another baud or encoding are garbage. Flow
-/// control doesn't change the bytes, so it isn't part of it
+/// address, line settings and encoding, as bytes from another baud or encoding are garbage.
+/// `port` is the link's address, whose form gives its kind (MAX-156), and `line` its line
+/// settings when maxicom sets them (a serial port, not a TCP link): a new kind of link never
+/// changes the file. In the file the line settings sit at the top of `[device]`, as before
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionDevice {
     pub host: String,
     pub port: String,
+    #[serde(flatten)]
+    pub line: Option<SessionLine>,
+    pub encoding: TextEncoding,
+}
+
+/// The line settings that change the bytes received. Flow control doesn't, so it isn't here
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionLine {
     pub baud: u32,
     pub char_size: CharSize,
     pub parity: Parity,
     pub stop_bits: StopBits,
-    pub encoding: TextEncoding,
 }
 
 impl SessionDevice {
     pub fn new(serial: &SerialConfig, encoding: TextEncoding) -> Self {
-        Self {
-            host: hostname(),
-            port: serial.port.clone(),
+        let line = has_line_settings(&serial.port).then_some(SessionLine {
             baud: serial.baudrate,
             char_size: serial.char_size,
             parity: serial.parity,
             stop_bits: serial.stop_bits,
+        });
+        Self {
+            host: hostname(),
+            port: serial.port.clone(),
+            line,
             encoding,
         }
+    }
+
+    /// Whether `line` is there exactly when the kind of link has line settings. serde reads
+    /// a `line` it can't read whole (a missing or unknown field) as none, which would turn a
+    /// broken serial meta into a link without line settings
+    fn is_whole(&self) -> bool {
+        self.line.is_some() == has_line_settings(&self.port)
     }
 }
 
@@ -200,7 +220,7 @@ fn read_session(dir: &Path, stem: String, files: Vec<PathBuf>) -> Session {
     let meta = fs::read_to_string(dir.join(format!("{stem}.meta")))
         .ok()
         .and_then(|meta| toml::from_str::<SessionMeta>(&meta).ok())
-        .filter(|meta| meta.version == SESSION_META_VERSION);
+        .filter(|meta| meta.version == SESSION_META_VERSION && meta.device.is_whole());
     let started = match &meta {
         Some(meta) => DateTime::from_timestamp(meta.started, 0).map(|t| t.with_timezone(&Local)),
         None => stem
@@ -482,6 +502,104 @@ mod tests {
         fs::write(dir.join(format!("{stem}.raw")), raw).unwrap();
     }
 
+    /// A meta file as maxicom wrote it before MAX-156 (version 1, the line settings at the top
+    /// of `[device]`), kept as text: later versions must read it the same
+    const META_V1: &str = r#"version = 1
+started = 1700000000
+
+[device]
+host = "board-host"
+port = "/dev/ttyUSB0"
+baud = 115200
+char_size = "bits8"
+parity = "none"
+stop_bits = "one"
+encoding = "utf8"
+
+[text]
+timestamp = "[%H:%M:%S%.3f]"
+tx_mark = "> "
+"#;
+
+    /// MAX-156: a version 1 meta reads back as a serial session with its line settings, and a
+    /// serial session still writes the same file.
+    /// How: the saved v1 text, read then written again.
+    #[test]
+    fn meta_v1_still_reads() {
+        let meta: SessionMeta = toml::from_str(META_V1).unwrap();
+        assert_eq!(meta.device.port, "/dev/ttyUSB0");
+        assert_eq!(toml::to_string(&meta).unwrap(), META_V1);
+    }
+
+    /// MAX-156: a TCP session has no line settings in its meta, reads back without them, and
+    /// restores only on the same address: never on a serial port, nor on another address.
+    /// How: a TCP session's meta text, then the last session for three devices.
+    #[test]
+    fn tcp_sessions_match_their_address_only() {
+        let dir = temp_dir("tcp_sessions");
+        let tcp = device("tcp://192.168.1.50:4000");
+        assert_eq!(tcp.line, None);
+        write_session(&dir, "20260101_000000_192.168.1.50_4000", &tcp, b"rx");
+        let meta = fs::read_to_string(dir.join("20260101_000000_192.168.1.50_4000.meta")).unwrap();
+        assert!(!meta.contains("baud") && !meta.contains("parity"), "{meta}");
+
+        assert_eq!(
+            found_stem(&dir, &tcp, None).as_deref(),
+            Some("20260101_000000_192.168.1.50_4000")
+        );
+        assert_eq!(
+            found_stem(&dir, &device("tcp://192.168.1.51:4000"), None),
+            None
+        );
+        let serial = SessionDevice {
+            line: device("/dev/ttyUSB0").line,
+            ..tcp.clone()
+        };
+        assert_eq!(found_stem(&dir, &serial, None), None);
+        let _ = fs::remove_dir_all(&dir);
+
+        // a real journal names its files after the address, which reads back whole
+        let dir = temp_dir("tcp_journal");
+        let session = crate::capture::tests::write_test_session(
+            &dir,
+            "tcp://192.168.1.50:4000",
+            &JournalText::default(),
+            b"rx\n",
+            b"",
+        );
+        assert_eq!(session.port_tag(), "192.168.1.50_4000");
+        assert_eq!(session.meta.unwrap().device.line, None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// MAX-156: a meta whose line settings don't fit its kind of link is broken, not a session
+    /// of the other kind: a serial meta missing a line field (serde would read it as no line
+    /// settings), or a TCP meta with line settings.
+    /// How: the v1 text without `parity`, then with a `tcp://` port.
+    #[test]
+    fn meta_with_the_wrong_line_is_broken() {
+        let dir = temp_dir("broken_line");
+        fs::create_dir_all(&dir).unwrap();
+        let cases = [
+            (
+                "20260101_000000_ttyUSB0",
+                META_V1.replace("parity = \"none\"\n", ""),
+            ),
+            (
+                "20260102_000000_192.168.1.50_4000",
+                META_V1.replace("/dev/ttyUSB0", "tcp://192.168.1.50:4000"),
+            ),
+        ];
+        for (stem, text) in &cases {
+            fs::write(dir.join(format!("{stem}.meta")), text).unwrap();
+            fs::write(dir.join(format!("{stem}.raw")), "rx").unwrap();
+        }
+        let sessions = list_sessions(&dir).unwrap();
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions.iter().all(|session| session.meta.is_none()));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     fn found_stem(dir: &Path, device: &SessionDevice, max_age: Option<Duration>) -> Option<String> {
         let session = find_last_session(dir, device, max_age)?;
         Some(session.raw_path()?.file_stem()?.to_str()?.to_string())
@@ -509,7 +627,7 @@ mod tests {
             b"x",
         );
         let other_baud = SessionDevice {
-            baud: 9600,
+            line: mine.line.map(|line| SessionLine { baud: 9600, ..line }),
             ..mine.clone()
         };
         write_session(&dir, "20260105_000000_ttyUSB0", &other_baud, b"x");

@@ -30,6 +30,18 @@ cargo run --bin maxicom --profile profiling -- --baud 115200 --port /tmp/maxicom
 cargo run --bin maxicom --profile profiling -- --baud 115200 --port /tmp/maxicom
 ```
 
+- Run a device over TCP (`tcp://` links): a shell on `127.0.0.1:4000`, one per
+  connection, or a real serial port shared like ser2net
+
+```bash
+./scripts/run_tcp.sh                            # zsh on port 4000
+./scripts/run_tcp.sh 4000 /dev/ttyUSB0 115200   # bridge a serial port
+```
+
+```bash
+cargo run --bin maxicom -- --port tcp://127.0.0.1:4000
+```
+
 - Profile (flame chart) with sample
 
 ```bash
@@ -45,6 +57,51 @@ samply record ./target/profiling/maxicom --baud 115200 --port /tmp/maxicom-shell
 ```bash
 cargo deny check
 ```
+
+## DEVICES
+
+`maxicom [OPTIONS] [DEVICE]`, all the options with `maxicom --help`.
+
+- A serial port: `maxicom /dev/ttyUSB0 -b 921600`, `maxicom COM3`, or with
+  `--port`.
+- A device over TCP: `maxicom tcp://192.168.1.50:4000`, or
+  `--tcp 192.168.1.50:4000`.
+
+### TCP LINKS
+
+The device's UART reached through a bridge, which copies the bytes between a
+TCP connection and the UART:
+
+- A TCP-UART bridge in the device's firmware (ESP32: ESP-Link, the ESPHome
+  stream server, your own): no cable, and from WSL2 no USB forwarding
+- ser2net or socat on the machine the board is plugged into, which shares its
+  port on the network (`./scripts/run_tcp.sh 4000 /dev/ttyUSB0 115200`). To
+  reach it from elsewhere, encrypted: `ssh -L 4000:localhost:4000 pi`, then
+  `maxicom tcp://localhost:4000`
+- Serial device servers (Moxa, Lantronix, Digi) in their raw TCP mode
+- Emulators: QEMU `-serial tcp::4444,server,nowait`, Renode
+- RTT logs through a debug probe: J-Link on `localhost:19021`, OpenOCD
+  `rtt server`
+
+What changes from a serial port:
+
+- Raw bytes only, no telnet: a ser2net "telnet" port or a server in telnet
+  mode shows a few unreadable bytes at connect (its option negotiation). Use
+  their raw mode.
+- No line settings: the bridge sets the baud and the framing. The status bar
+  shows `raw TCP` in their place (the `line_settings` condition hides them),
+  the serial settings popup shows the address only, and `--baud`, `--bits`,
+  `--parity`, `--stop-bits`, `--flow` are refused.
+- The UI never waits for the network: it says "Connecting to …"; a host down
+  or not listening yet shows "Connection Lost" and is retried every 500 ms,
+  like an unplugged port. Detach and attach work the same.
+- A link that dies silently (the device powered off, the Wi-Fi dropped) is
+  found by TCP keepalive after about 11 s, then retried.
+- Typed keys are sent at once, and timestamps are when the bytes arrive from
+  the network, not when they crossed the wire.
+- Sessions are kept per address: one restores only on the same address, and
+  its files are named after it (`192.168.1.50_4000`).
+- Prefer an IP address: a `.local` name (mDNS) may not resolve in WSL2.
 
 ## CONFIG
 
@@ -112,7 +169,8 @@ where its lines wrap, which `dimension_mode` decides.
   in the device's `~/.zshrc`):
 
   ```zsh
-  if [[ $TTY == /dev/tty(S|AMA|USB|ACM|mxc|GS)* ]] && (( $+commands[resize] )); then
+  if [[ $TTY == /dev/tty(S|AMA|USB|ACM|mxc|GS)* ]] &&
+     (( $+commands[resize] )); then
     _serial_resize() { eval "$(resize)" }
     precmd_functions+=(_serial_resize)
   fi
@@ -241,9 +299,9 @@ screenshot_name = "screen_%Y%m%d_%H%M%S" # the format adds .txt or .ans
 
 - Variables:
   - {mode}           "TERM" or "LINE"
-  - {port}           Serial device path (e.g. /dev/ttyUSB0)
-  - {baud}           Baud rate (e.g. 115200)
-  - {framing}        Serial framing (e.g. 8N1)
+  - {port}           Device address (e.g. /dev/ttyUSB0, tcp://192.168.1.50:4000)
+  - {baud}           Baud rate (e.g. 115200), raw for a raw TCP link
+  - {framing}        Serial framing (e.g. 8N1), TCP for a TCP link
   - {rx_bytes}       Received bytes count
   - {tx_bytes}       Transmitted bytes count
   - {time}           Local time (via time_format)
@@ -279,6 +337,8 @@ screenshot_name = "screen_%Y%m%d_%H%M%S" # the format adds .txt or .ans
     - search         Search mode is active
     - overlay        Dialog/popup is open (alias: popup)
     - focused        Window has OS desktop focus
+    - line_settings  The link has line settings: a serial port, not a TCP
+                     link whose bridge sets them (alias: serial)
 
   - Viewport & Scroll:
     - is_live        Following live tail (alias: live, bot, bottom)

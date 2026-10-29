@@ -210,6 +210,8 @@ pub enum SerialError {
         baudrate: u32,
         source: io::Error,
     },
+    /// Failed to connect to a network link (refused, unreachable, bad address)
+    ConnectFailed { addr: String, source: io::Error },
     /// Failed to configure port options (read timeout, termios flags)
     ConfigFailed(io::Error),
     ReconfigureFailed {
@@ -252,6 +254,9 @@ impl fmt::Display for SerialError {
                     )
                 }
             },
+            Self::ConnectFailed { addr, source } => {
+                write!(f, "could not connect to '{addr}': {source}")
+            }
             Self::ConfigFailed(source) => {
                 write!(f, "failed to configure port settings: {source}")
             }
@@ -294,6 +299,7 @@ impl Error for SerialError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::OpenFailed { source, .. } => Some(source),
+            Self::ConnectFailed { source, .. } => Some(source),
             Self::ConfigFailed(source) => Some(source),
             Self::ReconfigureFailed { source, .. } => Some(source),
             Self::ReadFailed(source) => Some(source),

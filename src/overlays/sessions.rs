@@ -239,7 +239,7 @@ mod tests {
     use crate::{
         capture::{JournalText, Recorder, SessionDevice, tests::write_test_session},
         configs::TextEncoding,
-        serial::SerialConfig,
+        link::serial::SerialConfig,
     };
     use crossterm::event::{KeyEvent, KeyModifiers};
 

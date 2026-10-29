@@ -270,11 +270,11 @@ mod tests {
         inputs::{
             Action, AppAction, CopyModeAction, DialogAction, HistoryAction, SearchModeAction,
         },
+        link::serial::SerialConfig,
         overlays::{
             ErrorDialog, FilePathDialog, HelpDialog, ResizeDialog, ScreenshotDialog,
             SerialConfigDialog,
         },
-        serial::SerialConfig,
     };
     use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use ratatui::{Terminal, backend::TestBackend};
@@ -1228,6 +1228,38 @@ mod tests {
         assert!(has(&rows, "< 1 >"), "{rows:#?}");
     }
 
+    /// MAX-156: a TCP link's popup shows its address and nothing to edit, and any key but
+    /// navigation closes it without reconfiguring.
+    /// How: the popup rows for a `tcp://` port, then its answers to Confirm and Right.
+    #[test]
+    fn serial_popup_for_a_tcp_link() {
+        let config = SerialConfig {
+            port: "tcp://192.168.1.50:4000".to_string(),
+            ..SerialConfig::default()
+        };
+        let rows = popup_rows(
+            Overlay::SerialSettings(SerialConfigDialog::new(&config)),
+            &[],
+        );
+        assert!(has(&rows, "Network Link"), "{rows:#?}");
+        assert!(has(&rows, "tcp://192.168.1.50:4000"), "{rows:#?}");
+        assert!(
+            !has(&rows, "Baud Rate") && !has(&rows, "< 8 >"),
+            "{rows:#?}"
+        );
+
+        let mut dialog = SerialConfigDialog::new(&config);
+        assert!(matches!(
+            dialog.handle_action(DialogAction::Right),
+            crate::overlays::OverlayResponse::Handled
+        ));
+        assert_eq!(dialog.config, config);
+        assert!(matches!(
+            dialog.handle_action(DialogAction::Confirm),
+            crate::overlays::OverlayResponse::Close
+        ));
+    }
+
     /// The text cursor of the text input popups sits right after the typed text.
     #[test]
     fn text_input_cursor_follows_the_text() {
@@ -1451,6 +1483,29 @@ mod tests {
         let row = &rows[y as usize];
         let x = row[..row.find(text).unwrap()].chars().count();
         (x as u16, y)
+    }
+
+    /// MAX-156: the browser shows a TCP session's address, and its line as `raw TCP` and the
+    /// encoding, as the status bar does.
+    /// How: a TCP session written, then selected with a click.
+    #[test]
+    fn session_browser_shows_a_tcp_session_without_line_settings() {
+        let dir =
+            std::env::temp_dir().join(format!("maxicom_test_{}_browser_tcp", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let text = crate::capture::JournalText::default();
+        let port = "tcp://192.168.1.50:4000";
+        crate::capture::tests::write_test_session(&dir, port, &text, b"rx\r\n", b"");
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
+        h.app.start_journal(Some(dir.clone()));
+        h.app.update(Action::App(AppAction::OpenSessions));
+        let rows = h.draw();
+        click(&mut h, cell_of(&rows, "192.168.1.50_4000"));
+        let rows = h.draw();
+        assert!(has(&rows, port), "{rows:#?}");
+        let line = rows.iter().find(|row| row.contains("Line ")).unwrap();
+        assert!(line.contains("raw TCP UTF8"), "{rows:#?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// MAX-148: the session browser lists the sessions with their marks (`●` running, `↺`
@@ -3687,8 +3742,8 @@ mod tests {
     /// not a connection alert, where closing quits (MAX-113).
     #[test]
     fn mouse_clicks_in_popups() {
+        use crate::link::serial::Parity;
         use crate::overlays::{HelpCategory, ResizeField, SerialSettingField};
-        use crate::serial::Parity;
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
         let open = |h: &mut Harness, overlay| {
             h.app.update(Action::App(AppAction::OpenOverlay(overlay)));
@@ -3749,8 +3804,8 @@ mod tests {
     /// stop bits' `<`.
     #[test]
     fn serial_popup_arrows() {
+        use crate::link::serial::Parity;
         use crate::overlays::SerialSettingField;
-        use crate::serial::Parity;
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
         h.app.update(Action::App(AppAction::OpenOverlay(
             Overlay::SerialSettings(SerialConfigDialog::new(&SerialConfig::default())),

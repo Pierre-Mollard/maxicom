@@ -11,11 +11,11 @@ use ratatui::{
 use crate::{
     capture::{Session, SessionOrder},
     configs::{KeyPattern, KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
+    link::{line_stand_in, serial::SerialConfig},
     overlays::{
         PopupTarget, SessionBrowser,
         sessions::{sessions, size},
     },
-    serial::SerialConfig,
     ui::{
         common::popup_area,
         popups::{Hints, hint_spans, popup_block, section},
@@ -270,24 +270,31 @@ fn details<'a>(
     match &session.meta {
         Some(meta) => {
             let device = &meta.device;
-            let framing: String = SerialConfig {
-                port: device.port.clone(),
-                baudrate: device.baud,
-                char_size: device.char_size,
-                stop_bits: device.stop_bits,
-                parity: device.parity,
-                ..SerialConfig::default()
-            }
-            .compact_notation()
-            .iter()
-            .collect();
+            // a link whose bridge sets the line shows what it is, as in the status bar (MAX-156)
+            let line = match device.line {
+                Some(line) => {
+                    let framing: String = SerialConfig {
+                        baudrate: line.baud,
+                        char_size: line.char_size,
+                        stop_bits: line.stop_bits,
+                        parity: line.parity,
+                        ..SerialConfig::default()
+                    }
+                    .compact_notation()
+                    .iter()
+                    .collect();
+                    format!("{} {framing} {}", line.baud, device.encoding.as_str())
+                }
+                None => match line_stand_in(&device.port) {
+                    Some([baud, framing]) => {
+                        format!("{baud} {framing} {}", device.encoding.as_str())
+                    }
+                    None => device.encoding.as_str().to_string(),
+                },
+            };
             let port = Style::default().fg(colors.port_color(session.port_tag()));
             lines.push(field("Port", device.port.clone(), port));
-            lines.push(field(
-                "Line",
-                format!("{} {framing} {}", device.baud, device.encoding.as_str()),
-                plain,
-            ));
+            lines.push(field("Line", line, plain));
             lines.push(field("Host", device.host.clone(), plain));
             let timestamp = meta.text.timestamp.clone();
             lines.push(field(

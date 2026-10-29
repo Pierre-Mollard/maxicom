@@ -21,6 +21,9 @@ pub fn render_reconfigure_popup(
     theme: &ThemeConfig,
     targets: &mut Vec<(Rect, PopupTarget)>,
 ) -> Rect {
+    if !dialog.line_settings {
+        return render_link_without_settings(dialog, resolver, frame, theme, targets);
+    }
     let [data_bits, _, stop_bits] = dialog.config.compact_notation();
     let mut lines = Vec::new();
 
@@ -112,5 +115,43 @@ pub fn render_reconfigure_popup(
     for (y, (field, _)) in field_rows.into_iter().enumerate() {
         targets.push((row_area(inner, y), PopupTarget::SerialField(field)));
     }
+    area
+}
+
+/// The popup for a link whose line settings belong to its bridge (TCP, MAX-156): its address
+/// and why there is nothing to set
+fn render_link_without_settings(
+    dialog: &SerialConfigDialog,
+    resolver: &KeyResolver,
+    frame: &mut Frame,
+    theme: &ThemeConfig,
+    targets: &mut Vec<(Rect, PopupTarget)>,
+) -> Rect {
+    let label = Style::default().fg(theme.palette.ternary);
+    let muted = Style::default().fg(theme.palette.unselected);
+    let lines = vec![
+        Line::from(vec![
+            Span::styled(format!("  {:<12}: ", "Address"), label),
+            Span::raw(dialog.config.port.clone()),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled("  The bridge sets baud and framing:", muted)),
+        Line::from(Span::styled("  nothing to set over TCP.", muted)),
+    ];
+
+    let hints = key_hints(
+        resolver,
+        false,
+        &[(&[KeyBindingDialogAction::Close], "Close")],
+        theme,
+    );
+    let block = popup_block("Network Link", &hints, theme);
+
+    let area = form_area(frame.area(), FORM_WIDTH, lines.len());
+    frame.render_widget(Clear, area);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    frame.render_widget(Paragraph::new(lines), inner);
+    hints.push_block_targets(area, targets);
     area
 }

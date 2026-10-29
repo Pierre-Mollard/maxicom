@@ -374,7 +374,7 @@ mod tests {
     use super::*;
     use crate::{
         configs::{KeyBindingsConfig, KeyResolver, SettingsConfig},
-        serial::SerialConfig,
+        link::serial::SerialConfig,
     };
     use crossterm::event::{KeyCode, KeyModifiers};
 

@@ -7,7 +7,7 @@ use crate::{
     capture::{Session, Stream},
     configs::{KeyBindingAction, keybindings::KeyBindingDialogAction},
     inputs::DialogAction,
-    serial::SerialConfig,
+    link::serial::SerialConfig,
 };
 
 // Re-exports

@@ -27,9 +27,9 @@
 //! | Variable            | Description                                             | Example          |
 //! |---------------------|---------------------------------------------------------|------------------|
 //! | `{mode}`            | Current input mode (`TERM` or `LINE`)                   | `TERM`           |
-//! | `{port}`            | Serial device path                                      | `/dev/ttyUSB0`   |
-//! | `{baud}`            | Serial baudrate                                         | `115200`         |
-//! | `{framing}`         | Data bits, parity, stop bits                            | `8N1`            |
+//! | `{port}`            | Device address: serial path or `tcp://host:port`        | `/dev/ttyUSB0`   |
+//! | `{baud}`            | Serial baudrate, `raw` for a raw TCP link               | `115200`         |
+//! | `{framing}`         | Data bits, parity, stop bits, `TCP` for a TCP link      | `8N1`            |
 //! | `{rx_bytes}`        | Total bytes received                                    | `1024`           |
 //! | `{tx_bytes}`        | Total bytes transmitted                                 | `256`            |
 //! | `{time}`            | Current local time (format in config)                   | `21:45:00`       |
@@ -88,6 +88,7 @@
 //! | `wide`                          | `pannable`                                 | The content is wider than the view: it can pan           |
 //! | `new_data`                      | `unread`, `missed`                         | Data arrived while scrolled up, not seen yet             |
 //! | `mouse`                         | —                                          | Mouse capture is on (`ui.mouse`)                         |
+//! | `line_settings`                 | `serial`                                   | The link has line settings: a serial port, not TCP       |
 //!
 //! ## Style Keywords
 //! - **Modifiers**: `bold`, `dim`, `italic`, `underlined` (`underline`), `reversed` (`reverse`), `reset` (`default`), `crossed`, `slow_blink` (`sblink`), `rapid_blink` (`rblink`)
@@ -168,6 +169,7 @@ use crate::{
         types::{ClickAction, ClickTarget},
     },
     configs::{KeyBindingAction, Mode, StatusBarConfig, StatusBarLayout, ThemeConfig},
+    link::{has_line_settings, line_stand_in},
     ui::common::{pan_left_indicator, pan_right_indicator},
 };
 
@@ -452,6 +454,8 @@ impl Var {
     fn number(self, app: &App) -> Option<u64> {
         let scroll = app.scroll_status();
         Some(match self {
+            // a TCP link has none: written as text by `write_text`
+            Self::Baud if !has_line_settings(&app.serial_config.port) => return None,
             Self::Baud => app.serial_config.baudrate as u64,
             Self::RxBytes => app.stats.rx() as u64,
             Self::TxBytes => app.stats.tx() as u64,
@@ -513,6 +517,12 @@ impl Var {
                 }
             ),
             Self::Port => write!(out, "{}", app.serial_config.port),
+            // the bridge sets them: what the stream is and the link kind, read as "raw TCP"
+            Self::Baud | Self::Framing
+                if let Some([baud, framing]) = line_stand_in(&app.serial_config.port) =>
+            {
+                write!(out, "{}", if self == Self::Baud { baud } else { framing })
+            }
             Self::Framing => write!(out, "{}", app.serial_config),
             Self::Time => write!(out, "{}", chrono::Local::now().format(time_format)),
             Self::PanLeft => write!(out, "{}", pan_left_indicator(app).unwrap_or_default()),
@@ -584,6 +594,7 @@ enum Cond {
     Wide,
     NewData,
     Mouse,
+    LineSettings,
     /// Unknown condition name, always false
     Unknown,
 }
@@ -614,6 +625,7 @@ impl Cond {
             "wide" | "pannable" => Self::Wide,
             "new_data" | "unread" | "missed" => Self::NewData,
             "mouse" => Self::Mouse,
+            "line_settings" | "serial" => Self::LineSettings,
             _ => Self::Unknown,
         }
     }
@@ -651,6 +663,7 @@ impl Cond {
             Self::Wide => app.pan_right_status().is_some(),
             Self::NewData => app.is_new_content_missed(),
             Self::Mouse => app.settings().ui.mouse,
+            Self::LineSettings => has_line_settings(&app.serial_config.port),
             Self::Unknown => false,
         }
     }
@@ -1252,7 +1265,7 @@ mod tests {
     use crate::{
         configs::{KeyBindingsConfig, KeyResolver, SettingsConfig},
         inputs::{Action, AppAction, CopyModeAction},
-        serial::SerialConfig,
+        link::serial::SerialConfig,
     };
 
     fn app(mode: Mode) -> App {
@@ -1308,6 +1321,30 @@ mod tests {
                 plain("8N1"),
             ]
         );
+    }
+
+    /// MAX-156: a TCP link has no line settings: `{baud}` is `raw` and `{framing}` the link
+    /// kind, in the same places and styles; `line_settings` can hide them.
+    /// How: the default left template with a `tcp://` port, a padded baud, the condition.
+    #[test]
+    fn tcp_link_has_no_baud_nor_framing() {
+        let mut a = app(Mode::Terminal);
+        a.serial_config.port = "tcp://192.168.1.50:4000".to_string();
+        let d = StatusBarConfig::default();
+        assert_eq!(
+            render(&d.left, &a),
+            [
+                span(" TERM ", "Some(Cyan)", BG, "BOLD"),
+                plain(" tcp://192.168.1.50:4000"),
+                span(" |", MUTED, BG, "NONE"),
+                plain(" "),
+                span("raw", "Some(Cyan)", BG, "NONE"),
+                plain(" "),
+                plain("TCP"),
+            ]
+        );
+        assert_eq!(render("<{baud:5}>", &a), [plain("<raw  >")]);
+        assert_eq!(render("[x](serial?bold:hide)", &a), Vec::<String>::new());
     }
 
     /// The mode pill follows the prefix and copy-mode conditions.

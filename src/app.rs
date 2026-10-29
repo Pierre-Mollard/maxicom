@@ -24,12 +24,12 @@ use crate::{
         Action, AppAction, ClickHoldAction, CopyModeAction, HistoryAction, LineInputAction,
         ScrollbarAction, SearchModeAction, SideViewAction, TerminalAction,
     },
+    link::serial::SerialConfig,
     notification::{NotificationManager, ToastLevel},
     overlays::{
         ErrorDialog, FilePathDialog, Overlay, OverlayResponse, PopupTarget, ScreenshotDialog,
         SessionBrowser, SettingKey,
     },
-    serial::SerialConfig,
 };
 
 pub mod data_processing;
