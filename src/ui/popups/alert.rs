@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::{
     configs::{KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
-    logger::PastSession,
+    logger::Session,
     overlays::{ErrorDialog, PopupTarget},
     ui::{
         common::popup_area,
@@ -168,7 +168,7 @@ pub fn render_confirm_quit_popup(
 
 /// The startup question when a past session on this device can be restored (MAX-148)
 pub fn render_restore_popup(
-    session: &PastSession,
+    session: &Session,
     resolver: &KeyResolver,
     frame: &mut Frame,
     theme: &ThemeConfig,

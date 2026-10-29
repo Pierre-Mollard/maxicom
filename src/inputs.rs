@@ -57,6 +57,7 @@ pub enum AppAction {
     Scrollbar(ScrollbarAction),
     ClickHold(ClickHoldAction),
     PasteBuffer,
+    OpenSessions,
     Quit,
 }
 

@@ -6,7 +6,7 @@ use crossterm::event::KeyCode;
 use crate::{
     configs::{KeyBindingAction, keybindings::KeyBindingDialogAction},
     inputs::DialogAction,
-    logger::{PastSession, Stream},
+    logger::{Session, Stream},
     serial::SerialConfig,
 };
 
@@ -16,12 +16,14 @@ pub use menu::ActionMenu;
 pub use misc::{ErrorDialog, FilePathDialog, ScreenshotDialog};
 pub use reconfigure::{SerialConfigDialog, SerialSettingField};
 pub use resize::{ResizeDialog, ResizeField};
+pub use sessions::SessionBrowser;
 
 pub mod help;
 pub mod menu;
 pub mod misc;
 pub mod reconfigure;
 pub mod resize;
+pub mod sessions;
 
 #[derive(Debug, Clone)]
 pub enum Overlay {
@@ -36,7 +38,8 @@ pub enum Overlay {
     Error(ErrorDialog),
     ConfirmQuit,
     ActionMenu(ActionMenu),
-    RestoreSession(PastSession),
+    RestoreSession(Box<Session>),
+    Sessions(Box<SessionBrowser>),
 }
 
 /// A part of a popup the mouse picks (MAX-113)
@@ -53,6 +56,12 @@ pub enum PopupTarget {
     CaptureStream,
     CaptureSession,
     ScreenshotFormat,
+    SessionRow(usize),
+    SessionDelete,
+    SessionDeleteAll,
+    SessionSort,
+    SessionConfirm,
+    SessionCancel,
 }
 
 pub enum OverlayResponse {
@@ -77,6 +86,10 @@ pub enum OverlayResponse {
     Quit,
     Run(KeyBindingAction),
     RestoreSession(bool),
+    HandledNotify {
+        message: String,
+        warn: bool,
+    },
 }
 
 impl Overlay {
@@ -104,6 +117,7 @@ impl Overlay {
             Overlay::FilePath(dialog) => dialog.handle_action(action),
             Overlay::Screenshot(dialog) => dialog.handle_action(action),
             Overlay::ActionMenu(menu) => menu.handle_action(action),
+            Overlay::Sessions(browser) => browser.handle_action(action),
             Overlay::Error(_) => match action {
                 DialogAction::Close | DialogAction::Confirm => OverlayResponse::Close,
                 _ => OverlayResponse::Handled,

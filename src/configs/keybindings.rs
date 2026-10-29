@@ -55,6 +55,7 @@ pub enum KeyBindingAction {
     PanSideRight,
     PanSideLeft,
     ClearHistory,
+    Sessions,
     DetachSerial,
     ExitPrefix,
     ReloadConfig,
@@ -101,6 +102,7 @@ impl FromStr for KeyBindingAction {
             "pan_side_right" => Ok(KeyBindingAction::PanSideRight),
             "pan_side_left" => Ok(KeyBindingAction::PanSideLeft),
             "clear_history" => Ok(KeyBindingAction::ClearHistory),
+            "sessions" => Ok(KeyBindingAction::Sessions),
             "exit_prefix" => Ok(KeyBindingAction::ExitPrefix),
             "detach_serial" => Ok(KeyBindingAction::DetachSerial),
             "reload_config" => Ok(KeyBindingAction::ReloadConfig),
@@ -148,6 +150,7 @@ impl std::fmt::Display for KeyBindingAction {
             Self::PanSideRight => "pan_side_right",
             Self::PanSideLeft => "pan_side_left",
             Self::ClearHistory => "clear_history",
+            Self::Sessions => "sessions",
             Self::ExitPrefix => "exit_prefix",
             Self::DetachSerial => "detach_serial",
             Self::ReloadConfig => "reload_config",
@@ -938,6 +941,7 @@ impl Default for KeyBindingsConfig {
             "o"     => KeyBindingAction::SKTextEncoding,
             "B"     => KeyBindingAction::SKDisplayRaw,
             "M"     => KeyBindingAction::ToggleMouse,
+            "S"     => KeyBindingAction::Sessions,
             "z"     => KeyBindingAction::Help,
             "s"     => KeyBindingAction::Settings,
             "l"     => KeyBindingAction::ToggleLogging,
@@ -1224,6 +1228,18 @@ mod tests {
             "select_line".parse::<KeyBindingCopyAction>().unwrap(),
             action
         );
+    }
+
+    /// MAX-148: prefix + `S` opens the session browser, apart from `s` (settings).
+    #[test]
+    fn sessions_default_key() {
+        let resolver = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
+        let action = resolver.prefix_actions[&"S".parse().unwrap()];
+        assert_eq!(action, KeyBindingAction::Sessions);
+        assert_eq!(action.to_string(), "sessions");
+        assert_eq!("sessions".parse::<KeyBindingAction>().unwrap(), action);
+        let settings = resolver.prefix_actions[&"s".parse().unwrap()];
+        assert_eq!(settings, KeyBindingAction::Settings);
     }
 
     #[test]

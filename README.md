@@ -95,14 +95,60 @@ cargo deny check
   - `Shift-Tab`  Include since session start: the file starts with everything
                  the session backup holds, then keeps recording
 - Session backup (journal): every session is recorded, text and raw, to
-  `~/.cache/maxicom/sessions/<date>_<time>_<port>.log` and `.raw`, flushed
-  every 250 ms, so a crash or a `kill` loses almost nothing. It never lights
-  `● REC`. The last `journal_keep` sessions are kept, older ones are removed at
-  startup. Not in replay mode. To recover a session, open its `.log`, or
-  replay its `.raw`:
-  `maxicom --replay ~/.cache/maxicom/sessions/20261028_141500_ttyUSB0.raw`
-  A layout can show it with the `journal` condition, e.g.
-  `[◆](journal?muted:hide)` (not in the default layout).
+  `~/.cache/maxicom/sessions/<date>_<time>_<port>` (`.log`, `.raw` and a small
+  `.meta` with the device and the text format), the time to the millisecond.
+  Flushed every 250 ms, so a crash or a `kill` loses almost nothing. It never
+  lights `● REC`. Not in replay mode.
+  - Its text is written with `timestamp`, `timestamp_format`, `record_tx` and
+    `tx_mark` as they are when the session starts; a reload changes the
+    recordings only, never a running backup.
+  - At startup, the sessions that received nothing are removed, then the
+    oldest past `journal_keep`. A session still running, here or in another
+    maxicom (another port), is never removed.
+  - To recover a session by hand, open its `.log`, or replay its `.raw`:
+    `maxicom --replay ~/.cache/maxicom/sessions/20261028_141500123_ttyUSB0.raw`
+  - A layout can show it with the `journal` condition, e.g.
+    `[◆](journal?muted:hide)` (not in the default layout).
+- Restore: at startup, the last session of the same device can come back in
+  the history, the lines in line mode and the screen and scrollback in
+  terminal mode, then a separator line
+  `── restored: ttyUSB0, 2026-10-28 14:15 → 16:40 ──` before the live data.
+  - `restore` in `[capture]`: `ask` (default) asks at startup, `always`
+    restores, `never` doesn't. `--restore` (restore without asking) and
+    `--no-restore` decide for one launch. Never in replay mode.
+  - The same device: the same machine (hostname), port, baud, data bits,
+    parity, stop bits and encoding. The session must have received something,
+    not be running, and have ended within `restore_max_age` (`"0s"`: no
+    limit).
+    Sessions from before the restore have no `.meta` and never come back.
+  - The question: Enter or `y` restores, Esc or `n` skips; a click outside
+    doesn't answer. What arrives meanwhile waits and comes after the
+    restored part (up to 4 MiB, then the restore is skipped).
+  - What comes back: the last `line_mode.history_size` lines of the `.log`,
+    with their time read with the session's format (a line whose time can't
+    be read, or a session without times, shows a blank time column), and the
+    last 1 MiB of the `.raw`. A line starting with the session's `tx_mark`
+    comes back as a sent line, so a mark that device output never starts with
+    is best.
+  - After the terminal part, the modes a full-screen program may have left
+    (alternate screen, cursor keys, mouse reports, scroll region) are reset.
+  - The restored part isn't backed up again nor counted in RX, so the next
+    launch restores this session's own data (or the same one again if this
+    one received nothing).
+- Session browser: `sessions` (`Ctrl-A S`, or Session backups in the
+  right-click menu) lists every backup on the left, whatever its device, and
+  shows the selected one on the right (device, format, times, size, its last
+  lines).
+  - Marks: `●` running (can't be deleted), `↺` what this device would
+    restore, `?` no `.meta` (from before the restore)
+  - `↑` `↓` `j` `k` `PageUp` `PageDown` `Home` `End`, or a click, select
+  - `d` (or `Del`)  Delete the selected session
+  - `D`             Delete all but the running ones, asked first (`y` / `n`)
+  - `s`             Sort by date (newest first) or by device
+  - `Esc`           Close
+  A keymap file from before has no `S` binding: add `S = "sessions"` under
+  `[prefix_actions]` in `keymap.toml`, or delete the file to get the new
+  defaults.
 - Screenshots (terminal mode): `screenshot_bytes` (`Ctrl-A k`) and
   `screenshot_text` (no default key, Screenshot in the right-click menu) take
   the screen at once, in both formats, then a dialog asks where to save it.
@@ -125,6 +171,8 @@ record_tx = true                         # sent lines in the text files (line mo
 tx_mark = "> "                           # before each sent line, "" for none
 journal = true                           # session backup (read at startup)
 journal_keep = 20                        # sessions kept
+restore = "ask"                          # ask, always or never
+restore_max_age = "24h"                  # since it ended, "0s": no limit
 screenshot_dir = ""
 screenshot_name = "screen_%Y%m%d_%H%M%S" # the format adds .txt or .ans
 ```

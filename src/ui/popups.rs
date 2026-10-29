@@ -18,6 +18,7 @@ pub mod menu;
 pub mod notifications;
 pub mod reconfigure;
 pub mod resize;
+pub mod sessions;
 pub mod settings;
 
 /// Width of the form popups (settings, serial, logging, resize) and of the alerts

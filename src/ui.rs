@@ -41,6 +41,7 @@ use crate::{
             notifications::render_notifications,
             reconfigure::render_reconfigure_popup,
             resize::render_resize_popup,
+            sessions::render_sessions_popup,
             settings::render_settings_popup,
         },
         status_bar::{CompiledStatusBar, render_status_bar},
@@ -237,6 +238,9 @@ fn render_active_overlay(app: &mut App, frame: &mut Frame, theme: &ThemeConfig) 
         }
         Some(Overlay::RestoreSession(session)) => {
             render_restore_popup(session, resolver, frame, theme, &mut targets)
+        }
+        Some(Overlay::Sessions(browser)) => {
+            render_sessions_popup(browser, resolver, frame, theme, &mut targets)
         }
         Some(Overlay::ActionMenu(menu)) => {
             render_action_menu(menu, resolver, frame, theme, &mut targets)
@@ -1419,6 +1423,66 @@ mod tests {
         let moved = h.draw();
         assert!(cursor_cell(&mut h).1 > y, "{moved:#?}");
         assert_eq!(before[..height], moved[..height]);
+    }
+
+    /// The cell of `text` on the row holding `on`, for labels drawn more than once.
+    fn cell_on_row(rows: &[String], on: &str, text: &str) -> (u16, u16) {
+        let y = cell_of(rows, on).1;
+        let row = &rows[y as usize];
+        let x = row[..row.find(text).unwrap()].chars().count();
+        (x as u16, y)
+    }
+
+    /// MAX-148: the session browser lists the sessions with their marks (`●` running, `↺`
+    /// what this device would restore) and previews the selected one; a click selects a row,
+    /// and the buttons sort, delete one, and delete all once the question is answered.
+    /// How: a session on this device, one on another port, and the app's own running
+    /// journal, in a temp folder.
+    #[test]
+    fn session_browser_lists_previews_and_deletes() {
+        let dir =
+            std::env::temp_dir().join(format!("maxicom_test_{}_browser_ui", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let text = crate::logger::JournalText::default();
+        let port = SerialConfig::default().port;
+        crate::logger::write_test_session(&dir, &port, &text, b"mine\r\n", b"");
+        crate::logger::write_test_session(&dir, "/dev/other", &text, b"theirs\r\n", b"");
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
+        h.app.start_journal(Some(dir.clone()));
+        h.app.update(Action::App(AppAction::OpenSessions));
+        let rows = h.draw();
+        assert!(has(&rows, "Session backups"), "{rows:#?}");
+        // the app's own journal runs (empty), the past one on this port would restore
+        let row_with = |rows: &[String], text: &str| -> String {
+            rows.iter().find(|row| row.contains(text)).cloned().unwrap()
+        };
+        assert!(row_with(&rows, "  0B  ttyUSB0").contains('●'), "{rows:#?}");
+        assert!(row_with(&rows, "11B  ttyUSB0").contains('↺'), "{rows:#?}");
+        let other = row_with(&rows, "  other ");
+        assert!(!other.contains(['●', '↺', '?']), "{rows:#?}");
+
+        click(&mut h, cell_of(&rows, "  other "));
+        let rows = h.draw();
+        assert!(has(&rows, "/dev/other"), "{rows:#?}");
+        assert!(has(&rows, "theirs"), "{rows:#?}");
+
+        click(&mut h, cell_of(&rows, "Sort by device"));
+        let rows = h.draw();
+        assert!(has(&rows, "Sort by date"), "{rows:#?}");
+
+        click(&mut h, cell_on_row(&rows, "Delete all", "Delete "));
+        let rows = h.draw();
+        assert!(!has(&rows, "  other "), "{rows:#?}");
+        assert!(has(&rows, "Deleted the session of"), "{rows:#?}");
+
+        click(&mut h, cell_of(&rows, "Delete all"));
+        let rows = h.draw();
+        assert!(has(&rows, "Delete 1 session ("), "{rows:#?}");
+        click(&mut h, cell_on_row(&rows, "Cancel", "Delete"));
+        let rows = h.draw();
+        assert!(!has(&rows, "11B  ttyUSB0"), "{rows:#?}");
+        assert!(row_with(&rows, "  0B  ttyUSB0").contains('●'), "{rows:#?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// MAX-148: the restore dialog names the port, the session's times and size; a click on

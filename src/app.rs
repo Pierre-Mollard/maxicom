@@ -19,14 +19,14 @@ use crate::{
         ScrollbarAction, SearchModeAction, SideViewAction, TerminalAction,
     },
     logger::{
-        JournalReader, JournalText, PastSession, RESTORE_RAW_TAIL, Recorder, ScreenshotFormat,
+        JournalReader, JournalText, RESTORE_RAW_TAIL, Recorder, ScreenshotFormat, Session,
         SessionDevice, Stream, create_parent_dirs, expand_home, find_last_session, read_tail_bytes,
         read_tail_lines, restore_separator,
     },
     notification::{NotificationManager, ToastLevel},
     overlays::{
         ErrorDialog, FilePathDialog, Overlay, OverlayResponse, PopupTarget, ScreenshotDialog,
-        SettingKey,
+        SessionBrowser, SettingKey,
     },
     serial::SerialConfig,
 };
@@ -117,6 +117,8 @@ pub struct App {
     recorder: Recorder,
     /// What is received while the restore dialog asks, fed after the answer (MAX-148)
     held_rx: Option<Vec<u8>>,
+    /// Where the session backups are, for the session browser (MAX-148)
+    sessions_dir: Option<PathBuf>,
     pub is_window_focused: bool,
     pointer: Option<(u16, u16)>,
     /// The last text copied, which a right-click pastes (MAX-144)
@@ -174,6 +176,7 @@ impl App {
             terminal_mode: terminal_view,
             recorder: Recorder::default(),
             held_rx: None,
+            sessions_dir: None,
             is_window_focused: true,
             pointer: None,
             paste_buffer: None,
@@ -393,6 +396,15 @@ impl App {
                             }
                             UpdateEffect::None
                         }
+                        OverlayResponse::HandledNotify { message, warn } => {
+                            self.overlay = Some(overlay);
+                            if warn {
+                                self.notify_warn(message);
+                            } else {
+                                self.notify_info(message);
+                            }
+                            UpdateEffect::None
+                        }
                         OverlayResponse::RestoreSession(yes) => {
                             if let Overlay::RestoreSession(session) = overlay {
                                 self.answer_restore(&session, yes);
@@ -487,7 +499,7 @@ impl App {
         };
         if mode == RestoreMode::Ask {
             self.held_rx = Some(Vec::new());
-            self.open_overlay(Overlay::RestoreSession(session));
+            self.open_overlay(Overlay::RestoreSession(Box::new(session)));
         } else {
             self.restore_now(&session);
         }
@@ -520,21 +532,33 @@ impl App {
     }
 
     /// The answer of the restore dialog: the session first when `yes`, then what came in
-    fn answer_restore(&mut self, session: &PastSession, yes: bool) {
+    fn answer_restore(&mut self, session: &Session, yes: bool) {
         if yes {
             self.restore_now(session);
         }
         self.release_held_rx();
     }
 
-    fn restore_now(&mut self, session: &PastSession) {
+    fn restore_now(&mut self, session: &Session) {
         match self.restore_session(session) {
-            Ok(()) => self.notify_info(format!(
-                "Restored the session of {}",
-                session.started.format("%Y-%m-%d %H:%M")
-            )),
+            Ok(()) => self.notify_info(format!("Restored the session of {}", session.time_span())),
             Err(err) => self.notify_warn(format!("Session not restored: {err}")),
         }
+    }
+
+    /// The session browser on the session folder, the session this device would restore marked
+    /// (MAX-148)
+    fn open_session_browser(&mut self) {
+        let Some(dir) = self.sessions_dir.clone() else {
+            self.notify_warn("No session folder");
+            return;
+        };
+        let capture = &self.settings.capture;
+        let max_age = (!capture.restore_max_age.is_zero()).then_some(capture.restore_max_age);
+        let restorable =
+            find_last_session(&dir, &self.session_device(), max_age).map(|session| session.stem);
+        let browser = SessionBrowser::new(dir, restorable);
+        self.open_overlay(Overlay::Sessions(Box::new(browser)));
     }
 
     /// What this session runs on, for its journal and to find a past one to restore
@@ -546,13 +570,22 @@ impl App {
     /// last lines of its text in line mode, read back with their times and marks, the end of
     /// its raw bytes through the terminal, then a separator where the live data starts. Not
     /// recorded nor counted: the new session starts empty
-    pub fn restore_session(&mut self, session: &PastSession) -> std::io::Result<()> {
-        let text = read_tail_lines(&session.text_path, self.settings.line_mode.history_size)?;
-        let raw = read_tail_bytes(&session.raw_path, RESTORE_RAW_TAIL)?;
+    pub fn restore_session(&mut self, session: &Session) -> std::io::Result<()> {
+        // a session from `find_last_session` has all three
+        let (Some(text_path), Some(raw_path), Some(meta), Some(started)) = (
+            session.text_path(),
+            session.raw_path(),
+            &session.meta,
+            session.started,
+        ) else {
+            return Err(std::io::Error::other("not a complete session"));
+        };
+        let text = read_tail_lines(text_path, self.settings.line_mode.history_size)?;
+        let raw = read_tail_bytes(raw_path, RESTORE_RAW_TAIL)?;
         let separator = restore_separator(session);
 
         let text = String::from_utf8_lossy(&text);
-        let mut reader = JournalReader::new(&session.text, session.started);
+        let mut reader = JournalReader::new(&meta.text, started);
         let lines = text.lines().map(|line| {
             let line = reader.parse(line);
             LogEntry::restored(line.text.to_string(), line.time)
@@ -771,6 +804,10 @@ impl App {
             }
             AppAction::Quit => {
                 self.overlay = Some(Overlay::ConfirmQuit);
+                UpdateEffect::None
+            }
+            AppAction::OpenSessions => {
+                self.open_session_browser();
                 UpdateEffect::None
             }
             AppAction::PasteBuffer => {
@@ -1112,6 +1149,8 @@ impl App {
     /// Starts the session backup in `dir` when `capture.journal` is on. Without it, a toast
     /// says so and the app runs on (MAX-147)
     pub fn start_journal(&mut self, dir: Option<PathBuf>) {
+        // the browser lists the past sessions even with the backup off
+        self.sessions_dir.clone_from(&dir);
         let capture = &self.settings.capture;
         if !capture.journal {
             return;
@@ -1624,7 +1663,7 @@ mod tests {
         let two_hours_ago = std::time::SystemTime::now() - Duration::from_secs(2 * 3600);
         std::fs::File::options()
             .write(true)
-            .open(&session.raw_path)
+            .open(session.raw_path().unwrap())
             .unwrap()
             .set_modified(two_hours_ago)
             .unwrap();
