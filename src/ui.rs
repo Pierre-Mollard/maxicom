@@ -262,6 +262,7 @@ mod tests {
             UpdateEffect,
             selection::{CopySide, LogicalPosition},
         },
+        capture::{Screenshot, ScreenshotFormat, Stream},
         configs::{
             KeyBindingsConfig, KeyResolver, LineDisplayMode, RawSideView, RxNewlineMode,
             SettingsConfig, TextEncoding,
@@ -269,7 +270,6 @@ mod tests {
         inputs::{
             Action, AppAction, CopyModeAction, DialogAction, HistoryAction, SearchModeAction,
         },
-        logger::{Screenshot, ScreenshotFormat, Stream},
         overlays::{
             ErrorDialog, FilePathDialog, HelpDialog, ResizeDialog, ScreenshotDialog,
             SerialConfigDialog,
@@ -1443,10 +1443,10 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("maxicom_test_{}_browser_ui", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let text = crate::logger::JournalText::default();
+        let text = crate::capture::JournalText::default();
         let port = SerialConfig::default().port;
-        crate::logger::write_test_session(&dir, &port, &text, b"mine\r\n", b"");
-        crate::logger::write_test_session(&dir, "/dev/other", &text, b"theirs\r\n", b"");
+        crate::capture::tests::write_test_session(&dir, &port, &text, b"mine\r\n", b"");
+        crate::capture::tests::write_test_session(&dir, "/dev/other", &text, b"theirs\r\n", b"");
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
         h.app.start_journal(Some(dir.clone()));
         h.app.update(Action::App(AppAction::OpenSessions));
@@ -1494,10 +1494,10 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
-        crate::logger::write_test_session(
+        crate::capture::tests::write_test_session(
             &dir,
             "/dev/ttyUSB0",
-            &crate::logger::JournalText::default(),
+            &crate::capture::JournalText::default(),
             b"old line\r\n",
             b"",
         );
@@ -1534,10 +1534,10 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
-        let session = crate::logger::write_test_session(
+        let session = crate::capture::tests::write_test_session(
             &dir,
             "/dev/ttyUSB0",
-            &crate::logger::JournalText::default(),
+            &crate::capture::JournalText::default(),
             b"restored words\r\n",
             b"",
         );

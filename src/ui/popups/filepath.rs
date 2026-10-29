@@ -7,8 +7,8 @@ use ratatui::{
 };
 
 use crate::{
+    capture::{ScreenshotFormat, Stream},
     configs::{KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
-    logger::{ScreenshotFormat, Stream},
     overlays::{FilePathDialog, PopupTarget, ScreenshotDialog},
     ui::popups::{form_area, key_hints, popup_block, row_area, section},
 };

@@ -1,7 +1,7 @@
 use crate::{
+    capture::Stream,
     configs::{KeyBindingAction, Mode},
     inputs::DialogAction,
-    logger::Stream,
     overlays::{OverlayResponse, PopupTarget},
 };
 

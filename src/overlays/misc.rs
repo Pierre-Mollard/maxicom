@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use tui_input::Input;
 
 use crate::{
+    capture::{Screenshot, ScreenshotFormat, Stream},
     inputs::{DialogAction, dispatch_input_key, paste_into_input},
-    logger::{Screenshot, ScreenshotFormat, Stream},
     overlays::{OverlayResponse, PopupTarget},
 };
 

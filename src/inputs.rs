@@ -10,9 +10,9 @@ use crate::{
         App, InputContext,
         selection::{CopySide, LogicalPosition, MouseUnit},
     },
+    capture::{ScreenshotFormat, Stream},
     configs::{KeyBindingAction, KeyPattern, Mode},
     inputs::mouse::handle_mouse,
-    logger::{ScreenshotFormat, Stream},
     overlays::{Overlay, PopupTarget, SettingKey},
 };
 

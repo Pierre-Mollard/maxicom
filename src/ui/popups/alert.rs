@@ -7,8 +7,8 @@ use ratatui::{
 };
 
 use crate::{
+    capture::Session,
     configs::{KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
-    logger::Session,
     overlays::{ErrorDialog, PopupTarget},
     ui::{
         common::popup_area,

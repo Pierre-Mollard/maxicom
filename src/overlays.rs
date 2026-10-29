@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use crossterm::event::KeyCode;
 
 use crate::{
+    capture::{Session, Stream},
     configs::{KeyBindingAction, keybindings::KeyBindingDialogAction},
     inputs::DialogAction,
-    logger::{Session, Stream},
     serial::SerialConfig,
 };
 

@@ -16,13 +16,13 @@ use crate::{
         search::SearchState,
         selection::{CopyActionResult, CopyModeState, Reveal, TextSource},
     },
+    capture::Screenshot,
     configs::{SettingsConfig, TerminalDimensionMode, TextEncoding, settings::RawSideView},
     inputs::{
         CopyModeAction, SearchModeAction, SideViewAction, TerminalAction, ViPending,
         click_input_at, dispatch_input_key, local_dispatchers::dispatch_copy_key_vi,
         paste_into_input,
     },
-    logger::Screenshot,
     terminal::{TerminalParser, new_parser, vt100_dim, vt100_size},
 };
 

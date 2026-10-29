@@ -30,9 +30,9 @@ use crate::{
 mod app;
 mod args;
 mod bytesource;
+mod capture;
 mod configs;
 mod inputs;
-mod logger;
 mod notification;
 mod overlays;
 mod serial;

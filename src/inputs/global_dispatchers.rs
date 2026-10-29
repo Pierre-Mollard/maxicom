@@ -1,6 +1,7 @@
 /// Converts Keybinding config action to a real action within contexts (mostly no context needed)
 use crate::{
     app::App,
+    capture::{ScreenshotFormat, Stream},
     configs::{
         KeyBindingAction, KeyBindingCopyAction, KeyBindingLineAction, KeyBindingSearchAction,
         KeyBindingTerminalAction, keybindings::KeyBindingDialogAction,
@@ -9,7 +10,6 @@ use crate::{
         Action, AppAction, CopyModeAction, DialogAction, HistoryAction, LineInputAction,
         SearchModeAction, SideViewAction, TerminalAction,
     },
-    logger::{ScreenshotFormat, Stream},
     overlays::{HelpDialog, Overlay, ResizeDialog, SerialConfigDialog, SettingKey},
 };
 

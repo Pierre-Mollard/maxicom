@@ -8,8 +8,8 @@ use ratatui::{
 };
 
 use crate::{
+    capture::{Session, SessionOrder},
     configs::{KeyPattern, KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
-    logger::{Session, SessionOrder},
     overlays::{
         PopupTarget, SessionBrowser,
         sessions::{sessions, size},

@@ -9,6 +9,11 @@ use crate::{
         selection::{ClickCounter, CopySide},
         types::{FocusTarget, FrameAreas, FrameMap, LogEntry, ViewportSize},
     },
+    capture::{
+        JournalReader, JournalText, RESTORE_RAW_TAIL, Recorder, ScreenshotFormat, Session,
+        SessionDevice, Stream, create_parent_dirs, expand_home, find_last_session, read_tail_bytes,
+        read_tail_lines, restore_separator,
+    },
     configs::{
         DualBufferMode, KeyBindingAction, KeyResolver, Mode, SettingsConfig, StatusBarLayout,
         WrapMode,
@@ -17,11 +22,6 @@ use crate::{
     inputs::{
         Action, AppAction, ClickHoldAction, CopyModeAction, HistoryAction, LineInputAction,
         ScrollbarAction, SearchModeAction, SideViewAction, TerminalAction,
-    },
-    logger::{
-        JournalReader, JournalText, RESTORE_RAW_TAIL, Recorder, ScreenshotFormat, Session,
-        SessionDevice, Stream, create_parent_dirs, expand_home, find_last_session, read_tail_bytes,
-        read_tail_lines, restore_separator,
     },
     notification::{NotificationManager, ToastLevel},
     overlays::{
@@ -1592,7 +1592,7 @@ mod tests {
             timestamp: Some("[%H:%M:%S%.3f]".to_string()),
             tx_mark: Some("> ".to_string()),
         };
-        let session = crate::logger::write_test_session(
+        let session = crate::capture::tests::write_test_session(
             &base.join("old"),
             "/dev/ttyUSB0",
             &text,
@@ -1638,7 +1638,7 @@ mod tests {
             std::env::temp_dir().join(format!("maxicom_test_{}_restore_last", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let port = SerialConfig::default().port;
-        let session = crate::logger::write_test_session(
+        let session = crate::capture::tests::write_test_session(
             &dir,
             &port,
             &JournalText::default(),
@@ -1681,7 +1681,7 @@ mod tests {
     fn asking_app(name: &str) -> (App, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("maxicom_test_{}_{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        crate::logger::write_test_session(
+        crate::capture::tests::write_test_session(
             &dir,
             &SerialConfig::default().port,
             &JournalText::default(),

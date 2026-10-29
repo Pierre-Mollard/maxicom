@@ -3,11 +3,11 @@ use std::path::PathBuf;
 use crossterm::event::KeyCode;
 
 use crate::{
-    inputs::DialogAction,
-    logger::{
+    capture::{
         Session, SessionOrder, delete_session, delete_sessions, list_sessions, read_tail_lines,
         sort_sessions,
     },
+    inputs::DialogAction,
     overlays::{OverlayResponse, PopupTarget},
     ui::status_bar::write_human,
 };
@@ -206,8 +206,8 @@ mod tests {
 
     use super::*;
     use crate::{
+        capture::{JournalText, Recorder, SessionDevice, tests::write_test_session},
         configs::TextEncoding,
-        logger::{JournalText, Recorder, SessionDevice, write_test_session},
         serial::SerialConfig,
     };
     use crossterm::event::{KeyEvent, KeyModifiers};
