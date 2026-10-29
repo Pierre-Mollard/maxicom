@@ -113,6 +113,8 @@ impl KeyBindingLineAction {
             }
             Self::ClearLine => Action::LineInput(LineInputAction::ClearLine),
             Self::Interrupt => Action::LineInput(LineInputAction::Interrupt),
+            Self::PageUp => Action::History(HistoryAction::ScrollUpPage),
+            Self::PageDown => Action::History(HistoryAction::ScrollDownPage),
             Self::Quit => Action::App(AppAction::Quit),
         }
     }

@@ -1125,6 +1125,23 @@ mod tests {
         assert!(bound_to_close(&rows, "q"), "{rows:#?}");
     }
 
+    /// MAX-155: the prefix tab's actions start on one column, past the longest key
+    /// (`Shift-Right`, one char wider than the old fixed column).
+    /// How: the default keymap, a screen tall enough for the whole tab.
+    #[test]
+    fn help_prefix_actions_align() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 60);
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::Help(
+                HelpDialog::new(),
+            ))));
+        let rows = h.draw();
+        assert!(has(&rows, "Shift-Right"), "{rows:#?}");
+        let mut columns: Vec<usize> = rows.iter().filter_map(|row| row.find("-> ")).collect();
+        columns.dedup();
+        assert_eq!(columns.len(), 1, "{rows:#?}");
+    }
+
     /// Rows inside the popup frame (between its top and bottom borders), without the borders
     /// MAX-143: the help's copy tab lists the scroll keys apart from the move keys, last: the
     /// copy mode's own, then the direct scroll and pan keys no copy key takes.
@@ -1145,12 +1162,15 @@ mod tests {
         let row_of = |text: &str| rows.iter().position(|row| row.contains(text));
         let header = row_of("Scrolling moves the view").expect("the scroll header");
         assert!(row_of("-> down").unwrap() < header, "{rows:#?}");
-        for scroll in ["scroll_up", "scroll_down", "scroll_to_top", "pan_side_left"] {
+        for scroll in ["scroll_up", "scroll_down", "scroll_to_top", "page_up"] {
             let row = row_of(&format!("-> {scroll}"));
             assert!(row.is_some_and(|row| row > header), "{scroll}: {rows:#?}");
         }
-        // `pageup` and `pagedown` move the copy cursor: their direct scrolls aren't listed
-        assert!(row_of("-> page_up").is_none(), "{rows:#?}");
+        // `PageUp` moves the copy cursor, the direct `Shift-PageUp` scrolls (MAX-155)
+        assert!(
+            row_of("Shift-PageUp").is_some_and(|row| row > header),
+            "{rows:#?}"
+        );
         assert!(row_of("Ctrl-y").is_some(), "{rows:#?}");
     }
 

@@ -156,7 +156,7 @@ impl App {
             settings.terminal_mode.cols,
         );
 
-        Self {
+        let mut app = Self {
             prefix_active: false,
             settings,
             key_resolver,
@@ -186,6 +186,16 @@ impl App {
                 received_bytes: 0,
                 sent_bytes: 0,
             },
+        };
+        app.warn_shadowed_keys();
+        app
+    }
+
+    /// A warning for the keymap's keys that never reach their mode section (MAX-155)
+    fn warn_shadowed_keys(&mut self) {
+        let shadowed = self.key_resolver.shadowed_keys();
+        if !shadowed.is_empty() {
+            self.notify_warn(format!("Keymap: unreachable {}", shadowed.join(", ")));
         }
     }
 
@@ -1042,6 +1052,7 @@ impl App {
                 restart_needed.join(", ")
             ));
         }
+        self.warn_shadowed_keys();
     }
 
     fn toggle_setting(&mut self, key: SettingKey) {

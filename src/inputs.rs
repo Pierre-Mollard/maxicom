@@ -230,7 +230,7 @@ pub fn handle_event(event: Event, app: &App) -> Action {
     // Actions using or ignoring with prefix
     match ctx {
         InputContext::Overlay => {
-            // a quit key again confirms the quit: Ctrl-C twice still quits fast (MAX-125)
+            // a quit key again confirms the quit: Ctrl-Q twice quits fast (MAX-125)
             if matches!(app.overlay(), Some(Overlay::ConfirmQuit))
                 && resolver.direct_actions.get(&pattern) == Some(&KeyBindingAction::Quit)
             {
@@ -239,8 +239,10 @@ pub fn handle_event(event: Event, app: &App) -> Action {
             let is_text_input = app.overlay().map_or_else(|| false, |o| o.is_text_input());
 
             if is_text_input {
+                // only close, confirm and cycle: the field keeps Ctrl-U, Ctrl-D, Home, End (MAX-155)
                 if pattern.is_modal()
                     && let Some(dialog_action_binding) = resolver.dialog_actions.get(&pattern)
+                    && dialog_action_binding.is_text_input_action()
                 {
                     return dialog_action_binding.to_action();
                 }
@@ -404,25 +406,20 @@ mod tests {
         app.update(Action::Search(SearchModeAction::Start));
         assert!(app.is_search_active());
 
-        let pageup = handle_event(plain(KeyCode::PageUp), &app);
+        let pageup = handle_event(key(KeyCode::PageUp, KeyModifiers::SHIFT), &app);
         assert!(matches!(
             pageup,
             Action::History(HistoryAction::ScrollUpPage)
-        ));
-        let side = handle_event(key(KeyCode::Right, KeyModifiers::CONTROL), &app);
-        assert!(matches!(
-            side,
-            Action::App(AppAction::SideView(SideViewAction::PanRight(2)))
         ));
         let typed = handle_event(plain(KeyCode::Char('x')), &app);
         assert!(matches!(
             typed,
             Action::Search(SearchModeAction::HandleKey(_))
         ));
-        // ctrl-f is a direct action, but not navigation: it edits the query
-        let search = handle_event(ctrl('f'), &app);
+        // ctrl-q is a direct action, but not navigation: it edits the query
+        let quit = handle_event(ctrl('q'), &app);
         assert!(matches!(
-            search,
+            quit,
             Action::Search(SearchModeAction::HandleKey(_))
         ));
 
@@ -435,6 +432,12 @@ mod tests {
         app.update(up);
         let left = handle_event(plain(KeyCode::Left), &app);
         assert!(matches!(left, Action::History(HistoryAction::PanLeft(1))));
+        app.update(left);
+        let side = handle_event(key(KeyCode::Right, KeyModifiers::SHIFT), &app);
+        assert!(matches!(
+            side,
+            Action::App(AppAction::SideView(SideViewAction::PanRight(2)))
+        ));
         // not navigation: dropped, not Quit
         let quit = handle_event(plain(KeyCode::Char('q')), &app);
         assert!(matches!(quit, Action::App(AppAction::SetPrefix(false))));
@@ -450,8 +453,8 @@ mod tests {
     #[test]
     fn global_keys_unchanged_outside_search() {
         let mut app = app();
-        let search = handle_event(ctrl('f'), &app);
-        assert!(matches!(search, Action::Search(SearchModeAction::Start)));
+        let quit = handle_event(ctrl('q'), &app);
+        assert!(matches!(quit, Action::App(AppAction::Quit)));
         app.update(Action::App(AppAction::SetPrefix(true)));
         let quit = handle_event(plain(KeyCode::Char('q')), &app);
         assert!(matches!(quit, Action::App(AppAction::Quit)));
@@ -491,5 +494,300 @@ mod tests {
             handle_event(plain(KeyCode::Char('q')), &app),
             Action::Overlay(DialogAction::Close)
         ));
+    }
+
+    /// The event crossterm sends for a key: an uppercase letter comes with Shift
+    fn event_of(key: KeyPattern) -> Event {
+        match key.code {
+            KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::SHIFT) => Event::Key(
+                KeyEvent::new(KeyCode::Char(c.to_ascii_uppercase()), key.modifiers),
+            ),
+            code => Event::Key(KeyEvent::new(code, key.modifiers)),
+        }
+    }
+
+    /// What a key does, short: the key handed on as typed, or the action
+    fn label(action: &Action) -> String {
+        match action {
+            Action::Terminal(TerminalAction::Key(_)) => "device".to_string(),
+            Action::LineInput(LineInputAction::HandleKey(_)) => "editor".to_string(),
+            Action::Search(SearchModeAction::HandleKey(_)) => "query".to_string(),
+            Action::CopyMode(CopyModeAction::HandleKey(_)) => "copy keys".to_string(),
+            Action::Overlay(DialogAction::HandleKey(_)) => "field".to_string(),
+            Action::App(AppAction::OpenOverlay(overlay)) => {
+                let overlay = format!("{overlay:?}");
+                let name = overlay.split('(').next().unwrap_or_default();
+                format!("open {name}")
+            }
+            other => format!("{other:?}"),
+        }
+    }
+
+    /// The keys of the default keymap (every section) and a few the remote or the input
+    /// fields use, which the default keymap may steal (MAX-155)
+    fn probe_keys() -> Vec<KeyPattern> {
+        let config = KeyBindingsConfig::default();
+        let extra = [
+            "ctrl-d",
+            "ctrl-f",
+            "ctrl-left",
+            "ctrl-right",
+            "alt-q",
+            "alt-v",
+            "ctrl-w",
+            "ctrl-k",
+            "ctrl-h",
+            "shift-pageup",
+            "shift-pagedown",
+            "shift-left",
+            "shift-right",
+        ];
+        let mut keys: Vec<KeyPattern> = [
+            &config.direct_actions,
+            &config.prefix_actions,
+            &config.line_mode,
+            &config.terminal_mode,
+            &config.search_mode,
+            &config.copy_mode,
+            &config.dialog_actions,
+        ]
+        .into_iter()
+        .flat_map(|section| section.keys().map(String::as_str))
+        .chain([config.prefix.as_str()])
+        .chain(extra)
+        .map(|key| key.parse().unwrap())
+        .collect();
+        keys.sort_by_cached_key(|key| key.to_string());
+        keys.dedup();
+        keys
+    }
+
+    /// One line per key that doesn't do what `typed` says (the context's fallback)
+    fn walk(app: &App, typed: &str) -> Vec<String> {
+        probe_keys()
+            .into_iter()
+            .map(|key| (key, label(&handle_event(event_of(key), app))))
+            .filter(|(_, action)| action != typed)
+            .map(|(key, action)| format!("{key} => {action}"))
+            .collect()
+    }
+
+    /// MAX-155 step 0: what each key of the default keymap does in each context. A key not
+    /// listed is handed on as typed (to the device, the line editor, the search query, the copy
+    /// mode keys or the popup). The next steps of MAX-155 change these tables.
+    #[test]
+    fn default_keymap_per_context() {
+        let mut app = app();
+        assert_eq!(
+            walk(&app, "device"),
+            [
+                "Alt-r => Terminal(AutoResizeRemoteToViewer)",
+                "Ctrl-a => App(SetPrefix(true))",
+                "Ctrl-q => App(Quit)",
+                "Shift-End => History(ScrollToBottom)",
+                "Shift-Home => History(ScrollToTop)",
+                "Shift-PageDown => History(ScrollDownPage)",
+                "Shift-PageUp => History(ScrollUpPage)"
+            ]
+        );
+
+        app.update(Action::App(AppAction::SetPrefix(true)));
+        assert_eq!(
+            walk(&app, "App(SetPrefix(false))"),
+            [
+                "/ => Search(Start)",
+                "? => open Help",
+                "Ctrl-a => TransmitRaw([1])",
+                "Down => History(ScrollDown(1))",
+                "Left => History(PanLeft(1))",
+                "PageDown => History(ScrollDownPage)",
+                "PageUp => History(ScrollUpPage)",
+                "Right => History(PanRight(1))",
+                "Shift-Left => App(SideView(PanLeft(2)))",
+                "Shift-Right => App(SideView(PanRight(2)))",
+                "Shift-b => App(ToggleSetting(DisplayRaw))",
+                "Shift-c => History(Clear)",
+                "Shift-m => App(ToggleSetting(Mouse))",
+                "Shift-s => App(OpenSessions)",
+                "Up => History(ScrollUp(1))",
+                "[ => CopyMode(Enter)",
+                "d => open SerialSettings",
+                "h => App(DetachSerial)",
+                "k => Terminal(Screenshot(Ansi))",
+                "l => App(ToggleLogging)",
+                "m => App(ToggleSetting(Mode))",
+                "o => App(ToggleSetting(TextEncoding))",
+                "q => App(Quit)",
+                "r => App(ReloadConfig)",
+                "s => open Settings",
+                "t => Terminal(AutoResizeEmulatorToViewer)",
+                "w => open TerminalSize",
+                "x => App(Quit)",
+                "z => open Help"
+            ]
+        );
+        app.update(Action::App(AppAction::SetPrefix(false)));
+
+        app.update(Action::CopyMode(CopyModeAction::Enter));
+        assert_eq!(
+            walk(&app, "copy keys"),
+            [
+                "$ => CopyMode(EndOfLine)",
+                "0 => CopyMode(StartOfLine)",
+                "Ctrl-a => App(SetPrefix(true))",
+                "Ctrl-e => History(ScrollDown(1))",
+                "Ctrl-y => History(ScrollUp(1))",
+                "Down => CopyMode(MoveDown)",
+                "Enter => CopyMode(Yank)",
+                "Esc => CopyMode(Exit)",
+                "Left => CopyMode(MoveLeft)",
+                "PageDown => CopyMode(PageDown)",
+                "PageUp => CopyMode(PageUp)",
+                "Right => CopyMode(MoveRight)",
+                "Shift-End => History(ScrollToBottom)",
+                "Shift-Home => History(ScrollToTop)",
+                "Shift-PageDown => History(ScrollDownPage)",
+                "Shift-PageUp => History(ScrollUpPage)",
+                "Shift-v => CopyMode(SelectLine)",
+                "Shift-y => CopyMode(YankRaw)",
+                "Space => CopyMode(Select)",
+                "Tab => CopyMode(ToggleSide)",
+                "Up => CopyMode(MoveUp)",
+                "h => CopyMode(MoveLeft)",
+                "j => CopyMode(MoveDown)",
+                "k => CopyMode(MoveUp)",
+                "l => CopyMode(MoveRight)",
+                "q => CopyMode(Exit)",
+                "v => CopyMode(Select)",
+                "y => CopyMode(Yank)"
+            ]
+        );
+        app.update(Action::CopyMode(CopyModeAction::Exit));
+
+        app.update(Action::Search(SearchModeAction::Start));
+        assert_eq!(
+            walk(&app, "query"),
+            [
+                "Ctrl-a => App(SetPrefix(true))",
+                "Ctrl-n => Search(Next)",
+                "Ctrl-p => Search(Previous)",
+                "Enter => Search(Confirm)",
+                "Esc => Search(Cancel)",
+                "Shift-End => History(ScrollToBottom)",
+                "Shift-Home => History(ScrollToTop)",
+                "Shift-PageDown => History(ScrollDownPage)",
+                "Shift-PageUp => History(ScrollUpPage)",
+                "Tab => Search(Kind)"
+            ]
+        );
+        app.update(Action::Search(SearchModeAction::Cancel));
+
+        let file = crate::overlays::FilePathDialog::new(
+            Stream::Text,
+            "log.txt".to_string(),
+            "log.raw".to_string(),
+        );
+        app.update(Action::App(AppAction::OpenOverlay(Overlay::FilePath(file))));
+        assert_eq!(
+            walk(&app, "field"),
+            [
+                "Ctrl-n => Overlay(CycleNext)",
+                "Ctrl-p => Overlay(CyclePrev)",
+                "Enter => Overlay(Confirm)",
+                "Esc => Overlay(Close)",
+                "Shift-Tab => Overlay(CyclePrev)",
+                "Tab => Overlay(CycleNext)"
+            ]
+        );
+        app.update(Action::Overlay(DialogAction::Close));
+
+        app.update(Action::App(AppAction::OpenOverlay(Overlay::Settings)));
+        assert_eq!(
+            walk(&app, "field"),
+            [
+                "Ctrl-d => Overlay(PageDown)",
+                "Ctrl-n => Overlay(CycleNext)",
+                "Ctrl-p => Overlay(CyclePrev)",
+                "Ctrl-u => Overlay(PageUp)",
+                "Down => Overlay(Down)",
+                "End => Overlay(End)",
+                "Enter => Overlay(Confirm)",
+                "Esc => Overlay(Close)",
+                "Home => Overlay(Home)",
+                "Left => Overlay(Left)",
+                "PageDown => Overlay(PageDown)",
+                "PageUp => Overlay(PageUp)",
+                "Right => Overlay(Right)",
+                "Shift-Tab => Overlay(CyclePrev)",
+                "Shift-g => Overlay(End)",
+                "Space => Overlay(CycleNext)",
+                "Tab => Overlay(CycleNext)",
+                "Up => Overlay(Up)",
+                "g => Overlay(Home)",
+                "h => Overlay(Left)",
+                "j => Overlay(Down)",
+                "k => Overlay(Up)",
+                "l => Overlay(Right)",
+                "q => Overlay(Close)"
+            ]
+        );
+        app.update(Action::Overlay(DialogAction::Close));
+
+        app.settings_mut().mode = Mode::Line;
+        assert_eq!(
+            walk(&app, "editor"),
+            [
+                "Alt-r => LineInput(AutoResizeRemoteToWidth)",
+                "Ctrl-a => App(SetPrefix(true))",
+                "Ctrl-c => LineInput(Interrupt)",
+                "Ctrl-q => App(Quit)",
+                "Ctrl-u => LineInput(ClearLine)",
+                "Down => LineInput(HistoryDown)",
+                "Enter => LineInput(Submit)",
+                "PageDown => History(ScrollDownPage)",
+                "PageUp => History(ScrollUpPage)",
+                "Shift-End => History(ScrollToBottom)",
+                "Shift-Home => History(ScrollToTop)",
+                "Shift-PageDown => History(ScrollDownPage)",
+                "Shift-PageUp => History(ScrollUpPage)",
+                "Up => LineInput(HistoryUp)"
+            ]
+        );
+    }
+
+    /// MAX-155: in terminal mode these keys reach the device as they were typed, the ones the
+    /// default keymap took before too (Ctrl-D, Ctrl-F, Ctrl-Left/Right, PageUp/PageDown, Alt-V,
+    /// Alt-Q).
+    #[test]
+    fn keys_reach_the_device() {
+        let app = app();
+        let keys = [
+            "ctrl-c",
+            "ctrl-d",
+            "ctrl-f",
+            "ctrl-left",
+            "ctrl-right",
+            "pageup",
+            "pagedown",
+            "alt-v",
+            "alt-q",
+            "ctrl-u",
+            "ctrl-w",
+            "ctrl-e",
+            "ctrl-k",
+            "alt-b",
+            "home",
+            "end",
+            "shift-left",
+            "shift-right",
+        ];
+        for key in keys {
+            let pattern: KeyPattern = key.parse().unwrap();
+            let Action::Terminal(TerminalAction::Key(sent)) = handle_event(event_of(pattern), &app)
+            else {
+                panic!("{key} doesn't reach the device");
+            };
+            assert_eq!(KeyPattern::from_event(&sent), pattern, "{key}");
+        }
     }
 }

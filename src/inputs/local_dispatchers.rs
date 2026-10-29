@@ -40,13 +40,8 @@ pub fn dispatch_copy_key_vi(
         });
     }
 
-    match key.code {
-        KeyCode::Char('v') | KeyCode::Char(' ') => Some(CopyModeAction::Select),
-        KeyCode::Char('V') => Some(CopyModeAction::SelectLine),
-        KeyCode::Char('y') | KeyCode::Enter => Some(CopyModeAction::Yank),
-        KeyCode::Esc | KeyCode::Char('q') => Some(CopyModeAction::Exit),
-        _ => None,
-    }
+    // select, yank and exit come from `[copy_mode]` (MAX-155)
+    None
 }
 
 /// Used to handle input fields in popups and other direct use case

@@ -128,11 +128,18 @@ pub fn render_help_popup(
 
             let mut sorted_keys: Vec<_> = app.key_resolver.prefix_actions.iter().collect();
             sorted_keys.sort_by_key(|(k, _)| format!("{k}"));
+            // the longest key sets the column, so `Shift-Right` doesn't push its action (MAX-155)
+            let key_width = sorted_keys
+                .iter()
+                .map(|(k, _)| format!("{k}").width())
+                .max()
+                .unwrap_or(0)
+                .max(10);
 
             for (pattern, action) in sorted_keys {
                 lines.push(Line::from(vec![
                     Span::styled(
-                        format!(" {prefix_str} + {:<10} ", format!("{pattern}")),
+                        format!(" {prefix_str} + {:<key_width$} ", format!("{pattern}")),
                         Style::default().fg(theme.palette.secondary),
                     ),
                     Span::raw(format!("-> {}", action)),

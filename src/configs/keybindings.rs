@@ -201,6 +201,8 @@ pub enum KeyBindingLineAction {
     AutoResizeRemoteLine,
     ClearLine,
     Interrupt,
+    PageUp,
+    PageDown,
     Quit,
 }
 
@@ -215,6 +217,8 @@ impl std::str::FromStr for KeyBindingLineAction {
             "auto_resize_remote_line" => Ok(Self::AutoResizeRemoteLine),
             "clear_line" => Ok(Self::ClearLine),
             "interrupt" => Ok(Self::Interrupt),
+            "page_up" => Ok(Self::PageUp),
+            "page_down" => Ok(Self::PageDown),
             "quit" => Ok(Self::Quit),
             other => Err(UnknownActionError(other.to_string())),
         }
@@ -230,6 +234,8 @@ impl std::fmt::Display for KeyBindingLineAction {
             Self::AutoResizeRemoteLine => "auto_resize_remote_line",
             Self::ClearLine => "clear_line",
             Self::Interrupt => "interrupt",
+            Self::PageUp => "page_up",
+            Self::PageDown => "page_down",
             Self::Quit => "quit",
         };
         write!(f, "{s}")
@@ -445,6 +451,16 @@ impl std::fmt::Display for KeyBindingDialogAction {
             KeyBindingDialogAction::End => "end",
         };
         write!(f, "{s}")
+    }
+}
+
+impl KeyBindingDialogAction {
+    /// The actions a text input popup takes from its keys, the others edit the field (MAX-155)
+    pub fn is_text_input_action(self) -> bool {
+        matches!(
+            self,
+            Self::Close | Self::Confirm | Self::CycleNext | Self::CyclePrev
+        )
     }
 }
 
@@ -768,6 +784,35 @@ impl KeyResolver {
         keys_of(&self.search_actions, action)
     }
 
+    /// The keys bound in `[line_mode]` or `[terminal_mode]` that never get there, because the
+    /// prefix or `[direct_actions]` take them first (MAX-155), for a warning
+    pub fn shadowed_keys(&self) -> Vec<String> {
+        let mode_keys = (self.line_actions.keys().map(|key| ("line_mode", key))).chain(
+            self.terminal_actions
+                .keys()
+                .map(|key| ("terminal_mode", key)),
+        );
+        let direct_keys = self
+            .direct_actions
+            .keys()
+            .map(|key| ("direct_actions", key));
+        let mut shadowed: Vec<String> = mode_keys
+            .chain(direct_keys)
+            .filter_map(|(section, key)| {
+                let by = if *key == self.prefix {
+                    "the prefix"
+                } else if section != "direct_actions" && self.direct_actions.contains_key(key) {
+                    "[direct_actions]"
+                } else {
+                    return None;
+                };
+                Some(format!("{key} in [{section}] (taken by {by})"))
+            })
+            .collect();
+        shadowed.sort();
+        shadowed
+    }
+
     pub fn try_new(config: &KeyBindingsConfig) -> Result<Self, KeymapError> {
         let prefix = config
             .prefix
@@ -923,15 +968,11 @@ pub struct KeyBindingsConfig {
 impl Default for KeyBindingsConfig {
     fn default() -> Self {
         let direct_actions = default_bindings! {
-            "ctrl-q"     => KeyBindingAction::Quit,
-            "ctrl-f"     => KeyBindingAction::EnterSearch,
-            "ctrl-d"     => KeyBindingAction::ClearHistory,
-            "pageup"     => KeyBindingAction::PageUp,
-            "pagedown"   => KeyBindingAction::PageDown,
-            "shift-home" => KeyBindingAction::ScrollToTop,
-            "shift-end"  => KeyBindingAction::ScrollToBottom,
-            "ctrl-right" => KeyBindingAction::PanSideRight,
-            "ctrl-left"  => KeyBindingAction::PanSideLeft,
+            "ctrl-q"         => KeyBindingAction::Quit,
+            "shift-pageup"   => KeyBindingAction::PageUp,
+            "shift-pagedown" => KeyBindingAction::PageDown,
+            "shift-home"     => KeyBindingAction::ScrollToTop,
+            "shift-end"      => KeyBindingAction::ScrollToBottom,
         };
 
         let prefix_actions = default_bindings! {
@@ -942,13 +983,13 @@ impl Default for KeyBindingsConfig {
             "B"     => KeyBindingAction::SKDisplayRaw,
             "M"     => KeyBindingAction::ToggleMouse,
             "S"     => KeyBindingAction::Sessions,
+            "C"     => KeyBindingAction::ClearHistory,
             "z"     => KeyBindingAction::Help,
+            "?"     => KeyBindingAction::Help,
             "s"     => KeyBindingAction::Settings,
             "l"     => KeyBindingAction::ToggleLogging,
             "r"     => KeyBindingAction::ReloadConfig,
             "w"     => KeyBindingAction::ResizeDialog,
-            "v"     => KeyBindingAction::AutoResizeRemote,
-            "b"     => KeyBindingAction::AutoResizeRemoteLine,
             "t"     => KeyBindingAction::AutoResizeEmulator,
             "d"     => KeyBindingAction::SerialSettings,
             "k"     => KeyBindingAction::ScreenshotBytes,
@@ -956,6 +997,10 @@ impl Default for KeyBindingsConfig {
             "down"  => KeyBindingAction::ScrollDown,
             "left"  => KeyBindingAction::PanLeft,
             "right" => KeyBindingAction::PanRight,
+            "shift-left"  => KeyBindingAction::PanSideLeft,
+            "shift-right" => KeyBindingAction::PanSideRight,
+            "pageup"      => KeyBindingAction::PageUp,
+            "pagedown"    => KeyBindingAction::PageDown,
             "["     => KeyBindingAction::EnterCopyMode,
             "/"     => KeyBindingAction::EnterSearch,
             "a"     => KeyBindingAction::ExitPrefix,
@@ -969,12 +1014,12 @@ impl Default for KeyBindingsConfig {
             "ctrl-c" => KeyBindingLineAction::Interrupt,
             "ctrl-u" => KeyBindingLineAction::ClearLine,
             "alt-r"  => KeyBindingLineAction::AutoResizeRemoteLine,
+            "pageup"   => KeyBindingLineAction::PageUp,
+            "pagedown" => KeyBindingLineAction::PageDown,
         };
 
         let terminal_mode = default_bindings! {
             "alt-r" => KeyBindingTerminalAction::AutoResizeRemote,
-            "alt-v" => KeyBindingTerminalAction::AutoResizeEmulator,
-            "alt-q" => KeyBindingTerminalAction::Quit,
         };
 
         let search_mode = default_bindings! {
@@ -1240,6 +1285,68 @@ mod tests {
         assert_eq!("sessions".parse::<KeyBindingAction>().unwrap(), action);
         let settings = resolver.prefix_actions[&"s".parse().unwrap()];
         assert_eq!(settings, KeyBindingAction::Settings);
+    }
+
+    /// MAX-155: clear_history moved from Ctrl-D (stolen from the remote) to prefix + `C`,
+    /// shifted because it wipes the history.
+    #[test]
+    fn clear_history_default_key() {
+        let resolver = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
+        let action = resolver.prefix_actions[&"C".parse().unwrap()];
+        assert_eq!(action, KeyBindingAction::ClearHistory);
+        assert!(
+            !resolver
+                .direct_actions
+                .contains_key(&"ctrl-d".parse().unwrap())
+        );
+        assert!(!resolver.prefix_actions.contains_key(&"c".parse().unwrap()));
+    }
+
+    /// MAX-155: a key bound in a mode section is reported when the prefix or `[direct_actions]`
+    /// take it first; the default keymap has none.
+    #[test]
+    fn shadowed_keys() {
+        let resolver = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
+        assert!(resolver.shadowed_keys().is_empty());
+
+        let mut config = KeyBindingsConfig::default();
+        let bind = |section: &mut BTreeMap<String, String>, key: &str, action: &str| {
+            section.insert(key.to_string(), action.to_string());
+        };
+        bind(&mut config.direct_actions, "alt-x", "quit");
+        bind(&mut config.line_mode, "alt-x", "submit");
+        bind(&mut config.terminal_mode, "alt-x", "quit");
+        bind(&mut config.terminal_mode, "ctrl-a", "quit");
+        bind(&mut config.direct_actions, "ctrl-a", "quit");
+        let resolver = KeyResolver::try_new(&config).unwrap();
+        assert_eq!(
+            resolver.shadowed_keys(),
+            [
+                "Alt-x in [line_mode] (taken by [direct_actions])",
+                "Alt-x in [terminal_mode] (taken by [direct_actions])",
+                "Ctrl-a in [direct_actions] (taken by the prefix)",
+                "Ctrl-a in [terminal_mode] (taken by the prefix)",
+            ]
+        );
+    }
+
+    /// MAX-155: only these dialog actions work in a text input popup.
+    #[test]
+    fn text_input_dialog_actions() {
+        use KeyBindingDialogAction as A;
+        for action in [A::Close, A::Confirm, A::CycleNext, A::CyclePrev] {
+            assert!(action.is_text_input_action(), "{action}");
+        }
+        for action in [
+            A::PageUp,
+            A::PageDown,
+            A::Home,
+            A::End,
+            A::NavUp,
+            A::NavLeft,
+        ] {
+            assert!(!action.is_text_input_action(), "{action}");
+        }
     }
 
     #[test]
