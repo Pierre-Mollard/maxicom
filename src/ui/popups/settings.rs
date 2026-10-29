@@ -60,6 +60,11 @@ pub fn render_settings_popup(
     };
 
     let mouse_str = if app.settings().ui.mouse { "ON" } else { "OFF" };
+    let answers_str = if app.settings().terminal_mode.answer_queries {
+        "ON"
+    } else {
+        "OFF"
+    };
     // each row with the setting a click on it toggles (MAX-113)
     let rows = [
         (None, section("General", theme)),
@@ -97,6 +102,10 @@ pub fn render_settings_popup(
         (
             Some(SettingKey::DimensionMode),
             row("S", "Size Mode", dimension_str),
+        ),
+        (
+            Some(SettingKey::AnswerQueries),
+            row("A", "Query Answers", answers_str),
         ),
     ];
 

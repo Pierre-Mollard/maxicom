@@ -8,30 +8,60 @@ use ratatui::{
     widgets::{Block, Clear, Widget},
 };
 
-/// Counts the main screen rows vt100 drops from the top of scrollback (`on_scroll` is only called
-/// for those, not for rows entering it). With the change of `scrollback_len` it gives how many
-/// rows a chunk pushed into scrollback (#13)
+use crate::app::term_answers::{Answer, answer_control, answer_csi, answer_escape};
+
+/// What the parser reports besides the screen. `evicted` counts the main screen rows vt100 drops
+/// from the top of scrollback (`on_scroll` is only called for those, not for rows entering it):
+/// with the change of `scrollback_len` it gives how many rows a chunk pushed into scrollback
+/// (#13). `answers` are the replies to the remote's queries, in order, for the settings to send
+/// or drop (MAX-151)
 #[derive(Default)]
-pub struct ScrollbackEvictions {
-    pub count: usize,
+pub struct ParserEvents {
+    pub evicted: usize,
+    pub answers: Vec<Answer>,
 }
 
-impl vt100::Callbacks for ScrollbackEvictions {
+impl vt100::Callbacks for ParserEvents {
     fn on_scroll(&mut self, _: vt100::capture::RowContents<'_>, alternate_screen: bool) {
         if !alternate_screen {
-            self.count += 1;
+            self.evicted += 1;
+        }
+    }
+
+    fn unhandled_csi(
+        &mut self,
+        screen: &mut vt100::Screen,
+        i1: Option<u8>,
+        i2: Option<u8>,
+        params: &[&[u16]],
+        c: char,
+    ) {
+        if let Some(answer) = answer_csi(screen, i1, i2, params, c) {
+            self.answers.push(answer);
+        }
+    }
+
+    fn unhandled_control(&mut self, _: &mut vt100::Screen, b: u8) {
+        if let Some(answer) = answer_control(b) {
+            self.answers.push(answer);
+        }
+    }
+
+    fn unhandled_escape(&mut self, _: &mut vt100::Screen, i1: Option<u8>, i2: Option<u8>, b: u8) {
+        if let Some(answer) = answer_escape(i1, i2, b) {
+            self.answers.push(answer);
         }
     }
 }
 
-pub type TerminalParser = vt100::Parser<ScrollbackEvictions>;
+pub type TerminalParser = vt100::Parser<ParserEvents>;
 
 pub fn new_parser(rows: u16, cols: u16, max_history_lines: usize) -> TerminalParser {
     TerminalParser::new_with_callbacks(
         vt100_dim(rows),
         vt100_dim(cols),
         max_history_lines,
-        ScrollbackEvictions::default(),
+        ParserEvents::default(),
     )
 }
 

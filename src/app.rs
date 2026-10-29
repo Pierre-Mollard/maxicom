@@ -7,6 +7,7 @@ use crate::{
     app::{
         scroller::ScrollStatus,
         selection::{ClickCounter, CopySide},
+        term_answers::answer_bytes,
         types::{FocusTarget, FrameAreas, FrameMap, LogEntry, ViewportSize},
     },
     capture::{
@@ -37,6 +38,7 @@ pub mod raw_scroller;
 pub mod scroller;
 pub mod search;
 pub mod selection;
+pub mod term_answers;
 pub mod terminal_mode;
 pub mod types;
 
@@ -117,6 +119,8 @@ pub struct App {
     recorder: Recorder,
     /// What is received while the restore dialog asks, fed after the answer (MAX-148)
     held_rx: Option<Vec<u8>>,
+    /// The replies to the remote's queries, for the loop to send (MAX-151)
+    query_answers: Vec<u8>,
     /// Where the session backups are, for the session browser (MAX-148)
     sessions_dir: Option<PathBuf>,
     pub is_window_focused: bool,
@@ -177,6 +181,7 @@ impl App {
             terminal_mode: terminal_view,
             recorder: Recorder::default(),
             held_rx: None,
+            query_answers: Vec::new(),
             sessions_dir: None,
             is_window_focused: true,
             pointer: None,
@@ -455,6 +460,12 @@ impl App {
         if self.hold_rx(chunk) {
             return;
         }
+        self.feed(chunk, true);
+    }
+
+    /// Feeds both modes. The remote's queries are answered when `live` (not held while the
+    /// restore dialog asked) and in terminal mode only (MAX-151)
+    fn feed(&mut self, chunk: &[u8], live: bool) {
         let settings = &self.settings;
         let timestamp_format = settings
             .capture
@@ -478,7 +489,17 @@ impl App {
         }
         if feed_terminal {
             self.terminal_mode.process_rx(settings.encoding, chunk);
+            let answers = self.terminal_mode.take_answers();
+            if live && self.settings.mode == Mode::Terminal {
+                let bytes = answer_bytes(answers, &self.settings.terminal_mode);
+                self.query_answers.extend(bytes);
+            }
         }
+    }
+
+    /// The replies to send to the remote's queries, received since the last call (MAX-151)
+    pub fn take_query_answers(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.query_answers)
     }
 
     /// Takes the terminal screen now, in both formats, and opens the dialog asking where to
@@ -543,7 +564,7 @@ impl App {
 
     fn release_held_rx(&mut self) {
         if let Some(held) = self.held_rx.take() {
-            self.feed_rx(&held);
+            self.feed(&held, false);
         }
     }
 
@@ -1111,6 +1132,12 @@ impl App {
                     "Terminal Size Mode is {}",
                     self.settings.terminal_mode.dimension_mode.as_str()
                 ));
+            }
+            SettingKey::AnswerQueries => {
+                let terminal = &mut self.settings.terminal_mode;
+                terminal.answer_queries = !terminal.answer_queries;
+                let state = if terminal.answer_queries { "ON" } else { "OFF" };
+                self.notify_info(format!("Query answers {state}"));
             }
             SettingKey::DisplayRaw => {
                 self.settings.raw_side.view.toggle();
@@ -1775,6 +1802,85 @@ mod tests {
         assert_eq!(texts(&app), ["held"]);
         app.feed_rx(b"\r\n");
         assert_eq!(texts(&app)[1].len(), HELD_RX_MAX);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    const DSR: &[u8] = b"\x1b[5n";
+    const DSR_READY: &[u8] = b"\x1b[0n";
+
+    /// MAX-151: a query received in terminal mode is answered, once; in line mode it is not,
+    /// even when the terminal is fed too, and it is not answered later on a switch.
+    /// How: the default `always_both` buffering, DSR status received in each mode.
+    #[test]
+    fn queries_answered_in_terminal_mode_only() {
+        let mut app = app();
+        app.settings.mode = Mode::Terminal;
+        app.feed_rx(DSR);
+        assert_eq!(app.take_query_answers(), DSR_READY);
+        assert!(app.take_query_answers().is_empty());
+
+        app.settings.mode = Mode::Line;
+        app.feed_rx(DSR);
+        assert!(app.take_query_answers().is_empty());
+        app.settings.mode = Mode::Terminal;
+        app.feed_rx(b"x");
+        assert!(app.take_query_answers().is_empty());
+    }
+
+    /// MAX-151: the settings apply to what is received after them: the popup toggle turns the
+    /// answers off and on, and the answerback answers ENQ once set.
+    #[test]
+    fn query_answers_follow_the_settings() {
+        let mut app = app();
+        app.settings.mode = Mode::Terminal;
+        app.toggle_setting(SettingKey::AnswerQueries);
+        app.feed_rx(DSR);
+        assert!(app.take_query_answers().is_empty());
+        app.toggle_setting(SettingKey::AnswerQueries);
+        app.feed_rx(DSR);
+        assert_eq!(app.take_query_answers(), DSR_READY);
+
+        app.feed_rx(b"\x05");
+        assert!(app.take_query_answers().is_empty());
+        app.settings.terminal_mode.answerback = "board-42".to_string();
+        app.feed_rx(b"\x05");
+        assert_eq!(app.take_query_answers(), b"board-42");
+    }
+
+    /// MAX-151: the queries of a restored session, and the ones held while the restore dialog
+    /// asked, are not answered; what comes after the answer is.
+    /// How: a session ending in a DSR, restored; then DSR held by the dialog, answered `n`.
+    #[test]
+    fn restored_and_held_queries_unanswered() {
+        let base =
+            std::env::temp_dir().join(format!("maxicom_test_{}_answers", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let session = crate::capture::tests::write_test_session(
+            &base,
+            "/dev/ttyUSB0",
+            &JournalText::default(),
+            b"old\r\n\x1b[5n",
+            b"",
+        );
+        let mut app = app();
+        app.settings.mode = Mode::Terminal;
+        app.restore_session(&session).unwrap();
+        app.feed_rx(b"x");
+        assert!(app.take_query_answers().is_empty());
+        let _ = std::fs::remove_dir_all(&base);
+
+        let (mut app, dir) = asking_app("ask_answers");
+        app.settings.mode = Mode::Terminal;
+        app.feed_rx(DSR);
+        let no = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('n'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.update(Action::Overlay(DialogAction::HandleKey(no)));
+        assert!(app.overlay().is_none());
+        assert!(app.take_query_answers().is_empty());
+        app.feed_rx(DSR);
+        assert_eq!(app.take_query_answers(), DSR_READY);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

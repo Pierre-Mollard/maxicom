@@ -190,6 +190,9 @@ impl Overlay {
                     KeyCode::Char('s' | 'S') => {
                         OverlayResponse::ToggleSetting(SettingKey::DimensionMode)
                     }
+                    KeyCode::Char('a' | 'A') => {
+                        OverlayResponse::ToggleSetting(SettingKey::AnswerQueries)
+                    }
                     _ => OverlayResponse::Handled,
                 },
                 _ => OverlayResponse::Handled,
@@ -211,4 +214,5 @@ pub enum SettingKey {
     DisplayRaw,
     Mouse,
     DimensionMode,
+    AnswerQueries,
 }

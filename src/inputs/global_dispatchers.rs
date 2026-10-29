@@ -58,7 +58,7 @@ impl KeyBindingAction {
                 Action::LineInput(LineInputAction::AutoResizeRemoteToWidth)
             }
             KeyBindingAction::AutoResizeRemote => {
-                Action::Terminal(TerminalAction::AutoResizeRemoteToViewer)
+                Action::Terminal(TerminalAction::AutoResizeRemoteToEmulator)
             }
             KeyBindingAction::AutoResizeEmulator => {
                 Action::Terminal(TerminalAction::AutoResizeEmulatorToViewer)
@@ -123,7 +123,7 @@ impl KeyBindingLineAction {
 impl KeyBindingTerminalAction {
     pub fn to_action(self) -> Action {
         match self {
-            Self::AutoResizeRemote => Action::Terminal(TerminalAction::AutoResizeRemoteToViewer),
+            Self::AutoResizeRemote => Action::Terminal(TerminalAction::AutoResizeRemoteToEmulator),
             Self::AutoResizeEmulator => {
                 Action::Terminal(TerminalAction::AutoResizeEmulatorToViewer)
             }

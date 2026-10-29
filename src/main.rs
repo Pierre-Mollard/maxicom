@@ -282,6 +282,15 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 }
             }
             needs_redraw |= rx_received;
+
+            // the replies to the remote's queries, never in a replay (MAX-151)
+            let answers = app.take_query_answers();
+            if !answers.is_empty()
+                && !is_replay
+                && let Some(ref mut dev) = device
+            {
+                transmit(&mut app, dev, &answers, is_replay);
+            }
         }
 
         if device.is_some() {
@@ -367,25 +376,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     }
                 }
                 UpdateEffect::Transmit(bytes) => {
-                    if let Some(ref mut dev) = device {
-                        match dev.write(&bytes) {
-                            Ok(()) => {
-                                last_rx_activity = Instant::now();
-                                if !is_replay {
-                                    app.stats.update_tx(bytes.len());
-                                    app.record_tx(&bytes);
-                                }
-                            }
-                            Err(e) => {
-                                app.open_overlay(Overlay::Error(
-                                    ErrorDialog::new(
-                                        "Serial Write Failed",
-                                        "Failed to transmit bytes to serial port",
-                                    )
-                                    .with_details(e),
-                                ));
-                            }
-                        }
+                    if let Some(ref mut dev) = device
+                        && transmit(&mut app, dev, &bytes, is_replay)
+                    {
+                        last_rx_activity = Instant::now();
                     }
                 }
                 UpdateEffect::Reconfigure(serial_config) => {
@@ -503,6 +497,30 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 }
 
 /// Copies `text` and says so: the copy of `what` with the text itself, else its char count
+/// Writes `bytes` to the device, counted and recorded (not in a replay), or opens the error
+/// popup. True when written
+fn transmit(app: &mut App, dev: &mut ByteSource, bytes: &[u8], is_replay: bool) -> bool {
+    match dev.write(bytes) {
+        Ok(()) => {
+            if !is_replay {
+                app.stats.update_tx(bytes.len());
+                app.record_tx(bytes);
+            }
+            true
+        }
+        Err(e) => {
+            app.open_overlay(Overlay::Error(
+                ErrorDialog::new(
+                    "Serial Write Failed",
+                    "Failed to transmit bytes to serial port",
+                )
+                .with_details(e),
+            ));
+            false
+        }
+    }
+}
+
 fn execute_clipboard_copy(app: &mut App, text: &str, what: Option<&str>) {
     if let Err(e) = copy_via_osc52(text) {
         app.notify_error(format!("Clipboard error: {e}"));

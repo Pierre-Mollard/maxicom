@@ -63,8 +63,9 @@ cargo deny check
 ### TERMINAL
 
 - `dimension_mode` in `[terminal_mode]`: the size of the emulated screen. The
-  device never learns it (there is no resize signal on a serial line), so it
-  only changes what can be shown, and an automatic resize never loses data:
+  device doesn't learn it by itself (there is no resize signal on a serial
+  line, see [Serial shells](#serial-shells)), so it only changes what can be
+  shown, and an automatic resize never loses data:
   - `grow_only` (default)  Grows with the view, never shrinks. When the window
                          gets smaller, the view follows the cursor
   - `match_view`           The view's size, but never smaller than the content
@@ -74,9 +75,58 @@ cargo deny check
   - `fixed`                `rows` x `cols`
   A size set from the resize popup applies as asked. The settings popup
   cycles the mode with `S` (Terminal Mode section).
+- `answer_queries` in `[terminal_mode]` (default `true`): answer the queries a
+  program on the device sends its terminal, like any terminal emulator does:
+  the cursor position (how `resize` learns the size), the screen size, the
+  device attributes, the mode states. Live data in terminal mode only, never a
+  restored session or a replay. Colors, the title and the clipboard are never
+  answered. The settings popup toggles it with `A`.
+  - `answer_groups` (default all): `status`, `identity`, `size`, `modes`
+  - `answerback` (default empty, no answer): the text sent back on ENQ
+    (`0x05`). Off by default because `0x05` also shows up in binary data
 - Scrolling: what is sent to the device (a key in terminal mode, a line on
   Enter in line mode) brings the view back to the live screen; what the device
   sends never moves a view scrolled up (`new_data` in the status bar).
+
+#### SERIAL SHELLS
+
+Over ssh or in a local terminal, the shell learns its size from the terminal,
+and again on each resize (`SIGWINCH`). A serial line carries bytes only: the
+device's tty keeps the size its getty set, often `0 x 0` or `24 x 80`, and
+never hears about the window. Programs then wrap long lines at the wrong
+column, and full-screen ones (vim, less, top, menuconfig) draw at the wrong
+size.
+
+maxicom never types a command into the device by itself. The device fixes its
+own size with `resize`, which moves the cursor to the bottom right corner, asks
+the terminal where the cursor is, and sets the tty to that size. maxicom
+answers that query (`answer_queries`, on by default) with the emulator's size:
+where its lines wrap, which `dimension_mode` decides.
+
+- `resize` comes with BusyBox (most embedded Linux boards) and with xterm
+  (`xterm` or `x11-utils` package on desktop distributions). It sets the tty
+  and prints the matching `COLUMNS` / `LINES` assignments (BusyBox only when
+  built with `FEATURE_RESIZE_PRINT`), so `eval "$(resize)"` also updates the
+  current shell's variables.
+- To fix the size at login and after each command, on serial ttys only (zsh,
+  in the device's `~/.zshrc`):
+
+  ```zsh
+  if [[ $TTY == /dev/tty(S|AMA|USB|ACM|mxc|GS)* ]] && (( $+commands[resize] )); then
+    _serial_resize() { eval "$(resize)" }
+    precmd_functions+=(_serial_resize)
+  fi
+  ```
+
+  For bash, in `~/.bashrc`: `PROMPT_COMMAND='eval "$(resize)"'`, under the
+  same kind of `tty` test. Each run costs one round trip on the line (a few
+  bytes each way): on a very slow link, call `_serial_resize` once in place of
+  the `precmd_functions` line, to fix the size at login only.
+- By hand: Alt-R (`auto_resize_remote`) sends
+  `stty rows R cols C; export LINES=R COLUMNS=C` with the emulator's size,
+  the same size `resize` gets. In line mode Alt-R sends the columns only.
+- With `answer_queries` off, or on a device without `resize`, the size stays
+  wrong until Alt-R.
 
 ### CAPTURE
 

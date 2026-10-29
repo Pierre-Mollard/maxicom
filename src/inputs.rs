@@ -94,7 +94,7 @@ pub enum LineInputAction {
 
 #[derive(Debug)]
 pub enum TerminalAction {
-    AutoResizeRemoteToViewer,
+    AutoResizeRemoteToEmulator,
     AutoResizeEmulatorToViewer,
     Screenshot(ScreenshotFormat),
     Key(KeyEvent),
@@ -581,7 +581,7 @@ mod tests {
         assert_eq!(
             walk(&app, "device"),
             [
-                "Alt-r => Terminal(AutoResizeRemoteToViewer)",
+                "Alt-r => Terminal(AutoResizeRemoteToEmulator)",
                 "Ctrl-a => App(SetPrefix(true))",
                 "Ctrl-q => App(Quit)",
                 "Shift-End => History(ScrollToBottom)",

@@ -292,6 +292,20 @@ impl TerminalDimensionMode {
     }
 }
 
+/// The groups of the remote's queries that `answer_groups` turns on (MAX-151)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum QueryGroup {
+    Status,
+    Identity,
+    Size,
+    Modes,
+}
+
+impl QueryGroup {
+    pub const ALL: [Self; 4] = [Self::Status, Self::Identity, Self::Size, Self::Modes];
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {
@@ -442,6 +456,12 @@ pub struct TerminalModeConfig {
     pub history_size: usize,
     pub empty_fill_char: String,
     pub unfocused_cursor_glyph: String,
+    /// Answer the remote's queries (cursor position, size, device attributes, modes), in
+    /// terminal mode only, for the groups of `answer_groups` (MAX-151)
+    pub answer_queries: bool,
+    pub answer_groups: Vec<QueryGroup>,
+    /// Sent back on ENQ (`0x05`), nothing when empty: `0x05` also shows up in binary data
+    pub answerback: String,
 }
 
 impl Default for TerminalModeConfig {
@@ -453,6 +473,9 @@ impl Default for TerminalModeConfig {
             history_size: 2500,
             empty_fill_char: String::from("░"),
             unfocused_cursor_glyph: String::from("█"),
+            answer_queries: true,
+            answer_groups: QueryGroup::ALL.to_vec(),
+            answerback: String::new(),
         }
     }
 }
@@ -851,6 +874,21 @@ mod tests {
 
     /// MAX-148: `capture.restore` defaults to `ask` and `restore_max_age` to 24 hours; both
     /// read from the config, the age as a human duration, `0` included.
+    /// MAX-151: the answer settings are on by default, groups by name; `colors` is no group
+    #[test]
+    fn answer_settings_parse() {
+        let parse = |toml: &str| toml::from_str::<TerminalModeConfig>(toml);
+        let config = parse("").unwrap();
+        assert!(config.answer_queries);
+        assert_eq!(config.answer_groups, QueryGroup::ALL);
+        assert_eq!(config.answerback, "");
+
+        let config = parse("answer_groups = [\"size\", \"modes\"]\nanswerback = \"x\"").unwrap();
+        assert_eq!(config.answer_groups, [QueryGroup::Size, QueryGroup::Modes]);
+        assert_eq!(config.answerback, "x");
+        assert!(parse("answer_groups = [\"colors\"]").is_err());
+    }
+
     #[test]
     fn restore_settings_parse() {
         let capture = CaptureConfig::default();

@@ -15,6 +15,7 @@ use crate::{
         scroller::ViewportScroller,
         search::SearchState,
         selection::{CopyActionResult, CopyModeState, Reveal, TextSource},
+        term_answers::Answer,
     },
     capture::Screenshot,
     configs::{SettingsConfig, TerminalDimensionMode, TextEncoding, settings::RawSideView},
@@ -95,7 +96,7 @@ impl TerminalMode {
 
         let utf8_bytes = encoding.to_utf8_bytes(raw_bytes);
         self.vt100_parser.process(&utf8_bytes);
-        let evicted = std::mem::take(&mut self.vt100_parser.callbacks_mut().count);
+        let evicted = std::mem::take(&mut self.vt100_parser.callbacks_mut().evicted);
         self.update_live_bottom();
         self.content_cols = None;
 
@@ -468,7 +469,7 @@ impl TerminalMode {
         let cursor_row_before = self.vt100_parser.screen().cursor_position().0 as usize;
         // the parser's `set_size` (not the screen's) reports the rows it evicts
         self.vt100_parser.set_size(vt100_dim(rows), vt100_dim(cols));
-        let evicted = std::mem::take(&mut self.vt100_parser.callbacks_mut().count);
+        let evicted = std::mem::take(&mut self.vt100_parser.callbacks_mut().evicted);
         self.update_live_bottom();
         self.content_cols = None;
         // in the alternate screen the main rows can't be measured: the next RX on the main
@@ -544,9 +545,9 @@ impl TerminalMode {
     pub fn update_action_terminal(&mut self, action: TerminalAction) -> UpdateEffect {
         match action {
             TerminalAction::MouseReport(bytes) => UpdateEffect::Transmit(bytes),
-            TerminalAction::AutoResizeRemoteToViewer => {
-                let rows = self.scroller.view_height as u16;
-                let cols = self.scroller.view_width as u16;
+            // the emulator's size, where the lines wrap, as the query answers say (MAX-151)
+            TerminalAction::AutoResizeRemoteToEmulator => {
+                let (rows, cols) = self.get_vt100_size();
                 let cmd =
                     format!("stty rows {rows} cols {cols}; export LINES={rows} COLUMNS={cols}\n");
                 UpdateEffect::Transmit(cmd.into_bytes())
@@ -841,6 +842,13 @@ impl TerminalMode {
         end.push_str("\x1b[0m\r\n");
         self.process_rx(TextEncoding::Utf8, end.as_bytes());
         self.row_timestamps.iter_mut().for_each(|time| *time = None);
+        // the queries of a past session are not answered (MAX-151)
+        self.take_answers();
+    }
+
+    /// The replies to the queries received since the last call, to send or drop (MAX-151)
+    pub fn take_answers(&mut self) -> Vec<Answer> {
+        std::mem::take(&mut self.vt100_parser.callbacks_mut().answers)
     }
 
     /// The screen as it is now, and a flash to show it was taken
@@ -1593,5 +1601,32 @@ mod tests {
         tm.restore(TextEncoding::Utf8, b"abc", "-- restored --");
         let contents = tm.vt100_screen().contents();
         assert!(contents.starts_with("abc\n-- restored --"), "{contents:?}");
+    }
+
+    /// MAX-151: Alt-R tells the remote the emulator's size, where its lines wrap, the size the
+    /// query answers give too, not the window's.
+    /// How: `fixed` 24x80 in a 50x200 window, then `grow_only` after the window shrank.
+    #[test]
+    fn auto_resize_remote_sends_the_emulator_size() {
+        let stty = |tm: &mut TerminalMode| match tm
+            .update_action_terminal(TerminalAction::AutoResizeRemoteToEmulator)
+        {
+            UpdateEffect::Transmit(bytes) => String::from_utf8(bytes).unwrap(),
+            _ => panic!("nothing sent"),
+        };
+        let mut tm = terminal(24);
+        view(&mut tm, TerminalDimensionMode::Fixed, 200, 50);
+        assert_eq!(
+            stty(&mut tm),
+            "stty rows 24 cols 80; export LINES=24 COLUMNS=80\n"
+        );
+
+        view(&mut tm, TerminalDimensionMode::GrowOnly, 120, 40);
+        view(&mut tm, TerminalDimensionMode::GrowOnly, 60, 20);
+        assert_eq!(tm.get_vt100_size(), (40, 120));
+        assert_eq!(
+            stty(&mut tm),
+            "stty rows 40 cols 120; export LINES=40 COLUMNS=120\n"
+        );
     }
 }
