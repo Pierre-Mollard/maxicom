@@ -104,7 +104,7 @@ closed index plus a recap. It is kept as an archive and is not updated anymore.
 
 ### Lessons
 
-- Lock today's behavior in tests (`// FIXME: current behavior, see #N`) before
+- Lock today's behavior in tests (`// fixme: current behavior, see #N`) before
   touching it: several real bugs showed up that way (#5a scroll to top,
   #36b tall first entry, #5d rows counted per frame).
 - Measure before building: the render cache looked necessary and was not.
@@ -118,7 +118,7 @@ closed index plus a recap. It is kept as an archive and is not updated anymore.
   reviewed (staged or committed).
 - Plan numbers (`#N`) stay: the code and tests refer to them, and ticket
   summaries start with `[#N]`.
-- Known bugs are locked in tests as `// FIXME: current behavior, see #N`. When
+- Known bugs are locked in tests as `// fixme: current behavior, see #N`. When
   #N is fixed, its test is updated to the correct expectation.
 - Jira labels: `optimization` on every ticket, `phase-0` … `phase-7`,
   `dropped`.

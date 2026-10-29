@@ -297,7 +297,7 @@ impl TerminalMode {
     }
 
     /// Updates `live_bottom` from the screen as the remote left it, whatever the view is
-    /// scrolled to WARN: move scrollback to get line number then reset it
+    /// scrolled to HACK: move scrollback to get line number then reset it
     fn update_live_bottom(&mut self) {
         let scrolled = self.vt100_parser.screen().scrollback();
         self.vt100_parser.screen_mut().set_scrollback(0);
@@ -325,7 +325,7 @@ impl TerminalMode {
 
     /// The columns a view of `cols` can shrink the grid to without losing any: vt100 cuts every
     /// row at the new width, so never fewer than the rightmost cell with content; the pan shows
-    /// the rest (MAX-140) WARN: use scroll back then reset to get line number
+    /// the rest (MAX-140) HACK: use scroll back then reset to get line number
     fn cols_to_keep(&mut self, cols: u16) -> u16 {
         let (rows, grid_cols) = self.get_vt100_size();
         if cols >= grid_cols {

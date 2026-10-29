@@ -7,7 +7,7 @@ use crate::configs::{RxNewlineMode, TextEncoding};
 use chrono::format::{Item, StrftimeItems};
 use chrono::{DateTime, Local};
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufWriter, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -21,10 +21,15 @@ struct LogFile {
 }
 
 impl LogFile {
-    /// Appends to the file, creating it and its missing folders
+    /// Appends to the file, creating it and its missing folders. Readable too: Windows only
+    /// locks a handle that can read or write, and append alone can't
     fn open(path: &Path) -> io::Result<Self> {
         create_parent_dirs(path)?;
-        let file = OpenOptions::new().create(true).append(true).open(path)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .read(true)
+            .open(path)?;
         Ok(Self {
             writer: BufWriter::new(file),
             last_flush: Instant::now(),
@@ -128,7 +133,11 @@ impl Recorder {
                 ));
             }
             backup.flush()?;
-            io::copy(&mut File::open(backup_path)?, &mut file.writer)?;
+            // through the backup's own handle: on Windows the `.raw` lock blocks reads from any
+            // other one. Appends still go to the end, wherever this leaves the position
+            let mut reader = backup.writer.get_ref();
+            reader.seek(SeekFrom::Start(0))?;
+            io::copy(&mut reader, &mut file.writer)?;
         }
         *self.slot(stream) = Some(file);
         Ok(())
@@ -548,6 +557,33 @@ mod tests {
         assert_eq!(fs::read(&files[0]).unwrap(), b"a\nb\n");
         assert!(files[1].to_string_lossy().ends_with("_port.meta"));
         assert_eq!(fs::read(&files[2]).unwrap(), b"a\nb\n");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A raw recording can start with the backup's `.raw` while the journal holds its lock
+    /// (Windows blocks reads from another handle), and the backup still appends after it.
+    /// How: "a\n" received, a raw recording including the session, "b\n" received.
+    #[test]
+    fn raw_recording_starts_with_the_locked_backup() {
+        let dir = temp_dir("journal_raw");
+        let mut recorder = Recorder::default();
+        recorder
+            .start_journal(&dir, &device("port"), &JournalText::default(), 20)
+            .unwrap();
+        record(&mut recorder, b"a\n");
+
+        let path = dir.join("mine.raw");
+        recorder.start(Stream::Raw, path.clone(), true).unwrap();
+        record(&mut recorder, b"b\n");
+        assert_eq!(stop_and_read(&mut recorder, Stream::Raw, &path), b"a\nb\n");
+
+        drop(recorder);
+        let backup = fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.to_string_lossy().ends_with("_port.raw"))
+            .unwrap();
+        assert_eq!(fs::read(backup).unwrap(), b"a\nb\n");
         let _ = fs::remove_dir_all(&dir);
     }
 

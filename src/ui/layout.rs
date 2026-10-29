@@ -927,12 +927,12 @@ mod tests {
         assert_eq!(texts, ["日", "日"]);
     }
 
-    /// Current behavior: a run of spaces can make a row wider than max_width.
+    /// Current behavior: a run of spaces can make a row wider than max_width. Not fixed because it
+    /// add a special case to check for something that is not visible (spaces) so out of screen
+    /// spaces are ok.
     /// How: exact first row and its width.
     #[test]
     fn word_wrap_whitespace_run_can_exceed_width() {
-        // FIXME: current behavior: whitespace tokens never trigger a break, so a row can be wider
-        // than max_width (harmless on screen, but inflates visual_width / max_line_width)
         let subs = wrap_line_by_words(line(&["aaaa     b"]), 5, 0, 0);
         assert_eq!(sub_text(&subs[0]), "aaaa     ");
         assert_eq!(subs[0].visual_width, 9);
