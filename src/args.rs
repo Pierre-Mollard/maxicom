@@ -15,6 +15,7 @@ pub enum ParseOutcome {
         restore: Option<bool>,
     },
     Help,
+    CacheDir,
 }
 
 #[derive(Debug)]
@@ -100,6 +101,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ParseOutcom
             "--help" | "-h" => {
                 return Ok(ParseOutcome::Help);
             }
+            "--cache-dir" => return Ok(ParseOutcome::CacheDir),
 
             unknown => {
                 return Err(ParseError::UnknownArgument(unknown.to_string()));
@@ -139,6 +141,7 @@ Options:
 
       --restore            Restore the last session on this device into the history
       --no-restore         Start with an empty history, whatever capture.restore says
+      --cache-dir          Print the session backups folder and exit
 
   -h, --help               Print help
 "
@@ -154,7 +157,7 @@ mod tests {
     fn restore_of(args: &[&str]) -> Option<bool> {
         match parse_args_from(args.iter().map(|a| a.to_string())).unwrap() {
             ParseOutcome::Run { restore, .. } => restore,
-            ParseOutcome::Help => panic!("help"),
+            _ => panic!("not a run"),
         }
     }
 
@@ -169,5 +172,14 @@ mod tests {
             restore_of(&["--restore", "-p", "x", "--no-restore"]),
             Some(false)
         );
+    }
+
+    /// MAX-154: `--cache-dir` asks for the session folder, wherever it is given.
+    #[test]
+    fn cache_dir_flag() {
+        for args in [&["--cache-dir"][..], &["-p", "x", "--cache-dir"]] {
+            let outcome = parse_args_from(args.iter().map(|a| a.to_string())).unwrap();
+            assert!(matches!(outcome, ParseOutcome::CacheDir), "{args:?}");
+        }
     }
 }

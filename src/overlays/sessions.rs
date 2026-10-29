@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crossterm::event::KeyCode;
 
@@ -20,8 +20,9 @@ const PAGE: usize = 10;
 
 /// The session browser (MAX-148): the session backups of the cache folder, the selected one's
 /// details and last lines. Deletes the selected one, or all but the running ones once asked,
-/// and sorts them by date or by device. `restorable` is the session this device would restore
-/// at the next launch. The preview is read when the selection changes, not on every frame
+/// sorts them by date or by device, copies the selected one's log path or the folder's, and
+/// reads the folder again. `restorable` is the session this device would restore at the next
+/// launch. The preview is read when the selection changes, not on every frame
 #[derive(Debug, Clone)]
 pub struct SessionBrowser {
     pub dir: PathBuf,
@@ -109,10 +110,16 @@ impl SessionBrowser {
             DialogAction::Pick(PopupTarget::SessionDelete) => return self.delete_selected(),
             DialogAction::Pick(PopupTarget::SessionDeleteAll) => return self.ask_delete_all(),
             DialogAction::Pick(PopupTarget::SessionSort) => self.switch_order(),
+            DialogAction::Pick(PopupTarget::SessionCopyLog) => return self.copy_log_path(),
+            DialogAction::Pick(PopupTarget::SessionCopyFolder) => return copy(&self.dir, "folder"),
+            DialogAction::Pick(PopupTarget::SessionReload) => return self.reload_folder(),
             DialogAction::HandleKey(key) => match key.code {
                 KeyCode::Char('d') | KeyCode::Delete => return self.delete_selected(),
                 KeyCode::Char('D') => return self.ask_delete_all(),
                 KeyCode::Char('s') => self.switch_order(),
+                KeyCode::Char('c') => return self.copy_log_path(),
+                KeyCode::Char('C') => return copy(&self.dir, "folder"),
+                KeyCode::Char('r') => return self.reload_folder(),
                 _ => {}
             },
             _ => {}
@@ -150,6 +157,22 @@ impl SessionBrowser {
         match result {
             Ok(()) => notify(format!("Deleted the session of {span}"), false),
             Err(err) => notify(format!("Session not deleted: {err}"), true),
+        }
+    }
+
+    /// Reads the folder again, for files changed or removed out of the app (MAX-154)
+    fn reload_folder(&mut self) -> OverlayResponse {
+        self.reload();
+        notify(
+            format!("Reloaded: {}", sessions(self.sessions.len())),
+            false,
+        )
+    }
+
+    fn copy_log_path(&self) -> OverlayResponse {
+        match self.selected_session().and_then(Session::text_path) {
+            Some(path) => copy(path, "session log"),
+            None => notify("No session log to copy".to_string(), false),
         }
     }
 
@@ -194,6 +217,14 @@ pub fn size(bytes: u64) -> String {
     write_human(&mut out, bytes);
     out.push('B');
     out
+}
+
+/// The path of `what` to the clipboard, for a look at the files out of the app (MAX-154)
+fn copy(path: &Path, what: &str) -> OverlayResponse {
+    OverlayResponse::HandledCopy {
+        text: path.display().to_string(),
+        what: format!("{what} path"),
+    }
 }
 
 fn notify(message: String, warn: bool) -> OverlayResponse {
@@ -349,6 +380,84 @@ mod tests {
         browser.handle_action(DialogAction::Pick(PopupTarget::SessionSort));
         assert_eq!(browser.order, SessionOrder::Date);
         assert_eq!(browser.selected_session().unwrap().port_tag(), "b");
+        drop(running);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// MAX-154: `c` copies the selected session's log path and `C` the folder's, as the
+    /// buttons do, the browser staying open; with no session, `c` says there is nothing.
+    #[test]
+    fn copy_keys_give_the_paths() {
+        let (dir, running) = folder("browser_copy");
+        let mut browser = SessionBrowser::new(dir.clone(), None);
+        select(&mut browser, "a");
+        let log = browser.selected_session().unwrap().text_path().unwrap();
+        let log = log.display().to_string();
+        for action in [key('c'), DialogAction::Pick(PopupTarget::SessionCopyLog)] {
+            match browser.handle_action(action) {
+                OverlayResponse::HandledCopy { text, what } => {
+                    assert_eq!(
+                        (text.as_str(), what.as_str()),
+                        (log.as_str(), "session log path")
+                    );
+                }
+                _ => panic!("no copy"),
+            }
+        }
+        assert!(log.ends_with("_a.log"), "{log}");
+        let folder = dir.display().to_string();
+        for action in [key('C'), DialogAction::Pick(PopupTarget::SessionCopyFolder)] {
+            match browser.handle_action(action) {
+                OverlayResponse::HandledCopy { text, what } => {
+                    assert_eq!(
+                        (text.as_str(), what.as_str()),
+                        (folder.as_str(), "folder path")
+                    );
+                }
+                _ => panic!("no copy"),
+            }
+        }
+        drop(running);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut empty = SessionBrowser::new(temp_dir("browser_copy_none"), None);
+        assert!(matches!(
+            empty.handle_action(key('c')),
+            OverlayResponse::HandledNotify { warn: false, .. }
+        ));
+    }
+
+    /// MAX-154: `r` reads the folder again, as the button does: a session removed out of the
+    /// app leaves the list, the same session stays selected, and a toast gives the count.
+    #[test]
+    fn reload_sees_changes_out_of_the_app() {
+        let (dir, running) = folder("browser_reload");
+        let mut browser = SessionBrowser::new(dir.clone(), None);
+        select(&mut browser, "b");
+        let gone = browser
+            .sessions
+            .iter()
+            .find(|s| s.port_tag() == "a")
+            .unwrap();
+        for path in &gone.files {
+            std::fs::remove_file(path).unwrap();
+        }
+        assert_eq!(browser.sessions.len(), 3);
+        match browser.handle_action(key('r')) {
+            OverlayResponse::HandledNotify { message, warn } => {
+                assert!(!warn);
+                assert_eq!(message, "Reloaded: 2 sessions");
+            }
+            _ => panic!("no toast"),
+        }
+        let mut left = tags(&browser);
+        left.sort_unstable();
+        assert_eq!(left, ["b", "live"]);
+        assert_eq!(browser.selected_session().unwrap().port_tag(), "b");
+        assert!(matches!(
+            browser.handle_action(DialogAction::Pick(PopupTarget::SessionReload)),
+            OverlayResponse::HandledNotify { warn: false, .. }
+        ));
         drop(running);
         let _ = std::fs::remove_dir_all(&dir);
     }

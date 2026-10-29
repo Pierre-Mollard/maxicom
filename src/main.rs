@@ -134,6 +134,17 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             print_help();
             return Ok(ExitCode::SUCCESS);
         }
+        // the folder to look into the backups out of the app: `cd $(maxicom --cache-dir)`
+        Ok(ParseOutcome::CacheDir) => match AppConfig::default_journal_dir() {
+            Some(dir) => {
+                println!("{}", dir.display());
+                return Ok(ExitCode::SUCCESS);
+            }
+            None => {
+                eprintln!("maxicom: no cache folder on this system");
+                return Ok(ExitCode::FAILURE);
+            }
+        },
         Err(error) => {
             eprintln!("Argument error: {error}");
             return Ok(ExitCode::from(EXIT_USAGE));
@@ -393,7 +404,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     }
                 }
                 UpdateEffect::CopyToClipboard(text) => {
-                    execute_clipboard_copy(&mut app, &text);
+                    execute_clipboard_copy(&mut app, &text, None);
+                }
+                UpdateEffect::CopyToClipboardAs { text, what } => {
+                    execute_clipboard_copy(&mut app, &text, Some(&what));
                 }
                 UpdateEffect::ReloadConfig => match load_runtime_config(&config_path) {
                     Ok(mut config) => {
@@ -447,7 +461,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             PostRenderEffect::None => {
                 last_layout_warnings.clear();
             }
-            PostRenderEffect::_CopyToClipboard(text) => execute_clipboard_copy(&mut app, &text),
+            PostRenderEffect::_CopyToClipboard(text) => {
+                execute_clipboard_copy(&mut app, &text, None)
+            }
             PostRenderEffect::LayoutWarnings(current_warnings) => {
                 for warn in &current_warnings {
                     if !last_layout_warnings.contains(warn) {
@@ -486,9 +502,12 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn execute_clipboard_copy(app: &mut App, text: &str) {
+/// Copies `text` and says so: the copy of `what` with the text itself, else its char count
+fn execute_clipboard_copy(app: &mut App, text: &str, what: Option<&str>) {
     if let Err(e) = copy_via_osc52(text) {
         app.notify_error(format!("Clipboard error: {e}"));
+    } else if let Some(what) = what {
+        app.notify_success(format!("Copied the {what}: {text}"));
     } else {
         let count = text.chars().count();
         app.notify_success(format!("Copied {count} chars to clipboard"));

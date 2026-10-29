@@ -1447,6 +1447,8 @@ mod tests {
         let port = SerialConfig::default().port;
         crate::capture::tests::write_test_session(&dir, &port, &text, b"mine\r\n", b"");
         crate::capture::tests::write_test_session(&dir, "/dev/other", &text, b"theirs\r\n", b"");
+        // the names are to the millisecond: the app's journal must not get the same one
+        std::thread::sleep(std::time::Duration::from_millis(2));
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
         h.app.start_journal(Some(dir.clone()));
         h.app.update(Action::App(AppAction::OpenSessions));
@@ -1482,6 +1484,134 @@ mod tests {
         let rows = h.draw();
         assert!(!has(&rows, "11B  ttyUSB0"), "{rows:#?}");
         assert!(row_with(&rows, "  0B  ttyUSB0").contains('●'), "{rows:#?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// MAX-153: a session row is colored as `lsd -l`: the date by the age of the last write,
+    /// the size by its magnitude, the port by its name, and the mark by its kind; the gaps
+    /// between them keep the text color. The preview's port, times and size take the same
+    /// colors.
+    /// How: one past session written now on this device, so it is the restorable one, next to
+    /// the app's own running journal.
+    #[test]
+    fn session_browser_row_colors() {
+        let dir = std::env::temp_dir().join(format!(
+            "maxicom_test_{}_browser_colors",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let port = SerialConfig::default().port;
+        let text = crate::capture::JournalText::default();
+        crate::capture::tests::write_test_session(&dir, &port, &text, b"mine\r\n", b"");
+        // the names are to the millisecond: the app's journal must not get the same one
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
+        h.app.start_journal(Some(dir.clone()));
+        h.app.update(Action::App(AppAction::OpenSessions));
+        let rows = h.draw();
+        let colors = h.theme.session_browser;
+        let fg_at = |(x, y): (u16, u16)| h.terminal.backend().buffer()[(x, y)].fg;
+        let (x, y) = cell_of(&rows, "↺");
+        assert_eq!(fg_at((x, y)), colors.mark_restorable, "{rows:#?}");
+        assert_eq!(fg_at((x + 2, y)), colors.date_hour, "{rows:#?}");
+        let (size_x, _) = cell_of(&rows, "11B");
+        assert_eq!(fg_at((size_x, y)), colors.size_small, "{rows:#?}");
+        // the gaps and the size's padding aren't colored, so a reversed column ends with its
+        // text
+        let text = h.theme.palette.text;
+        assert_eq!(fg_at((x + 1, y)), text, "{rows:#?}");
+        assert_eq!(fg_at((x + 2 + 16, y)), text, "{rows:#?}");
+        assert_eq!(fg_at((size_x - 1, y)), text, "{rows:#?}");
+        let tag = cell_on_row(&rows, "11B", "ttyUSB0");
+        assert_eq!(fg_at(tag), colors.port_color("ttyUSB0"), "{rows:#?}");
+
+        // the preview's port, times and size take the same colors as the row
+        click(&mut h, (x, y));
+        let rows = h.draw();
+        let fg_at = |(x, y): (u16, u16)| h.terminal.backend().buffer()[(x, y)].fg;
+        let after = |rows: &[String], name: &str| {
+            let (x, y) = cell_of(rows, name);
+            (x + 8, y)
+        };
+        let port = after(&rows, "Port    ");
+        assert_eq!(fg_at(port), colors.port_color("ttyUSB0"), "{rows:#?}");
+        let (times_x, times_y) = cell_on_row(&rows, " → ", "Session ");
+        let times = (times_x + 8, times_y);
+        assert_eq!(fg_at(times), colors.date_hour, "{rows:#?}");
+        let size = after(&rows, "Size    ");
+        assert_eq!(fg_at(size), colors.size_small, "{rows:#?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// MAX-154: the session browser shows its folder, and its Copy buttons copy the folder's
+    /// path and the selected session's log path, to the clipboard and the paste buffer, the
+    /// browser staying open.
+    #[test]
+    fn session_browser_copies_paths() {
+        let dir =
+            std::env::temp_dir().join(format!("maxicom_test_{}_browser_copy", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let text = crate::capture::JournalText::default();
+        let session =
+            crate::capture::tests::write_test_session(&dir, "/dev/past", &text, b"x\r\n", b"");
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
+        h.app.start_journal(Some(dir.clone()));
+        h.app.update(Action::App(AppAction::OpenSessions));
+        let rows = h.draw();
+        let folder = dir.display().to_string();
+        assert!(has(&rows, &format!("Folder  {folder}")), "{rows:#?}");
+
+        // a button answers on the press
+        let press =
+            |h: &mut Harness, at| match mouse_do(h, MouseEventKind::Down(MouseButton::Left), at) {
+                UpdateEffect::CopyToClipboardAs { text, what } => (text, what),
+                _ => panic!("no copy"),
+            };
+        let (text, what) = press(&mut h, cell_of(&rows, "Copy folder"));
+        assert_eq!(
+            (text.as_str(), what.as_str()),
+            (folder.as_str(), "folder path")
+        );
+        assert!(matches!(h.app.overlay(), Some(Overlay::Sessions(_))));
+        assert!(h.app.has_paste_buffer());
+
+        click(&mut h, cell_of(&rows, "  past"));
+        let rows = h.draw();
+        let (text, what) = press(&mut h, cell_of(&rows, "Copy path"));
+        let log = session.text_path().unwrap().display().to_string();
+        assert_eq!(
+            (text.as_str(), what.as_str()),
+            (log.as_str(), "session log path")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// MAX-154: on an 80-column terminal every button of the session browser shows, the
+    /// folder's under the folder line, and Reload reads the folder again with a toast.
+    #[test]
+    fn session_browser_buttons_fit_80_columns() {
+        let dir =
+            std::env::temp_dir().join(format!("maxicom_test_{}_browser_80", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        h.app.start_journal(Some(dir.clone()));
+        h.app.update(Action::App(AppAction::OpenSessions));
+        let rows = h.draw();
+        for label in [
+            "Delete all",
+            "Sort by device",
+            "Close",
+            "Copy path",
+            "Copy folder",
+        ] {
+            assert!(has(&rows, label), "{label}: {rows:#?}");
+        }
+        let folder_row = cell_of(&rows, "Folder  ").1;
+        assert_eq!(cell_of(&rows, "Copy folder").1, folder_row + 1, "{rows:#?}");
+
+        click(&mut h, cell_of(&rows, "Reload"));
+        let rows = h.draw();
+        assert!(has(&rows, "Reloaded: 1 session"), "{rows:#?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

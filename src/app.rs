@@ -134,6 +134,7 @@ pub enum UpdateEffect {
     Transmit(Vec<u8>),
     Reconfigure(SerialConfig),
     CopyToClipboard(String),
+    CopyToClipboardAs { text: String, what: String },
     ToggleAttachSerial,
     ReloadConfig,
     Quit,
@@ -404,6 +405,11 @@ impl App {
                                 self.notify_info(message);
                             }
                             UpdateEffect::None
+                        }
+                        OverlayResponse::HandledCopy { text, what } => {
+                            self.overlay = Some(overlay);
+                            self.paste_buffer = Some(text.clone());
+                            UpdateEffect::CopyToClipboardAs { text, what }
                         }
                         OverlayResponse::RestoreSession(yes) => {
                             if let Overlay::RestoreSession(session) = overlay {

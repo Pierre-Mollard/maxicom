@@ -2,6 +2,7 @@ use ratatui::style::{Color, Modifier, Style};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::configs::style::ConfigStyle;
 
@@ -16,6 +17,7 @@ pub struct ThemeConfig {
     pub raw_inspector: RawInspectorColors,
     pub popup: PopupStyles,
     pub notification: NotificationStyles,
+    pub session_browser: SessionBrowserColors,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -243,6 +245,90 @@ impl Default for RawInspectorColors {
     }
 }
 
+/// The session browser's colors (MAX-153), as `lsd -l` draws a listing: the date fades from
+/// green to a grayish green with the age of the last write (1 hour, 1 day, 1 week, 30 days),
+/// the size warms from pale yellow to red (empty, 100 KiB, 1 MiB, 100 MiB, 1 GiB), and each
+/// port gets one of the `port` colors by its name. The defaults are 256-color indexed, lsd's
+/// own where it has one
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SessionBrowserColors {
+    pub date_hour: Color,
+    pub date_day: Color,
+    pub date_week: Color,
+    pub date_month: Color,
+    pub date_older: Color,
+    pub size_empty: Color,
+    pub size_small: Color,
+    pub size_medium: Color,
+    pub size_large: Color,
+    pub size_huge: Color,
+    pub size_giant: Color,
+    pub mark_running: Color,
+    pub mark_restorable: Color,
+    pub mark_no_meta: Color,
+    pub port: [Color; 8],
+}
+
+impl Default for SessionBrowserColors {
+    fn default() -> Self {
+        Self {
+            date_hour: Color::Indexed(40),
+            date_day: Color::Indexed(42),
+            date_week: Color::Indexed(36),
+            date_month: Color::Indexed(29),
+            date_older: Color::Indexed(65),
+            size_empty: Color::Indexed(245),
+            size_small: Color::Indexed(229),
+            size_medium: Color::Indexed(222),
+            size_large: Color::Indexed(216),
+            size_huge: Color::Indexed(172),
+            size_giant: Color::Indexed(160),
+            mark_running: Color::Indexed(40),
+            mark_restorable: Color::Cyan,
+            mark_no_meta: Color::Indexed(245),
+            port: [75, 141, 211, 117, 183, 110, 176, 152].map(Color::Indexed),
+        }
+    }
+}
+
+impl SessionBrowserColors {
+    /// The date's color for a last write `age` ago
+    pub fn date_color(&self, age: Duration) -> Color {
+        const HOUR: u64 = 60 * 60;
+        const DAY: u64 = 24 * HOUR;
+        match age.as_secs() {
+            s if s < HOUR => self.date_hour,
+            s if s < DAY => self.date_day,
+            s if s < 7 * DAY => self.date_week,
+            s if s < 30 * DAY => self.date_month,
+            _ => self.date_older,
+        }
+    }
+
+    pub fn size_color(&self, bytes: u64) -> Color {
+        const KIB: u64 = 1024;
+        const MIB: u64 = 1024 * KIB;
+        match bytes {
+            0 => self.size_empty,
+            b if b < 100 * KIB => self.size_small,
+            b if b < MIB => self.size_medium,
+            b if b < 100 * MIB => self.size_large,
+            b if b < 1024 * MIB => self.size_huge,
+            _ => self.size_giant,
+        }
+    }
+
+    /// The port's color by an FNV-1a hash of its name, the same from one launch to the next
+    /// (std's hasher doesn't promise that)
+    pub fn port_color(&self, tag: &str) -> Color {
+        let hash = tag.bytes().fold(0x811c_9dc5_u32, |hash, b| {
+            (hash ^ u32::from(b)).wrapping_mul(0x0100_0193)
+        });
+        self.port[hash as usize % self.port.len()]
+    }
+}
+
 impl ThemeConfig {
     pub fn load_or_create_default<P: AsRef<Path>>(path: P) -> Result<Self, ThemeError> {
         let path = path.as_ref();
@@ -331,5 +417,82 @@ impl std::error::Error for ThemeError {
             Self::Io { source, .. } => Some(source),
             Self::Parse { source, .. } => Some(source),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The session browser's color steps, and its theme section read back.
+
+    use super::*;
+
+    /// MAX-153: each date step starts at its bound, the last one has no end.
+    #[test]
+    fn session_date_steps() {
+        let colors = SessionBrowserColors::default();
+        let hours = |h: u64| Duration::from_secs(h * 60 * 60);
+        let steps = [
+            (Duration::ZERO, colors.date_hour),
+            (hours(1) - Duration::from_secs(1), colors.date_hour),
+            (hours(1), colors.date_day),
+            (hours(24), colors.date_week),
+            (hours(7 * 24), colors.date_month),
+            (hours(30 * 24), colors.date_older),
+            (hours(1000 * 24), colors.date_older),
+        ];
+        for (age, color) in steps {
+            assert_eq!(colors.date_color(age), color, "{age:?}");
+        }
+    }
+
+    /// MAX-153: each size step starts at its bound, 1 GiB and more is the last one.
+    #[test]
+    fn session_size_steps() {
+        let colors = SessionBrowserColors::default();
+        let (kib, mib) = (1024, 1024 * 1024);
+        let steps = [
+            (0, colors.size_empty),
+            (1, colors.size_small),
+            (100 * kib - 1, colors.size_small),
+            (100 * kib, colors.size_medium),
+            (mib, colors.size_large),
+            (100 * mib, colors.size_huge),
+            (1024 * mib - 1, colors.size_huge),
+            (1024 * mib, colors.size_giant),
+        ];
+        for (bytes, color) in steps {
+            assert_eq!(colors.size_color(bytes), color, "{bytes}");
+        }
+    }
+
+    /// MAX-153: a port's color comes from its name only, so it is the same at every launch,
+    /// and close names get apart.
+    /// How: the FNV-1a hash of "ttyUSB0" is fixed, so its color is pinned.
+    #[test]
+    fn session_port_color_is_stable() {
+        let colors = SessionBrowserColors::default();
+        assert_eq!(colors.port_color("ttyUSB0"), colors.port_color("ttyUSB0"));
+        assert_eq!(colors.port_color("ttyUSB0"), Color::Indexed(211));
+        let ports = ["ttyUSB0", "ttyUSB1", "ttyACM0", "COM3"];
+        let distinct: std::collections::HashSet<_> =
+            ports.iter().map(|port| colors.port_color(port)).collect();
+        assert!(distinct.len() > 1);
+    }
+
+    /// MAX-153: a theme giving only some of the section keeps the defaults for the rest, and
+    /// the defaults write and read back the same.
+    #[test]
+    fn session_browser_theme_reads_back() {
+        let theme: ThemeConfig =
+            toml::from_str("[session_browser]\ndate_hour = \"#00ff00\"\n").unwrap();
+        let colors = theme.session_browser;
+        assert_eq!(colors.date_hour, Color::Rgb(0, 0xff, 0));
+        assert_eq!(
+            colors.size_giant,
+            SessionBrowserColors::default().size_giant
+        );
+        let written = toml::to_string_pretty(&ThemeConfig::default()).unwrap();
+        let read: ThemeConfig = toml::from_str(&written).unwrap();
+        assert_eq!(read, ThemeConfig::default());
     }
 }

@@ -60,6 +60,9 @@ pub enum PopupTarget {
     SessionDelete,
     SessionDeleteAll,
     SessionSort,
+    SessionCopyLog,
+    SessionCopyFolder,
+    SessionReload,
     SessionConfirm,
     SessionCancel,
 }
@@ -89,6 +92,10 @@ pub enum OverlayResponse {
     HandledNotify {
         message: String,
         warn: bool,
+    },
+    HandledCopy {
+        text: String,
+        what: String,
     },
 }
 
