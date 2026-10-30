@@ -128,6 +128,32 @@ impl Default for RawSideConfig {
     }
 }
 
+/// Where the command line is drawn (MAX-12): a centered one-row popup, or over the status bar,
+/// the popup when the status bar isn't shown
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandLineLayout {
+    #[default]
+    Popup,
+    StatusBar,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CommandLineConfig {
+    pub layout: CommandLineLayout,
+    pub history_size: usize,
+}
+
+impl Default for CommandLineConfig {
+    fn default() -> Self {
+        Self {
+            layout: CommandLineLayout::default(),
+            history_size: 100,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TextEncoding {
@@ -605,6 +631,7 @@ pub struct SettingsConfig {
     pub highlights_path: Option<PathBuf>,
     pub ui: UiConfig,
     pub raw_side: RawSideConfig,
+    pub command_line: CommandLineConfig,
 
     // cache
     #[serde(skip)]
@@ -630,6 +657,7 @@ impl Default for SettingsConfig {
             highlights_path: None,
             ui: UiConfig::default(),
             raw_side: RawSideConfig::default(),
+            command_line: CommandLineConfig::default(),
             timestamp_width: 0,
         };
         settings.refresh_timestamp_width();

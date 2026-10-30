@@ -10,7 +10,7 @@ use crate::{
         Action, AppAction, CopyModeAction, DialogAction, HistoryAction, LineInputAction,
         SearchModeAction, SideViewAction, TerminalAction,
     },
-    overlays::{HelpDialog, Overlay, ResizeDialog, SerialConfigDialog, SettingKey},
+    overlays::{CommandLine, HelpDialog, Overlay, ResizeDialog, SerialConfigDialog, SettingKey},
 };
 
 impl KeyBindingAction {
@@ -97,6 +97,12 @@ impl KeyBindingAction {
             KeyBindingAction::Sessions => Action::App(AppAction::OpenSessions),
             KeyBindingAction::ToggleMouse => {
                 Action::App(AppAction::ToggleSetting(SettingKey::Mouse))
+            }
+            KeyBindingAction::CommandLine => {
+                let history = app.command_history().iter().cloned().collect();
+                Action::App(AppAction::OpenOverlay(Overlay::CommandLine(
+                    CommandLine::new(history),
+                )))
             }
         }
     }

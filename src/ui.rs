@@ -35,6 +35,7 @@ use crate::{
                 render_confirm_quit_popup, render_detached_popup, render_disconnected_popup,
                 render_error_popup, render_restore_popup,
             },
+            command_line::render_command_line,
             filepath::{render_filepath_popup, render_screenshot_popup},
             help::render_help_popup,
             menu::render_action_menu,
@@ -179,7 +180,7 @@ pub fn render(
         app.frame_map_mut().click_targets.extend(targets);
     }
 
-    render_active_overlay(app, frame, theme);
+    render_active_overlay(app, frame, theme, layout.status_bar_area);
 
     // the part under the pointer: of the popup when one is open, the menu showing it as its
     // selection; else a border button or search bar hint (MAX-131)
@@ -208,9 +209,17 @@ pub fn render(
     }
 }
 
-fn render_active_overlay(app: &mut App, frame: &mut Frame, theme: &ThemeConfig) {
+/// The open popup, `status_bar` the status bar's area when it is drawn: the command line can
+/// take its place (MAX-12)
+fn render_active_overlay(
+    app: &mut App,
+    frame: &mut Frame,
+    theme: &ThemeConfig,
+    status_bar: Option<Rect>,
+) {
     let mut targets = std::mem::take(&mut app.frame_map_mut().popup_targets);
     let resolver = &app.key_resolver;
+    let mut command_line_prompt = None;
     let area = match app.overlay() {
         Some(Overlay::Settings) => render_settings_popup(app, frame, theme, &mut targets),
         Some(Overlay::Help(dialog)) => render_help_popup(app, dialog, frame, theme, &mut targets),
@@ -245,11 +254,18 @@ fn render_active_overlay(app: &mut App, frame: &mut Frame, theme: &ThemeConfig) 
         Some(Overlay::ActionMenu(menu)) => {
             render_action_menu(menu, resolver, frame, theme, &mut targets)
         }
+        Some(Overlay::CommandLine(command_line)) => {
+            let (area, prompt) =
+                render_command_line(app, command_line, status_bar, frame, theme, &mut targets);
+            command_line_prompt = Some(prompt);
+            area
+        }
         None => return,
     };
     let map = app.frame_map_mut();
     map.popup = Some(area);
     map.popup_targets = targets;
+    map.command_line = command_line_prompt;
 }
 
 #[cfg(test)]
@@ -272,7 +288,7 @@ mod tests {
         },
         link::serial::SerialConfig,
         overlays::{
-            ErrorDialog, FilePathDialog, HelpDialog, ResizeDialog, ScreenshotDialog,
+            CommandLine, ErrorDialog, FilePathDialog, HelpDialog, ResizeDialog, ScreenshotDialog,
             SerialConfigDialog,
         },
     };
@@ -1041,6 +1057,146 @@ mod tests {
 
         let rows = popup_rows(Overlay::Settings, &[("x", "close")]);
         assert!(has(&rows, "x Return"), "{rows:#?}");
+    }
+
+    /// MAX-12: the command line is a centered bordered popup of one row, or with `layout =
+    /// "status_bar"` takes the status bar's row, inside its box; the popup again when the
+    /// status bar is hidden. The cursor follows the text.
+    /// How: the command line open with `help` typed, drawn in each case.
+    #[test]
+    fn command_line_layouts() {
+        use crate::configs::{CommandLineLayout, StatusBarLayout};
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 24, |s| {
+            s.ui.show_borders = true;
+            s.ui.status_bar.layout = StatusBarLayout::Box;
+        });
+        let mut command_line = CommandLine::new(Vec::new());
+        command_line.handle_action(DialogAction::Paste("help".into()));
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::CommandLine(
+                command_line,
+            ))));
+
+        // 64 wide, 3 high, centered: the row inside the border and the padding column
+        let rows = h.draw();
+        assert_eq!(cell_of(&rows, ":help"), (10, 11));
+        assert_eq!(cursor_cell(&mut h), (15, 11));
+        assert!(rows[10].contains(" Command "), "{:?}", rows[10]);
+        assert!(has(&rows, "Enter Run · Esc Cancel"), "{rows:#?}");
+        assert!(rows[22].starts_with("│ LINE "), "{:?}", rows[22]);
+
+        h.app.settings_mut().command_line.layout = CommandLineLayout::StatusBar;
+        let rows = h.draw();
+        assert!(rows[22].starts_with("│:help "), "{:?}", rows[22]);
+        assert!(rows[22].ends_with(" │"), "{:?}", rows[22]);
+        assert_eq!(cursor_cell(&mut h), (6, 22));
+        assert!(!has(&rows, " Command "), "{rows:#?}");
+
+        h.app.settings_mut().ui.show_status_bar = false;
+        let rows = h.draw();
+        assert_eq!(cell_of(&rows, ":help"), (10, 11));
+    }
+
+    /// MAX-12: the command line scrolls as the TX input, a mark on the edge hiding text, and a
+    /// click on its text puts the cursor there; a click outside the popup still closes it.
+    /// How: 80 digits typed in the 59 columns of the popup's text, the cursor at the end.
+    #[test]
+    fn command_line_scroll_and_click() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        let mut command_line = CommandLine::new(Vec::new());
+        command_line.handle_action(DialogAction::Paste("0123456789".repeat(8)));
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::CommandLine(
+                command_line,
+            ))));
+        let input_cursor = |h: &Harness| match h.app.overlay() {
+            Some(Overlay::CommandLine(command_line)) => command_line.input.visual_cursor(),
+            _ => panic!("the command line is closed"),
+        };
+
+        // the text starts after the `:` at column 11: 22 columns hidden on the left
+        let rows = h.draw();
+        let row: Vec<char> = rows[11].chars().collect();
+        assert_eq!(row[10..13], [':', '◀', '3'], "{:?}", rows[11]);
+        assert_eq!(row[68], '9', "{:?}", rows[11]);
+        assert_eq!(cursor_cell(&mut h), (69, 11));
+
+        click(&mut h, (16, 11));
+        assert_eq!(input_cursor(&h), 27);
+        let rows = h.draw();
+        assert_eq!(cursor_cell(&mut h), (16, 11), "{:?}", rows[11]);
+
+        // the `:` puts it at the text's first column shown
+        click(&mut h, (10, 11));
+        assert_eq!(input_cursor(&h), 22);
+
+        click(&mut h, (2, 11));
+        assert!(h.app.overlay().is_none());
+    }
+
+    /// MAX-12: the completion is listed under the popup, one column inside it on each side,
+    /// with each command's help; the selected candidate is in the `selected` color and a click
+    /// takes one. With the status bar layout the list is above the bar, inside it too.
+    /// How: `help; toggle-d` typed (3 candidates), Tab, a click.
+    #[test]
+    fn command_line_completion_list() {
+        use crate::configs::{CommandLineLayout, StatusBarLayout};
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 24, |s| {
+            s.ui.show_borders = true;
+            s.ui.status_bar.layout = StatusBarLayout::Box;
+        });
+        let open = |h: &mut Harness, text: &str| {
+            let mut command_line = CommandLine::new(Vec::new());
+            command_line.handle_action(DialogAction::Paste(text.into()));
+            h.app
+                .update(Action::App(AppAction::OpenOverlay(Overlay::CommandLine(
+                    command_line,
+                ))));
+            h.draw()
+        };
+
+        // the popup on columns 8 to 71 and rows 10 to 12, the list on columns 9 to 70 from row 13
+        let rows = open(&mut h, "help; toggle-d");
+        let row: Vec<char> = rows[13].chars().collect();
+        assert_eq!((row[9], row[70]), ('┌', '┐'), "{:?}", rows[13]);
+        assert_eq!(cell_of(&rows, "toggle-display-mode"), (11, 14));
+        assert!(
+            rows[14].contains("Cycle the display mode"),
+            "{:?}",
+            rows[14]
+        );
+        assert_eq!(cell_of(&rows, "toggle-display-timestamp"), (11, 16));
+        assert!(has(&rows, "Tab Complete"), "{rows:#?}");
+
+        h.app.update(Action::Overlay(DialogAction::CycleNext));
+        let rows = h.draw();
+        assert!(
+            rows[11].contains(":help; toggle-display-mode"),
+            "{:?}",
+            rows[11]
+        );
+        let selected = h.theme.command_line.selected.bg;
+        assert_eq!(bg_at(&h, (17, 14)), selected);
+        assert_ne!(bg_at(&h, (17, 15)), selected);
+
+        click(&mut h, (17, 15));
+        let rows = h.draw();
+        assert!(
+            rows[11].contains(":help; toggle-display-raw "),
+            "{:?}",
+            rows[11]
+        );
+        assert!(!has(&rows, "toggle-display-mode"), "{rows:#?}");
+
+        // the bar's box on rows 21 to 23, the list on columns 1 to 78 above it
+        h.app.close_overlay();
+        h.app.settings_mut().command_line.layout = CommandLineLayout::StatusBar;
+        let rows = open(&mut h, "toggle-d");
+        assert_eq!(cell_of(&rows, "toggle-display-mode"), (3, 17));
+        let row: Vec<char> = rows[16].chars().collect();
+        assert_eq!((row[1], row[78]), ('┌', '┐'), "{:?}", rows[16]);
+        assert!(rows[20].starts_with('└'), "{:?}", rows[20]);
+        assert!(rows[22].starts_with("│:toggle-d"), "{:?}", rows[22]);
     }
 
     /// A text input popup types the keys that are not Esc, Enter, Tab or modified, so they

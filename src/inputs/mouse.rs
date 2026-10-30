@@ -170,7 +170,10 @@ fn handle_left_button(event: MouseEvent, app: &App) -> Action {
             let outside = map
                 .popup
                 .is_some_and(|area| !area.contains(Position::new(x, y)));
-            return if let Some(PopupTarget::Hint(action)) = map.popup_target(x, y) {
+            return if let Some(column) = map.command_line_column(x, y) {
+                // the command line's cursor goes under the click (MAX-12)
+                Action::Overlay(DialogAction::ClickAt(column))
+            } else if let Some(PopupTarget::Hint(action)) = map.popup_target(x, y) {
                 // a key hint runs as its key would (MAX-125)
                 action.to_action()
             } else if let Some(target) = map.popup_target(x, y) {

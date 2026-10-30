@@ -62,6 +62,7 @@ pub enum KeyBindingAction {
     ExitPrefix,
     ReloadConfig,
     ToggleMouse,
+    CommandLine,
 }
 
 impl FromStr for KeyBindingAction {
@@ -926,6 +927,7 @@ impl Default for KeyBindingsConfig {
             "pagedown"    => KeyBindingAction::PageDown,
             "["     => KeyBindingAction::EnterCopyMode,
             "/"     => KeyBindingAction::EnterSearch,
+            ":"     => KeyBindingAction::CommandLine,
             "a"     => KeyBindingAction::ExitPrefix,
             "h"     => KeyBindingAction::DetachSerial,
         };
@@ -1285,7 +1287,7 @@ mod tests {
     /// between words: the old `_` names are refused
     #[test]
     fn action_names() {
-        const NAMES: [(&str, KeyBindingAction); 40] = [
+        const NAMES: [(&str, KeyBindingAction); 41] = [
             ("quit", KeyBindingAction::Quit),
             ("toggle-input-mode", KeyBindingAction::SKInputMode),
             ("toggle-local-echo", KeyBindingAction::SKLocalEcho),
@@ -1332,6 +1334,7 @@ mod tests {
             ("detach-serial", KeyBindingAction::DetachSerial),
             ("reload-config", KeyBindingAction::ReloadConfig),
             ("toggle-mouse", KeyBindingAction::ToggleMouse),
+            ("command-line", KeyBindingAction::CommandLine),
         ];
         for (name, action) in NAMES {
             assert_eq!(name.parse::<KeyBindingAction>().unwrap(), action, "{name}");

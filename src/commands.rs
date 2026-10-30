@@ -1,6 +1,3 @@
-// TODO: (MAX-12) the command line (step 2) runs the parser, only the tests do until then
-#![allow(dead_code)]
-
 /// Command registry and parser (MAX-12): the one table of named commands that keys, the
 /// command line and later the API (MAX-74) run. Pure functions, no UI
 use std::path::PathBuf;
@@ -11,6 +8,8 @@ pub mod tokenizer;
 
 use tokenizer::Word;
 
+// TODO: (MAX-12) the commands with arguments (step 3) use them
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArgKind {
     Int {
@@ -222,6 +221,7 @@ pub static COMMANDS: &[CommandSpec] = {
         CommandSpec::action("detach-serial", A::DetachSerial, "Detach / attach the port"),
         CommandSpec::action("reload-config", A::ReloadConfig, "Reload the config files"),
         CommandSpec::action("toggle-mouse", A::ToggleMouse, "Toggle mouse support"),
+        CommandSpec::action("command-line", A::CommandLine, "Open the command line"),
     ]
 };
 
@@ -235,15 +235,138 @@ pub fn find_by_action(action: KeyBindingAction) -> Option<&'static CommandSpec> 
         .find(|spec| spec.target == Target::Action(action))
 }
 
-/// The command names starting with `prefix`, sorted, for completion
-pub fn complete_names(prefix: &str) -> Vec<&'static str> {
-    let mut names: Vec<_> = COMMANDS
-        .iter()
-        .map(|spec| spec.name)
-        .filter(|name| name.starts_with(prefix))
-        .collect();
-    names.sort_unstable();
-    names
+/// A value to complete a word with, and its help line (a command's, none for a value)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Candidate {
+    pub value: &'static str,
+    pub help: &'static str,
+}
+
+/// What completes the word before the cursor: where the word starts in the line (in bytes), and
+/// the candidates starting like it
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Completion {
+    pub start: usize,
+    pub candidates: Vec<Candidate>,
+}
+
+/// The completion of the last word of `before_cursor`, the line up to the cursor: the command
+/// names (sorted) for a command's first word, else the values of the argument it is. None for
+/// a word already whole, nor for one with a quote or an escape
+pub fn complete(before_cursor: &str) -> Completion {
+    complete_in(COMMANDS, before_cursor)
+}
+
+fn complete_in(commands: &'static [CommandSpec], line: &str) -> Completion {
+    let Some(word) = last_word(line) else {
+        return Completion::default();
+    };
+    let prefix = &line[word.start..];
+    let mut candidates: Vec<Candidate> = match word.command {
+        None => {
+            let mut specs: Vec<_> = commands
+                .iter()
+                .filter(|spec| spec.name.starts_with(prefix))
+                .collect();
+            specs.sort_unstable_by_key(|spec| spec.name);
+            specs
+                .into_iter()
+                .map(|spec| Candidate {
+                    value: spec.name,
+                    help: spec.help,
+                })
+                .collect()
+        }
+        Some(name) => commands
+            .iter()
+            .find(|spec| spec.name == name)
+            .and_then(|spec| spec.args.get(word.index - 1))
+            .map(|arg| arg.kind.candidates(prefix))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|value| Candidate { value, help: "" })
+            .collect(),
+    };
+    if let [only] = candidates[..]
+        && only.value == prefix
+    {
+        candidates.clear();
+    }
+    Completion {
+        start: word.start,
+        candidates,
+    }
+}
+
+/// The last word of a line, as the tokenizer splits it
+struct LastWord<'a> {
+    start: usize,
+    /// Its place in its command, `0` the command's name
+    index: usize,
+    /// Its command's name, when it isn't the name
+    command: Option<&'a str>,
+}
+
+/// None when the word has a quote or an escape: it isn't text a candidate starts like
+fn last_word(line: &str) -> Option<LastWord<'_>> {
+    let mut start = 0;
+    let mut index = 0;
+    let mut in_word = false;
+    let mut command = None;
+    let mut quote = None;
+    let mut escaped = false;
+    for (i, c) in line.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if let Some(open) = quote {
+            if c == open {
+                quote = None;
+            } else if c == '\\' && open == '"' {
+                escaped = true;
+            }
+            continue;
+        }
+        match c {
+            ';' => {
+                index = 0;
+                in_word = false;
+                command = None;
+                start = i + 1;
+            }
+            c if c.is_whitespace() => {
+                if in_word {
+                    if index == 0 {
+                        command = Some(&line[start..i]);
+                    }
+                    index += 1;
+                    in_word = false;
+                }
+                start = i + c.len_utf8();
+            }
+            c => {
+                if !in_word {
+                    in_word = true;
+                    start = i;
+                }
+                match c {
+                    '\\' => escaped = true,
+                    '\'' | '"' => quote = Some(c),
+                    _ => {}
+                }
+            }
+        }
+    }
+    let word = &line[start..];
+    if quote.is_some() || escaped || word.contains(['\\', '\'', '"']) {
+        return None;
+    }
+    Some(LastWord {
+        start,
+        index,
+        command,
+    })
 }
 
 /// Parses a command line: commands chained with `;`, each checked against the registry
@@ -336,7 +459,7 @@ impl ArgKind {
             Self::Int { suggestions, .. } => suggestions,
             Self::Bool => &["on", "off"],
             Self::Enum(values) => values,
-            // TODO: (MAX-12) paths complete from the file system in the command line (step 2)
+            // TODO: (MAX-12) paths complete from the file system with `send-file` (step 3)
             Self::String | Self::Path | Self::Hex => &[],
         };
         values
@@ -409,16 +532,20 @@ mod tests {
         },
     ];
 
-    static TEST_SPEC: CommandSpec = CommandSpec {
-        name: "test",
-        args: TEST_ARGS,
-        help: "",
-        target: Target::Action(KeyBindingAction::Quit),
-    };
+    /// A command with an argument of each kind, and one without
+    static TEST_COMMANDS: [CommandSpec; 2] = [
+        CommandSpec {
+            name: "test",
+            args: TEST_ARGS,
+            help: "",
+            target: Target::Action(KeyBindingAction::Quit),
+        },
+        CommandSpec::action("quit", KeyBindingAction::Quit, "Quit"),
+    ];
 
     fn args(line: &str) -> Result<Vec<ArgValue>, CommandError> {
         let words = tokenizer::split(line).unwrap().remove(0);
-        parse_args(&TEST_SPEC, &words[1..])
+        parse_args(&TEST_COMMANDS[0], &words[1..])
     }
 
     fn bad_argument(line: &str) -> (usize, String) {
@@ -473,6 +600,7 @@ mod tests {
             A::ExitPrefix => 37,
             A::ReloadConfig => 38,
             A::ToggleMouse => 39,
+            A::CommandLine => 40,
         }
     }
 
@@ -491,7 +619,7 @@ mod tests {
             })
             .collect();
         indexes.sort_unstable();
-        assert_eq!(indexes, (0..40).collect::<Vec<_>>());
+        assert_eq!(indexes, (0..41).collect::<Vec<_>>());
     }
 
     #[test]
@@ -620,18 +748,59 @@ mod tests {
         );
     }
 
+    fn values(completion: &Completion) -> Vec<&'static str> {
+        completion.candidates.iter().map(|c| c.value).collect()
+    }
+
     #[test]
-    fn completion() {
+    fn complete_command_names() {
+        let all = complete("");
+        assert_eq!(all.start, 0);
+        assert_eq!(all.candidates.len(), COMMANDS.len());
+        assert!(values(&all).is_sorted());
         assert_eq!(
-            complete_names("toggle-d"),
+            values(&complete("toggle-d")),
             [
                 "toggle-display-mode",
                 "toggle-display-raw",
                 "toggle-display-timestamp"
             ]
         );
-        assert_eq!(complete_names("").len(), COMMANDS.len());
-        assert!(complete_names("zz").is_empty());
+        let after_chain = complete("help; tog");
+        assert_eq!(after_chain.start, 6);
+        assert_eq!(after_chain.candidates[0].value, "toggle-display-mode");
+        assert_eq!(after_chain.candidates[0].help, "Cycle the display mode");
+        assert!(complete("zz").candidates.is_empty());
+        // a whole name, or an argument of a command without any
+        assert!(complete("quit").candidates.is_empty());
+        assert_eq!(
+            complete("help "),
+            Completion {
+                start: 5,
+                candidates: vec![]
+            }
+        );
+    }
+
+    #[test]
+    fn complete_argument_values() {
+        let complete = |line| complete_in(&TEST_COMMANDS, line);
+        assert_eq!(values(&complete("test 1 ")), ["on", "off"]);
+        assert_eq!(values(&complete("test  1   o")), ["on", "off"]);
+        let flow = complete("quit; test 1 on h");
+        assert_eq!((flow.start, values(&flow)), (16, vec!["hw"]));
+        assert_eq!(values(&complete("test 1")), ["115200"]);
+        assert_eq!(complete("test 1 on hw").candidates, []);
+        // a quote or an escape: no completion
+        for line in ["test 1 \"o", "test 1 'o", "test 1 \\o", "test \"a b\" o\\"] {
+            assert!(complete(line).candidates.is_empty(), "{line}");
+        }
+        assert_eq!(values(&complete("test \"a b\" o")), ["on", "off"]);
+        assert!(complete("test 1 on hw x y z ").candidates.is_empty());
+    }
+
+    #[test]
+    fn argument_candidates() {
         assert_eq!(TEST_ARGS[0].kind.candidates("1"), ["115200"]);
         assert_eq!(TEST_ARGS[1].kind.candidates(""), ["on", "off"]);
         assert!(TEST_ARGS[1].kind.candidates("t").is_empty());

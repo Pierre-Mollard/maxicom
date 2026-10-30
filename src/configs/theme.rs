@@ -18,6 +18,7 @@ pub struct ThemeConfig {
     pub popup: PopupStyles,
     pub notification: NotificationStyles,
     pub session_browser: SessionBrowserColors,
+    pub command_line: CommandLineStyles,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,6 +67,32 @@ impl Default for PopupStyles {
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             ),
+        }
+    }
+}
+
+/// The command line's own colors (MAX-12), apart from the line-mode input that goes to the
+/// device
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CommandLineStyles {
+    pub border: ConfigStyle,
+    pub prompt: ConfigStyle,
+    pub text: ConfigStyle,
+    pub selected: ConfigStyle,
+}
+
+impl Default for CommandLineStyles {
+    fn default() -> Self {
+        Self {
+            border: ConfigStyle::from_fg(Color::LightGreen),
+            prompt: ConfigStyle::new(
+                Style::default()
+                    .fg(Color::LightGreen)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            text: ConfigStyle::from_fg(Color::White),
+            selected: ConfigStyle::new(Style::default().bg(Color::LightGreen).fg(Color::Black)),
         }
     }
 }

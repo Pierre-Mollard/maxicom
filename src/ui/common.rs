@@ -454,3 +454,43 @@ pub fn apply_selection_to_spans(
 
     out
 }
+
+/// A one-row input's scroll (the TX input, the command line): the text's columns hidden on the
+/// left, and whether text is hidden on the left and on the right, each shown by a mark on that
+/// edge's cell (MAX-145). The view keeps the last frame's scroll while the cursor is on one of
+/// its text cells, not under a mark, and moves just enough to bring it back otherwise: a cursor
+/// pushing past an edge scrolls by one. At the end of the text the cursor takes one more cell
+pub fn prompt_view(
+    text_width: usize,
+    cursor: usize,
+    width: usize,
+    last_scroll: usize,
+) -> (usize, bool, bool) {
+    let content = text_width.max(cursor + 1);
+    if content <= width {
+        return (0, false, false);
+    }
+    // too narrow for marks
+    if width < 3 {
+        let scroll = last_scroll.clamp((cursor + 1).saturating_sub(width), cursor);
+        return (scroll, false, false);
+    }
+    // at most the end of the text shown, after the left mark, with the cell after it kept
+    // whatever the cursor's place, so moving off the end doesn't scroll
+    let max_scroll = text_width + 1 - width;
+    let mut scroll = last_scroll.min(max_scroll);
+    let first = if scroll > 0 { scroll + 1 } else { 0 };
+    let last = if scroll < max_scroll {
+        scroll + width - 2
+    } else {
+        scroll + width - 1
+    };
+    if cursor < first {
+        // the cursor right after the left mark, or the text's start
+        scroll = cursor.saturating_sub(1);
+    } else if cursor > last {
+        // the cursor right before the right mark, or the text's end
+        scroll = (cursor + 2 - width).min(max_scroll);
+    }
+    (scroll, scroll > 0, scroll < max_scroll)
+}

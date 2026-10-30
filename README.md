@@ -117,6 +117,27 @@ What changes from a serial port:
   status bar and scrollbar, to leave the room to the content. The settings
   stay as they are: a bigger window brings them back. `0` turns a side off.
 
+### COMMAND LINE
+
+- `Ctrl-A :` (`command-line`) opens a `:` prompt that runs commands: the
+  names of `keymap.toml` (`toggle-local-echo`, `record-raw`, ...), chained
+  with `;`. Enter runs the line, Esc closes it. A line with an unknown command
+  or a bad argument runs nothing: the error shows and the prompt stays.
+- The word before the cursor has its completions listed (command names with
+  their help, then the values of the argument it is). Tab and Shift-Tab put
+  them in its place in turn, then Up and Down too; a lone one, or a click, is
+  taken with a space after it.
+- Otherwise Up and Down walk the lines that ran, as in the TX input: the
+  newest first, back to the line being typed. `history_size` in
+  `[command_line]` (default `100`) keeps that many, for the session only; a
+  reload applies at once.
+- `layout` in `[command_line]` (default `"popup"`): `"popup"` draws it in a
+  centered popup of one row, `"status_bar"` over the status bar's row, or in
+  the popup when the status bar isn't shown.
+- Its colors are `[command_line]` in `theme.toml`: `border` (the popup's and
+  the list's), `prompt` (the `:`), `text` and `selected` (the completion
+  picked in the list).
+
 ### TERMINAL
 
 - `dimension_mode` in `[terminal_mode]`: the size of the emulated screen. The

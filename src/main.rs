@@ -389,78 +389,86 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let action = inputs::handle_event(event, &app);
             // the mouse capture reports every move: one that does nothing draws nothing
             needs_redraw |= !matches!(action, inputs::Action::Ignore);
-            match app.update(action) {
-                UpdateEffect::Quit => running = false,
-                UpdateEffect::ToggleAttachSerial => {
-                    if !is_replay {
-                        if device.is_some() {
-                            device = None;
-                            app.open_overlay(Overlay::DeviceDetached(
-                                app.serial_config.port.clone(),
-                            ));
-                            app.notify_warn("Serial Port Released (Detached)");
-                        } else {
-                            // the result comes with the reconnect's, next frame for a port
-                            open_for = OpenFor::Attach;
-                            opener.start(&app.serial_config);
-                            if tcp_address(&app.serial_config.port).is_some() {
-                                app.notify_info(format!(
-                                    "Connecting to {}",
-                                    app.serial_config.port
+            // the event's action, then the queued commands of a command line chain one at a
+            // time, each effect applied before the next is built (MAX-12)
+            let mut next = Some(action);
+            while let Some(action) = next.take() {
+                match app.update(action) {
+                    UpdateEffect::Quit => running = false,
+                    UpdateEffect::ToggleAttachSerial => {
+                        if !is_replay {
+                            if device.is_some() {
+                                device = None;
+                                app.open_overlay(Overlay::DeviceDetached(
+                                    app.serial_config.port.clone(),
                                 ));
+                                app.notify_warn("Serial Port Released (Detached)");
+                            } else {
+                                // the result comes with the reconnect's, next frame for a port
+                                open_for = OpenFor::Attach;
+                                opener.start(&app.serial_config);
+                                if tcp_address(&app.serial_config.port).is_some() {
+                                    app.notify_info(format!(
+                                        "Connecting to {}",
+                                        app.serial_config.port
+                                    ));
+                                }
                             }
                         }
                     }
-                }
-                UpdateEffect::Transmit(bytes) => {
-                    if let Some(ref mut dev) = device
-                        && transmit(&mut app, dev, &bytes, is_replay)
-                    {
-                        last_rx_activity = Instant::now();
-                    }
-                }
-                UpdateEffect::Reconfigure(serial_config) => {
-                    if !is_replay && let Some(ByteSource::Live(ref mut dev)) = device {
-                        if let Err(e) = dev.reconfigure(&serial_config) {
-                            app.open_overlay(Overlay::Error(
-                                ErrorDialog::new(
-                                    "Serial Conf Rejected",
-                                    "Failed to reconfigure serial",
-                                )
-                                .with_details(e),
-                            ));
-                        } else {
-                            app.serial_config = serial_config;
+                    UpdateEffect::Transmit(bytes) => {
+                        if let Some(ref mut dev) = device
+                            && transmit(&mut app, dev, &bytes, is_replay)
+                        {
+                            last_rx_activity = Instant::now();
                         }
                     }
-                }
-                UpdateEffect::CopyToClipboard(text) => {
-                    execute_clipboard_copy(&mut app, &text, None);
-                }
-                UpdateEffect::CopyToClipboardAs { text, what } => {
-                    execute_clipboard_copy(&mut app, &text, Some(&what));
-                }
-                UpdateEffect::ReloadConfig => match load_runtime_config(&config_path) {
-                    Ok(mut config) => {
-                        if is_replay {
-                            config.settings.mode = Mode::Terminal;
+                    UpdateEffect::Reconfigure(serial_config) => {
+                        if !is_replay && let Some(ByteSource::Live(ref mut dev)) = device {
+                            if let Err(e) = dev.reconfigure(&serial_config) {
+                                app.open_overlay(Overlay::Error(
+                                    ErrorDialog::new(
+                                        "Serial Conf Rejected",
+                                        "Failed to reconfigure serial",
+                                    )
+                                    .with_details(e),
+                                ));
+                            } else {
+                                app.serial_config = serial_config;
+                            }
                         }
-                        input_buffer.resize(config.settings.rx_buffer_size, 0);
-                        theme = config.theme;
-                        highlight_rules = config.highlight_rules;
-                        status_bar = config.status_bar;
-                        app.apply_reload(config.settings, config.key_resolver);
                     }
-                    // the running config stays
-                    Err(err) => app.open_overlay(Overlay::Error(
-                        ErrorDialog::new(
-                            "Config Reload Failed",
-                            "The config files were not applied",
-                        )
-                        .with_details(err),
-                    )),
-                },
-                UpdateEffect::None => {}
+                    UpdateEffect::CopyToClipboard(text) => {
+                        execute_clipboard_copy(&mut app, &text, None);
+                    }
+                    UpdateEffect::CopyToClipboardAs { text, what } => {
+                        execute_clipboard_copy(&mut app, &text, Some(&what));
+                    }
+                    UpdateEffect::ReloadConfig => match load_runtime_config(&config_path) {
+                        Ok(mut config) => {
+                            if is_replay {
+                                config.settings.mode = Mode::Terminal;
+                            }
+                            input_buffer.resize(config.settings.rx_buffer_size, 0);
+                            theme = config.theme;
+                            highlight_rules = config.highlight_rules;
+                            status_bar = config.status_bar;
+                            app.apply_reload(config.settings, config.key_resolver);
+                        }
+                        // the running config stays
+                        Err(err) => app.open_overlay(Overlay::Error(
+                            ErrorDialog::new(
+                                "Config Reload Failed",
+                                "The config files were not applied",
+                            )
+                            .with_details(err),
+                        )),
+                    },
+                    UpdateEffect::None => {}
+                }
+                if running {
+                    next = app.next_command_action();
+                }
             }
         }
 

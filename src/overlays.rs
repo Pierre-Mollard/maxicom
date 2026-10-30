@@ -5,12 +5,14 @@ use crossterm::event::KeyCode;
 
 use crate::{
     capture::{Session, Stream},
+    commands::Invocation,
     configs::{KeyBindingAction, keybindings::KeyBindingDialogAction},
     inputs::DialogAction,
     link::serial::SerialConfig,
 };
 
 // Re-exports
+pub use command_line::CommandLine;
 pub use help::{HelpCategory, HelpDialog};
 pub use menu::ActionMenu;
 pub use misc::{ErrorDialog, FilePathDialog, ScreenshotDialog};
@@ -18,6 +20,7 @@ pub use reconfigure::{SerialConfigDialog, SerialSettingField};
 pub use resize::{ResizeDialog, ResizeField};
 pub use sessions::SessionBrowser;
 
+pub mod command_line;
 pub mod help;
 pub mod menu;
 pub mod misc;
@@ -40,6 +43,7 @@ pub enum Overlay {
     ActionMenu(ActionMenu),
     RestoreSession(Box<Session>),
     Sessions(Box<SessionBrowser>),
+    CommandLine(CommandLine),
 }
 
 /// A part of a popup the mouse picks (MAX-113)
@@ -65,6 +69,7 @@ pub enum PopupTarget {
     SessionReload,
     SessionConfirm,
     SessionCancel,
+    Completion(usize),
 }
 
 pub enum OverlayResponse {
@@ -88,6 +93,10 @@ pub enum OverlayResponse {
     },
     Quit,
     Run(KeyBindingAction),
+    QueueCommands {
+        line: String,
+        invocations: Vec<Invocation>,
+    },
     RestoreSession(bool),
     HandledNotify {
         message: String,
@@ -103,7 +112,10 @@ impl Overlay {
     pub fn is_text_input(&self) -> bool {
         matches!(
             self,
-            Overlay::FilePath(_) | Overlay::Screenshot(_) | Overlay::TerminalSize(_)
+            Overlay::FilePath(_)
+                | Overlay::Screenshot(_)
+                | Overlay::TerminalSize(_)
+                | Overlay::CommandLine(_)
         )
     }
 
@@ -125,6 +137,7 @@ impl Overlay {
             Overlay::Screenshot(dialog) => dialog.handle_action(action),
             Overlay::ActionMenu(menu) => menu.handle_action(action),
             Overlay::Sessions(browser) => browser.handle_action(action),
+            Overlay::CommandLine(command_line) => command_line.handle_action(action),
             Overlay::Error(_) => match action {
                 DialogAction::Close | DialogAction::Confirm => OverlayResponse::Close,
                 _ => OverlayResponse::Handled,

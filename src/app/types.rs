@@ -191,6 +191,8 @@ pub struct FrameMap {
     pub prompt: Option<PromptMap>,
     /// The search bar's query, as drawn
     pub search_query: Option<PromptMap>,
+    /// The command line's text, as drawn (MAX-12)
+    pub command_line: Option<PromptMap>,
     /// The history's scrollbar, as drawn
     pub scrollbar: Option<ScrollbarMap>,
     /// The status bar blocks, border buttons and search bar hints a click runs, in drawing
@@ -286,6 +288,18 @@ pub struct PromptMap {
     pub scroll: usize,
 }
 
+impl PromptMap {
+    /// The column (counted from the text's start, scroll included) under a cell of its row
+    pub fn column(&self, x: u16, y: u16) -> Option<usize> {
+        let area = self.text_area;
+        if y < area.top() || y >= area.bottom() || x >= area.right() {
+            return None;
+        }
+        // a click on the prompt prefix goes to the text's start
+        Some(x.saturating_sub(area.left()) as usize + self.scroll)
+    }
+}
+
 #[derive(Debug)]
 pub struct TextRow {
     pub line_idx: usize,
@@ -321,6 +335,7 @@ impl FrameMap {
         self.popup_targets.clear();
         self.prompt = None;
         self.search_query = None;
+        self.command_line = None;
         self.scrollbar = None;
         self.click_targets.clear();
     }
@@ -368,13 +383,15 @@ impl FrameMap {
 
     /// The TX input column (counted from the text's start, scroll included) under a cell
     pub fn prompt_column(&self, x: u16, y: u16) -> Option<usize> {
-        let prompt = self.prompt?;
-        let area = prompt.text_area;
-        if y < area.top() || y >= area.bottom() || x >= area.right() {
-            return None;
-        }
-        // a click on the prompt prefix goes to the text's start
-        Some(x.saturating_sub(area.left()) as usize + prompt.scroll)
+        self.prompt?.column(x, y)
+    }
+
+    /// The command line's column under a cell, in its popup only (MAX-12)
+    pub fn command_line_column(&self, x: u16, y: u16) -> Option<usize> {
+        let in_popup = self
+            .popup
+            .is_some_and(|area| area.contains(ratatui::layout::Position::new(x, y)));
+        self.command_line?.column(x, y).filter(|_| in_popup)
     }
 
     /// The search query's column under a cell: on the query only, the bar's labels before it

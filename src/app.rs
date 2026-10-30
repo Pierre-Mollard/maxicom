@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -15,6 +16,7 @@ use crate::{
         SessionDevice, Stream, create_parent_dirs, expand_home, find_last_session, read_tail_bytes,
         read_tail_lines, restore_separator,
     },
+    commands::{Invocation, Target},
     configs::{
         DualBufferMode, KeyBindingAction, KeyResolver, Mode, SettingsConfig, StatusBarLayout,
         WrapMode,
@@ -114,6 +116,10 @@ pub struct App {
     /// runs again
     click_hold: Option<(KeyBindingAction, ratatui::layout::Rect)>,
     click_repeat_at: Option<Instant>,
+    /// The commands of a command line chain still to run, one after the other (MAX-12)
+    pending_commands: VecDeque<Invocation>,
+    /// The command lines that ran, the oldest first (MAX-12)
+    command_history: VecDeque<String>,
     pub line_mode: LineMode,
     pub terminal_mode: TerminalMode,
     recorder: Recorder,
@@ -177,6 +183,8 @@ impl App {
             scrollbar_repeat_at: None,
             click_hold: None,
             click_repeat_at: None,
+            pending_commands: VecDeque::new(),
+            command_history: VecDeque::new(),
             line_mode: line_view,
             terminal_mode: terminal_view,
             recorder: Recorder::default(),
@@ -194,6 +202,33 @@ impl App {
         };
         app.warn_shadowed_keys();
         app
+    }
+
+    pub fn command_history(&self) -> &VecDeque<String> {
+        &self.command_history
+    }
+
+    /// A command line that ran, trimmed, unless it is the last one; the oldest dropped past
+    /// `command_line.history_size`, read now so a reload applies at once
+    fn push_command_history(&mut self, line: String) {
+        let line = line.trim();
+        if line.is_empty() || self.command_history.back().is_some_and(|last| last == line) {
+            return;
+        }
+        self.command_history.push_back(line.to_string());
+        let size = self.settings.command_line.history_size;
+        while self.command_history.len() > size {
+            self.command_history.pop_front();
+        }
+    }
+
+    /// The next action of a command line chain (MAX-12). Each is built when its turn comes, on
+    /// the state the previous ones left, and the loop applies its effect before the next
+    pub fn next_command_action(&mut self) -> Option<Action> {
+        let invocation = self.pending_commands.pop_front()?;
+        match invocation.spec.target {
+            Target::Action(action) => Some(action.to_action(self)),
+        }
     }
 
     /// A warning for the keymap's keys that never reach their mode section (MAX-155)
@@ -386,6 +421,11 @@ impl App {
                         OverlayResponse::Run(action) => {
                             let action = action.to_action(self);
                             self.update(action)
+                        }
+                        OverlayResponse::QueueCommands { line, invocations } => {
+                            self.push_command_history(line);
+                            self.pending_commands.extend(invocations);
+                            UpdateEffect::None
                         }
                         OverlayResponse::StartCapture {
                             path,
@@ -1358,6 +1398,75 @@ mod tests {
             KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap(),
             SerialConfig::default(),
         )
+    }
+
+    /// MAX-12: the command line runs its chain one action at a time, in order, each effect
+    /// returned for the loop to apply, and closes; a line that doesn't parse runs nothing,
+    /// warns and stays open.
+    /// How: a chain toggling a setting then giving two effects, then a chain with a typo.
+    #[test]
+    fn command_line_runs_its_chain_in_order() {
+        let mut app = app();
+        let run_line = |app: &mut App, line: &str| {
+            app.update(KeyBindingAction::CommandLine.to_action(app));
+            app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
+            app.update(Action::Overlay(DialogAction::Confirm))
+        };
+        let echo = app.settings.local_echo;
+        let effect = run_line(&mut app, "toggle-local-echo; reload-config; detach-serial");
+        assert!(matches!(effect, UpdateEffect::None));
+        assert!(app.overlay().is_none());
+        let mut effects = Vec::new();
+        while let Some(action) = app.next_command_action() {
+            effects.push(app.update(action));
+        }
+        assert!(matches!(
+            effects[..],
+            [
+                UpdateEffect::None,
+                UpdateEffect::ReloadConfig,
+                UpdateEffect::ToggleAttachSerial
+            ]
+        ));
+        assert_ne!(app.settings.local_echo, echo);
+
+        run_line(&mut app, "toggle-local-echo; nope");
+        assert!(matches!(app.overlay(), Some(Overlay::CommandLine(_))));
+        assert!(app.next_command_action().is_none());
+        assert_ne!(app.settings.local_echo, echo);
+        let toast = app.notifications.active_toasts().last().unwrap();
+        assert_eq!(toast.message, "unknown command 'nope'");
+    }
+
+    /// MAX-12: the lines that ran are kept for the next command lines, trimmed, not twice in a
+    /// row, the oldest dropped past `command_line.history_size`; a line that doesn't parse
+    /// isn't kept. The next command line recalls them with Up.
+    /// How: a history of 2, five lines run, one with a typo.
+    #[test]
+    fn command_line_history() {
+        let mut app = app();
+        app.settings.command_line.history_size = 2;
+        for line in ["help ", "help", "nope", "settings", "toggle-mouse"] {
+            app.update(KeyBindingAction::CommandLine.to_action(&app));
+            app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
+            app.update(Action::Overlay(DialogAction::Confirm));
+            while let Some(action) = app.next_command_action() {
+                app.update(action);
+            }
+            app.close_overlay();
+        }
+        assert_eq!(app.command_history(), &["settings", "toggle-mouse"]);
+
+        app.update(KeyBindingAction::CommandLine.to_action(&app));
+        let up = crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Up);
+        app.update(Action::Overlay(DialogAction::HandleKey(up)));
+        app.update(Action::Overlay(DialogAction::HandleKey(up)));
+        match app.overlay() {
+            Some(Overlay::CommandLine(command_line)) => {
+                assert_eq!(command_line.input.value(), "settings");
+            }
+            _ => panic!("the command line is closed"),
+        }
     }
 
     /// MAX-147: a text recording gets what is received in terminal mode too, even when line

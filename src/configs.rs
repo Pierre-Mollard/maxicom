@@ -13,8 +13,8 @@ pub use keybindings::{
     KeyBindingTerminalAction, KeyBindingsConfig, KeyPattern, KeyResolver, KeymapFileError,
 };
 pub use settings::{
-    DualBufferMode, LineDisplayMode, Mode, PrefixWrapBehavior, QueryGroup, RawSideView,
-    RxNewlineMode, SettingsConfig, SettingsError, StatusBarConfig, StatusBarLayout,
+    CommandLineLayout, DualBufferMode, LineDisplayMode, Mode, PrefixWrapBehavior, QueryGroup,
+    RawSideView, RxNewlineMode, SettingsConfig, SettingsError, StatusBarConfig, StatusBarLayout,
     TerminalDimensionMode, TerminalModeConfig, TextEncoding, WrapMode,
 };
 pub use theme::{ThemeConfig, ThemeError};

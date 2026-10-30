@@ -12,6 +12,7 @@ use crate::{
 };
 
 pub mod alert;
+pub mod command_line;
 pub mod filepath;
 pub mod help;
 pub mod menu;

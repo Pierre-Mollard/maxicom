@@ -186,6 +186,7 @@ pub enum DialogAction {
     HandleKey(KeyEvent),
     Paste(String),
     Pick(PopupTarget),
+    ClickAt(usize),
 }
 
 /// Using crossterm's event API instead of stdin.read() to handle multi-byte ANSI sequence like
@@ -596,6 +597,7 @@ mod tests {
             walk(&app, "App(SetPrefix(false))"),
             [
                 "/ => Search(Start)",
+                ": => open CommandLine",
                 "? => open Help",
                 "Ctrl-a => TransmitRaw([1])",
                 "Down => History(ScrollDown(1))",
