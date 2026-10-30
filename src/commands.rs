@@ -281,6 +281,11 @@ pub static COMMANDS: &[CommandSpec] = {
             A::CancelCommands,
             "Stop the file transfer and queued commands",
         ),
+        CommandSpec::action(
+            "toggle-triggers",
+            A::ToggleTriggers,
+            "Arm / disarm the triggers",
+        ),
         CommandSpec::build(
             "send",
             &[arg("text", ArgKind::Bytes)],
@@ -405,6 +410,19 @@ pub static COMMANDS: &[CommandSpec] = {
             &[arg("name", ArgKind::Path)],
             build::screenshot,
             "Save the terminal to a file: .ans keeps the colors",
+        ),
+        CommandSpec::build(
+            "trigger",
+            &[
+                arg("state", ArgKind::Bool),
+                ArgSpec {
+                    name: "name",
+                    kind: ArgKind::String,
+                    optional: true,
+                },
+            ],
+            build::trigger,
+            "Arm or disarm the triggers, or the one named",
         ),
         CommandSpec::build(
             "flow",
@@ -846,6 +864,7 @@ mod tests {
             A::ToggleMouse => 39,
             A::CommandLine => 40,
             A::CancelCommands => 41,
+            A::ToggleTriggers => 42,
         }
     }
 
@@ -865,7 +884,7 @@ mod tests {
             })
             .collect();
         indexes.sort_unstable();
-        assert_eq!(indexes, (0..42).collect::<Vec<_>>());
+        assert_eq!(indexes, (0..43).collect::<Vec<_>>());
     }
 
     /// The help writes a required argument in angle brackets, an optional one in square ones

@@ -56,6 +56,20 @@ pub fn split(line: &str) -> Result<Vec<Vec<Word>>, CommandError> {
     Ok(commands)
 }
 
+/// The escapes of a whole text, its spaces, quotes and `;` kept as they are: a trigger's text
+/// (MAX-6)
+pub fn unescape(text: &str) -> Result<Word, CommandError> {
+    let mut word = Word::new();
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => escape(&mut chars, &mut word)?,
+            c => push_char(&mut word, c),
+        }
+    }
+    Ok(word)
+}
+
 fn push_char(word: &mut Word, c: char) {
     word.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
 }
@@ -121,6 +135,14 @@ mod tests {
         assert_eq!(words("mark é"), [["mark", "é"]]);
         assert_eq!(split("send \"abc"), Err(CommandError::UnclosedQuote));
         assert_eq!(split("send 'abc"), Err(CommandError::UnclosedQuote));
+    }
+
+    /// MAX-6: only the escapes are read, the rest is kept as is.
+    #[test]
+    fn unescaped() {
+        assert_eq!(unescape("=> ").unwrap(), b"=> ");
+        assert_eq!(unescape("'a;b' \\x1b[0m\\r").unwrap(), b"'a;b' \x1b[0m\r");
+        assert_eq!(unescape("\\q"), Err(CommandError::BadEscape("\\q".into())));
     }
 
     #[test]

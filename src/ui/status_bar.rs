@@ -45,6 +45,7 @@
 //! | `{copy_side}`       | Copy cursor panel (`TXT` or `RAW`), empty out of copy  | `RAW`            |
 //! | `{send_file}`       | The file `send-file` sends, empty when none             | `fw.hex`         |
 //! | `{send_percent}`    | How much of it is sent, in percent                      | `42`             |
+//! | `{trigger}`         | The armed triggers (`triggers.toml`), empty when none   | `u-boot, login`  |
 //!
 //! ## Formats
 //! `{name:spec}` with spec `[<>^][0][width][h]`, close to Rust's and C's:
@@ -92,6 +93,7 @@
 //! | `mouse`                         | —                                          | Mouse capture is on (`ui.mouse`)                         |
 //! | `line_settings`                 | `serial`                                   | The link has line settings: a serial port, not TCP       |
 //! | `sending`                       | `send_file`                                | A file is being sent (`send-file`)                       |
+//! | `armed`                         | `trigger`                                  | A trigger is armed, ready to fire (`triggers.toml`)      |
 //!
 //! ## Style Keywords
 //! - **Modifiers**: `bold`, `dim`, `italic`, `underlined` (`underline`), `reversed` (`reverse`), `reset` (`default`), `crossed`, `slow_blink` (`sblink`), `rapid_blink` (`rblink`)
@@ -131,6 +133,7 @@
 //! | `{pan_offset}`, `{pan_max}`                                | `pan-home`                |
 //! | `{scroll_pos}` `{scroll_pos_up}` `{scroll_percent}` `{scroll_offset}` | `scroll-to-bottom` |
 //! | `{send_file}`, `{send_percent}`                            | `cancel`                  |
+//! | `{trigger}`                                                | `toggle-triggers`         |
 //!
 //! The scroll and pan actions a `click=` can run: `scroll-up`, `scroll-down`, `page-up`,
 //! `page-down`, `scroll-to-top`, `scroll-to-bottom`, `pan-left`, `pan-right`, `pan-home` (back
@@ -410,6 +413,7 @@ enum Var {
     CopySide,
     SendFile,
     SendPercent,
+    Trigger,
 }
 
 impl Var {
@@ -434,6 +438,7 @@ impl Var {
             "copy_side" => Self::CopySide,
             "send_file" => Self::SendFile,
             "send_percent" => Self::SendPercent,
+            "trigger" => Self::Trigger,
             _ => return None,
         })
     }
@@ -451,6 +456,7 @@ impl Var {
             }
             Self::CopySide => return Some(ClickAction::ToggleSide),
             Self::SendFile | Self::SendPercent => KeyBindingAction::CancelCommands,
+            Self::Trigger => KeyBindingAction::ToggleTriggers,
             Self::Port | Self::RxBytes | Self::TxBytes | Self::Time | Self::ScrollMax => {
                 return None;
             }
@@ -553,6 +559,7 @@ impl Var {
                 "{}",
                 app.transfer().map_or("", |transfer| transfer.name())
             ),
+            Self::Trigger => write!(out, "{}", app.armed_triggers()),
             // the numbers, written by `write`
             Self::Baud
             | Self::RxBytes
@@ -612,6 +619,7 @@ enum Cond {
     Mouse,
     LineSettings,
     Sending,
+    Armed,
     /// Unknown condition name, always false
     Unknown,
 }
@@ -644,6 +652,7 @@ impl Cond {
             "mouse" => Self::Mouse,
             "line_settings" | "serial" => Self::LineSettings,
             "sending" | "send_file" => Self::Sending,
+            "armed" | "trigger" => Self::Armed,
             _ => Self::Unknown,
         }
     }
@@ -683,6 +692,7 @@ impl Cond {
             Self::Mouse => app.settings().ui.mouse,
             Self::LineSettings => has_line_settings(&app.serial_config.port),
             Self::Sending => app.transfer().is_some(),
+            Self::Armed => app.triggers().iter().any(|trigger| trigger.is_armed()),
             Self::Unknown => false,
         }
     }
@@ -1482,6 +1492,36 @@ mod tests {
                 span("≡", MUTED, BG, "NONE"),
                 plain(" "),
             ]
+        );
+    }
+
+    /// MAX-6: the default center shows the armed triggers by name, hidden while none is; a
+    /// click on them toggles them.
+    /// How: the default triggers, disarmed then all armed, then one.
+    #[test]
+    fn armed_triggers() {
+        let mut a = app(Mode::Terminal);
+        let triggers = crate::configs::TriggersConfig::default().compile().unwrap();
+        a.set_triggers(triggers);
+        let d = StatusBarConfig::default();
+        let texts = |a: &App| -> Vec<String> {
+            let spans = render(&d.center, a);
+            spans
+                .iter()
+                .map(|s| s.split('|').next().unwrap().to_string())
+                .collect()
+        };
+        assert!(texts(&a).is_empty());
+        a.update(Action::App(AppAction::ToggleTriggers));
+        assert_eq!(texts(&a), ["◎ login, u-boot "]);
+        a.update(Action::App(AppAction::ArmTriggers {
+            on: false,
+            name: Some("login".to_string()),
+        }));
+        assert_eq!(render("{trigger}", &a), [plain("u-boot")]);
+        assert_eq!(
+            Var::Trigger.click(),
+            Some(ClickAction::Run(KeyBindingAction::ToggleTriggers))
         );
     }
 

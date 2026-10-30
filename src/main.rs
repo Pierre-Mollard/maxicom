@@ -15,7 +15,7 @@ use crossterm::{
 use ratatui::DefaultTerminal;
 
 use crate::{
-    app::{App, UpdateEffect, selection::copy_via_osc52},
+    app::{App, UpdateEffect, selection::copy_via_osc52, triggers::Trigger},
     args::{ParseOutcome, RunMode, parse_args, print_help},
     configs::{
         AppConfig, ConfigsError, KeyResolver, KeywordHighlight, Mode, SettingsConfig, ThemeConfig,
@@ -98,6 +98,7 @@ struct RuntimeConfig {
     theme: ThemeConfig,
     key_resolver: KeyResolver,
     highlight_rules: Vec<KeywordHighlight>,
+    triggers: Vec<Trigger>,
     status_bar: CompiledStatusBar,
 }
 
@@ -106,8 +107,11 @@ fn load_runtime_config(config_path: &Path) -> Result<RuntimeConfig, ConfigsError
     let key_resolver = KeyResolver::try_new(&configs.keybindings)
         .expect("keybindings were already validated during config loading");
     let status_bar = CompiledStatusBar::new(&configs.settings.ui.status_bar, &configs.theme);
+    let triggers = (configs.triggers.compile())
+        .expect("triggers were already validated during config loading");
     Ok(RuntimeConfig {
         highlight_rules: configs.highlights.compile_rules(),
+        triggers,
         settings: configs.settings,
         theme: configs.theme,
         key_resolver,
@@ -122,6 +126,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         mut theme,
         key_resolver,
         mut highlight_rules,
+        triggers,
         mut status_bar,
     } = match load_runtime_config(&config_path) {
         Ok(config) => config,
@@ -203,6 +208,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         },
     };
     let mut app = App::new(settings, key_resolver, serial_config);
+    app.set_triggers(triggers);
     // a replay is a file already: no backup of it, nothing to restore
     if is_replay {
         app.settings_mut().mode = Mode::Terminal;
@@ -551,6 +557,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                             input_buffer.resize(config.settings.rx_buffer_size, 0);
                             theme = config.theme;
                             highlight_rules = config.highlight_rules;
+                            app.set_triggers(config.triggers);
                             status_bar = config.status_bar;
                             app.apply_reload(config.settings, config.key_resolver);
                         }

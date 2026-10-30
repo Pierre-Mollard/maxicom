@@ -239,6 +239,21 @@ pub fn search(_app: &App, args: &[ArgValue]) -> Result<Action, String> {
     Ok(Action::Search(SearchModeAction::Query(text.clone())))
 }
 
+/// `trigger on|off [name]` (MAX-6): all the triggers, or the one named
+pub fn trigger(app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let (on, name) = match args {
+        [ArgValue::Bool(on)] => (*on, None),
+        [ArgValue::Bool(on), ArgValue::String(name)] => (*on, Some(name.clone())),
+        _ => unreachable!("trigger takes on or off, then a name"),
+    };
+    let mut names = app.triggers().iter().map(|trigger| trigger.name.as_str());
+    match &name {
+        _ if app.triggers().is_empty() => Err("triggers.toml has no trigger".to_string()),
+        Some(name) if !names.any(|n| n == name) => Err(format!("no trigger named '{name}'")),
+        _ => Ok(Action::App(AppAction::ArmTriggers { on, name })),
+    }
+}
+
 /// `screenshot <name>`: the terminal saved at once, without the dialog
 pub fn screenshot(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     let [ArgValue::Path(name)] = args else {

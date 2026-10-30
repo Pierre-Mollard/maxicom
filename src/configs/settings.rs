@@ -536,7 +536,7 @@ impl Default for StatusBarConfig {
                 "[ {mode} ](prefix?(bg=secondary fg=black bold):copy_raw?(bg=red fg=black bold):copy?(bg=magenta fg=black bold):search?(bg=blue fg=white bold):(fg=primary bold))[ {copy_side}](copy_raw?(fg=red bold):copy?(fg=magenta bold):hide)[ {port}](prio=3)[ |](muted prio=3)[ ](prio=2)[{baud}](primary prio=2)[ ](prio=4)[{framing}](prio=4)",
             ),
             center: String::from(
-                "[⇡ {send_file} {send_percent:>3}% ](sending?(fg=secondary bold):hide)[● REC ](rec?(fg=warn bold):hide click=toggle-logging)[◀ ](wide?(pan_left?secondary:muted):hide click=pan-left)[{pan_offset:>3}/{pan_max:<3}](wide?muted:hide)[ ▶](wide?(pan_alert?(fg=warn bold):(pan_right?secondary:muted)):hide click=pan-right)",
+                "[◎ {trigger} ](armed?(fg=warn bold):hide)[⇡ {send_file} {send_percent:>3}% ](sending?(fg=secondary bold):hide)[● REC ](rec?(fg=warn bold):hide click=toggle-logging)[◀ ](wide?(pan_left?secondary:muted):hide click=pan-left)[{pan_offset:>3}/{pan_max:<3}](wide?muted:hide)[ ▶](wide?(pan_alert?(fg=warn bold):(pan_right?secondary:muted)):hide click=pan-right)",
             ),
             right: String::from(
                 "[{scroll_pos_up} ](has_scroll?muted:hide prio=2)[RX: {rx_bytes:4h}](muted prio=3)[ | ](muted prio=3)[TX: {tx_bytes:4h}](muted prio=3)[ | ](muted prio=4)[{time}](secondary prio=4) [?](muted click=help hover=(bg=primary fg=black)) [≡](muted click=settings hover=(bg=secondary fg=black)) ",
@@ -629,6 +629,7 @@ pub struct SettingsConfig {
     pub theme_path: Option<PathBuf>,
     pub keybindings_path: Option<PathBuf>,
     pub highlights_path: Option<PathBuf>,
+    pub triggers_path: Option<PathBuf>,
     pub ui: UiConfig,
     pub raw_side: RawSideConfig,
     pub command_line: CommandLineConfig,
@@ -655,6 +656,7 @@ impl Default for SettingsConfig {
             theme_path: None,
             keybindings_path: None,
             highlights_path: None,
+            triggers_path: None,
             ui: UiConfig::default(),
             raw_side: RawSideConfig::default(),
             command_line: CommandLineConfig::default(),

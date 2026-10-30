@@ -70,6 +70,8 @@ pub enum AppAction {
     SetEncoding(TextEncoding),
     SaveScreenshot(PathBuf),
     QueueCommands(Vec<Invocation>),
+    ToggleTriggers,
+    ArmTriggers { on: bool, name: Option<String> },
     Quit,
 }
 
@@ -682,6 +684,7 @@ mod tests {
                 "Shift-c => History(Clear)",
                 "Shift-m => App(ToggleSetting(Mouse))",
                 "Shift-s => App(OpenSessions)",
+                "Shift-t => App(ToggleTriggers)",
                 "Up => History(ScrollUp(1))",
                 "[ => CopyMode(Enter)",
                 "d => open SerialSettings",

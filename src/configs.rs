@@ -5,6 +5,7 @@ pub mod keybindings;
 pub mod settings;
 pub mod style;
 pub mod theme;
+pub mod triggers;
 
 // Re-exports
 pub use highlights::{HighlightConfig, HighlightError, KeywordHighlight};
@@ -18,6 +19,7 @@ pub use settings::{
     TerminalDimensionMode, TerminalModeConfig, TextEncoding, WrapMode,
 };
 pub use theme::{ThemeConfig, ThemeError};
+pub use triggers::{TriggersConfig, TriggersFileError};
 
 const APP_DIR: &str = "maxicom";
 const SESSION_DIR: &str = "sessions";
@@ -25,6 +27,7 @@ const CONFIG_FILE: &str = "config.toml";
 const THEME_FILE: &str = "theme.toml";
 const KEYMAP_FILE: &str = "keymap.toml";
 const HIGHLIGHT_FILE: &str = "highlights.toml";
+const TRIGGERS_FILE: &str = "triggers.toml";
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -32,6 +35,7 @@ pub struct AppConfig {
     pub theme: ThemeConfig,
     pub keybindings: KeyBindingsConfig,
     pub highlights: HighlightConfig,
+    pub triggers: TriggersConfig,
 }
 
 impl AppConfig {
@@ -54,11 +58,16 @@ impl AppConfig {
         let highlights = HighlightConfig::load_or_create_default(&highlights_path)
             .map_err(ConfigsError::Highlight)?;
 
+        let triggers_path = Self::active_triggers_path(&settings);
+        let triggers = TriggersConfig::load_or_create_default(&triggers_path)
+            .map_err(ConfigsError::Triggers)?;
+
         Ok(AppConfig {
             settings,
             theme,
             keybindings,
             highlights,
+            triggers,
         })
     }
 
@@ -90,6 +99,12 @@ impl AppConfig {
             .unwrap_or_else(|| PathBuf::from(HIGHLIGHT_FILE))
     }
 
+    pub fn default_triggers_path() -> PathBuf {
+        dirs::config_dir()
+            .map(|p| p.join(APP_DIR).join(TRIGGERS_FILE))
+            .unwrap_or_else(|| PathBuf::from(TRIGGERS_FILE))
+    }
+
     pub fn active_theme_path(settings: &SettingsConfig) -> PathBuf {
         settings
             .theme_path
@@ -110,6 +125,13 @@ impl AppConfig {
             .clone()
             .unwrap_or_else(Self::default_highlights_path)
     }
+
+    pub fn active_triggers_path(settings: &SettingsConfig) -> PathBuf {
+        settings
+            .triggers_path
+            .clone()
+            .unwrap_or_else(Self::default_triggers_path)
+    }
 }
 
 #[derive(Debug)]
@@ -118,6 +140,7 @@ pub enum ConfigsError {
     Theme(ThemeError),
     Keymap(KeymapFileError),
     Highlight(HighlightError),
+    Triggers(TriggersFileError),
 }
 
 impl std::fmt::Display for ConfigsError {
@@ -127,6 +150,7 @@ impl std::fmt::Display for ConfigsError {
             Self::Theme(err) => write!(f, "{err}"),
             Self::Keymap(err) => write!(f, "{err}"),
             Self::Highlight(err) => write!(f, "{err}"),
+            Self::Triggers(err) => write!(f, "{err}"),
         }
     }
 }
@@ -138,6 +162,7 @@ impl std::error::Error for ConfigsError {
             Self::Theme(err) => Some(err),
             Self::Keymap(err) => Some(err),
             Self::Highlight(err) => Some(err),
+            Self::Triggers(err) => Some(err),
         }
     }
 }

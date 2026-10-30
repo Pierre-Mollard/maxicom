@@ -64,6 +64,7 @@ pub enum KeyBindingAction {
     ToggleMouse,
     CommandLine,
     CancelCommands,
+    ToggleTriggers,
 }
 
 impl FromStr for KeyBindingAction {
@@ -977,6 +978,7 @@ impl Default for KeyBindingsConfig {
             ":"     => KeyBindingAction::CommandLine,
             "a"     => KeyBindingAction::ExitPrefix,
             "h"     => KeyBindingAction::DetachSerial,
+            "T"     => KeyBindingAction::ToggleTriggers,
             "f"     => "break", // a break like minicom's
             "p"     => "dtr off; sleep 100; dtr on", // DTR pulse which resets most boards
         };
@@ -1336,7 +1338,7 @@ mod tests {
     /// between words: the old `_` names are refused
     #[test]
     fn action_names() {
-        const NAMES: [(&str, KeyBindingAction); 42] = [
+        const NAMES: [(&str, KeyBindingAction); 43] = [
             ("quit", KeyBindingAction::Quit),
             ("toggle-input-mode", KeyBindingAction::SKInputMode),
             ("toggle-local-echo", KeyBindingAction::SKLocalEcho),
@@ -1385,6 +1387,7 @@ mod tests {
             ("toggle-mouse", KeyBindingAction::ToggleMouse),
             ("command-line", KeyBindingAction::CommandLine),
             ("cancel", KeyBindingAction::CancelCommands),
+            ("toggle-triggers", KeyBindingAction::ToggleTriggers),
         ];
         for (name, action) in NAMES {
             assert_eq!(name.parse::<KeyBindingAction>().unwrap(), action, "{name}");

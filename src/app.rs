@@ -10,6 +10,7 @@ use crate::{
         selection::{ClickCounter, CopySide},
         term_answers::answer_bytes,
         transfer::FileTransfer,
+        triggers::Trigger,
         types::{FocusTarget, FrameAreas, FrameMap, LogEntry, ViewportSize},
     },
     capture::{
@@ -27,7 +28,10 @@ use crate::{
         Action, AppAction, ClickHoldAction, CopyModeAction, HistoryAction, LineInputAction,
         ScrollbarAction, SearchModeAction, SideViewAction, TerminalAction,
     },
-    link::serial::{LineControl, SerialConfig},
+    link::{
+        self,
+        serial::{LineControl, SerialConfig},
+    },
     notification::{NotificationManager, ToastLevel},
     overlays::{
         ErrorDialog, FilePathDialog, Overlay, OverlayResponse, PopupTarget, ScreenshotDialog,
@@ -44,6 +48,7 @@ pub mod selection;
 pub mod term_answers;
 pub mod terminal_mode;
 pub mod transfer;
+pub mod triggers;
 pub mod types;
 
 pub use line_mode::LineMode;
@@ -131,6 +136,8 @@ pub struct App {
     held_rx: Option<Vec<u8>>,
     /// The replies to the remote's queries, for the loop to send (MAX-151)
     query_answers: Vec<u8>,
+    /// The rules of `triggers.toml` (MAX-6)
+    triggers: Vec<Trigger>,
     /// Where the session backups are, for the session browser (MAX-148)
     sessions_dir: Option<PathBuf>,
     pub is_window_focused: bool,
@@ -201,6 +208,7 @@ impl App {
             recorder: Recorder::default(),
             held_rx: None,
             query_answers: Vec::new(),
+            triggers: Vec::new(),
             sessions_dir: None,
             is_window_focused: true,
             pointer: None,
@@ -640,6 +648,63 @@ impl App {
             return;
         }
         self.feed(chunk, true);
+        self.fire_triggers(chunk);
+    }
+
+    /// The rules of `triggers.toml`, at startup and on a reload (MAX-6)
+    pub fn set_triggers(&mut self, triggers: Vec<Trigger>) {
+        self.triggers = triggers;
+    }
+
+    pub fn triggers(&self) -> &[Trigger] {
+        &self.triggers
+    }
+
+    /// Arms or disarms the triggers, or the one named, with a notice of what is armed after
+    /// (MAX-6)
+    fn arm_triggers(&mut self, on: bool, name: Option<&str>) {
+        if self.triggers.is_empty() {
+            self.notify_warn("triggers.toml has no trigger");
+            return;
+        }
+        for trigger in &mut self.triggers {
+            if name.is_none_or(|name| name == trigger.name) {
+                trigger.arm(on);
+            }
+        }
+        let armed = self.armed_triggers();
+        if armed.is_empty() {
+            self.notify_info("Triggers disarmed");
+        } else {
+            self.notify_info(format!("Triggers armed: {armed}"));
+        }
+    }
+
+    /// The names of the armed triggers, empty when none is
+    pub fn armed_triggers(&self) -> String {
+        let armed: Vec<&str> = (self.triggers.iter())
+            .filter(|trigger| trigger.is_armed())
+            .map(|trigger| trigger.name.as_str())
+            .collect();
+        armed.join(", ")
+    }
+
+    /// The armed triggers whose text ends in these live bytes run their command line, queued
+    /// as a typed one, with a notice (MAX-6). A replay's bytes never fire one, nor what a
+    /// restore or the restore question held back (fed apart)
+    fn fire_triggers(&mut self, chunk: &[u8]) {
+        if link::is_replay(&self.serial_config.port) {
+            return;
+        }
+        for i in 0..self.triggers.len() {
+            if self.triggers[i].fires(chunk) {
+                let trigger = &self.triggers[i];
+                let notice = format!("Trigger {}: {}", trigger.name, trigger.run);
+                let invocations = trigger.invocations.clone();
+                self.notify_info(notice);
+                self.queue_commands(invocations);
+            }
+        }
     }
 
     /// Feeds both modes. The remote's queries are answered when `live` (not held while the
@@ -1092,6 +1157,15 @@ impl App {
             }
             AppAction::CancelCommands => {
                 self.cancel();
+                UpdateEffect::None
+            }
+            AppAction::ToggleTriggers => {
+                let on = !self.triggers.iter().any(Trigger::is_armed);
+                self.arm_triggers(on, None);
+                UpdateEffect::None
+            }
+            AppAction::ArmTriggers { on, name } => {
+                self.arm_triggers(on, name.as_deref());
                 UpdateEffect::None
             }
             AppAction::PasteBuffer => {
@@ -1691,6 +1765,112 @@ mod tests {
         assert!(matches!(app.overlay(), Some(Overlay::Help(_))));
         assert_eq!(last_error(&app), "send: a replay has no link to send to");
         assert!(app.next_command_action(Instant::now()).is_none());
+    }
+
+    /// MAX-6: an armed trigger whose text comes in runs its command line as a typed one, with
+    /// a notice, once (one shot); a disarmed one doesn't. A replay's bytes and what the restore
+    /// question held back never fire one.
+    /// How: an armed `u-boot` rule and a disarmed `login` one, the U-Boot line fed live, again,
+    /// then as a replay and as held bytes.
+    #[test]
+    fn triggers_fire_on_live_bytes() {
+        let config: crate::configs::TriggersConfig = toml::from_str(
+            r#"
+            [u-boot]
+            match = "Hit any key to stop autoboot"
+            run = "send ' '"
+            armed = true
+            [login]
+            match = "login: "
+            run = "send root\r"
+            "#,
+        )
+        .unwrap();
+        let mut app = app();
+        app.set_triggers(config.compile().unwrap());
+        let effects = |app: &mut App| {
+            let mut effects = Vec::new();
+            while let Some(action) = app.next_command_action(Instant::now()) {
+                effects.push(app.update(action));
+            }
+            effects
+        };
+        let uboot = b"U-Boot 2024.01\r\nHit any key to stop autoboot:  3";
+
+        app.feed_rx(b"board login: ");
+        assert!(effects(&mut app).is_empty());
+
+        app.feed_rx(uboot);
+        assert!(matches!(&effects(&mut app)[..], [UpdateEffect::Transmit(b)] if b == b" "));
+        let toast = &app.notifications.active_toasts().last().unwrap().message;
+        assert_eq!(toast, "Trigger u-boot: send ' '");
+        assert!(app.command_history.is_empty());
+
+        // one shot: disarmed now
+        app.feed_rx(uboot);
+        assert!(effects(&mut app).is_empty());
+
+        let reload = |app: &mut App| {
+            app.set_triggers(config.compile().unwrap());
+        };
+        reload(&mut app);
+        app.held_rx = Some(uboot.to_vec());
+        app.release_held_rx();
+        assert!(effects(&mut app).is_empty());
+
+        reload(&mut app);
+        app.serial_config.port = "file:///tmp/capture.raw".to_string();
+        app.feed_rx(uboot);
+        assert!(effects(&mut app).is_empty());
+    }
+
+    /// MAX-6: the toggle arms every trigger when none is armed, else disarms them all; the
+    /// `trigger` command arms or disarms all or one by name, refuses a name that isn't one,
+    /// and each change says what is armed. With no trigger at all, both say so.
+    /// How: the default triggers (`login`, `u-boot`), then none.
+    #[test]
+    fn arming_triggers() {
+        let mut app = app();
+        app.set_triggers(crate::configs::TriggersConfig::default().compile().unwrap());
+        let last_toast = |app: &App| {
+            let toasts = app.notifications.active_toasts();
+            toasts.last().unwrap().message.clone()
+        };
+        let run = |app: &mut App, line: &str| {
+            app.update(Action::App(AppAction::QueueCommands(
+                crate::commands::parse(line).unwrap(),
+            )));
+            while let Some(action) = app.next_command_action(Instant::now()) {
+                app.update(action);
+            }
+        };
+
+        app.update(KeyBindingAction::ToggleTriggers.to_action(&app));
+        assert_eq!(app.armed_triggers(), "login, u-boot");
+        assert_eq!(last_toast(&app), "Triggers armed: login, u-boot");
+        run(&mut app, "trigger off login");
+        assert_eq!(app.armed_triggers(), "u-boot");
+        // one armed: the toggle disarms
+        app.update(KeyBindingAction::ToggleTriggers.to_action(&app));
+        assert_eq!(app.armed_triggers(), "");
+        assert_eq!(last_toast(&app), "Triggers disarmed");
+        run(&mut app, "trigger on u-boot");
+        assert_eq!(app.armed_triggers(), "u-boot");
+        run(&mut app, "trigger on");
+        assert_eq!(app.armed_triggers(), "login, u-boot");
+
+        run(&mut app, "trigger off uboot; trigger off");
+        assert_eq!(
+            last_toast(&app),
+            "trigger: no trigger named 'uboot' (1 more not run)"
+        );
+        assert_eq!(app.armed_triggers(), "login, u-boot");
+
+        app.set_triggers(Vec::new());
+        run(&mut app, "trigger on");
+        assert_eq!(last_toast(&app), "trigger: triggers.toml has no trigger");
+        app.update(KeyBindingAction::ToggleTriggers.to_action(&app));
+        assert_eq!(last_toast(&app), "triggers.toml has no trigger");
     }
 
     /// A pty pair: maxicom opens the `path` side as its port, the test reads and writes the
