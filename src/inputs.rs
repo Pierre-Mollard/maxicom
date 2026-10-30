@@ -8,6 +8,7 @@ use ratatui::layout::Rect;
 use crate::{
     app::{
         App, InputContext,
+        mash::Mash,
         selection::{CopySide, LogicalPosition, MouseUnit},
         transfer::FileTransfer,
     },
@@ -72,6 +73,7 @@ pub enum AppAction {
     QueueCommands(Vec<Invocation>),
     ToggleTriggers,
     ArmTriggers { on: bool, name: Option<String> },
+    StartMash(Box<Mash>),
     Quit,
 }
 
@@ -699,6 +701,7 @@ mod tests {
                 "r => App(ReloadConfig)",
                 "s => open Settings",
                 "t => Terminal(AutoResizeEmulatorToViewer)",
+                "u => run trigger",
                 "w => open TerminalSize",
                 "x => App(Quit)",
                 "z => open Help"

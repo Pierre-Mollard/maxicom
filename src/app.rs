@@ -6,6 +6,7 @@ use std::{
 
 use crate::{
     app::{
+        mash::{Mash, MashStep},
         scroller::ScrollStatus,
         selection::{ClickCounter, CopySide},
         term_answers::answer_bytes,
@@ -41,6 +42,7 @@ use crate::{
 
 pub mod data_processing;
 pub mod line_mode;
+pub mod mash;
 pub mod raw_scroller;
 pub mod scroller;
 pub mod search;
@@ -138,6 +140,8 @@ pub struct App {
     query_answers: Vec<u8>,
     /// The rules of `triggers.toml` (MAX-6)
     triggers: Vec<Trigger>,
+    /// The text `mash` sends until another comes in (MAX-6)
+    mash: Option<Mash>,
     /// Where the session backups are, for the session browser (MAX-148)
     sessions_dir: Option<PathBuf>,
     pub is_window_focused: bool,
@@ -209,6 +213,7 @@ impl App {
             held_rx: None,
             query_answers: Vec::new(),
             triggers: Vec::new(),
+            mash: None,
             sessions_dir: None,
             is_window_focused: true,
             pointer: None,
@@ -343,6 +348,9 @@ impl App {
     /// `cancel` (MAX-12): stops the file being sent and drops the commands waiting
     fn cancel(&mut self) {
         let mut stopped = Vec::new();
+        if self.mash.take().is_some() {
+            stopped.push("Stopped mashing".to_string());
+        }
         if let Some(transfer) = self.transfer.take() {
             stopped.push(format!(
                 "Stopped sending {} at {}%",
@@ -513,6 +521,21 @@ impl App {
             self.prefix_active = false;
         }
 
+        // the user takes over: a mash stops at the first key typed for the device (MAX-6)
+        let typed = matches!(
+            action,
+            Action::Terminal(TerminalAction::Key(_) | TerminalAction::Paste(_))
+                | Action::LineInput(
+                    LineInputAction::HandleKey(_)
+                        | LineInputAction::Paste(_)
+                        | LineInputAction::Submit
+                        | LineInputAction::Interrupt
+                )
+        );
+        if typed {
+            self.stop_mash("a key was typed");
+        }
+
         match action {
             Action::App(action) => self.update_action_app(action),
             Action::TransmitRaw(bytes) => {
@@ -649,6 +672,48 @@ impl App {
         }
         self.feed(chunk, true);
         self.fire_triggers(chunk);
+        self.watch_mash(chunk);
+    }
+
+    pub fn mash(&self) -> Option<&Mash> {
+        self.mash.as_ref()
+    }
+
+    /// What the mash sends now, for the loop to write; none while it isn't time. Its timeout
+    /// stops it, and the rest of its line
+    pub fn next_mash_bytes(&mut self, now: Instant) -> Option<Vec<u8>> {
+        match self.mash.as_mut()?.step(now) {
+            MashStep::Wait => None,
+            MashStep::Send(bytes) => Some(bytes.to_vec()),
+            MashStep::TimedOut => {
+                let until = self.mash.take()?.until_text().to_string();
+                self.fail_commands(format!("mash: '{until}' didn't come in"));
+                None
+            }
+        }
+    }
+
+    /// Ends the mash before its text came in (`why` shown as reason), and the rest of its line
+    pub fn stop_mash(&mut self, why: &str) {
+        if self.mash.take().is_some() {
+            self.fail_commands(format!("Mash stopped: {why}"));
+        }
+    }
+
+    /// The text the mash waits for came in: it ends, the rest of its line goes on
+    fn watch_mash(&mut self, chunk: &[u8]) {
+        if self
+            .mash
+            .as_mut()
+            .is_some_and(|mash| mash.until_seen(chunk))
+        {
+            let until = self.mash.take().map(|mash| mash.until_text().to_string());
+            self.notify_success(format!(
+                "Mash done: '{}' came in",
+                until.unwrap_or_default()
+            ));
+            self.resume_commands();
+        }
     }
 
     /// The rules of `triggers.toml`, at startup and on a reload (MAX-6)
@@ -672,7 +737,7 @@ impl App {
                 trigger.arm(on);
             }
         }
-        let armed = self.armed_triggers();
+        let armed = self.armed_triggers().join(", ");
         if armed.is_empty() {
             self.notify_info("Triggers disarmed");
         } else {
@@ -680,13 +745,12 @@ impl App {
         }
     }
 
-    /// The names of the armed triggers, empty when none is
-    pub fn armed_triggers(&self) -> String {
-        let armed: Vec<&str> = (self.triggers.iter())
+    /// The names of the armed triggers
+    pub fn armed_triggers(&self) -> Vec<&str> {
+        (self.triggers.iter())
             .filter(|trigger| trigger.is_armed())
             .map(|trigger| trigger.name.as_str())
-            .collect();
-        armed.join(", ")
+            .collect()
     }
 
     /// The armed triggers whose text ends in these live bytes run their command line, queued
@@ -1124,6 +1188,13 @@ impl App {
             }
             AppAction::OpenSessions => {
                 self.open_session_browser();
+                UpdateEffect::None
+            }
+            AppAction::StartMash(mash) => {
+                self.notify_info(format!("Mashing until '{}'", mash.until_text()));
+                // the rest of the line waits for its text, its timeout at most
+                self.pause_commands(mash.deadline());
+                self.mash = Some(*mash);
                 UpdateEffect::None
             }
             AppAction::StartTransfer(transfer) => {
@@ -1825,8 +1896,8 @@ mod tests {
     }
 
     /// MAX-6: the toggle arms every trigger when none is armed, else disarms them all; the
-    /// `trigger` command arms or disarms all or one by name, refuses a name that isn't one,
-    /// and each change says what is armed. With no trigger at all, both say so.
+    /// `trigger` command arms, disarms or toggles all or one by name, refuses a name that
+    /// isn't one, and each change says what is armed. With no trigger at all, both say so.
     /// How: the default triggers (`login`, `u-boot`), then none.
     #[test]
     fn arming_triggers() {
@@ -1846,31 +1917,142 @@ mod tests {
         };
 
         app.update(KeyBindingAction::ToggleTriggers.to_action(&app));
-        assert_eq!(app.armed_triggers(), "login, u-boot");
+        assert_eq!(app.armed_triggers(), ["login", "u-boot"]);
         assert_eq!(last_toast(&app), "Triggers armed: login, u-boot");
         run(&mut app, "trigger off login");
-        assert_eq!(app.armed_triggers(), "u-boot");
+        assert_eq!(app.armed_triggers(), ["u-boot"]);
         // one armed: the toggle disarms
         app.update(KeyBindingAction::ToggleTriggers.to_action(&app));
-        assert_eq!(app.armed_triggers(), "");
+        assert!(app.armed_triggers().is_empty());
         assert_eq!(last_toast(&app), "Triggers disarmed");
         run(&mut app, "trigger on u-boot");
-        assert_eq!(app.armed_triggers(), "u-boot");
+        assert_eq!(app.armed_triggers(), ["u-boot"]);
         run(&mut app, "trigger on");
-        assert_eq!(app.armed_triggers(), "login, u-boot");
+        assert_eq!(app.armed_triggers(), ["login", "u-boot"]);
+        // toggled by name, or all: none armed arms them all
+        run(&mut app, "trigger toggle u-boot");
+        assert_eq!(app.armed_triggers(), ["login"]);
+        run(&mut app, "trigger toggle u-boot");
+        assert_eq!(app.armed_triggers(), ["login", "u-boot"]);
+        run(&mut app, "trigger toggle");
+        assert!(app.armed_triggers().is_empty());
+        run(&mut app, "trigger toggle");
+        assert_eq!(app.armed_triggers(), ["login", "u-boot"]);
 
         run(&mut app, "trigger off uboot; trigger off");
         assert_eq!(
             last_toast(&app),
             "trigger: no trigger named 'uboot' (1 more not run)"
         );
-        assert_eq!(app.armed_triggers(), "login, u-boot");
+        assert_eq!(app.armed_triggers(), ["login", "u-boot"]);
+
+        // the command line completes their names
+        app.update(KeyBindingAction::CommandLine.to_action(&app));
+        app.update(Action::Overlay(DialogAction::Paste(
+            "trigger on u".to_string(),
+        )));
+        let Some(Overlay::CommandLine(command_line)) = app.overlay() else {
+            panic!("the command line");
+        };
+        assert_eq!(command_line.completion.candidates[0].value, "u-boot");
+        app.update(Action::Overlay(DialogAction::Close));
 
         app.set_triggers(Vec::new());
         run(&mut app, "trigger on");
         assert_eq!(last_toast(&app), "trigger: triggers.toml has no trigger");
         app.update(KeyBindingAction::ToggleTriggers.to_action(&app));
         assert_eq!(last_toast(&app), "triggers.toml has no trigger");
+    }
+
+    /// MAX-6: `mash` sends its text at once then every interval, the rest of its line
+    /// waiting; its text coming in ends it and the line goes on. The timeout, a key typed for
+    /// the device and `cancel` stop it and the rest of its line. It refuses a second mash, a
+    /// replay and a closed link.
+    /// How: a space every 50 ms until `=> `, a second at most, the timeout's clock passed by
+    /// hand.
+    #[test]
+    fn mash_until_its_text() {
+        let mut app = app();
+        let last_toast = |app: &App| {
+            let toasts = app.notifications.active_toasts();
+            toasts.last().unwrap().message.clone()
+        };
+        let queue = |app: &mut App, line: &str| {
+            let invocations = crate::commands::parse(line).unwrap();
+            app.update(Action::App(AppAction::QueueCommands(invocations)));
+        };
+        // the chain's actions built at `now`, their effects
+        let run = |app: &mut App, now: Instant| {
+            let mut effects = Vec::new();
+            while let Some(action) = app.next_command_action(now) {
+                effects.push(app.update(action));
+            }
+            effects
+        };
+
+        queue(&mut app, "mash ' ' '=> ' 50 1000; send x");
+        assert!(matches!(
+            &run(&mut app, Instant::now())[..],
+            [UpdateEffect::None]
+        ));
+        assert!(app.mash().is_some());
+        assert_eq!(last_toast(&app), "Mashing until '=> '");
+        assert_eq!(app.next_mash_bytes(Instant::now()), Some(b" ".to_vec()));
+        assert_eq!(app.next_mash_bytes(Instant::now()), None);
+        // the line waits
+        assert!(run(&mut app, Instant::now()).is_empty());
+        app.feed_rx(b"Hit any key to stop autoboot:  0 \r\n=");
+        assert!(app.mash().is_some());
+        app.feed_rx(b"> ");
+        assert!(app.mash().is_none());
+        assert_eq!(last_toast(&app), "Mash done: '=> ' came in");
+        let effects = run(&mut app, Instant::now());
+        assert!(matches!(&effects[..], [UpdateEffect::Transmit(x)] if x == b"x"));
+
+        // the timeout, then a key, then `cancel`
+        queue(&mut app, "mash ' ' '=> ' 50 1000; send x");
+        run(&mut app, Instant::now());
+        // past the deadline, set when it was built
+        let late = Instant::now() + Duration::from_millis(1000);
+        assert_eq!(app.next_mash_bytes(late), None);
+        assert!(app.mash().is_none());
+        assert_eq!(
+            last_toast(&app),
+            "mash: '=> ' didn't come in (1 more not run)"
+        );
+        assert!(run(&mut app, late).is_empty());
+
+        queue(&mut app, "mash ' ' '=> '; send x");
+        run(&mut app, Instant::now());
+        let key = crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('a'));
+        app.update(Action::LineInput(LineInputAction::HandleKey(key)));
+        assert!(app.mash().is_none());
+        assert_eq!(
+            last_toast(&app),
+            "Mash stopped: a key was typed (1 more not run)"
+        );
+
+        queue(&mut app, "mash ' ' '=> '");
+        run(&mut app, Instant::now());
+        queue(&mut app, "cancel");
+        run(&mut app, Instant::now());
+        assert!(app.mash().is_none());
+        assert_eq!(last_toast(&app), "Stopped mashing");
+
+        // refused
+        queue(&mut app, "mash ' ' '=> '; mash x y");
+        run(&mut app, Instant::now());
+        assert_eq!(last_toast(&app), "Mashing until '=> '");
+        app.update(Action::App(AppAction::CancelCommands));
+        app.set_link_open(false);
+        queue(&mut app, "mash ' ' '=> '");
+        run(&mut app, Instant::now());
+        assert!(last_toast(&app).starts_with("mash: the port isn't open"));
+        app.set_link_open(true);
+        app.serial_config.port = "file:///tmp/capture.raw".to_string();
+        queue(&mut app, "mash ' ' '=> '");
+        run(&mut app, Instant::now());
+        assert_eq!(last_toast(&app), "mash: a replay has no link to send to");
     }
 
     /// A pty pair: maxicom opens the `path` side as its port, the test reads and writes the
@@ -1900,17 +2082,21 @@ mod tests {
             }
         }
 
-        /// What came out of the port, `len` bytes, waiting `within` at most
+        /// What came out of the port, `len` bytes, waiting `within` at most: what is there
+        /// already with no wait
         fn received(&mut self, len: usize, within: Duration) -> Vec<u8> {
             use std::io::Read;
             let deadline = Instant::now() + within;
             let mut bytes = Vec::new();
             let mut buf = [0; 256];
-            while bytes.len() < len && Instant::now() < deadline {
+            while bytes.len() < len {
                 match self.device.read(&mut buf) {
                     Ok(n) => bytes.extend_from_slice(&buf[..n]),
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(Duration::from_millis(5))
+                        if Instant::now() >= deadline {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(5));
                     }
                     Err(e) => panic!("{e}"),
                 }
@@ -1985,6 +2171,83 @@ mod tests {
         assert!(toast.starts_with("DTR on: "), "{toast}");
         assert!(toast.ends_with("(1 more not run)"), "{toast}");
         assert!(pty.received(1, Duration::from_millis(50)).is_empty());
+    }
+
+    /// MAX-6: `mash` on a real tty, its steps run as the main loop does: it sends its text
+    /// every interval, the device's prompt ends it and the rest of the line goes out after;
+    /// with no prompt it stops at its timeout, nothing sent after.
+    /// How: a pty pair, a space every 20 ms, the device answering `=> ` once it got five; then
+    /// `x` every 20 ms for 150 ms with no answer.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn mash_on_the_wire() {
+        use std::io::Write;
+
+        use crate::link::serial::SerialDevice;
+        let mut pty = Pty::open();
+        let mut app = app();
+        app.serial_config.port = pty.path.clone();
+        let mut device = SerialDevice::open(&app.serial_config).unwrap();
+        // a turn of the main loop: what came in, the mash's step, the line's next commands
+        let mut turn = |app: &mut App| {
+            let mut buf = [0; 256];
+            let n = device.read(&mut buf).unwrap();
+            if n > 0 {
+                app.feed_rx(&buf[..n]);
+            }
+            if let Some(bytes) = app.next_mash_bytes(Instant::now()) {
+                device.write(&bytes).unwrap();
+            }
+            while let Some(action) = app.next_command_action(Instant::now()) {
+                match app.update(action) {
+                    UpdateEffect::Transmit(bytes) => device.write(&bytes).unwrap(),
+                    UpdateEffect::None => {}
+                    _ => panic!("unexpected effect"),
+                }
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        let queue = |app: &mut App, line: &str| {
+            let invocations = crate::commands::parse(line).unwrap();
+            app.update(Action::App(AppAction::QueueCommands(invocations)));
+        };
+
+        queue(&mut app, "mash ' ' '=> ' 20 2000; send ok");
+        let start = Instant::now();
+        let mut received = Vec::new();
+        while received.len() < 5 {
+            assert!(start.elapsed() < Duration::from_secs(1), "{received:?}");
+            turn(&mut app);
+            received.extend(pty.received(5 - received.len(), Duration::ZERO));
+        }
+        // five sends take four intervals at least
+        assert!(start.elapsed() >= Duration::from_millis(80));
+        assert_eq!(received, b"     ");
+        pty.device.write_all(b"U-Boot> \r\n=> ").unwrap();
+        let mut after = Vec::new();
+        while !after.ends_with(b"ok") {
+            assert!(start.elapsed() < Duration::from_secs(2), "{after:?}");
+            turn(&mut app);
+            after.extend(pty.received(1, Duration::ZERO));
+        }
+        assert!(app.mash().is_none());
+        // a space may have gone out while the prompt came, then the rest of the line
+        assert!(after == b"ok" || after == b" ok", "{after:?}");
+
+        queue(&mut app, "mash x '=> ' 20 150; send late");
+        let start = Instant::now();
+        turn(&mut app);
+        assert!(app.mash().is_some());
+        while app.mash().is_some() {
+            assert!(start.elapsed() < Duration::from_secs(1));
+            turn(&mut app);
+        }
+        assert!(start.elapsed() >= Duration::from_millis(150));
+        turn(&mut app);
+        let sent = pty.received(64, Duration::from_millis(50));
+        // one at once, then every 20 ms until 150 ms: 8 at most, never `late`
+        assert!((6..=8).contains(&sent.len()), "{sent:?}");
+        assert!(sent.iter().all(|&b| b == b'x'), "{sent:?}");
     }
 
     /// MAX-12: `send-file` starts a paced transfer and the chain goes on at once; its chunks

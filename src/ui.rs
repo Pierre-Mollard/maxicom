@@ -1070,7 +1070,7 @@ mod tests {
             s.ui.show_borders = true;
             s.ui.status_bar.layout = StatusBarLayout::Box;
         });
-        let mut command_line = CommandLine::new(Vec::new());
+        let mut command_line = CommandLine::new(Vec::new(), Vec::new());
         command_line.handle_action(DialogAction::Paste("help".into()));
         h.app
             .update(Action::App(AppAction::OpenOverlay(Overlay::CommandLine(
@@ -1103,7 +1103,7 @@ mod tests {
     #[test]
     fn command_line_scroll_and_click() {
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
-        let mut command_line = CommandLine::new(Vec::new());
+        let mut command_line = CommandLine::new(Vec::new(), Vec::new());
         command_line.handle_action(DialogAction::Paste("0123456789".repeat(8)));
         h.app
             .update(Action::App(AppAction::OpenOverlay(Overlay::CommandLine(
@@ -1146,7 +1146,7 @@ mod tests {
             s.ui.status_bar.layout = StatusBarLayout::Box;
         });
         let open = |h: &mut Harness, text: &str| {
-            let mut command_line = CommandLine::new(Vec::new());
+            let mut command_line = CommandLine::new(Vec::new(), Vec::new());
             command_line.handle_action(DialogAction::Paste(text.into()));
             h.app
                 .update(Action::App(AppAction::OpenOverlay(Overlay::CommandLine(

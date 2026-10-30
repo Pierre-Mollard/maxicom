@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    app::{App, transfer::FileTransfer},
+    app::{App, mash::Mash, transfer::FileTransfer},
     capture::expand_home,
     commands::ArgValue,
     configs::{Mode, TextEncoding},
@@ -239,17 +239,56 @@ pub fn search(_app: &App, args: &[ArgValue]) -> Result<Action, String> {
     Ok(Action::Search(SearchModeAction::Query(text.clone())))
 }
 
-/// `trigger on|off [name]` (MAX-6): all the triggers, or the one named
-pub fn trigger(app: &App, args: &[ArgValue]) -> Result<Action, String> {
-    let (on, name) = match args {
-        [ArgValue::Bool(on)] => (*on, None),
-        [ArgValue::Bool(on), ArgValue::String(name)] => (*on, Some(name.clone())),
-        _ => unreachable!("trigger takes on or off, then a name"),
+/// `mash <text> <until> [every-ms] [timeout-ms]` (MAX-6): sends the text at once, then every
+/// `every-ms` (50 by default), until `until` comes in or `timeout-ms` (15 s) is up; the rest
+/// of the line waits for `until`
+pub fn mash(app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let (text, until, every, timeout) = match args {
+        [ArgValue::Bytes(text), ArgValue::Bytes(until), rest @ ..] => {
+            let ms = |i: usize, default| match rest.get(i) {
+                Some(ArgValue::Int(ms)) => Duration::from_millis(*ms as u64),
+                _ => Duration::from_millis(default),
+            };
+            (text, until, ms(0, 50), ms(1, 15_000))
+        }
+        _ => unreachable!("mash takes a text, a text to wait for, then times"),
     };
-    let mut names = app.triggers().iter().map(|trigger| trigger.name.as_str());
+    if text.is_empty() {
+        return Err("nothing to send".to_string());
+    }
+    if link::is_replay(&app.serial_config.port) {
+        return Err("a replay has no link to send to".to_string());
+    }
+    link_open(app)?;
+    if app.mash().is_some() {
+        return Err("a mash runs already (cancel stops it)".to_string());
+    }
+    let mash = Mash::new(text.clone(), until, every, timeout, Instant::now())
+        .ok_or_else(|| "nothing to wait for".to_string())?;
+    Ok(Action::App(AppAction::StartMash(Box::new(mash))))
+}
+
+/// `trigger on|off|toggle [name]` (MAX-6): all the triggers, or the one named. Toggled, all
+/// of them are armed when none is, else disarmed
+pub fn trigger(app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let (state, name) = match args {
+        [ArgValue::Enum(state)] => (*state, None),
+        [ArgValue::Enum(state), ArgValue::String(name)] => (*state, Some(name.clone())),
+        _ => unreachable!("trigger takes on, off or toggle, then a name"),
+    };
+    let triggers = app.triggers();
+    if triggers.is_empty() {
+        return Err("triggers.toml has no trigger".to_string());
+    }
+    let named =
+        (triggers.iter()).filter(|trigger| name.as_ref().is_none_or(|n| *n == trigger.name));
+    let on = match state {
+        "on" => true,
+        "off" => false,
+        _ => !named.clone().any(|trigger| trigger.is_armed()),
+    };
     match &name {
-        _ if app.triggers().is_empty() => Err("triggers.toml has no trigger".to_string()),
-        Some(name) if !names.any(|n| n == name) => Err(format!("no trigger named '{name}'")),
+        Some(name) if named.count() == 0 => Err(format!("no trigger named '{name}'")),
         _ => Ok(Action::App(AppAction::ArmTriggers { on, name })),
     }
 }

@@ -981,6 +981,7 @@ impl Default for KeyBindingsConfig {
             "T"     => KeyBindingAction::ToggleTriggers,
             "f"     => "break", // a break like minicom's
             "p"     => "dtr off; sleep 100; dtr on", // DTR pulse which resets most boards
+            "u"     => "trigger toggle u-boot", // the default triggers.toml's
         };
 
         let line_mode = default_bindings! {

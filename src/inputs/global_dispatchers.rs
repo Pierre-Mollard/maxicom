@@ -102,8 +102,9 @@ impl KeyBindingAction {
             KeyBindingAction::ToggleTriggers => Action::App(AppAction::ToggleTriggers),
             KeyBindingAction::CommandLine => {
                 let history = app.command_history().iter().cloned().collect();
+                let triggers = app.triggers().iter().map(|t| t.name.clone()).collect();
                 Action::App(AppAction::OpenOverlay(Overlay::CommandLine(
-                    CommandLine::new(history),
+                    CommandLine::new(history, triggers),
                 )))
             }
         }

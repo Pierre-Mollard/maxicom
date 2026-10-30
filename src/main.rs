@@ -340,6 +340,24 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
         }
 
+        // the text `mash` sends, on time: the input poll wakes the loop often enough (MAX-6)
+        if app.mash().is_some() {
+            match device {
+                Some(ref mut dev) => {
+                    if let Some(bytes) = app.next_mash_bytes(Instant::now()) {
+                        if !transmit(&mut app, dev, &bytes, is_replay) {
+                            app.stop_mash("the write failed");
+                        }
+                        needs_redraw = true;
+                    }
+                }
+                None => {
+                    app.stop_mash("the link closed");
+                    needs_redraw = true;
+                }
+            }
+        }
+
         if device.is_some() {
             let inactivity_timeout = app.settings().inactivity_detach_timeout;
             if !is_replay

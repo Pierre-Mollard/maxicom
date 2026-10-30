@@ -27,12 +27,15 @@ pub struct CommandLine {
     history: Vec<String>,
     history_index: Option<usize>,
     draft: String,
+    /// The names of the triggers, to complete `trigger`'s (MAX-6)
+    trigger_names: Vec<String>,
 }
 
 impl CommandLine {
-    pub fn new(history: Vec<String>) -> Self {
+    pub fn new(history: Vec<String>, trigger_names: Vec<String>) -> Self {
         let mut command_line = Self {
             history,
+            trigger_names,
             ..Self::default()
         };
         command_line.refresh();
@@ -64,7 +67,7 @@ impl CommandLine {
     /// The completion of the word now before the cursor, none selected
     fn refresh(&mut self) {
         let before_cursor = &self.input.value()[..self.cursor_byte()];
-        self.completion = commands::complete(before_cursor);
+        self.completion = commands::complete(before_cursor, &self.trigger_names);
         self.selected = None;
     }
 
@@ -225,7 +228,7 @@ mod tests {
 
     #[test]
     fn typing_and_pasting() {
-        let mut command_line = CommandLine::new(Vec::new());
+        let mut command_line = CommandLine::new(Vec::new(), Vec::new());
         let key = |c| crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char(c));
         command_line.handle_action(DialogAction::HandleKey(key('h')));
         command_line.handle_action(DialogAction::Paste("elp".to_string()));
@@ -245,7 +248,7 @@ mod tests {
     /// The command line opens with every command listed
     #[test]
     fn opens_with_every_command() {
-        let command_line = CommandLine::new(Vec::new());
+        let command_line = CommandLine::new(Vec::new(), Vec::new());
         assert_eq!(
             command_line.completion.candidates.len(),
             commands::COMMANDS.len()
@@ -315,7 +318,8 @@ mod tests {
     /// it; an edit starts from the edited line
     #[test]
     fn walk_the_history() {
-        let mut command_line = CommandLine::new(vec!["help".into(), "toggle-mouse".into()]);
+        let mut command_line =
+            CommandLine::new(vec!["help".into(), "toggle-mouse".into()], Vec::new());
         command_line.handle_action(DialogAction::Paste("zz".into()));
         let up = |command_line: &mut CommandLine| {
             command_line.handle_action(key(KeyCode::Up));
@@ -342,12 +346,12 @@ mod tests {
     /// candidate, Up and Down move in the list
     #[test]
     fn arrows_walk_the_history_until_tab() {
-        let mut command_line = CommandLine::new(vec!["help".into()]);
+        let mut command_line = CommandLine::new(vec!["help".into()], Vec::new());
         assert!(!command_line.completion.candidates.is_empty());
         command_line.handle_action(key(KeyCode::Up));
         assert_eq!(value(&command_line), "help");
 
-        let mut command_line = CommandLine::new(vec!["help".into()]);
+        let mut command_line = CommandLine::new(vec!["help".into()], Vec::new());
         command_line.handle_action(DialogAction::Paste("toggle-d".into()));
         command_line.handle_action(DialogAction::CycleNext);
         command_line.handle_action(key(KeyCode::Down));

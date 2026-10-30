@@ -24,6 +24,7 @@ pub enum ArgKind {
     Path,
     Hex,
     Bytes,
+    Trigger,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -412,17 +413,44 @@ pub static COMMANDS: &[CommandSpec] = {
             "Save the terminal to a file: .ans keeps the colors",
         ),
         CommandSpec::build(
+            "mash",
+            &[
+                arg("text", ArgKind::Bytes),
+                arg("until", ArgKind::Bytes),
+                ArgSpec {
+                    name: "every-ms",
+                    kind: ArgKind::Int {
+                        min: 10,
+                        max: 10_000,
+                        suggestions: &[],
+                    },
+                    optional: true,
+                },
+                ArgSpec {
+                    name: "timeout-ms",
+                    kind: ArgKind::Int {
+                        min: 100,
+                        max: 600_000,
+                        suggestions: &[],
+                    },
+                    optional: true,
+                },
+            ],
+            build::mash,
+            "Send text every 50 ms until a text comes in, 15 s at most",
+        ),
+        CommandSpec::build(
             "trigger",
             &[
-                arg("state", ArgKind::Bool),
+                arg("state", ArgKind::Enum(&["on", "off", "toggle"])),
                 ArgSpec {
                     name: "name",
-                    kind: ArgKind::String,
+                    kind: ArgKind::Trigger,
                     optional: true,
                 },
             ],
             build::trigger,
-            "Arm or disarm the triggers, or the one named",
+            "Arm, disarm or toggle the triggers, or the one named",
         ),
         CommandSpec::build(
             "flow",
@@ -461,11 +489,15 @@ pub struct Completion {
 /// The completion of the last word of `before_cursor`, the line up to the cursor: the command
 /// names (sorted) for a command's first word, else the values of the argument it is. None for
 /// a word already whole, nor for one with a quote or an escape
-pub fn complete(before_cursor: &str) -> Completion {
-    complete_in(COMMANDS, before_cursor)
+pub fn complete(before_cursor: &str, trigger_names: &[String]) -> Completion {
+    complete_in(COMMANDS, before_cursor, trigger_names)
 }
 
-fn complete_in(commands: &'static [CommandSpec], line: &str) -> Completion {
+fn complete_in(
+    commands: &'static [CommandSpec],
+    line: &str,
+    trigger_names: &[String],
+) -> Completion {
     let Some(word) = last_word(line) else {
         return Completion::default();
     };
@@ -491,6 +523,10 @@ fn complete_in(commands: &'static [CommandSpec], line: &str) -> Completion {
             .and_then(|spec| spec.args.get(word.index - 1))
             .map(|arg| match arg.kind {
                 ArgKind::Path => path_candidates(prefix),
+                ArgKind::Trigger => (trigger_names.iter())
+                    .map(|name| escape_word(name))
+                    .filter(|name| name.starts_with(prefix))
+                    .collect(),
                 kind => kind
                     .candidates(prefix)
                     .into_iter()
@@ -708,7 +744,7 @@ impl ArgKind {
                 .find(|value| **value == text)
                 .map(|value| ArgValue::Enum(value))
                 .ok_or_else(|| format!("'{text}' is not one of {}", values.join(", "))),
-            Self::String => Ok(ArgValue::String(text.to_string())),
+            Self::String | Self::Trigger => Ok(ArgValue::String(text.to_string())),
             Self::Path => Ok(ArgValue::Path(PathBuf::from(text))),
             Self::Hex => parse_hex(text).map(ArgValue::Bytes),
             Self::Bytes => unreachable!("bytes aren't text"),
@@ -721,8 +757,8 @@ impl ArgKind {
             Self::Int { suggestions, .. } => suggestions,
             Self::Bool => &["on", "off"],
             Self::Enum(values) => values,
-            // paths complete from the disk, in `path_candidates`
-            Self::String | Self::Path | Self::Hex | Self::Bytes => &[],
+            // paths complete from the disk, in `path_candidates`, triggers from their names
+            Self::String | Self::Path | Self::Hex | Self::Bytes | Self::Trigger => &[],
         };
         values
             .iter()
@@ -945,9 +981,29 @@ mod tests {
         ] {
             assert!(parse(line).is_err(), "{line}");
         }
-        assert_eq!(values(&complete("baud 1")), ["19200", "115200"]);
-        assert_eq!(values(&complete("flow ")), ["none", "hw", "sw"]);
-        assert_eq!(values(&complete("dtr o")), ["on", "off"]);
+        assert_eq!(values(&complete("baud 1", &[])), ["19200", "115200"]);
+        assert_eq!(values(&complete("flow ", &[])), ["none", "hw", "sw"]);
+        assert_eq!(values(&complete("dtr o", &[])), ["on", "off"]);
+    }
+
+    /// MAX-6: `trigger` takes on, off or toggle, then a trigger's name, completed from the
+    /// names it is given, escaped like a path.
+    #[test]
+    fn trigger_names() {
+        let names = [
+            "u-boot".to_string(),
+            "uart menu".to_string(),
+            "login".to_string(),
+        ];
+        assert_eq!(values(&complete("trigger t", &names)), ["toggle"]);
+        assert_eq!(
+            values(&complete("trigger on u", &names)),
+            ["u-boot", "uart\\ menu"]
+        );
+        assert_eq!(values(&complete("trigger off ", &names)).len(), 3);
+        assert!(complete("trigger on ", &[]).candidates.is_empty());
+        assert!(parse("trigger toggle u-boot").is_ok());
+        assert!(parse("trigger flip").is_err());
     }
 
     #[test]
@@ -1086,6 +1142,7 @@ mod tests {
 
     #[test]
     fn complete_command_names() {
+        let complete = |line| complete(line, &[]);
         let all = complete("");
         assert_eq!(all.start, 0);
         assert_eq!(all.candidates.len(), COMMANDS.len());
@@ -1116,7 +1173,7 @@ mod tests {
 
     #[test]
     fn complete_argument_values() {
-        let complete = |line| complete_in(&TEST_COMMANDS, line);
+        let complete = |line| complete_in(&TEST_COMMANDS, line, &[]);
         assert_eq!(values(&complete("test 1 ")), ["on", "off"]);
         assert_eq!(values(&complete("test  1   o")), ["on", "off"]);
         let flow = complete("quit; test 1 on h");
@@ -1147,7 +1204,7 @@ mod tests {
         let folder = format!("{}/", dir.display()).replace('\\', "/");
         let complete = |typed: &str| {
             let line = format!("test 1 on none x {folder}{typed}");
-            let completion = complete_in(&TEST_COMMANDS, &line);
+            let completion = complete_in(&TEST_COMMANDS, &line, &[]);
             assert_eq!(completion.start, 17);
             completion
                 .candidates
@@ -1163,7 +1220,11 @@ mod tests {
 
         let line = format!("test 1 on none x {folder}my\\ file.bin");
         // the escaped name is whole, and the argument is the name
-        assert!(complete_in(&TEST_COMMANDS, &line).candidates.is_empty());
+        assert!(
+            complete_in(&TEST_COMMANDS, &line, &[])
+                .candidates
+                .is_empty()
+        );
         let parsed = parse_args(&TEST_COMMANDS[0], &tokenizer::split(&line).unwrap()[0][1..]);
         assert_eq!(
             parsed.unwrap()[4],

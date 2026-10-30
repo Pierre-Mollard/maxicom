@@ -166,8 +166,19 @@ What changes from a serial port:
     are kept for when it opens.
   - `sleep <ms>`: the rest of the line waits that long (up to a minute), the
     screen stays live. A line run meanwhile waits behind it.
-  - `cancel`: stops the file being sent and drops the commands waiting. A line
-    starting with it runs it at once, not behind them: `cancel; send x`.
+  - `cancel`: stops the file being sent, a `mash`, and drops the commands
+    waiting. A line starting with it runs it at once, not behind them:
+    `cancel; send x`.
+  - `mash <text> <until> [every-ms] [timeout-ms]`: sends the text at once,
+    then every 50 ms by default, until `until` comes in, 15 s at most, for a
+    bootloader that only listens for a moment after a reset. The rest of the
+    line waits for `until`: `mash ' ' '=> '; send 'printenv\r'`. The timeout,
+    a key typed for the device, `cancel`, a detach or a lost link stop it and
+    drop the rest of the line. The status bar shows `⟳ mash` while it runs (a
+    click stops it). With a reset first, on one key:
+    `dtr off; rts on; rts off; mash ' ' '=> '`.
+  - `trigger on|off|toggle [name]`: arms, disarms or toggles the triggers, or
+    the one named (see [Triggers](#triggers)); the names complete.
 
   A command the link can't do (anything sent on a replay) stops the line
   there, with the error.
@@ -189,8 +200,8 @@ What changes from a serial port:
   doesn't parse stops the keymap from loading, naming its key (a reload keeps
   the running one). The default keymap has two: `Ctrl-A f` sends a break,
   `Ctrl-A p` pulses DTR (`dtr off; sleep 100; dtr on`), which resets most
-  boards. The help's Commands tab lists the keys bound to a line and every
-  command.
+  boards, and `Ctrl-A u` toggles the `u-boot` trigger. The help's Commands
+  tab lists the keys bound to a line and every command.
 - The word before the cursor has its completions listed (command names with
   their help, then the values of the argument it is). Tab and Shift-Tab put
   them in its place in turn, then Up and Down too; a lone one, or a click, is
@@ -205,6 +216,47 @@ What changes from a serial port:
 - Its colors are `[command_line]` in `theme.toml`: `border` (the popup's and
   the list's), `prompt` (the `:`), `text` and `selected` (the completion
   picked in the list).
+
+### TRIGGERS
+
+A trigger runs a command line when a text comes in, as soon as it does: the
+`Hit any key to stop autoboot` of U-Boot answered by a space, a login prompt
+by a user name. They are in `triggers.toml`, a table each, named after it (the
+default file has these two, disarmed):
+
+```toml
+[u-boot]
+match = "Hit any key to stop autoboot"
+run = "send ' '"
+
+[login]
+match = "login: "
+run = 'send root\r'
+rearm = true
+```
+
+- `match` is found in the received bytes as they come, not in whole lines
+  (U-Boot redraws its countdown on the same line), even cut between two
+  reads. It takes the escapes of the command line: `'\x1b[7mBoot menu'`.
+- `run` is a command line (see [Command line](#command-line)), run as if
+  typed, after a line still waiting.
+- A trigger only fires while armed, and once: it disarms then, so the next
+  boot goes on normally. `rearm = true` keeps it armed. They start disarmed,
+  `armed = true` starts one armed.
+- `Ctrl-A T` (`toggle-triggers`) arms them all when none is armed, else
+  disarms them all; `Ctrl-A u` toggles `u-boot`; `trigger on|off|toggle
+  [name]` does it from a command line or a key, so one key can arm and reset:
+  `trigger on u-boot; dtr off; rts on; rts off`.
+- The status bar shows `◎ 2` while two are armed (a click toggles them). In a
+  template, `{trigger_count}` is how many are armed, `{trigger_names}` their
+  names (the first and how many more when the bar is short) and `armed` the
+  condition. A notice says when one fires.
+- Only live bytes fire them: never a replay, a restored session, nor what came
+  in while the restore question was open.
+- A rule that doesn't parse (an empty `match`, an unknown command, a misspelt
+  field) stops the file from loading, naming the rule; a reload keeps the
+  running ones. A reload applies the file, each trigger armed as it says.
+  `triggers_path` in `config.toml` points to another file.
 
 ### TERMINAL
 

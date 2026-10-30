@@ -45,7 +45,8 @@
 //! | `{copy_side}`       | Copy cursor panel (`TXT` or `RAW`), empty out of copy  | `RAW`            |
 //! | `{send_file}`       | The file `send-file` sends, empty when none             | `fw.hex`         |
 //! | `{send_percent}`    | How much of it is sent, in percent                      | `42`             |
-//! | `{trigger}`         | The armed triggers (`triggers.toml`), empty when none   | `u-boot, login`  |
+//! | `{trigger_count}`   | How many triggers (`triggers.toml`) are armed           | `2`              |
+//! | `{trigger_names}`   | The armed triggers by name, empty when none             | `login, u-boot`  |
 //!
 //! ## Formats
 //! `{name:spec}` with spec `[<>^][0][width][h]`, close to Rust's and C's:
@@ -56,8 +57,8 @@
 //!   `12K`, `1.2M`), never wider than 4 columns: `{rx_bytes:4h}`
 //!
 //! The numbers are `{baud}`, `{rx_bytes}`, `{tx_bytes}`, `{scroll_percent}`, `{scroll_offset}`,
-//! `{scroll_max}`, `{pan_offset}`, `{pan_max}` and `{send_percent}`. A longer value is never cut; a malformed spec
-//! stays as written.
+//! `{scroll_max}`, `{pan_offset}`, `{pan_max}`, `{send_percent}` and `{trigger_count}`. A
+//! longer value is never cut; a malformed spec stays as written.
 //!
 //! ## The pan
 //! It shows once: in the bar when it is drawn and a template has a pan variable (`{pan_left}`,
@@ -94,6 +95,7 @@
 //! | `line_settings`                 | `serial`                                   | The link has line settings: a serial port, not TCP       |
 //! | `sending`                       | `send_file`                                | A file is being sent (`send-file`)                       |
 //! | `armed`                         | `trigger`                                  | A trigger is armed, ready to fire (`triggers.toml`)      |
+//! | `mashing`                       | `mash`                                     | `mash` sends its text, waiting for the other one         |
 //!
 //! ## Style Keywords
 //! - **Modifiers**: `bold`, `dim`, `italic`, `underlined` (`underline`), `reversed` (`reverse`), `reset` (`default`), `crossed`, `slow_blink` (`sblink`), `rapid_blink` (`rblink`)
@@ -113,7 +115,8 @@
 //! A block can take `prio=N` (no style either, like `click=`): `1` is the most important.
 //! When the three parts don't fit side by side, the bar tries, in order:
 //! 1. the variables without a format of their own in a compact form: `{port}` as its file name
-//!    (`ttyUSB0`), `{rx_bytes}`/`{tx_bytes}` as sizes (`1.2K`), the pan as `◀3` / `!2▶`;
+//!    (`ttyUSB0`), `{rx_bytes}`/`{tx_bytes}` as sizes (`1.2K`), the pan as `◀3` / `!2▶`,
+//!    `{trigger_names}` as the first name and how many more (`login +1`);
 //! 2. without the blocks of the highest `prio`, then the next one, and so on; the blocks with
 //!    the same `prio` go together, so a separator goes with its block. A block without `prio=`
 //!    and plain text always stay;
@@ -133,7 +136,7 @@
 //! | `{pan_offset}`, `{pan_max}`                                | `pan-home`                |
 //! | `{scroll_pos}` `{scroll_pos_up}` `{scroll_percent}` `{scroll_offset}` | `scroll-to-bottom` |
 //! | `{send_file}`, `{send_percent}`                            | `cancel`                  |
-//! | `{trigger}`                                                | `toggle-triggers`         |
+//! | `{trigger_count}`, `{trigger_names}`                       | `toggle-triggers`         |
 //!
 //! The scroll and pan actions a `click=` can run: `scroll-up`, `scroll-down`, `page-up`,
 //! `page-down`, `scroll-to-top`, `scroll-to-bottom`, `pan-left`, `pan-right`, `pan-home` (back
@@ -413,7 +416,8 @@ enum Var {
     CopySide,
     SendFile,
     SendPercent,
-    Trigger,
+    TriggerCount,
+    TriggerNames,
 }
 
 impl Var {
@@ -438,7 +442,8 @@ impl Var {
             "copy_side" => Self::CopySide,
             "send_file" => Self::SendFile,
             "send_percent" => Self::SendPercent,
-            "trigger" => Self::Trigger,
+            "trigger_count" => Self::TriggerCount,
+            "trigger_names" => Self::TriggerNames,
             _ => return None,
         })
     }
@@ -456,7 +461,7 @@ impl Var {
             }
             Self::CopySide => return Some(ClickAction::ToggleSide),
             Self::SendFile | Self::SendPercent => KeyBindingAction::CancelCommands,
-            Self::Trigger => KeyBindingAction::ToggleTriggers,
+            Self::TriggerCount | Self::TriggerNames => KeyBindingAction::ToggleTriggers,
             Self::Port | Self::RxBytes | Self::TxBytes | Self::Time | Self::ScrollMax => {
                 return None;
             }
@@ -478,6 +483,7 @@ impl Var {
             Self::ScrollOffset => scroll.offset_from_bottom as u64,
             Self::ScrollMax => scroll.max_scroll as u64,
             Self::SendPercent => app.transfer().map_or(0, |transfer| transfer.percent()),
+            Self::TriggerCount => app.armed_triggers().len() as u64,
             Self::PanOffset => app.pan_left_status().unwrap_or(0) as u64,
             Self::PanMax => app
                 .pan_right_status()
@@ -510,6 +516,16 @@ impl Var {
             None if compact && self == Self::Port => {
                 let port = &app.serial_config.port;
                 out.push_str(port.rsplit(['/', '\\']).next().unwrap_or(port));
+            }
+            // the first name, then how many more
+            None if compact && self == Self::TriggerNames => {
+                let armed = app.armed_triggers();
+                if let Some((first, more)) = armed.split_first() {
+                    out.push_str(first);
+                    if !more.is_empty() {
+                        let _ = write!(out, " +{}", more.len());
+                    }
+                }
             }
             None if compact && matches!(self, Self::PanLeft | Self::PanRight) => {
                 let mut full = String::new();
@@ -559,7 +575,7 @@ impl Var {
                 "{}",
                 app.transfer().map_or("", |transfer| transfer.name())
             ),
-            Self::Trigger => write!(out, "{}", app.armed_triggers()),
+            Self::TriggerNames => write!(out, "{}", app.armed_triggers().join(", ")),
             // the numbers, written by `write`
             Self::Baud
             | Self::RxBytes
@@ -569,7 +585,8 @@ impl Var {
             | Self::ScrollMax
             | Self::PanOffset
             | Self::PanMax
-            | Self::SendPercent => Ok(()),
+            | Self::SendPercent
+            | Self::TriggerCount => Ok(()),
         };
     }
 }
@@ -620,6 +637,7 @@ enum Cond {
     LineSettings,
     Sending,
     Armed,
+    Mashing,
     /// Unknown condition name, always false
     Unknown,
 }
@@ -653,6 +671,7 @@ impl Cond {
             "line_settings" | "serial" => Self::LineSettings,
             "sending" | "send_file" => Self::Sending,
             "armed" | "trigger" => Self::Armed,
+            "mashing" | "mash" => Self::Mashing,
             _ => Self::Unknown,
         }
     }
@@ -693,6 +712,7 @@ impl Cond {
             Self::LineSettings => has_line_settings(&app.serial_config.port),
             Self::Sending => app.transfer().is_some(),
             Self::Armed => app.triggers().iter().any(|trigger| trigger.is_armed()),
+            Self::Mashing => app.mash().is_some(),
             Self::Unknown => false,
         }
     }
@@ -1495,8 +1515,9 @@ mod tests {
         );
     }
 
-    /// MAX-6: the default center shows the armed triggers by name, hidden while none is; a
-    /// click on them toggles them.
+    /// MAX-6: the default center shows how many triggers are armed, hidden while none is;
+    /// `{trigger_names}` names them, the first and how many more when squeezed; a click on
+    /// either toggles them.
     /// How: the default triggers, disarmed then all armed, then one.
     #[test]
     fn armed_triggers() {
@@ -1511,18 +1532,30 @@ mod tests {
                 .map(|s| s.split('|').next().unwrap().to_string())
                 .collect()
         };
+        let compact = Fit {
+            compact: true,
+            drop_from: None,
+        };
         assert!(texts(&a).is_empty());
+        assert_eq!(text_with("{trigger_names}", &a, compact), "");
+
         a.update(Action::App(AppAction::ToggleTriggers));
-        assert_eq!(texts(&a), ["◎ login, u-boot "]);
+        assert_eq!(texts(&a), ["◎ 2 "]);
+        assert_eq!(render("{trigger_names}", &a), [plain("login, u-boot")]);
+        assert_eq!(text_with("{trigger_names}", &a, compact), "login +1");
+        assert_eq!(render("{trigger_count:02}", &a), [plain("02")]);
+
         a.update(Action::App(AppAction::ArmTriggers {
             on: false,
             name: Some("login".to_string()),
         }));
-        assert_eq!(render("{trigger}", &a), [plain("u-boot")]);
-        assert_eq!(
-            Var::Trigger.click(),
-            Some(ClickAction::Run(KeyBindingAction::ToggleTriggers))
-        );
+        assert_eq!(text_with("{trigger_names}", &a, compact), "u-boot");
+        for var in [Var::TriggerCount, Var::TriggerNames] {
+            assert_eq!(
+                var.click(),
+                Some(ClickAction::Run(KeyBindingAction::ToggleTriggers))
+            );
+        }
     }
 
     /// Every variable is filled; an unknown variable stays as written.
