@@ -10,11 +10,13 @@ use crate::{
     app::{App, transfer::FileTransfer},
     capture::expand_home,
     commands::ArgValue,
-    inputs::{Action, AppAction},
+    configs::{Mode, TextEncoding},
+    inputs::{Action, AppAction, SearchModeAction},
     link::{
         self,
         serial::{FlowControl, LineControl, SerialConfig, parse_framing},
     },
+    overlays::SettingKey,
 };
 
 /// `send` and `send-hex`: their bytes, to the link
@@ -28,6 +30,7 @@ pub fn send(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     if link::is_replay(&app.serial_config.port) {
         return Err("a replay has no link to send to".to_string());
     }
+    link_open(app)?;
     Ok(Action::TransmitRaw(bytes.clone()))
 }
 
@@ -42,6 +45,7 @@ pub fn send_file(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     if link::is_replay(&app.serial_config.port) {
         return Err("a replay has no link to send to".to_string());
     }
+    link_open(app)?;
     if app.transfer().is_some() {
         return Err("a file is being sent already (cancel stops it)".to_string());
     }
@@ -123,6 +127,7 @@ pub fn flow(app: &App, args: &[ArgValue]) -> Result<Action, String> {
 
 fn control(app: &App, control: LineControl) -> Result<Action, String> {
     serial_only(app, "control lines")?;
+    link_open(app)?;
     Ok(Action::App(AppAction::LineControl(control)))
 }
 
@@ -164,4 +169,83 @@ pub fn pause_commands(_app: &App, args: &[ArgValue]) -> Result<Action, String> {
     Ok(Action::App(AppAction::PauseCommands(
         Duration::from_millis(*ms as u64),
     )))
+}
+
+/// None when the link is open, else that it isn't: detached, lost, still opening
+fn link_open(app: &App) -> Result<(), String> {
+    if app.is_link_open() {
+        Ok(())
+    } else {
+        Err("the port isn't open (detached or reconnecting)".to_string())
+    }
+}
+
+/// `open <port | tcp://host:port>`: the link switches to it, its settings kept; the rest of
+/// the line waits for it to be open
+pub fn open(app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let [ArgValue::Path(port)] = args else {
+        unreachable!("open takes a port");
+    };
+    if link::is_replay(&app.serial_config.port) {
+        return Err("a replay can't open a link".to_string());
+    }
+    let port = port.to_string_lossy().into_owned();
+    if link::is_replay(&port) {
+        return Err("a replay opens from the command line: maxicom --replay".to_string());
+    }
+    Ok(Action::App(AppAction::Open(port)))
+}
+
+/// The settings `set` turns on or off, by name
+pub const ON_OFF_SETTINGS: &[&str] = &["local-echo", "timestamps", "mouse", "answer-queries"];
+
+/// `set <setting> on|off`: nothing when it is so already
+pub fn set(app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let [ArgValue::Enum(name), ArgValue::Bool(on)] = args else {
+        unreachable!("set takes a setting and on or off");
+    };
+    let key = match *name {
+        "local-echo" => SettingKey::LocalEcho,
+        "timestamps" => SettingKey::DisplayTimestamp,
+        "mouse" => SettingKey::Mouse,
+        "answer-queries" => SettingKey::AnswerQueries,
+        _ => unreachable!("set takes one of ON_OFF_SETTINGS"),
+    };
+    let is_on = app.setting_is_on(key).expect("an on/off setting");
+    Ok(if is_on == *on {
+        Action::Ignore
+    } else {
+        Action::App(AppAction::ToggleSetting(key))
+    })
+}
+
+/// `encoding utf8|ascii|cp437|latin1`: how the received bytes are read as text
+pub fn encoding(_app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let encoding = match args {
+        [ArgValue::Enum("utf8")] => TextEncoding::Utf8,
+        [ArgValue::Enum("ascii")] => TextEncoding::Ascii,
+        [ArgValue::Enum("cp437")] => TextEncoding::Cp437,
+        [ArgValue::Enum("latin1")] => TextEncoding::Latin1,
+        _ => unreachable!("encoding takes utf8, ascii, cp437 or latin1"),
+    };
+    Ok(Action::App(AppAction::SetEncoding(encoding)))
+}
+
+/// `search <text>`: the search bar open on it, its matches shown
+pub fn search(_app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let [ArgValue::String(text)] = args else {
+        unreachable!("search takes its text");
+    };
+    Ok(Action::Search(SearchModeAction::Query(text.clone())))
+}
+
+/// `screenshot <name>`: the terminal saved at once, without the dialog
+pub fn screenshot(app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let [ArgValue::Path(name)] = args else {
+        unreachable!("screenshot takes a name");
+    };
+    if app.settings().mode != Mode::Terminal {
+        return Err("screenshots are in terminal mode".to_string());
+    }
+    Ok(Action::App(AppAction::SaveScreenshot(name.clone())))
 }

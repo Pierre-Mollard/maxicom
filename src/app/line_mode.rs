@@ -490,6 +490,11 @@ impl LineMode {
                     self.update_search_matches(display_mode, raw_view);
                 }
             }
+            SearchModeAction::Query(text) => {
+                self.search_state.toggle(true);
+                self.search_state.query = Input::new(text);
+                self.update_search_matches(display_mode, raw_view);
+            }
             SearchModeAction::Kind => {
                 self.search_state.toggle_mode();
                 self.update_search_matches(display_mode, raw_view);

@@ -7,6 +7,7 @@ use chrono::{DateTime, Local};
 use crossterm::event::KeyEvent;
 use terminput::Encoding;
 use terminput_crossterm::to_terminput_key;
+use tui_input::Input;
 
 use crate::{
     app::{
@@ -633,6 +634,11 @@ impl TerminalMode {
                     paste_into_input(&mut self.search_state.query, &text);
                     self.update_search_matches(raw_view);
                 }
+            }
+            SearchModeAction::Query(text) => {
+                self.search_state.toggle(true);
+                self.search_state.query = Input::new(text);
+                self.update_search_matches(raw_view);
             }
             SearchModeAction::Kind => {
                 self.search_state.toggle_mode();

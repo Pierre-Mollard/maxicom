@@ -142,6 +142,8 @@ pub struct App {
     pub stats: Stats,
     /// The file `send-file` sends, a chunk per loop turn (MAX-12)
     transfer: Option<FileTransfer>,
+    /// The link is open, as the loop last said: the commands that need it refuse otherwise
+    link_open: bool,
 }
 
 // Effects outside which can only be handled by main
@@ -150,6 +152,7 @@ pub enum UpdateEffect {
     Transmit(Vec<u8>),
     Reconfigure(SerialConfig),
     LineControl(LineControl),
+    Open(String),
     CopyToClipboard(String),
     CopyToClipboardAs { text: String, what: String },
     ToggleAttachSerial,
@@ -208,6 +211,7 @@ impl App {
                 sent_bytes: 0,
             },
             transfer: None,
+            link_open: false,
         };
         app.warn_shadowed_keys();
         app
@@ -336,9 +340,29 @@ impl App {
         }
     }
 
-    /// The rest of a command line chain waits until `until` (a `sleep`, the end of a `break`)
+    /// The rest of a command line chain waits until `until` (a `sleep`, the end of a `break`,
+    /// an `open` at the latest)
     pub fn pause_commands(&mut self, until: Instant) {
         self.commands_resume_at = Some(until);
+    }
+
+    /// The rest of a command line chain goes on now: the link `open` waited for is open
+    pub fn resume_commands(&mut self) {
+        self.commands_resume_at = None;
+    }
+
+    /// Whether the link is open, which the loop sets before it runs a command (MAX-12)
+    pub fn set_link_open(&mut self, open: bool) {
+        self.link_open = open;
+    }
+
+    pub fn is_link_open(&self) -> bool {
+        self.link_open
+    }
+
+    /// A new session backup, for the port `open` switched to: the backups go by port (MAX-12)
+    pub fn restart_journal(&mut self) {
+        self.start_journal(self.sessions_dir.clone());
     }
 
     /// A warning for the keymap's keys that never reach their mode section (MAX-155)
@@ -598,18 +622,7 @@ impl App {
                             UpdateEffect::None
                         }
                         OverlayResponse::SaveScreenshot { path, contents } => {
-                            let path = expand_home(&path);
-                            let saved = create_parent_dirs(&path)
-                                .and_then(|()| std::fs::write(&path, contents));
-                            match saved {
-                                Ok(()) => self.notify_success(format!(
-                                    "Screenshot saved to {}",
-                                    path.display()
-                                )),
-                                Err(e) => {
-                                    self.notify_error(format!("Failed to save screenshot: {e}"))
-                                }
-                            }
+                            self.save_screenshot(&path, contents);
                             UpdateEffect::None
                         }
                     }
@@ -670,6 +683,41 @@ impl App {
     /// Takes the terminal screen now, in both formats, and opens the dialog asking where to
     /// save it and which format, `format` chosen first, so a fast screen is caught. Line mode
     /// doesn't show that screen, so it is not taken there (MAX-147)
+    fn save_screenshot(&mut self, path: &Path, contents: String) {
+        let path = expand_home(path);
+        let saved = create_parent_dirs(&path).and_then(|()| std::fs::write(&path, contents));
+        match saved {
+            Ok(()) => self.notify_success(format!("Screenshot saved to {}", path.display())),
+            Err(e) => self.notify_error(format!("Failed to save screenshot: {e}")),
+        }
+    }
+
+    /// `screenshot <name>` (MAX-12): saved at once, its format from its extension (`.ans` the
+    /// colors, else text, `.txt` added to a name without one), a bare name in `screenshot_dir`
+    fn save_screenshot_as(&mut self, name: &Path) {
+        let format = match name.extension() {
+            Some(ext) if ext == "ans" => ScreenshotFormat::Ansi,
+            _ => ScreenshotFormat::Text,
+        };
+        let mut path = self.settings.capture.screenshot_dir.join(name);
+        if path.extension().is_none() {
+            path.set_extension(format.extension());
+        }
+        let contents = self.terminal_mode.screenshot().into_contents(format);
+        self.save_screenshot(&path, contents);
+    }
+
+    /// Whether an on/off setting is on, for `set` (MAX-12); none for the ones with more values
+    pub fn setting_is_on(&self, key: SettingKey) -> Option<bool> {
+        match key {
+            SettingKey::LocalEcho => Some(self.settings.local_echo),
+            SettingKey::DisplayTimestamp => Some(self.settings.show_timestamps),
+            SettingKey::Mouse => Some(self.settings.ui.mouse),
+            SettingKey::AnswerQueries => Some(self.settings.terminal_mode.answer_queries),
+            _ => None,
+        }
+    }
+
     fn take_screenshot(&mut self, format: ScreenshotFormat) {
         if self.settings.mode != Mode::Terminal {
             self.notify_info("Screenshots are in terminal mode");
@@ -1027,6 +1075,16 @@ impl App {
                 UpdateEffect::None
             }
             AppAction::LineControl(control) => UpdateEffect::LineControl(control),
+            AppAction::Open(port) => UpdateEffect::Open(port),
+            AppAction::SetEncoding(encoding) => {
+                self.settings.encoding = encoding;
+                self.notify_info(format!("Rx Text Encoding is {}", encoding.as_str()));
+                UpdateEffect::None
+            }
+            AppAction::SaveScreenshot(name) => {
+                self.save_screenshot_as(&name);
+                UpdateEffect::None
+            }
             AppAction::CancelCommands => {
                 self.cancel();
                 UpdateEffect::None
@@ -1536,12 +1594,15 @@ mod tests {
     use super::*;
     use crate::{configs::KeyBindingsConfig, inputs::DialogAction};
 
+    /// An app whose link is open
     fn app() -> App {
-        App::new(
+        let mut app = App::new(
             SettingsConfig::default(),
             KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap(),
             SerialConfig::default(),
-        )
+        );
+        app.set_link_open(true);
+        app
     }
 
     /// MAX-12: the command line runs its chain one action at a time, in order, each effect
@@ -1899,6 +1960,138 @@ mod tests {
         let open = matches!(app.overlay(), Some(Overlay::CommandLine(_)));
         app.close_overlay();
         open
+    }
+
+    /// MAX-12: `open` gives the port for the loop to open, its settings kept; the loop pauses
+    /// the line until its result, which resumes it or fails it. While the link isn't open,
+    /// `send` and the control lines refuse; a replay refuses `open`.
+    /// How: the loop's part played by the test.
+    #[test]
+    fn command_line_open() {
+        let mut app = app();
+        let queue_line = |app: &mut App, line: &str| {
+            app.update(KeyBindingAction::CommandLine.to_action(app));
+            app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
+            app.update(Action::Overlay(DialogAction::Confirm));
+        };
+        let last_toast = |app: &App| {
+            app.notifications
+                .active_toasts()
+                .last()
+                .unwrap()
+                .message
+                .clone()
+        };
+        let now = Instant::now();
+
+        queue_line(&mut app, "open /dev/ttyUSB9; send x");
+        let open = app.next_command_action(now).unwrap();
+        assert!(matches!(app.update(open), UpdateEffect::Open(port) if port == "/dev/ttyUSB9"));
+        // the loop: the link closed, the line waiting for the open
+        app.set_link_open(false);
+        app.pause_commands(now + Duration::from_secs(6));
+        assert!(app.next_command_action(now).is_none());
+        app.set_link_open(true);
+        app.resume_commands();
+        let send = app.next_command_action(now).unwrap();
+        assert!(matches!(app.update(send), UpdateEffect::Transmit(x) if x == b"x"));
+
+        app.set_link_open(false);
+        queue_line(&mut app, "send y; help");
+        assert!(app.next_command_action(now).is_none());
+        assert_eq!(
+            last_toast(&app),
+            "send: the port isn't open (detached or reconnecting) (1 more not run)"
+        );
+        queue_line(&mut app, "dtr on");
+        assert!(app.next_command_action(now).is_none());
+        assert_eq!(
+            last_toast(&app),
+            "dtr: the port isn't open (detached or reconnecting)"
+        );
+        // settings wait for the port to open
+        queue_line(&mut app, "baud 9600");
+        assert!(app.next_command_action(now).is_some());
+
+        app.set_link_open(true);
+        queue_line(&mut app, "open file:///tmp/x.raw");
+        assert!(app.next_command_action(now).is_none());
+        assert!(last_toast(&app).starts_with("open: a replay opens from the command line"));
+        app.serial_config.port = "file:///tmp/capture.raw".to_string();
+        queue_line(&mut app, "open /dev/ttyUSB0");
+        assert!(app.next_command_action(now).is_none());
+        assert_eq!(last_toast(&app), "open: a replay can't open a link");
+    }
+
+    /// MAX-12: `set` turns an on/off setting on or off (nothing when it is so already),
+    /// `encoding` sets the encoding, `search` opens the search bar on its text with its matches,
+    /// `screenshot` saves the terminal at once in `screenshot_dir`, as text or with its colors
+    /// (`.ans`), and refuses in line mode.
+    /// How: each command run, then the state it left.
+    #[test]
+    fn command_line_set_encoding_search_screenshot() {
+        let mut app = app();
+        app.settings.mode = Mode::Line;
+        let run_line = |app: &mut App, line: &str| {
+            app.update(KeyBindingAction::CommandLine.to_action(app));
+            app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
+            app.update(Action::Overlay(DialogAction::Confirm));
+            while let Some(action) = app.next_command_action(Instant::now()) {
+                app.update(action);
+            }
+        };
+        let last_toast = |app: &App| {
+            app.notifications
+                .active_toasts()
+                .last()
+                .unwrap()
+                .message
+                .clone()
+        };
+
+        let echo = app.settings.local_echo;
+        let on_off = |on: bool| if on { "on" } else { "off" };
+        run_line(&mut app, &format!("set local-echo {}", on_off(echo)));
+        assert_eq!(app.settings.local_echo, echo);
+        run_line(&mut app, &format!("set local-echo {}", on_off(!echo)));
+        assert_eq!(app.settings.local_echo, !echo);
+        run_line(
+            &mut app,
+            "set mouse off; set timestamps on; set answer-queries 0",
+        );
+        assert!(!app.settings.ui.mouse && app.settings.show_timestamps);
+        assert!(!app.settings.terminal_mode.answer_queries);
+        assert!(parse_fails(&mut app, "set line-wrap on"));
+
+        run_line(&mut app, "encoding cp437");
+        assert_eq!(app.settings.encoding, crate::configs::TextEncoding::Cp437);
+        assert_eq!(last_toast(&app), "Rx Text Encoding is CP437");
+        run_line(&mut app, "encoding utf8");
+
+        app.feed_rx(b"hello world\r\nbye\r\n");
+        run_line(&mut app, "search world");
+        let search = app.line_mode.search();
+        assert!(search.active);
+        assert_eq!(search.query_str(), "world");
+        assert_eq!(search.matches.len(), 1);
+
+        run_line(&mut app, "screenshot shot");
+        assert_eq!(
+            last_toast(&app),
+            "screenshot: screenshots are in terminal mode"
+        );
+        let dir =
+            std::env::temp_dir().join(format!("maxicom_test_{}_screenshots", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        app.settings.capture.screenshot_dir = dir.clone();
+        app.settings.mode = Mode::Terminal;
+        app.feed_rx(b"\x1b[31mred\x1b[0m");
+        run_line(&mut app, "screenshot shot; screenshot shot.ans");
+        let text = std::fs::read_to_string(dir.join("shot.txt")).unwrap();
+        let ansi = std::fs::read_to_string(dir.join("shot.ans")).unwrap();
+        assert!(text.contains("red") && !text.contains('\x1b'));
+        assert!(ansi.contains("\x1b["));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// MAX-12: the lines that ran are kept for the next command lines, trimmed, not twice in a

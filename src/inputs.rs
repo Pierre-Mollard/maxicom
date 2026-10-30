@@ -1,6 +1,6 @@
 /// Keyboard event polling and translation
 /// Using the 'crossterm' crate
-use std::{io, time::Duration};
+use std::{io, path::PathBuf, time::Duration};
 
 use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
 use ratatui::layout::Rect;
@@ -12,7 +12,7 @@ use crate::{
         transfer::FileTransfer,
     },
     capture::{ScreenshotFormat, Stream},
-    configs::{KeyBindingAction, KeyPattern, Mode},
+    configs::{KeyBindingAction, KeyPattern, Mode, TextEncoding},
     inputs::mouse::handle_mouse,
     link::serial::{LineControl, SerialConfig},
     overlays::{Overlay, PopupTarget, SettingKey},
@@ -65,6 +65,9 @@ pub enum AppAction {
     Reconfigure(SerialConfig),
     LineControl(LineControl),
     PauseCommands(Duration),
+    Open(String),
+    SetEncoding(TextEncoding),
+    SaveScreenshot(PathBuf),
     Quit,
 }
 
@@ -140,6 +143,7 @@ pub enum SearchModeAction {
     HandleKey(KeyEvent),
     Paste(String),
     ClickAt(usize),
+    Query(String),
 }
 
 #[derive(Debug, PartialEq, Eq)]

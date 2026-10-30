@@ -21,7 +21,7 @@ use crate::{
         AppConfig, ConfigsError, KeyResolver, KeywordHighlight, Mode, SettingsConfig, ThemeConfig,
     },
     link::{
-        ByteSource, Opener,
+        ByteSource, CONNECT_TIMEOUT, Opener,
         replay::Replay,
         serial::{LineControl, SerialConfig, SerialError},
         tcp_address,
@@ -374,6 +374,14 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                                 app.close_overlay();
                             }
                         }
+                        OpenFor::Open { previous } => {
+                            let switched = previous != *port;
+                            app.notify_success(format!("Opened {port}"));
+                            if switched {
+                                app.restart_journal();
+                            }
+                            app.resume_commands();
+                        }
                     }
                     open_for = OpenFor::Retry;
                     needs_redraw = true;
@@ -393,6 +401,14 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         }
                         OpenFor::Attach => app.notify_error(format!("Failed to reattach: {e}")),
                         OpenFor::Retry => {}
+                        // the retries reopen the port that was open
+                        OpenFor::Open { previous } => {
+                            app.serial_config.port = previous;
+                            app.fail_commands(format!(
+                                "open: {e}, back to {}",
+                                app.serial_config.port
+                            ));
+                        }
                     }
                     open_for = OpenFor::Retry;
                     needs_redraw = true;
@@ -414,6 +430,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         };
         let mut handled_events = 0;
         while running && handled_events < MAX_EVENTS_PER_FRAME {
+            // for the commands that need the link (MAX-12)
+            app.set_link_open(device.is_some());
             let action = match inputs::poll_event(poll_timeout) {
                 Ok(Some(event)) => {
                     let action = inputs::handle_event(event, &app);
@@ -439,6 +457,22 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             while let Some(action) = next.take() {
                 match app.update(action) {
                     UpdateEffect::Quit => running = false,
+                    // the current link closes and the new one opens as a reconnect does,
+                    // without waiting: the rest of the line waits for its result (MAX-12)
+                    UpdateEffect::Open(port) => {
+                        let previous = std::mem::replace(&mut app.serial_config.port, port);
+                        device = None;
+                        break_until = None;
+                        open_for = OpenFor::Open { previous };
+                        opener.restart(&app.serial_config);
+                        app.pause_commands(Instant::now() + CONNECT_TIMEOUT * 2);
+                        app.notify_info(format!("Opening {}", app.serial_config.port));
+                        if let Some(Overlay::DeviceDetached(_) | Overlay::DeviceDisconnected(_)) =
+                            app.overlay()
+                        {
+                            app.close_overlay();
+                        }
+                    }
                     UpdateEffect::ToggleAttachSerial => {
                         if !is_replay {
                             if device.is_some() {
@@ -532,6 +566,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     UpdateEffect::None => {}
                 }
                 if running {
+                    app.set_link_open(device.is_some());
                     next = app.next_command_action(Instant::now());
                 }
             }
@@ -607,11 +642,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 }
 
 /// Who started the open that runs, which decides what its result shows: a retry stays quiet
-/// until it connects, the user's attach reports a failure, the start shows the popup
+/// until it connects, the user's attach reports a failure, the start shows the popup. `open`
+/// (MAX-12) goes back to the `previous` port when it fails
 enum OpenFor {
     Start,
     Attach,
     Retry,
+    Open { previous: String },
 }
 
 /// Writes `bytes` to the device, counted and recorded (not in a replay), or opens the error

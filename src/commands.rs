@@ -298,6 +298,12 @@ pub static COMMANDS: &[CommandSpec] = {
             "Send a file at the baud rate, waiting after each line",
         ),
         CommandSpec::build(
+            "open",
+            &[arg("port", ArgKind::Path)],
+            build::open,
+            "Switch to a port or tcp://host:port, its settings kept",
+        ),
+        CommandSpec::build(
             "sleep",
             &[arg(
                 "ms",
@@ -356,6 +362,36 @@ pub static COMMANDS: &[CommandSpec] = {
             &[arg("framing", ArgKind::String)],
             build::framing,
             "Set data bits, parity and stop bits: 8N1",
+        ),
+        CommandSpec::build(
+            "set",
+            &[
+                arg("setting", ArgKind::Enum(build::ON_OFF_SETTINGS)),
+                arg("state", ArgKind::Bool),
+            ],
+            build::set,
+            "Set local-echo, timestamps, mouse or answer-queries on or off",
+        ),
+        CommandSpec::build(
+            "encoding",
+            &[arg(
+                "encoding",
+                ArgKind::Enum(&["utf8", "ascii", "cp437", "latin1"]),
+            )],
+            build::encoding,
+            "Read the received bytes as utf8, ascii, cp437 or latin1",
+        ),
+        CommandSpec::build(
+            "search",
+            &[arg("text", ArgKind::String)],
+            build::search,
+            "Search the history for the text",
+        ),
+        CommandSpec::build(
+            "screenshot",
+            &[arg("name", ArgKind::Path)],
+            build::screenshot,
+            "Save the terminal to a file: .ans keeps the colors",
         ),
         CommandSpec::build(
             "flow",

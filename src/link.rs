@@ -24,7 +24,7 @@ use serial::{LineControl, SerialConfig, SerialDevice, SerialError};
 use tcp::TcpDevice;
 
 /// A TCP connect gives up after this. Off the loop, except at start before the UI
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub enum ByteSource {
     Live(SerialDevice),
@@ -128,6 +128,13 @@ impl Opener {
         self.pending = Some(receiver);
     }
 
+    /// Starts opening `config`'s link in place of the open running, whose result is dropped:
+    /// `open` switching while the last port retries (MAX-12)
+    pub fn restart(&mut self, config: &SerialConfig) {
+        self.pending = None;
+        self.start(config);
+    }
+
     /// The result of the open started last, once it is done
     pub fn finished(&mut self) -> Option<Result<ByteSource, SerialError>> {
         let received = self.pending.as_ref()?.try_recv();
@@ -191,6 +198,21 @@ mod tests {
             Some(["raw", "TCP"])
         );
         assert_eq!(line_stand_in("/dev/ttyUSB0"), None);
+    }
+
+    /// MAX-12: `restart` drops the open running for the new one: its result is the new link's.
+    /// How: a TCP open started, then restarted on a local listener.
+    #[test]
+    fn opener_restart_drops_the_open_running() {
+        let first = TcpListener::bind("127.0.0.1:0").unwrap();
+        let second = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut opener = Opener::default();
+        opener.start(&config(&format!("tcp://{}", first.local_addr().unwrap())));
+        opener.restart(&config(&format!("tcp://{}", second.local_addr().unwrap())));
+        assert!(matches!(wait(&mut opener), Ok(ByteSource::Tcp(_))));
+        assert!(second.accept().is_ok());
+        assert!(opener.finished().is_none());
+        assert!(is_replay("file:///tmp/x.raw") && !is_replay("/dev/ttyUSB0"));
     }
 
     /// A TCP open runs off the loop and gives a TCP link; a second start while it runs is

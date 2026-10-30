@@ -147,6 +147,23 @@ What changes from a serial port:
 
   These six need a serial port: a TCP link (its bridge owns the lines and the
   settings) and a replay refuse them.
+  - `open <port>`: switches to another serial port or `tcp://host:port`, the
+    settings kept (`open /dev/ttyUSB1`, `open tcp://192.168.1.50:4000`). The
+    path completes from the disk. The rest of the line waits until it is
+    open: `open COM4; send AT\r`. A port that fails to open brings the last
+    one back. Another port starts a new session backup, as they go by port.
+    `detach-serial` detaches and attaches the port, as `Ctrl-A h` does.
+  - `set <setting> on|off`: `local-echo`, `timestamps`, `mouse` or
+    `answer-queries`; nothing when it is so already (the settings with more
+    values cycle with their keys).
+  - `encoding utf8|ascii|cp437|latin1`: how the received bytes are read.
+  - `search <text>`: opens the search bar on the text, its matches shown.
+  - `screenshot <name>`: saves the terminal at once, without the dialog, in
+    `screenshot_dir` for a bare name: `.ans` keeps the colors, else text
+    (`.txt` added to a name without an extension). Terminal mode only.
+  - While the port isn't open (detached, lost, reconnecting), `send`,
+    `send-file` and the control lines refuse; `baud`, `framing` and `flow`
+    are kept for when it opens.
   - `sleep <ms>`: the rest of the line waits that long (up to a minute), the
     screen stays live. A line run meanwhile waits behind it.
   - `cancel`: stops the file being sent and drops the commands waiting. A line
