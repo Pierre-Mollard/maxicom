@@ -1117,7 +1117,7 @@ mod tests {
         };
         assert!(bound_to_close(&rows, "Esc"), "{rows:#?}");
         assert!(bound_to_close(&rows, "Ctrl-x"), "{rows:#?}");
-        assert!(has(&rows, "-> cycle_next"), "{rows:#?}");
+        assert!(has(&rows, "-> cycle-next"), "{rows:#?}");
 
         // the letters come last, below the view
         h.app.update(Action::Overlay(DialogAction::End));
@@ -1162,7 +1162,7 @@ mod tests {
         let row_of = |text: &str| rows.iter().position(|row| row.contains(text));
         let header = row_of("Scrolling moves the view").expect("the scroll header");
         assert!(row_of("-> down").unwrap() < header, "{rows:#?}");
-        for scroll in ["scroll_up", "scroll_down", "scroll_to_top", "page_up"] {
+        for scroll in ["scroll-up", "scroll-down", "scroll-to-top", "page-up"] {
             let row = row_of(&format!("-> {scroll}"));
             assert!(row.is_some_and(|row| row > header), "{scroll}: {rows:#?}");
         }

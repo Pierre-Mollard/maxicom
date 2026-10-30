@@ -7,6 +7,8 @@ use std::{
     str::FromStr,
 };
 
+use crate::commands::{self, Target};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnknownActionError(pub String);
 
@@ -65,98 +67,19 @@ pub enum KeyBindingAction {
 impl FromStr for KeyBindingAction {
     type Err = UnknownActionError;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "quit" => Ok(KeyBindingAction::Quit),
-            "toggle_input_mode" => Ok(KeyBindingAction::SKInputMode),
-            "toggle_local_echo" => Ok(KeyBindingAction::SKLocalEcho),
-            "toggle_line_wrap" => Ok(KeyBindingAction::SKLineWrap),
-            "toggle_display_timestamp" => Ok(KeyBindingAction::SKDisplayTimestamp),
-            "toggle_text_encoding" => Ok(KeyBindingAction::SKTextEncoding),
-            "toggle_indent_wrap" => Ok(KeyBindingAction::SKIndentWrap),
-            "toggle_display_mode" => Ok(KeyBindingAction::SKDisplayMode),
-            "toggle_display_raw" => Ok(KeyBindingAction::SKDisplayRaw),
-            "screenshot_bytes" => Ok(KeyBindingAction::ScreenshotBytes),
-            "screenshot_text" => Ok(KeyBindingAction::ScreenshotTxt),
-            "help" => Ok(KeyBindingAction::Help),
-            "settings" => Ok(KeyBindingAction::Settings),
-            "toggle_logging" => Ok(KeyBindingAction::ToggleLogging),
-            "record_text" => Ok(KeyBindingAction::RecordText),
-            "record_raw" => Ok(KeyBindingAction::RecordRaw),
-            "resize_dialog" => Ok(KeyBindingAction::ResizeDialog),
-            "auto_resize_remote" => Ok(KeyBindingAction::AutoResizeRemote),
-            "auto_resize_remote_line" => Ok(KeyBindingAction::AutoResizeRemoteLine),
-            "auto_resize_emulator" => Ok(KeyBindingAction::AutoResizeEmulator),
-            "serial_settings" => Ok(KeyBindingAction::SerialSettings),
-            "enter_copy_mode" => Ok(KeyBindingAction::EnterCopyMode),
-            "enter_search" => Ok(KeyBindingAction::EnterSearch),
-            "scroll_up" => Ok(KeyBindingAction::ScrollUp),
-            "scroll_down" => Ok(KeyBindingAction::ScrollDown),
-            "scroll_to_bottom" => Ok(KeyBindingAction::ScrollToBottom),
-            "scroll_to_top" => Ok(KeyBindingAction::ScrollToTop),
-            "page_up" => Ok(KeyBindingAction::PageUp),
-            "page_down" => Ok(KeyBindingAction::PageDown),
-            "pan_right" => Ok(KeyBindingAction::PanRight),
-            "pan_left" => Ok(KeyBindingAction::PanLeft),
-            "pan_home" => Ok(KeyBindingAction::PanHome),
-            "pan_side_right" => Ok(KeyBindingAction::PanSideRight),
-            "pan_side_left" => Ok(KeyBindingAction::PanSideLeft),
-            "clear_history" => Ok(KeyBindingAction::ClearHistory),
-            "sessions" => Ok(KeyBindingAction::Sessions),
-            "exit_prefix" => Ok(KeyBindingAction::ExitPrefix),
-            "detach_serial" => Ok(KeyBindingAction::DetachSerial),
-            "reload_config" => Ok(KeyBindingAction::ReloadConfig),
-            "toggle_mouse" => Ok(KeyBindingAction::ToggleMouse),
-            other => Err(UnknownActionError(other.to_string())),
+    /// An action's name is its command's in the registry (MAX-12)
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        match commands::find_by_name(name).map(|spec| spec.target) {
+            Some(Target::Action(action)) => Ok(action),
+            None => Err(UnknownActionError(name.to_string())),
         }
     }
 }
 
 impl std::fmt::Display for KeyBindingAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            Self::Quit => "quit",
-            Self::SKInputMode => "toggle_input_mode",
-            Self::SKLocalEcho => "toggle_local_echo",
-            Self::SKLineWrap => "toggle_line_wrap",
-            Self::SKDisplayTimestamp => "toggle_display_timestamp",
-            Self::SKTextEncoding => "toggle_text_encoding",
-            Self::SKIndentWrap => "toggle_indent_wrap",
-            Self::SKDisplayMode => "toggle_display_mode",
-            Self::SKDisplayRaw => "toggle_display_raw",
-            Self::ScreenshotBytes => "screenshot_bytes",
-            Self::ScreenshotTxt => "screenshot_text",
-            Self::Help => "help",
-            Self::Settings => "settings",
-            Self::ToggleLogging => "toggle_logging",
-            Self::RecordText => "record_text",
-            Self::RecordRaw => "record_raw",
-            Self::ResizeDialog => "resize_dialog",
-            Self::AutoResizeRemote => "auto_resize_remote",
-            Self::AutoResizeRemoteLine => "auto_resize_remote_line",
-            Self::AutoResizeEmulator => "auto_resize_emulator",
-            Self::SerialSettings => "serial_settings",
-            Self::EnterCopyMode => "enter_copy_mode",
-            Self::EnterSearch => "enter_search",
-            Self::ScrollUp => "scroll_up",
-            Self::ScrollDown => "scroll_down",
-            Self::ScrollToBottom => "scroll_to_bottom",
-            Self::ScrollToTop => "scroll_to_top",
-            Self::PageUp => "page_up",
-            Self::PageDown => "page_down",
-            Self::PanRight => "pan_right",
-            Self::PanLeft => "pan_left",
-            Self::PanHome => "pan_home",
-            Self::PanSideRight => "pan_side_right",
-            Self::PanSideLeft => "pan_side_left",
-            Self::ClearHistory => "clear_history",
-            Self::Sessions => "sessions",
-            Self::ExitPrefix => "exit_prefix",
-            Self::DetachSerial => "detach_serial",
-            Self::ReloadConfig => "reload_config",
-            Self::ToggleMouse => "toggle_mouse",
-        };
-        write!(f, "{s}")
+        let spec = commands::find_by_action(*self).expect("every action has a command");
+        write!(f, "{}", spec.name)
     }
 }
 
@@ -212,13 +135,13 @@ impl std::str::FromStr for KeyBindingLineAction {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "submit" => Ok(Self::Submit),
-            "history_prev" => Ok(Self::HistoryPrev),
-            "history_next" => Ok(Self::HistoryNext),
-            "auto_resize_remote_line" => Ok(Self::AutoResizeRemoteLine),
-            "clear_line" => Ok(Self::ClearLine),
+            "history-prev" => Ok(Self::HistoryPrev),
+            "history-next" => Ok(Self::HistoryNext),
+            "auto-resize-remote-line" => Ok(Self::AutoResizeRemoteLine),
+            "clear-line" => Ok(Self::ClearLine),
             "interrupt" => Ok(Self::Interrupt),
-            "page_up" => Ok(Self::PageUp),
-            "page_down" => Ok(Self::PageDown),
+            "page-up" => Ok(Self::PageUp),
+            "page-down" => Ok(Self::PageDown),
             "quit" => Ok(Self::Quit),
             other => Err(UnknownActionError(other.to_string())),
         }
@@ -229,13 +152,13 @@ impl std::fmt::Display for KeyBindingLineAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
             Self::Submit => "submit",
-            Self::HistoryPrev => "history_prev",
-            Self::HistoryNext => "history_next",
-            Self::AutoResizeRemoteLine => "auto_resize_remote_line",
-            Self::ClearLine => "clear_line",
+            Self::HistoryPrev => "history-prev",
+            Self::HistoryNext => "history-next",
+            Self::AutoResizeRemoteLine => "auto-resize-remote-line",
+            Self::ClearLine => "clear-line",
             Self::Interrupt => "interrupt",
-            Self::PageUp => "page_up",
-            Self::PageDown => "page_down",
+            Self::PageUp => "page-up",
+            Self::PageDown => "page-down",
             Self::Quit => "quit",
         };
         write!(f, "{s}")
@@ -254,8 +177,8 @@ impl std::str::FromStr for KeyBindingTerminalAction {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "auto_resize_remote" => Ok(Self::AutoResizeRemote),
-            "auto_resize_emulator" => Ok(Self::AutoResizeEmulator),
+            "auto-resize-remote" => Ok(Self::AutoResizeRemote),
+            "auto-resize-emulator" => Ok(Self::AutoResizeEmulator),
             "quit" => Ok(Self::Quit),
             other => Err(UnknownActionError(other.to_string())),
         }
@@ -265,8 +188,8 @@ impl std::str::FromStr for KeyBindingTerminalAction {
 impl std::fmt::Display for KeyBindingTerminalAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
-            Self::AutoResizeRemote => "auto_resize_remote",
-            Self::AutoResizeEmulator => "auto_resize_emulator",
+            Self::AutoResizeRemote => "auto-resize-remote",
+            Self::AutoResizeEmulator => "auto-resize-emulator",
             Self::Quit => "quit",
         };
         write!(f, "{s}")
@@ -291,7 +214,7 @@ impl std::str::FromStr for KeyBindingSearchAction {
             "previous" => Ok(Self::Previous),
             "cancel" => Ok(Self::Cancel),
             "confirm" => Ok(Self::Confirm),
-            "search_kind" => Ok(Self::Kind),
+            "search-kind" => Ok(Self::Kind),
             other => Err(UnknownActionError(other.to_string())),
         }
     }
@@ -304,7 +227,7 @@ impl std::fmt::Display for KeyBindingSearchAction {
             Self::Previous => "previous",
             Self::Cancel => "cancel",
             Self::Confirm => "confirm",
-            Self::Kind => "search_kind",
+            Self::Kind => "search-kind",
         };
         write!(f, "{s}")
     }
@@ -351,20 +274,20 @@ impl std::str::FromStr for KeyBindingCopyAction {
             "down" => Ok(Self::Down),
             "left" => Ok(Self::Left),
             "right" => Ok(Self::Right),
-            "page_up" => Ok(Self::PageUp),
-            "page_down" => Ok(Self::PageDown),
-            "start_of_line" => Ok(Self::StartOfLine),
-            "end_of_line" => Ok(Self::EndOfLine),
+            "page-up" => Ok(Self::PageUp),
+            "page-down" => Ok(Self::PageDown),
+            "start-of-line" => Ok(Self::StartOfLine),
+            "end-of-line" => Ok(Self::EndOfLine),
             "select" => Ok(Self::Select),
-            "select_line" => Ok(Self::SelectLine),
+            "select-line" => Ok(Self::SelectLine),
             "yank" => Ok(Self::Yank),
-            "yank_side_inspector" => Ok(Self::YankSideInspector),
-            "toggle_side" => Ok(Self::ToggleSide),
+            "yank-side-inspector" => Ok(Self::YankSideInspector),
+            "toggle-side" => Ok(Self::ToggleSide),
             "exit" => Ok(Self::Exit),
-            "scroll_up" => Ok(Self::ScrollUp),
-            "scroll_down" => Ok(Self::ScrollDown),
-            "scroll_page_up" => Ok(Self::ScrollPageUp),
-            "scroll_page_down" => Ok(Self::ScrollPageDown),
+            "scroll-up" => Ok(Self::ScrollUp),
+            "scroll-down" => Ok(Self::ScrollDown),
+            "scroll-page-up" => Ok(Self::ScrollPageUp),
+            "scroll-page-down" => Ok(Self::ScrollPageDown),
             other => Err(UnknownActionError(other.to_string())),
         }
     }
@@ -377,20 +300,20 @@ impl std::fmt::Display for KeyBindingCopyAction {
             Self::Down => "down",
             Self::Left => "left",
             Self::Right => "right",
-            Self::PageUp => "page_up",
-            Self::PageDown => "page_down",
-            Self::StartOfLine => "start_of_line",
-            Self::EndOfLine => "end_of_line",
+            Self::PageUp => "page-up",
+            Self::PageDown => "page-down",
+            Self::StartOfLine => "start-of-line",
+            Self::EndOfLine => "end-of-line",
             Self::Select => "select",
-            Self::SelectLine => "select_line",
+            Self::SelectLine => "select-line",
             Self::Yank => "yank",
-            Self::YankSideInspector => "yank_side_inspector",
-            Self::ToggleSide => "toggle_side",
+            Self::YankSideInspector => "yank-side-inspector",
+            Self::ToggleSide => "toggle-side",
             Self::Exit => "exit",
-            Self::ScrollUp => "scroll_up",
-            Self::ScrollDown => "scroll_down",
-            Self::ScrollPageUp => "scroll_page_up",
-            Self::ScrollPageDown => "scroll_page_down",
+            Self::ScrollUp => "scroll-up",
+            Self::ScrollDown => "scroll-down",
+            Self::ScrollPageUp => "scroll-page-up",
+            Self::ScrollPageDown => "scroll-page-down",
         };
         write!(f, "{s}")
     }
@@ -423,10 +346,10 @@ impl std::str::FromStr for KeyBindingDialogAction {
             "down" => Ok(Self::NavDown),
             "left" => Ok(Self::NavLeft),
             "right" => Ok(Self::NavRight),
-            "cycle_next" => Ok(Self::CycleNext),
-            "cycle_prev" => Ok(Self::CyclePrev),
-            "page_up" => Ok(Self::PageUp),
-            "page_down" => Ok(Self::PageDown),
+            "cycle-next" => Ok(Self::CycleNext),
+            "cycle-prev" => Ok(Self::CyclePrev),
+            "page-up" => Ok(Self::PageUp),
+            "page-down" => Ok(Self::PageDown),
             "home" => Ok(Self::Home),
             "end" => Ok(Self::End),
             other => Err(UnknownActionError(other.to_string())),
@@ -443,10 +366,10 @@ impl std::fmt::Display for KeyBindingDialogAction {
             KeyBindingDialogAction::NavDown => "down",
             KeyBindingDialogAction::NavLeft => "left",
             KeyBindingDialogAction::NavRight => "right",
-            KeyBindingDialogAction::CycleNext => "cycle_next",
-            KeyBindingDialogAction::CyclePrev => "cycle_prev",
-            KeyBindingDialogAction::PageUp => "page_up",
-            KeyBindingDialogAction::PageDown => "page_down",
+            KeyBindingDialogAction::CycleNext => "cycle-next",
+            KeyBindingDialogAction::CyclePrev => "cycle-prev",
+            KeyBindingDialogAction::PageUp => "page-up",
+            KeyBindingDialogAction::PageDown => "page-down",
             KeyBindingDialogAction::Home => "home",
             KeyBindingDialogAction::End => "end",
         };
@@ -1238,10 +1161,10 @@ mod tests {
         assert_eq!(prefix_action("r"), KeyBindingAction::ReloadConfig);
         assert_eq!(prefix_action("w"), KeyBindingAction::ResizeDialog);
         assert_eq!(
-            "reload_config".parse::<KeyBindingAction>().unwrap(),
+            "reload-config".parse::<KeyBindingAction>().unwrap(),
             KeyBindingAction::ReloadConfig
         );
-        assert_eq!(KeyBindingAction::ReloadConfig.to_string(), "reload_config");
+        assert_eq!(KeyBindingAction::ReloadConfig.to_string(), "reload-config");
     }
 
     /// MAX-129: Ctrl-C is no global quit key: in line mode it is `interrupt`, in terminal mode
@@ -1268,9 +1191,9 @@ mod tests {
         let resolver = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
         let action = resolver.copy_actions[&"V".parse().unwrap()];
         assert_eq!(action, KeyBindingCopyAction::SelectLine);
-        assert_eq!(action.to_string(), "select_line");
+        assert_eq!(action.to_string(), "select-line");
         assert_eq!(
-            "select_line".parse::<KeyBindingCopyAction>().unwrap(),
+            "select-line".parse::<KeyBindingCopyAction>().unwrap(),
             action
         );
     }
@@ -1354,8 +1277,68 @@ mod tests {
         let resolver = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
         let action = resolver.prefix_actions[&"M".parse().unwrap()];
         assert_eq!(action, KeyBindingAction::ToggleMouse);
-        assert_eq!(action.to_string(), "toggle_mouse");
-        assert_eq!("toggle_mouse".parse::<KeyBindingAction>().unwrap(), action);
+        assert_eq!(action.to_string(), "toggle-mouse");
+        assert_eq!("toggle-mouse".parse::<KeyBindingAction>().unwrap(), action);
+    }
+
+    /// The action names of `keymap.toml` come from the command registry (MAX-12), with `-`
+    /// between words: the old `_` names are refused
+    #[test]
+    fn action_names() {
+        const NAMES: [(&str, KeyBindingAction); 40] = [
+            ("quit", KeyBindingAction::Quit),
+            ("toggle-input-mode", KeyBindingAction::SKInputMode),
+            ("toggle-local-echo", KeyBindingAction::SKLocalEcho),
+            ("toggle-line-wrap", KeyBindingAction::SKLineWrap),
+            (
+                "toggle-display-timestamp",
+                KeyBindingAction::SKDisplayTimestamp,
+            ),
+            ("toggle-text-encoding", KeyBindingAction::SKTextEncoding),
+            ("toggle-indent-wrap", KeyBindingAction::SKIndentWrap),
+            ("toggle-display-mode", KeyBindingAction::SKDisplayMode),
+            ("toggle-display-raw", KeyBindingAction::SKDisplayRaw),
+            ("screenshot-bytes", KeyBindingAction::ScreenshotBytes),
+            ("screenshot-text", KeyBindingAction::ScreenshotTxt),
+            ("help", KeyBindingAction::Help),
+            ("settings", KeyBindingAction::Settings),
+            ("toggle-logging", KeyBindingAction::ToggleLogging),
+            ("record-text", KeyBindingAction::RecordText),
+            ("record-raw", KeyBindingAction::RecordRaw),
+            ("resize-dialog", KeyBindingAction::ResizeDialog),
+            ("auto-resize-remote", KeyBindingAction::AutoResizeRemote),
+            (
+                "auto-resize-remote-line",
+                KeyBindingAction::AutoResizeRemoteLine,
+            ),
+            ("auto-resize-emulator", KeyBindingAction::AutoResizeEmulator),
+            ("serial-settings", KeyBindingAction::SerialSettings),
+            ("enter-copy-mode", KeyBindingAction::EnterCopyMode),
+            ("enter-search", KeyBindingAction::EnterSearch),
+            ("scroll-up", KeyBindingAction::ScrollUp),
+            ("scroll-down", KeyBindingAction::ScrollDown),
+            ("scroll-to-bottom", KeyBindingAction::ScrollToBottom),
+            ("scroll-to-top", KeyBindingAction::ScrollToTop),
+            ("page-up", KeyBindingAction::PageUp),
+            ("page-down", KeyBindingAction::PageDown),
+            ("pan-right", KeyBindingAction::PanRight),
+            ("pan-left", KeyBindingAction::PanLeft),
+            ("pan-home", KeyBindingAction::PanHome),
+            ("pan-side-right", KeyBindingAction::PanSideRight),
+            ("pan-side-left", KeyBindingAction::PanSideLeft),
+            ("clear-history", KeyBindingAction::ClearHistory),
+            ("sessions", KeyBindingAction::Sessions),
+            ("exit-prefix", KeyBindingAction::ExitPrefix),
+            ("detach-serial", KeyBindingAction::DetachSerial),
+            ("reload-config", KeyBindingAction::ReloadConfig),
+            ("toggle-mouse", KeyBindingAction::ToggleMouse),
+        ];
+        for (name, action) in NAMES {
+            assert_eq!(name.parse::<KeyBindingAction>().unwrap(), action, "{name}");
+            assert_eq!(action.to_string(), name);
+        }
+        assert!("toggle_local_echo".parse::<KeyBindingAction>().is_err());
+        assert!("".parse::<KeyBindingAction>().is_err());
     }
 
     /// Keys a text input popup still sends to `[dialog_actions]`: the others are typed.

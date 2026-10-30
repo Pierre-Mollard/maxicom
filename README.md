@@ -180,7 +180,7 @@ where its lines wrap, which `dimension_mode` decides.
   same kind of `tty` test. Each run costs one round trip on the line (a few
   bytes each way): on a very slow link, call `_serial_resize` once in place of
   the `precmd_functions` line, to fix the size at login only.
-- By hand: Alt-R (`auto_resize_remote`) sends
+- By hand: Alt-R (`auto-resize-remote`) sends
   `stty rows R cols C; export LINES=R COLUMNS=C` with the emulator's size,
   the same size `resize` gets. In line mode Alt-R sends the columns only.
 - With `answer_queries` off, or on a device without `resize`, the size stays
@@ -193,10 +193,10 @@ where its lines wrap, which `dimension_mode` decides.
             (`timestamp_format`) when `timestamp` is on. In line mode, the
             sent lines too, after `tx_mark`
   - `raw`   The received bytes as is, replayable with `--replay <file>`
-  Text and raw record apart, both at once if you want. `toggle_logging`
+  Text and raw record apart, both at once if you want. `toggle-logging`
   (`Ctrl-A l`, or a click on `● REC`) stops every recording, or opens the
   recording dialog on the mode's stream (text in line mode, raw in terminal
-  mode). `record_text` and `record_raw` (no default keys, also in the
+  mode). `record-text` and `record-raw` (no default keys, also in the
   right-click menu) start or stop one stream.
 - The recording dialog: the path is prefilled, Enter starts.
   - `Tab`        Switch the stream (swaps the default path unless edited)
@@ -257,8 +257,8 @@ where its lines wrap, which `dimension_mode` decides.
   A keymap file from before has no `S` binding: add `S = "sessions"` under
   `[prefix_actions]` in `keymap.toml`, or delete the file to get the new
   defaults.
-- Screenshots (terminal mode): `screenshot_bytes` (`Ctrl-A k`) and
-  `screenshot_text` (no default key, Screenshot in the right-click menu) take
+- Screenshots (terminal mode): `screenshot-bytes` (`Ctrl-A k`) and
+  `screenshot-text` (no default key, Screenshot in the right-click menu) take
   the screen at once, in both formats, then a dialog asks where to save it.
   Enter saves to the prefilled path, Esc drops it. In line mode they only say
   so.
@@ -369,7 +369,7 @@ screenshot_name = "screen_%Y%m%d_%H%M%S" # the format adds .txt or .ans
     hide, hidden, none
   - Mouse:
     `click=<action>` runs a keymap action (e.g. `help`, `settings`, `quit`,
-    `toggle_logging`) when the block is clicked
+    `toggle-logging`) when the block is clicked
     `hover=<style>` styles the block under the mouse pointer, e.g.
     `hover=(bg=main fg=black)`, or `hover=none`; blocks without it take
     `hover` in `[ui.status_bar]` (default "reversed", "none" for no hover)
@@ -390,14 +390,14 @@ screenshot_name = "screen_%Y%m%d_%H%M%S" # the format adds .txt or .ans
   - {scroll_pos}, {scroll_pos_up}, {scroll_percent}, {scroll_offset}
                                  Back to the live tail
   A variable in plain text (outside `[...]`) is clickable on its own.
-  The scroll and pan actions a `click=` can run: `scroll_up`, `scroll_down`,
-  `page_up`, `page_down`, `scroll_to_top`, `scroll_to_bottom`, `pan_left`,
-  `pan_right`, `pan_home` (back to the left edge). They move the view only,
-  in copy mode too: the copy cursor stays. The steps (`scroll_up`,
-  `scroll_down`, `page_up`, `page_down`, `pan_left`, `pan_right`) repeat while
+  The scroll and pan actions a `click=` can run: `scroll-up`, `scroll-down`,
+  `page-up`, `page-down`, `scroll-to-top`, `scroll-to-bottom`, `pan-left`,
+  `pan-right`, `pan-home` (back to the left edge). They move the view only,
+  in copy mode too: the copy cursor stays. The steps (`scroll-up`,
+  `scroll-down`, `page-up`, `page-down`, `pan-left`, `pan-right`) repeat while
   the button is held on their block, until the pointer leaves it. The wheel
   over a block that pans pans the history. A custom scroll block:
-  `[▲](click=page_up)[{scroll_percent:>3}%](muted)[▼](click=page_down)`
+  `[▲](click=page-up)[{scroll_percent:>3}%](muted)[▼](click=page-down)`
   The history box's own indicators are clickable too: its bottom border's
   `◀ (n)` / `(n) ▶` pan, its title's `SCROLL +n` goes back to the live tail
   and `PAN +n` to the left edge.

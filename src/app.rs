@@ -1419,7 +1419,7 @@ mod tests {
     }
 
     /// MAX-147: each stream's action opens the dialog on it or stops it alone; the
-    /// `toggle_logging` action (the `REC` click) stops both, and `REC` is on with either.
+    /// `toggle-logging` action (the `REC` click) stops both, and `REC` is on with either.
     /// How: text and raw recordings to temp files, then each action in turn.
     #[test]
     fn recording_actions_per_stream() {

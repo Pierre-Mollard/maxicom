@@ -121,20 +121,20 @@
 //!
 //! | Variable                                                   | Click                     |
 //! |------------------------------------------------------------|---------------------------|
-//! | `{mode}`                                                   | `toggle_input_mode`       |
-//! | `{baud}`, `{framing}`                                      | `serial_settings`         |
+//! | `{mode}`                                                   | `toggle-input-mode`       |
+//! | `{baud}`, `{framing}`                                      | `serial-settings`         |
 //! | `{copy_side}`                                              | the copy cursor's panel   |
-//! | `{pan_left}`, `{pan_right}`                                | `pan_left`, `pan_right`   |
-//! | `{pan_offset}`, `{pan_max}`                                | `pan_home`                |
-//! | `{scroll_pos}` `{scroll_pos_up}` `{scroll_percent}` `{scroll_offset}` | `scroll_to_bottom` |
+//! | `{pan_left}`, `{pan_right}`                                | `pan-left`, `pan-right`   |
+//! | `{pan_offset}`, `{pan_max}`                                | `pan-home`                |
+//! | `{scroll_pos}` `{scroll_pos_up}` `{scroll_percent}` `{scroll_offset}` | `scroll-to-bottom` |
 //!
-//! The scroll and pan actions a `click=` can run: `scroll_up`, `scroll_down`, `page_up`,
-//! `page_down`, `scroll_to_top`, `scroll_to_bottom`, `pan_left`, `pan_right`, `pan_home` (back
+//! The scroll and pan actions a `click=` can run: `scroll-up`, `scroll-down`, `page-up`,
+//! `page-down`, `scroll-to-top`, `scroll-to-bottom`, `pan-left`, `pan-right`, `pan-home` (back
 //! to the left edge). They move the view only, in copy mode too: the copy cursor stays. The
-//! steps (all but `scroll_to_top`, `scroll_to_bottom` and `pan_home`) repeat while the button
+//! steps (all but `scroll-to-top`, `scroll-to-bottom` and `pan-home`) repeat while the button
 //! is held on their block, until the pointer leaves it. The wheel over a block that pans pans
 //! the history. A custom scroll block:
-//! `[▲](click=page_up)[{scroll_percent:>3}%](muted)[▼](click=page_down)`
+//! `[▲](click=page-up)[{scroll_percent:>3}%](muted)[▼](click=page-down)`
 //!
 //! ## Examples
 //! ```toml
@@ -146,7 +146,7 @@
 //! center = "[{pan_left} ](pan_left?warn:hide)[{scroll_pos}](has_scroll?muted:hide)[ {pan_right}](pan_right_alert?(bg=warn fg=black bold):(pan_right?warn:hide))"
 //!
 //! # Right-aligned status with a red badge for recording (a click stops it) and a help button:
-//! right = "[ ● REC ](rec?(bg=warn fg=white bold):hide click=toggle_logging) [{scroll_pos_up}](has_scroll?muted:hide) [RX: {rx_bytes}](muted) | [TX: {tx_bytes}](muted) | [{time}](secondary) [?](muted click=help)"
+//! right = "[ ● REC ](rec?(bg=warn fg=white bold):hide click=toggle-logging) [{scroll_pos_up}](has_scroll?muted:hide) [RX: {rx_bytes}](muted) | [TX: {tx_bytes}](muted) | [{time}](secondary) [?](muted click=help)"
 //! ```
 
 use std::borrow::Cow;

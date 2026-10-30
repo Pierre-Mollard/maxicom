@@ -33,6 +33,7 @@ use crate::{
 mod app;
 mod args;
 mod capture;
+mod commands;
 mod configs;
 mod inputs;
 mod link;
