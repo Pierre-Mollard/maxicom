@@ -1199,6 +1199,31 @@ mod tests {
         assert!(rows[22].starts_with("│:toggle-d"), "{:?}", rows[22]);
     }
 
+    /// MAX-12: the default status bar shows the file `send-file` sends and its progress, only
+    /// while it is sent; a click on it stops it.
+    #[test]
+    fn status_bar_send_progress() {
+        use crate::app::transfer::FileTransfer;
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 10);
+        assert!(!has(&h.draw(), "⇡"));
+        let transfer = FileTransfer::new(
+            Box::new(std::io::Cursor::new(vec![b'x'; 10])),
+            "fw.bin".to_string(),
+            10,
+            960.0,
+            std::time::Duration::ZERO,
+            std::time::Instant::now(),
+        );
+        h.app
+            .update(Action::App(AppAction::StartTransfer(Box::new(transfer))));
+        let rows = h.draw();
+        assert!(has(&rows, "⇡ fw.bin   0%"), "{rows:#?}");
+        // not the "Sending fw.bin" notice
+        click(&mut h, cell_of(&rows, "⇡ fw.bin"));
+        assert!(h.app.transfer().is_none());
+        assert!(!has(&h.draw(), "⇡"));
+    }
+
     /// A text input popup types the keys that are not Esc, Enter, Tab or modified, so they
     /// are not hints there.
     /// How: Cancel bound to `q` only, then to `q` and Ctrl-q (`q` comes first in the order).

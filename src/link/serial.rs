@@ -153,6 +153,31 @@ pub struct SerialConfig {
 }
 
 impl SerialConfig {
+    /// The bits on the wire for one character: the start bit, the data bits, the parity bit if
+    /// any and the stop bits; 10 for 8N1
+    pub fn bits_per_char(&self) -> u32 {
+        let data = match self.char_size {
+            CharSize::Bits5 => 5,
+            CharSize::Bits6 => 6,
+            CharSize::Bits7 => 7,
+            CharSize::Bits8 => 8,
+        };
+        let parity = match self.parity {
+            Parity::None => 0,
+            Parity::Odd | Parity::Even => 1,
+        };
+        let stop = match self.stop_bits {
+            StopBits::One => 1,
+            StopBits::Two => 2,
+        };
+        1 + data + parity + stop
+    }
+
+    /// The characters the line carries a second at its baud rate and framing
+    pub fn bytes_per_sec(&self) -> f64 {
+        f64::from(self.baudrate) / f64::from(self.bits_per_char())
+    }
+
     pub fn compact_notation(&self) -> [char; 3] {
         let d = match self.char_size {
             CharSize::Bits5 => '5',
@@ -442,5 +467,36 @@ impl Drop for SerialDevice {
         unsafe {
             libc::ioctl(fd, libc::TIOCNXCL);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// MAX-12: the framing's bits per character, what a paced `send-file` divides the baud
+    /// rate by
+    #[test]
+    fn bits_per_char() {
+        let framing = |char_size, parity, stop_bits| SerialConfig {
+            char_size,
+            parity,
+            stop_bits,
+            ..SerialConfig::default()
+        };
+        let cases = [
+            (framing(CharSize::Bits8, Parity::None, StopBits::One), 10),
+            (framing(CharSize::Bits7, Parity::Even, StopBits::One), 10),
+            (framing(CharSize::Bits8, Parity::Odd, StopBits::Two), 12),
+            (framing(CharSize::Bits5, Parity::None, StopBits::One), 7),
+        ];
+        for (config, bits) in cases {
+            assert_eq!(config.bits_per_char(), bits, "{config}");
+        }
+        let config = SerialConfig {
+            baudrate: 9600,
+            ..framing(CharSize::Bits8, Parity::Even, StopBits::One)
+        };
+        assert!((config.bytes_per_sec() - 9600.0 / 11.0).abs() < 1e-9);
     }
 }

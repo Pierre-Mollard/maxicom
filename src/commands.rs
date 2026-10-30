@@ -1,14 +1,17 @@
 /// Command registry and parser (MAX-12): the one table of named commands that keys, the
-/// command line and later the API (MAX-74) run. Pure functions, no UI
-use std::path::PathBuf;
+/// command line and later the API (MAX-74) run. The parser and the completion are pure, but for
+/// the paths read from the disk; the commands with arguments build their actions in `build`
+use std::path::{Path, PathBuf};
 
-use crate::configs::KeyBindingAction;
+use crate::{app::App, capture::expand_home, configs::KeyBindingAction, inputs::Action};
 
+pub mod build;
 pub mod tokenizer;
 
 use tokenizer::Word;
 
-// TODO: (MAX-12) the commands with arguments (step 3) use them
+/// `Bytes` is any bytes, the word as the tokenizer made it (escapes and all), not only UTF-8
+// TODO: (MAX-12) the commands of steps 3b to 3d use the others
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArgKind {
@@ -22,6 +25,7 @@ pub enum ArgKind {
     String,
     Path,
     Hex,
+    Bytes,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,19 +46,30 @@ pub struct ArgSpec {
     pub optional: bool,
 }
 
-/// What a command runs
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What a command runs: a keymap action, or the action built from its arguments (checked
+/// against its spec), refused with the reason when the link can't do it
+#[derive(Debug, Clone, Copy)]
 pub enum Target {
     Action(KeyBindingAction),
+    Build(fn(&App, &[ArgValue]) -> Result<Action, String>),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct CommandSpec {
     pub name: &'static str,
     pub args: &'static [ArgSpec],
     pub help: &'static str,
     pub target: Target,
 }
+
+/// A spec is one entry of a registry: the same spec is the same entry
+impl PartialEq for CommandSpec {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+
+impl Eq for CommandSpec {}
 
 impl CommandSpec {
     const fn action(name: &'static str, action: KeyBindingAction, help: &'static str) -> Self {
@@ -64,6 +79,28 @@ impl CommandSpec {
             help,
             target: Target::Action(action),
         }
+    }
+
+    const fn build(
+        name: &'static str,
+        args: &'static [ArgSpec],
+        build: fn(&App, &[ArgValue]) -> Result<Action, String>,
+        help: &'static str,
+    ) -> Self {
+        Self {
+            name,
+            args,
+            help,
+            target: Target::Build(build),
+        }
+    }
+}
+
+const fn arg(name: &'static str, kind: ArgKind) -> ArgSpec {
+    ArgSpec {
+        name,
+        kind,
+        optional: false,
     }
 }
 
@@ -92,6 +129,11 @@ pub enum CommandError {
         index: usize,
         reason: String,
     },
+    /// Refused when it ran: the link can't do it
+    Failed {
+        command: &'static str,
+        reason: String,
+    },
 }
 
 impl std::fmt::Display for CommandError {
@@ -112,6 +154,7 @@ impl std::fmt::Display for CommandError {
                 index,
                 reason,
             } => write!(f, "{command}: bad argument {index}: {reason}"),
+            Self::Failed { command, reason } => write!(f, "{command}: {reason}"),
         }
     }
 }
@@ -222,6 +265,36 @@ pub static COMMANDS: &[CommandSpec] = {
         CommandSpec::action("reload-config", A::ReloadConfig, "Reload the config files"),
         CommandSpec::action("toggle-mouse", A::ToggleMouse, "Toggle mouse support"),
         CommandSpec::action("command-line", A::CommandLine, "Open the command line"),
+        CommandSpec::action("send-cancel", A::SendCancel, "Stop sending a file"),
+        CommandSpec::build(
+            "send",
+            &[arg("text", ArgKind::Bytes)],
+            build::send,
+            "Send text, with escapes: \\r \\n \\t \\xNN",
+        ),
+        CommandSpec::build(
+            "send-hex",
+            &[arg("bytes", ArgKind::Hex)],
+            build::send,
+            "Send bytes written in hex: 0d0a",
+        ),
+        CommandSpec::build(
+            "send-file",
+            &[
+                arg("path", ArgKind::Path),
+                ArgSpec {
+                    name: "line-delay-ms",
+                    kind: ArgKind::Int {
+                        min: 0,
+                        max: 60_000,
+                        suggestions: &[],
+                    },
+                    optional: true,
+                },
+            ],
+            build::send_file,
+            "Send a file at the baud rate, waiting after each line",
+        ),
     ]
 };
 
@@ -232,13 +305,13 @@ pub fn find_by_name(name: &str) -> Option<&'static CommandSpec> {
 pub fn find_by_action(action: KeyBindingAction) -> Option<&'static CommandSpec> {
     COMMANDS
         .iter()
-        .find(|spec| spec.target == Target::Action(action))
+        .find(|spec| matches!(spec.target, Target::Action(a) if a == action))
 }
 
 /// A value to complete a word with, and its help line (a command's, none for a value)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
-    pub value: &'static str,
+    pub value: String,
     pub help: &'static str,
 }
 
@@ -272,7 +345,7 @@ fn complete_in(commands: &'static [CommandSpec], line: &str) -> Completion {
             specs
                 .into_iter()
                 .map(|spec| Candidate {
-                    value: spec.name,
+                    value: spec.name.to_string(),
                     help: spec.help,
                 })
                 .collect()
@@ -281,13 +354,20 @@ fn complete_in(commands: &'static [CommandSpec], line: &str) -> Completion {
             .iter()
             .find(|spec| spec.name == name)
             .and_then(|spec| spec.args.get(word.index - 1))
-            .map(|arg| arg.kind.candidates(prefix))
+            .map(|arg| match arg.kind {
+                ArgKind::Path => path_candidates(prefix),
+                kind => kind
+                    .candidates(prefix)
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+            })
             .unwrap_or_default()
             .into_iter()
             .map(|value| Candidate { value, help: "" })
             .collect(),
     };
-    if let [only] = candidates[..]
+    if let [only] = &candidates[..]
         && only.value == prefix
     {
         candidates.clear();
@@ -296,6 +376,49 @@ fn complete_in(commands: &'static [CommandSpec], line: &str) -> Completion {
         start: word.start,
         candidates,
     }
+}
+
+/// The entries of the folder `prefix` names (the current one when none, `~` the home folder)
+/// starting like its last part, written as `prefix` with them: a folder with a `/` after it,
+/// the characters the tokenizer splits on escaped. Hidden entries only for a part starting
+/// with a `.`; the names that aren't UTF-8 or have other blanks than spaces are left out
+fn path_candidates(prefix: &str) -> Vec<String> {
+    let (folder, part) = prefix.split_at(prefix.rfind('/').map_or(0, |i| i + 1));
+    let dir = match folder {
+        "" => PathBuf::from("."),
+        folder => expand_home(Path::new(folder)),
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut candidates: Vec<String> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            let hidden = name.starts_with('.') && !part.starts_with('.');
+            let blank = name.chars().any(|c| c.is_whitespace() && c != ' ');
+            if !name.starts_with(part) || hidden || blank {
+                return None;
+            }
+            // through a link to a folder too
+            let slash = if entry.path().is_dir() { "/" } else { "" };
+            Some(format!("{folder}{}{slash}", escape_word(&name)))
+        })
+        .collect();
+    candidates.sort_unstable();
+    candidates
+}
+
+/// `text` as one word for the tokenizer: its spaces, quotes, `;` and `\` escaped
+fn escape_word(text: &str) -> String {
+    let mut word = String::with_capacity(text.len());
+    for c in text.chars() {
+        if matches!(c, ' ' | '"' | '\'' | ';' | '\\') {
+            word.push('\\');
+        }
+        word.push(c);
+    }
+    word
 }
 
 /// The last word of a line, as the tokenizer splits it
@@ -426,6 +549,9 @@ fn parse_args(spec: &'static CommandSpec, words: &[Word]) -> Result<Vec<ArgValue
 
 impl ArgKind {
     fn parse(self, word: &[u8]) -> Result<ArgValue, String> {
+        if self == Self::Bytes {
+            return Ok(ArgValue::Bytes(word.to_vec()));
+        }
         let text = std::str::from_utf8(word).map_err(|_| "not valid UTF-8".to_string())?;
         match self {
             Self::Int { min, max, .. } => {
@@ -450,6 +576,7 @@ impl ArgKind {
             Self::String => Ok(ArgValue::String(text.to_string())),
             Self::Path => Ok(ArgValue::Path(PathBuf::from(text))),
             Self::Hex => parse_hex(text).map(ArgValue::Bytes),
+            Self::Bytes => unreachable!("bytes aren't text"),
         }
     }
 
@@ -459,8 +586,8 @@ impl ArgKind {
             Self::Int { suggestions, .. } => suggestions,
             Self::Bool => &["on", "off"],
             Self::Enum(values) => values,
-            // TODO: (MAX-12) paths complete from the file system with `send-file` (step 3)
-            Self::String | Self::Path | Self::Hex => &[],
+            // paths complete from the disk, in `path_candidates`
+            Self::String | Self::Path | Self::Hex | Self::Bytes => &[],
         };
         values
             .iter()
@@ -601,6 +728,7 @@ mod tests {
             A::ReloadConfig => 38,
             A::ToggleMouse => 39,
             A::CommandLine => 40,
+            A::SendCancel => 41,
         }
     }
 
@@ -609,17 +737,41 @@ mod tests {
     fn every_action_has_one_command() {
         let mut indexes: Vec<usize> = COMMANDS
             .iter()
-            .map(|spec| match spec.target {
+            .filter_map(|spec| match spec.target {
                 Target::Action(action) => {
                     assert!(spec.args.is_empty(), "{}", spec.name);
                     assert_eq!(find_by_name(spec.name), Some(spec));
                     assert_eq!(find_by_action(action), Some(spec));
-                    action_index(action)
+                    Some(action_index(action))
                 }
+                Target::Build(_) => None,
             })
             .collect();
         indexes.sort_unstable();
-        assert_eq!(indexes, (0..41).collect::<Vec<_>>());
+        assert_eq!(indexes, (0..42).collect::<Vec<_>>());
+    }
+
+    /// `send` takes any bytes, escapes and all, `send-hex` hex digits; both are bytes
+    #[test]
+    fn send_arguments() {
+        let bytes = |line: &str| {
+            let invocations = parse(line).unwrap();
+            assert_eq!(invocations[0].args.len(), 1);
+            invocations[0].args[0].clone()
+        };
+        assert_eq!(bytes("send AT\\r\\n"), ArgValue::Bytes(b"AT\r\n".to_vec()));
+        assert_eq!(bytes("send '\\xff' "), ArgValue::Bytes(b"\\xff".to_vec()));
+        assert_eq!(bytes("send \\xff\\x00"), ArgValue::Bytes(vec![0xff, 0]));
+        assert_eq!(bytes("send-hex 0D0a"), ArgValue::Bytes(vec![0x0d, 0x0a]));
+        assert_eq!(
+            parse("send").unwrap_err().to_string(),
+            "send: missing argument <text>"
+        );
+        assert_eq!(
+            parse("send-hex 0d 0a").unwrap_err().to_string(),
+            "send-hex takes 1 argument(s) at most"
+        );
+        assert!("send".parse::<KeyBindingAction>().is_err());
     }
 
     #[test]
@@ -748,8 +900,12 @@ mod tests {
         );
     }
 
-    fn values(completion: &Completion) -> Vec<&'static str> {
-        completion.candidates.iter().map(|c| c.value).collect()
+    fn values(completion: &Completion) -> Vec<&str> {
+        completion
+            .candidates
+            .iter()
+            .map(|c| c.value.as_str())
+            .collect()
     }
 
     #[test]
@@ -797,6 +953,47 @@ mod tests {
         }
         assert_eq!(values(&complete("test \"a b\" o")), ["on", "off"]);
         assert!(complete("test 1 on hw x y z ").candidates.is_empty());
+    }
+
+    /// A path completes from the folder typed: its entries starting like the last part, a
+    /// folder with a `/`, hidden ones for a part starting with `.` only, a space escaped so the
+    /// word parses back to the name.
+    /// How: a temporary folder with files, a subfolder and a hidden file.
+    #[test]
+    fn complete_paths() {
+        let dir = std::env::temp_dir().join(format!("maxicom_test_{}_paths", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("logs")).unwrap();
+        for file in ["log.txt", "my file.bin", ".hidden", "other"] {
+            std::fs::write(dir.join(file), "").unwrap();
+        }
+        // `/` between the parts on every system: `\` is the tokenizer's escape
+        let folder = format!("{}/", dir.display()).replace('\\', "/");
+        let complete = |typed: &str| {
+            let line = format!("test 1 on none x {folder}{typed}");
+            let completion = complete_in(&TEST_COMMANDS, &line);
+            assert_eq!(completion.start, 17);
+            completion
+                .candidates
+                .iter()
+                .map(|c| c.value.strip_prefix(&folder).unwrap().to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(complete("lo"), ["log.txt", "logs/"]);
+        assert_eq!(complete(""), ["log.txt", "logs/", "my\\ file.bin", "other"]);
+        assert_eq!(complete("."), [".hidden"]);
+        assert!(complete("logs/").is_empty());
+        assert!(complete("other").is_empty());
+
+        let line = format!("test 1 on none x {folder}my\\ file.bin");
+        // the escaped name is whole, and the argument is the name
+        assert!(complete_in(&TEST_COMMANDS, &line).candidates.is_empty());
+        let parsed = parse_args(&TEST_COMMANDS[0], &tokenizer::split(&line).unwrap()[0][1..]);
+        assert_eq!(
+            parsed.unwrap()[4],
+            ArgValue::Path(PathBuf::from(format!("{folder}my file.bin")))
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

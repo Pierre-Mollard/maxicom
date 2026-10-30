@@ -43,6 +43,8 @@
 //! | `{scroll_offset}`   | Lines scrolled up from the bottom                       | `15`             |
 //! | `{scroll_max}`      | Maximum total scrollback lines available                | `500`            |
 //! | `{copy_side}`       | Copy cursor panel (`TXT` or `RAW`), empty out of copy  | `RAW`            |
+//! | `{send_file}`       | The file `send-file` sends, empty when none             | `fw.hex`         |
+//! | `{send_percent}`    | How much of it is sent, in percent                      | `42`             |
 //!
 //! ## Formats
 //! `{name:spec}` with spec `[<>^][0][width][h]`, close to Rust's and C's:
@@ -53,7 +55,7 @@
 //!   `12K`, `1.2M`), never wider than 4 columns: `{rx_bytes:4h}`
 //!
 //! The numbers are `{baud}`, `{rx_bytes}`, `{tx_bytes}`, `{scroll_percent}`, `{scroll_offset}`,
-//! `{scroll_max}`, `{pan_offset}` and `{pan_max}`. A longer value is never cut; a malformed spec
+//! `{scroll_max}`, `{pan_offset}`, `{pan_max}` and `{send_percent}`. A longer value is never cut; a malformed spec
 //! stays as written.
 //!
 //! ## The pan
@@ -89,6 +91,7 @@
 //! | `new_data`                      | `unread`, `missed`                         | Data arrived while scrolled up, not seen yet             |
 //! | `mouse`                         | —                                          | Mouse capture is on (`ui.mouse`)                         |
 //! | `line_settings`                 | `serial`                                   | The link has line settings: a serial port, not TCP       |
+//! | `sending`                       | `send_file`                                | A file is being sent (`send-file`)                       |
 //!
 //! ## Style Keywords
 //! - **Modifiers**: `bold`, `dim`, `italic`, `underlined` (`underline`), `reversed` (`reverse`), `reset` (`default`), `crossed`, `slow_blink` (`sblink`), `rapid_blink` (`rblink`)
@@ -127,6 +130,7 @@
 //! | `{pan_left}`, `{pan_right}`                                | `pan-left`, `pan-right`   |
 //! | `{pan_offset}`, `{pan_max}`                                | `pan-home`                |
 //! | `{scroll_pos}` `{scroll_pos_up}` `{scroll_percent}` `{scroll_offset}` | `scroll-to-bottom` |
+//! | `{send_file}`, `{send_percent}`                            | `send-cancel`             |
 //!
 //! The scroll and pan actions a `click=` can run: `scroll-up`, `scroll-down`, `page-up`,
 //! `page-down`, `scroll-to-top`, `scroll-to-bottom`, `pan-left`, `pan-right`, `pan-home` (back
@@ -404,6 +408,8 @@ enum Var {
     ScrollOffset,
     ScrollMax,
     CopySide,
+    SendFile,
+    SendPercent,
 }
 
 impl Var {
@@ -426,6 +432,8 @@ impl Var {
             "scroll_offset" => Self::ScrollOffset,
             "scroll_max" => Self::ScrollMax,
             "copy_side" => Self::CopySide,
+            "send_file" => Self::SendFile,
+            "send_percent" => Self::SendPercent,
             _ => return None,
         })
     }
@@ -442,6 +450,7 @@ impl Var {
                 KeyBindingAction::ScrollToBottom
             }
             Self::CopySide => return Some(ClickAction::ToggleSide),
+            Self::SendFile | Self::SendPercent => KeyBindingAction::SendCancel,
             Self::Port | Self::RxBytes | Self::TxBytes | Self::Time | Self::ScrollMax => {
                 return None;
             }
@@ -462,6 +471,7 @@ impl Var {
             Self::ScrollPercent => scroll.percent() as u64,
             Self::ScrollOffset => scroll.offset_from_bottom as u64,
             Self::ScrollMax => scroll.max_scroll as u64,
+            Self::SendPercent => app.transfer().map_or(0, |transfer| transfer.percent()),
             Self::PanOffset => app.pan_left_status().unwrap_or(0) as u64,
             Self::PanMax => app
                 .pan_right_status()
@@ -538,6 +548,11 @@ impl Var {
                     None => "",
                 }
             ),
+            Self::SendFile => write!(
+                out,
+                "{}",
+                app.transfer().map_or("", |transfer| transfer.name())
+            ),
             // the numbers, written by `write`
             Self::Baud
             | Self::RxBytes
@@ -546,7 +561,8 @@ impl Var {
             | Self::ScrollOffset
             | Self::ScrollMax
             | Self::PanOffset
-            | Self::PanMax => Ok(()),
+            | Self::PanMax
+            | Self::SendPercent => Ok(()),
         };
     }
 }
@@ -595,6 +611,7 @@ enum Cond {
     NewData,
     Mouse,
     LineSettings,
+    Sending,
     /// Unknown condition name, always false
     Unknown,
 }
@@ -626,6 +643,7 @@ impl Cond {
             "new_data" | "unread" | "missed" => Self::NewData,
             "mouse" => Self::Mouse,
             "line_settings" | "serial" => Self::LineSettings,
+            "sending" | "send_file" => Self::Sending,
             _ => Self::Unknown,
         }
     }
@@ -664,6 +682,7 @@ impl Cond {
             Self::NewData => app.is_new_content_missed(),
             Self::Mouse => app.settings().ui.mouse,
             Self::LineSettings => has_line_settings(&app.serial_config.port),
+            Self::Sending => app.transfer().is_some(),
             Self::Unknown => false,
         }
     }

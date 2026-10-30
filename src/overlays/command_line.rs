@@ -92,18 +92,21 @@ impl CommandLine {
             (Some(i), true) => (i + 1) % count,
             (Some(i), false) => (i + count - 1) % count,
         };
-        self.put_word(self.completion.candidates[selected].value);
+        let value = self.completion.candidates[selected].value.clone();
+        self.put_word(&value);
         self.selected = Some(selected);
     }
 
-    /// The candidate in the word's place and a space after it, then the next word's completion
+    /// The candidate in the word's place and a space after it, but for a folder (`/`): its
+    /// entries come next. Then the next word's completion
     fn take(&mut self, index: usize) {
         let Some(candidate) = self.completion.candidates.get(index) else {
             return;
         };
-        self.put_word(candidate.value);
+        let value = candidate.value.clone();
+        self.put_word(&value);
         let after = &self.input.value()[self.cursor_byte()..];
-        if !after.starts_with(char::is_whitespace) {
+        if !value.ends_with('/') && !after.starts_with(char::is_whitespace) {
             self.input.handle(InputRequest::InsertChar(' '));
         }
         self.refresh();
@@ -349,5 +352,20 @@ mod tests {
         command_line.handle_action(DialogAction::CycleNext);
         command_line.handle_action(key(KeyCode::Down));
         assert_eq!(value(&command_line), "toggle-display-raw");
+    }
+
+    /// A folder taken is followed by no space: its entries are completed next
+    #[test]
+    fn take_a_folder() {
+        let mut command_line = line("x ");
+        command_line.completion = Completion {
+            start: 2,
+            candidates: vec![commands::Candidate {
+                value: "logs/".to_string(),
+                help: "",
+            }],
+        };
+        command_line.handle_action(DialogAction::CycleNext);
+        assert_eq!(value(&command_line), "x logs/");
     }
 }

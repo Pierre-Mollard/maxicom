@@ -123,6 +123,22 @@ What changes from a serial port:
   names of `keymap.toml` (`toggle-local-echo`, `record-raw`, ...), chained
   with `;`. Enter runs the line, Esc closes it. A line with an unknown command
   or a bad argument runs nothing: the error shows and the prompt stays.
+- Commands with arguments, quoted when they have spaces (`"..."` takes the
+  escapes `\r \n \t \xNN`, `'...'` is literal):
+  - `send <text>`: sends the text as is, its escapes as bytes:
+    `send AT\r`, `send "hello world\r\n"`
+  - `send-hex <bytes>`: sends bytes written in hex, no spaces: `send-hex 0d0a`
+  - `send-file <path> [line-delay-ms]`: sends a file as is, paced to the baud
+    rate and framing (10 bits a byte in 8N1, 12 in 8E2), so the screen stays
+    live and the file can be any size. With a delay, it waits that long
+    after each line, for a device
+    without flow control. The line goes on at once: `send-file a; send b`
+    sends `b` first. The status bar shows `⇡ name 42%` while it runs (a click
+    stops it), `send-cancel` stops it too. A detach or a lost link stops it.
+    The path completes from the disk (`~` is the home folder).
+
+  A command the link can't do (anything sent on a replay) stops the line
+  there, with the error.
 - The word before the cursor has its completions listed (command names with
   their help, then the values of the argument it is). Tab and Shift-Tab put
   them in its place in turn, then Up and Down too; a lone one, or a click, is
@@ -335,6 +351,8 @@ screenshot_name = "screen_%Y%m%d_%H%M%S" # the format adds .txt or .ans
   - {scroll_percent} Numeric percent: 0..100
   - {scroll_offset}  Lines scrolled away from tail
   - {scroll_max}     Total scrollback depth
+  - {send_file}      The file `send-file` sends, empty when none
+  - {send_percent}   How much of it is sent: 0..100
 
 - Formats: `{name:spec}`, spec `[<>^][0][width][h]`
   - `{rx_bytes:8}`    Pad to 8 columns (numbers right, text left)
@@ -360,6 +378,7 @@ screenshot_name = "screen_%Y%m%d_%H%M%S" # the format adds .txt or .ans
     - focused        Window has OS desktop focus
     - line_settings  The link has line settings: a serial port, not a TCP
                      link whose bridge sets them (alias: serial)
+    - sending        A file is being sent (alias: send_file)
 
   - Viewport & Scroll:
     - is_live        Following live tail (alias: live, bot, bottom)
@@ -408,6 +427,7 @@ screenshot_name = "screen_%Y%m%d_%H%M%S" # the format adds .txt or .ans
   - {copy_side}                  Switch the copy cursor's panel
   - {pan_left}, {pan_right}      Pan left / right
   - {pan_offset}, {pan_max}      Back to the left edge
+  - {send_file}, {send_percent}  Stop sending the file
   - {scroll_pos}, {scroll_pos_up}, {scroll_percent}, {scroll_offset}
                                  Back to the live tail
   A variable in plain text (outside `[...]`) is clickable on its own.

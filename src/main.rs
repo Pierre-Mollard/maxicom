@@ -301,6 +301,27 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
         }
 
+        // the file `send-file` sends, a chunk per turn paced to the baud rate: the input poll
+        // wakes the loop often enough (MAX-12)
+        if app.transfer().is_some() {
+            match device {
+                Some(ref mut dev) => {
+                    if let Some(chunk) = app.next_transfer_chunk(Instant::now()) {
+                        if transmit(&mut app, dev, &chunk, is_replay) {
+                            last_rx_activity = Instant::now();
+                        } else {
+                            app.stop_transfer("the write failed");
+                        }
+                        needs_redraw = true;
+                    }
+                }
+                None => {
+                    app.stop_transfer("the link closed");
+                    needs_redraw = true;
+                }
+            }
+        }
+
         if device.is_some() {
             let inactivity_timeout = app.settings().inactivity_detach_timeout;
             if !is_replay

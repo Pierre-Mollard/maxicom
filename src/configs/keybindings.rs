@@ -63,6 +63,7 @@ pub enum KeyBindingAction {
     ReloadConfig,
     ToggleMouse,
     CommandLine,
+    SendCancel,
 }
 
 impl FromStr for KeyBindingAction {
@@ -70,9 +71,10 @@ impl FromStr for KeyBindingAction {
 
     /// An action's name is its command's in the registry (MAX-12)
     fn from_str(name: &str) -> Result<Self, Self::Err> {
+        // the commands with arguments aren't keymap actions
         match commands::find_by_name(name).map(|spec| spec.target) {
             Some(Target::Action(action)) => Ok(action),
-            None => Err(UnknownActionError(name.to_string())),
+            _ => Err(UnknownActionError(name.to_string())),
         }
     }
 }
@@ -1287,7 +1289,7 @@ mod tests {
     /// between words: the old `_` names are refused
     #[test]
     fn action_names() {
-        const NAMES: [(&str, KeyBindingAction); 41] = [
+        const NAMES: [(&str, KeyBindingAction); 42] = [
             ("quit", KeyBindingAction::Quit),
             ("toggle-input-mode", KeyBindingAction::SKInputMode),
             ("toggle-local-echo", KeyBindingAction::SKLocalEcho),
@@ -1335,6 +1337,7 @@ mod tests {
             ("reload-config", KeyBindingAction::ReloadConfig),
             ("toggle-mouse", KeyBindingAction::ToggleMouse),
             ("command-line", KeyBindingAction::CommandLine),
+            ("send-cancel", KeyBindingAction::SendCancel),
         ];
         for (name, action) in NAMES {
             assert_eq!(name.parse::<KeyBindingAction>().unwrap(), action, "{name}");

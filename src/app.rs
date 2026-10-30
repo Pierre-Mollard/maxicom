@@ -9,6 +9,7 @@ use crate::{
         scroller::ScrollStatus,
         selection::{ClickCounter, CopySide},
         term_answers::answer_bytes,
+        transfer::FileTransfer,
         types::{FocusTarget, FrameAreas, FrameMap, LogEntry, ViewportSize},
     },
     capture::{
@@ -16,7 +17,7 @@ use crate::{
         SessionDevice, Stream, create_parent_dirs, expand_home, find_last_session, read_tail_bytes,
         read_tail_lines, restore_separator,
     },
-    commands::{Invocation, Target},
+    commands::{CommandError, Invocation, Target},
     configs::{
         DualBufferMode, KeyBindingAction, KeyResolver, Mode, SettingsConfig, StatusBarLayout,
         WrapMode,
@@ -42,6 +43,7 @@ pub mod search;
 pub mod selection;
 pub mod term_answers;
 pub mod terminal_mode;
+pub mod transfer;
 pub mod types;
 
 pub use line_mode::LineMode;
@@ -136,6 +138,8 @@ pub struct App {
     /// The last frame was smaller than `compact_cols` x `compact_rows` (MAX-136)
     compact: bool,
     pub stats: Stats,
+    /// The file `send-file` sends, a chunk per loop turn (MAX-12)
+    transfer: Option<FileTransfer>,
 }
 
 // Effects outside which can only be handled by main
@@ -199,9 +203,49 @@ impl App {
                 received_bytes: 0,
                 sent_bytes: 0,
             },
+            transfer: None,
         };
         app.warn_shadowed_keys();
         app
+    }
+
+    /// The file `send-file` sends (MAX-12)
+    pub fn transfer(&self) -> Option<&FileTransfer> {
+        self.transfer.as_ref()
+    }
+
+    /// The next chunk of the file being sent, for the loop to write; none while it isn't time.
+    /// The end of the file, or a read error, ends the transfer with a notice
+    pub fn next_transfer_chunk(&mut self, now: Instant) -> Option<Vec<u8>> {
+        let transfer = self.transfer.as_mut()?;
+        match transfer.next_chunk(now) {
+            Ok(Some(chunk)) if chunk.is_empty() => None,
+            Ok(Some(chunk)) => Some(chunk),
+            Ok(None) => {
+                let transfer = self.transfer.take()?;
+                self.notify_success(format!(
+                    "Sent {} ({} bytes)",
+                    transfer.name(),
+                    transfer.size()
+                ));
+                None
+            }
+            Err(e) => {
+                self.stop_transfer(&format!("read error: {e}"));
+                None
+            }
+        }
+    }
+
+    /// Ends the file being sent, the link can't take it (`why`)
+    pub fn stop_transfer(&mut self, why: &str) {
+        if let Some(transfer) = self.transfer.take() {
+            self.notify_error(format!(
+                "Stopped sending {} at {}%: {why}",
+                transfer.name(),
+                transfer.percent()
+            ));
+        }
     }
 
     pub fn command_history(&self) -> &VecDeque<String> {
@@ -224,11 +268,26 @@ impl App {
 
     /// The next action of a command line chain (MAX-12). Each is built when its turn comes, on
     /// the state the previous ones left, and the loop applies its effect before the next
+    /// A command that refuses (the link can't do it) stops the chain, with the error
     pub fn next_command_action(&mut self) -> Option<Action> {
         let invocation = self.pending_commands.pop_front()?;
-        match invocation.spec.target {
-            Target::Action(action) => Some(action.to_action(self)),
-        }
+        let built = match invocation.spec.target {
+            Target::Action(action) => Ok(action.to_action(self)),
+            Target::Build(build) => build(self, &invocation.args),
+        };
+        built
+            .map_err(|reason| {
+                let error = CommandError::Failed {
+                    command: invocation.spec.name,
+                    reason,
+                };
+                let skipped = std::mem::take(&mut self.pending_commands).len();
+                match skipped {
+                    0 => self.notify_error(error.to_string()),
+                    n => self.notify_error(format!("{error} ({n} more not run)")),
+                }
+            })
+            .ok()
     }
 
     /// A warning for the keymap's keys that never reach their mode section (MAX-155)
@@ -887,6 +946,26 @@ impl App {
                 self.open_session_browser();
                 UpdateEffect::None
             }
+            AppAction::StartTransfer(transfer) => {
+                self.notify_info(format!(
+                    "Sending {} ({} bytes)",
+                    transfer.name(),
+                    transfer.size()
+                ));
+                self.transfer = Some(*transfer);
+                UpdateEffect::None
+            }
+            AppAction::CancelTransfer => {
+                match self.transfer.take() {
+                    Some(transfer) => self.notify_warn(format!(
+                        "Stopped sending {} at {}%",
+                        transfer.name(),
+                        transfer.percent()
+                    )),
+                    None => self.notify_info("No file is being sent"),
+                }
+                UpdateEffect::None
+            }
             AppAction::PasteBuffer => {
                 let Some(text) = self.paste_buffer.clone() else {
                     return UpdateEffect::None;
@@ -1436,6 +1515,137 @@ mod tests {
         assert_ne!(app.settings.local_echo, echo);
         let toast = app.notifications.active_toasts().last().unwrap();
         assert_eq!(toast.message, "unknown command 'nope'");
+    }
+
+    /// MAX-12: `send` and `send-hex` transmit their bytes, in the chain's order. A command that
+    /// refuses (nothing to send, a replay) stops the chain with the error.
+    /// How: chains run on a live port, then on a replay (`file://`).
+    #[test]
+    fn command_line_send() {
+        let mut app = app();
+        let run_line = |app: &mut App, line: &str| {
+            app.update(KeyBindingAction::CommandLine.to_action(app));
+            app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
+            app.update(Action::Overlay(DialogAction::Confirm));
+            let mut effects = Vec::new();
+            while let Some(action) = app.next_command_action() {
+                effects.push(app.update(action));
+            }
+            effects
+        };
+        let last_error = |app: &App| {
+            app.notifications
+                .active_toasts()
+                .last()
+                .unwrap()
+                .message
+                .clone()
+        };
+
+        let effects = run_line(&mut app, "send-hex 0d0a; send AT\\r");
+        assert!(matches!(
+            &effects[..],
+            [UpdateEffect::Transmit(crlf), UpdateEffect::Transmit(at)]
+                if crlf == b"\r\n" && at == b"AT\r"
+        ));
+
+        let effects = run_line(&mut app, "send ''; help; settings");
+        assert!(effects.is_empty());
+        assert_eq!(last_error(&app), "send: nothing to send (2 more not run)");
+        assert!(app.overlay().is_none());
+
+        app.serial_config.port = "file:///tmp/capture.raw".to_string();
+        let effects = run_line(&mut app, "help; send x");
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(app.overlay(), Some(Overlay::Help(_))));
+        assert_eq!(last_error(&app), "send: a replay has no link to send to");
+        assert!(app.next_command_action().is_none());
+    }
+
+    /// MAX-12: `send-file` starts a paced transfer and the chain goes on at once; its chunks
+    /// come from `next_transfer_chunk` until the end of the file, with a notice. A second
+    /// `send-file`, a missing file or a replay refuse; `send-cancel` stops it.
+    /// How: a 300-byte file at 9600 baud (96 bytes per 100 ms at most).
+    #[test]
+    fn command_line_send_file() {
+        let mut app = app();
+        app.serial_config.baudrate = 9600;
+        let path =
+            std::env::temp_dir().join(format!("maxicom_test_{}_send.txt", std::process::id()));
+        std::fs::write(&path, [b'x'; 300]).unwrap();
+        let file = path.display().to_string().replace('\\', "/");
+        let run_line = |app: &mut App, line: &str| {
+            app.update(KeyBindingAction::CommandLine.to_action(app));
+            app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
+            app.update(Action::Overlay(DialogAction::Confirm));
+            let mut effects = Vec::new();
+            while let Some(action) = app.next_command_action() {
+                effects.push(app.update(action));
+            }
+            effects
+        };
+        let last_toast = |app: &App| {
+            app.notifications
+                .active_toasts()
+                .last()
+                .unwrap()
+                .message
+                .clone()
+        };
+
+        let effects = run_line(&mut app, &format!("send-file {file}; send y"));
+        assert!(matches!(
+            &effects[..],
+            [UpdateEffect::None, UpdateEffect::Transmit(y)] if y == b"y"
+        ));
+        assert_eq!(app.transfer().unwrap().percent(), 0);
+        assert!(run_line(&mut app, &format!("send-file {file}")).is_empty());
+        assert_eq!(
+            last_toast(&app),
+            "send-file: a file is being sent already (send-cancel stops it)"
+        );
+
+        let start = Instant::now();
+        let mut sent = 0;
+        for step in 1..=10 {
+            if let Some(chunk) = app.next_transfer_chunk(start + Duration::from_secs(step)) {
+                assert!(chunk.len() <= 96);
+                sent += chunk.len();
+            }
+        }
+        assert_eq!(sent, 300);
+        assert!(app.transfer().is_none());
+        assert!(
+            last_toast(&app).starts_with("Sent maxicom_test_"),
+            "{}",
+            last_toast(&app)
+        );
+
+        run_line(&mut app, &format!("send-file {file}"));
+        app.next_transfer_chunk(start + Duration::from_secs(1));
+        run_line(&mut app, "send-cancel");
+        assert!(app.transfer().is_none());
+        assert!(
+            last_toast(&app).ends_with(" at 32%"),
+            "{}",
+            last_toast(&app)
+        );
+
+        run_line(&mut app, &format!("send-file {file}.nope; help"));
+        assert!(app.overlay().is_none());
+        assert!(
+            last_toast(&app).contains("(1 more not run)"),
+            "{}",
+            last_toast(&app)
+        );
+
+        app.serial_config.port = "file:///tmp/capture.raw".to_string();
+        run_line(&mut app, &format!("send-file {file}"));
+        assert_eq!(
+            last_toast(&app),
+            "send-file: a replay has no link to send to"
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     /// MAX-12: the lines that ran are kept for the next command lines, trimmed, not twice in a

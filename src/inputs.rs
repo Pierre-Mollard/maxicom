@@ -9,6 +9,7 @@ use crate::{
     app::{
         App, InputContext,
         selection::{CopySide, LogicalPosition, MouseUnit},
+        transfer::FileTransfer,
     },
     capture::{ScreenshotFormat, Stream},
     configs::{KeyBindingAction, KeyPattern, Mode},
@@ -58,6 +59,8 @@ pub enum AppAction {
     ClickHold(ClickHoldAction),
     PasteBuffer,
     OpenSessions,
+    StartTransfer(Box<FileTransfer>),
+    CancelTransfer,
     Quit,
 }
 

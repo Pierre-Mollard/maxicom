@@ -55,6 +55,11 @@ pub fn tcp_address(port: &str) -> Option<&str> {
     port.strip_prefix("tcp://")
 }
 
+/// Whether `port` is a replayed file (`file://`): no link, nothing goes out
+pub fn is_replay(port: &str) -> bool {
+    port.starts_with("file://")
+}
+
 /// Whether maxicom sets the link's line settings (baud, framing, flow control): a serial port
 /// does, a raw TCP link doesn't, its bridge owns them. Later RFC 2217 will, telnet won't
 pub fn has_line_settings(port: &str) -> bool {
