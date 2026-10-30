@@ -92,6 +92,19 @@ impl CommandSpec {
             target: Target::Build(build),
         }
     }
+
+    /// The name and its arguments, `<required>` and `[optional]`, for the help
+    pub fn usage(&self) -> String {
+        let mut usage = self.name.to_string();
+        for arg in self.args {
+            if arg.optional {
+                usage.push_str(&format!(" [{}]", arg.name));
+            } else {
+                usage.push_str(&format!(" <{}>", arg.name));
+            }
+        }
+        usage
+    }
 }
 
 const fn arg(name: &'static str, kind: ArgKind) -> ArgSpec {
@@ -103,7 +116,7 @@ const fn arg(name: &'static str, kind: ArgKind) -> ArgSpec {
 }
 
 /// A parsed command, its arguments checked against its spec
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Invocation {
     pub spec: &'static CommandSpec,
     pub args: Vec<ArgValue>,
@@ -266,7 +279,7 @@ pub static COMMANDS: &[CommandSpec] = {
         CommandSpec::action(
             "cancel",
             A::CancelCommands,
-            "Stop the file being sent and the commands waiting",
+            "Stop the file transfer and queued commands",
         ),
         CommandSpec::build(
             "send",
@@ -853,6 +866,15 @@ mod tests {
             .collect();
         indexes.sort_unstable();
         assert_eq!(indexes, (0..42).collect::<Vec<_>>());
+    }
+
+    /// The help writes a required argument in angle brackets, an optional one in square ones
+    #[test]
+    fn usage() {
+        let usage = |name| find_by_name(name).unwrap().usage();
+        assert_eq!(usage("quit"), "quit");
+        assert_eq!(usage("dtr"), "dtr <state>");
+        assert_eq!(usage("send-file"), "send-file <path> [line-delay-ms]");
     }
 
     /// `send` takes any bytes, escapes and all, `send-hex` hex digits; both are bytes

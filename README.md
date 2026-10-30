@@ -168,11 +168,29 @@ What changes from a serial port:
     screen stays live. A line run meanwhile waits behind it.
   - `cancel`: stops the file being sent and drops the commands waiting. A line
     starting with it runs it at once, not behind them: `cancel; send x`.
-    An ESP32 into its bootloader, as esptool does it:
-    `dtr off; rts on; sleep 100; dtr on; rts off; sleep 50; dtr off`
 
   A command the link can't do (anything sent on a replay) stops the line
   there, with the error.
+- In `keymap.toml`, a key of `[prefix_actions]` or `[direct_actions]` takes a
+  command line where an action name goes, as tmux's `bind`. An ESP32 into its
+  bootloader on one key, as esptool does it, and Ctrl-C as a byte:
+
+  ```toml
+  [prefix_actions]
+  F6 = "dtr off; rts on; sleep 100; dtr on; rts off; sleep 50; dtr off"
+
+  [direct_actions]
+  F5 = "send-hex 03"
+  ```
+
+  The key runs its line as if typed: behind a line still waiting (unless it
+  starts with `cancel`), and it doesn't go in the history. Like the other
+  keys of these sections, it does nothing in copy mode and search. A line that
+  doesn't parse stops the keymap from loading, naming its key (a reload keeps
+  the running one). The default keymap has two: `Ctrl-A f` sends a break,
+  `Ctrl-A p` pulses DTR (`dtr off; sleep 100; dtr on`), which resets most
+  boards. The help's Commands tab lists the keys bound to a line and every
+  command.
 - The word before the cursor has its completions listed (command names with
   their help, then the values of the argument it is). Tab and Shift-Tab put
   them in its place in turn, then Up and Down too; a lone one, or a click, is

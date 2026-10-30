@@ -508,6 +508,12 @@ impl SerialDevice {
             .map_err(SerialError::ControlFailed)
     }
 
+    /// The line's settings as the port has them, for the tests on a pty
+    #[cfg(test)]
+    pub fn settings(&self) -> std::io::Result<serial2::Settings> {
+        self.port.get_configuration()
+    }
+
     pub fn write(&mut self, buffer: &[u8]) -> Result<(), SerialError> {
         self.port
             .write_all(buffer)

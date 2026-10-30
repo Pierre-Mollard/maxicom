@@ -316,6 +316,22 @@ impl App {
         std::mem::take(&mut self.pending_commands).len()
     }
 
+    /// A command line to run, typed or bound to a key (MAX-12): after the commands waiting, but
+    /// a line starting with `cancel` stops them instead of waiting behind them
+    fn queue_commands(&mut self, mut invocations: Vec<Invocation>) {
+        let cancels = invocations.first().is_some_and(|invocation| {
+            matches!(
+                invocation.spec.target,
+                Target::Action(KeyBindingAction::CancelCommands)
+            )
+        });
+        if cancels {
+            invocations.remove(0);
+            self.cancel();
+        }
+        self.pending_commands.extend(invocations);
+    }
+
     /// `cancel` (MAX-12): stops the file being sent and drops the commands waiting
     fn cancel(&mut self) {
         let mut stopped = Vec::new();
@@ -556,24 +572,9 @@ impl App {
                             let action = action.to_action(self);
                             self.update(action)
                         }
-                        OverlayResponse::QueueCommands {
-                            line,
-                            mut invocations,
-                        } => {
+                        OverlayResponse::QueueCommands { line, invocations } => {
                             self.push_command_history(line);
-                            // a line starting with `cancel` stops what waits, instead of
-                            // waiting behind it
-                            let cancels = invocations.first().is_some_and(|invocation| {
-                                matches!(
-                                    invocation.spec.target,
-                                    Target::Action(KeyBindingAction::CancelCommands)
-                                )
-                            });
-                            if cancels {
-                                invocations.remove(0);
-                                self.cancel();
-                            }
-                            self.pending_commands.extend(invocations);
+                            self.queue_commands(invocations);
                             UpdateEffect::None
                         }
                         OverlayResponse::StartCapture {
@@ -1083,6 +1084,10 @@ impl App {
             }
             AppAction::SaveScreenshot(name) => {
                 self.save_screenshot_as(&name);
+                UpdateEffect::None
+            }
+            AppAction::QueueCommands(invocations) => {
+                self.queue_commands(invocations);
                 UpdateEffect::None
             }
             AppAction::CancelCommands => {
@@ -1688,6 +1693,120 @@ mod tests {
         assert!(app.next_command_action(Instant::now()).is_none());
     }
 
+    /// A pty pair: maxicom opens the `path` side as its port, the test reads and writes the
+    /// `device` side, as `src/bin/fake_device.rs` does through socat
+    #[cfg(target_os = "linux")]
+    struct Pty {
+        device: std::fs::File,
+        path: String,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Pty {
+        fn open() -> Self {
+            use std::os::fd::FromRawFd;
+            unsafe {
+                let fd = libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY | libc::O_NONBLOCK);
+                assert!(fd >= 0, "posix_openpt");
+                assert_eq!(libc::grantpt(fd), 0);
+                assert_eq!(libc::unlockpt(fd), 0);
+                let mut name = [0 as libc::c_char; 64];
+                assert_eq!(libc::ptsname_r(fd, name.as_mut_ptr(), name.len()), 0);
+                let path = std::ffi::CStr::from_ptr(name.as_ptr()).to_str().unwrap();
+                Self {
+                    device: std::fs::File::from_raw_fd(fd),
+                    path: path.to_string(),
+                }
+            }
+        }
+
+        /// What came out of the port, `len` bytes, waiting `within` at most
+        fn received(&mut self, len: usize, within: Duration) -> Vec<u8> {
+            use std::io::Read;
+            let deadline = Instant::now() + within;
+            let mut bytes = Vec::new();
+            let mut buf = [0; 256];
+            while bytes.len() < len && Instant::now() < deadline {
+                match self.device.read(&mut buf) {
+                    Ok(n) => bytes.extend_from_slice(&buf[..n]),
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5))
+                    }
+                    Err(e) => panic!("{e}"),
+                }
+            }
+            bytes
+        }
+    }
+
+    /// MAX-12: command lines on a real tty, their effects applied as the main loop does: the
+    /// bytes of `send` and `send-hex` reach the other end in order, `baud` and `framing`
+    /// change the port's settings, and a setting or a line the port refuses stops the rest of
+    /// the line.
+    /// How: a pty pair in place of socat and `fake_device`; a pty refuses parity, 7 bits and
+    /// the modem lines.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn commands_on_the_wire() {
+        use crate::link::serial::{CharSize, LineControl, SerialDevice, StopBits};
+        let mut pty = Pty::open();
+        let mut app = app();
+        app.serial_config.port = pty.path.clone();
+        let mut device = SerialDevice::open(&app.serial_config).unwrap();
+        // a pty has no modem lines
+        assert!(device.control(LineControl::Dtr(true)).is_err());
+        let mut run = |app: &mut App, line: &str| {
+            let invocations = crate::commands::parse(line).unwrap();
+            app.update(Action::App(AppAction::QueueCommands(invocations)));
+            while let Some(action) = app.next_command_action(Instant::now()) {
+                match app.update(action) {
+                    UpdateEffect::Transmit(bytes) => device.write(&bytes).unwrap(),
+                    UpdateEffect::Reconfigure(config) => match device.reconfigure(&config) {
+                        Ok(()) => app.serial_config = config,
+                        Err(_) => {
+                            app.drop_pending_commands();
+                        }
+                    },
+                    UpdateEffect::LineControl(control) => {
+                        if let Err(e) = device.control(control) {
+                            app.fail_commands(format!("{control}: {e}"));
+                        }
+                    }
+                    UpdateEffect::None => {}
+                    _ => panic!("{line}"),
+                }
+            }
+            device.settings().unwrap()
+        };
+
+        run(&mut app, "send AT\\r\\n; send-hex 1b5b41; send 'a;b'");
+        assert_eq!(pty.received(10, Duration::from_secs(1)), b"AT\r\n\x1b[Aa;b");
+
+        let settings = run(&mut app, "baud 9600; framing 8N2");
+        assert_eq!(settings.get_baud_rate().unwrap(), 9600);
+        assert_eq!(settings.get_stop_bits().unwrap(), serial2::StopBits::Two);
+        assert_eq!(app.serial_config.baudrate, 9600);
+        assert_eq!(app.serial_config.stop_bits, StopBits::Two);
+
+        // a pty keeps 8 bits and no parity: the port refuses, the line stops there
+        let settings = run(&mut app, "framing 7E1; send y");
+        assert_eq!(settings.get_char_size().unwrap(), serial2::CharSize::Bits8);
+        assert_eq!(app.serial_config.char_size, CharSize::Bits8);
+        assert!(pty.received(1, Duration::from_millis(50)).is_empty());
+
+        run(&mut app, "dtr on; send x");
+        let toast = app
+            .notifications
+            .active_toasts()
+            .last()
+            .unwrap()
+            .message
+            .clone();
+        assert!(toast.starts_with("DTR on: "), "{toast}");
+        assert!(toast.ends_with("(1 more not run)"), "{toast}");
+        assert!(pty.received(1, Duration::from_millis(50)).is_empty());
+    }
+
     /// MAX-12: `send-file` starts a paced transfer and the chain goes on at once; its chunks
     /// come from `next_transfer_chunk` until the end of the file, with a notice. A second
     /// `send-file`, a missing file or a replay refuse; `cancel` stops it.
@@ -1950,6 +2069,29 @@ mod tests {
             app.next_command_action(Instant::now() + Duration::from_secs(2))
                 .is_none()
         );
+    }
+
+    /// MAX-12: a command line bound to a key runs as a typed one, but stays out of the command
+    /// history; it waits behind a waiting line, unless it starts with `cancel`.
+    #[test]
+    fn bound_line_runs_as_typed() {
+        let mut app = app();
+        let line = |text: &str| crate::commands::parse(text).unwrap();
+        app.update(Action::App(AppAction::QueueCommands(line(
+            "send a; sleep 1000; send b",
+        ))));
+        let now = Instant::now();
+        let send = app.next_command_action(now).unwrap();
+        assert!(matches!(app.update(send), UpdateEffect::Transmit(a) if a == b"a"));
+        let sleep = app.next_command_action(now).unwrap();
+        app.update(sleep);
+        app.update(Action::App(AppAction::QueueCommands(line(
+            "cancel; send c",
+        ))));
+        let send = app.next_command_action(Instant::now()).unwrap();
+        assert!(matches!(app.update(send), UpdateEffect::Transmit(c) if c == b"c"));
+        assert!(app.next_command_action(Instant::now()).is_none());
+        assert!(app.command_history().is_empty());
     }
 
     /// The line doesn't parse: the command line stays open

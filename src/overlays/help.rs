@@ -10,6 +10,7 @@ pub enum HelpCategory {
     #[default]
     Prefix,
     Direct,
+    Commands,
     CopyMode,
     Search,
     LineMode,
@@ -18,9 +19,10 @@ pub enum HelpCategory {
 }
 
 impl HelpCategory {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Prefix,
         Self::Direct,
+        Self::Commands,
         Self::CopyMode,
         Self::Search,
         Self::LineMode,
@@ -32,6 +34,7 @@ impl HelpCategory {
         match self {
             Self::Prefix => "Prefixed",
             Self::Direct => "Directs",
+            Self::Commands => "Commands",
             Self::CopyMode => "Copy",
             Self::Search => "Search",
             Self::LineMode => "Line",
@@ -43,7 +46,8 @@ impl HelpCategory {
     pub fn next(self) -> Self {
         match self {
             Self::Prefix => Self::Direct,
-            Self::Direct => Self::CopyMode,
+            Self::Direct => Self::Commands,
+            Self::Commands => Self::CopyMode,
             Self::CopyMode => Self::Search,
             Self::Search => Self::LineMode,
             Self::LineMode => Self::TerminalMode,
@@ -56,7 +60,8 @@ impl HelpCategory {
         match self {
             Self::Prefix => Self::Dialog,
             Self::Direct => Self::Prefix,
-            Self::CopyMode => Self::Direct,
+            Self::Commands => Self::Direct,
+            Self::CopyMode => Self::Commands,
             Self::Search => Self::CopyMode,
             Self::LineMode => Self::Search,
             Self::TerminalMode => Self::LineMode,
@@ -70,6 +75,9 @@ pub struct HelpDialog {
     pub category: HelpCategory,
     pub scroll: usize,
     pub max_scroll: Cell<usize>,
+    /// The first tab shown when they don't all fit (MAX-12): kept while the selected one is in
+    /// view, moved just enough to bring it back
+    pub first_tab: Cell<usize>,
 }
 
 impl HelpDialog {

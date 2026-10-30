@@ -12,6 +12,7 @@ use crate::{
         transfer::FileTransfer,
     },
     capture::{ScreenshotFormat, Stream},
+    commands::Invocation,
     configs::{KeyBindingAction, KeyPattern, Mode, TextEncoding},
     inputs::mouse::handle_mouse,
     link::serial::{LineControl, SerialConfig},
@@ -68,6 +69,7 @@ pub enum AppAction {
     Open(String),
     SetEncoding(TextEncoding),
     SaveScreenshot(PathBuf),
+    QueueCommands(Vec<Invocation>),
     Quit,
 }
 
@@ -312,6 +314,8 @@ pub fn handle_event(event: Event, app: &App) -> Action {
 
             if let Some(prefix_action_binding) = resolver.prefix_actions.get(&pattern) {
                 return prefix_action_binding.to_action(app);
+            } else if let Some(line) = resolver.prefix_commands.get(&pattern) {
+                return Action::App(AppAction::QueueCommands(line.invocations.clone()));
             } else {
                 return Action::App(AppAction::SetPrefix(false));
             }
@@ -340,6 +344,8 @@ pub fn handle_event(event: Event, app: &App) -> Action {
         InputContext::LineInput => {
             if let Some(action_binding) = resolver.direct_actions.get(&pattern) {
                 action_binding.to_action(app)
+            } else if let Some(line) = resolver.direct_commands.get(&pattern) {
+                Action::App(AppAction::QueueCommands(line.invocations.clone()))
             } else if let Some(line_action_binding) = resolver.line_actions.get(&pattern) {
                 line_action_binding.to_action()
             } else {
@@ -349,6 +355,8 @@ pub fn handle_event(event: Event, app: &App) -> Action {
         InputContext::Terminal => {
             if let Some(action_binding) = resolver.direct_actions.get(&pattern) {
                 action_binding.to_action(app)
+            } else if let Some(line) = resolver.direct_commands.get(&pattern) {
+                Action::App(AppAction::QueueCommands(line.invocations.clone()))
             } else if let Some(term_action_binding) = resolver.terminal_actions.get(&pattern) {
                 term_action_binding.to_action()
             } else {
@@ -405,6 +413,57 @@ mod tests {
 
     fn plain(code: KeyCode) -> Event {
         key(code, KeyModifiers::NONE)
+    }
+
+    /// MAX-12: a key bound to a command line queues it after the prefix, and as a direct key in
+    /// line input and terminal mode; in copy mode and search it does nothing of its own, as
+    /// any global key but navigation.
+    /// How: F6 after the prefix, F5 direct, in each context.
+    #[test]
+    fn bound_lines_run_where_global_keys_do() {
+        let mut config = KeyBindingsConfig::default();
+        config
+            .prefix_actions
+            .insert("f6".into(), "help; settings".into());
+        config
+            .direct_actions
+            .insert("f5".into(), "send-hex 03".into());
+        let mut settings = SettingsConfig::default();
+        settings.mode = Mode::Line;
+        let mut app = App::new(
+            settings,
+            KeyResolver::try_new(&config).unwrap(),
+            SerialConfig::default(),
+        );
+        let commands = |action: Action| match action {
+            Action::App(AppAction::QueueCommands(invocations)) => invocations
+                .iter()
+                .map(|invocation| invocation.spec.name)
+                .collect::<Vec<_>>(),
+            other => panic!("{other:?}"),
+        };
+        let f5 = || plain(KeyCode::F(5));
+
+        assert_eq!(commands(handle_event(f5(), &app)), ["send-hex"]);
+        app.update(Action::App(AppAction::SetPrefix(true)));
+        let f6 = handle_event(plain(KeyCode::F(6)), &app);
+        assert_eq!(commands(f6), ["help", "settings"]);
+        app.update(Action::App(AppAction::SetPrefix(false)));
+
+        app.update(Action::App(AppAction::ToggleSetting(SettingKey::Mode)));
+        assert_eq!(commands(handle_event(f5(), &app)), ["send-hex"]);
+
+        app.update(Action::Search(SearchModeAction::Start));
+        assert!(matches!(
+            handle_event(f5(), &app),
+            Action::Search(SearchModeAction::HandleKey(_))
+        ));
+        app.update(Action::Search(SearchModeAction::Cancel));
+        app.update(Action::CopyMode(CopyModeAction::Enter));
+        assert!(matches!(
+            handle_event(f5(), &app),
+            Action::CopyMode(CopyModeAction::HandleKey(_))
+        ));
     }
 
     /// In search mode the global navigation keys (direct and after the prefix) scroll and pan;
@@ -528,6 +587,10 @@ mod tests {
                 let name = overlay.split('(').next().unwrap_or_default();
                 format!("open {name}")
             }
+            Action::App(AppAction::QueueCommands(invocations)) => {
+                let names: Vec<_> = invocations.iter().map(|i| i.spec.name).collect();
+                format!("run {}", names.join("; "))
+            }
             other => format!("{other:?}"),
         }
     }
@@ -622,11 +685,13 @@ mod tests {
                 "Up => History(ScrollUp(1))",
                 "[ => CopyMode(Enter)",
                 "d => open SerialSettings",
+                "f => run break",
                 "h => App(DetachSerial)",
                 "k => Terminal(Screenshot(Ansi))",
                 "l => App(ToggleLogging)",
                 "m => App(ToggleSetting(Mode))",
                 "o => App(ToggleSetting(TextEncoding))",
+                "p => run dtr; sleep; dtr",
                 "q => App(Quit)",
                 "r => App(ReloadConfig)",
                 "s => open Settings",

@@ -7,7 +7,7 @@ use std::{
     str::FromStr,
 };
 
-use crate::commands::{self, Target};
+use crate::commands::{self, CommandError, Invocation, Target};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnknownActionError(pub String);
@@ -627,10 +627,20 @@ impl std::fmt::Display for KeyPattern {
     }
 }
 
+/// A command line bound to a key in `[prefix_actions]` or `[direct_actions]` (MAX-12): its
+/// text as written, parsed when the keymap loads
+#[derive(Debug, Clone)]
+pub struct BoundLine {
+    pub text: String,
+    pub invocations: Vec<Invocation>,
+}
+
 pub struct KeyResolver {
     pub prefix: KeyPattern,
     pub prefix_actions: HashMap<KeyPattern, KeyBindingAction>,
     pub direct_actions: HashMap<KeyPattern, KeyBindingAction>,
+    pub prefix_commands: HashMap<KeyPattern, BoundLine>,
+    pub direct_commands: HashMap<KeyPattern, BoundLine>,
     pub line_actions: HashMap<KeyPattern, KeyBindingLineAction>,
     pub terminal_actions: HashMap<KeyPattern, KeyBindingTerminalAction>,
     pub search_actions: HashMap<KeyPattern, KeyBindingSearchAction>,
@@ -649,6 +659,11 @@ pub enum KeymapError {
         section: &'static str,
         action: String,
     },
+    BadCommandLine {
+        section: &'static str,
+        key: String,
+        error: CommandError,
+    },
 }
 
 impl std::fmt::Display for KeymapError {
@@ -664,11 +679,63 @@ impl std::fmt::Display for KeymapError {
             KeymapError::InvalidAction { section, action } => {
                 write!(f, "in [{section}]: unknown action '{action}'")
             }
+            KeymapError::BadCommandLine {
+                section,
+                key,
+                error,
+            } => write!(f, "in [{section}]: {key}: {error}"),
         }
     }
 }
 
 impl std::error::Error for KeymapError {}
+
+/// A global section's keys to their action, and to their command line
+type GlobalSection = (
+    HashMap<KeyPattern, KeyBindingAction>,
+    HashMap<KeyPattern, BoundLine>,
+);
+
+/// A global section's keys, to an action name or else to a command line (MAX-12). A value
+/// neither is an error naming its key: an unknown action, the line's parse error
+fn global_section(
+    section: &'static str,
+    entries: &BTreeMap<String, String>,
+) -> Result<GlobalSection, KeymapError> {
+    let mut actions = HashMap::new();
+    let mut lines = HashMap::new();
+    for (key, value) in entries {
+        let pattern = key.parse().map_err(|reason| KeymapError::InvalidKey {
+            section,
+            key: key.clone(),
+            reason,
+        })?;
+        if let Ok(action) = value.parse() {
+            actions.insert(pattern, action);
+            continue;
+        }
+        match commands::parse(value) {
+            Ok(invocations) if !invocations.is_empty() => {
+                let text = value.trim().to_string();
+                lines.insert(pattern, BoundLine { text, invocations });
+            }
+            Ok(_) => {
+                return Err(KeymapError::InvalidAction {
+                    section,
+                    action: value.clone(),
+                });
+            }
+            Err(error) => {
+                return Err(KeymapError::BadCommandLine {
+                    section,
+                    key: key.clone(),
+                    error,
+                });
+            }
+        }
+    }
+    Ok((actions, lines))
+}
 
 /// The keys bound to `action` in a fixed order (the map's changes between runs): plain keys
 /// before modified ones, named keys before letters, then by name
@@ -718,16 +785,17 @@ impl KeyResolver {
                 .keys()
                 .map(|key| ("terminal_mode", key)),
         );
-        let direct_keys = self
-            .direct_actions
-            .keys()
+        let direct_keys = (self.direct_actions.keys())
+            .chain(self.direct_commands.keys())
             .map(|key| ("direct_actions", key));
         let mut shadowed: Vec<String> = mode_keys
             .chain(direct_keys)
             .filter_map(|(section, key)| {
+                let is_direct =
+                    self.direct_actions.contains_key(key) || self.direct_commands.contains_key(key);
                 let by = if *key == self.prefix {
                     "the prefix"
-                } else if section != "direct_actions" && self.direct_actions.contains_key(key) {
+                } else if section != "direct_actions" && is_direct {
                     "[direct_actions]"
                 } else {
                     return None;
@@ -749,35 +817,10 @@ impl KeyResolver {
                 reason: err,
             })?;
 
-        let mut prefix_actions = HashMap::new();
-        for (k, action_str) in &config.prefix_actions {
-            let pat = k.parse().map_err(|err| KeymapError::InvalidKey {
-                section: "prefix_actions",
-                key: k.clone(),
-                reason: err,
-            })?;
-            let act: KeyBindingAction =
-                action_str.parse().map_err(|_| KeymapError::InvalidAction {
-                    section: "prefix_actions",
-                    action: action_str.clone(),
-                })?;
-            prefix_actions.insert(pat, act);
-        }
-
-        let mut direct_actions = HashMap::new();
-        for (k, action_str) in &config.direct_actions {
-            let pat = k.parse().map_err(|err| KeymapError::InvalidKey {
-                section: "direct_actions",
-                key: k.clone(),
-                reason: err,
-            })?;
-            let act: KeyBindingAction =
-                action_str.parse().map_err(|_| KeymapError::InvalidAction {
-                    section: "direct_actions",
-                    action: action_str.clone(),
-                })?;
-            direct_actions.insert(pat, act);
-        }
+        let (prefix_actions, prefix_commands) =
+            global_section("prefix_actions", &config.prefix_actions)?;
+        let (direct_actions, direct_commands) =
+            global_section("direct_actions", &config.direct_actions)?;
 
         let mut line_actions = HashMap::new();
         for (k, action_str) in &config.line_mode {
@@ -858,6 +901,8 @@ impl KeyResolver {
             prefix,
             prefix_actions,
             direct_actions,
+            prefix_commands,
+            direct_commands,
             line_actions,
             terminal_actions,
             search_actions,
@@ -932,6 +977,8 @@ impl Default for KeyBindingsConfig {
             ":"     => KeyBindingAction::CommandLine,
             "a"     => KeyBindingAction::ExitPrefix,
             "h"     => KeyBindingAction::DetachSerial,
+            "f"     => "break", // a break like minicom's
+            "p"     => "dtr off; sleep 100; dtr on", // DTR pulse which resets most boards
         };
 
         let line_mode = default_bindings! {
@@ -1345,6 +1392,54 @@ mod tests {
         }
         assert!("toggle_local_echo".parse::<KeyBindingAction>().is_err());
         assert!("".parse::<KeyBindingAction>().is_err());
+    }
+
+    /// MAX-12: `[prefix_actions]` and `[direct_actions]` take a command line where an action
+    /// name goes, parsed when the keymap loads; an action name stays an action. A value that
+    /// is neither fails the load, naming its key. A mode key under a direct line is warned.
+    /// How: the ESP32 reset into the bootloader on F6, `send-hex` on F5, the default break and
+    /// DTR pulse, then typos.
+    #[test]
+    fn bound_command_lines() {
+        let mut config = KeyBindingsConfig::default();
+        let esp32 = "dtr off; rts on; sleep 100; dtr on; rts off; sleep 50; dtr off";
+        config.prefix_actions.insert("f6".into(), esp32.into());
+        config
+            .direct_actions
+            .insert("f5".into(), " send-hex 03 ".into());
+        config.line_mode.insert("f5".into(), "submit".into());
+        let resolver = KeyResolver::try_new(&config).unwrap();
+        let key = |name: &str| name.parse::<KeyPattern>().unwrap();
+        let f6 = &resolver.prefix_commands[&key("f6")];
+        assert_eq!((f6.text.as_str(), f6.invocations.len()), (esp32, 7));
+        assert_eq!(resolver.direct_commands[&key("f5")].text, "send-hex 03");
+        assert_eq!(
+            resolver.prefix_actions[&key("h")],
+            KeyBindingAction::DetachSerial
+        );
+        assert!(!resolver.prefix_commands.contains_key(&key("h")));
+        // the default ones
+        assert_eq!(resolver.prefix_commands[&key("f")].invocations.len(), 1);
+        assert_eq!(resolver.prefix_commands[&key("p")].invocations.len(), 3);
+        assert_eq!(
+            resolver.shadowed_keys(),
+            ["F5 in [line_mode] (taken by [direct_actions])"]
+        );
+
+        let error = |value: &str| {
+            let mut config = KeyBindingsConfig::default();
+            config.prefix_actions.insert("f7".into(), value.into());
+            KeyResolver::try_new(&config).err().unwrap().to_string()
+        };
+        assert_eq!(
+            error("rst on"),
+            "in [prefix_actions]: f7: unknown command 'rst'"
+        );
+        assert_eq!(
+            error("baud 10"),
+            "in [prefix_actions]: f7: baud: bad argument 1: 10 is out of 50..=4000000"
+        );
+        assert_eq!(error(" ; "), "in [prefix_actions]: unknown action ' ; '");
     }
 
     /// Keys a text input popup still sends to `[dialog_actions]`: the others are typed.

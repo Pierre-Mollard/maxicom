@@ -1274,7 +1274,78 @@ mod tests {
         assert!(has(&rows, "x Dismiss"), "{rows:#?}");
     }
 
-    /// The help popup has a tab for the popup bindings, the last one (MAX-73).
+    /// MAX-12: the help's third tab lists the keys bound to a command line, the direct ones
+    /// first, then every command: those with arguments with their help under them, then the
+    /// others, one a row.
+    /// How: the default keymap (break and the DTR pulse after the prefix) and `send-hex 03` on
+    /// F5, the tab reached two forward from the first.
+    #[test]
+    fn help_lists_the_commands() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 60);
+        let mut config = KeyBindingsConfig::default();
+        config
+            .direct_actions
+            .insert("f5".to_string(), "send-hex 03".to_string());
+        h.app.key_resolver = KeyResolver::try_new(&config).unwrap();
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::Help(
+                HelpDialog::new(),
+            ))));
+        h.app.update(Action::Overlay(DialogAction::CycleNext));
+        h.app.update(Action::Overlay(DialogAction::CycleNext));
+        let rows = h.draw();
+        let row_of = |rows: &[String], text: &str| rows.iter().position(|row| row.contains(text));
+        let f5 = row_of(&rows, "F5 ").expect("F5");
+        assert!(rows[f5].contains("-> send-hex 03"), "{rows:#?}");
+        assert_eq!(row_of(&rows, "Ctrl-a + f "), Some(f5 + 1), "{rows:#?}");
+        let pulse = row_of(&rows, "Ctrl-a + p -> dtr off; sleep 100; dtr on");
+        assert!(pulse.is_some(), "{rows:#?}");
+        assert!(has(&rows, "on the command line (Ctrl-a :)"), "{rows:#?}");
+
+        // scrolled down until `text` shows with the row under it
+        let scroll_to = |h: &mut Harness, text: &str| loop {
+            let rows = h.draw();
+            if let Some(row) = row_of(&rows, text).filter(|row| !rows[row + 1].contains('└')) {
+                return (rows[row].clone(), rows[row + 1].clone());
+            }
+            assert!(
+                !has(&rows, " cancel "),
+                "{text} not before the last command"
+            );
+            h.app.update(Action::Overlay(DialogAction::Down));
+        };
+        let (_, help) = scroll_to(&mut h, " dtr <state>");
+        assert!(help.contains("     Set the DTR line: on or off"), "{help}");
+        let (quit, _) = scroll_to(&mut h, " quit ");
+        assert!(quit.contains("Quit maxicom"), "{quit}");
+        // the last command, whole: the scrollbar keeps its own column
+        h.app.update(Action::Overlay(DialogAction::End));
+        let rows = h.draw();
+        let cancel = &rows[row_of(&rows, " cancel ").expect("cancel")];
+        assert!(cancel.contains("and queued commands "), "{cancel}");
+    }
+
+    /// MAX-12: the help popup takes four fifths of the screen, 74 columns at least, and no
+    /// more than its whole tab bar needs (75 columns) inside the borders and the padding:
+    /// every tab fits from 99 columns, no arrow; at 80 the last ones hide behind `▶`.
+    #[test]
+    fn help_popup_widens() {
+        for (width, popup, arrow) in [(200, 79, false), (99, 79, false), (80, 74, true)] {
+            let mut h = Harness::line_mode(LineDisplayMode::Pretty, width, 24);
+            h.app
+                .update(Action::App(AppAction::OpenOverlay(Overlay::Help(
+                    HelpDialog::new(),
+                ))));
+            let rows = h.draw();
+            let top = rows.iter().find(|row| row.contains("┌ Help")).unwrap();
+            assert_eq!(top.trim().chars().count(), popup, "{rows:#?}");
+            assert_eq!(has(&rows, "Dialogs"), !arrow, "{rows:#?}");
+            assert_eq!(has(&rows, "▶"), arrow, "{rows:#?}");
+        }
+    }
+
+    /// The help popup has a tab for the popup bindings, the last one (MAX-73), brought into
+    /// view when the tabs overflow (MAX-12).
     /// How: back one tab from the first, with Close also on Ctrl-x.
     #[test]
     fn help_lists_the_popup_bindings() {
@@ -1326,7 +1397,8 @@ mod tests {
     /// Rows inside the popup frame (between its top and bottom borders), without the borders
     /// MAX-143: the help's copy tab lists the scroll keys apart from the move keys, last: the
     /// copy mode's own, then the direct scroll and pan keys no copy key takes.
-    /// How: the default keymap, the copy tab (the third) scrolled to its end.
+    /// Every tab ends with a blank row.
+    /// How: the default keymap, the copy tab (the fourth) scrolled to its end.
     #[test]
     fn help_lists_the_copy_scroll_keys_apart() {
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
@@ -1336,11 +1408,16 @@ mod tests {
             ))));
         h.app.update(Action::Overlay(DialogAction::CycleNext));
         h.app.update(Action::Overlay(DialogAction::CycleNext));
+        h.app.update(Action::Overlay(DialogAction::CycleNext));
         // the popup knows how far it scrolls once drawn
         h.draw();
         h.app.update(Action::Overlay(DialogAction::End));
         let rows = h.draw();
         let row_of = |text: &str| rows.iter().position(|row| row.contains(text));
+        // the last row is blank, off the bottom border
+        let bottom = rows.iter().position(|row| row.contains("└")).unwrap();
+        let last = rows[bottom - 1].trim_matches(|c| " │▼".contains(c));
+        assert!(last.is_empty(), "{rows:#?}");
         let header = row_of("Scrolling moves the view").expect("the scroll header");
         assert!(row_of("-> down").unwrap() < header, "{rows:#?}");
         for scroll in ["scroll-up", "scroll-down", "scroll-to-top", "page-up"] {
@@ -3936,10 +4013,23 @@ mod tests {
         assert!(
             matches!(h.app.overlay(), Some(Overlay::Help(d)) if d.category == HelpCategory::Search)
         );
-        let (x, y) = cell_of(&rows, "Dialogs");
-        click(&mut h, (x + 6, y));
+        // the tabs overflow the popup: the arrow picks the hidden one past it (MAX-12)
+        assert!(!has(&rows, "Dialogs"), "{rows:#?}");
+        click(&mut h, cell_of(&rows, "▶"));
         assert!(
             matches!(h.app.overlay(), Some(Overlay::Help(d)) if d.category == HelpCategory::Dialog)
+        );
+        let rows = h.draw();
+        assert!(has(&rows, "Dialogs") && !has(&rows, "▶"), "{rows:#?}");
+        let (x, y) = cell_of(&rows, "Copy");
+        click(&mut h, (x + 3, y));
+        assert!(
+            matches!(h.app.overlay(), Some(Overlay::Help(d)) if d.category == HelpCategory::CopyMode)
+        );
+        let rows = h.draw();
+        click(&mut h, cell_of(&rows, "◀"));
+        assert!(
+            matches!(h.app.overlay(), Some(Overlay::Help(d)) if d.category == HelpCategory::Prefix)
         );
         click(&mut h, (0, 0));
         assert!(h.app.overlay().is_none());
