@@ -20,7 +20,7 @@ use std::{
 };
 
 use replay::Replay;
-use serial::{SerialConfig, SerialDevice, SerialError};
+use serial::{LineControl, SerialConfig, SerialDevice, SerialError};
 use tcp::TcpDevice;
 
 /// A TCP connect gives up after this. Off the loop, except at start before the UI
@@ -46,6 +46,22 @@ impl ByteSource {
             ByteSource::Live(dev) => dev.write(bytes),
             ByteSource::Tcp(dev) => dev.write(bytes),
             ByteSource::Replay(_) => Ok(()),
+        }
+    }
+
+    /// Sets a control line (MAX-12), a serial port's only
+    pub fn control(&mut self, control: LineControl) -> Result<(), SerialError> {
+        match self {
+            ByteSource::Live(dev) => dev.control(control),
+            ByteSource::Tcp(_) | ByteSource::Replay(_) => Err(SerialError::NoControlLines),
+        }
+    }
+
+    /// Ends the break `control` started; nothing for a link without control lines
+    pub fn end_break(&mut self) -> Result<(), SerialError> {
+        match self {
+            ByteSource::Live(dev) => dev.end_break(),
+            ByteSource::Tcp(_) | ByteSource::Replay(_) => Ok(()),
         }
     }
 }

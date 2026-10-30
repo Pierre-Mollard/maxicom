@@ -23,7 +23,7 @@ use crate::{
     link::{
         ByteSource, Opener,
         replay::Replay,
-        serial::{SerialConfig, SerialError},
+        serial::{LineControl, SerialConfig, SerialError},
         tcp_address,
     },
     overlays::{ErrorDialog, Overlay},
@@ -234,6 +234,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut last_rx_activity = Instant::now();
     let mut needs_redraw = true;
     let mut last_draw: Option<Instant> = None;
+    // when the break a `break` command started ends (MAX-12)
+    let mut break_until: Option<Instant> = None;
 
     'main: while running {
         let mut rx_received = false;
@@ -298,6 +300,16 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 && let Some(ref mut dev) = device
             {
                 transmit(&mut app, dev, &answers, is_replay);
+            }
+        }
+
+        // the break ends on time, the input poll waking the loop often enough (MAX-12)
+        if break_until.is_some_and(|until| Instant::now() >= until) {
+            break_until = None;
+            if let Some(ref mut dev) = device
+                && let Err(e) = dev.end_break()
+            {
+                app.notify_error(format!("break: {e}"));
             }
         }
 
@@ -401,17 +413,28 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             IDLE_WAIT
         };
         let mut handled_events = 0;
-        while running
-            && handled_events < MAX_EVENTS_PER_FRAME
-            && let Ok(Some(event)) = inputs::poll_event(poll_timeout)
-        {
+        while running && handled_events < MAX_EVENTS_PER_FRAME {
+            let action = match inputs::poll_event(poll_timeout) {
+                Ok(Some(event)) => {
+                    let action = inputs::handle_event(event, &app);
+                    // the mouse capture reports every move: one that does nothing draws nothing
+                    needs_redraw |= !matches!(action, inputs::Action::Ignore);
+                    action
+                }
+                // no event: a command line chain paused by a `sleep` or a `break` goes on
+                // once its time is up (MAX-12)
+                _ => match app.next_command_action(Instant::now()) {
+                    Some(action) => {
+                        needs_redraw = true;
+                        action
+                    }
+                    None => break,
+                },
+            };
             poll_timeout = Duration::ZERO;
             handled_events += 1;
-            let action = inputs::handle_event(event, &app);
-            // the mouse capture reports every move: one that does nothing draws nothing
-            needs_redraw |= !matches!(action, inputs::Action::Ignore);
-            // the event's action, then the queued commands of a command line chain one at a
-            // time, each effect applied before the next is built (MAX-12)
+            // the action, then the queued commands of a command line chain one at a time, each
+            // effect applied before the next is built (MAX-12)
             let mut next = Some(action);
             while let Some(action) = next.take() {
                 match app.update(action) {
@@ -447,6 +470,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     UpdateEffect::Reconfigure(serial_config) => {
                         if !is_replay && let Some(ByteSource::Live(ref mut dev)) = device {
                             if let Err(e) = dev.reconfigure(&serial_config) {
+                                // a command line chain stops there, the dialog says why (MAX-12)
+                                app.drop_pending_commands();
                                 app.open_overlay(Overlay::Error(
                                     ErrorDialog::new(
                                         "Serial Conf Rejected",
@@ -457,8 +482,27 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                             } else {
                                 app.serial_config = serial_config;
                             }
+                        } else if !is_replay && device.is_none() {
+                            // a detached port opens with them (MAX-12)
+                            app.serial_config = serial_config;
+                            app.notify_info("The port is detached: it opens with these settings");
                         }
                     }
+                    UpdateEffect::LineControl(control) => match device {
+                        Some(ref mut dev) => match dev.control(control) {
+                            Ok(()) => {
+                                // the chain waits for the break's end, which the top of the
+                                // loop's turn comes to first
+                                if let LineControl::Break(duration) = control {
+                                    let until = Instant::now() + duration;
+                                    break_until = Some(until);
+                                    app.pause_commands(until);
+                                }
+                            }
+                            Err(e) => app.fail_commands(format!("{control}: {e}")),
+                        },
+                        None => app.fail_commands(format!("{control}: the port is detached")),
+                    },
                     UpdateEffect::CopyToClipboard(text) => {
                         execute_clipboard_copy(&mut app, &text, None);
                     }
@@ -488,7 +532,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     UpdateEffect::None => {}
                 }
                 if running {
-                    next = app.next_command_action();
+                    next = app.next_command_action(Instant::now());
                 }
             }
         }

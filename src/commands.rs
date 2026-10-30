@@ -11,8 +11,6 @@ pub mod tokenizer;
 use tokenizer::Word;
 
 /// `Bytes` is any bytes, the word as the tokenizer made it (escapes and all), not only UTF-8
-// TODO: (MAX-12) the commands of steps 3b to 3d use the others
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArgKind {
     Int {
@@ -265,7 +263,11 @@ pub static COMMANDS: &[CommandSpec] = {
         CommandSpec::action("reload-config", A::ReloadConfig, "Reload the config files"),
         CommandSpec::action("toggle-mouse", A::ToggleMouse, "Toggle mouse support"),
         CommandSpec::action("command-line", A::CommandLine, "Open the command line"),
-        CommandSpec::action("send-cancel", A::SendCancel, "Stop sending a file"),
+        CommandSpec::action(
+            "cancel",
+            A::CancelCommands,
+            "Stop the file being sent and the commands waiting",
+        ),
         CommandSpec::build(
             "send",
             &[arg("text", ArgKind::Bytes)],
@@ -294,6 +296,72 @@ pub static COMMANDS: &[CommandSpec] = {
             ],
             build::send_file,
             "Send a file at the baud rate, waiting after each line",
+        ),
+        CommandSpec::build(
+            "sleep",
+            &[arg(
+                "ms",
+                ArgKind::Int {
+                    min: 1,
+                    max: 60_000,
+                    suggestions: &[],
+                },
+            )],
+            build::pause_commands,
+            "Pause the rest of the line, the screen stays live",
+        ),
+        CommandSpec::build(
+            "dtr",
+            &[arg("state", ArgKind::Bool)],
+            build::dtr,
+            "Set the DTR line: on or off",
+        ),
+        CommandSpec::build(
+            "rts",
+            &[arg("state", ArgKind::Bool)],
+            build::rts,
+            "Set the RTS line: on or off",
+        ),
+        CommandSpec::build(
+            "break",
+            &[ArgSpec {
+                name: "ms",
+                kind: ArgKind::Int {
+                    min: 1,
+                    max: 10_000,
+                    suggestions: &[],
+                },
+                optional: true,
+            }],
+            build::line_break,
+            "Hold the line in break, 250 ms by default",
+        ),
+        CommandSpec::build(
+            "baud",
+            &[arg(
+                "rate",
+                ArgKind::Int {
+                    min: 50,
+                    max: 4_000_000,
+                    suggestions: &[
+                        "9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600",
+                    ],
+                },
+            )],
+            build::baud,
+            "Set the baud rate",
+        ),
+        CommandSpec::build(
+            "framing",
+            &[arg("framing", ArgKind::String)],
+            build::framing,
+            "Set data bits, parity and stop bits: 8N1",
+        ),
+        CommandSpec::build(
+            "flow",
+            &[arg("flow", ArgKind::Enum(&["none", "hw", "sw"]))],
+            build::flow,
+            "Set flow control: none, hw (RTS/CTS), sw (XON/XOFF)",
         ),
     ]
 };
@@ -728,7 +796,7 @@ mod tests {
             A::ReloadConfig => 38,
             A::ToggleMouse => 39,
             A::CommandLine => 40,
-            A::SendCancel => 41,
+            A::CancelCommands => 41,
         }
     }
 
@@ -772,6 +840,37 @@ mod tests {
             "send-hex takes 1 argument(s) at most"
         );
         assert!("send".parse::<KeyBindingAction>().is_err());
+    }
+
+    /// The arguments of the line commands: `on`/`off`, a break in 1..=10000 ms or none, a baud
+    /// rate in 50..=4000000 with the usual ones completed, `none`/`hw`/`sw`
+    #[test]
+    fn line_command_arguments() {
+        for line in [
+            "dtr on",
+            "rts off",
+            "dtr 1",
+            "break",
+            "break 100",
+            "baud 115200",
+            "flow hw",
+            "framing 7e1",
+        ] {
+            assert!(parse(line).is_ok(), "{line}");
+        }
+        for line in [
+            "dtr",
+            "rts maybe",
+            "break 0",
+            "break 10001",
+            "baud 10",
+            "flow rtscts",
+        ] {
+            assert!(parse(line).is_err(), "{line}");
+        }
+        assert_eq!(values(&complete("baud 1")), ["19200", "115200"]);
+        assert_eq!(values(&complete("flow ")), ["none", "hw", "sw"]);
+        assert_eq!(values(&complete("dtr o")), ["on", "off"]);
     }
 
     #[test]

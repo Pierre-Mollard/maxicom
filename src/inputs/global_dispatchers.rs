@@ -98,7 +98,7 @@ impl KeyBindingAction {
             KeyBindingAction::ToggleMouse => {
                 Action::App(AppAction::ToggleSetting(SettingKey::Mouse))
             }
-            KeyBindingAction::SendCancel => Action::App(AppAction::CancelTransfer),
+            KeyBindingAction::CancelCommands => Action::App(AppAction::CancelCommands),
             KeyBindingAction::CommandLine => {
                 let history = app.command_history().iter().cloned().collect();
                 Action::App(AppAction::OpenOverlay(Overlay::CommandLine(

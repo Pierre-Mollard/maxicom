@@ -63,7 +63,7 @@ pub enum KeyBindingAction {
     ReloadConfig,
     ToggleMouse,
     CommandLine,
-    SendCancel,
+    CancelCommands,
 }
 
 impl FromStr for KeyBindingAction {
@@ -1337,7 +1337,7 @@ mod tests {
             ("reload-config", KeyBindingAction::ReloadConfig),
             ("toggle-mouse", KeyBindingAction::ToggleMouse),
             ("command-line", KeyBindingAction::CommandLine),
-            ("send-cancel", KeyBindingAction::SendCancel),
+            ("cancel", KeyBindingAction::CancelCommands),
         ];
         for (name, action) in NAMES {
             assert_eq!(name.parse::<KeyBindingAction>().unwrap(), action, "{name}");

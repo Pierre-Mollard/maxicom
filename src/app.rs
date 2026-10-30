@@ -27,7 +27,7 @@ use crate::{
         Action, AppAction, ClickHoldAction, CopyModeAction, HistoryAction, LineInputAction,
         ScrollbarAction, SearchModeAction, SideViewAction, TerminalAction,
     },
-    link::serial::SerialConfig,
+    link::serial::{LineControl, SerialConfig},
     notification::{NotificationManager, ToastLevel},
     overlays::{
         ErrorDialog, FilePathDialog, Overlay, OverlayResponse, PopupTarget, ScreenshotDialog,
@@ -118,8 +118,10 @@ pub struct App {
     /// runs again
     click_hold: Option<(KeyBindingAction, ratatui::layout::Rect)>,
     click_repeat_at: Option<Instant>,
-    /// The commands of a command line chain still to run, one after the other (MAX-12)
+    /// The commands of a command line chain still to run, one after the other (MAX-12), and
+    /// when they go on after a `sleep` or a `break`
     pending_commands: VecDeque<Invocation>,
+    commands_resume_at: Option<Instant>,
     /// The command lines that ran, the oldest first (MAX-12)
     command_history: VecDeque<String>,
     pub line_mode: LineMode,
@@ -147,6 +149,7 @@ pub enum UpdateEffect {
     None,
     Transmit(Vec<u8>),
     Reconfigure(SerialConfig),
+    LineControl(LineControl),
     CopyToClipboard(String),
     CopyToClipboardAs { text: String, what: String },
     ToggleAttachSerial,
@@ -188,6 +191,7 @@ impl App {
             click_hold: None,
             click_repeat_at: None,
             pending_commands: VecDeque::new(),
+            commands_resume_at: None,
             command_history: VecDeque::new(),
             line_mode: line_view,
             terminal_mode: terminal_view,
@@ -268,8 +272,15 @@ impl App {
 
     /// The next action of a command line chain (MAX-12). Each is built when its turn comes, on
     /// the state the previous ones left, and the loop applies its effect before the next
-    /// A command that refuses (the link can't do it) stops the chain, with the error
-    pub fn next_command_action(&mut self) -> Option<Action> {
+    /// A command that refuses (the link can't do it) stops the chain, with the error. None
+    /// either while the chain is paused (before `now`)
+    pub fn next_command_action(&mut self, now: Instant) -> Option<Action> {
+        if let Some(resume_at) = self.commands_resume_at {
+            if now < resume_at {
+                return None;
+            }
+            self.commands_resume_at = None;
+        }
         let invocation = self.pending_commands.pop_front()?;
         let built = match invocation.spec.target {
             Target::Action(action) => Ok(action.to_action(self)),
@@ -281,13 +292,53 @@ impl App {
                     command: invocation.spec.name,
                     reason,
                 };
-                let skipped = std::mem::take(&mut self.pending_commands).len();
-                match skipped {
-                    0 => self.notify_error(error.to_string()),
-                    n => self.notify_error(format!("{error} ({n} more not run)")),
-                }
+                self.fail_commands(error.to_string());
             })
             .ok()
+    }
+
+    /// A command failed with `message`, here or where the loop applied its effect: the rest of
+    /// its chain is dropped, the error says how much
+    pub fn fail_commands(&mut self, message: String) {
+        match self.drop_pending_commands() {
+            0 => self.notify_error(message),
+            n => self.notify_error(format!("{message} ({n} more not run)")),
+        }
+    }
+
+    /// Drops the rest of a command line chain, quietly: how many commands it had
+    pub fn drop_pending_commands(&mut self) -> usize {
+        self.commands_resume_at = None;
+        std::mem::take(&mut self.pending_commands).len()
+    }
+
+    /// `cancel` (MAX-12): stops the file being sent and drops the commands waiting
+    fn cancel(&mut self) {
+        let mut stopped = Vec::new();
+        if let Some(transfer) = self.transfer.take() {
+            stopped.push(format!(
+                "Stopped sending {} at {}%",
+                transfer.name(),
+                transfer.percent()
+            ));
+        }
+        match self.drop_pending_commands() {
+            0 => {}
+            1 => stopped.push("dropped 1 waiting command".to_string()),
+            n => stopped.push(format!("dropped {n} waiting commands")),
+        }
+        if stopped.is_empty() {
+            self.notify_info("Nothing to cancel");
+        } else {
+            let mut message = stopped.join(", ");
+            message[..1].make_ascii_uppercase();
+            self.notify_warn(message);
+        }
+    }
+
+    /// The rest of a command line chain waits until `until` (a `sleep`, the end of a `break`)
+    pub fn pause_commands(&mut self, until: Instant) {
+        self.commands_resume_at = Some(until);
     }
 
     /// A warning for the keymap's keys that never reach their mode section (MAX-155)
@@ -481,8 +532,23 @@ impl App {
                             let action = action.to_action(self);
                             self.update(action)
                         }
-                        OverlayResponse::QueueCommands { line, invocations } => {
+                        OverlayResponse::QueueCommands {
+                            line,
+                            mut invocations,
+                        } => {
                             self.push_command_history(line);
+                            // a line starting with `cancel` stops what waits, instead of
+                            // waiting behind it
+                            let cancels = invocations.first().is_some_and(|invocation| {
+                                matches!(
+                                    invocation.spec.target,
+                                    Target::Action(KeyBindingAction::CancelCommands)
+                                )
+                            });
+                            if cancels {
+                                invocations.remove(0);
+                                self.cancel();
+                            }
                             self.pending_commands.extend(invocations);
                             UpdateEffect::None
                         }
@@ -955,15 +1021,14 @@ impl App {
                 self.transfer = Some(*transfer);
                 UpdateEffect::None
             }
-            AppAction::CancelTransfer => {
-                match self.transfer.take() {
-                    Some(transfer) => self.notify_warn(format!(
-                        "Stopped sending {} at {}%",
-                        transfer.name(),
-                        transfer.percent()
-                    )),
-                    None => self.notify_info("No file is being sent"),
-                }
+            AppAction::Reconfigure(config) => UpdateEffect::Reconfigure(config),
+            AppAction::PauseCommands(duration) => {
+                self.pause_commands(Instant::now() + duration);
+                UpdateEffect::None
+            }
+            AppAction::LineControl(control) => UpdateEffect::LineControl(control),
+            AppAction::CancelCommands => {
+                self.cancel();
                 UpdateEffect::None
             }
             AppAction::PasteBuffer => {
@@ -1496,7 +1561,7 @@ mod tests {
         assert!(matches!(effect, UpdateEffect::None));
         assert!(app.overlay().is_none());
         let mut effects = Vec::new();
-        while let Some(action) = app.next_command_action() {
+        while let Some(action) = app.next_command_action(Instant::now()) {
             effects.push(app.update(action));
         }
         assert!(matches!(
@@ -1511,7 +1576,7 @@ mod tests {
 
         run_line(&mut app, "toggle-local-echo; nope");
         assert!(matches!(app.overlay(), Some(Overlay::CommandLine(_))));
-        assert!(app.next_command_action().is_none());
+        assert!(app.next_command_action(Instant::now()).is_none());
         assert_ne!(app.settings.local_echo, echo);
         let toast = app.notifications.active_toasts().last().unwrap();
         assert_eq!(toast.message, "unknown command 'nope'");
@@ -1528,7 +1593,7 @@ mod tests {
             app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
             app.update(Action::Overlay(DialogAction::Confirm));
             let mut effects = Vec::new();
-            while let Some(action) = app.next_command_action() {
+            while let Some(action) = app.next_command_action(Instant::now()) {
                 effects.push(app.update(action));
             }
             effects
@@ -1559,12 +1624,12 @@ mod tests {
         assert_eq!(effects.len(), 1);
         assert!(matches!(app.overlay(), Some(Overlay::Help(_))));
         assert_eq!(last_error(&app), "send: a replay has no link to send to");
-        assert!(app.next_command_action().is_none());
+        assert!(app.next_command_action(Instant::now()).is_none());
     }
 
     /// MAX-12: `send-file` starts a paced transfer and the chain goes on at once; its chunks
     /// come from `next_transfer_chunk` until the end of the file, with a notice. A second
-    /// `send-file`, a missing file or a replay refuse; `send-cancel` stops it.
+    /// `send-file`, a missing file or a replay refuse; `cancel` stops it.
     /// How: a 300-byte file at 9600 baud (96 bytes per 100 ms at most).
     #[test]
     fn command_line_send_file() {
@@ -1579,7 +1644,7 @@ mod tests {
             app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
             app.update(Action::Overlay(DialogAction::Confirm));
             let mut effects = Vec::new();
-            while let Some(action) = app.next_command_action() {
+            while let Some(action) = app.next_command_action(Instant::now()) {
                 effects.push(app.update(action));
             }
             effects
@@ -1602,7 +1667,7 @@ mod tests {
         assert!(run_line(&mut app, &format!("send-file {file}")).is_empty());
         assert_eq!(
             last_toast(&app),
-            "send-file: a file is being sent already (send-cancel stops it)"
+            "send-file: a file is being sent already (cancel stops it)"
         );
 
         let start = Instant::now();
@@ -1623,7 +1688,7 @@ mod tests {
 
         run_line(&mut app, &format!("send-file {file}"));
         app.next_transfer_chunk(start + Duration::from_secs(1));
-        run_line(&mut app, "send-cancel");
+        run_line(&mut app, "cancel");
         assert!(app.transfer().is_none());
         assert!(
             last_toast(&app).ends_with(" at 32%"),
@@ -1648,6 +1713,194 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// MAX-12: `baud`, `framing` and `flow` give the port's settings for the loop to apply,
+    /// each on the settings the one before left; `dtr`, `rts` and `break` give the line
+    /// controls. `rts` refuses with hardware flow control, and all refuse on a TCP link or a
+    /// replay, stopping the chain.
+    /// How: the loop's part played by the test, which applies each settings change.
+    #[test]
+    fn command_line_serial_lines() {
+        use crate::link::serial::{CharSize, FlowControl, Parity, StopBits};
+        let mut app = app();
+        let run_line = |app: &mut App, line: &str| {
+            app.update(KeyBindingAction::CommandLine.to_action(app));
+            app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
+            app.update(Action::Overlay(DialogAction::Confirm));
+            let mut controls = Vec::new();
+            while let Some(action) = app.next_command_action(Instant::now()) {
+                match app.update(action) {
+                    UpdateEffect::Reconfigure(config) => app.serial_config = config,
+                    UpdateEffect::LineControl(control) => controls.push(control),
+                    _ => {}
+                }
+            }
+            controls
+        };
+        let last_error = |app: &App| {
+            app.notifications
+                .active_toasts()
+                .last()
+                .unwrap()
+                .message
+                .clone()
+        };
+
+        run_line(&mut app, "baud 9600; framing 7e2; flow hw");
+        let config = &app.serial_config;
+        assert_eq!(config.baudrate, 9600);
+        assert_eq!(
+            (config.char_size, config.parity, config.stop_bits),
+            (CharSize::Bits7, Parity::Even, StopBits::Two)
+        );
+        assert_eq!(config.flow_control, FlowControl::RtsCts);
+
+        assert!(run_line(&mut app, "rts on").is_empty());
+        assert_eq!(
+            last_error(&app),
+            "rts: hardware flow control drives RTS (flow none first)"
+        );
+        let controls = run_line(&mut app, "flow none; dtr off; rts on; break; break 100");
+        assert_eq!(
+            controls,
+            [
+                LineControl::Dtr(false),
+                LineControl::Rts(true),
+                LineControl::Break(Duration::from_millis(250)),
+                LineControl::Break(Duration::from_millis(100)),
+            ]
+        );
+        run_line(&mut app, "framing 9x1");
+        assert!(last_error(&app).starts_with("framing: '9x1' isn't a framing"));
+
+        app.serial_config.port = "tcp://localhost:4000".to_string();
+        run_line(&mut app, "baud 115200");
+        assert_eq!(
+            last_error(&app),
+            "baud: a TCP link has no line settings, its bridge sets them"
+        );
+        assert!(run_line(&mut app, "dtr on; send x").is_empty());
+        assert_eq!(
+            last_error(&app),
+            "dtr: a TCP link has no control lines, its bridge sets them (1 more not run)"
+        );
+        app.serial_config.port = "file:///tmp/capture.raw".to_string();
+        run_line(&mut app, "break");
+        assert_eq!(last_error(&app), "break: a replay has no control lines");
+        assert_eq!(app.serial_config.baudrate, 9600);
+    }
+
+    /// MAX-12: `sleep` pauses the rest of the chain, which goes on once its time is up; the
+    /// pause the loop sets for a break does the same. A failure drops a paused chain, pause
+    /// and all.
+    /// How: the actions taken one by one, at chosen times.
+    #[test]
+    fn command_line_sleep() {
+        let mut app = app();
+        let queue_line = |app: &mut App, line: &str| {
+            app.update(KeyBindingAction::CommandLine.to_action(app));
+            app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
+            app.update(Action::Overlay(DialogAction::Confirm));
+        };
+        let sent = |app: &mut App, action: Option<Action>| match app.update(action.unwrap()) {
+            UpdateEffect::Transmit(bytes) => bytes,
+            _ => panic!("expected a transmit"),
+        };
+
+        queue_line(&mut app, "send a; sleep 100; send b");
+        let now = Instant::now();
+        let action = app.next_command_action(now);
+        assert_eq!(sent(&mut app, action), b"a");
+        let sleep = app.next_command_action(now).unwrap();
+        app.update(sleep);
+        assert!(app.next_command_action(Instant::now()).is_none());
+        let later = Instant::now() + Duration::from_millis(150);
+        let action = app.next_command_action(later);
+        assert_eq!(sent(&mut app, action), b"b");
+        assert!(app.next_command_action(later).is_none());
+
+        // the loop pauses the chain for a break
+        queue_line(&mut app, "send c");
+        app.pause_commands(later + Duration::from_millis(100));
+        assert!(app.next_command_action(later).is_none());
+        app.fail_commands("break: failed".to_string());
+        assert!(
+            app.next_command_action(later + Duration::from_secs(1))
+                .is_none()
+        );
+        queue_line(&mut app, "send d");
+        let action = app.next_command_action(Instant::now());
+        assert_eq!(sent(&mut app, action), b"d");
+        assert!(parse_fails(&mut app, "sleep"));
+        assert!(parse_fails(&mut app, "sleep 60001"));
+    }
+
+    /// MAX-12: a line starting with `cancel` runs it at once, not behind the commands waiting:
+    /// it drops them, pause and all, and stops the file being sent, then the rest of its line
+    /// runs.
+    /// How: a chain paused by `sleep`, then a transfer and a paused chain together.
+    #[test]
+    fn command_line_cancel() {
+        use crate::app::transfer::FileTransfer;
+        let mut app = app();
+        let queue_line = |app: &mut App, line: &str| {
+            app.update(KeyBindingAction::CommandLine.to_action(app));
+            app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
+            app.update(Action::Overlay(DialogAction::Confirm));
+        };
+        let last_toast = |app: &App| {
+            app.notifications
+                .active_toasts()
+                .last()
+                .unwrap()
+                .message
+                .clone()
+        };
+
+        queue_line(&mut app, "cancel");
+        assert_eq!(last_toast(&app), "Nothing to cancel");
+
+        queue_line(&mut app, "sleep 1000; send a");
+        let sleep = app.next_command_action(Instant::now()).unwrap();
+        app.update(sleep);
+        queue_line(&mut app, "cancel; send b");
+        assert_eq!(last_toast(&app), "Dropped 1 waiting command");
+        let send = app.next_command_action(Instant::now()).unwrap();
+        assert!(matches!(app.update(send), UpdateEffect::Transmit(b) if b == b"b"));
+
+        let transfer = FileTransfer::new(
+            Box::new(std::io::Cursor::new(vec![b'x'; 10])),
+            "fw.bin".to_string(),
+            10,
+            960.0,
+            Duration::ZERO,
+            Instant::now(),
+        );
+        app.update(Action::App(AppAction::StartTransfer(Box::new(transfer))));
+        queue_line(&mut app, "sleep 1000; send c; send d");
+        let sleep = app.next_command_action(Instant::now()).unwrap();
+        app.update(sleep);
+        queue_line(&mut app, "cancel");
+        assert_eq!(
+            last_toast(&app),
+            "Stopped sending fw.bin at 0%, dropped 2 waiting commands"
+        );
+        assert!(app.transfer().is_none());
+        assert!(
+            app.next_command_action(Instant::now() + Duration::from_secs(2))
+                .is_none()
+        );
+    }
+
+    /// The line doesn't parse: the command line stays open
+    fn parse_fails(app: &mut App, line: &str) -> bool {
+        app.update(KeyBindingAction::CommandLine.to_action(app));
+        app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
+        app.update(Action::Overlay(DialogAction::Confirm));
+        let open = matches!(app.overlay(), Some(Overlay::CommandLine(_)));
+        app.close_overlay();
+        open
+    }
+
     /// MAX-12: the lines that ran are kept for the next command lines, trimmed, not twice in a
     /// row, the oldest dropped past `command_line.history_size`; a line that doesn't parse
     /// isn't kept. The next command line recalls them with Up.
@@ -1660,7 +1913,7 @@ mod tests {
             app.update(KeyBindingAction::CommandLine.to_action(&app));
             app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
             app.update(Action::Overlay(DialogAction::Confirm));
-            while let Some(action) = app.next_command_action() {
+            while let Some(action) = app.next_command_action(Instant::now()) {
                 app.update(action);
             }
             app.close_overlay();

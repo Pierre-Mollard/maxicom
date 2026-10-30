@@ -130,7 +130,7 @@
 //! | `{pan_left}`, `{pan_right}`                                | `pan-left`, `pan-right`   |
 //! | `{pan_offset}`, `{pan_max}`                                | `pan-home`                |
 //! | `{scroll_pos}` `{scroll_pos_up}` `{scroll_percent}` `{scroll_offset}` | `scroll-to-bottom` |
-//! | `{send_file}`, `{send_percent}`                            | `send-cancel`             |
+//! | `{send_file}`, `{send_percent}`                            | `cancel`                  |
 //!
 //! The scroll and pan actions a `click=` can run: `scroll-up`, `scroll-down`, `page-up`,
 //! `page-down`, `scroll-to-top`, `scroll-to-bottom`, `pan-left`, `pan-right`, `pan-home` (back
@@ -450,7 +450,7 @@ impl Var {
                 KeyBindingAction::ScrollToBottom
             }
             Self::CopySide => return Some(ClickAction::ToggleSide),
-            Self::SendFile | Self::SendPercent => KeyBindingAction::SendCancel,
+            Self::SendFile | Self::SendPercent => KeyBindingAction::CancelCommands,
             Self::Port | Self::RxBytes | Self::TxBytes | Self::Time | Self::ScrollMax => {
                 return None;
             }

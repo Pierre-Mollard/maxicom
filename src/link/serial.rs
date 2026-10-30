@@ -223,6 +223,43 @@ impl Display for SerialConfig {
     }
 }
 
+/// A framing written as `8N1`: the data bits (5 to 8), the parity (`N`, `E`, `O`) and the stop
+/// bits (1 or 2), in any case
+pub fn parse_framing(text: &str) -> Result<(CharSize, Parity, StopBits), String> {
+    let invalid = || format!("'{text}' isn't a framing like 8N1 (5-8 data bits, N/E/O, 1-2 stop)");
+    let [data, parity, stop] = text.as_bytes() else {
+        return Err(invalid());
+    };
+    let part = |byte: &u8| (*byte as char).to_string();
+    let data = part(data).parse().map_err(|_| invalid())?;
+    let parity = part(parity).parse().map_err(|_| invalid())?;
+    let stop = match stop {
+        b'1' => StopBits::One,
+        b'2' => StopBits::Two,
+        _ => return Err(invalid()),
+    };
+    Ok((data, parity, stop))
+}
+
+/// A control line of a serial port, set by hand (MAX-12): DTR, RTS, or a break held this long
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineControl {
+    Dtr(bool),
+    Rts(bool),
+    Break(Duration),
+}
+
+impl Display for LineControl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let on_off = |on| if on { "on" } else { "off" };
+        match self {
+            Self::Dtr(on) => write!(f, "DTR {}", on_off(*on)),
+            Self::Rts(on) => write!(f, "RTS {}", on_off(*on)),
+            Self::Break(duration) => write!(f, "break of {} ms", duration.as_millis()),
+        }
+    }
+}
+
 pub struct SerialDevice {
     port: SerialPort,
 }
@@ -253,6 +290,10 @@ pub enum SerialError {
         bytes_attempted: usize,
         source: io::Error,
     },
+    /// Failed to set a control line (DTR, RTS, break)
+    ControlFailed(io::Error),
+    /// The link has no control lines: a TCP link, a replay
+    NoControlLines,
 }
 
 impl fmt::Display for SerialError {
@@ -316,6 +357,8 @@ impl fmt::Display for SerialError {
                     "failed to write {bytes_attempted} bytes to serial port: {source}"
                 )
             }
+            Self::ControlFailed(source) => write!(f, "failed to set the line: {source}"),
+            Self::NoControlLines => write!(f, "the link has no control lines"),
         }
     }
 }
@@ -329,7 +372,8 @@ impl Error for SerialError {
             Self::ReconfigureFailed { source, .. } => Some(source),
             Self::ReadFailed(source) => Some(source),
             Self::WriteFailed { source, .. } => Some(source),
-            Self::InputClosed => None,
+            Self::ControlFailed(source) => Some(source),
+            Self::InputClosed | Self::NoControlLines => None,
         }
     }
 }
@@ -448,6 +492,22 @@ impl SerialDevice {
         }
     }
 
+    /// Sets DTR or RTS, or starts a break: ending it is the caller's, `set_break(false)`
+    pub fn control(&mut self, control: LineControl) -> Result<(), SerialError> {
+        match control {
+            LineControl::Dtr(on) => self.port.set_dtr(on),
+            LineControl::Rts(on) => self.port.set_rts(on),
+            LineControl::Break(_) => self.port.set_break(true),
+        }
+        .map_err(SerialError::ControlFailed)
+    }
+
+    pub fn end_break(&mut self) -> Result<(), SerialError> {
+        self.port
+            .set_break(false)
+            .map_err(SerialError::ControlFailed)
+    }
+
     pub fn write(&mut self, buffer: &[u8]) -> Result<(), SerialError> {
         self.port
             .write_all(buffer)
@@ -498,5 +558,21 @@ mod tests {
             ..framing(CharSize::Bits8, Parity::Even, StopBits::One)
         };
         assert!((config.bytes_per_sec() - 9600.0 / 11.0).abs() < 1e-9);
+    }
+
+    /// MAX-12: `framing 8N1` and the like, any case
+    #[test]
+    fn framings() {
+        assert_eq!(
+            parse_framing("8N1"),
+            Ok((CharSize::Bits8, Parity::None, StopBits::One))
+        );
+        assert_eq!(
+            parse_framing("7e2"),
+            Ok((CharSize::Bits7, Parity::Even, StopBits::Two))
+        );
+        for bad in ["", "8N", "8N1 ", "9N1", "8X1", "8N3", "8é1"] {
+            assert!(parse_framing(bad).is_err(), "{bad}");
+        }
     }
 }

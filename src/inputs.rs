@@ -14,6 +14,7 @@ use crate::{
     capture::{ScreenshotFormat, Stream},
     configs::{KeyBindingAction, KeyPattern, Mode},
     inputs::mouse::handle_mouse,
+    link::serial::{LineControl, SerialConfig},
     overlays::{Overlay, PopupTarget, SettingKey},
 };
 
@@ -60,7 +61,10 @@ pub enum AppAction {
     PasteBuffer,
     OpenSessions,
     StartTransfer(Box<FileTransfer>),
-    CancelTransfer,
+    CancelCommands,
+    Reconfigure(SerialConfig),
+    LineControl(LineControl),
+    PauseCommands(Duration),
     Quit,
 }
 
@@ -376,10 +380,7 @@ mod tests {
     //! Keys reaching navigation while the search bar is open (MAX-72), and popup keys (MAX-73).
 
     use super::*;
-    use crate::{
-        configs::{KeyBindingsConfig, KeyResolver, SettingsConfig},
-        link::serial::SerialConfig,
-    };
+    use crate::configs::{KeyBindingsConfig, KeyResolver, SettingsConfig};
     use crossterm::event::{KeyCode, KeyModifiers};
 
     fn app() -> App {

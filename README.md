@@ -134,8 +134,25 @@ What changes from a serial port:
     after each line, for a device
     without flow control. The line goes on at once: `send-file a; send b`
     sends `b` first. The status bar shows `⇡ name 42%` while it runs (a click
-    stops it), `send-cancel` stops it too. A detach or a lost link stops it.
+    stops it), `cancel` stops it too. A detach or a lost link stops it.
     The path completes from the disk (`~` is the home folder).
+  - `dtr on|off`, `rts on|off`: set the control lines (`true`/`false`, `1`/`0`
+    work too). `rts` is refused with hardware flow control: the driver drives
+    RTS then.
+  - `break [ms]`: holds the line in break, 250 ms by default. The rest of the
+    line waits for its end.
+  - `baud <rate>`, `framing <8N1>`, `flow none|hw|sw`: change the port's
+    settings, as the serial settings popup does. On a detached port they are
+    kept for when it opens.
+
+  These six need a serial port: a TCP link (its bridge owns the lines and the
+  settings) and a replay refuse them.
+  - `sleep <ms>`: the rest of the line waits that long (up to a minute), the
+    screen stays live. A line run meanwhile waits behind it.
+  - `cancel`: stops the file being sent and drops the commands waiting. A line
+    starting with it runs it at once, not behind them: `cancel; send x`.
+    An ESP32 into its bootloader, as esptool does it:
+    `dtr off; rts on; sleep 100; dtr on; rts off; sleep 50; dtr off`
 
   A command the link can't do (anything sent on a replay) stops the line
   there, with the error.
