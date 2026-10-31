@@ -287,6 +287,7 @@ pub static COMMANDS: &[CommandSpec] = {
             A::ToggleTriggers,
             "Arm / disarm the triggers",
         ),
+        CommandSpec::action("triggers", A::Triggers, "Open the triggers"),
         CommandSpec::build(
             "send",
             &[arg("text", ArgKind::Bytes)],
@@ -901,6 +902,7 @@ mod tests {
             A::CommandLine => 40,
             A::CancelCommands => 41,
             A::ToggleTriggers => 42,
+            A::Triggers => 43,
         }
     }
 
@@ -920,7 +922,7 @@ mod tests {
             })
             .collect();
         indexes.sort_unstable();
-        assert_eq!(indexes, (0..43).collect::<Vec<_>>());
+        assert_eq!(indexes, (0..44).collect::<Vec<_>>());
     }
 
     /// The help writes a required argument in angle brackets, an optional one in square ones

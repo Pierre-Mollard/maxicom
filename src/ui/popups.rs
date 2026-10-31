@@ -21,6 +21,7 @@ pub mod reconfigure;
 pub mod resize;
 pub mod sessions;
 pub mod settings;
+pub mod triggers;
 
 /// Width of the form popups (settings, serial, logging, resize) and of the alerts
 pub const FORM_WIDTH: u16 = 48;

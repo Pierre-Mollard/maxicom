@@ -3,14 +3,17 @@ use crate::{
     app::App,
     capture::{ScreenshotFormat, Stream},
     configs::{
-        KeyBindingAction, KeyBindingCopyAction, KeyBindingLineAction, KeyBindingSearchAction,
-        KeyBindingTerminalAction, keybindings::KeyBindingDialogAction,
+        AppConfig, KeyBindingAction, KeyBindingCopyAction, KeyBindingLineAction,
+        KeyBindingSearchAction, KeyBindingTerminalAction, keybindings::KeyBindingDialogAction,
     },
     inputs::{
         Action, AppAction, CopyModeAction, DialogAction, HistoryAction, LineInputAction,
         SearchModeAction, SideViewAction, TerminalAction,
     },
-    overlays::{CommandLine, HelpDialog, Overlay, ResizeDialog, SerialConfigDialog, SettingKey},
+    overlays::{
+        CommandLine, HelpDialog, Overlay, ResizeDialog, SerialConfigDialog, SettingKey,
+        TriggerBrowser,
+    },
 };
 
 impl KeyBindingAction {
@@ -100,6 +103,13 @@ impl KeyBindingAction {
             }
             KeyBindingAction::CancelCommands => Action::App(AppAction::CancelCommands),
             KeyBindingAction::ToggleTriggers => Action::App(AppAction::ToggleTriggers),
+            KeyBindingAction::Triggers => {
+                let names = app.triggers().iter().map(|t| t.name.clone()).collect();
+                let path = AppConfig::active_triggers_path(app.settings());
+                Action::App(AppAction::OpenOverlay(Overlay::Triggers(
+                    TriggerBrowser::new(names, path),
+                )))
+            }
             KeyBindingAction::CommandLine => {
                 let history = app.command_history().iter().cloned().collect();
                 let triggers = app.triggers().iter().map(|t| t.name.clone()).collect();

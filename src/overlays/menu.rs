@@ -51,6 +51,7 @@ impl ActionMenu {
         }
         items.extend([
             ("Session backups…", KeyBindingAction::Sessions),
+            ("Triggers…", KeyBindingAction::Triggers),
             ("Clear history", KeyBindingAction::ClearHistory),
             ("Detach / attach port", KeyBindingAction::DetachSerial),
             ("Reload config", KeyBindingAction::ReloadConfig),

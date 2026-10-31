@@ -19,6 +19,7 @@ pub use misc::{ErrorDialog, FilePathDialog, ScreenshotDialog};
 pub use reconfigure::{SerialConfigDialog, SerialSettingField};
 pub use resize::{ResizeDialog, ResizeField};
 pub use sessions::SessionBrowser;
+pub use triggers::TriggerBrowser;
 
 pub mod command_line;
 pub mod help;
@@ -27,6 +28,7 @@ pub mod misc;
 pub mod reconfigure;
 pub mod resize;
 pub mod sessions;
+pub mod triggers;
 
 #[derive(Debug, Clone)]
 pub enum Overlay {
@@ -44,6 +46,7 @@ pub enum Overlay {
     RestoreSession(Box<Session>),
     Sessions(Box<SessionBrowser>),
     CommandLine(CommandLine),
+    Triggers(TriggerBrowser),
 }
 
 /// A part of a popup the mouse picks (MAX-113)
@@ -70,6 +73,10 @@ pub enum PopupTarget {
     SessionConfirm,
     SessionCancel,
     Completion(usize),
+    TriggerRow(usize),
+    TriggerToggle,
+    TriggerToggleAll,
+    TriggerCopyPath,
 }
 
 pub enum OverlayResponse {
@@ -106,6 +113,7 @@ pub enum OverlayResponse {
         text: String,
         what: String,
     },
+    ToggleTrigger(Option<String>),
 }
 
 impl Overlay {
@@ -138,6 +146,7 @@ impl Overlay {
             Overlay::ActionMenu(menu) => menu.handle_action(action),
             Overlay::Sessions(browser) => browser.handle_action(action),
             Overlay::CommandLine(command_line) => command_line.handle_action(action),
+            Overlay::Triggers(browser) => browser.handle_action(action),
             Overlay::Error(_) => match action {
                 DialogAction::Close | DialogAction::Confirm => OverlayResponse::Close,
                 _ => OverlayResponse::Handled,

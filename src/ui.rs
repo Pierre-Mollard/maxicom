@@ -44,6 +44,7 @@ use crate::{
             resize::render_resize_popup,
             sessions::render_sessions_popup,
             settings::render_settings_popup,
+            triggers::render_triggers_popup,
         },
         status_bar::{CompiledStatusBar, render_status_bar},
         terminal::{render_timestamp_gutter, render_vt100_terminal},
@@ -250,6 +251,9 @@ fn render_active_overlay(
         }
         Some(Overlay::Sessions(browser)) => {
             render_sessions_popup(browser, resolver, frame, theme, &mut targets)
+        }
+        Some(Overlay::Triggers(browser)) => {
+            render_triggers_popup(app, browser, frame, theme, &mut targets)
         }
         Some(Overlay::ActionMenu(menu)) => {
             render_action_menu(menu, resolver, frame, theme, &mut targets)
@@ -1741,6 +1745,109 @@ mod tests {
         let row = &rows[y as usize];
         let x = row[..row.find(text).unwrap()].chars().count();
         (x as u16, y)
+    }
+
+    /// MAX-167: the trigger browser lists the triggers with their state (`◎` armed, `○` not) and the selected one's rule on the side; a click selects a row, a click on
+    /// the selected one or the Toggle button toggles it, Toggle all toggles them all, and it
+    /// stays open. The status bar's count opens it.
+    /// How: the default triggers, the popup opened by its action, then by the status bar.
+    #[test]
+    fn trigger_browser_lists_and_toggles() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
+        h.app
+            .set_triggers(crate::configs::TriggersConfig::default().compile().unwrap());
+        h.app.update(KeyBindingAction::Triggers.to_action(&h.app));
+        let rows = h.draw();
+        let shows = |rows: &[String], texts: &[&str]| {
+            for text in texts {
+                assert!(has(rows, text), "{text}: {rows:#?}");
+            }
+        };
+        shows(
+            &rows,
+            &[
+                "○ login",
+                "○ u-boot",
+                "State  disarmed",
+                r#"Match  "login: ""#,
+                "Run    send root\\r",
+                "Fires  each time, it stays armed",
+            ],
+        );
+
+        click(&mut h, cell_of(&rows, "u-boot"));
+        let rows = h.draw();
+        shows(&rows, &["Run    send ' '", "Fires  once, then disarms"]);
+        assert!(h.app.armed_triggers().is_empty());
+        click(&mut h, cell_of(&rows, "u-boot"));
+        assert_eq!(h.app.armed_triggers(), ["u-boot"]);
+        let rows = h.draw();
+        shows(&rows, &["○ login", "◎ u-boot", "State  armed"]);
+        click(&mut h, cell_of(&rows, "Toggle all"));
+        assert!(h.app.armed_triggers().is_empty());
+        click(&mut h, cell_of(&rows, "Toggle all"));
+        assert_eq!(h.app.armed_triggers(), ["login", "u-boot"]);
+        let (x, y) = cell_of(&rows, " Toggle ");
+        click(&mut h, (x + 1, y));
+        assert_eq!(h.app.armed_triggers(), ["login"]);
+        assert!(matches!(h.app.overlay(), Some(Overlay::Triggers(_))));
+
+        h.app.update(Action::Overlay(DialogAction::Close));
+        let rows = h.draw();
+        click(&mut h, cell_of(&rows, "◎ 1"));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Triggers(_))));
+    }
+
+    /// MAX-167: the trigger browser is as big as its text and buttons, every trigger's config
+    /// in it: it doesn't change with the selection, and a longer rule widens it; the screen's
+    /// size at most.
+    /// How: the default triggers, the popup's top border measured, a second row selected,
+    /// then a long `run` and a narrow screen.
+    #[test]
+    fn trigger_browser_fits_its_text() {
+        let popup_width = |h: &mut Harness| {
+            let rows = h.draw();
+            let top = rows.iter().find(|row| row.contains("┌ Triggers")).unwrap();
+            top.trim().chars().count()
+        };
+        let open = |h: &mut Harness, toml: &str| {
+            let config: crate::configs::TriggersConfig = toml::from_str(toml).unwrap();
+            h.app.set_triggers(config.compile().unwrap());
+            h.app.update(KeyBindingAction::Triggers.to_action(&h.app));
+        };
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 200, 40);
+        h.app.settings_mut().triggers_path = Some("/t.toml".into());
+        open(
+            &mut h,
+            &toml::to_string(&crate::configs::TriggersConfig::default()).unwrap(),
+        );
+        // the buttons are wider than the list (`○ u-boot`), the gap and `Match  "Hit any key
+        // to stop autoboot"` (8 + 2 + 37): them, a space and a corner on each side
+        let buttons = "Enter Toggle · a Toggle all · c Copy path · Esc Close";
+        let width = popup_width(&mut h);
+        assert_eq!(width, buttons.chars().count() + 4);
+        let rows = h.draw();
+        assert!(has(&rows, &format!("└ {buttons} ┘")), "{rows:#?}");
+        let top = rows
+            .iter()
+            .position(|row| row.contains("┌ Triggers"))
+            .unwrap();
+        let bottom = top
+            + rows[top..]
+                .iter()
+                .position(|row| row.contains('└'))
+                .unwrap();
+        let height = bottom - top + 1;
+        assert_eq!(height, 4 + 2 + 4);
+        h.app.update(Action::Overlay(DialogAction::Down));
+        assert_eq!(popup_width(&mut h), width);
+
+        let long = "x".repeat(80);
+        open(&mut h, &format!("[r]\nmatch = 'x'\nrun = 'send {long}'\n"));
+        assert_eq!(popup_width(&mut h), 3 + 2 + 7 + 5 + 80 + 4);
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 60, 20);
+        open(&mut h, &format!("[r]\nmatch = 'x'\nrun = 'send {long}'\n"));
+        assert_eq!(popup_width(&mut h), 60);
     }
 
     /// MAX-156: the browser shows a TCP session's address, and its line as `raw TCP` and the

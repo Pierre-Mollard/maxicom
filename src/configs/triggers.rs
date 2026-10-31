@@ -71,6 +71,7 @@ impl TriggersConfig {
                 }
                 Ok(Trigger::new(
                     name.clone(),
+                    rule.text.clone(),
                     matcher,
                     rule.run.trim().to_string(),
                     invocations,

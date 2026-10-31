@@ -13,6 +13,7 @@ use crate::commands::Invocation;
 #[derive(Debug, Clone)]
 pub struct Trigger {
     pub name: String,
+    pub text: String,
     pub run: String,
     pub invocations: Vec<Invocation>,
     pub rearm: bool,
@@ -23,6 +24,7 @@ pub struct Trigger {
 impl Trigger {
     pub fn new(
         name: String,
+        text: String,
         matcher: StreamMatcher,
         run: String,
         invocations: Vec<Invocation>,
@@ -31,6 +33,7 @@ impl Trigger {
     ) -> Self {
         Self {
             name,
+            text,
             run,
             invocations,
             rearm,
@@ -181,7 +184,15 @@ mod tests {
     fn trigger(rearm: bool, armed: bool) -> Trigger {
         let invocations = crate::commands::parse("send ' '").unwrap();
         let run = "send ' '".to_string();
-        Trigger::new("u-boot".into(), matcher(), run, invocations, rearm, armed)
+        Trigger::new(
+            "u-boot".into(),
+            String::from_utf8_lossy(UBOOT).into(),
+            matcher(),
+            run,
+            invocations,
+            rearm,
+            armed,
+        )
     }
 
     /// A trigger fires while armed; one shot, it disarms then; with `rearm` it fires again.

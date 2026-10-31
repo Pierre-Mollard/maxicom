@@ -642,6 +642,11 @@ impl App {
                             }
                             UpdateEffect::None
                         }
+                        OverlayResponse::ToggleTrigger(name) => {
+                            self.overlay = Some(overlay);
+                            self.toggle_triggers(name.as_deref());
+                            UpdateEffect::None
+                        }
                         OverlayResponse::HandledCopy { text, what } => {
                             self.overlay = Some(overlay);
                             self.paste_buffer = Some(text.clone());
@@ -723,6 +728,13 @@ impl App {
 
     pub fn triggers(&self) -> &[Trigger] {
         &self.triggers
+    }
+
+    /// Toggles the trigger named, or all of them: armed when none is, else disarmed (MAX-6)
+    fn toggle_triggers(&mut self, name: Option<&str>) {
+        let named = (self.triggers.iter()).filter(|t| name.is_none_or(|name| name == t.name));
+        let on = !named.into_iter().any(Trigger::is_armed);
+        self.arm_triggers(on, name);
     }
 
     /// Arms or disarms the triggers, or the one named, with a notice of what is armed after
@@ -1231,8 +1243,7 @@ impl App {
                 UpdateEffect::None
             }
             AppAction::ToggleTriggers => {
-                let on = !self.triggers.iter().any(Trigger::is_armed);
-                self.arm_triggers(on, None);
+                self.toggle_triggers(None);
                 UpdateEffect::None
             }
             AppAction::ArmTriggers { on, name } => {

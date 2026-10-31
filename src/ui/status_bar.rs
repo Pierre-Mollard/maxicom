@@ -136,7 +136,7 @@
 //! | `{pan_offset}`, `{pan_max}`                                | `pan-home`                |
 //! | `{scroll_pos}` `{scroll_pos_up}` `{scroll_percent}` `{scroll_offset}` | `scroll-to-bottom` |
 //! | `{send_file}`, `{send_percent}`                            | `cancel`                  |
-//! | `{trigger_count}`, `{trigger_names}`                       | `toggle-triggers`         |
+//! | `{trigger_count}`, `{trigger_names}`                       | `triggers`                |
 //!
 //! The scroll and pan actions a `click=` can run: `scroll-up`, `scroll-down`, `page-up`,
 //! `page-down`, `scroll-to-top`, `scroll-to-bottom`, `pan-left`, `pan-right`, `pan-home` (back
@@ -461,7 +461,7 @@ impl Var {
             }
             Self::CopySide => return Some(ClickAction::ToggleSide),
             Self::SendFile | Self::SendPercent => KeyBindingAction::CancelCommands,
-            Self::TriggerCount | Self::TriggerNames => KeyBindingAction::ToggleTriggers,
+            Self::TriggerCount | Self::TriggerNames => KeyBindingAction::Triggers,
             Self::Port | Self::RxBytes | Self::TxBytes | Self::Time | Self::ScrollMax => {
                 return None;
             }
@@ -1517,7 +1517,7 @@ mod tests {
 
     /// MAX-6: the default center shows how many triggers are armed, hidden while none is;
     /// `{trigger_names}` names them, the first and how many more when squeezed; a click on
-    /// either toggles them.
+    /// either opens the trigger browser (MAX-167).
     /// How: the default triggers, disarmed then all armed, then one.
     #[test]
     fn armed_triggers() {
@@ -1553,7 +1553,7 @@ mod tests {
         for var in [Var::TriggerCount, Var::TriggerNames] {
             assert_eq!(
                 var.click(),
-                Some(ClickAction::Run(KeyBindingAction::ToggleTriggers))
+                Some(ClickAction::Run(KeyBindingAction::Triggers))
             );
         }
     }

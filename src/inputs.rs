@@ -686,7 +686,7 @@ mod tests {
                 "Shift-c => History(Clear)",
                 "Shift-m => App(ToggleSetting(Mouse))",
                 "Shift-s => App(OpenSessions)",
-                "Shift-t => App(ToggleTriggers)",
+                "Shift-t => open Triggers",
                 "Up => History(ScrollUp(1))",
                 "[ => CopyMode(Enter)",
                 "d => open SerialSettings",

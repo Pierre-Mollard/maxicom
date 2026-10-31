@@ -243,14 +243,19 @@ rearm = true
 - A trigger only fires while armed, and once: it disarms then, so the next
   boot goes on normally. `rearm = true` keeps it armed. They start disarmed,
   `armed = true` starts one armed.
-- `Ctrl-A T` (`toggle-triggers`) arms them all when none is armed, else
-  disarms them all; `Ctrl-A u` toggles `u-boot`; `trigger on|off|toggle
-  [name]` does it from a command line or a key, so one key can arm and reset:
+- `Ctrl-A T` (`triggers`, also in the right-click menu) opens the trigger
+  browser: the triggers and their state (`◎` armed, `○` not), the selected
+  one's rule on the side. Enter, space, a click on the selected
+  one or its button toggle it, `a` toggles them all (armed when none is,
+  else disarmed), `c` copies the file's path.
+- `Ctrl-A u` toggles `u-boot`; `toggle-triggers` (no key by default) toggles
+  them all; `trigger on|off|toggle [name]` does it from a command line or a
+  key, so one key can arm and reset:
   `trigger on u-boot; dtr off; rts on; rts off`.
-- The status bar shows `◎ 2` while two are armed (a click toggles them). In a
-  template, `{trigger_count}` is how many are armed, `{trigger_names}` their
-  names (the first and how many more when the bar is short) and `armed` the
-  condition. A notice says when one fires.
+- The status bar shows `◎ 2` while two are armed (a click opens the
+  browser). In a template, `{trigger_count}` is how many are armed,
+  `{trigger_names}` their names (the first and how many more when the bar is
+  short) and `armed` the condition. A notice says when one fires.
 - Only live bytes fire them: never a replay, a restored session, nor what came
   in while the restore question was open.
 - A rule that doesn't parse (an empty `match`, an unknown command, a misspelt
