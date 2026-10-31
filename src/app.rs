@@ -16,13 +16,13 @@ use crate::{
     },
     capture::{
         JournalReader, JournalText, RESTORE_RAW_TAIL, Recorder, ScreenshotFormat, Session,
-        SessionDevice, Stream, create_parent_dirs, expand_home, find_last_session, read_tail_bytes,
-        read_tail_lines, restore_separator,
+        SessionDevice, SessionLine, Stream, create_parent_dirs, expand_home, find_last_session,
+        read_tail_bytes, read_tail_lines, restore_separator,
     },
     commands::{CommandError, Invocation, Target},
     configs::{
         DualBufferMode, KeyBindingAction, KeyResolver, Mode, SettingsConfig, StatusBarLayout,
-        WrapMode,
+        TextEncoding, WrapMode,
         settings::{PrefixWrapBehavior, RestoreMode},
     },
     inputs::{
@@ -158,18 +158,27 @@ pub struct App {
     link_open: bool,
     /// What a replay started while running set aside, to go back to (MAX-166)
     replaced_link: Option<Box<ReplacedLink>>,
-    /// The replay read its whole file, or was stopped without a link to go back to (MAX-166)
-    replay_ended: bool,
+    replay: ReplayState,
 }
 
-/// The live link a replay replaced (MAX-166): its settings, the mode, the histories of both
-/// modes and the counts, put back as they were when the replay stops
+/// The live link a replay replaced (MAX-166): its settings, the mode, the encoding, the
+/// histories of both modes and the counts, put back as they were when the replay stops
 struct ReplacedLink {
     serial_config: SerialConfig,
     mode: Mode,
+    encoding: TextEncoding,
     line_mode: LineMode,
     terminal_mode: TerminalMode,
     stats: Stats,
+}
+
+/// The replay running (MAX-166), new for each one: the line settings of the session it plays,
+/// when it plays one recorded on a serial port, and whether it read its whole file or was
+/// stopped without a link to go back to. Meaningless while the link isn't a replay
+#[derive(Debug, Default)]
+struct ReplayState {
+    line: Option<SessionLine>,
+    ended: bool,
 }
 
 // Effects outside which can only be handled by main
@@ -179,10 +188,19 @@ pub enum UpdateEffect {
     Reconfigure(SerialConfig),
     LineControl(LineControl),
     Open(Address),
-    Replay { path: PathBuf, delay: Duration },
+    /// `session` is what a session backup was recorded on, from its meta file: the replay
+    /// decodes with its encoding and shows its line settings (MAX-166)
+    Replay {
+        path: PathBuf,
+        delay: Duration,
+        session: Option<SessionDevice>,
+    },
     StopReplay,
     CopyToClipboard(String),
-    CopyToClipboardAs { text: String, what: String },
+    CopyToClipboardAs {
+        text: String,
+        what: String,
+    },
     ToggleAttachSerial,
     ReloadConfig,
     Quit,
@@ -243,7 +261,7 @@ impl App {
             transfer: None,
             link_open: false,
             replaced_link: None,
-            replay_ended: false,
+            replay: ReplayState::default(),
         };
         app.warn_shadowed_keys();
         app
@@ -421,10 +439,30 @@ impl App {
         self.serial_config.address.kind()
     }
 
+    /// The line settings the status bar and the settings dialog show (MAX-166): a serial port's,
+    /// a replayed serial session's from its meta; none for a TCP link nor a plain file
+    pub fn line_settings(&self) -> Option<SessionLine> {
+        match self.link_kind() {
+            LinkKind::Serial => Some(SessionLine::of(&self.serial_config)),
+            LinkKind::Tcp => None,
+            LinkKind::Replay => self.recorded_line(),
+        }
+    }
+
+    /// The line settings of the session the replay plays, from its meta (MAX-166): shown, never
+    /// set. None for a plain file, a session recorded over TCP, or a link that isn't a replay
+    pub fn recorded_line(&self) -> Option<SessionLine> {
+        (self.link_kind() == LinkKind::Replay)
+            .then_some(self.replay.line)
+            .flatten()
+    }
+
     /// The replay of the file at `path` takes the link's place, on a reset terminal in terminal
-    /// mode (MAX-166). A live link is set aside with its histories and counts, its journal
-    /// paused; what it was sending stops. A replay replacing a replay keeps the live link
-    pub fn start_replay(&mut self, path: PathBuf) {
+    /// mode (MAX-166). A live link is set aside with its encoding, histories and counts, its
+    /// journal paused; what it was sending stops. A replay replacing a replay keeps the live
+    /// link. A session backup (`session`) decodes with its own encoding, a plain file with the
+    /// live link's
+    pub fn start_replay(&mut self, path: PathBuf, session: Option<&SessionDevice>) {
         self.stop_transfer("a replay took the link's place");
         self.stop_mash("a replay took the link's place");
         let line_mode = LineMode::new(
@@ -439,11 +477,16 @@ impl App {
         let line_mode = std::mem::replace(&mut self.line_mode, line_mode);
         let terminal_mode = std::mem::replace(&mut self.terminal_mode, terminal_mode);
         let stats = std::mem::take(&mut self.stats);
+        let live_encoding = match &self.replaced_link {
+            Some(replaced) => replaced.encoding,
+            None => self.settings.encoding,
+        };
         if self.link_kind().keeps_sessions() {
             self.recorder.pause_journal();
             self.replaced_link = Some(Box::new(ReplacedLink {
                 serial_config: self.serial_config.clone(),
                 mode: self.settings.mode,
+                encoding: self.settings.encoding,
                 line_mode,
                 terminal_mode,
                 stats,
@@ -451,28 +494,33 @@ impl App {
         }
         self.serial_config.address = Address::Replay(path);
         self.settings.mode = Mode::Terminal;
-        self.replay_ended = false;
+        self.settings.encoding = session.map_or(live_encoding, |device| device.encoding);
+        self.replay = ReplayState {
+            line: session.and_then(|device| device.line),
+            ended: false,
+        };
     }
 
     /// The replay read its whole file: said once, its screen left as it is (MAX-166)
     pub fn end_replay(&mut self) {
-        self.replay_ended = true;
+        self.replay.ended = true;
         self.notify_info("Replay finished");
     }
 
     pub fn is_replay_ended(&self) -> bool {
-        self.replay_ended
+        self.replay.ended
     }
 
     /// Puts back the live link the replay replaced, for the loop to open, and resumes its
     /// journal (MAX-166). False when there is none: a replay from the command line
     pub fn stop_replay(&mut self) -> bool {
         let Some(replaced) = self.replaced_link.take() else {
-            self.replay_ended = true;
+            self.replay.ended = true;
             return false;
         };
         self.serial_config = replaced.serial_config;
         self.settings.mode = replaced.mode;
+        self.settings.encoding = replaced.encoding;
         self.line_mode = replaced.line_mode;
         self.terminal_mode = replaced.terminal_mode;
         self.stats = replaced.stats;
@@ -735,6 +783,13 @@ impl App {
                             self.paste_buffer = Some(text.clone());
                             UpdateEffect::CopyToClipboardAs { text, what }
                         }
+                        // the browser closes on the replay, which takes the screen
+                        OverlayResponse::ReplaySession { path, device } => UpdateEffect::Replay {
+                            path,
+                            delay: Duration::ZERO,
+                            session: device,
+                        },
+                        OverlayResponse::StopReplay => UpdateEffect::StopReplay,
                         OverlayResponse::RestoreSession(yes) => {
                             if let Overlay::RestoreSession(session) = overlay {
                                 self.answer_restore(&session, yes);
@@ -1032,7 +1087,11 @@ impl App {
         let max_age = (!capture.restore_max_age.is_zero()).then_some(capture.restore_max_age);
         let restorable =
             find_last_session(&dir, &self.session_device(), max_age).map(|session| session.stem);
-        let browser = SessionBrowser::new(dir, restorable);
+        let mut browser = SessionBrowser::new(dir, restorable);
+        if self.replaced_link.is_some() {
+            let raw = self.recorder.paused_journal_raw().map(Path::to_path_buf);
+            browser = browser.with_live(raw);
+        }
         self.open_overlay(Overlay::Sessions(Box::new(browser)));
     }
 
@@ -1308,7 +1367,11 @@ impl App {
             }
             AppAction::LineControl(control) => UpdateEffect::LineControl(control),
             AppAction::Open(port) => UpdateEffect::Open(port),
-            AppAction::Replay { path, delay } => UpdateEffect::Replay { path, delay },
+            AppAction::Replay { path, delay } => UpdateEffect::Replay {
+                path,
+                delay,
+                session: None,
+            },
             AppAction::StopReplay => UpdateEffect::StopReplay,
             AppAction::SetEncoding(encoding) => {
                 self.settings.encoding = encoding;
@@ -2714,7 +2777,7 @@ mod tests {
         queue_line(&mut app, "open file:///tmp/x.raw");
         let open = app.next_command_action(now).unwrap();
         assert!(
-            matches!(app.update(open), UpdateEffect::Replay { path, delay }
+            matches!(app.update(open), UpdateEffect::Replay { path, delay, session: None }
             if path == Path::new("/tmp/x.raw") && delay.is_zero())
         );
         app.serial_config.address = Address::parse("file:///tmp/capture.raw");
@@ -2744,7 +2807,7 @@ mod tests {
         };
         let home = dirs::home_dir().unwrap();
         assert!(matches!(run(&mut app, "replay ~/x.raw 50"),
-            Some(UpdateEffect::Replay { path, delay })
+            Some(UpdateEffect::Replay { path, delay, session: None })
                 if path == home.join("x.raw") && delay == Duration::from_millis(50)));
         assert!(matches!(run(&mut app, "replay /tmp/x.raw"),
             Some(UpdateEffect::Replay { delay, .. }) if delay.is_zero()));
@@ -2752,7 +2815,7 @@ mod tests {
         let last_toast = app.notifications.active_toasts().last().unwrap();
         assert_eq!(last_toast.message, "replay-stop: no replay runs");
 
-        app.start_replay(PathBuf::from("/tmp/x.raw"));
+        app.start_replay(PathBuf::from("/tmp/x.raw"), None);
         assert!(matches!(
             run(&mut app, "replay-stop"),
             Some(UpdateEffect::StopReplay)
@@ -3198,7 +3261,7 @@ mod tests {
         app.feed_rx(b"live\r\n");
         app.stats.update_rx(6);
 
-        app.start_replay(PathBuf::from("/tmp/a.raw"));
+        app.start_replay(PathBuf::from("/tmp/a.raw"), None);
         assert_eq!(
             app.serial_config.address,
             Address::parse("file:///tmp/a.raw")
@@ -3209,7 +3272,7 @@ mod tests {
         assert_eq!(app.stats.rx(), 0);
         app.feed_rx(b"replayed\r\n");
         assert_eq!(texts(&app), ["replayed"]);
-        app.start_replay(PathBuf::from("/tmp/b.raw"));
+        app.start_replay(PathBuf::from("/tmp/b.raw"), None);
         assert!(texts(&app).is_empty());
 
         assert!(app.stop_replay());
@@ -3232,9 +3295,52 @@ mod tests {
         let mut app = self::app();
         app.serial_config.address = Address::parse("file:///tmp/a.raw");
         app.end_replay();
-        app.start_replay(PathBuf::from("/tmp/b.raw"));
+        app.start_replay(PathBuf::from("/tmp/b.raw"), None);
         assert!(!app.is_replay_ended());
         assert!(!app.stop_replay() && app.is_replay_ended());
+    }
+
+    /// MAX-166: a session's replay decodes with its meta's encoding and shows its line
+    /// settings; stopping it gives the live link its own encoding back. A plain file replayed
+    /// after it decodes with the live link's encoding and has no line settings, nor has a
+    /// session recorded over TCP. A serial port's are its config's, a TCP link has none.
+    /// How: a live app in UTF-8, a cp437 session at 9600 7E1 replayed, a plain file, the stop;
+    /// then a TCP session, and the link kinds.
+    #[test]
+    fn session_replay_uses_its_meta() {
+        let mut app = app();
+        let mut session = crate::capture::tests::device("/dev/ttyACM1");
+        session.encoding = crate::configs::TextEncoding::Cp437;
+        session.line = Some(SessionLine {
+            baud: 9600,
+            char_size: crate::link::serial::CharSize::Bits7,
+            parity: crate::link::serial::Parity::Even,
+            stop_bits: crate::link::serial::StopBits::One,
+        });
+        assert_eq!(
+            app.line_settings(),
+            Some(SessionLine::of(&app.serial_config))
+        );
+        assert_eq!(app.recorded_line(), None);
+
+        app.start_replay(PathBuf::from("/tmp/s.raw"), Some(&session));
+        assert_eq!(app.settings().encoding, TextEncoding::Cp437);
+        assert_eq!(app.line_settings(), session.line);
+        assert_eq!(app.recorded_line(), session.line);
+        app.start_replay(PathBuf::from("/tmp/plain.raw"), None);
+        assert_eq!(app.settings().encoding, TextEncoding::Utf8);
+        assert_eq!(app.line_settings(), None);
+        app.start_replay(PathBuf::from("/tmp/s.raw"), Some(&session));
+        assert!(app.stop_replay());
+        assert_eq!(app.settings().encoding, TextEncoding::Utf8);
+        assert_eq!(app.recorded_line(), None);
+
+        let tcp = crate::capture::tests::device("tcp://192.168.1.50:4000");
+        app.start_replay(PathBuf::from("/tmp/t.raw"), Some(&tcp));
+        assert_eq!(app.line_settings(), None);
+        assert!(app.stop_replay());
+        app.serial_config.address = Address::parse("tcp://192.168.1.50:4000");
+        assert_eq!(app.line_settings(), None);
     }
 
     /// MAX-148: the last session restores at startup with `always` or `--restore`, not with

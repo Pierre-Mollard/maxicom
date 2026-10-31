@@ -1522,6 +1522,28 @@ mod tests {
         ));
     }
 
+    /// MAX-166: a replayed session's popup shows what it was recorded with, and that a replay
+    /// has nothing to set.
+    /// How: the popup rows for a `file://` port with a recorded 9600 7E1.
+    #[test]
+    fn serial_popup_for_a_session_replay() {
+        let config = SerialConfig {
+            address: Address::parse("file:///tmp/boot.raw"),
+            ..SerialConfig::default()
+        };
+        let line = crate::capture::SessionLine {
+            baud: 9600,
+            char_size: crate::link::serial::CharSize::Bits7,
+            parity: crate::link::serial::Parity::Even,
+            stop_bits: crate::link::serial::StopBits::One,
+        };
+        let dialog = SerialConfigDialog::new(&config).with_recorded_line(Some(line));
+        let rows = popup_rows(Overlay::SerialSettings(dialog), &[]);
+        assert!(has(&rows, "Recorded    : 9600 7E1"), "{rows:#?}");
+        assert!(has(&rows, "A replay plays what was recorded"), "{rows:#?}");
+        assert!(!has(&rows, "Baud Rate"), "{rows:#?}");
+    }
+
     /// MAX-166: a replay's popup shows its address and that a file has nothing to set.
     /// How: the popup rows for a `file://` port.
     #[test]
@@ -1948,6 +1970,68 @@ mod tests {
         let rows = h.draw();
         assert!(!has(&rows, "11B  ttyUSB0"), "{rows:#?}");
         assert!(row_with(&rows, "  0B  ttyUSB0").contains('●'), "{rows:#?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// MAX-166: the browser's Replay button replays the selected session, with what its meta
+    /// says, and closes the browser. While the replay runs, the browser's Back to live button
+    /// and `L` through the keymap stop it, as `replay-stop` does; they aren't there before.
+    /// How: a past session on another port, selected, then a click on the button; the replay
+    /// started as the loop does, the browser opened again, a click on Back to live, then `L`.
+    #[test]
+    fn session_browser_replays_the_selected_session() {
+        let dir = std::env::temp_dir().join(format!(
+            "maxicom_test_{}_browser_replay_ui",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let text = crate::capture::JournalText::default();
+        crate::capture::tests::write_test_session(&dir, "/dev/other", &text, b"theirs\r\n", b"");
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
+        h.app.start_journal(Some(dir.clone()));
+        h.app.update(Action::App(AppAction::OpenSessions));
+        let rows = h.draw();
+        assert!(!has(&rows, "Back to live"), "{rows:#?}");
+        click(&mut h, cell_of(&rows, "  other "));
+        let rows = h.draw();
+        let at = cell_of(&rows, "Replay");
+        let effects = [
+            mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), at),
+            mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), at),
+        ];
+        let replay = effects.into_iter().find_map(|effect| match effect {
+            UpdateEffect::Replay { path, session, .. } => Some((path, session)),
+            _ => None,
+        });
+        let (path, session) = replay.expect("no replay");
+        assert!(path.extension().is_some_and(|ext| ext == "raw"));
+        assert_eq!(
+            session.as_ref().unwrap().address,
+            Address::parse("/dev/other")
+        );
+        assert!(h.app.overlay().is_none());
+
+        h.app.start_replay(path, session.as_ref());
+        h.app.update(Action::App(AppAction::OpenSessions));
+        let rows = h.draw();
+        let at = cell_of(&rows, "Back to live");
+        let effects = [
+            mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), at),
+            mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), at),
+        ];
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, UpdateEffect::StopReplay)),
+            "no stop"
+        );
+        assert!(h.app.overlay().is_none());
+
+        h.app.update(Action::App(AppAction::OpenSessions));
+        let shift = KeyModifiers::SHIFT;
+        let effect = key_do(&mut h, crossterm::event::KeyCode::Char('L'), shift);
+        assert!(matches!(effect, UpdateEffect::StopReplay));
+        assert!(h.app.overlay().is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -19,10 +19,12 @@ const PREVIEW_LINES: usize = 200;
 const PAGE: usize = 10;
 
 /// The session browser (MAX-148): the session backups of the cache folder, the selected one's
-/// details and last lines. Deletes the selected one, or all but the running ones once asked,
-/// sorts them by date or by device, copies the selected one's log path or the folder's, and
-/// reads the folder again. `restorable` is the session this device would restore at the next
-/// launch. The preview is read when the selection changes, not on every frame
+/// details and last lines. Replays the selected one (MAX-166), deletes it, or all but the
+/// running ones once asked, sorts them by date or by device, copies the selected one's log path
+/// or the folder's, and reads the folder again. `restorable` is the session this device would
+/// restore at the next launch. `live` says a replay set the live link aside, which the browser
+/// goes back to, and `live_raw` is that link's paused session (MAX-166). The preview is read
+/// when the selection changes, not on every frame
 #[derive(Debug, Clone)]
 pub struct SessionBrowser {
     pub dir: PathBuf,
@@ -30,6 +32,8 @@ pub struct SessionBrowser {
     pub selected: usize,
     pub order: SessionOrder,
     pub restorable: Option<String>,
+    pub live: bool,
+    pub live_raw: Option<PathBuf>,
     pub confirm_delete_all: bool,
     pub preview: Vec<String>,
 }
@@ -42,11 +46,21 @@ impl SessionBrowser {
             selected: 0,
             order: SessionOrder::default(),
             restorable,
+            live: false,
+            live_raw: None,
             confirm_delete_all: false,
             preview: Vec::new(),
         };
         browser.reload();
         browser
+    }
+
+    /// A replay set the live link aside: the browser can go back to it, and `raw` is its
+    /// session's `.raw` (none without a journal)
+    pub fn with_live(mut self, raw: Option<PathBuf>) -> Self {
+        self.live = true;
+        self.live_raw = raw;
+        self
     }
 
     pub fn selected_session(&self) -> Option<&Session> {
@@ -107,6 +121,10 @@ impl SessionBrowser {
             DialogAction::Home => self.select(0),
             DialogAction::End => self.select(last),
             DialogAction::Pick(PopupTarget::SessionRow(idx)) => self.select(idx),
+            DialogAction::Confirm | DialogAction::Pick(PopupTarget::SessionReplay) => {
+                return self.replay_selected();
+            }
+            DialogAction::Pick(PopupTarget::SessionBackToLive) => return self.back_to_live(),
             DialogAction::Pick(PopupTarget::SessionDelete) => return self.delete_selected(),
             DialogAction::Pick(PopupTarget::SessionDeleteAll) => return self.ask_delete_all(),
             DialogAction::Pick(PopupTarget::SessionSort) => self.switch_order(),
@@ -114,6 +132,8 @@ impl SessionBrowser {
             DialogAction::Pick(PopupTarget::SessionCopyFolder) => return copy(&self.dir, "folder"),
             DialogAction::Pick(PopupTarget::SessionReload) => return self.reload_folder(),
             DialogAction::HandleKey(key) => match key.code {
+                KeyCode::Char('p') => return self.replay_selected(),
+                KeyCode::Char('L') => return self.back_to_live(),
                 KeyCode::Char('d') | KeyCode::Delete => return self.delete_selected(),
                 KeyCode::Char('D') => return self.ask_delete_all(),
                 KeyCode::Char('s') => self.switch_order(),
@@ -142,6 +162,47 @@ impl SessionBrowser {
         self.confirm_delete_all = false;
         if yes {
             self.delete_all()
+        } else {
+            OverlayResponse::Handled
+        }
+    }
+
+    /// The selected session's `.raw` to replay, with its meta's encoding and line settings. Not
+    /// a session still running, here or in another maxicom: its journal grows, and on Windows
+    /// its lock keeps it from being read. The live link's own session, which a replay paused,
+    /// goes back to it instead
+    fn replay_selected(&self) -> OverlayResponse {
+        let Some(session) = self.selected_session() else {
+            return OverlayResponse::Handled;
+        };
+        if session.running {
+            let raw = session.raw_path();
+            if self
+                .live_raw
+                .as_deref()
+                .is_some_and(|live| raw == Some(live))
+            {
+                return OverlayResponse::StopReplay;
+            }
+            return notify("A running session can't be replayed".to_string(), true);
+        }
+        match session.raw_path() {
+            Some(path) => OverlayResponse::ReplaySession {
+                path: path.to_path_buf(),
+                device: session.meta.as_ref().map(|meta| meta.device.clone()),
+            },
+            None => notify(
+                "This session has no raw capture to replay".to_string(),
+                true,
+            ),
+        }
+    }
+
+    /// The replay stops and the live link it set aside comes back, as `replay-stop` does;
+    /// nothing without one
+    fn back_to_live(&self) -> OverlayResponse {
+        if self.live {
+            OverlayResponse::StopReplay
         } else {
             OverlayResponse::Handled
         }
@@ -297,6 +358,102 @@ mod tests {
         assert_eq!(browser.selected, 0);
         select(&mut browser, "a");
         assert_eq!(browser.preview, ["line of a"]);
+        drop(running);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// MAX-166: `p`, Enter or the button replay the selected session's `.raw` with what its
+    /// meta says it was recorded on; the running one is refused with a warning, and so is a
+    /// session without a `.raw`.
+    /// How: sessions a and live; then a's `.raw` removed.
+    #[test]
+    fn replay_the_selected_session_not_the_running_one() {
+        let (dir, running) = folder("browser_replay");
+        let mut browser = SessionBrowser::new(dir.clone(), None);
+        select(&mut browser, "a");
+        let raw = browser
+            .selected_session()
+            .unwrap()
+            .raw_path()
+            .unwrap()
+            .to_path_buf();
+        for action in [
+            key('p'),
+            DialogAction::Confirm,
+            DialogAction::Pick(PopupTarget::SessionReplay),
+        ] {
+            match browser.handle_action(action) {
+                OverlayResponse::ReplaySession { path, device } => {
+                    assert_eq!(path, raw);
+                    assert_eq!(device.unwrap().address, Address::parse("/dev/a"));
+                }
+                _ => panic!("no replay"),
+            }
+        }
+
+        select(&mut browser, "live");
+        assert!(matches!(
+            browser.handle_action(key('p')),
+            OverlayResponse::HandledNotify { warn: true, message }
+                if message == "A running session can't be replayed"
+        ));
+
+        std::fs::remove_file(&raw).unwrap();
+        browser.handle_action(key('r'));
+        select(&mut browser, "a");
+        assert!(matches!(
+            browser.handle_action(key('p')),
+            OverlayResponse::HandledNotify { warn: true, message }
+                if message == "This session has no raw capture to replay"
+        ));
+        drop(running);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// MAX-166: `L` or the button go back to the live link a replay set aside, as `replay-stop`
+    /// does; without one they do nothing. Replaying the live link's own running session goes
+    /// back to it too; another running session is still refused.
+    /// How: a browser without a live link, then one whose live session is "live", and "a"
+    /// marked running.
+    #[test]
+    fn back_to_live_only_with_a_live_link() {
+        let (dir, running) = folder("browser_live");
+        let mut browser = SessionBrowser::new(dir.clone(), None);
+        let back = || [key('L'), DialogAction::Pick(PopupTarget::SessionBackToLive)];
+        for action in back() {
+            assert!(matches!(
+                browser.handle_action(action),
+                OverlayResponse::Handled
+            ));
+        }
+        select(&mut browser, "live");
+        assert!(matches!(
+            browser.handle_action(key('p')),
+            OverlayResponse::HandledNotify { warn: true, .. }
+        ));
+
+        let raw = browser
+            .selected_session()
+            .unwrap()
+            .raw_path()
+            .map(Path::to_path_buf);
+        let mut browser = browser.with_live(raw);
+        for action in back() {
+            assert!(matches!(
+                browser.handle_action(action),
+                OverlayResponse::StopReplay
+            ));
+        }
+        assert!(matches!(
+            browser.handle_action(key('p')),
+            OverlayResponse::StopReplay
+        ));
+        select(&mut browser, "a");
+        browser.sessions[browser.selected].running = true;
+        assert!(matches!(
+            browser.handle_action(key('p')),
+            OverlayResponse::HandledNotify { warn: true, .. }
+        ));
         drop(running);
         let _ = std::fs::remove_dir_all(&dir);
     }

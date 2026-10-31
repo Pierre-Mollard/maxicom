@@ -120,7 +120,8 @@ pub fn render_reconfigure_popup(
 }
 
 /// The popup for a link without line settings: its address and why there is nothing to set,
-/// the bridge's for a TCP link (MAX-156), none for a replayed file (MAX-166)
+/// the bridge's for a TCP link (MAX-156), none for a replayed file (MAX-166). A replayed
+/// session shows what it was recorded with
 fn render_link_without_settings(
     dialog: &SerialConfigDialog,
     resolver: &KeyResolver,
@@ -131,6 +132,10 @@ fn render_link_without_settings(
     let label = Style::default().fg(theme.palette.ternary);
     let muted = Style::default().fg(theme.palette.unselected);
     let (title, why) = match dialog.config.address.kind() {
+        LinkKind::Replay if dialog.recorded_line.is_some() => (
+            "Replay",
+            ["  A replay plays what was recorded:", "  nothing to set."],
+        ),
         LinkKind::Replay => (
             "Replay",
             [
@@ -146,15 +151,21 @@ fn render_link_without_settings(
             ],
         ),
     };
-    let lines = vec![
-        Line::from(vec![
-            Span::styled(format!("  {:<12}: ", "Address"), label),
-            Span::raw(dialog.config.address.to_string()),
-        ]),
+    let mut lines = vec![Line::from(vec![
+        Span::styled(format!("  {:<12}: ", "Address"), label),
+        Span::raw(dialog.config.address.to_string()),
+    ])];
+    if let Some(line) = dialog.recorded_line {
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {:<12}: ", "Recorded"), label),
+            Span::raw(format!("{} {}", line.baud, line.framing())),
+        ]));
+    }
+    lines.extend([
         Line::from(""),
         Line::from(Span::styled(why[0], muted)),
         Line::from(Span::styled(why[1], muted)),
-    ];
+    ]);
 
     let hints = key_hints(
         resolver,

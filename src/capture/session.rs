@@ -46,18 +46,36 @@ pub struct SessionLine {
     pub stop_bits: StopBits,
 }
 
+impl SessionLine {
+    pub fn of(serial: &SerialConfig) -> Self {
+        Self {
+            baud: serial.baudrate,
+            char_size: serial.char_size,
+            parity: serial.parity,
+            stop_bits: serial.stop_bits,
+        }
+    }
+
+    /// The framing written `8N1`, as the port's
+    pub fn framing(&self) -> String {
+        // TODO: (MAX-168) one LineSettings type for both, which writes itself
+        SerialConfig {
+            char_size: self.char_size,
+            parity: self.parity,
+            stop_bits: self.stop_bits,
+            ..SerialConfig::default()
+        }
+        .to_string()
+    }
+}
+
 impl SessionDevice {
     pub fn new(serial: &SerialConfig, encoding: TextEncoding) -> Self {
         let line = serial
             .address
             .kind()
             .has_line_settings()
-            .then_some(SessionLine {
-                baud: serial.baudrate,
-                char_size: serial.char_size,
-                parity: serial.parity,
-                stop_bits: serial.stop_bits,
-            });
+            .then(|| SessionLine::of(serial));
         Self {
             host: hostname(),
             address: serial.address.clone(),

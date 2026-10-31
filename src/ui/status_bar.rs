@@ -28,7 +28,7 @@
 //! |---------------------|---------------------------------------------------------|------------------|
 //! | `{mode}`            | Current input mode (`TERM` or `LINE`)                   | `TERM`           |
 //! | `{port}`            | Address: serial path, `tcp://host:port`, `file://name`  | `/dev/ttyUSB0`   |
-//! | `{baud}`            | Serial baudrate, `raw` for a TCP link, `replay`         | `115200`         |
+//! | `{baud}`            | Baudrate (a replayed session's), `raw` (TCP), `replay`  | `115200`         |
 //! | `{framing}`         | Data bits, parity, stop bits, `TCP`, replay `RUN`/`END` | `8N1`            |
 //! | `{rx_bytes}`        | Total bytes received                                    | `1024`           |
 //! | `{tx_bytes}`        | Total bytes transmitted                                 | `256`            |
@@ -92,7 +92,7 @@
 //! | `wide`                          | `pannable`                                 | The content is wider than the view: it can pan           |
 //! | `new_data`                      | `unread`, `missed`                         | Data arrived while scrolled up, not seen yet             |
 //! | `mouse`                         | —                                          | Mouse capture is on (`ui.mouse`)                         |
-//! | `line_settings`                 | `serial`                                   | The link has line settings: a serial port only           |
+//! | `line_settings`                 | `serial`                                   | Line settings to show: a serial port, a replayed session |
 //! | `sending`                       | `send_file`                                | A file is being sent (`send-file`)                       |
 //! | `armed`                         | `trigger`                                  | A trigger is armed, ready to fire (`triggers.toml`)      |
 //! | `mashing`                       | `mash`                                     | `mash` sends its text, waiting for the other one         |
@@ -474,11 +474,8 @@ impl Var {
     fn number(self, app: &App) -> Option<u64> {
         let scroll = app.scroll_status();
         Some(match self {
-            // a TCP link or a replay has none: written as text by `write_text`
-            Self::Baud if !app.link_kind().has_line_settings() => {
-                return None;
-            }
-            Self::Baud => app.serial_config.baudrate as u64,
+            // a TCP link or a plain file has none: written as text by `write_text`
+            Self::Baud => app.line_settings()?.baud as u64,
             Self::RxBytes => app.stats.rx() as u64,
             Self::TxBytes => app.stats.tx() as u64,
             Self::ScrollPercent => scroll.percent() as u64,
@@ -550,7 +547,11 @@ impl Var {
                 }
             ),
             Self::Port => write!(out, "{}", app.serial_config.address.label()),
-            // a replayed file has no line settings
+            // a port's, or a replayed session's from its meta (MAX-166)
+            Self::Framing if let Some(line) = app.line_settings() => {
+                write!(out, "{}", line.framing())
+            }
+            // a replayed file has none
             Self::Baud if app.link_kind() == LinkKind::Replay => {
                 write!(out, "replay")
             }
@@ -563,7 +564,8 @@ impl Var {
             {
                 write!(out, "{}", if self == Self::Baud { baud } else { framing })
             }
-            Self::Framing => write!(out, "{}", app.serial_config),
+            // a kind with neither, none yet
+            Self::Framing => Ok(()),
             Self::Time => write!(out, "{}", chrono::Local::now().format(time_format)),
             Self::PanLeft => write!(out, "{}", pan_left_indicator(app).unwrap_or_default()),
             Self::PanRight => write!(out, "{}", pan_right_indicator(app).unwrap_or_default()),
@@ -717,7 +719,7 @@ impl Cond {
             Self::Wide => app.pan_right_status().is_some(),
             Self::NewData => app.is_new_content_missed(),
             Self::Mouse => app.settings().ui.mouse,
-            Self::LineSettings => app.link_kind().has_line_settings(),
+            Self::LineSettings => app.line_settings().is_some(),
             Self::Sending => app.transfer().is_some(),
             Self::Armed => app.triggers().iter().any(|trigger| trigger.is_armed()),
             Self::Mashing => app.mash().is_some(),
@@ -1428,6 +1430,43 @@ mod tests {
         a.end_replay();
         assert_eq!(render("{baud} {framing}", &a), [plain("replay END")]);
         assert_eq!(render("[x](serial?bold:hide)", &a), Vec::<String>::new());
+    }
+
+    /// MAX-166: a replayed serial session shows the line settings it was recorded with, in
+    /// the baud and framing places and styles; `line_settings` shows them.
+    /// How: the default left template while replaying a session recorded at 9600 7E1.
+    #[test]
+    fn session_replay_shows_its_recorded_line() {
+        let mut a = app(Mode::Terminal);
+        let mut session = crate::capture::tests::device("/dev/ttyACM1");
+        session.line = Some(crate::capture::SessionLine {
+            baud: 9600,
+            char_size: crate::link::serial::CharSize::Bits7,
+            parity: crate::link::serial::Parity::Even,
+            stop_bits: crate::link::serial::StopBits::One,
+        });
+        a.start_replay(
+            std::path::PathBuf::from("/tmp/logs/boot.raw"),
+            Some(&session),
+        );
+        let d = StatusBarConfig::default();
+        assert_eq!(
+            render(&d.left, &a),
+            [
+                span(" TERM ", "Some(Cyan)", BG, "BOLD"),
+                plain(" file://boot.raw"),
+                span(" |", MUTED, BG, "NONE"),
+                plain(" "),
+                span("9600", "Some(Cyan)", BG, "NONE"),
+                plain(" "),
+                plain("7E1"),
+            ]
+        );
+        assert_eq!(render("<{baud:5}>", &a), [plain("< 9600>")]);
+        assert_eq!(
+            render("[x](serial?bold:hide)", &a),
+            [span("x", "Some(White)", BG, "BOLD")]
+        );
     }
 
     /// The mode pill follows the prefix and copy-mode conditions.

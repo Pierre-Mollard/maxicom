@@ -1,4 +1,5 @@
 use crate::{
+    capture::SessionLine,
     inputs::DialogAction,
     link::serial::{CharSize, FlowControl, Parity, SerialConfig, StopBits},
     overlays::{OverlayResponse, PopupTarget},
@@ -44,6 +45,8 @@ pub struct SerialConfigDialog {
     pub selected_field: SerialSettingField,
     pub baudrate_idx: usize,
     pub config: SerialConfig,
+    /// What a replayed session was recorded with, shown as a replay has nothing to set (MAX-166)
+    pub recorded_line: Option<SessionLine>,
 }
 
 impl SerialConfigDialog {
@@ -57,7 +60,13 @@ impl SerialConfigDialog {
             selected_field: SerialSettingField::BaudRate,
             baudrate_idx: baud_idx,
             config: current_config.clone(),
+            recorded_line: None,
         }
+    }
+
+    pub fn with_recorded_line(mut self, line: Option<SessionLine>) -> Self {
+        self.recorded_line = line;
+        self
     }
 
     pub fn cycle_next(&mut self) {

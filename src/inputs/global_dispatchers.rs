@@ -73,7 +73,8 @@ impl KeyBindingAction {
                 Action::Terminal(TerminalAction::Screenshot(ScreenshotFormat::Text))
             }
             KeyBindingAction::SerialSettings => {
-                let dialog = SerialConfigDialog::new(&app.serial_config);
+                let dialog = SerialConfigDialog::new(&app.serial_config)
+                    .with_recorded_line(app.recorded_line());
                 Action::App(AppAction::OpenOverlay(Overlay::SerialSettings(dialog)))
             }
             KeyBindingAction::ScrollUp => Action::History(HistoryAction::ScrollUp(1)),

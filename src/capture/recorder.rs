@@ -206,6 +206,13 @@ impl Recorder {
         self.lines = RxLineSplitter::default();
     }
 
+    /// The `.raw` of the journal a replay paused, which is this maxicom's own running session
+    pub fn paused_journal_raw(&self) -> Option<&Path> {
+        self.paused_journal
+            .as_ref()
+            .map(|journal| journal.raw_path.as_path())
+    }
+
     pub fn resume_journal(&mut self) {
         if let Some(journal) = self.paused_journal.take() {
             self.journal = Some(journal);

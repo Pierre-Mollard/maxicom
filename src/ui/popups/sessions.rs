@@ -11,7 +11,6 @@ use ratatui::{
 use crate::{
     capture::{Session, SessionOrder},
     configs::{KeyPattern, KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
-    link::serial::SerialConfig,
     overlays::{
         PopupTarget, SessionBrowser,
         sessions::{sessions, size},
@@ -63,7 +62,12 @@ pub fn render_sessions_popup(
             (key('n'), PopupTarget::SessionCancel, "Cancel"),
         ]
     } else {
-        vec![
+        let mut buttons = vec![(key('p'), PopupTarget::SessionReplay, "Replay")];
+        // while a replay runs, the way back to the live link it set aside (MAX-166)
+        if browser.live {
+            buttons.push((key('L'), PopupTarget::SessionBackToLive, "Back to live"));
+        }
+        buttons.extend([
             (key('d'), PopupTarget::SessionDelete, "Delete"),
             (key('D'), PopupTarget::SessionDeleteAll, "Delete all"),
             (key('s'), PopupTarget::SessionSort, sort),
@@ -72,7 +76,8 @@ pub fn render_sessions_popup(
                 PopupTarget::Hint(KeyBindingDialogAction::Close),
                 "Close",
             ),
-        ]
+        ]);
+        buttons
     };
     let as_hints = |buttons: Vec<(Option<KeyPattern>, PopupTarget, &'static str)>| {
         let buttons = buttons.into_iter().map(|(key, target, label)| {
@@ -273,16 +278,7 @@ fn details<'a>(
             // a link whose bridge sets the line shows what it is, as in the status bar (MAX-156)
             let line = match device.line {
                 Some(line) => {
-                    let framing: String = SerialConfig {
-                        baudrate: line.baud,
-                        char_size: line.char_size,
-                        stop_bits: line.stop_bits,
-                        parity: line.parity,
-                        ..SerialConfig::default()
-                    }
-                    .compact_notation()
-                    .iter()
-                    .collect();
+                    let framing = line.framing();
                     format!("{} {framing} {}", line.baud, device.encoding.as_str())
                 }
                 None => match device.address.kind().line_stand_in() {

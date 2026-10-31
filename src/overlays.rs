@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use crossterm::event::KeyCode;
 
 use crate::{
-    capture::{Session, Stream},
+    capture::{Session, SessionDevice, Stream},
     commands::Invocation,
     configs::{KeyBindingAction, keybindings::KeyBindingDialogAction},
     inputs::DialogAction,
@@ -64,6 +64,8 @@ pub enum PopupTarget {
     CaptureSession,
     ScreenshotFormat,
     SessionRow(usize),
+    SessionReplay,
+    SessionBackToLive,
     SessionDelete,
     SessionDeleteAll,
     SessionSort,
@@ -105,6 +107,12 @@ pub enum OverlayResponse {
         invocations: Vec<Invocation>,
     },
     RestoreSession(bool),
+    ReplaySession {
+        path: PathBuf,
+        device: Option<SessionDevice>,
+    },
+    /// Back to the live link a replay set aside, from the browser (MAX-166)
+    StopReplay,
     HandledNotify {
         message: String,
         warn: bool,

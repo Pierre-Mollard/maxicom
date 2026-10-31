@@ -514,11 +514,15 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     }
                     // the file in place of the link, which closes: no wait, a file opens at
                     // once (MAX-166)
-                    UpdateEffect::Replay { path, delay } => match Replay::open(&path, delay) {
+                    UpdateEffect::Replay {
+                        path,
+                        delay,
+                        session,
+                    } => match Replay::open(&path, delay) {
                         Ok(replay) => {
                             device = Some(ByteSource::Replay(replay));
                             break_until = None;
-                            app.start_replay(path.clone());
+                            app.start_replay(path.clone(), session.as_ref());
                             app.notify_info(format!("Replaying {}", path.display()));
                             if let Some(
                                 Overlay::DeviceDetached(_) | Overlay::DeviceDisconnected(_),
