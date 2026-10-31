@@ -8,7 +8,7 @@ use crate::{
     commands::Invocation,
     configs::{KeyBindingAction, keybindings::KeyBindingDialogAction},
     inputs::DialogAction,
-    link::serial::SerialConfig,
+    link::serial::LineSettings,
 };
 
 // Re-exports
@@ -16,7 +16,7 @@ pub use command_line::CommandLine;
 pub use help::{HelpCategory, HelpDialog};
 pub use menu::ActionMenu;
 pub use misc::{ErrorDialog, FilePathDialog, ScreenshotDialog};
-pub use reconfigure::{SerialConfigDialog, SerialSettingField};
+pub use reconfigure::{LineSettingField, LineSettingsDialog};
 pub use resize::{ResizeDialog, ResizeField};
 pub use sessions::SessionBrowser;
 pub use triggers::TriggerBrowser;
@@ -35,7 +35,7 @@ pub enum Overlay {
     Help(HelpDialog),
     Settings,
     TerminalSize(ResizeDialog),
-    SerialSettings(SerialConfigDialog),
+    SerialSettings(LineSettingsDialog),
     FilePath(FilePathDialog),
     Screenshot(ScreenshotDialog),
     DeviceDisconnected,
@@ -54,9 +54,9 @@ pub enum Overlay {
 pub enum PopupTarget {
     HelpTab(HelpCategory),
     Setting(SettingKey),
-    SerialField(SerialSettingField),
-    SerialPrev(SerialSettingField),
-    SerialNext(SerialSettingField),
+    LineField(LineSettingField),
+    LinePrev(LineSettingField),
+    LineNext(LineSettingField),
     ResizeField(ResizeField),
     Hint(KeyBindingDialogAction),
     MenuItem(usize),
@@ -89,8 +89,8 @@ pub enum OverlayResponse {
         rows: u16,
         cols: u16,
     },
-    ReconfigureSerial(SerialConfig),
-    ReconnectSerial,
+    Reconfigure(LineSettings),
+    Reattach,
     StartCapture {
         path: PathBuf,
         stream: Stream,
@@ -182,7 +182,7 @@ impl Overlay {
                 _ => OverlayResponse::Handled,
             },
             Overlay::DeviceDetached => match action {
-                DialogAction::Confirm => OverlayResponse::ReconnectSerial,
+                DialogAction::Confirm => OverlayResponse::Reattach,
                 DialogAction::Close => OverlayResponse::Quit,
                 _ => OverlayResponse::Handled,
             },

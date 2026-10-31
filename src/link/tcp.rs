@@ -10,7 +10,7 @@ use std::{
 
 use socket2::{SockRef, TcpKeepalive};
 
-use super::serial::SerialError;
+use super::LinkError;
 
 /// A read waits at most this, like the serial port's: the loop idles in the input poll
 const READ_TIMEOUT: Duration = Duration::from_millis(1);
@@ -73,23 +73,23 @@ impl TcpDevice {
         Ok(Self { stream })
     }
 
-    pub fn read(&mut self, buffer: &mut [u8]) -> Result<usize, SerialError> {
+    pub fn read(&mut self, buffer: &mut [u8]) -> Result<usize, LinkError> {
         match self.stream.read(buffer) {
             // the peer closed the connection
-            Ok(0) if !buffer.is_empty() => Err(SerialError::InputClosed),
+            Ok(0) if !buffer.is_empty() => Err(LinkError::InputClosed),
             Ok(bytes_read) => Ok(bytes_read),
             // the read timeout: WouldBlock on Unix, TimedOut on Windows
             Err(e) => match e.kind() {
                 ErrorKind::TimedOut | ErrorKind::WouldBlock | ErrorKind::Interrupted => Ok(0),
-                _ => Err(SerialError::ReadFailed(e)),
+                _ => Err(LinkError::ReadFailed(e)),
             },
         }
     }
 
-    pub fn write(&mut self, buffer: &[u8]) -> Result<(), SerialError> {
+    pub fn write(&mut self, buffer: &[u8]) -> Result<(), LinkError> {
         self.stream
             .write_all(buffer)
-            .map_err(|err| SerialError::WriteFailed {
+            .map_err(|err| LinkError::WriteFailed {
                 bytes_attempted: buffer.len(),
                 source: err,
             })
@@ -160,10 +160,7 @@ mod tests {
                 other => break other,
             }
         };
-        assert!(
-            matches!(result, Err(SerialError::InputClosed)),
-            "{result:?}"
-        );
+        assert!(matches!(result, Err(LinkError::InputClosed)), "{result:?}");
     }
 
     /// Connecting where nothing listens fails at once, and a reconnect works once something

@@ -19,7 +19,7 @@ use crate::{
     link::{
         Address,
         replay::ReplayControl,
-        serial::{LineControl, SerialConfig},
+        serial::{LineControl, LineSettings},
     },
     overlays::{Overlay, PopupTarget, SettingKey},
 };
@@ -68,7 +68,7 @@ pub enum AppAction {
     OpenSessions,
     StartTransfer(Box<FileTransfer>),
     CancelCommands,
-    Reconfigure(SerialConfig),
+    Reconfigure(LineSettings),
     LineControl(LineControl),
     PauseCommands(Duration),
     Open(Address),
@@ -403,14 +403,17 @@ mod tests {
     //! Keys reaching navigation while the search bar is open (MAX-72), and popup keys (MAX-73).
 
     use super::*;
-    use crate::configs::{KeyBindingsConfig, KeyResolver, SettingsConfig};
+    use crate::{
+        configs::{KeyBindingsConfig, KeyResolver, SettingsConfig},
+        link::LinkConfig,
+    };
     use crossterm::event::{KeyCode, KeyModifiers};
 
     fn app() -> App {
         App::new(
             SettingsConfig::default(),
             KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap(),
-            SerialConfig::default(),
+            LinkConfig::default(),
         )
     }
 
@@ -444,7 +447,7 @@ mod tests {
         let mut app = App::new(
             settings,
             KeyResolver::try_new(&config).unwrap(),
-            SerialConfig::default(),
+            LinkConfig::default(),
         );
         let commands = |action: Action| match action {
             Action::App(AppAction::QueueCommands(invocations)) => invocations

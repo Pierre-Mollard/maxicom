@@ -1,14 +1,17 @@
 use crate::{
     capture::SessionLine,
     inputs::DialogAction,
-    link::serial::{CharSize, FlowControl, Parity, SerialConfig, StopBits},
+    link::{
+        Address, LinkConfig,
+        serial::{CharSize, FlowControl, LineSettings, Parity, StopBits},
+    },
     overlays::{OverlayResponse, PopupTarget},
 };
 
 const COMMON_BAUDRATES: &[u32] = &[9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SerialSettingField {
+pub enum LineSettingField {
     BaudRate,
     CharSize,
     Parity,
@@ -16,7 +19,7 @@ pub enum SerialSettingField {
     FlowControl,
 }
 
-impl SerialSettingField {
+impl LineSettingField {
     pub const ALL: &[Self] = &[
         Self::BaudRate,
         Self::CharSize,
@@ -40,26 +43,29 @@ impl SerialSettingField {
     }
 }
 
+/// The line settings of the link at `address`, edited; a link without them only says so
 #[derive(Debug, Clone)]
-pub struct SerialConfigDialog {
-    pub selected_field: SerialSettingField,
+pub struct LineSettingsDialog {
+    pub selected_field: LineSettingField,
     pub baudrate_idx: usize,
-    pub config: SerialConfig,
+    pub address: Address,
+    pub line: LineSettings,
     /// What a replayed session was recorded with, shown as a replay has nothing to set (MAX-166)
     pub recorded_line: Option<SessionLine>,
 }
 
-impl SerialConfigDialog {
-    pub fn new(current_config: &SerialConfig) -> Self {
+impl LineSettingsDialog {
+    pub fn new(current_config: &LinkConfig) -> Self {
         let baud_idx = COMMON_BAUDRATES
             .iter()
-            .position(|&b| b == current_config.baudrate)
+            .position(|&b| b == current_config.line.baud)
             .unwrap_or(4); // default 115200
 
         Self {
-            selected_field: SerialSettingField::BaudRate,
+            selected_field: LineSettingField::BaudRate,
             baudrate_idx: baud_idx,
-            config: current_config.clone(),
+            address: current_config.address.clone(),
+            line: current_config.line,
             recorded_line: None,
         }
     }
@@ -71,33 +77,33 @@ impl SerialConfigDialog {
 
     pub fn cycle_next(&mut self) {
         match self.selected_field {
-            SerialSettingField::BaudRate => {
+            LineSettingField::BaudRate => {
                 self.baudrate_idx = (self.baudrate_idx + 1) % COMMON_BAUDRATES.len();
-                self.config.baudrate = COMMON_BAUDRATES[self.baudrate_idx];
+                self.line.baud = COMMON_BAUDRATES[self.baudrate_idx];
             }
-            SerialSettingField::CharSize => {
-                self.config.char_size = match self.config.char_size {
+            LineSettingField::CharSize => {
+                self.line.framing.char_size = match self.line.framing.char_size {
                     CharSize::Bits5 => CharSize::Bits6,
                     CharSize::Bits6 => CharSize::Bits7,
                     CharSize::Bits7 => CharSize::Bits8,
                     CharSize::Bits8 => CharSize::Bits5,
                 };
             }
-            SerialSettingField::Parity => {
-                self.config.parity = match self.config.parity {
+            LineSettingField::Parity => {
+                self.line.framing.parity = match self.line.framing.parity {
                     Parity::None => Parity::Even,
                     Parity::Even => Parity::Odd,
                     Parity::Odd => Parity::None,
                 };
             }
-            SerialSettingField::StopBits => {
-                self.config.stop_bits = match self.config.stop_bits {
+            LineSettingField::StopBits => {
+                self.line.framing.stop_bits = match self.line.framing.stop_bits {
                     StopBits::One => StopBits::Two,
                     StopBits::Two => StopBits::One,
                 };
             }
-            SerialSettingField::FlowControl => {
-                self.config.flow_control = match self.config.flow_control {
+            LineSettingField::FlowControl => {
+                self.line.flow_control = match self.line.flow_control {
                     FlowControl::None => FlowControl::RtsCts,
                     FlowControl::RtsCts => FlowControl::XonXoff,
                     FlowControl::XonXoff => FlowControl::None,
@@ -108,34 +114,34 @@ impl SerialConfigDialog {
 
     pub fn cycle_prev(&mut self) {
         match self.selected_field {
-            SerialSettingField::BaudRate => {
+            LineSettingField::BaudRate => {
                 if self.baudrate_idx == 0 {
                     self.baudrate_idx = COMMON_BAUDRATES.len() - 1;
                 } else {
                     self.baudrate_idx -= 1;
                 }
-                self.config.baudrate = COMMON_BAUDRATES[self.baudrate_idx];
+                self.line.baud = COMMON_BAUDRATES[self.baudrate_idx];
             }
-            SerialSettingField::CharSize => {
-                self.config.char_size = match self.config.char_size {
+            LineSettingField::CharSize => {
+                self.line.framing.char_size = match self.line.framing.char_size {
                     CharSize::Bits5 => CharSize::Bits8,
                     CharSize::Bits6 => CharSize::Bits5,
                     CharSize::Bits7 => CharSize::Bits6,
                     CharSize::Bits8 => CharSize::Bits7,
                 };
             }
-            SerialSettingField::Parity => {
-                self.config.parity = match self.config.parity {
+            LineSettingField::Parity => {
+                self.line.framing.parity = match self.line.framing.parity {
                     Parity::None => Parity::Odd,
                     Parity::Even => Parity::None,
                     Parity::Odd => Parity::Even,
                 };
             }
-            SerialSettingField::StopBits => {
+            LineSettingField::StopBits => {
                 self.cycle_next();
             }
-            SerialSettingField::FlowControl => {
-                self.config.flow_control = match self.config.flow_control {
+            LineSettingField::FlowControl => {
+                self.line.flow_control = match self.line.flow_control {
                     FlowControl::None => FlowControl::XonXoff,
                     FlowControl::RtsCts => FlowControl::None,
                     FlowControl::XonXoff => FlowControl::RtsCts,
@@ -144,14 +150,10 @@ impl SerialConfigDialog {
         }
     }
 
-    pub fn to_config(&self) -> SerialConfig {
-        self.config.clone()
-    }
-
     /// False for a link whose bridge owns the line settings (TCP), or a replay: nothing to
     /// edit, the popup only tells it (MAX-156)
     pub fn has_line_settings(&self) -> bool {
-        self.config.address.kind().has_line_settings()
+        self.address.kind().has_line_settings()
     }
 
     pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
@@ -163,17 +165,17 @@ impl SerialConfigDialog {
         }
         match action {
             DialogAction::Close => OverlayResponse::Close,
-            DialogAction::Pick(PopupTarget::SerialPrev(field)) => {
+            DialogAction::Pick(PopupTarget::LinePrev(field)) => {
                 self.selected_field = field;
                 self.cycle_prev();
                 OverlayResponse::Handled
             }
-            DialogAction::Pick(PopupTarget::SerialNext(field)) => {
+            DialogAction::Pick(PopupTarget::LineNext(field)) => {
                 self.selected_field = field;
                 self.cycle_next();
                 OverlayResponse::Handled
             }
-            DialogAction::Pick(PopupTarget::SerialField(field)) => {
+            DialogAction::Pick(PopupTarget::LineField(field)) => {
                 if self.selected_field == field {
                     self.cycle_next();
                 } else {
@@ -197,10 +199,7 @@ impl SerialConfigDialog {
                 self.cycle_prev();
                 OverlayResponse::Handled
             }
-            DialogAction::Confirm => {
-                let new_cfg = self.to_config();
-                OverlayResponse::ReconfigureSerial(new_cfg)
-            }
+            DialogAction::Confirm => OverlayResponse::Reconfigure(self.line),
             _ => OverlayResponse::Handled,
         }
     }

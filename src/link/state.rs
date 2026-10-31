@@ -8,16 +8,16 @@ use std::{
 };
 
 use super::{
-    Address, ByteSource, LinkKind, Opener,
+    Address, ByteSource, LinkConfig, LinkError, LinkKind, Opener,
     replay::Replay,
-    serial::{LineControl, SerialConfig, SerialError},
+    serial::{LineControl, LineSettings},
 };
 
 /// Between two tries to reopen a closed link
 pub const REOPEN_EVERY: Duration = Duration::from_millis(500);
 
 pub struct LinkState {
-    config: SerialConfig,
+    config: LinkConfig,
     device: Option<ByteSource>,
     opener: Opener,
     open_for: OpenFor,
@@ -44,12 +44,12 @@ pub enum OpenFor {
 pub enum Reconfigured {
     Applied,
     Kept,
-    Refused(SerialError),
+    Refused(LinkError),
     Ignored,
 }
 
 impl LinkState {
-    pub fn new(config: SerialConfig) -> Self {
+    pub fn new(config: LinkConfig) -> Self {
         let now = Instant::now();
         Self {
             config,
@@ -63,7 +63,7 @@ impl LinkState {
         }
     }
 
-    pub fn config(&self) -> &SerialConfig {
+    pub fn config(&self) -> &LinkConfig {
         &self.config
     }
 
@@ -76,7 +76,7 @@ impl LinkState {
     }
 
     /// The whole config, a replay's live link put back (MAX-166)
-    pub fn set_config(&mut self, config: SerialConfig) {
+    pub fn set_config(&mut self, config: LinkConfig) {
         self.config = config;
     }
 
@@ -94,18 +94,18 @@ impl LinkState {
     }
 
     /// One read of what is waiting, none when closed. Bytes are activity; a lost link closes
-    pub fn read(&mut self, buffer: &mut [u8]) -> Option<Result<usize, SerialError>> {
+    pub fn read(&mut self, buffer: &mut [u8]) -> Option<Result<usize, LinkError>> {
         let result = self.device.as_mut()?.read(buffer);
         match result {
             Ok(n) if n > 0 => self.last_rx_activity = Instant::now(),
-            Err(SerialError::InputClosed) => self.device = None,
+            Err(LinkError::InputClosed) => self.device = None,
             _ => {}
         }
         Some(result)
     }
 
     /// Writes to the device, none when closed
-    pub fn write(&mut self, bytes: &[u8]) -> Option<Result<(), SerialError>> {
+    pub fn write(&mut self, bytes: &[u8]) -> Option<Result<(), LinkError>> {
         Some(self.device.as_mut()?.write(bytes))
     }
 
@@ -115,11 +115,7 @@ impl LinkState {
     }
 
     /// Sets a control line, none when closed; a break ends at `now` + its duration
-    pub fn control(
-        &mut self,
-        control: LineControl,
-        now: Instant,
-    ) -> Option<Result<(), SerialError>> {
+    pub fn control(&mut self, control: LineControl, now: Instant) -> Option<Result<(), LinkError>> {
         let result = self.device.as_mut()?.control(control);
         if let (Ok(()), LineControl::Break(duration)) = (&result, control) {
             self.break_until = Some(now + duration);
@@ -128,7 +124,7 @@ impl LinkState {
     }
 
     /// Ends the break once its time is up: its result then, none before
-    pub fn end_break_if_due(&mut self, now: Instant) -> Option<Result<(), SerialError>> {
+    pub fn end_break_if_due(&mut self, now: Instant) -> Option<Result<(), LinkError>> {
         if self.break_until.is_none_or(|until| now < until) {
             return None;
         }
@@ -158,18 +154,18 @@ impl LinkState {
 
     /// New line settings: set on the open port, or kept for a detached one, which opens with
     /// them (MAX-12)
-    pub fn reconfigure(&mut self, config: SerialConfig) -> Reconfigured {
+    pub fn reconfigure(&mut self, line: LineSettings) -> Reconfigured {
         let reopens = self.kind().reopens();
         match self.device.as_mut() {
-            Some(ByteSource::Live(dev)) => match dev.reconfigure(&config) {
+            Some(ByteSource::Serial(dev)) => match dev.reconfigure(&line) {
                 Ok(()) => {
-                    self.config = config;
+                    self.config.line = line;
                     Reconfigured::Applied
                 }
                 Err(e) => Reconfigured::Refused(e),
             },
             None if reopens => {
-                self.config = config;
+                self.config.line = line;
                 Reconfigured::Kept
             }
             _ => Reconfigured::Ignored,
@@ -230,7 +226,7 @@ impl LinkState {
     /// A closed link opens again every `REOPEN_EVERY` unless detached, then the result of the
     /// open running, with why it was started: an open device is in place, a failed `open` is
     /// back on its previous address. None while it runs, or when the link is open
-    pub fn poll_open(&mut self) -> Option<(OpenFor, Result<(), SerialError>)> {
+    pub fn poll_open(&mut self) -> Option<(OpenFor, Result<(), LinkError>)> {
         if self.is_open() {
             return None;
         }
@@ -271,14 +267,14 @@ mod tests {
     }
 
     fn link_on(address: Address) -> LinkState {
-        LinkState::new(SerialConfig {
+        LinkState::new(LinkConfig {
             address,
-            ..SerialConfig::default()
+            ..LinkConfig::default()
         })
     }
 
     /// Polls until the open running gives its result
-    fn result(link: &mut LinkState) -> (OpenFor, Result<(), SerialError>) {
+    fn result(link: &mut LinkState) -> (OpenFor, Result<(), LinkError>) {
         let start = Instant::now();
         loop {
             if let Some(result) = link.poll_open() {

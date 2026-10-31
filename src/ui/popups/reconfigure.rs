@@ -11,12 +11,12 @@ use unicode_width::UnicodeWidthStr;
 use crate::{
     configs::{KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
     link::LinkKind,
-    overlays::{PopupTarget, SerialConfigDialog, SerialSettingField},
+    overlays::{LineSettingField, LineSettingsDialog, PopupTarget},
     ui::popups::{FORM_WIDTH, form_area, key_hints, popup_block, row_area},
 };
 
 pub fn render_reconfigure_popup(
-    dialog: &SerialConfigDialog,
+    dialog: &LineSettingsDialog,
     resolver: &KeyResolver,
     frame: &mut Frame,
     theme: &ThemeConfig,
@@ -25,39 +25,39 @@ pub fn render_reconfigure_popup(
     if !dialog.has_line_settings() {
         return render_link_without_settings(dialog, resolver, frame, theme, targets);
     }
-    let [data_bits, _, stop_bits] = dialog.config.compact_notation();
+    let [data_bits, _, stop_bits] = dialog.line.framing.compact_notation();
     let mut lines = Vec::new();
 
     let fields = [
         (
-            SerialSettingField::BaudRate,
+            LineSettingField::BaudRate,
             "Baud Rate",
-            format!("< {} >", dialog.config.baudrate),
+            format!("< {} >", dialog.line.baud),
         ),
         (
-            SerialSettingField::CharSize,
+            LineSettingField::CharSize,
             "Data Bits",
             format!("< {data_bits} >"),
         ),
         (
-            SerialSettingField::Parity,
+            LineSettingField::Parity,
             "Parity",
-            format!("< {:?} >", dialog.config.parity),
+            format!("< {:?} >", dialog.line.framing.parity),
         ),
         (
-            SerialSettingField::StopBits,
+            LineSettingField::StopBits,
             "Stop Bits",
             format!("< {stop_bits} >"),
         ),
         (
-            SerialSettingField::FlowControl,
+            LineSettingField::FlowControl,
             "Flow Ctrl",
-            format!("< {:?} >", dialog.config.flow_control),
+            format!("< {:?} >", dialog.line.flow_control),
         ),
     ];
 
     // each field with the width of its `< value >`
-    let field_rows: Vec<(SerialSettingField, u16)> = fields
+    let field_rows: Vec<(LineSettingField, u16)> = fields
         .iter()
         .map(|(field, _, value)| (*field, value.width() as u16))
         .collect();
@@ -107,14 +107,14 @@ pub fn render_reconfigure_popup(
         let row = row_area(inner, y);
         let value_x = row.x + 2 + 14;
         let arrow = |x| Rect::new(x, row.y, 2, 1).intersection(row);
-        targets.push((arrow(value_x), PopupTarget::SerialPrev(field)));
+        targets.push((arrow(value_x), PopupTarget::LinePrev(field)));
         targets.push((
             arrow(value_x + width.saturating_sub(2)),
-            PopupTarget::SerialNext(field),
+            PopupTarget::LineNext(field),
         ));
     }
     for (y, (field, _)) in field_rows.into_iter().enumerate() {
-        targets.push((row_area(inner, y), PopupTarget::SerialField(field)));
+        targets.push((row_area(inner, y), PopupTarget::LineField(field)));
     }
     area
 }
@@ -123,7 +123,7 @@ pub fn render_reconfigure_popup(
 /// the bridge's for a TCP link (MAX-156), none for a replayed file (MAX-166). A replayed
 /// session shows what it was recorded with
 fn render_link_without_settings(
-    dialog: &SerialConfigDialog,
+    dialog: &LineSettingsDialog,
     resolver: &KeyResolver,
     frame: &mut Frame,
     theme: &ThemeConfig,
@@ -131,7 +131,7 @@ fn render_link_without_settings(
 ) -> Rect {
     let label = Style::default().fg(theme.palette.ternary);
     let muted = Style::default().fg(theme.palette.unselected);
-    let (title, why) = match dialog.config.address.kind() {
+    let (title, why) = match dialog.address.kind() {
         LinkKind::Replay if dialog.recorded_line.is_some() => (
             "Replay",
             ["  A replay plays what was recorded:", "  nothing to set."],
@@ -153,12 +153,12 @@ fn render_link_without_settings(
     };
     let mut lines = vec![Line::from(vec![
         Span::styled(format!("  {:<12}: ", "Address"), label),
-        Span::raw(dialog.config.address.to_string()),
+        Span::raw(dialog.address.to_string()),
     ])];
     if let Some(line) = dialog.recorded_line {
         lines.push(Line::from(vec![
             Span::styled(format!("  {:<12}: ", "Recorded"), label),
-            Span::raw(format!("{} {}", line.baud, line.framing())),
+            Span::raw(format!("{} {}", line.baud, line.framing)),
         ]));
     }
     lines.extend([

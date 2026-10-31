@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use super::serial::SerialError;
+use super::LinkError;
 
 /// What the replay controls do to the replay playing (MAX-166)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,7 +89,7 @@ impl Replay {
         (self.read.min(self.size) * 100) / self.size
     }
 
-    pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, SerialError> {
+    pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, LinkError> {
         if self.finished || self.paused || self.last_chunk.elapsed() < self.delay {
             return Ok(0);
         }
@@ -108,7 +108,7 @@ impl Replay {
                 self.read += n as u64;
                 Ok(n)
             }
-            Err(e) => Err(SerialError::ReadFailed(e)),
+            Err(e) => Err(LinkError::ReadFailed(e)),
         }
     }
 }

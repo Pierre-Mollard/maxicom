@@ -12,9 +12,9 @@ use crate::{
     capture::SessionDevice,
     inputs::Action,
     link::{
-        Address, ByteSource, CONNECT_TIMEOUT, LinkKind, OpenFor, Reconfigured,
+        Address, ByteSource, CONNECT_TIMEOUT, LinkError, LinkKind, OpenFor, Reconfigured,
         replay::{Replay, ReplayControl},
-        serial::{LineControl, SerialConfig, SerialError},
+        serial::{LineControl, LineSettings},
     },
     overlays::{ErrorDialog, Overlay},
 };
@@ -51,7 +51,7 @@ impl App {
     /// replies to the remote's queries sent, the break ended, the file and the mash sent on
     /// time; then an idle link detached, or a closed one reopened and its result shown. A read
     /// error nothing handles ends the loop
-    pub fn poll_link(&mut self, buffer: &mut [u8]) -> Result<LinkTurn, SerialError> {
+    pub fn poll_link(&mut self, buffer: &mut [u8]) -> Result<LinkTurn, LinkError> {
         let mut turn = LinkTurn::default();
         if self.disconnected_after_restore && self.overlay().is_none() {
             self.disconnected_after_restore = false;
@@ -120,13 +120,13 @@ impl App {
                 session,
             } => self.replay_file(path, delay, session),
             UpdateEffect::StopReplay => self.stop_replay_link(),
-            UpdateEffect::ToggleAttachSerial => self.toggle_attach(),
+            UpdateEffect::ToggleAttach => self.toggle_attach(),
             UpdateEffect::Transmit(bytes) => {
                 if self.transmit(&bytes) {
                     self.link.note_activity();
                 }
             }
-            UpdateEffect::Reconfigure(config) => self.reconfigure_link(config),
+            UpdateEffect::Reconfigure(line) => self.reconfigure_link(line),
             UpdateEffect::LineControl(control) => self.line_control(control),
             other => return other,
         }
@@ -160,7 +160,7 @@ impl App {
 
     /// Everything already waiting, instead of one buffer per frame, for `RX_DRAIN_BUDGET` at
     /// most. A lost link shows its popup
-    fn read_link(&mut self, buffer: &mut [u8], turn: &mut LinkTurn) -> Result<(), SerialError> {
+    fn read_link(&mut self, buffer: &mut [u8], turn: &mut LinkTurn) -> Result<(), LinkError> {
         let drain_start = Instant::now();
         while let Some(result) = self.link.read(buffer) {
             match result {
@@ -173,13 +173,13 @@ impl App {
                         break;
                     }
                 }
-                Err(SerialError::InputClosed) => {
+                Err(LinkError::InputClosed) => {
                     self.show_disconnected();
                     self.notify_warn("Device Lost");
                     turn.redraw = true;
                     break;
                 }
-                Err(SerialError::ReadFailed(e)) => {
+                Err(LinkError::ReadFailed(e)) => {
                     self.open_overlay(Overlay::Error(
                         ErrorDialog::new("Serial Read Error", "Could not read from device buffer")
                             .with_details(e),
@@ -256,7 +256,7 @@ impl App {
         }
     }
 
-    fn open_failed(&mut self, why: OpenFor, e: SerialError) {
+    fn open_failed(&mut self, why: OpenFor, e: LinkError) {
         match why {
             // what a missing port does at start, after the restore question
             OpenFor::Start => {
@@ -335,8 +335,8 @@ impl App {
 
     /// New line settings: a port that refuses them stops the command line chain, the dialog
     /// says why (MAX-12)
-    fn reconfigure_link(&mut self, config: SerialConfig) {
-        match self.link.reconfigure(config) {
+    fn reconfigure_link(&mut self, line: LineSettings) {
+        match self.link.reconfigure(line) {
             Reconfigured::Applied | Reconfigured::Ignored => {}
             Reconfigured::Kept => {
                 self.notify_info("The port is detached: it opens with these settings");
@@ -424,16 +424,16 @@ mod tests {
     use crate::{
         configs::{KeyBindingsConfig, KeyResolver, SettingsConfig},
         inputs::AppAction,
-        link::state::REOPEN_EVERY,
+        link::{LinkConfig, state::REOPEN_EVERY},
     };
 
     fn app_on(address: &str) -> App {
         App::new(
             SettingsConfig::default(),
             KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap(),
-            SerialConfig {
+            LinkConfig {
                 address: Address::parse(address),
-                ..SerialConfig::default()
+                ..LinkConfig::default()
             },
         )
     }
@@ -562,23 +562,23 @@ mod tests {
     #[test]
     fn reconfigure_keeps_settings_for_a_detached_port() {
         let mut app = app_on("/nonexistent/ttyMAXICOM");
-        let config = SerialConfig {
-            baudrate: 9600,
-            ..app.link_config().clone()
+        let line = LineSettings {
+            baud: 9600,
+            ..app.link_config().line
         };
-        app.apply_link_effect(UpdateEffect::Reconfigure(config));
-        assert_eq!(app.link_config().baudrate, 9600);
+        app.apply_link_effect(UpdateEffect::Reconfigure(line));
+        assert_eq!(app.link_config().line.baud, 9600);
         let kept = "The port is detached: it opens with these settings";
         assert!(toasts(&app).contains(&kept.to_string()));
 
         let (listener, address) = listener();
         let (mut app, _peer) = connected(&listener, &address);
-        let config = SerialConfig {
-            baudrate: 9600,
-            ..app.link_config().clone()
+        let line = LineSettings {
+            baud: 9600,
+            ..app.link_config().line
         };
-        app.apply_link_effect(UpdateEffect::Reconfigure(config));
-        assert_eq!(app.link_config().baudrate, 115_200);
+        app.apply_link_effect(UpdateEffect::Reconfigure(line));
+        assert_eq!(app.link_config().line.baud, 115_200);
     }
 
     /// MAX-168: a link quiet for `inactivity_detach_timeout` is detached, with its popup.

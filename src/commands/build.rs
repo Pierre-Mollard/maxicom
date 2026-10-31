@@ -15,7 +15,7 @@ use crate::{
     link::{
         Address, LinkKind,
         replay::ReplayControl,
-        serial::{FlowControl, LineControl, SerialConfig, parse_framing},
+        serial::{FlowControl, Framing, LineControl, LineSettings},
     },
     overlays::SettingKey,
 };
@@ -66,7 +66,7 @@ pub fn send_file(app: &App, args: &[ArgValue]) -> Result<Action, String> {
         Box::new(BufReader::new(file)),
         name,
         metadata.len(),
-        app.link_config().bytes_per_sec(),
+        app.link_config().line.bytes_per_sec(),
         Duration::from_millis(delay_ms),
         Instant::now(),
     );
@@ -83,12 +83,12 @@ fn serial_only(app: &App, what: &str) -> Result<(), String> {
     }
 }
 
-/// The port's settings with `change`, for the loop to apply
-fn reconfigure(app: &App, change: impl FnOnce(&mut SerialConfig)) -> Result<Action, String> {
+/// The port's line settings with `change`, for the link to take
+fn reconfigure(app: &App, change: impl FnOnce(&mut LineSettings)) -> Result<Action, String> {
     serial_only(app, "line settings")?;
-    let mut config = app.link_config().clone();
-    change(&mut config);
-    Ok(Action::App(AppAction::Reconfigure(config)))
+    let mut line = app.link_config().line;
+    change(&mut line);
+    Ok(Action::App(AppAction::Reconfigure(line)))
 }
 
 /// `baud <rate>`
@@ -96,7 +96,7 @@ pub fn baud(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     let [ArgValue::Int(rate)] = args else {
         unreachable!("baud takes a rate");
     };
-    reconfigure(app, |config| config.baudrate = *rate as u32)
+    reconfigure(app, |line| line.baud = *rate as u32)
 }
 
 /// `framing <8N1>`
@@ -104,12 +104,8 @@ pub fn framing(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     let [ArgValue::String(text)] = args else {
         unreachable!("framing takes a framing");
     };
-    let (char_size, parity, stop_bits) = parse_framing(text)?;
-    reconfigure(app, |config| {
-        config.char_size = char_size;
-        config.parity = parity;
-        config.stop_bits = stop_bits;
-    })
+    let framing: Framing = text.parse()?;
+    reconfigure(app, |line| line.framing = framing)
 }
 
 /// `flow none|hw|sw`
@@ -120,7 +116,7 @@ pub fn flow(app: &App, args: &[ArgValue]) -> Result<Action, String> {
         [ArgValue::Enum("none")] => FlowControl::None,
         _ => unreachable!("flow takes none, hw or sw"),
     };
-    reconfigure(app, |config| config.flow_control = flow_control)
+    reconfigure(app, |line| line.flow_control = flow_control)
 }
 
 fn control(app: &App, control: LineControl) -> Result<Action, String> {
@@ -142,7 +138,7 @@ pub fn rts(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     let [ArgValue::Bool(on)] = args else {
         unreachable!("rts takes on or off");
     };
-    if app.link_config().flow_control == FlowControl::RtsCts {
+    if app.link_config().line.flow_control == FlowControl::RtsCts {
         return Err("hardware flow control drives RTS (flow none first)".to_string());
     }
     control(app, LineControl::Rts(*on))

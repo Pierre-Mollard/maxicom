@@ -1,14 +1,13 @@
 /// HW I/O & Serial configuration
 /// Using the 'serial2' crate
 use std::{
-    error::Error,
     fmt::{self, Display, Write},
-    io::{self, ErrorKind},
+    io::ErrorKind,
     str::FromStr,
     time::Duration,
 };
 
-use super::Address;
+use super::LinkError;
 use serde::{Deserialize, Serialize};
 use serial2::{
     CharSize as S2CharSize, FlowControl as S2FlowControl, Parity as S2Parity, SerialPort,
@@ -143,17 +142,16 @@ impl From<FlowControl> for S2FlowControl {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SerialConfig {
-    pub address: Address,
-    pub baudrate: u32,
+/// The bits of one character on the line, written `8N1`: the data bits (5 to 8), the parity
+/// (`N`, `E`, `O`) and the stop bits (1 or 2)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Framing {
     pub char_size: CharSize,
-    pub stop_bits: StopBits,
     pub parity: Parity,
-    pub flow_control: FlowControl,
+    pub stop_bits: StopBits,
 }
 
-impl SerialConfig {
+impl Framing {
     /// The bits on the wire for one character: the start bit, the data bits, the parity bit if
     /// any and the stop bits; 10 for 8N1
     pub fn bits_per_char(&self) -> u32 {
@@ -172,11 +170,6 @@ impl SerialConfig {
             StopBits::Two => 2,
         };
         1 + data + parity + stop
-    }
-
-    /// The characters the line carries a second at its baud rate and framing
-    pub fn bytes_per_sec(&self) -> f64 {
-        f64::from(self.baudrate) / f64::from(self.bits_per_char())
     }
 
     pub fn compact_notation(&self) -> [char; 3] {
@@ -202,20 +195,7 @@ impl SerialConfig {
     }
 }
 
-impl Default for SerialConfig {
-    fn default() -> Self {
-        Self {
-            address: Address::Serial(String::from("/dev/ttyUSB0")),
-            baudrate: 115_200,
-            char_size: CharSize::Bits8,
-            stop_bits: StopBits::One,
-            parity: Parity::None,
-            flow_control: FlowControl::None,
-        }
-    }
-}
-
-impl Display for SerialConfig {
+impl Display for Framing {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let compact_bytes = self.compact_notation();
         f.write_char(compact_bytes[0])?;
@@ -224,22 +204,55 @@ impl Display for SerialConfig {
     }
 }
 
-/// A framing written as `8N1`: the data bits (5 to 8), the parity (`N`, `E`, `O`) and the stop
-/// bits (1 or 2), in any case
-pub fn parse_framing(text: &str) -> Result<(CharSize, Parity, StopBits), String> {
-    let invalid = || format!("'{text}' isn't a framing like 8N1 (5-8 data bits, N/E/O, 1-2 stop)");
-    let [data, parity, stop] = text.as_bytes() else {
-        return Err(invalid());
-    };
-    let part = |byte: &u8| (*byte as char).to_string();
-    let data = part(data).parse().map_err(|_| invalid())?;
-    let parity = part(parity).parse().map_err(|_| invalid())?;
-    let stop = match stop {
-        b'1' => StopBits::One,
-        b'2' => StopBits::Two,
-        _ => return Err(invalid()),
-    };
-    Ok((data, parity, stop))
+/// `8N1` and the like, in any case
+impl FromStr for Framing {
+    type Err = String;
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let invalid =
+            || format!("'{text}' isn't a framing like 8N1 (5-8 data bits, N/E/O, 1-2 stop)");
+        let [data, parity, stop] = text.as_bytes() else {
+            return Err(invalid());
+        };
+        let part = |byte: &u8| (*byte as char).to_string();
+        let char_size = part(data).parse().map_err(|_| invalid())?;
+        let parity = part(parity).parse().map_err(|_| invalid())?;
+        let stop_bits = match stop {
+            b'1' => StopBits::One,
+            b'2' => StopBits::Two,
+            _ => return Err(invalid()),
+        };
+        Ok(Self {
+            char_size,
+            parity,
+            stop_bits,
+        })
+    }
+}
+
+/// What maxicom sets on a serial port: its baud rate, framing and flow control (MAX-168)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LineSettings {
+    pub baud: u32,
+    pub framing: Framing,
+    pub flow_control: FlowControl,
+}
+
+impl LineSettings {
+    /// The characters the line carries a second at its baud rate and framing
+    pub fn bytes_per_sec(&self) -> f64 {
+        f64::from(self.baud) / f64::from(self.framing.bits_per_char())
+    }
+}
+
+/// 115200 8N1, no flow control
+impl Default for LineSettings {
+    fn default() -> Self {
+        Self {
+            baud: 115_200,
+            framing: Framing::default(),
+            flow_control: FlowControl::None,
+        }
+    }
 }
 
 /// A control line of a serial port, set by hand (MAX-12): DTR, RTS, or a break held this long
@@ -265,127 +278,13 @@ pub struct SerialDevice {
     port: SerialPort,
 }
 
-#[derive(Debug)]
-pub enum SerialError {
-    /// Failed to open port (missing device, permissions, etc.)
-    OpenFailed {
-        port: String,
-        baudrate: u32,
-        source: io::Error,
-    },
-    /// Failed to connect to a network link (refused, unreachable, bad address)
-    ConnectFailed { addr: String, source: io::Error },
-    /// Failed to configure port options (read timeout, termios flags)
-    ConfigFailed(io::Error),
-    ReconfigureFailed {
-        summary: String,
-        rejected_fields: Vec<String>,
-        source: io::Error,
-    },
-    /// Port was closed on the other side or USB unplugged (EOF on read)
-    InputClosed,
-    /// Unexpected error while reading bytes
-    ReadFailed(io::Error),
-    /// Failed to transmit bytes
-    WriteFailed {
-        bytes_attempted: usize,
-        source: io::Error,
-    },
-    /// Failed to set a control line (DTR, RTS, break)
-    ControlFailed(io::Error),
-    /// The link has no control lines: a TCP link, a replay
-    NoControlLines,
-}
-
-impl fmt::Display for SerialError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::OpenFailed {
-                port,
-                baudrate,
-                source,
-            } => match source.kind() {
-                ErrorKind::PermissionDenied => {
-                    write!(f, "permission denied opening serial port '{port}'")
-                }
-                ErrorKind::ResourceBusy => {
-                    write!(
-                        f,
-                        "serial port '{port}' is busy (already in use by another application)"
-                    )
-                }
-                _ => {
-                    write!(
-                        f,
-                        "failed to open serial port '{port}' at {baudrate} baud: {source}"
-                    )
-                }
-            },
-            Self::ConnectFailed { addr, source } => {
-                write!(f, "could not connect to '{addr}': {source}")
-            }
-            Self::ConfigFailed(source) => {
-                write!(f, "failed to configure port settings: {source}")
-            }
-            Self::ReconfigureFailed {
-                summary,
-                rejected_fields,
-                source,
-            } => {
-                if !rejected_fields.is_empty() {
-                    write!(
-                        f,
-                        "Hardware driver rejected: {}.\n\
-                         Requested [{summary}], but device kept previous attributes.",
-                        rejected_fields.join(", ")
-                    )
-                } else {
-                    write!(f, "Driver error applying [{summary}]: {source}")
-                }
-            }
-            Self::InputClosed => {
-                write!(f, "serial device input closed (EOF / cable unplugged)")
-            }
-            Self::ReadFailed(source) => {
-                write!(f, "failed to read from serial port: {source}")
-            }
-            Self::WriteFailed {
-                bytes_attempted,
-                source,
-            } => {
-                write!(
-                    f,
-                    "failed to write {bytes_attempted} bytes to serial port: {source}"
-                )
-            }
-            Self::ControlFailed(source) => write!(f, "failed to set the line: {source}"),
-            Self::NoControlLines => write!(f, "the link has no control lines"),
-        }
-    }
-}
-
-impl Error for SerialError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::OpenFailed { source, .. } => Some(source),
-            Self::ConnectFailed { source, .. } => Some(source),
-            Self::ConfigFailed(source) => Some(source),
-            Self::ReconfigureFailed { source, .. } => Some(source),
-            Self::ReadFailed(source) => Some(source),
-            Self::WriteFailed { source, .. } => Some(source),
-            Self::ControlFailed(source) => Some(source),
-            Self::InputClosed | Self::NoControlLines => None,
-        }
-    }
-}
-
 impl SerialDevice {
-    /// Opens `device` with `config`'s line settings
-    pub fn open(device: &str, config: &SerialConfig) -> Result<Self, SerialError> {
+    /// Opens `device` with the line settings `line`
+    pub fn open(device: &str, line: &LineSettings) -> Result<Self, LinkError> {
         let mut port =
-            SerialPort::open(device, config.baudrate).map_err(|err| SerialError::OpenFailed {
+            SerialPort::open(device, line.baud).map_err(|err| LinkError::OpenFailed {
                 port: device.to_string(),
-                baudrate: config.baudrate,
+                baudrate: line.baud,
                 source: err,
             })?;
 
@@ -399,9 +298,9 @@ impl SerialDevice {
             let res = unsafe { libc::ioctl(fd, libc::TIOCEXCL) };
             if res < 0 {
                 let err = std::io::Error::last_os_error();
-                return Err(SerialError::OpenFailed {
+                return Err(LinkError::OpenFailed {
                     port: device.to_string(),
-                    baudrate: config.baudrate,
+                    baudrate: line.baud,
                     source: err,
                 });
             }
@@ -409,58 +308,62 @@ impl SerialDevice {
 
         // short: the main loop idles in the input poll, a read only waits for late bytes
         port.set_read_timeout(Duration::from_millis(1))
-            .map_err(SerialError::ConfigFailed)?;
+            .map_err(LinkError::ConfigFailed)?;
 
         let mut dev = Self { port };
-        dev.reconfigure(config)?;
+        dev.reconfigure(line)?;
         Ok(dev)
     }
 
-    pub fn reconfigure(&mut self, config: &SerialConfig) -> Result<(), SerialError> {
+    pub fn reconfigure(&mut self, line: &LineSettings) -> Result<(), LinkError> {
         let summary = format!(
             "{} baud, {:?}, {:?} parity, {:?} stop, {:?} flow",
-            config.baudrate, config.char_size, config.parity, config.stop_bits, config.flow_control
+            line.baud,
+            line.framing.char_size,
+            line.framing.parity,
+            line.framing.stop_bits,
+            line.flow_control
         );
         let mut settings = self
             .port
             .get_configuration()
-            .map_err(SerialError::ConfigFailed)?;
+            .map_err(LinkError::ConfigFailed)?;
 
         settings.set_raw();
         settings
-            .set_baud_rate(config.baudrate)
-            .map_err(|e| SerialError::ReconfigureFailed {
+            .set_baud_rate(line.baud)
+            .map_err(|e| LinkError::ReconfigureFailed {
                 summary: summary.clone(),
-                rejected_fields: vec![format!("Baud rate {}", config.baudrate)],
+                rejected_fields: vec![format!("Baud rate {}", line.baud)],
                 source: e,
             })?;
 
-        settings.set_char_size(config.char_size.into());
-        settings.set_stop_bits(config.stop_bits.into());
-        settings.set_parity(config.parity.into());
-        settings.set_flow_control(config.flow_control.into());
+        settings.set_char_size(line.framing.char_size.into());
+        settings.set_stop_bits(line.framing.stop_bits.into());
+        settings.set_parity(line.framing.parity.into());
+        settings.set_flow_control(line.flow_control.into());
 
         if let Err(err) = self.port.set_configuration(&settings) {
             // Read back what the hardware actually kept to find the culprit!
             let mut rejected = Vec::new();
 
             if let Ok(actual) = self.port.get_configuration() {
-                let expected_char_size: serial2::CharSize = config.char_size.into();
-                let expected_stop_bits: serial2::StopBits = config.stop_bits.into();
-                let expected_parity: serial2::Parity = config.parity.into();
-                let expected_flow: serial2::FlowControl = config.flow_control.into();
+                let expected_char_size: serial2::CharSize = line.framing.char_size.into();
+                let expected_stop_bits: serial2::StopBits = line.framing.stop_bits.into();
+                let expected_parity: serial2::Parity = line.framing.parity.into();
+                let expected_flow: serial2::FlowControl = line.flow_control.into();
 
                 if actual.get_char_size().ok() != Some(expected_char_size) {
-                    rejected.push(format!("Data bits ({:?})", config.char_size));
+                    rejected.push(format!("Data bits ({:?})", line.framing.char_size));
                 }
                 if actual.get_stop_bits().ok() != Some(expected_stop_bits) {
-                    rejected.push(format!("Stop bits ({:?})", config.stop_bits));
+                    rejected.push(format!("Stop bits ({:?})", line.framing.stop_bits));
                 }
                 if actual.get_parity().ok() != Some(expected_parity) {
-                    rejected.push(format!("Parity ({:?})", config.parity));
+                    rejected.push(format!("Parity ({:?})", line.framing.parity));
                 }
                 if actual.get_flow_control().ok() != Some(expected_flow) {
-                    rejected.push(format!("Flow control ({:?})", config.flow_control));
+                    rejected.push(format!("Flow control ({:?})", line.flow_control));
                 }
             }
 
@@ -468,7 +371,7 @@ impl SerialDevice {
                 rejected.push("Unsupported configuration combination".to_string());
             }
 
-            return Err(SerialError::ReconfigureFailed {
+            return Err(LinkError::ReconfigureFailed {
                 summary,
                 rejected_fields: rejected,
                 source: err,
@@ -478,35 +381,33 @@ impl SerialDevice {
         Ok(())
     }
 
-    pub fn read(&self, buffer: &mut [u8]) -> Result<usize, SerialError> {
+    pub fn read(&self, buffer: &mut [u8]) -> Result<usize, LinkError> {
         match self.port.read(buffer) {
             // 0 bytes on Unix TTY indicates EOF / disconnect
-            Ok(0) => Err(SerialError::InputClosed),
+            Ok(0) => Err(LinkError::InputClosed),
 
             Ok(bytes_read) => Ok(bytes_read),
 
             // Recoverable conditions -> return 0 bytes read
             Err(e) => match e.kind() {
                 ErrorKind::TimedOut | ErrorKind::WouldBlock | ErrorKind::Interrupted => Ok(0),
-                _ => Err(SerialError::ReadFailed(e)),
+                _ => Err(LinkError::ReadFailed(e)),
             },
         }
     }
 
     /// Sets DTR or RTS, or starts a break: ending it is the caller's, `set_break(false)`
-    pub fn control(&mut self, control: LineControl) -> Result<(), SerialError> {
+    pub fn control(&mut self, control: LineControl) -> Result<(), LinkError> {
         match control {
             LineControl::Dtr(on) => self.port.set_dtr(on),
             LineControl::Rts(on) => self.port.set_rts(on),
             LineControl::Break(_) => self.port.set_break(true),
         }
-        .map_err(SerialError::ControlFailed)
+        .map_err(LinkError::ControlFailed)
     }
 
-    pub fn end_break(&mut self) -> Result<(), SerialError> {
-        self.port
-            .set_break(false)
-            .map_err(SerialError::ControlFailed)
+    pub fn end_break(&mut self) -> Result<(), LinkError> {
+        self.port.set_break(false).map_err(LinkError::ControlFailed)
     }
 
     /// The line's settings as the port has them, for the tests on a pty
@@ -515,10 +416,10 @@ impl SerialDevice {
         self.port.get_configuration()
     }
 
-    pub fn write(&mut self, buffer: &[u8]) -> Result<(), SerialError> {
+    pub fn write(&mut self, buffer: &[u8]) -> Result<(), LinkError> {
         self.port
             .write_all(buffer)
-            .map_err(|err| SerialError::WriteFailed {
+            .map_err(|err| LinkError::WriteFailed {
                 bytes_attempted: buffer.len(),
                 source: err,
             })
@@ -545,11 +446,10 @@ mod tests {
     /// rate by
     #[test]
     fn bits_per_char() {
-        let framing = |char_size, parity, stop_bits| SerialConfig {
+        let framing = |char_size, parity, stop_bits| Framing {
             char_size,
             parity,
             stop_bits,
-            ..SerialConfig::default()
         };
         let cases = [
             (framing(CharSize::Bits8, Parity::None, StopBits::One), 10),
@@ -557,29 +457,32 @@ mod tests {
             (framing(CharSize::Bits8, Parity::Odd, StopBits::Two), 12),
             (framing(CharSize::Bits5, Parity::None, StopBits::One), 7),
         ];
-        for (config, bits) in cases {
-            assert_eq!(config.bits_per_char(), bits, "{config}");
+        for (framing, bits) in cases {
+            assert_eq!(framing.bits_per_char(), bits, "{framing}");
         }
-        let config = SerialConfig {
-            baudrate: 9600,
-            ..framing(CharSize::Bits8, Parity::Even, StopBits::One)
+        let line = LineSettings {
+            baud: 9600,
+            framing: framing(CharSize::Bits8, Parity::Even, StopBits::One),
+            ..LineSettings::default()
         };
-        assert!((config.bytes_per_sec() - 9600.0 / 11.0).abs() < 1e-9);
+        assert!((line.bytes_per_sec() - 9600.0 / 11.0).abs() < 1e-9);
     }
 
-    /// MAX-12: `framing 8N1` and the like, any case
+    /// MAX-12: `framing 8N1` and the like, any case, written back in capitals
     #[test]
     fn framings() {
+        let parsed = |text: &str| text.parse::<Framing>();
         assert_eq!(
-            parse_framing("8N1"),
-            Ok((CharSize::Bits8, Parity::None, StopBits::One))
+            parsed("8N1"),
+            Ok(Framing {
+                char_size: CharSize::Bits8,
+                parity: Parity::None,
+                stop_bits: StopBits::One,
+            })
         );
-        assert_eq!(
-            parse_framing("7e2"),
-            Ok((CharSize::Bits7, Parity::Even, StopBits::Two))
-        );
+        assert_eq!(parsed("7e2").unwrap().to_string(), "7E2");
         for bad in ["", "8N", "8N1 ", "9N1", "8X1", "8N3", "8é1"] {
-            assert!(parse_framing(bad).is_err(), "{bad}");
+            assert!(parsed(bad).is_err(), "{bad}");
         }
     }
 }

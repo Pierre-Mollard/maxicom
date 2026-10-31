@@ -11,7 +11,7 @@ use crate::{
         SearchModeAction, SideViewAction, TerminalAction,
     },
     overlays::{
-        CommandLine, HelpDialog, Overlay, ResizeDialog, SerialConfigDialog, SettingKey,
+        CommandLine, HelpDialog, LineSettingsDialog, Overlay, ResizeDialog, SettingKey,
         TriggerBrowser,
     },
 };
@@ -73,7 +73,7 @@ impl KeyBindingAction {
                 Action::Terminal(TerminalAction::Screenshot(ScreenshotFormat::Text))
             }
             KeyBindingAction::SerialSettings => {
-                let dialog = SerialConfigDialog::new(app.link_config())
+                let dialog = LineSettingsDialog::new(app.link_config())
                     .with_recorded_line(app.recorded_line());
                 Action::App(AppAction::OpenOverlay(Overlay::SerialSettings(dialog)))
             }

@@ -278,7 +278,7 @@ fn details<'a>(
             // a link whose bridge sets the line shows what it is, as in the status bar (MAX-156)
             let line = match device.line {
                 Some(line) => {
-                    let framing = line.framing();
+                    let framing = line.framing;
                     format!("{} {framing} {}", line.baud, device.encoding.as_str())
                 }
                 None => match device.address.kind().line_stand_in() {

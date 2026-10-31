@@ -44,7 +44,7 @@ pub mod tests {
 
     use super::*;
     use crate::configs::{RxNewlineMode, TextEncoding};
-    use crate::link::{Address, serial::SerialConfig};
+    use crate::link::{Address, LinkConfig};
 
     pub fn record(recorder: &mut Recorder, bytes: &[u8]) {
         recorder.record_rx(RxNewlineMode::Auto, TextEncoding::Utf8, None, bytes);
@@ -53,9 +53,9 @@ pub mod tests {
     /// A device on `address`, on this machine.
     pub fn device(address: &str) -> SessionDevice {
         SessionDevice::new(
-            &SerialConfig {
+            &LinkConfig {
                 address: Address::parse(address),
-                ..SerialConfig::default()
+                ..LinkConfig::default()
             },
             TextEncoding::Utf8,
         )
@@ -78,9 +78,9 @@ pub mod tests {
         tx: &[u8],
     ) -> Session {
         let device = SessionDevice::new(
-            &SerialConfig {
+            &LinkConfig {
                 address: Address::parse(port),
-                ..SerialConfig::default()
+                ..LinkConfig::default()
             },
             TextEncoding::Utf8,
         );

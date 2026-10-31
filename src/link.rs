@@ -1,5 +1,5 @@
 //! The link to the device: where the bytes come from and go to. Every kind reads and writes
-//! the same way (nothing waiting reads 0, a lost link is `SerialError::InputClosed`), so the
+//! the same way (nothing waiting reads 0, a lost link is `LinkError::InputClosed`), so the
 //! loop, the terminal, capture and sessions work on any of them. The address says the kind:
 //!
 //! * serial port, `serial`: `/dev/ttyUSB0`, `COM3`. Has line settings (baud, framing)
@@ -13,6 +13,8 @@
 //! Planned: telnet `telnet://host:port` (MAX-161, no line settings), RFC 2217
 //! `rfc2217://host:port` (line settings set remotely), Unix sockets and Windows named pipes
 pub mod address;
+pub mod config;
+pub mod error;
 pub mod replay;
 pub mod serial;
 pub mod state;
@@ -26,8 +28,10 @@ use std::{
 };
 
 pub use address::Address;
+pub use config::LinkConfig;
+pub use error::LinkError;
 use replay::Replay;
-use serial::{LineControl, SerialConfig, SerialDevice, SerialError};
+use serial::{LineControl, SerialDevice};
 pub use state::{LinkState, OpenFor, Reconfigured};
 use tcp::TcpDevice;
 
@@ -35,40 +39,40 @@ use tcp::TcpDevice;
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub enum ByteSource {
-    Live(SerialDevice),
+    Serial(SerialDevice),
     Tcp(TcpDevice),
     Replay(Replay),
 }
 
 impl ByteSource {
-    pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, SerialError> {
+    pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, LinkError> {
         match self {
-            ByteSource::Live(dev) => dev.read(buf),
+            ByteSource::Serial(dev) => dev.read(buf),
             ByteSource::Tcp(dev) => dev.read(buf),
             ByteSource::Replay(replay) => replay.read(buf),
         }
     }
 
-    pub fn write(&mut self, bytes: &[u8]) -> Result<(), SerialError> {
+    pub fn write(&mut self, bytes: &[u8]) -> Result<(), LinkError> {
         match self {
-            ByteSource::Live(dev) => dev.write(bytes),
+            ByteSource::Serial(dev) => dev.write(bytes),
             ByteSource::Tcp(dev) => dev.write(bytes),
             ByteSource::Replay(_) => Ok(()),
         }
     }
 
     /// Sets a control line (MAX-12), a serial port's only
-    pub fn control(&mut self, control: LineControl) -> Result<(), SerialError> {
+    pub fn control(&mut self, control: LineControl) -> Result<(), LinkError> {
         match self {
-            ByteSource::Live(dev) => dev.control(control),
-            ByteSource::Tcp(_) | ByteSource::Replay(_) => Err(SerialError::NoControlLines),
+            ByteSource::Serial(dev) => dev.control(control),
+            ByteSource::Tcp(_) | ByteSource::Replay(_) => Err(LinkError::NoControlLines),
         }
     }
 
     /// Ends the break `control` started; nothing for a link without control lines
-    pub fn end_break(&mut self) -> Result<(), SerialError> {
+    pub fn end_break(&mut self) -> Result<(), LinkError> {
         match self {
-            ByteSource::Live(dev) => dev.end_break(),
+            ByteSource::Serial(dev) => dev.end_break(),
             ByteSource::Tcp(_) | ByteSource::Replay(_) => Ok(()),
         }
     }
@@ -119,19 +123,19 @@ impl LinkKind {
 
 /// Opens the link `config.address` names, waiting for it: a serial port, or a TCP
 /// connection
-pub fn open(config: &SerialConfig) -> Result<ByteSource, SerialError> {
+pub fn open(config: &LinkConfig) -> Result<ByteSource, LinkError> {
     match &config.address {
-        Address::Serial(device) => SerialDevice::open(device, config).map(ByteSource::Live),
+        Address::Serial(device) => SerialDevice::open(device, &config.line).map(ByteSource::Serial),
         Address::Tcp(addr) => TcpDevice::connect(addr, CONNECT_TIMEOUT)
             .map(ByteSource::Tcp)
-            .map_err(|source| SerialError::ConnectFailed {
+            .map_err(|source| LinkError::ConnectFailed {
                 addr: addr.clone(),
                 source,
             }),
         // the loop opens a replay's file itself: a link never reopens as one
-        Address::Replay(_) => Err(SerialError::OpenFailed {
+        Address::Replay(_) => Err(LinkError::OpenFailed {
             port: config.address.to_string(),
-            baudrate: config.baudrate,
+            baudrate: config.line.baud,
             source: io::Error::new(
                 io::ErrorKind::Unsupported,
                 "a replay isn't opened as a link",
@@ -144,13 +148,13 @@ pub fn open(config: &SerialConfig) -> Result<ByteSource, SerialError> {
 /// unreachable host takes the whole timeout; a serial port opens at once. One open at a time
 #[derive(Default)]
 pub struct Opener {
-    pending: Option<Receiver<Result<ByteSource, SerialError>>>,
+    pending: Option<Receiver<Result<ByteSource, LinkError>>>,
 }
 
 impl Opener {
     /// Starts opening `config`'s link, unless an open is still running. Its result comes from
     /// `finished`, right away for a serial port
-    pub fn start(&mut self, config: &SerialConfig) {
+    pub fn start(&mut self, config: &LinkConfig) {
         if self.pending.is_some() {
             return;
         }
@@ -168,13 +172,13 @@ impl Opener {
 
     /// Starts opening `config`'s link in place of the open running, whose result is dropped:
     /// `open` switching while the last port retries (MAX-12)
-    pub fn restart(&mut self, config: &SerialConfig) {
+    pub fn restart(&mut self, config: &LinkConfig) {
         self.pending = None;
         self.start(config);
     }
 
     /// The result of the open started last, once it is done
-    pub fn finished(&mut self) -> Option<Result<ByteSource, SerialError>> {
+    pub fn finished(&mut self) -> Option<Result<ByteSource, LinkError>> {
         let received = self.pending.as_ref()?.try_recv();
         match received {
             Ok(result) => {
@@ -198,15 +202,15 @@ mod tests {
     use std::net::TcpListener;
     use std::time::Instant;
 
-    fn config(address: &str) -> SerialConfig {
-        SerialConfig {
+    fn config(address: &str) -> LinkConfig {
+        LinkConfig {
             address: Address::parse(address),
-            ..SerialConfig::default()
+            ..LinkConfig::default()
         }
     }
 
     /// Waits for the opener's result, as the loop polls it each frame
-    fn wait(opener: &mut Opener) -> Result<ByteSource, SerialError> {
+    fn wait(opener: &mut Opener) -> Result<ByteSource, LinkError> {
         let start = Instant::now();
         loop {
             if let Some(result) = opener.finished() {
@@ -280,7 +284,7 @@ mod tests {
         for _ in 0..2 {
             opener.start(&config(&format!("tcp://{addr}")));
             match wait(&mut opener) {
-                Err(SerialError::ConnectFailed { addr: failed, .. }) => assert_eq!(failed, addr),
+                Err(LinkError::ConnectFailed { addr: failed, .. }) => assert_eq!(failed, addr),
                 other => panic!("{:?}", other.err()),
             }
         }
@@ -294,7 +298,7 @@ mod tests {
         opener.start(&config("/nonexistent/ttyMAXICOM"));
         assert!(matches!(
             opener.finished(),
-            Some(Err(SerialError::OpenFailed { .. }))
+            Some(Err(LinkError::OpenFailed { .. }))
         ));
     }
 }

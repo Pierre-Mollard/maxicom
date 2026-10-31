@@ -20,11 +20,7 @@ use crate::{
     configs::{
         AppConfig, ConfigsError, KeyResolver, KeywordHighlight, Mode, SettingsConfig, ThemeConfig,
     },
-    link::{
-        Address, ByteSource,
-        replay::Replay,
-        serial::{SerialConfig, SerialError},
-    },
+    link::{Address, ByteSource, LinkConfig, LinkError, replay::Replay},
     overlays::{ErrorDialog, Overlay},
     ui::{PostRenderEffect, layout::LayoutWarning, render, status_bar::CompiledStatusBar},
 };
@@ -159,19 +155,19 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let device: Option<ByteSource> = match &run_mode {
         // connected in the loop, like a reconnect, so the UI is up and says it's connecting.
         // The arguments refused a malformed address
-        RunMode::Live(SerialConfig {
+        RunMode::Live(LinkConfig {
             address: Address::Tcp(_),
             ..
         }) => None,
         // serial without tcp for sure here
         RunMode::Live(cfg) => match link::open(cfg) {
             Ok(dev) => Some(dev),
-            Err(SerialError::OpenFailed { ref source, .. })
+            Err(LinkError::OpenFailed { ref source, .. })
                 if source.kind() == ErrorKind::NotFound =>
             {
                 None
             }
-            Err(SerialError::InputClosed) => None,
+            Err(LinkError::InputClosed) => None,
             Err(err) => {
                 eprintln!("maxicom: could not open the device: {err}");
                 return Ok(ExitCode::FAILURE);
@@ -199,14 +195,14 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut running: bool = true;
     let mut input_buffer = vec![0u8; settings.rx_buffer_size];
 
-    let serial_config = match &run_mode {
+    let link_config = match &run_mode {
         RunMode::Live(cfg) => cfg.clone(),
-        RunMode::Replay { file_path, .. } => SerialConfig {
+        RunMode::Replay { file_path, .. } => LinkConfig {
             address: Address::Replay(file_path.clone()),
-            ..SerialConfig::default()
+            ..LinkConfig::default()
         },
     };
-    let mut app = App::new(settings, key_resolver, serial_config);
+    let mut app = App::new(settings, key_resolver, link_config);
     app.set_triggers(triggers);
     let kind = app.link_kind();
     if !kind.writes() {

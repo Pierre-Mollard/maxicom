@@ -8,7 +8,7 @@ use std::{
 const MAX_BURST: Duration = Duration::from_millis(100);
 
 /// A file sent paced (MAX-12): one chunk per loop turn, what the line drains at its rate since
-/// the last one (`SerialConfig::bytes_per_sec`), read from the file as it goes, so the UI stays
+/// the last one (`LinkConfig::bytes_per_sec`), read from the file as it goes, so the UI stays
 /// live and the file can be any size. With a line delay it waits that long after each `\n`,
 /// for a device without flow control that handles a line at a time
 pub struct FileTransfer {

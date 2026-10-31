@@ -292,10 +292,10 @@ mod tests {
         inputs::{
             Action, AppAction, CopyModeAction, DialogAction, HistoryAction, SearchModeAction,
         },
-        link::{Address, serial::SerialConfig},
+        link::{Address, LinkConfig},
         overlays::{
-            CommandLine, ErrorDialog, FilePathDialog, HelpDialog, ResizeDialog, ScreenshotDialog,
-            SerialConfigDialog,
+            CommandLine, ErrorDialog, FilePathDialog, HelpDialog, LineSettingsDialog, ResizeDialog,
+            ScreenshotDialog,
         },
     };
     use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -336,7 +336,7 @@ mod tests {
             let app = App::new(
                 settings,
                 KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap(),
-                SerialConfig::default(),
+                LinkConfig::default(),
             );
             let terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
             Self {
@@ -1047,7 +1047,7 @@ mod tests {
     /// Popup hints show the keys of the user's keymap (MAX-73).
     #[test]
     fn popup_hints_follow_the_keymap() {
-        let serial = || Overlay::SerialSettings(SerialConfigDialog::new(&SerialConfig::default()));
+        let serial = || Overlay::SerialSettings(LineSettingsDialog::new(&LinkConfig::default()));
 
         let rows = popup_rows(serial(), &[]);
         assert!(has(&rows, "Enter Apply · Esc Cancel"), "{rows:#?}");
@@ -1463,7 +1463,7 @@ mod tests {
     fn popups_fit_their_content() {
         let popups = [
             Overlay::Settings,
-            Overlay::SerialSettings(SerialConfigDialog::new(&SerialConfig::default())),
+            Overlay::SerialSettings(LineSettingsDialog::new(&LinkConfig::default())),
             Overlay::FilePath(FilePathDialog::new(
                 Stream::Text,
                 "log.txt".into(),
@@ -1491,7 +1491,7 @@ mod tests {
     /// The serial popup shows the data and stop bits as numbers.
     #[test]
     fn serial_popup_values_are_readable() {
-        let dialog = SerialConfigDialog::new(&SerialConfig::default());
+        let dialog = LineSettingsDialog::new(&LinkConfig::default());
         let rows = popup_rows(Overlay::SerialSettings(dialog), &[]);
         assert!(has(&rows, "< 8 >"), "{rows:#?}");
         assert!(has(&rows, "< 1 >"), "{rows:#?}");
@@ -1502,12 +1502,12 @@ mod tests {
     /// How: the popup rows for a `tcp://` port, then its answers to Confirm and Right.
     #[test]
     fn serial_popup_for_a_tcp_link() {
-        let config = SerialConfig {
+        let config = LinkConfig {
             address: Address::parse("tcp://192.168.1.50:4000"),
-            ..SerialConfig::default()
+            ..LinkConfig::default()
         };
         let rows = popup_rows(
-            Overlay::SerialSettings(SerialConfigDialog::new(&config)),
+            Overlay::SerialSettings(LineSettingsDialog::new(&config)),
             &[],
         );
         assert!(has(&rows, "Network Link"), "{rows:#?}");
@@ -1517,12 +1517,15 @@ mod tests {
             "{rows:#?}"
         );
 
-        let mut dialog = SerialConfigDialog::new(&config);
+        let mut dialog = LineSettingsDialog::new(&config);
         assert!(matches!(
             dialog.handle_action(DialogAction::Right),
             crate::overlays::OverlayResponse::Handled
         ));
-        assert_eq!(dialog.config, config);
+        assert_eq!(
+            (&dialog.address, dialog.line),
+            (&config.address, config.line)
+        );
         assert!(matches!(
             dialog.handle_action(DialogAction::Confirm),
             crate::overlays::OverlayResponse::Close
@@ -1534,17 +1537,15 @@ mod tests {
     /// How: the popup rows for a `file://` port with a recorded 9600 7E1.
     #[test]
     fn serial_popup_for_a_session_replay() {
-        let config = SerialConfig {
+        let config = LinkConfig {
             address: Address::parse("file:///tmp/boot.raw"),
-            ..SerialConfig::default()
+            ..LinkConfig::default()
         };
         let line = crate::capture::SessionLine {
             baud: 9600,
-            char_size: crate::link::serial::CharSize::Bits7,
-            parity: crate::link::serial::Parity::Even,
-            stop_bits: crate::link::serial::StopBits::One,
+            framing: "7E1".parse().unwrap(),
         };
-        let dialog = SerialConfigDialog::new(&config).with_recorded_line(Some(line));
+        let dialog = LineSettingsDialog::new(&config).with_recorded_line(Some(line));
         let rows = popup_rows(Overlay::SerialSettings(dialog), &[]);
         assert!(has(&rows, "Recorded    : 9600 7E1"), "{rows:#?}");
         assert!(has(&rows, "A replay plays what was recorded"), "{rows:#?}");
@@ -1555,12 +1556,12 @@ mod tests {
     /// How: the popup rows for a `file://` port.
     #[test]
     fn serial_popup_for_a_replay() {
-        let config = SerialConfig {
+        let config = LinkConfig {
             address: Address::parse("file:///tmp/boot.raw"),
-            ..SerialConfig::default()
+            ..LinkConfig::default()
         };
         let rows = popup_rows(
-            Overlay::SerialSettings(SerialConfigDialog::new(&config)),
+            Overlay::SerialSettings(LineSettingsDialog::new(&config)),
             &[],
         );
         assert!(
@@ -1937,7 +1938,7 @@ mod tests {
             std::env::temp_dir().join(format!("maxicom_test_{}_browser_ui", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let text = crate::capture::JournalText::default();
-        let port = SerialConfig::default().address.to_string();
+        let port = LinkConfig::default().address.to_string();
         crate::capture::tests::write_test_session(&dir, &port, &text, b"mine\r\n", b"");
         crate::capture::tests::write_test_session(&dir, "/dev/other", &text, b"theirs\r\n", b"");
         // the names are to the millisecond: the app's journal must not get the same one
@@ -2055,7 +2056,7 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
-        let port = SerialConfig::default().address.to_string();
+        let port = LinkConfig::default().address.to_string();
         let text = crate::capture::JournalText::default();
         crate::capture::tests::write_test_session(&dir, &port, &text, b"mine\r\n", b"");
         // the names are to the millisecond: the app's journal must not get the same one
@@ -2347,7 +2348,7 @@ mod tests {
         let (mut h, without_3) = bar_at(30);
         assert!(!without_3.contains("ttyUSB0") && !without_3.contains("RX:"));
         assert!(without_3.contains(" LINE  115200"), "{without_3:?}");
-        let baud = h.app.link_config().baudrate.to_string();
+        let baud = h.app.link_config().line.baud.to_string();
         let rows = h.draw();
         click(&mut h, status_cell(&rows, &baud));
         assert!(matches!(h.app.overlay(), Some(Overlay::SerialSettings(_))));
@@ -3855,7 +3856,7 @@ mod tests {
         h.app.close_overlay();
 
         h.app.update(Action::App(AppAction::OpenOverlay(
-            Overlay::SerialSettings(SerialConfigDialog::new(&SerialConfig::default())),
+            Overlay::SerialSettings(LineSettingsDialog::new(&LinkConfig::default())),
         )));
         let rows = h.draw();
         let before = match h.app.overlay() {
@@ -4112,7 +4113,7 @@ mod tests {
         assert_eq!(h.app.settings().mode, Mode::Terminal);
 
         let rows = h.draw();
-        let baud = h.app.link_config().baudrate.to_string();
+        let baud = h.app.link_config().line.baud.to_string();
         click(&mut h, status_cell(&rows, &baud));
         assert!(matches!(h.app.overlay(), Some(Overlay::SerialSettings(_))));
         h.app.close_overlay();
@@ -4155,7 +4156,7 @@ mod tests {
             mouse_do(h, MouseEventKind::Up(MouseButton::Left), at);
             effect
         };
-        let serial = || Overlay::SerialSettings(SerialConfigDialog::new(&SerialConfig::default()));
+        let serial = || Overlay::SerialSettings(LineSettingsDialog::new(&LinkConfig::default()));
 
         let rows = open(&mut h, serial());
         click(&mut h, cell_of(&rows, "Parity"));
@@ -4232,7 +4233,7 @@ mod tests {
         let rows = open(&mut h, Overlay::DeviceDetached);
         assert!(matches!(
             press(&mut h, cell_of(&rows, "Reattach")),
-            UpdateEffect::ToggleAttachSerial
+            UpdateEffect::ToggleAttach
         ));
         // the last cell of an odd-width centered hint line: the paragraph's own centering
         let rows = open(&mut h, Overlay::DeviceDetached);
@@ -4246,7 +4247,7 @@ mod tests {
     #[test]
     fn mouse_clicks_in_popups() {
         use crate::link::serial::Parity;
-        use crate::overlays::{HelpCategory, ResizeField, SerialSettingField};
+        use crate::overlays::{HelpCategory, LineSettingField, ResizeField};
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
         let open = |h: &mut Harness, overlay| {
             h.app.update(Action::App(AppAction::OpenOverlay(overlay)));
@@ -4287,15 +4288,15 @@ mod tests {
 
         let rows = open(
             &mut h,
-            Overlay::SerialSettings(SerialConfigDialog::new(&SerialConfig::default())),
+            Overlay::SerialSettings(LineSettingsDialog::new(&LinkConfig::default())),
         );
         let parity = cell_of(&rows, "Parity");
         click(&mut h, parity);
         click(&mut h, parity);
         match h.app.overlay() {
             Some(Overlay::SerialSettings(d)) => {
-                assert_eq!(d.selected_field, SerialSettingField::Parity);
-                assert_ne!(d.config.parity, Parity::None);
+                assert_eq!(d.selected_field, LineSettingField::Parity);
+                assert_ne!(d.line.framing.parity, Parity::None);
             }
             _ => panic!("serial popup closed"),
         }
@@ -4318,10 +4319,10 @@ mod tests {
     #[test]
     fn serial_popup_arrows() {
         use crate::link::serial::Parity;
-        use crate::overlays::SerialSettingField;
+        use crate::overlays::LineSettingField;
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
         h.app.update(Action::App(AppAction::OpenOverlay(
-            Overlay::SerialSettings(SerialConfigDialog::new(&SerialConfig::default())),
+            Overlay::SerialSettings(LineSettingsDialog::new(&LinkConfig::default())),
         )));
         let rows = h.draw();
         // the arrows of a row: its first `<` and its last `>`
@@ -4336,24 +4337,24 @@ mod tests {
             Some(Overlay::SerialSettings(d)) => d.clone(),
             _ => panic!("serial popup closed"),
         };
-        let parity = dialog(&h).config.parity;
+        let parity = dialog(&h).line.framing.parity;
         assert_eq!(parity, Parity::None);
 
         let (left, right) = arrows(&rows, "Parity");
         click(&mut h, right);
-        assert_eq!(dialog(&h).selected_field, SerialSettingField::Parity);
-        assert_eq!(dialog(&h).config.parity, Parity::Even);
+        assert_eq!(dialog(&h).selected_field, LineSettingField::Parity);
+        assert_eq!(dialog(&h).line.framing.parity, Parity::Even);
         click(&mut h, right);
-        assert_eq!(dialog(&h).config.parity, Parity::Odd);
+        assert_eq!(dialog(&h).line.framing.parity, Parity::Odd);
         click(&mut h, left);
-        assert_eq!(dialog(&h).config.parity, Parity::Even);
+        assert_eq!(dialog(&h).line.framing.parity, Parity::Even);
 
         let rows = h.draw();
         let (left, _) = arrows(&rows, "Stop Bits");
-        let stop_bits = dialog(&h).config.stop_bits;
+        let stop_bits = dialog(&h).line.framing.stop_bits;
         click(&mut h, left);
-        assert_eq!(dialog(&h).selected_field, SerialSettingField::StopBits);
-        assert_ne!(dialog(&h).config.stop_bits, stop_bits);
+        assert_eq!(dialog(&h).selected_field, LineSettingField::StopBits);
+        assert_ne!(dialog(&h).line.framing.stop_bits, stop_bits);
     }
 
     /// MAX-134: in the resize popup the sideways wheel (Shift + wheel too) steps the active

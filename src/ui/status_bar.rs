@@ -588,7 +588,7 @@ impl Var {
             Self::Port => write!(out, "{}", app.link_config().address.label()),
             // a port's, or a replayed session's from its meta (MAX-166)
             Self::Framing if let Some(line) = app.line_settings() => {
-                write!(out, "{}", line.framing())
+                write!(out, "{}", line.framing)
             }
             // a replayed file has none
             Self::Baud if app.link_kind() == LinkKind::Replay => {
@@ -1376,7 +1376,7 @@ mod tests {
     use crate::{
         configs::{KeyBindingsConfig, KeyResolver, SettingsConfig},
         inputs::{Action, AppAction, CopyModeAction},
-        link::{Address, serial::SerialConfig},
+        link::{Address, LinkConfig},
     };
 
     fn app(mode: Mode) -> App {
@@ -1384,7 +1384,7 @@ mod tests {
         settings.mode = mode;
         settings.ui.status_bar.time_format = "TIME".to_string();
         let resolver = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
-        App::new(settings, resolver, SerialConfig::default())
+        App::new(settings, resolver, LinkConfig::default())
     }
 
     /// One "text|fg|bg|modifiers" string per span, so expectations stay readable
@@ -1530,9 +1530,7 @@ mod tests {
         let mut session = crate::capture::tests::device("/dev/ttyACM1");
         session.line = Some(crate::capture::SessionLine {
             baud: 9600,
-            char_size: crate::link::serial::CharSize::Bits7,
-            parity: crate::link::serial::Parity::Even,
-            stop_bits: crate::link::serial::StopBits::One,
+            framing: "7E1".parse().unwrap(),
         });
         a.start_replay(
             std::path::PathBuf::from("/tmp/logs/boot.raw"),
@@ -1865,7 +1863,7 @@ mod tests {
             clicks("[{mode}](click=nope)", &a),
             [(0, 4, run(SKInputMode))]
         );
-        let baud = a.link_config().baudrate.to_string().len() as u16;
+        let baud = a.link_config().line.baud.to_string().len() as u16;
         assert_eq!(
             clicks("port {port} | {baud} {rx_bytes}", &a),
             [(14, baud, run(SerialSettings))]

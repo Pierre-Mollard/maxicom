@@ -1,14 +1,14 @@
 use std::{env, path::PathBuf};
 
 use crate::link::{
-    Address,
-    serial::{CharSize, FlowControl, Parity, SerialConfig, StopBits},
+    Address, LinkConfig,
+    serial::{CharSize, FlowControl, Parity, StopBits},
     tcp::TcpDevice,
 };
 
 #[derive(Debug, Clone)]
 pub enum RunMode {
-    Live(SerialConfig),
+    Live(LinkConfig),
     Replay { file_path: PathBuf, delay_ms: u64 },
 }
 /// `restore` is `--restore` / `--no-restore`, the last one given, over `capture.restore`
@@ -53,7 +53,7 @@ pub fn parse_args() -> Result<ParseOutcome, ParseError> {
 
 fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ParseOutcome, ParseError> {
     let mut args = args.into_iter();
-    let mut serial_config = SerialConfig::default();
+    let mut link_config = LinkConfig::default();
     let mut replay_file: Option<PathBuf> = None;
     let mut replay_delay: u64 = 0;
     let mut restore: Option<bool> = None;
@@ -78,38 +78,41 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ParseOutcom
             }
             "--port" | "-p" => {
                 let port = args.next().ok_or(ParseError::MissingValue("--port"))?;
-                serial_config.address = Address::parse(&port);
+                link_config.address = Address::parse(&port);
             }
             "--tcp" => {
                 let addr = args.next().ok_or(ParseError::MissingValue("--tcp"))?;
-                serial_config.address = Address::Tcp(addr);
+                link_config.address = Address::Tcp(addr);
             }
             "--baud" | "-b" => {
                 line_options.push("--baud");
                 let val = args.next().ok_or(ParseError::MissingValue("--baud"))?;
-                serial_config.baudrate = val
+                link_config.line.baud = val
                     .parse::<u32>()
                     .map_err(|_| ParseError::BadFormat(format!("Invalid baud rate '{val}'")))?;
             }
             "--bits" => {
                 line_options.push("--bits");
                 let val = args.next().ok_or(ParseError::MissingValue("--bits"))?;
-                serial_config.char_size = val.parse::<CharSize>().map_err(ParseError::BadFormat)?;
+                link_config.line.framing.char_size =
+                    val.parse::<CharSize>().map_err(ParseError::BadFormat)?;
             }
             "--stop-bits" => {
                 line_options.push("--stop-bits");
                 let val = args.next().ok_or(ParseError::MissingValue("--stop-bits"))?;
-                serial_config.stop_bits = val.parse::<StopBits>().map_err(ParseError::BadFormat)?;
+                link_config.line.framing.stop_bits =
+                    val.parse::<StopBits>().map_err(ParseError::BadFormat)?;
             }
             "--parity" => {
                 line_options.push("--parity");
                 let val = args.next().ok_or(ParseError::MissingValue("--parity"))?;
-                serial_config.parity = val.parse::<Parity>().map_err(ParseError::BadFormat)?;
+                link_config.line.framing.parity =
+                    val.parse::<Parity>().map_err(ParseError::BadFormat)?;
             }
             "--flow" => {
                 line_options.push("--flow");
                 let val = args.next().ok_or(ParseError::MissingValue("--flow"))?;
-                serial_config.flow_control =
+                link_config.line.flow_control =
                     val.parse::<FlowControl>().map_err(ParseError::BadFormat)?;
             }
             "--restore" => restore = Some(true),
@@ -119,7 +122,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ParseOutcom
             }
             "--cache-dir" => return Ok(ParseOutcome::CacheDir),
             // the device without `--port`: `maxicom /dev/ttyUSB0`, `maxicom tcp://host:port`
-            device if !device.starts_with('-') => serial_config.address = Address::parse(device),
+            device if !device.starts_with('-') => link_config.address = Address::parse(device),
 
             unknown => {
                 return Err(ParseError::UnknownArgument(unknown.to_string()));
@@ -133,7 +136,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ParseOutcom
             delay_ms: replay_delay,
         }
     } else {
-        if let Address::Tcp(addr) = &serial_config.address {
+        if let Address::Tcp(addr) = &link_config.address {
             // a malformed address would never connect
             TcpDevice::check_address(addr).map_err(|e| ParseError::BadFormat(e.to_string()))?;
             if let Some(option) = line_options.first() {
@@ -142,7 +145,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ParseOutcom
                 )));
             }
         }
-        RunMode::Live(serial_config)
+        RunMode::Live(link_config)
     };
     Ok(ParseOutcome::Run { mode, restore })
 }

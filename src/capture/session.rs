@@ -1,6 +1,9 @@
 use crate::configs::TextEncoding;
 use crate::link::Address;
-use crate::link::serial::{CharSize, Parity, SerialConfig, StopBits};
+use crate::link::{
+    LinkConfig,
+    serial::{Framing, LineSettings},
+};
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -37,48 +40,34 @@ pub struct SessionDevice {
     pub encoding: TextEncoding,
 }
 
-/// The line settings that change the bytes received. Flow control doesn't, so it isn't here
+/// The line settings that change the bytes received: the baud rate and the framing. Flow
+/// control doesn't, so it isn't here. In the file the framing's fields sit next to `baud`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionLine {
     pub baud: u32,
-    pub char_size: CharSize,
-    pub parity: Parity,
-    pub stop_bits: StopBits,
+    #[serde(flatten)]
+    pub framing: Framing,
 }
 
 impl SessionLine {
-    pub fn of(serial: &SerialConfig) -> Self {
+    pub fn of(line: &LineSettings) -> Self {
         Self {
-            baud: serial.baudrate,
-            char_size: serial.char_size,
-            parity: serial.parity,
-            stop_bits: serial.stop_bits,
+            baud: line.baud,
+            framing: line.framing,
         }
-    }
-
-    /// The framing written `8N1`, as the port's
-    pub fn framing(&self) -> String {
-        // TODO: (MAX-168) one LineSettings type for both, which writes itself
-        SerialConfig {
-            char_size: self.char_size,
-            parity: self.parity,
-            stop_bits: self.stop_bits,
-            ..SerialConfig::default()
-        }
-        .to_string()
     }
 }
 
 impl SessionDevice {
-    pub fn new(serial: &SerialConfig, encoding: TextEncoding) -> Self {
-        let line = serial
+    pub fn new(config: &LinkConfig, encoding: TextEncoding) -> Self {
+        let line = config
             .address
             .kind()
             .has_line_settings()
-            .then(|| SessionLine::of(serial));
+            .then(|| SessionLine::of(&config.line));
         Self {
             host: hostname(),
-            address: serial.address.clone(),
+            address: config.address.clone(),
             line,
             encoding,
         }
