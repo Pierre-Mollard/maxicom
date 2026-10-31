@@ -138,7 +138,22 @@ impl LinkState {
 
     /// Whether the replay read its whole file (MAX-166)
     pub fn is_replay_finished(&self) -> bool {
-        matches!(&self.device, Some(ByteSource::Replay(replay)) if replay.is_finished())
+        self.replay().is_some_and(Replay::is_finished)
+    }
+
+    /// The replay playing, for its progress and its controls (MAX-166)
+    pub fn replay(&self) -> Option<&Replay> {
+        match &self.device {
+            Some(ByteSource::Replay(replay)) => Some(replay),
+            _ => None,
+        }
+    }
+
+    pub fn replay_mut(&mut self) -> Option<&mut Replay> {
+        match &mut self.device {
+            Some(ByteSource::Replay(replay)) => Some(replay),
+            _ => None,
+        }
     }
 
     /// New line settings: set on the open port, or kept for a detached one, which opens with
@@ -184,7 +199,7 @@ impl LinkState {
     }
 
     /// A replay's file in place of the device, which closes (MAX-166)
-    pub fn replay(&mut self, replay: Replay) {
+    pub fn set_replay(&mut self, replay: Replay) {
         self.device = Some(ByteSource::Replay(replay));
         self.break_until = None;
         self.detached = false;

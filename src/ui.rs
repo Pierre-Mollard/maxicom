@@ -2362,6 +2362,29 @@ mod tests {
         assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
     }
 
+    /// MAX-166: the default bar's replay block is the first one left out when the bar doesn't
+    /// fit: wherever it shows, the file name, the replay's state and RX/TX show too, and it
+    /// shows on a wide screen.
+    /// How: a replay of a long session file name in terminal mode, every width from 60 to 200.
+    #[test]
+    fn status_bar_replay_block_goes_first() {
+        let name = "20260101_000000000_ttyFAKE.raw";
+        let mut shown = false;
+        for width in 60..=200 {
+            let mut h = Harness::line_mode(LineDisplayMode::Pretty, width, 10);
+            h.app
+                .start_replay(std::path::PathBuf::from(format!("/tmp/{name}")), None);
+            let bar = h.draw()[9].clone();
+            if bar.contains('▷') {
+                shown = true;
+                for text in [name, "replay RUN", "RX:"] {
+                    assert!(bar.contains(text), "{width}: {bar:?}");
+                }
+            }
+        }
+        assert!(shown);
+    }
+
     /// MAX-139: whatever the width, the bar's parts never write over each other, in every
     /// layout: the mode and the `?` and `≡` buttons, never dropped, are always whole.
     /// How: line and terminal mode, each layout (borders on for `border` and `box`), every width

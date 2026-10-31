@@ -346,6 +346,33 @@ pub static COMMANDS: &[CommandSpec] = {
             build::replay_stop,
             "Stop the replay, back to the link it replaced",
         ),
+        CommandSpec::build("replay-pause", &[], build::replay_pause, "Pause the replay"),
+        CommandSpec::build(
+            "replay-resume",
+            &[],
+            build::replay_resume,
+            "Resume the paused replay",
+        ),
+        CommandSpec::build(
+            "replay-speed",
+            &[ArgSpec {
+                name: "delay-ms",
+                kind: ArgKind::Int {
+                    min: 0,
+                    max: 10_000,
+                    suggestions: &[],
+                },
+                optional: false,
+            }],
+            build::replay_speed,
+            "Set the replay's delay between two buffers",
+        ),
+        CommandSpec::build(
+            "replay-restart",
+            &[],
+            build::replay_restart,
+            "Play the replay again from the start, on a clean screen",
+        ),
         CommandSpec::build(
             "sleep",
             &[arg(

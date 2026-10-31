@@ -18,6 +18,7 @@ use crate::{
     inputs::mouse::handle_mouse,
     link::{
         Address,
+        replay::ReplayControl,
         serial::{LineControl, SerialConfig},
     },
     overlays::{Overlay, PopupTarget, SettingKey},
@@ -73,6 +74,7 @@ pub enum AppAction {
     Open(Address),
     Replay { path: PathBuf, delay: Duration },
     StopReplay,
+    ControlReplay(ReplayControl),
     SetEncoding(TextEncoding),
     SaveScreenshot(PathBuf),
     QueueCommands(Vec<Invocation>),

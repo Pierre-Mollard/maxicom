@@ -14,6 +14,7 @@ use crate::{
     inputs::{Action, AppAction, SearchModeAction},
     link::{
         Address, LinkKind,
+        replay::ReplayControl,
         serial::{FlowControl, LineControl, SerialConfig, parse_framing},
     },
     overlays::SettingKey,
@@ -215,6 +216,49 @@ pub fn replay_stop(app: &App, _args: &[ArgValue]) -> Result<Action, String> {
         return Err("no replay runs".to_string());
     }
     Ok(Action::App(AppAction::StopReplay))
+}
+
+/// `replay-pause`, `replay-resume`, `replay-restart` and `replay-speed`: refused without a
+/// replay reading, and when they would change nothing (MAX-166)
+fn replay_control(app: &App, control: ReplayControl) -> Result<Action, String> {
+    let Some(replay) = app.replay() else {
+        return Err(if app.link_kind() == LinkKind::Replay {
+            "the replay was stopped".to_string()
+        } else {
+            "no replay runs".to_string()
+        });
+    };
+    match control {
+        ReplayControl::Pause if replay.is_paused() => {
+            Err("the replay is paused already".to_string())
+        }
+        ReplayControl::Pause if app.is_replay_ended() => {
+            Err("the replay is finished (replay-restart plays it again)".to_string())
+        }
+        ReplayControl::Resume if !replay.is_paused() => Err("the replay isn't paused".to_string()),
+        _ => Ok(Action::App(AppAction::ControlReplay(control))),
+    }
+}
+
+pub fn replay_pause(app: &App, _args: &[ArgValue]) -> Result<Action, String> {
+    replay_control(app, ReplayControl::Pause)
+}
+
+pub fn replay_resume(app: &App, _args: &[ArgValue]) -> Result<Action, String> {
+    replay_control(app, ReplayControl::Resume)
+}
+
+pub fn replay_restart(app: &App, _args: &[ArgValue]) -> Result<Action, String> {
+    replay_control(app, ReplayControl::Restart)
+}
+
+/// `replay-speed <delay-ms>`: the wait between two buffers from now on
+pub fn replay_speed(app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let [ArgValue::Int(ms)] = args else {
+        unreachable!("replay-speed takes a delay");
+    };
+    let delay = Duration::from_millis(*ms as u64);
+    replay_control(app, ReplayControl::Delay(delay))
 }
 
 /// The settings `set` turns on or off, by name

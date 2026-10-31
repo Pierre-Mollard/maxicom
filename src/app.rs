@@ -31,6 +31,7 @@ use crate::{
     },
     link::{
         Address, LinkKind, LinkState,
+        replay::Replay,
         serial::{LineControl, SerialConfig},
     },
     notification::{NotificationManager, ToastLevel},
@@ -474,18 +475,7 @@ impl App {
     pub fn start_replay(&mut self, path: PathBuf, session: Option<&SessionDevice>) {
         self.stop_transfer("a replay took the link's place");
         self.stop_mash("a replay took the link's place");
-        let line_mode = LineMode::new(
-            self.settings.line_mode.history_size,
-            self.settings.line_mode.send_history_size,
-        );
-        let terminal_mode = TerminalMode::new(
-            self.settings.terminal_mode.history_size,
-            self.settings.terminal_mode.rows,
-            self.settings.terminal_mode.cols,
-        );
-        let line_mode = std::mem::replace(&mut self.line_mode, line_mode);
-        let terminal_mode = std::mem::replace(&mut self.terminal_mode, terminal_mode);
-        let stats = std::mem::take(&mut self.stats);
+        let (line_mode, terminal_mode, stats) = self.clear_screen_for_replay();
         let live_encoding = match &self.replaced_link {
             Some(replaced) => replaced.encoding,
             None => self.settings.encoding,
@@ -508,6 +498,36 @@ impl App {
             line: session.and_then(|device| device.line),
             ended: false,
         };
+    }
+
+    /// Fresh histories of both modes and fresh counts for a replay to play on, the ones they
+    /// replace given back (MAX-166)
+    fn clear_screen_for_replay(&mut self) -> (LineMode, TerminalMode, Stats) {
+        let line_mode = LineMode::new(
+            self.settings.line_mode.history_size,
+            self.settings.line_mode.send_history_size,
+        );
+        let terminal_mode = TerminalMode::new(
+            self.settings.terminal_mode.history_size,
+            self.settings.terminal_mode.rows,
+            self.settings.terminal_mode.cols,
+        );
+        (
+            std::mem::replace(&mut self.line_mode, line_mode),
+            std::mem::replace(&mut self.terminal_mode, terminal_mode),
+            std::mem::take(&mut self.stats),
+        )
+    }
+
+    /// The replay reads again from the start, on a clean screen, not ended (MAX-166)
+    fn restart_replay_screen(&mut self) {
+        self.clear_screen_for_replay();
+        self.replay.ended = false;
+    }
+
+    /// The replay reading, for its progress and its controls (MAX-166)
+    pub fn replay(&self) -> Option<&Replay> {
+        self.link.replay()
     }
 
     /// The replay read its whole file: said once, its screen left as it is (MAX-166)
@@ -1382,6 +1402,10 @@ impl App {
                 session: None,
             },
             AppAction::StopReplay => UpdateEffect::StopReplay,
+            AppAction::ControlReplay(control) => {
+                self.control_replay(control);
+                UpdateEffect::None
+            }
             AppAction::SetEncoding(encoding) => {
                 self.settings.encoding = encoding;
                 self.notify_info(format!("Rx Text Encoding is {}", encoding.as_str()));

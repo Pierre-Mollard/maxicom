@@ -29,7 +29,7 @@
 //! | `{mode}`            | Current input mode (`TERM` or `LINE`)                   | `TERM`           |
 //! | `{port}`            | Address: serial path, `tcp://host:port`, `file://name`  | `/dev/ttyUSB0`   |
 //! | `{baud}`            | Baudrate (a replayed session's), `raw` (TCP), `replay`  | `115200`         |
-//! | `{framing}`         | Data bits, parity, stop bits, `TCP`, replay `RUN`/`END` | `8N1`            |
+//! | `{framing}`         | Data bits, parity, stop bits, `TCP`, the replay's state | `8N1`            |
 //! | `{rx_bytes}`        | Total bytes received                                    | `1024`           |
 //! | `{tx_bytes}`        | Total bytes transmitted                                 | `256`            |
 //! | `{time}`            | Current local time (format in config)                   | `21:45:00`       |
@@ -47,6 +47,11 @@
 //! | `{send_percent}`    | How much of it is sent, in percent                      | `42`             |
 //! | `{trigger_count}`   | How many triggers (`triggers.toml`) are armed           | `2`              |
 //! | `{trigger_names}`   | The armed triggers by name, empty when none             | `login, u-boot`  |
+//! | `{replay_file}`     | The file the replay reads, empty when none              | `boot.raw`       |
+//! | `{replay_state}`    | The replay's state (`RUN`, `PAUSE`, `END`), or empty    | `PAUSE`          |
+//! | `{replay_percent}`  | How much of the file the replay read, in percent        | `42`             |
+//! | `{replay_read}`     | The bytes it read                                       | `4096`           |
+//! | `{replay_size}`     | The file's size                                         | `9752`           |
 //!
 //! ## Formats
 //! `{name:spec}` with spec `[<>^][0][width][h]`, close to Rust's and C's:
@@ -57,8 +62,9 @@
 //!   `12K`, `1.2M`), never wider than 4 columns: `{rx_bytes:4h}`
 //!
 //! The numbers are `{baud}`, `{rx_bytes}`, `{tx_bytes}`, `{scroll_percent}`, `{scroll_offset}`,
-//! `{scroll_max}`, `{pan_offset}`, `{pan_max}`, `{send_percent}` and `{trigger_count}`. A
-//! longer value is never cut; a malformed spec stays as written.
+//! `{scroll_max}`, `{pan_offset}`, `{pan_max}`, `{send_percent}`, `{trigger_count}`,
+//! `{replay_percent}`, `{replay_read}` and `{replay_size}`. A longer value is never cut; a
+//! malformed spec stays as written.
 //!
 //! ## The pan
 //! It shows once: in the bar when it is drawn and a template has a pan variable (`{pan_left}`,
@@ -96,6 +102,7 @@
 //! | `sending`                       | `send_file`                                | A file is being sent (`send-file`)                       |
 //! | `armed`                         | `trigger`                                  | A trigger is armed, ready to fire (`triggers.toml`)      |
 //! | `mashing`                       | `mash`                                     | `mash` sends its text, waiting for the other one         |
+//! | `replaying`                     | `replay`                                   | A replay takes the link's place, ended or not            |
 //!
 //! ## Style Keywords
 //! - **Modifiers**: `bold`, `dim`, `italic`, `underlined` (`underline`), `reversed` (`reverse`), `reset` (`default`), `crossed`, `slow_blink` (`sblink`), `rapid_blink` (`rblink`)
@@ -374,6 +381,18 @@ impl VarFormat {
     }
 }
 
+/// What the replay does (MAX-166): `END` once it read its whole file or was stopped, `PAUSE`
+/// while paused, else `RUN`
+fn replay_state(app: &App) -> &'static str {
+    if app.is_replay_ended() {
+        "END"
+    } else if app.replay().is_some_and(|replay| replay.is_paused()) {
+        "PAUSE"
+    } else {
+        "RUN"
+    }
+}
+
 /// A byte count like `ls -h`: up to 999 as is, then `1.0K`..`9.9K`, `10K`..`999K`, `1.0M`, ...,
 /// at most 4 columns (base 1024)
 pub fn write_human(out: &mut String, bytes: u64) {
@@ -418,6 +437,11 @@ enum Var {
     SendPercent,
     TriggerCount,
     TriggerNames,
+    ReplayFile,
+    ReplayState,
+    ReplayPercent,
+    ReplayRead,
+    ReplaySize,
 }
 
 impl Var {
@@ -444,6 +468,11 @@ impl Var {
             "send_percent" => Self::SendPercent,
             "trigger_count" => Self::TriggerCount,
             "trigger_names" => Self::TriggerNames,
+            "replay_file" => Self::ReplayFile,
+            "replay_state" => Self::ReplayState,
+            "replay_percent" => Self::ReplayPercent,
+            "replay_read" => Self::ReplayRead,
+            "replay_size" => Self::ReplaySize,
             _ => return None,
         })
     }
@@ -462,9 +491,16 @@ impl Var {
             Self::CopySide => return Some(ClickAction::ToggleSide),
             Self::SendFile | Self::SendPercent => KeyBindingAction::CancelCommands,
             Self::TriggerCount | Self::TriggerNames => KeyBindingAction::Triggers,
-            Self::Port | Self::RxBytes | Self::TxBytes | Self::Time | Self::ScrollMax => {
-                return None;
-            }
+            Self::Port
+            | Self::RxBytes
+            | Self::TxBytes
+            | Self::Time
+            | Self::ScrollMax
+            | Self::ReplayFile
+            | Self::ReplayState
+            | Self::ReplayPercent
+            | Self::ReplayRead
+            | Self::ReplaySize => return None,
         };
         Some(ClickAction::Run(action))
     }
@@ -483,6 +519,9 @@ impl Var {
             Self::ScrollMax => scroll.max_scroll as u64,
             Self::SendPercent => app.transfer().map_or(0, |transfer| transfer.percent()),
             Self::TriggerCount => app.armed_triggers().len() as u64,
+            Self::ReplayPercent => app.replay().map_or(0, |replay| replay.percent()),
+            Self::ReplayRead => app.replay().map_or(0, |replay| replay.progress().0),
+            Self::ReplaySize => app.replay().map_or(0, |replay| replay.progress().1),
             Self::PanOffset => app.pan_left_status().unwrap_or(0) as u64,
             Self::PanMax => app
                 .pan_right_status()
@@ -556,7 +595,7 @@ impl Var {
                 write!(out, "replay")
             }
             Self::Framing if app.link_kind() == LinkKind::Replay => {
-                write!(out, "{}", if app.is_replay_ended() { "END" } else { "RUN" })
+                write!(out, "{}", replay_state(app))
             }
             // the bridge sets them: what the stream is and the link kind, read as "raw TCP"
             Self::Baud | Self::Framing
@@ -586,6 +625,13 @@ impl Var {
                 app.transfer().map_or("", |transfer| transfer.name())
             ),
             Self::TriggerNames => write!(out, "{}", app.armed_triggers().join(", ")),
+            Self::ReplayFile if app.link_kind() == LinkKind::Replay => {
+                write!(out, "{}", app.link_config().address.tag())
+            }
+            Self::ReplayState if app.link_kind() == LinkKind::Replay => {
+                write!(out, "{}", replay_state(app))
+            }
+            Self::ReplayFile | Self::ReplayState => Ok(()),
             // the numbers, written by `write`
             Self::Baud
             | Self::RxBytes
@@ -596,7 +642,10 @@ impl Var {
             | Self::PanOffset
             | Self::PanMax
             | Self::SendPercent
-            | Self::TriggerCount => Ok(()),
+            | Self::TriggerCount
+            | Self::ReplayPercent
+            | Self::ReplayRead
+            | Self::ReplaySize => Ok(()),
         };
     }
 }
@@ -648,6 +697,7 @@ enum Cond {
     Sending,
     Armed,
     Mashing,
+    Replaying,
     /// Unknown condition name, always false
     Unknown,
 }
@@ -682,6 +732,7 @@ impl Cond {
             "sending" | "send_file" => Self::Sending,
             "armed" | "trigger" => Self::Armed,
             "mashing" | "mash" => Self::Mashing,
+            "replaying" | "replay" => Self::Replaying,
             _ => Self::Unknown,
         }
     }
@@ -723,6 +774,7 @@ impl Cond {
             Self::Sending => app.transfer().is_some(),
             Self::Armed => app.triggers().iter().any(|trigger| trigger.is_armed()),
             Self::Mashing => app.mash().is_some(),
+            Self::Replaying => app.link_kind() == LinkKind::Replay,
             Self::Unknown => false,
         }
     }
@@ -1432,6 +1484,41 @@ mod tests {
         a.end_replay();
         assert_eq!(render("{baud} {framing}", &a), [plain("replay END")]);
         assert_eq!(render("[x](serial?bold:hide)", &a), Vec::<String>::new());
+    }
+
+    /// MAX-166: the replay's variables: its file, state and progress; `{framing}` says
+    /// `PAUSE` while paused, `replaying` holds; without a replay they are empty or zero.
+    /// How: a 10-byte file replayed, 4 bytes read, paused; then an app on a port.
+    #[test]
+    fn replay_variables() {
+        let path = std::env::temp_dir().join(format!(
+            "maxicom_test_{}_status_replay.raw",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"0123456789").unwrap();
+        let mut a = app(Mode::Terminal);
+        let template = "{replay_file}|{replay_state}|{replay_percent}|{replay_read}|{replay_size}";
+        assert_eq!(render(template, &a), [plain("||0|0|0")]);
+        assert_eq!(render("[x](replaying?bold:hide)", &a), Vec::<String>::new());
+
+        let replay = crate::link::replay::Replay::open(&path, std::time::Duration::ZERO).unwrap();
+        let mut link = crate::link::LinkState::new(a.link_config().clone());
+        link.set_replay(replay);
+        *a.link_mut() = link;
+        a.start_replay(path.clone(), None);
+        a.link_mut().read(&mut [0; 4]).unwrap().unwrap();
+        a.link_mut().replay_mut().unwrap().pause();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        assert_eq!(
+            render(template, &a),
+            [plain(&format!("{name}|PAUSE|40|4|10"))]
+        );
+        assert_eq!(render("{baud} {framing}", &a), [plain("replay PAUSE")]);
+        assert_eq!(
+            render("[x](replaying?bold:hide)", &a),
+            [span("x", "Some(White)", BG, "BOLD")]
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     /// MAX-166: a replayed serial session shows the line settings it was recorded with, in

@@ -13,7 +13,7 @@ use crate::{
     inputs::Action,
     link::{
         Address, ByteSource, CONNECT_TIMEOUT, LinkKind, OpenFor, Reconfigured,
-        replay::Replay,
+        replay::{Replay, ReplayControl},
         serial::{LineControl, SerialConfig, SerialError},
     },
     overlays::{ErrorDialog, Overlay},
@@ -298,7 +298,7 @@ impl App {
     fn replay_file(&mut self, path: PathBuf, delay: Duration, session: Option<SessionDevice>) {
         match Replay::open(&path, delay) {
             Ok(replay) => {
-                self.link.replay(replay);
+                self.link.set_replay(replay);
                 self.start_replay(path.clone(), session.as_ref());
                 self.notify_info(format!("Replaying {}", path.display()));
                 self.close_link_popups();
@@ -364,6 +364,35 @@ impl App {
             }
             Some(Err(e)) => self.fail_commands(format!("{control}: {e}")),
         }
+    }
+
+    /// A replay control on the replay reading, said with a notice (MAX-166)
+    pub fn control_replay(&mut self, control: ReplayControl) {
+        let Some(replay) = self.link.replay_mut() else {
+            return;
+        };
+        let notice = match control {
+            ReplayControl::Pause => {
+                replay.pause();
+                "Replay paused".to_string()
+            }
+            ReplayControl::Resume => {
+                replay.resume();
+                "Replay resumed".to_string()
+            }
+            ReplayControl::Delay(delay) => {
+                replay.set_delay(delay);
+                format!("Replay delay {} ms", delay.as_millis())
+            }
+            ReplayControl::Restart => match replay.restart() {
+                Ok(()) => {
+                    self.restart_replay_screen();
+                    "Replay restarted".to_string()
+                }
+                Err(e) => return self.notify_error(format!("replay-restart: {e}")),
+            },
+        };
+        self.notify_info(notice);
     }
 
     fn show_disconnected(&mut self) {
@@ -600,6 +629,81 @@ mod tests {
         assert_eq!(app.link_config().address, Address::parse(&address));
         let _peer = listener.accept().unwrap();
         poll_until(&mut app, "back", |app| app.link.is_open());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// MAX-166: the replay controls from the command line: a paused replay reads nothing
+    /// until resumed, its delay changes, a restart plays it again from the top on a clean
+    /// screen, not ended; each refuses with its reason when it would change nothing, and all
+    /// refuse without a replay.
+    /// How: a 3-line file replayed with a long delay, then each command.
+    #[test]
+    fn replay_controls() {
+        let run = |app: &mut App, line: &str| {
+            let invocations = crate::commands::parse(line).unwrap();
+            app.dispatch(Action::App(AppAction::QueueCommands(invocations)));
+            while let Some(action) = app.next_command_action(Instant::now()) {
+                app.dispatch(action);
+            }
+            toasts(app).last().cloned().unwrap_or_default()
+        };
+        let mut app = app_on("/nonexistent/ttyMAXICOM");
+        assert_eq!(
+            run(&mut app, "replay-pause"),
+            "replay-pause: no replay runs"
+        );
+
+        let path = std::env::temp_dir().join(format!(
+            "maxicom_test_{}_device_controls.raw",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"one\r\ntwo\r\nthree\r\n").unwrap();
+        run(&mut app, &format!("replay {} 10000", path.display()));
+        assert_eq!(app.replay().unwrap().progress(), (0, 17));
+        assert_eq!(
+            run(&mut app, "replay-resume"),
+            "replay-resume: the replay isn't paused"
+        );
+        assert_eq!(run(&mut app, "replay-pause"), "Replay paused");
+        assert_eq!(
+            run(&mut app, "replay-pause"),
+            "replay-pause: the replay is paused already"
+        );
+        assert_eq!(run(&mut app, "replay-speed 0"), "Replay delay 0 ms");
+        let mut buffer = [0; 256];
+        app.poll_link(&mut buffer).unwrap();
+        assert_eq!(app.replay().unwrap().progress().0, 0);
+        assert_eq!(run(&mut app, "replay-resume"), "Replay resumed");
+        poll_until(&mut app, "finished", App::is_replay_ended);
+        assert_eq!(app.replay().unwrap().percent(), 100);
+        assert!(
+            app.terminal_mode
+                .vt100_screen()
+                .contents()
+                .contains("three")
+        );
+        assert_eq!(
+            run(&mut app, "replay-pause"),
+            "replay-pause: the replay is finished (replay-restart plays it again)"
+        );
+
+        assert_eq!(run(&mut app, "replay-restart"), "Replay restarted");
+        assert!(!app.is_replay_ended());
+        assert!(
+            !app.terminal_mode
+                .vt100_screen()
+                .contents()
+                .contains("three")
+        );
+        assert_eq!(app.stats.rx(), 0);
+        poll_until(&mut app, "again", App::is_replay_ended);
+        assert!(
+            app.terminal_mode
+                .vt100_screen()
+                .contents()
+                .contains("three")
+        );
+        assert_eq!(app.stats.rx(), 17);
         let _ = std::fs::remove_file(&path);
     }
 
