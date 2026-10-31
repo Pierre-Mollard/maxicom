@@ -8,7 +8,7 @@ use crate::{
     commands::Invocation,
     configs::{KeyBindingAction, keybindings::KeyBindingDialogAction},
     inputs::DialogAction,
-    link::serial::SerialConfig,
+    link::{Address, serial::SerialConfig},
 };
 
 // Re-exports
@@ -38,8 +38,8 @@ pub enum Overlay {
     SerialSettings(SerialConfigDialog),
     FilePath(FilePathDialog),
     Screenshot(ScreenshotDialog),
-    DeviceDisconnected(String),
-    DeviceDetached(String),
+    DeviceDisconnected(Address),
+    DeviceDetached(Address),
     Error(ErrorDialog),
     ConfirmQuit,
     ActionMenu(ActionMenu),

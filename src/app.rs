@@ -30,7 +30,7 @@ use crate::{
         ScrollbarAction, SearchModeAction, SideViewAction, TerminalAction,
     },
     link::{
-        self,
+        Address, LinkKind,
         serial::{LineControl, SerialConfig},
     },
     notification::{NotificationManager, ToastLevel},
@@ -66,6 +66,7 @@ pub enum InputContext {
     Terminal,
 }
 
+#[derive(Default)]
 pub struct Stats {
     received_bytes: usize,
     sent_bytes: usize,
@@ -155,6 +156,20 @@ pub struct App {
     transfer: Option<FileTransfer>,
     /// The link is open, as the loop last said: the commands that need it refuse otherwise
     link_open: bool,
+    /// What a replay started while running set aside, to go back to (MAX-166)
+    replaced_link: Option<Box<ReplacedLink>>,
+    /// The replay read its whole file, or was stopped without a link to go back to (MAX-166)
+    replay_ended: bool,
+}
+
+/// The live link a replay replaced (MAX-166): its settings, the mode, the histories of both
+/// modes and the counts, put back as they were when the replay stops
+struct ReplacedLink {
+    serial_config: SerialConfig,
+    mode: Mode,
+    line_mode: LineMode,
+    terminal_mode: TerminalMode,
+    stats: Stats,
 }
 
 // Effects outside which can only be handled by main
@@ -163,7 +178,9 @@ pub enum UpdateEffect {
     Transmit(Vec<u8>),
     Reconfigure(SerialConfig),
     LineControl(LineControl),
-    Open(String),
+    Open(Address),
+    Replay { path: PathBuf, delay: Duration },
+    StopReplay,
     CopyToClipboard(String),
     CopyToClipboardAs { text: String, what: String },
     ToggleAttachSerial,
@@ -225,6 +242,8 @@ impl App {
             },
             transfer: None,
             link_open: false,
+            replaced_link: None,
+            replay_ended: false,
         };
         app.warn_shadowed_keys();
         app
@@ -395,6 +414,70 @@ impl App {
     /// A new session backup, for the port `open` switched to: the backups go by port (MAX-12)
     pub fn restart_journal(&mut self) {
         self.start_journal(self.sessions_dir.clone());
+    }
+
+    /// What the current link can do, taken from its address (MAX-166)
+    pub fn link_kind(&self) -> LinkKind {
+        self.serial_config.address.kind()
+    }
+
+    /// The replay of the file at `path` takes the link's place, on a reset terminal in terminal
+    /// mode (MAX-166). A live link is set aside with its histories and counts, its journal
+    /// paused; what it was sending stops. A replay replacing a replay keeps the live link
+    pub fn start_replay(&mut self, path: PathBuf) {
+        self.stop_transfer("a replay took the link's place");
+        self.stop_mash("a replay took the link's place");
+        let line_mode = LineMode::new(
+            self.settings.line_mode.history_size,
+            self.settings.line_mode.send_history_size,
+        );
+        let terminal_mode = TerminalMode::new(
+            self.settings.terminal_mode.history_size,
+            self.settings.terminal_mode.rows,
+            self.settings.terminal_mode.cols,
+        );
+        let line_mode = std::mem::replace(&mut self.line_mode, line_mode);
+        let terminal_mode = std::mem::replace(&mut self.terminal_mode, terminal_mode);
+        let stats = std::mem::take(&mut self.stats);
+        if self.link_kind().keeps_sessions() {
+            self.recorder.pause_journal();
+            self.replaced_link = Some(Box::new(ReplacedLink {
+                serial_config: self.serial_config.clone(),
+                mode: self.settings.mode,
+                line_mode,
+                terminal_mode,
+                stats,
+            }));
+        }
+        self.serial_config.address = Address::Replay(path);
+        self.settings.mode = Mode::Terminal;
+        self.replay_ended = false;
+    }
+
+    /// The replay read its whole file: said once, its screen left as it is (MAX-166)
+    pub fn end_replay(&mut self) {
+        self.replay_ended = true;
+        self.notify_info("Replay finished");
+    }
+
+    pub fn is_replay_ended(&self) -> bool {
+        self.replay_ended
+    }
+
+    /// Puts back the live link the replay replaced, for the loop to open, and resumes its
+    /// journal (MAX-166). False when there is none: a replay from the command line
+    pub fn stop_replay(&mut self) -> bool {
+        let Some(replaced) = self.replaced_link.take() else {
+            self.replay_ended = true;
+            return false;
+        };
+        self.serial_config = replaced.serial_config;
+        self.settings.mode = replaced.mode;
+        self.line_mode = replaced.line_mode;
+        self.terminal_mode = replaced.terminal_mode;
+        self.stats = replaced.stats;
+        self.recorder.resume_journal();
+        true
     }
 
     /// A warning for the keymap's keys that never reach their mode section (MAX-155)
@@ -769,7 +852,7 @@ impl App {
     /// as a typed one, with a notice (MAX-6). A replay's bytes never fire one, nor what a
     /// restore or the restore question held back (fed apart)
     fn fire_triggers(&mut self, chunk: &[u8]) {
-        if link::is_replay(&self.serial_config.port) {
+        if !self.link_kind().writes() {
             return;
         }
         for i in 0..self.triggers.len() {
@@ -1225,6 +1308,8 @@ impl App {
             }
             AppAction::LineControl(control) => UpdateEffect::LineControl(control),
             AppAction::Open(port) => UpdateEffect::Open(port),
+            AppAction::Replay { path, delay } => UpdateEffect::Replay { path, delay },
+            AppAction::StopReplay => UpdateEffect::StopReplay,
             AppAction::SetEncoding(encoding) => {
                 self.settings.encoding = encoding;
                 self.notify_info(format!("Rx Text Encoding is {}", encoding.as_str()));
@@ -1260,6 +1345,8 @@ impl App {
                     Mode::Line => self.update(Action::LineInput(LineInputAction::Paste(text))),
                 }
             }
+            // the live link a replay replaced comes back with the attach key too (MAX-166)
+            AppAction::DetachSerial if self.replaced_link.is_some() => UpdateEffect::StopReplay,
             AppAction::DetachSerial => UpdateEffect::ToggleAttachSerial,
             AppAction::ReloadConfig => UpdateEffect::ReloadConfig,
             AppAction::SideView(action) => self.update_side_view(action),
@@ -1841,12 +1928,17 @@ mod tests {
         assert_eq!(last_error(&app), "send: nothing to send (2 more not run)");
         assert!(app.overlay().is_none());
 
-        app.serial_config.port = "file:///tmp/capture.raw".to_string();
+        app.serial_config.address = Address::parse("file:///tmp/capture.raw");
         let effects = run_line(&mut app, "help; send x");
         assert_eq!(effects.len(), 1);
         assert!(matches!(app.overlay(), Some(Overlay::Help(_))));
         assert_eq!(last_error(&app), "send: a replay has no link to send to");
         assert!(app.next_command_action(Instant::now()).is_none());
+        assert!(run_line(&mut app, "send-hex 0d0a").is_empty());
+        assert_eq!(
+            last_error(&app),
+            "send-hex: a replay has no link to send to"
+        );
     }
 
     /// MAX-6: an armed trigger whose text comes in runs its command line as a typed one, with
@@ -1901,7 +1993,7 @@ mod tests {
         assert!(effects(&mut app).is_empty());
 
         reload(&mut app);
-        app.serial_config.port = "file:///tmp/capture.raw".to_string();
+        app.serial_config.address = Address::parse("file:///tmp/capture.raw");
         app.feed_rx(uboot);
         assert!(effects(&mut app).is_empty());
     }
@@ -2060,7 +2152,7 @@ mod tests {
         run(&mut app, Instant::now());
         assert!(last_toast(&app).starts_with("mash: the port isn't open"));
         app.set_link_open(true);
-        app.serial_config.port = "file:///tmp/capture.raw".to_string();
+        app.serial_config.address = Address::parse("file:///tmp/capture.raw");
         queue(&mut app, "mash ' ' '=> '");
         run(&mut app, Instant::now());
         assert_eq!(last_toast(&app), "mash: a replay has no link to send to");
@@ -2128,8 +2220,8 @@ mod tests {
         use crate::link::serial::{CharSize, LineControl, SerialDevice, StopBits};
         let mut pty = Pty::open();
         let mut app = app();
-        app.serial_config.port = pty.path.clone();
-        let mut device = SerialDevice::open(&app.serial_config).unwrap();
+        app.serial_config.address = Address::Serial(pty.path.clone());
+        let mut device = SerialDevice::open(&pty.path, &app.serial_config).unwrap();
         // a pty has no modem lines
         assert!(device.control(LineControl::Dtr(true)).is_err());
         let mut run = |app: &mut App, line: &str| {
@@ -2197,8 +2289,8 @@ mod tests {
         use crate::link::serial::SerialDevice;
         let mut pty = Pty::open();
         let mut app = app();
-        app.serial_config.port = pty.path.clone();
-        let mut device = SerialDevice::open(&app.serial_config).unwrap();
+        app.serial_config.address = Address::Serial(pty.path.clone());
+        let mut device = SerialDevice::open(&pty.path, &app.serial_config).unwrap();
         // a turn of the main loop: what came in, the mash's step, the line's next commands
         let mut turn = |app: &mut App| {
             let mut buf = [0; 256];
@@ -2338,7 +2430,7 @@ mod tests {
             last_toast(&app)
         );
 
-        app.serial_config.port = "file:///tmp/capture.raw".to_string();
+        app.serial_config.address = Address::parse("file:///tmp/capture.raw");
         run_line(&mut app, &format!("send-file {file}"));
         assert_eq!(
             last_toast(&app),
@@ -2406,7 +2498,7 @@ mod tests {
         run_line(&mut app, "framing 9x1");
         assert!(last_error(&app).starts_with("framing: '9x1' isn't a framing"));
 
-        app.serial_config.port = "tcp://localhost:4000".to_string();
+        app.serial_config.address = Address::parse("tcp://localhost:4000");
         run_line(&mut app, "baud 115200");
         assert_eq!(
             last_error(&app),
@@ -2417,9 +2509,16 @@ mod tests {
             last_error(&app),
             "dtr: a TCP link has no control lines, its bridge sets them (1 more not run)"
         );
-        app.serial_config.port = "file:///tmp/capture.raw".to_string();
+        app.serial_config.address = Address::parse("file:///tmp/capture.raw");
         run_line(&mut app, "break");
         assert_eq!(last_error(&app), "break: a replay has no control lines");
+        assert!(run_line(&mut app, "dtr on; rts on").is_empty());
+        assert_eq!(
+            last_error(&app),
+            "dtr: a replay has no control lines (1 more not run)"
+        );
+        run_line(&mut app, "baud 115200");
+        assert_eq!(last_error(&app), "baud: a replay has no line settings");
         assert_eq!(app.serial_config.baudrate, 9600);
     }
 
@@ -2582,7 +2681,9 @@ mod tests {
 
         queue_line(&mut app, "open /dev/ttyUSB9; send x");
         let open = app.next_command_action(now).unwrap();
-        assert!(matches!(app.update(open), UpdateEffect::Open(port) if port == "/dev/ttyUSB9"));
+        assert!(
+            matches!(app.update(open), UpdateEffect::Open(address) if address == Address::parse("/dev/ttyUSB9"))
+        );
         // the loop: the link closed, the line waiting for the open
         app.set_link_open(false);
         app.pause_commands(now + Duration::from_secs(6));
@@ -2611,12 +2712,60 @@ mod tests {
 
         app.set_link_open(true);
         queue_line(&mut app, "open file:///tmp/x.raw");
-        assert!(app.next_command_action(now).is_none());
-        assert!(last_toast(&app).starts_with("open: a replay opens from the command line"));
-        app.serial_config.port = "file:///tmp/capture.raw".to_string();
+        let open = app.next_command_action(now).unwrap();
+        assert!(
+            matches!(app.update(open), UpdateEffect::Replay { path, delay }
+            if path == Path::new("/tmp/x.raw") && delay.is_zero())
+        );
+        app.serial_config.address = Address::parse("file:///tmp/capture.raw");
         queue_line(&mut app, "open /dev/ttyUSB0");
         assert!(app.next_command_action(now).is_none());
-        assert_eq!(last_toast(&app), "open: a replay can't open a link");
+        assert_eq!(
+            last_toast(&app),
+            "open: a replay can't open a link (replay-stop ends it)"
+        );
+    }
+
+    /// MAX-166: `replay` gives the file to replay, `~` expanded, with its delay (none by
+    /// default); `replay-stop` stops a replay and refuses without one. The attach key stops a
+    /// replay started while running, not one from the command line.
+    /// How: the commands run on a live port, then on a replay, with and without a live link
+    /// set aside.
+    #[test]
+    fn command_line_replay() {
+        let mut app = app();
+        let now = Instant::now();
+        let run = |app: &mut App, line: &str| {
+            app.update(KeyBindingAction::CommandLine.to_action(app));
+            app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
+            app.update(Action::Overlay(DialogAction::Confirm));
+            let action = app.next_command_action(now)?;
+            Some(app.update(action))
+        };
+        let home = dirs::home_dir().unwrap();
+        assert!(matches!(run(&mut app, "replay ~/x.raw 50"),
+            Some(UpdateEffect::Replay { path, delay })
+                if path == home.join("x.raw") && delay == Duration::from_millis(50)));
+        assert!(matches!(run(&mut app, "replay /tmp/x.raw"),
+            Some(UpdateEffect::Replay { delay, .. }) if delay.is_zero()));
+        assert!(run(&mut app, "replay-stop").is_none());
+        let last_toast = app.notifications.active_toasts().last().unwrap();
+        assert_eq!(last_toast.message, "replay-stop: no replay runs");
+
+        app.start_replay(PathBuf::from("/tmp/x.raw"));
+        assert!(matches!(
+            run(&mut app, "replay-stop"),
+            Some(UpdateEffect::StopReplay)
+        ));
+        let detach = Action::App(AppAction::DetachSerial);
+        assert!(matches!(app.update(detach), UpdateEffect::StopReplay));
+        app.stop_replay();
+        app.serial_config.address = Address::parse("file:///tmp/x.raw");
+        let detach = Action::App(AppAction::DetachSerial);
+        assert!(matches!(
+            app.update(detach),
+            UpdateEffect::ToggleAttachSerial
+        ));
     }
 
     /// MAX-12: `set` turns an on/off setting on or off (nothing when it is so already),
@@ -3033,6 +3182,61 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// MAX-166: a replay started while running takes the link's place, on fresh histories in
+    /// terminal mode; the live link is set aside with its histories, counts and mode, its
+    /// journal paused, and stopping the replay puts it all back, the journal going on in the
+    /// same files. A replay replacing a replay keeps the live link; a replay from the command
+    /// line has none to go back to: its stop ends it. A new replay isn't ended.
+    /// How: "live" received in line mode with a journal, a replay, "replayed" fed, a second
+    /// replay, the stop, "back" received; then an app on an ended replay from the start.
+    #[test]
+    fn replay_sets_the_live_link_aside() {
+        let dir = crate::capture::tests::temp_dir("replay_aside");
+        let mut app = app();
+        app.settings_mut().mode = Mode::Line;
+        app.start_journal(Some(dir.clone()));
+        app.feed_rx(b"live\r\n");
+        app.stats.update_rx(6);
+
+        app.start_replay(PathBuf::from("/tmp/a.raw"));
+        assert_eq!(
+            app.serial_config.address,
+            Address::parse("file:///tmp/a.raw")
+        );
+        assert_eq!(app.settings().mode, Mode::Terminal);
+        assert!(texts(&app).is_empty() && !app.has_journal());
+        assert!(!app.terminal_mode.vt100_screen().contents().contains("live"));
+        assert_eq!(app.stats.rx(), 0);
+        app.feed_rx(b"replayed\r\n");
+        assert_eq!(texts(&app), ["replayed"]);
+        app.start_replay(PathBuf::from("/tmp/b.raw"));
+        assert!(texts(&app).is_empty());
+
+        assert!(app.stop_replay());
+        assert_eq!(app.serial_config.address, Address::parse("/dev/ttyUSB0"));
+        assert_eq!(app.settings().mode, Mode::Line);
+        assert_eq!(texts(&app), ["live"]);
+        assert!(app.terminal_mode.vt100_screen().contents().contains("live"));
+        assert_eq!(app.stats.rx(), 6);
+        assert!(app.has_journal() && !app.stop_replay());
+        app.feed_rx(b"back\r\n");
+        drop(app);
+        let raw = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.extension().is_some_and(|ext| ext == "raw"))
+            .unwrap();
+        assert_eq!(std::fs::read(raw).unwrap(), b"live\r\nback\r\n");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut app = self::app();
+        app.serial_config.address = Address::parse("file:///tmp/a.raw");
+        app.end_replay();
+        app.start_replay(PathBuf::from("/tmp/b.raw"));
+        assert!(!app.is_replay_ended());
+        assert!(!app.stop_replay() && app.is_replay_ended());
+    }
+
     /// MAX-148: the last session restores at startup with `always` or `--restore`, not with
     /// `never`, `ask` (before its answer) or `--no-restore`, nor when older than
     /// `restore_max_age`; `0` is no limit. A session restores again on the next launch.
@@ -3042,7 +3246,7 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("maxicom_test_{}_restore_last", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let port = SerialConfig::default().port;
+        let port = SerialConfig::default().address.to_string();
         let session = crate::capture::tests::write_test_session(
             &dir,
             &port,
@@ -3088,7 +3292,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         crate::capture::tests::write_test_session(
             &dir,
-            &SerialConfig::default().port,
+            &SerialConfig::default().address.to_string(),
             &JournalText::default(),
             b"old line\r\n",
             b"",

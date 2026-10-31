@@ -38,38 +38,23 @@ pub fn expand_home(path: &Path) -> PathBuf {
     }
 }
 
-/// The port's last part, kept to the characters safe in a file name: "/dev/ttyUSB0" gives
-/// "ttyUSB0"
-pub fn session_tag(port: &str) -> String {
-    let name = port.rsplit(['/', '\\']).next().unwrap_or(port);
-    name.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
 #[cfg(test)]
 pub mod tests {
     //! The path helpers, and the helpers the capture tests and the other modules' tests share.
 
     use super::*;
     use crate::configs::{RxNewlineMode, TextEncoding};
-    use crate::link::serial::SerialConfig;
+    use crate::link::{Address, serial::SerialConfig};
 
     pub fn record(recorder: &mut Recorder, bytes: &[u8]) {
         recorder.record_rx(RxNewlineMode::Auto, TextEncoding::Utf8, None, bytes);
     }
 
-    /// A device on `port`, on this machine.
-    pub fn device(port: &str) -> SessionDevice {
+    /// A device on `address`, on this machine.
+    pub fn device(address: &str) -> SessionDevice {
         SessionDevice::new(
             &SerialConfig {
-                port: port.to_string(),
+                address: Address::parse(address),
                 ..SerialConfig::default()
             },
             TextEncoding::Utf8,
@@ -94,7 +79,7 @@ pub mod tests {
     ) -> Session {
         let device = SessionDevice::new(
             &SerialConfig {
-                port: port.to_string(),
+                address: Address::parse(port),
                 ..SerialConfig::default()
             },
             TextEncoding::Utf8,
@@ -109,10 +94,9 @@ pub mod tests {
         find_last_session(dir, &device, None).unwrap()
     }
 
-    /// `~` is the home folder only as the first part of a path; the port tag keeps the last
-    /// part of the port, safe for a file name.
+    /// `~` is the home folder only as the first part of a path.
     #[test]
-    fn home_expansion_and_session_tag() {
+    fn home_expansion() {
         let home = dirs::home_dir().unwrap();
         assert_eq!(
             expand_home(Path::new("~/logs/x.log")),
@@ -120,10 +104,5 @@ pub mod tests {
         );
         assert_eq!(expand_home(Path::new("a/~/x")), Path::new("a/~/x"));
         assert_eq!(expand_home(Path::new("~x")), Path::new("~x"));
-        assert_eq!(session_tag("/dev/ttyUSB0"), "ttyUSB0");
-        assert_eq!(session_tag("COM3"), "COM3");
-        // no ':' in a Windows file name (MAX-156)
-        assert_eq!(session_tag("tcp://192.168.1.50:4000"), "192.168.1.50_4000");
-        assert_eq!(session_tag("file:///tmp/my log.raw"), "my_log.raw");
     }
 }

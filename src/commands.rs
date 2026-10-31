@@ -321,7 +321,30 @@ pub static COMMANDS: &[CommandSpec] = {
             "open",
             &[arg("port", ArgKind::Path)],
             build::open,
-            "Switch to a port or tcp://host:port, its settings kept",
+            "Switch to a port, tcp://host:port or a replay of file://path, its settings kept",
+        ),
+        CommandSpec::build(
+            "replay",
+            &[
+                arg("path", ArgKind::Path),
+                ArgSpec {
+                    name: "delay-ms",
+                    kind: ArgKind::Int {
+                        min: 0,
+                        max: 10_000,
+                        suggestions: &[],
+                    },
+                    optional: true,
+                },
+            ],
+            build::replay,
+            "Replay a raw capture in place of the link, a buffer every delay",
+        ),
+        CommandSpec::build(
+            "replay-stop",
+            &[],
+            build::replay_stop,
+            "Stop the replay, back to the link it replaced",
         ),
         CommandSpec::build(
             "sleep",

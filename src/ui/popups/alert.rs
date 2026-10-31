@@ -9,6 +9,7 @@ use ratatui::{
 use crate::{
     capture::Session,
     configs::{KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
+    link::Address,
     overlays::{ErrorDialog, PopupTarget},
     ui::{
         common::popup_area,
@@ -18,7 +19,7 @@ use crate::{
 };
 
 pub fn render_disconnected_popup(
-    port: &str,
+    address: &Address,
     resolver: &KeyResolver,
     frame: &mut Frame,
     theme: &ThemeConfig,
@@ -34,7 +35,10 @@ pub fn render_disconnected_popup(
         Line::from(""),
         Line::from(vec![
             Span::raw("Device "),
-            Span::styled(port, Style::default().fg(theme.palette.secondary)),
+            Span::styled(
+                address.to_string(),
+                Style::default().fg(theme.palette.secondary),
+            ),
             Span::raw(" was closed or unplugged."),
         ]),
         Line::from("Waiting for port to reconnect..."),
@@ -57,7 +61,7 @@ pub fn render_disconnected_popup(
 }
 
 pub fn render_detached_popup(
-    port: &str,
+    address: &Address,
     resolver: &KeyResolver,
     frame: &mut Frame,
     theme: &ThemeConfig,
@@ -73,7 +77,10 @@ pub fn render_detached_popup(
         Line::from(""),
         Line::from(vec![
             Span::raw("Device "),
-            Span::styled(port, Style::default().fg(theme.palette.secondary)),
+            Span::styled(
+                address.to_string(),
+                Style::default().fg(theme.palette.secondary),
+            ),
             Span::raw(" was released."),
         ]),
         Line::from("The serial port is free..."),

@@ -1,7 +1,7 @@
+use super::create_parent_dirs;
 use super::session::{
-    JournalText, SESSION_META_VERSION, SessionDevice, SessionMeta, prune_sessions,
+    JournalText, SESSION_META_VERSION, SessionDevice, SessionMeta, prune_sessions, session_tag,
 };
-use super::{create_parent_dirs, session_tag};
 use crate::app::types::RxLineSplitter;
 use crate::configs::{RxNewlineMode, TextEncoding};
 use chrono::format::{Item, StrftimeItems};
@@ -91,6 +91,8 @@ pub struct Recorder {
     text: Option<LogFile>,
     raw: Option<LogFile>,
     journal: Option<Journal>,
+    /// The journal a replay paused (MAX-166): open and locked, recording nothing
+    paused_journal: Option<Journal>,
     lines: RxLineSplitter,
     timestamp: Option<TimestampFormat>,
     line_buf: Vec<u8>,
@@ -159,7 +161,7 @@ impl Recorder {
         let stem = format!(
             "{}_{}",
             now.format("%Y%m%d_%H%M%S%3f"),
-            session_tag(&device.port)
+            session_tag(&device.address)
         );
         let text_path = dir.join(format!("{stem}.log"));
         let raw_path = dir.join(format!("{stem}.raw"));
@@ -190,6 +192,25 @@ impl Recorder {
 
     pub fn has_journal(&self) -> bool {
         self.journal.is_some()
+    }
+
+    /// Stops recording to the session backup until `resume_journal`, its files kept open, and
+    /// its lock with them, so no pruning removes it (MAX-166). The line being cut is dropped
+    /// at both ends, so a line never mixes the live bytes and the replayed ones
+    pub fn pause_journal(&mut self) {
+        if let Some(mut journal) = self.journal.take() {
+            let _ = journal.text.flush();
+            let _ = journal.raw.flush();
+            self.paused_journal = Some(journal);
+        }
+        self.lines = RxLineSplitter::default();
+    }
+
+    pub fn resume_journal(&mut self) {
+        if let Some(journal) = self.paused_journal.take() {
+            self.journal = Some(journal);
+        }
+        self.lines = RxLineSplitter::default();
     }
 
     pub fn stop(&mut self, stream: Stream) {
@@ -557,6 +578,42 @@ mod tests {
         assert_eq!(fs::read(&files[0]).unwrap(), b"a\nb\n");
         assert!(files[1].to_string_lossy().ends_with("_port.meta"));
         assert_eq!(fs::read(&files[2]).unwrap(), b"a\nb\n");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// MAX-166: a paused journal records nothing, a user recording still does, and the journal
+    /// goes on in the same files once resumed; the line cut at the pause is dropped.
+    /// How: "a\n" and half a line received, the journal paused, a text recording started, "b\n"
+    /// received, the journal resumed, "c\n" received, then the files read back.
+    #[test]
+    fn paused_journal_records_nothing() {
+        let dir = temp_dir("journal_paused");
+        let mut recorder = Recorder::default();
+        recorder
+            .start_journal(&dir, &device("port"), &JournalText::default(), 20)
+            .unwrap();
+        record(&mut recorder, b"a\nhal");
+        recorder.pause_journal();
+        assert!(!recorder.has_journal());
+        let path = dir.join("mine.log");
+        recorder.start(Stream::Text, path.clone(), true).unwrap();
+        record(&mut recorder, b"b\n");
+        recorder.resume_journal();
+        assert!(recorder.has_journal());
+        record(&mut recorder, b"c\n");
+        assert_eq!(stop_and_read(&mut recorder, Stream::Text, &path), b"b\nc\n");
+
+        drop(recorder);
+        let read = |extension: &str| {
+            let entry = fs::read_dir(&dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|path| path.to_string_lossy().ends_with(extension))
+                .unwrap();
+            fs::read(entry).unwrap()
+        };
+        assert_eq!(read("_port.log"), b"a\nc\n");
+        assert_eq!(read("_port.raw"), b"a\nhalc\n");
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -25,6 +25,11 @@ impl Replay {
         })
     }
 
+    /// Whether the whole file was read (MAX-166)
+    pub fn is_finished(&self) -> bool {
+        self.finished
+    }
+
     pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, SerialError> {
         if self.finished || self.last_chunk.elapsed() < self.delay {
             return Ok(0);

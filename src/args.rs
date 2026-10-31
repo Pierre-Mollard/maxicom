@@ -1,9 +1,9 @@
 use std::{env, path::PathBuf};
 
 use crate::link::{
+    Address,
     serial::{CharSize, FlowControl, Parity, SerialConfig, StopBits},
     tcp::TcpDevice,
-    tcp_address,
 };
 
 #[derive(Debug, Clone)]
@@ -77,11 +77,12 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ParseOutcom
                     .map_err(|_| ParseError::BadFormat(format!("Invalid delay '{val}'")))?;
             }
             "--port" | "-p" => {
-                serial_config.port = args.next().ok_or(ParseError::MissingValue("--port"))?;
+                let port = args.next().ok_or(ParseError::MissingValue("--port"))?;
+                serial_config.address = Address::parse(&port);
             }
             "--tcp" => {
                 let addr = args.next().ok_or(ParseError::MissingValue("--tcp"))?;
-                serial_config.port = format!("tcp://{addr}");
+                serial_config.address = Address::Tcp(addr);
             }
             "--baud" | "-b" => {
                 line_options.push("--baud");
@@ -118,7 +119,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ParseOutcom
             }
             "--cache-dir" => return Ok(ParseOutcome::CacheDir),
             // the device without `--port`: `maxicom /dev/ttyUSB0`, `maxicom tcp://host:port`
-            device if !device.starts_with('-') => serial_config.port = device.to_string(),
+            device if !device.starts_with('-') => serial_config.address = Address::parse(device),
 
             unknown => {
                 return Err(ParseError::UnknownArgument(unknown.to_string()));
@@ -132,7 +133,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ParseOutcom
             delay_ms: replay_delay,
         }
     } else {
-        if let Some(addr) = tcp_address(&serial_config.port) {
+        if let Address::Tcp(addr) = &serial_config.address {
             // a malformed address would never connect
             TcpDevice::check_address(addr).map_err(|e| ParseError::BadFormat(e.to_string()))?;
             if let Some(option) = line_options.first() {
@@ -220,7 +221,7 @@ mod tests {
             Ok(ParseOutcome::Run {
                 mode: RunMode::Live(config),
                 ..
-            }) => Ok(config.port),
+            }) => Ok(config.address.to_string()),
             Ok(_) => panic!("not a live run"),
             Err(err) => Err(err.to_string()),
         }

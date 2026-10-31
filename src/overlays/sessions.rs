@@ -239,7 +239,7 @@ mod tests {
     use crate::{
         capture::{JournalText, Recorder, SessionDevice, tests::write_test_session},
         configs::TextEncoding,
-        link::serial::SerialConfig,
+        link::{Address, serial::SerialConfig},
     };
     use crossterm::event::{KeyEvent, KeyModifiers};
 
@@ -261,7 +261,7 @@ mod tests {
         write_test_session(&dir, "/dev/b", &text, b"line of b\r\n", b"");
         let device = SessionDevice::new(
             &SerialConfig {
-                port: "live".to_string(),
+                address: Address::parse("live"),
                 ..SerialConfig::default()
             },
             TextEncoding::Utf8,

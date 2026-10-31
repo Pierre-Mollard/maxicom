@@ -27,9 +27,9 @@
 //! | Variable            | Description                                             | Example          |
 //! |---------------------|---------------------------------------------------------|------------------|
 //! | `{mode}`            | Current input mode (`TERM` or `LINE`)                   | `TERM`           |
-//! | `{port}`            | Device address: serial path or `tcp://host:port`        | `/dev/ttyUSB0`   |
-//! | `{baud}`            | Serial baudrate, `raw` for a raw TCP link               | `115200`         |
-//! | `{framing}`         | Data bits, parity, stop bits, `TCP` for a TCP link      | `8N1`            |
+//! | `{port}`            | Address: serial path, `tcp://host:port`, `file://name`  | `/dev/ttyUSB0`   |
+//! | `{baud}`            | Serial baudrate, `raw` for a TCP link, `replay`         | `115200`         |
+//! | `{framing}`         | Data bits, parity, stop bits, `TCP`, replay `RUN`/`END` | `8N1`            |
 //! | `{rx_bytes}`        | Total bytes received                                    | `1024`           |
 //! | `{tx_bytes}`        | Total bytes transmitted                                 | `256`            |
 //! | `{time}`            | Current local time (format in config)                   | `21:45:00`       |
@@ -92,7 +92,7 @@
 //! | `wide`                          | `pannable`                                 | The content is wider than the view: it can pan           |
 //! | `new_data`                      | `unread`, `missed`                         | Data arrived while scrolled up, not seen yet             |
 //! | `mouse`                         | —                                          | Mouse capture is on (`ui.mouse`)                         |
-//! | `line_settings`                 | `serial`                                   | The link has line settings: a serial port, not TCP       |
+//! | `line_settings`                 | `serial`                                   | The link has line settings: a serial port only           |
 //! | `sending`                       | `send_file`                                | A file is being sent (`send-file`)                       |
 //! | `armed`                         | `trigger`                                  | A trigger is armed, ready to fire (`triggers.toml`)      |
 //! | `mashing`                       | `mash`                                     | `mash` sends its text, waiting for the other one         |
@@ -179,7 +179,7 @@ use crate::{
         types::{ClickAction, ClickTarget},
     },
     configs::{KeyBindingAction, Mode, StatusBarConfig, StatusBarLayout, ThemeConfig},
-    link::{has_line_settings, line_stand_in},
+    link::LinkKind,
     ui::common::{pan_left_indicator, pan_right_indicator},
 };
 
@@ -474,8 +474,10 @@ impl Var {
     fn number(self, app: &App) -> Option<u64> {
         let scroll = app.scroll_status();
         Some(match self {
-            // a TCP link has none: written as text by `write_text`
-            Self::Baud if !has_line_settings(&app.serial_config.port) => return None,
+            // a TCP link or a replay has none: written as text by `write_text`
+            Self::Baud if !app.link_kind().has_line_settings() => {
+                return None;
+            }
             Self::Baud => app.serial_config.baudrate as u64,
             Self::RxBytes => app.stats.rx() as u64,
             Self::TxBytes => app.stats.tx() as u64,
@@ -514,8 +516,7 @@ impl Var {
                 let _ = write!(out, "{value}");
             }
             None if compact && self == Self::Port => {
-                let port = &app.serial_config.port;
-                out.push_str(port.rsplit(['/', '\\']).next().unwrap_or(port));
+                out.push_str(&app.serial_config.address.tag());
             }
             // the first name, then how many more
             None if compact && self == Self::TriggerNames => {
@@ -548,10 +549,17 @@ impl Var {
                     Mode::Line => "LINE",
                 }
             ),
-            Self::Port => write!(out, "{}", app.serial_config.port),
+            Self::Port => write!(out, "{}", app.serial_config.address.label()),
+            // a replayed file has no line settings
+            Self::Baud if app.link_kind() == LinkKind::Replay => {
+                write!(out, "replay")
+            }
+            Self::Framing if app.link_kind() == LinkKind::Replay => {
+                write!(out, "{}", if app.is_replay_ended() { "END" } else { "RUN" })
+            }
             // the bridge sets them: what the stream is and the link kind, read as "raw TCP"
             Self::Baud | Self::Framing
-                if let Some([baud, framing]) = line_stand_in(&app.serial_config.port) =>
+                if let Some([baud, framing]) = app.link_kind().line_stand_in() =>
             {
                 write!(out, "{}", if self == Self::Baud { baud } else { framing })
             }
@@ -709,7 +717,7 @@ impl Cond {
             Self::Wide => app.pan_right_status().is_some(),
             Self::NewData => app.is_new_content_missed(),
             Self::Mouse => app.settings().ui.mouse,
-            Self::LineSettings => has_line_settings(&app.serial_config.port),
+            Self::LineSettings => app.link_kind().has_line_settings(),
             Self::Sending => app.transfer().is_some(),
             Self::Armed => app.triggers().iter().any(|trigger| trigger.is_armed()),
             Self::Mashing => app.mash().is_some(),
@@ -1314,7 +1322,7 @@ mod tests {
     use crate::{
         configs::{KeyBindingsConfig, KeyResolver, SettingsConfig},
         inputs::{Action, AppAction, CopyModeAction},
-        link::serial::SerialConfig,
+        link::{Address, serial::SerialConfig},
     };
 
     fn app(mode: Mode) -> App {
@@ -1378,7 +1386,7 @@ mod tests {
     #[test]
     fn tcp_link_has_no_baud_nor_framing() {
         let mut a = app(Mode::Terminal);
-        a.serial_config.port = "tcp://192.168.1.50:4000".to_string();
+        a.serial_config.address = Address::parse("tcp://192.168.1.50:4000");
         let d = StatusBarConfig::default();
         assert_eq!(
             render(&d.left, &a),
@@ -1393,6 +1401,32 @@ mod tests {
             ]
         );
         assert_eq!(render("<{baud:5}>", &a), [plain("<raw  >")]);
+        assert_eq!(render("[x](serial?bold:hide)", &a), Vec::<String>::new());
+    }
+
+    /// MAX-166: a replayed file has no line settings: `{port}` is `file://` and its name,
+    /// `{baud}` is `replay` and `{framing}` its state, `RUN` then `END`, in the same places and
+    /// styles; `line_settings` hides them.
+    /// How: the default left template on a `file://` port, then after the end.
+    #[test]
+    fn replay_shows_its_file_and_state() {
+        let mut a = app(Mode::Terminal);
+        a.serial_config.address = Address::parse("file:///tmp/logs/boot.raw");
+        let d = StatusBarConfig::default();
+        assert_eq!(
+            render(&d.left, &a),
+            [
+                span(" TERM ", "Some(Cyan)", BG, "BOLD"),
+                plain(" file://boot.raw"),
+                span(" |", MUTED, BG, "NONE"),
+                plain(" "),
+                span("replay", "Some(Cyan)", BG, "NONE"),
+                plain(" "),
+                plain("RUN"),
+            ]
+        );
+        a.end_replay();
+        assert_eq!(render("{baud} {framing}", &a), [plain("replay END")]);
         assert_eq!(render("[x](serial?bold:hide)", &a), Vec::<String>::new());
     }
 
@@ -1623,7 +1657,7 @@ mod tests {
     #[test]
     fn variable_value_is_not_markup() {
         let mut a = app(Mode::Terminal);
-        a.serial_config.port = "[x](bold)".to_string();
+        a.serial_config.address = Address::parse("[x](bold)");
         assert_eq!(render("port {port}", &a), [plain("port [x](bold)")]);
     }
 
@@ -1695,7 +1729,7 @@ mod tests {
     fn variables_imply_clicks() {
         use KeyBindingAction::{Help, SKInputMode, SerialSettings};
         let mut a = app(Mode::Terminal);
-        a.serial_config.port = "/dev/x".to_string();
+        a.serial_config.address = Address::parse("/dev/x");
         let run = ClickAction::Run;
         assert_eq!(clicks("[ {mode} ](bold)", &a), [(0, 6, run(SKInputMode))]);
         assert_eq!(clicks("[{mode}](click=help)", &a), [(0, 4, run(Help))]);

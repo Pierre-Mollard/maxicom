@@ -10,6 +10,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     configs::{KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
+    link::LinkKind,
     overlays::{PopupTarget, SerialConfigDialog, SerialSettingField},
     ui::popups::{FORM_WIDTH, form_area, key_hints, popup_block, row_area},
 };
@@ -21,7 +22,7 @@ pub fn render_reconfigure_popup(
     theme: &ThemeConfig,
     targets: &mut Vec<(Rect, PopupTarget)>,
 ) -> Rect {
-    if !dialog.line_settings {
+    if !dialog.has_line_settings() {
         return render_link_without_settings(dialog, resolver, frame, theme, targets);
     }
     let [data_bits, _, stop_bits] = dialog.config.compact_notation();
@@ -118,8 +119,8 @@ pub fn render_reconfigure_popup(
     area
 }
 
-/// The popup for a link whose line settings belong to its bridge (TCP, MAX-156): its address
-/// and why there is nothing to set
+/// The popup for a link without line settings: its address and why there is nothing to set,
+/// the bridge's for a TCP link (MAX-156), none for a replayed file (MAX-166)
 fn render_link_without_settings(
     dialog: &SerialConfigDialog,
     resolver: &KeyResolver,
@@ -129,14 +130,30 @@ fn render_link_without_settings(
 ) -> Rect {
     let label = Style::default().fg(theme.palette.ternary);
     let muted = Style::default().fg(theme.palette.unselected);
+    let (title, why) = match dialog.config.address.kind() {
+        LinkKind::Replay => (
+            "Replay",
+            [
+                "  A replayed file has no baud nor framing:",
+                "  nothing to set.",
+            ],
+        ),
+        _ => (
+            "Network Link",
+            [
+                "  The bridge sets baud and framing:",
+                "  nothing to set over TCP.",
+            ],
+        ),
+    };
     let lines = vec![
         Line::from(vec![
             Span::styled(format!("  {:<12}: ", "Address"), label),
-            Span::raw(dialog.config.port.clone()),
+            Span::raw(dialog.config.address.to_string()),
         ]),
         Line::from(""),
-        Line::from(Span::styled("  The bridge sets baud and framing:", muted)),
-        Line::from(Span::styled("  nothing to set over TCP.", muted)),
+        Line::from(Span::styled(why[0], muted)),
+        Line::from(Span::styled(why[1], muted)),
     ];
 
     let hints = key_hints(
@@ -145,7 +162,7 @@ fn render_link_without_settings(
         &[(&[KeyBindingDialogAction::Close], "Close")],
         theme,
     );
-    let block = popup_block("Network Link", &hints, theme);
+    let block = popup_block(title, &hints, theme);
 
     let area = form_area(frame.area(), FORM_WIDTH, lines.len());
     frame.render_widget(Clear, area);

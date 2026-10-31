@@ -11,7 +11,7 @@ use ratatui::{
 use crate::{
     capture::{Session, SessionOrder},
     configs::{KeyPattern, KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
-    link::{line_stand_in, serial::SerialConfig},
+    link::serial::SerialConfig,
     overlays::{
         PopupTarget, SessionBrowser,
         sessions::{sessions, size},
@@ -285,7 +285,7 @@ fn details<'a>(
                     .collect();
                     format!("{} {framing} {}", line.baud, device.encoding.as_str())
                 }
-                None => match line_stand_in(&device.port) {
+                None => match device.address.kind().line_stand_in() {
                     Some([baud, framing]) => {
                         format!("{baud} {framing} {}", device.encoding.as_str())
                     }
@@ -293,7 +293,7 @@ fn details<'a>(
                 },
             };
             let port = Style::default().fg(colors.port_color(session.port_tag()));
-            lines.push(field("Port", device.port.clone(), port));
+            lines.push(field("Port", device.address.to_string(), port));
             lines.push(field("Line", line, plain));
             lines.push(field("Host", device.host.clone(), plain));
             let timestamp = meta.text.timestamp.clone();

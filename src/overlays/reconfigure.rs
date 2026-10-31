@@ -1,11 +1,6 @@
-use tui_input::Input;
-
 use crate::{
     inputs::DialogAction,
-    link::{
-        has_line_settings,
-        serial::{CharSize, FlowControl, Parity, SerialConfig, StopBits},
-    },
+    link::serial::{CharSize, FlowControl, Parity, SerialConfig, StopBits},
     overlays::{OverlayResponse, PopupTarget},
 };
 
@@ -47,12 +42,8 @@ impl SerialSettingField {
 #[derive(Debug, Clone)]
 pub struct SerialConfigDialog {
     pub selected_field: SerialSettingField,
-    pub port_input: Input,
     pub baudrate_idx: usize,
     pub config: SerialConfig,
-    /// False for a link whose bridge owns the line settings (TCP): nothing to edit, the popup
-    /// only tells it (MAX-156)
-    pub line_settings: bool,
 }
 
 impl SerialConfigDialog {
@@ -64,10 +55,8 @@ impl SerialConfigDialog {
 
         Self {
             selected_field: SerialSettingField::BaudRate,
-            port_input: Input::new(current_config.port.clone()),
             baudrate_idx: baud_idx,
             config: current_config.clone(),
-            line_settings: has_line_settings(&current_config.port),
         }
     }
 
@@ -147,13 +136,17 @@ impl SerialConfigDialog {
     }
 
     pub fn to_config(&self) -> SerialConfig {
-        let mut final_cfg = self.config.clone();
-        final_cfg.port = self.port_input.value().to_string();
-        final_cfg
+        self.config.clone()
+    }
+
+    /// False for a link whose bridge owns the line settings (TCP), or a replay: nothing to
+    /// edit, the popup only tells it (MAX-156)
+    pub fn has_line_settings(&self) -> bool {
+        self.config.address.kind().has_line_settings()
     }
 
     pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
-        if !self.line_settings {
+        if !self.has_line_settings() {
             return match action {
                 DialogAction::Close | DialogAction::Confirm => OverlayResponse::Close,
                 _ => OverlayResponse::Handled,

@@ -21,10 +21,9 @@ use crate::{
         AppConfig, ConfigsError, KeyResolver, KeywordHighlight, Mode, SettingsConfig, ThemeConfig,
     },
     link::{
-        ByteSource, CONNECT_TIMEOUT, Opener,
+        Address, ByteSource, CONNECT_TIMEOUT, LinkKind, Opener,
         replay::Replay,
         serial::{LineControl, SerialConfig, SerialError},
-        tcp_address,
     },
     overlays::{ErrorDialog, Overlay},
     ui::{PostRenderEffect, layout::LayoutWarning, render, status_bar::CompiledStatusBar},
@@ -162,7 +161,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut device: Option<ByteSource> = match &run_mode {
         // connected in the loop, like a reconnect, so the UI is up and says it's connecting.
         // The arguments refused a malformed address
-        RunMode::Live(cfg) if tcp_address(&cfg.port).is_some() => None,
+        RunMode::Live(SerialConfig {
+            address: Address::Tcp(_),
+            ..
+        }) => None,
         // serial without tcp for sure here
         RunMode::Live(cfg) => match link::open(cfg) {
             Ok(dev) => Some(dev),
@@ -197,22 +199,22 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut mouse_captured = false;
 
     let mut running: bool = true;
-    let is_replay = matches!(run_mode, RunMode::Replay { .. });
     let mut input_buffer = vec![0u8; settings.rx_buffer_size];
 
     let serial_config = match &run_mode {
         RunMode::Live(cfg) => cfg.clone(),
         RunMode::Replay { file_path, .. } => SerialConfig {
-            port: format!("file://{}", file_path.display()),
+            address: Address::Replay(file_path.clone()),
             ..SerialConfig::default()
         },
     };
     let mut app = App::new(settings, key_resolver, serial_config);
     app.set_triggers(triggers);
-    // a replay is a file already: no backup of it, nothing to restore
-    if is_replay {
+    let kind = app.link_kind();
+    if !kind.writes() {
         app.settings_mut().mode = Mode::Terminal;
-    } else {
+    }
+    if kind.keeps_sessions() {
         // before the new journal, whose pruning could remove the last session (MAX-148)
         let journal_dir = AppConfig::default_journal_dir();
         app.restore_last_session(journal_dir.as_deref(), restore);
@@ -224,15 +226,17 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut open_for = OpenFor::Retry;
     // the restore question comes first, the missing device's popup once it's answered (MAX-148)
     let mut disconnected_after_restore = false;
-    if device.is_none() && tcp_address(&app.serial_config.port).is_some() {
+    if device.is_none() && app.link_kind() == LinkKind::Tcp {
         opener.start(&app.serial_config);
         open_for = OpenFor::Start;
-        app.notify_info(format!("Connecting to {}", app.serial_config.port));
+        app.notify_info(format!("Connecting to {}", app.serial_config.address));
     } else if device.is_none() {
         if matches!(app.overlay(), Some(Overlay::RestoreSession(_))) {
             disconnected_after_restore = true;
         } else {
-            app.open_overlay(Overlay::DeviceDisconnected(app.serial_config.port.clone()));
+            app.open_overlay(Overlay::DeviceDisconnected(
+                app.serial_config.address.clone(),
+            ));
         }
     }
 
@@ -249,7 +253,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         if disconnected_after_restore && app.overlay().is_none() {
             disconnected_after_restore = false;
             if device.is_none() {
-                app.open_overlay(Overlay::DeviceDisconnected(app.serial_config.port.clone()));
+                app.open_overlay(Overlay::DeviceDisconnected(
+                    app.serial_config.address.clone(),
+                ));
                 needs_redraw = true;
             }
         }
@@ -273,7 +279,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     Err(SerialError::InputClosed) => {
                         device = None;
                         app.open_overlay(Overlay::DeviceDisconnected(
-                            app.serial_config.port.clone(),
+                            app.serial_config.address.clone(),
                         ));
                         app.notify_warn("Device Lost");
                         needs_redraw = true;
@@ -299,13 +305,22 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
             needs_redraw |= rx_received;
 
+            // the end of a replayed file, said once (MAX-166)
+            if let Some(ByteSource::Replay(replay)) = &device
+                && replay.is_finished()
+                && !app.is_replay_ended()
+            {
+                app.end_replay();
+                needs_redraw = true;
+            }
+
             // the replies to the remote's queries, never in a replay (MAX-151)
             let answers = app.take_query_answers();
             if !answers.is_empty()
-                && !is_replay
+                && app.link_kind().writes()
                 && let Some(ref mut dev) = device
             {
-                transmit(&mut app, dev, &answers, is_replay);
+                transmit(&mut app, dev, &answers);
             }
         }
 
@@ -325,7 +340,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             match device {
                 Some(ref mut dev) => {
                     if let Some(chunk) = app.next_transfer_chunk(Instant::now()) {
-                        if transmit(&mut app, dev, &chunk, is_replay) {
+                        if transmit(&mut app, dev, &chunk) {
                             last_rx_activity = Instant::now();
                         } else {
                             app.stop_transfer("the write failed");
@@ -345,7 +360,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             match device {
                 Some(ref mut dev) => {
                     if let Some(bytes) = app.next_mash_bytes(Instant::now()) {
-                        if !transmit(&mut app, dev, &bytes, is_replay) {
+                        if !transmit(&mut app, dev, &bytes) {
                             app.stop_mash("the write failed");
                         }
                         needs_redraw = true;
@@ -360,12 +375,12 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
         if device.is_some() {
             let inactivity_timeout = app.settings().inactivity_detach_timeout;
-            if !is_replay
+            if app.link_kind().reopens()
                 && !inactivity_timeout.is_zero()
                 && last_rx_activity.elapsed() >= inactivity_timeout
             {
                 device = None;
-                app.open_overlay(Overlay::DeviceDetached(app.serial_config.port.clone()));
+                app.open_overlay(Overlay::DeviceDetached(app.serial_config.address.clone()));
                 app.notify_warn(format!(
                     "Device idle for {}s: port detached",
                     inactivity_timeout.as_secs()
@@ -374,7 +389,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
         } else {
             let is_detached_by_user = matches!(app.overlay(), Some(Overlay::DeviceDetached(_)));
-            if !is_replay
+            if app.link_kind().reopens()
                 && !is_detached_by_user
                 && last_reconnect_attempt.elapsed() >= Duration::from_millis(500)
             {
@@ -385,22 +400,22 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 Some(Ok(new_dev)) => {
                     device = Some(new_dev);
                     last_rx_activity = Instant::now();
-                    let port = &app.serial_config.port;
+                    let address = &app.serial_config.address;
                     match open_for {
-                        OpenFor::Start => app.notify_success(format!("Connected to {port}")),
+                        OpenFor::Start => app.notify_success(format!("Connected to {address}")),
                         OpenFor::Attach => {
-                            app.notify_success(format!("Reconnected to {port}"));
+                            app.notify_success(format!("Reconnected to {address}"));
                             app.close_overlay();
                         }
                         OpenFor::Retry => {
-                            app.notify_success(format!("Device Reconnected: {port}"));
+                            app.notify_success(format!("Device Reconnected: {address}"));
                             if let Some(Overlay::DeviceDisconnected(_)) = app.overlay() {
                                 app.close_overlay();
                             }
                         }
                         OpenFor::Open { previous } => {
-                            let switched = previous != *port;
-                            app.notify_success(format!("Opened {port}"));
+                            let switched = previous != *address;
+                            app.notify_success(format!("Opened {address}"));
                             if switched {
                                 app.restart_journal();
                             }
@@ -419,7 +434,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                                 disconnected_after_restore = true;
                             } else {
                                 app.open_overlay(Overlay::DeviceDisconnected(
-                                    app.serial_config.port.clone(),
+                                    app.serial_config.address.clone(),
                                 ));
                             }
                         }
@@ -427,10 +442,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         OpenFor::Retry => {}
                         // the retries reopen the port that was open
                         OpenFor::Open { previous } => {
-                            app.serial_config.port = previous;
+                            app.serial_config.address = previous;
                             app.fail_commands(format!(
                                 "open: {e}, back to {}",
-                                app.serial_config.port
+                                app.serial_config.address
                             ));
                         }
                     }
@@ -483,36 +498,70 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     UpdateEffect::Quit => running = false,
                     // the current link closes and the new one opens as a reconnect does,
                     // without waiting: the rest of the line waits for its result (MAX-12)
-                    UpdateEffect::Open(port) => {
-                        let previous = std::mem::replace(&mut app.serial_config.port, port);
+                    UpdateEffect::Open(address) => {
+                        let previous = std::mem::replace(&mut app.serial_config.address, address);
                         device = None;
                         break_until = None;
                         open_for = OpenFor::Open { previous };
                         opener.restart(&app.serial_config);
                         app.pause_commands(Instant::now() + CONNECT_TIMEOUT * 2);
-                        app.notify_info(format!("Opening {}", app.serial_config.port));
+                        app.notify_info(format!("Opening {}", app.serial_config.address));
                         if let Some(Overlay::DeviceDetached(_) | Overlay::DeviceDisconnected(_)) =
                             app.overlay()
                         {
                             app.close_overlay();
                         }
                     }
+                    // the file in place of the link, which closes: no wait, a file opens at
+                    // once (MAX-166)
+                    UpdateEffect::Replay { path, delay } => match Replay::open(&path, delay) {
+                        Ok(replay) => {
+                            device = Some(ByteSource::Replay(replay));
+                            break_until = None;
+                            app.start_replay(path.clone());
+                            app.notify_info(format!("Replaying {}", path.display()));
+                            if let Some(
+                                Overlay::DeviceDetached(_) | Overlay::DeviceDisconnected(_),
+                            ) = app.overlay()
+                            {
+                                app.close_overlay();
+                            }
+                        }
+                        Err(e) => app.fail_commands(format!("replay: {}: {e}", path.display())),
+                    },
+                    // the link the replay replaced opens again as at start, its popup if it
+                    // doesn't; a replay from the command line just stops reading
+                    UpdateEffect::StopReplay => {
+                        device = None;
+                        if app.stop_replay() {
+                            open_for = OpenFor::Start;
+                            opener.restart(&app.serial_config);
+                            if app.link_kind() == LinkKind::Tcp {
+                                app.notify_info(format!(
+                                    "Connecting to {}",
+                                    app.serial_config.address
+                                ));
+                            }
+                        } else {
+                            app.notify_info("Replay stopped");
+                        }
+                    }
                     UpdateEffect::ToggleAttachSerial => {
-                        if !is_replay {
+                        if app.link_kind().reopens() {
                             if device.is_some() {
                                 device = None;
                                 app.open_overlay(Overlay::DeviceDetached(
-                                    app.serial_config.port.clone(),
+                                    app.serial_config.address.clone(),
                                 ));
                                 app.notify_warn("Serial Port Released (Detached)");
                             } else {
                                 // the result comes with the reconnect's, next frame for a port
                                 open_for = OpenFor::Attach;
                                 opener.start(&app.serial_config);
-                                if tcp_address(&app.serial_config.port).is_some() {
+                                if app.link_kind() == LinkKind::Tcp {
                                     app.notify_info(format!(
                                         "Connecting to {}",
-                                        app.serial_config.port
+                                        app.serial_config.address
                                     ));
                                 }
                             }
@@ -520,13 +569,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     }
                     UpdateEffect::Transmit(bytes) => {
                         if let Some(ref mut dev) = device
-                            && transmit(&mut app, dev, &bytes, is_replay)
+                            && transmit(&mut app, dev, &bytes)
                         {
                             last_rx_activity = Instant::now();
                         }
                     }
                     UpdateEffect::Reconfigure(serial_config) => {
-                        if !is_replay && let Some(ByteSource::Live(ref mut dev)) = device {
+                        if let Some(ByteSource::Live(ref mut dev)) = device {
                             if let Err(e) = dev.reconfigure(&serial_config) {
                                 // a command line chain stops there, the dialog says why (MAX-12)
                                 app.drop_pending_commands();
@@ -540,7 +589,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                             } else {
                                 app.serial_config = serial_config;
                             }
-                        } else if !is_replay && device.is_none() {
+                        } else if device.is_none() && app.link_kind().reopens() {
                             // a detached port opens with them (MAX-12)
                             app.serial_config = serial_config;
                             app.notify_info("The port is detached: it opens with these settings");
@@ -569,7 +618,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     }
                     UpdateEffect::ReloadConfig => match load_runtime_config(&config_path) {
                         Ok(mut config) => {
-                            if is_replay {
+                            if !app.link_kind().writes() {
                                 config.settings.mode = Mode::Terminal;
                             }
                             input_buffer.resize(config.settings.rx_buffer_size, 0);
@@ -673,15 +722,15 @@ enum OpenFor {
     Start,
     Attach,
     Retry,
-    Open { previous: String },
+    Open { previous: Address },
 }
 
 /// Writes `bytes` to the device, counted and recorded (not in a replay), or opens the error
 /// popup. True when written
-fn transmit(app: &mut App, dev: &mut ByteSource, bytes: &[u8], is_replay: bool) -> bool {
+fn transmit(app: &mut App, dev: &mut ByteSource, bytes: &[u8]) -> bool {
     match dev.write(bytes) {
         Ok(()) => {
-            if !is_replay {
+            if app.link_kind().writes() {
                 app.stats.update_tx(bytes.len());
                 app.record_tx(bytes);
             }

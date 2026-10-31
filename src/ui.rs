@@ -236,11 +236,11 @@ fn render_active_overlay(
         Some(Overlay::Screenshot(dialog)) => {
             render_screenshot_popup(dialog, resolver, frame, theme, &mut targets)
         }
-        Some(Overlay::DeviceDisconnected(port)) => {
-            render_disconnected_popup(port, resolver, frame, theme, &mut targets)
+        Some(Overlay::DeviceDisconnected(address)) => {
+            render_disconnected_popup(address, resolver, frame, theme, &mut targets)
         }
-        Some(Overlay::DeviceDetached(port)) => {
-            render_detached_popup(port, resolver, frame, theme, &mut targets)
+        Some(Overlay::DeviceDetached(address)) => {
+            render_detached_popup(address, resolver, frame, theme, &mut targets)
         }
         Some(Overlay::Error(err)) => render_error_popup(err, resolver, frame, theme, &mut targets),
         Some(Overlay::ConfirmQuit) => {
@@ -290,7 +290,7 @@ mod tests {
         inputs::{
             Action, AppAction, CopyModeAction, DialogAction, HistoryAction, SearchModeAction,
         },
-        link::serial::SerialConfig,
+        link::{Address, serial::SerialConfig},
         overlays::{
             CommandLine, ErrorDialog, FilePathDialog, HelpDialog, ResizeDialog, ScreenshotDialog,
             SerialConfigDialog,
@@ -1260,17 +1260,17 @@ mod tests {
     /// Their text wraps, and they grow to show all of it.
     #[test]
     fn alert_hints_follow_the_keymap() {
-        let rows = popup_rows(Overlay::DeviceDisconnected("/dev/x".into()), &[]);
+        let rows = popup_rows(Overlay::DeviceDisconnected(Address::parse("/dev/x")), &[]);
         assert!(has(&rows, "Esc/Enter Quit"), "{rows:#?}");
         assert!(!has(&rows, "Ctrl"), "{rows:#?}");
 
         // a long port path wraps instead of being cut
         let port = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A50285BI-if00-port0";
-        let rows = popup_rows(Overlay::DeviceDisconnected(port.into()), &[]);
+        let rows = popup_rows(Overlay::DeviceDisconnected(Address::parse(port)), &[]);
         assert!(has(&rows, "if00-port0"), "{rows:#?}");
         assert!(has(&rows, "Esc/Enter Quit"), "{rows:#?}");
 
-        let rows = popup_rows(Overlay::DeviceDetached("/dev/x".into()), &[]);
+        let rows = popup_rows(Overlay::DeviceDetached(Address::parse("/dev/x")), &[]);
         assert!(has(&rows, "Enter Reattach · Esc Quit"), "{rows:#?}");
 
         let error = ErrorDialog::new("Oops", "it broke");
@@ -1496,7 +1496,7 @@ mod tests {
     #[test]
     fn serial_popup_for_a_tcp_link() {
         let config = SerialConfig {
-            port: "tcp://192.168.1.50:4000".to_string(),
+            address: Address::parse("tcp://192.168.1.50:4000"),
             ..SerialConfig::default()
         };
         let rows = popup_rows(
@@ -1520,6 +1520,30 @@ mod tests {
             dialog.handle_action(DialogAction::Confirm),
             crate::overlays::OverlayResponse::Close
         ));
+    }
+
+    /// MAX-166: a replay's popup shows its address and that a file has nothing to set.
+    /// How: the popup rows for a `file://` port.
+    #[test]
+    fn serial_popup_for_a_replay() {
+        let config = SerialConfig {
+            address: Address::parse("file:///tmp/boot.raw"),
+            ..SerialConfig::default()
+        };
+        let rows = popup_rows(
+            Overlay::SerialSettings(SerialConfigDialog::new(&config)),
+            &[],
+        );
+        assert!(
+            has(&rows, "Replay") && !has(&rows, "Network Link"),
+            "{rows:#?}"
+        );
+        assert!(has(&rows, "file:///tmp/boot.raw"), "{rows:#?}");
+        assert!(
+            has(&rows, "A replayed file has no baud nor framing"),
+            "{rows:#?}"
+        );
+        assert!(!has(&rows, "Baud Rate"), "{rows:#?}");
     }
 
     /// The text cursor of the text input popups sits right after the typed text.
@@ -1884,7 +1908,7 @@ mod tests {
             std::env::temp_dir().join(format!("maxicom_test_{}_browser_ui", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let text = crate::capture::JournalText::default();
-        let port = SerialConfig::default().port;
+        let port = SerialConfig::default().address.to_string();
         crate::capture::tests::write_test_session(&dir, &port, &text, b"mine\r\n", b"");
         crate::capture::tests::write_test_session(&dir, "/dev/other", &text, b"theirs\r\n", b"");
         // the names are to the millisecond: the app's journal must not get the same one
@@ -1940,7 +1964,7 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
-        let port = SerialConfig::default().port;
+        let port = SerialConfig::default().address.to_string();
         let text = crate::capture::JournalText::default();
         crate::capture::tests::write_test_session(&dir, &port, &text, b"mine\r\n", b"");
         // the names are to the millisecond: the app's journal must not get the same one
@@ -4085,19 +4109,22 @@ mod tests {
         press(&mut h, cell_of(&rows, "Cancel"));
         assert!(h.app.overlay().is_none());
 
-        let rows = open(&mut h, Overlay::DeviceDisconnected("/dev/x".into()));
+        let rows = open(
+            &mut h,
+            Overlay::DeviceDisconnected(Address::parse("/dev/x")),
+        );
         assert!(matches!(
             press(&mut h, cell_of(&rows, "Quit")),
             UpdateEffect::Quit
         ));
 
-        let rows = open(&mut h, Overlay::DeviceDetached("/dev/x".into()));
+        let rows = open(&mut h, Overlay::DeviceDetached(Address::parse("/dev/x")));
         assert!(matches!(
             press(&mut h, cell_of(&rows, "Reattach")),
             UpdateEffect::ToggleAttachSerial
         ));
         // the last cell of an odd-width centered hint line: the paragraph's own centering
-        let rows = open(&mut h, Overlay::DeviceDetached("/dev/x".into()));
+        let rows = open(&mut h, Overlay::DeviceDetached(Address::parse("/dev/x")));
         let (x, y) = cell_of(&rows, "Quit");
         assert!(matches!(press(&mut h, (x + 3, y)), UpdateEffect::Quit));
     }
@@ -4168,7 +4195,10 @@ mod tests {
             matches!(h.app.overlay(), Some(Overlay::TerminalSize(d)) if d.active_field == ResizeField::Cols)
         );
 
-        open(&mut h, Overlay::DeviceDisconnected("/dev/x".into()));
+        open(
+            &mut h,
+            Overlay::DeviceDisconnected(Address::parse("/dev/x")),
+        );
         click(&mut h, (0, 0));
         assert!(matches!(
             h.app.overlay(),

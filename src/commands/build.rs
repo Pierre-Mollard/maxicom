@@ -13,7 +13,7 @@ use crate::{
     configs::{Mode, TextEncoding},
     inputs::{Action, AppAction, SearchModeAction},
     link::{
-        self,
+        Address, LinkKind,
         serial::{FlowControl, LineControl, SerialConfig, parse_framing},
     },
     overlays::SettingKey,
@@ -27,7 +27,7 @@ pub fn send(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     if bytes.is_empty() {
         return Err("nothing to send".to_string());
     }
-    if link::is_replay(&app.serial_config.port) {
+    if !app.link_kind().writes() {
         return Err("a replay has no link to send to".to_string());
     }
     link_open(app)?;
@@ -42,7 +42,7 @@ pub fn send_file(app: &App, args: &[ArgValue]) -> Result<Action, String> {
         [ArgValue::Path(path), ArgValue::Int(ms)] => (path, *ms as u64),
         _ => unreachable!("send-file takes a path and a delay"),
     };
-    if link::is_replay(&app.serial_config.port) {
+    if !app.link_kind().writes() {
         return Err("a replay has no link to send to".to_string());
     }
     link_open(app)?;
@@ -75,13 +75,10 @@ pub fn send_file(app: &App, args: &[ArgValue]) -> Result<Action, String> {
 /// None when the link is a serial port, else why it has no `what` (line settings, control
 /// lines): a replay, a TCP link whose bridge owns them
 fn serial_only(app: &App, what: &str) -> Result<(), String> {
-    let port = &app.serial_config.port;
-    if link::is_replay(port) {
-        Err(format!("a replay has no {what}"))
-    } else if !link::has_line_settings(port) {
-        Err(format!("a TCP link has no {what}, its bridge sets them"))
-    } else {
-        Ok(())
+    match app.link_kind() {
+        LinkKind::Serial => Ok(()),
+        LinkKind::Tcp => Err(format!("a TCP link has no {what}, its bridge sets them")),
+        LinkKind::Replay => Err(format!("a replay has no {what}")),
     }
 }
 
@@ -180,20 +177,44 @@ fn link_open(app: &App) -> Result<(), String> {
     }
 }
 
-/// `open <port | tcp://host:port>`: the link switches to it, its settings kept; the rest of
-/// the line waits for it to be open
+/// `open <port | tcp://host:port | file://path>`: the link switches to it, its settings kept;
+/// the rest of the line waits for it to be open. A `file://` is a replay, without delay
 pub fn open(app: &App, args: &[ArgValue]) -> Result<Action, String> {
-    let [ArgValue::Path(port)] = args else {
+    let [ArgValue::Path(text)] = args else {
         unreachable!("open takes a port");
     };
-    if link::is_replay(&app.serial_config.port) {
-        return Err("a replay can't open a link".to_string());
+    match Address::parse(&text.to_string_lossy()) {
+        Address::Replay(path) => Ok(Action::App(AppAction::Replay {
+            path: expand_home(&path),
+            delay: Duration::ZERO,
+        })),
+        _ if app.link_kind() == LinkKind::Replay => {
+            Err("a replay can't open a link (replay-stop ends it)".to_string())
+        }
+        address => Ok(Action::App(AppAction::Open(address))),
     }
-    let port = port.to_string_lossy().into_owned();
-    if link::is_replay(&port) {
-        return Err("a replay opens from the command line: maxicom --replay".to_string());
+}
+
+/// `replay <path> [delay-ms]`: the file's bytes in place of the link's, a buffer every delay
+/// (MAX-166)
+pub fn replay(_app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let (path, delay_ms) = match args {
+        [ArgValue::Path(path)] => (path, 0),
+        [ArgValue::Path(path), ArgValue::Int(ms)] => (path, *ms as u64),
+        _ => unreachable!("replay takes a path and a delay"),
+    };
+    Ok(Action::App(AppAction::Replay {
+        path: expand_home(path),
+        delay: Duration::from_millis(delay_ms),
+    }))
+}
+
+/// `replay-stop`: the replay ends, back to the link it replaced if any (MAX-166)
+pub fn replay_stop(app: &App, _args: &[ArgValue]) -> Result<Action, String> {
+    if app.link_kind() != LinkKind::Replay {
+        return Err("no replay runs".to_string());
     }
-    Ok(Action::App(AppAction::Open(port)))
+    Ok(Action::App(AppAction::StopReplay))
 }
 
 /// The settings `set` turns on or off, by name
@@ -256,7 +277,7 @@ pub fn mash(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     if text.is_empty() {
         return Err("nothing to send".to_string());
     }
-    if link::is_replay(&app.serial_config.port) {
+    if !app.link_kind().writes() {
         return Err("a replay has no link to send to".to_string());
     }
     link_open(app)?;

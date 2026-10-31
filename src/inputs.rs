@@ -16,7 +16,10 @@ use crate::{
     commands::Invocation,
     configs::{KeyBindingAction, KeyPattern, Mode, TextEncoding},
     inputs::mouse::handle_mouse,
-    link::serial::{LineControl, SerialConfig},
+    link::{
+        Address,
+        serial::{LineControl, SerialConfig},
+    },
     overlays::{Overlay, PopupTarget, SettingKey},
 };
 
@@ -67,7 +70,9 @@ pub enum AppAction {
     Reconfigure(SerialConfig),
     LineControl(LineControl),
     PauseCommands(Duration),
-    Open(String),
+    Open(Address),
+    Replay { path: PathBuf, delay: Duration },
+    StopReplay,
     SetEncoding(TextEncoding),
     SaveScreenshot(PathBuf),
     QueueCommands(Vec<Invocation>),

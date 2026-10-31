@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use super::Address;
 use serde::{Deserialize, Serialize};
 use serial2::{
     CharSize as S2CharSize, FlowControl as S2FlowControl, Parity as S2Parity, SerialPort,
@@ -144,7 +145,7 @@ impl From<FlowControl> for S2FlowControl {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SerialConfig {
-    pub port: String,
+    pub address: Address,
     pub baudrate: u32,
     pub char_size: CharSize,
     pub stop_bits: StopBits,
@@ -204,7 +205,7 @@ impl SerialConfig {
 impl Default for SerialConfig {
     fn default() -> Self {
         Self {
-            port: String::from("/dev/ttyUSB0"),
+            address: Address::Serial(String::from("/dev/ttyUSB0")),
             baudrate: 115_200,
             char_size: CharSize::Bits8,
             stop_bits: StopBits::One,
@@ -379,14 +380,14 @@ impl Error for SerialError {
 }
 
 impl SerialDevice {
-    pub fn open(config: &SerialConfig) -> Result<Self, SerialError> {
-        let mut port = SerialPort::open(&config.port, config.baudrate).map_err(|err| {
-            SerialError::OpenFailed {
-                port: config.port.clone(),
+    /// Opens `device` with `config`'s line settings
+    pub fn open(device: &str, config: &SerialConfig) -> Result<Self, SerialError> {
+        let mut port =
+            SerialPort::open(device, config.baudrate).map_err(|err| SerialError::OpenFailed {
+                port: device.to_string(),
                 baudrate: config.baudrate,
                 source: err,
-            }
-        })?;
+            })?;
 
         // Platform-specific exclusivity lock
         #[cfg(unix)]
@@ -399,7 +400,7 @@ impl SerialDevice {
             if res < 0 {
                 let err = std::io::Error::last_os_error();
                 return Err(SerialError::OpenFailed {
-                    port: config.port.clone(),
+                    port: device.to_string(),
                     baudrate: config.baudrate,
                     source: err,
                 });

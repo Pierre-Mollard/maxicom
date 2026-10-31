@@ -1,5 +1,5 @@
 use crate::configs::TextEncoding;
-use crate::link::has_line_settings;
+use crate::link::Address;
 use crate::link::serial::{CharSize, Parity, SerialConfig, StopBits};
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use serde::{Deserialize, Serialize};
@@ -23,13 +23,15 @@ pub struct JournalText {
 
 /// What a session was recorded on (MAX-148): a session restores only on the same machine,
 /// address, line settings and encoding, as bytes from another baud or encoding are garbage.
-/// `port` is the link's address, whose form gives its kind (MAX-156), and `line` its line
-/// settings when maxicom sets them (a serial port, not a TCP link): a new kind of link never
-/// changes the file. In the file the line settings sit at the top of `[device]`, as before
+/// `address` is the link's, which gives its kind (MAX-156), written `port` in the file as
+/// before; `line` its line settings when maxicom sets them (a serial port, not a TCP link): a
+/// new kind of link never changes the file. In the file the line settings sit at the top of
+/// `[device]`, as before
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionDevice {
     pub host: String,
-    pub port: String,
+    #[serde(rename = "port")]
+    pub address: Address,
     #[serde(flatten)]
     pub line: Option<SessionLine>,
     pub encoding: TextEncoding,
@@ -46,15 +48,19 @@ pub struct SessionLine {
 
 impl SessionDevice {
     pub fn new(serial: &SerialConfig, encoding: TextEncoding) -> Self {
-        let line = has_line_settings(&serial.port).then_some(SessionLine {
-            baud: serial.baudrate,
-            char_size: serial.char_size,
-            parity: serial.parity,
-            stop_bits: serial.stop_bits,
-        });
+        let line = serial
+            .address
+            .kind()
+            .has_line_settings()
+            .then_some(SessionLine {
+                baud: serial.baudrate,
+                char_size: serial.char_size,
+                parity: serial.parity,
+                stop_bits: serial.stop_bits,
+            });
         Self {
             host: hostname(),
-            port: serial.port.clone(),
+            address: serial.address.clone(),
             line,
             encoding,
         }
@@ -64,7 +70,7 @@ impl SessionDevice {
     /// a `line` it can't read whole (a missing or unknown field) as none, which would turn a
     /// broken serial meta into a link without line settings
     fn is_whole(&self) -> bool {
-        self.line.is_some() == has_line_settings(&self.port)
+        self.line.is_some() == self.address.kind().has_line_settings()
     }
 }
 
@@ -147,6 +153,23 @@ pub struct Session {
     pub raw_len: u64,
     pub size: u64,
     pub running: bool,
+}
+
+/// The part of a session's name its address gives: the address's last part, kept to the
+/// characters safe in a file name. "/dev/ttyUSB0" gives "ttyUSB0"; `Session::port_tag` reads
+/// it back
+pub fn session_tag(address: &Address) -> String {
+    address
+        .tag()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 impl Session {
@@ -354,6 +377,18 @@ mod tests {
     use crate::capture::Recorder;
     use crate::capture::tests::{device, record, temp_dir, write_test_session};
 
+    /// The session tag keeps the last part of the address, safe for a file name.
+    /// How: an address of each kind.
+    #[test]
+    fn session_tags() {
+        let tag = |text| session_tag(&Address::parse(text));
+        assert_eq!(tag("/dev/ttyUSB0"), "ttyUSB0");
+        assert_eq!(tag("COM3"), "COM3");
+        // no ':' in a Windows file name (MAX-156)
+        assert_eq!(tag("tcp://192.168.1.50:4000"), "192.168.1.50_4000");
+        assert_eq!(tag("file:///tmp/my log.raw"), "my_log.raw");
+    }
+
     /// MAX-147: pruning keeps the newest sessions (all files of each, the meta file with them,
     /// MAX-148) and leaves other files.
     /// How: 3 sessions that received something and a note, keep 2.
@@ -527,7 +562,7 @@ tx_mark = "> "
     #[test]
     fn meta_v1_still_reads() {
         let meta: SessionMeta = toml::from_str(META_V1).unwrap();
-        assert_eq!(meta.device.port, "/dev/ttyUSB0");
+        assert_eq!(meta.device.address.to_string(), "/dev/ttyUSB0");
         assert_eq!(toml::to_string(&meta).unwrap(), META_V1);
     }
 
@@ -763,7 +798,7 @@ tx_mark = "> "
         assert!(live.running && !usb.running && !old.running);
 
         let meta = usb.meta.as_ref().unwrap();
-        assert_eq!(meta.device.port, "/dev/ttyUSB0");
+        assert_eq!(meta.device.address.to_string(), "/dev/ttyUSB0");
         assert_eq!(meta.text, JournalText::default());
         assert_eq!(usb.started, with_meta.started);
         assert_eq!(usb.ended, with_meta.ended);

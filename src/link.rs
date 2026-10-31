@@ -7,18 +7,24 @@
 //!   a serial device server, QEMU) owns the line settings
 //! * replay, `replay`: `file://path`, a raw capture played back. Never written, no session
 //!
+//! The address is an `Address`, read once from its text (MAX-166). What each kind can do is
+//! its `LinkKind`'s, so a check asks the kind, never the address's text.
+//!
 //! Planned: telnet `telnet://host:port` (MAX-161, no line settings), RFC 2217
 //! `rfc2217://host:port` (line settings set remotely), Unix sockets and Windows named pipes
+pub mod address;
 pub mod replay;
 pub mod serial;
 pub mod tcp;
 
 use std::{
+    io,
     sync::mpsc::{self, Receiver, TryRecvError},
     thread,
     time::Duration,
 };
 
+pub use address::Address;
 use replay::Replay;
 use serial::{LineControl, SerialConfig, SerialDevice, SerialError};
 use tcp::TcpDevice;
@@ -66,39 +72,69 @@ impl ByteSource {
     }
 }
 
-/// The `host:port` of a raw TCP address `tcp://host:port`
-pub fn tcp_address(port: &str) -> Option<&str> {
-    port.strip_prefix("tcp://")
+/// The kind of link an address names, and what it can do (MAX-166)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkKind {
+    Serial,
+    Tcp,
+    Replay,
 }
 
-/// Whether `port` is a replayed file (`file://`): no link, nothing goes out
-pub fn is_replay(port: &str) -> bool {
-    port.starts_with("file://")
+impl LinkKind {
+    /// Whether bytes go out: what is typed, sent, mashed, a trigger's line and the replies to
+    /// the remote's queries, counted and recorded as TX. A link not written has no line mode
+    pub fn writes(self) -> bool {
+        self != LinkKind::Replay
+    }
+
+    /// Whether the link has a session backup: the journal, its pruning and the restore of the
+    /// last session. A replay is a file already
+    pub fn keeps_sessions(self) -> bool {
+        self != LinkKind::Replay
+    }
+
+    /// Whether the link can be closed and opened again: it reconnects when lost, detaches by
+    /// hand or when idle, and attaches, with the line settings changed meanwhile
+    pub fn reopens(self) -> bool {
+        self != LinkKind::Replay
+    }
+
+    /// Whether maxicom sets the link's line settings (baud, framing, flow control): a serial
+    /// port does; a raw TCP link doesn't, its bridge owns them, nor does a replayed file. Later
+    /// RFC 2217 will, telnet won't
+    pub fn has_line_settings(self) -> bool {
+        self == LinkKind::Serial
+    }
+
+    /// What a link without line settings shows in place of its baud and framing, read together
+    /// as "raw TCP": in the status bar and the session browser. None for a replay, whose stand-in
+    /// is its state, which the status bar writes
+    pub fn line_stand_in(self) -> Option<[&'static str; 2]> {
+        // TODO: (MAX-161) "telnet TCP" for telnet://, and the later kinds without line settings
+        (self == LinkKind::Tcp).then_some(["raw", "TCP"])
+    }
 }
 
-/// Whether maxicom sets the link's line settings (baud, framing, flow control): a serial port
-/// does, a raw TCP link doesn't, its bridge owns them. Later RFC 2217 will, telnet won't
-pub fn has_line_settings(port: &str) -> bool {
-    tcp_address(port).is_none()
-}
-
-/// What a link without line settings shows in place of its baud and framing, read together
-/// as "raw TCP": in the status bar and the session browser
-pub fn line_stand_in(port: &str) -> Option<[&'static str; 2]> {
-    // TODO: (MAX-161) "telnet TCP" for telnet://, and the later kinds without line settings
-    tcp_address(port).map(|_| ["raw", "TCP"])
-}
-
-/// Opens the link `config.port` names, waiting for it: a serial port, or a TCP connection
+/// Opens the link `config.address` names, waiting for it: a serial port, or a TCP
+/// connection
 pub fn open(config: &SerialConfig) -> Result<ByteSource, SerialError> {
-    match tcp_address(&config.port) {
-        Some(addr) => TcpDevice::connect(addr, CONNECT_TIMEOUT)
+    match &config.address {
+        Address::Serial(device) => SerialDevice::open(device, config).map(ByteSource::Live),
+        Address::Tcp(addr) => TcpDevice::connect(addr, CONNECT_TIMEOUT)
             .map(ByteSource::Tcp)
             .map_err(|source| SerialError::ConnectFailed {
-                addr: addr.to_string(),
+                addr: addr.clone(),
                 source,
             }),
-        None => SerialDevice::open(config).map(ByteSource::Live),
+        // the loop opens a replay's file itself: a link never reopens as one
+        Address::Replay(_) => Err(SerialError::OpenFailed {
+            port: config.address.to_string(),
+            baudrate: config.baudrate,
+            source: io::Error::new(
+                io::ErrorKind::Unsupported,
+                "a replay isn't opened as a link",
+            ),
+        }),
     }
 }
 
@@ -117,7 +153,7 @@ impl Opener {
             return;
         }
         let (sender, receiver) = mpsc::channel();
-        if tcp_address(&config.port).is_some() {
+        if let Address::Tcp(_) = config.address {
             let config = config.clone();
             thread::spawn(move || {
                 let _ = sender.send(open(&config));
@@ -160,9 +196,9 @@ mod tests {
     use std::net::TcpListener;
     use std::time::Instant;
 
-    fn config(port: &str) -> SerialConfig {
+    fn config(address: &str) -> SerialConfig {
         SerialConfig {
-            port: port.to_string(),
+            address: Address::parse(address),
             ..SerialConfig::default()
         }
     }
@@ -179,25 +215,26 @@ mod tests {
         }
     }
 
-    /// Only `tcp://` names a TCP link; anything else is a serial port.
-    /// How: addresses of each kind.
+    /// MAX-166: what each kind does: a replay is never written, keeps no session, never
+    /// reopens and has no line settings; a serial port and a TCP link do the first three, only a
+    /// serial port has line settings. A TCP link shows "raw TCP" in their place.
+    /// How: the answers of each kind. The kind each address names is `address`'s test.
     #[test]
-    fn address_kinds() {
-        assert_eq!(
-            tcp_address("tcp://192.168.1.50:4000"),
-            Some("192.168.1.50:4000")
-        );
-        assert_eq!(tcp_address("tcp://localhost:23"), Some("localhost:23"));
-        assert_eq!(tcp_address("/dev/ttyUSB0"), None);
-        assert_eq!(tcp_address("COM3"), None);
-        assert_eq!(tcp_address("TCP://host:1"), None);
-        assert!(has_line_settings("/dev/ttyUSB0") && has_line_settings("COM3"));
-        assert!(!has_line_settings("tcp://192.168.1.50:4000"));
-        assert_eq!(
-            line_stand_in("tcp://192.168.1.50:4000"),
-            Some(["raw", "TCP"])
-        );
-        assert_eq!(line_stand_in("/dev/ttyUSB0"), None);
+    fn link_kinds() {
+        let answers = |kind: LinkKind| {
+            [
+                kind.writes(),
+                kind.keeps_sessions(),
+                kind.reopens(),
+                kind.has_line_settings(),
+            ]
+        };
+        assert_eq!(answers(LinkKind::Serial), [true; 4]);
+        assert_eq!(answers(LinkKind::Tcp), [true, true, true, false]);
+        assert_eq!(answers(LinkKind::Replay), [false; 4]);
+        assert_eq!(LinkKind::Tcp.line_stand_in(), Some(["raw", "TCP"]));
+        assert_eq!(LinkKind::Serial.line_stand_in(), None);
+        assert_eq!(LinkKind::Replay.line_stand_in(), None);
     }
 
     /// MAX-12: `restart` drops the open running for the new one: its result is the new link's.
@@ -212,7 +249,6 @@ mod tests {
         assert!(matches!(wait(&mut opener), Ok(ByteSource::Tcp(_))));
         assert!(second.accept().is_ok());
         assert!(opener.finished().is_none());
-        assert!(is_replay("file:///tmp/x.raw") && !is_replay("/dev/ttyUSB0"));
     }
 
     /// A TCP open runs off the loop and gives a TCP link; a second start while it runs is
