@@ -236,10 +236,12 @@ fn render_active_overlay(
         Some(Overlay::Screenshot(dialog)) => {
             render_screenshot_popup(dialog, resolver, frame, theme, &mut targets)
         }
-        Some(Overlay::DeviceDisconnected(address)) => {
+        Some(Overlay::DeviceDisconnected) => {
+            let address = &app.link_config().address;
             render_disconnected_popup(address, resolver, frame, theme, &mut targets)
         }
-        Some(Overlay::DeviceDetached(address)) => {
+        Some(Overlay::DeviceDetached) => {
+            let address = &app.link_config().address;
             render_detached_popup(address, resolver, frame, theme, &mut targets)
         }
         Some(Overlay::Error(err)) => render_error_popup(err, resolver, frame, theme, &mut targets),
@@ -1260,17 +1262,22 @@ mod tests {
     /// Their text wraps, and they grow to show all of it.
     #[test]
     fn alert_hints_follow_the_keymap() {
-        let rows = popup_rows(Overlay::DeviceDisconnected(Address::parse("/dev/x")), &[]);
+        let rows = popup_rows(Overlay::DeviceDisconnected, &[]);
         assert!(has(&rows, "Esc/Enter Quit"), "{rows:#?}");
         assert!(!has(&rows, "Ctrl"), "{rows:#?}");
 
-        // a long port path wraps instead of being cut
+        // a long port path wraps instead of being cut; the popup shows the link's address
         let port = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A50285BI-if00-port0";
-        let rows = popup_rows(Overlay::DeviceDisconnected(Address::parse(port)), &[]);
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        h.app.link_mut().set_address(Address::parse(port));
+        h.app.update(Action::App(AppAction::OpenOverlay(
+            Overlay::DeviceDisconnected,
+        )));
+        let rows = h.draw();
         assert!(has(&rows, "if00-port0"), "{rows:#?}");
         assert!(has(&rows, "Esc/Enter Quit"), "{rows:#?}");
 
-        let rows = popup_rows(Overlay::DeviceDetached(Address::parse("/dev/x")), &[]);
+        let rows = popup_rows(Overlay::DeviceDetached, &[]);
         assert!(has(&rows, "Enter Reattach · Esc Quit"), "{rows:#?}");
 
         let error = ErrorDialog::new("Oops", "it broke");
@@ -2340,7 +2347,7 @@ mod tests {
         let (mut h, without_3) = bar_at(30);
         assert!(!without_3.contains("ttyUSB0") && !without_3.contains("RX:"));
         assert!(without_3.contains(" LINE  115200"), "{without_3:?}");
-        let baud = h.app.serial_config.baudrate.to_string();
+        let baud = h.app.link_config().baudrate.to_string();
         let rows = h.draw();
         click(&mut h, status_cell(&rows, &baud));
         assert!(matches!(h.app.overlay(), Some(Overlay::SerialSettings(_))));
@@ -4082,7 +4089,7 @@ mod tests {
         assert_eq!(h.app.settings().mode, Mode::Terminal);
 
         let rows = h.draw();
-        let baud = h.app.serial_config.baudrate.to_string();
+        let baud = h.app.link_config().baudrate.to_string();
         click(&mut h, status_cell(&rows, &baud));
         assert!(matches!(h.app.overlay(), Some(Overlay::SerialSettings(_))));
         h.app.close_overlay();
@@ -4193,22 +4200,19 @@ mod tests {
         press(&mut h, cell_of(&rows, "Cancel"));
         assert!(h.app.overlay().is_none());
 
-        let rows = open(
-            &mut h,
-            Overlay::DeviceDisconnected(Address::parse("/dev/x")),
-        );
+        let rows = open(&mut h, Overlay::DeviceDisconnected);
         assert!(matches!(
             press(&mut h, cell_of(&rows, "Quit")),
             UpdateEffect::Quit
         ));
 
-        let rows = open(&mut h, Overlay::DeviceDetached(Address::parse("/dev/x")));
+        let rows = open(&mut h, Overlay::DeviceDetached);
         assert!(matches!(
             press(&mut h, cell_of(&rows, "Reattach")),
             UpdateEffect::ToggleAttachSerial
         ));
         // the last cell of an odd-width centered hint line: the paragraph's own centering
-        let rows = open(&mut h, Overlay::DeviceDetached(Address::parse("/dev/x")));
+        let rows = open(&mut h, Overlay::DeviceDetached);
         let (x, y) = cell_of(&rows, "Quit");
         assert!(matches!(press(&mut h, (x + 3, y)), UpdateEffect::Quit));
     }
@@ -4279,15 +4283,9 @@ mod tests {
             matches!(h.app.overlay(), Some(Overlay::TerminalSize(d)) if d.active_field == ResizeField::Cols)
         );
 
-        open(
-            &mut h,
-            Overlay::DeviceDisconnected(Address::parse("/dev/x")),
-        );
+        open(&mut h, Overlay::DeviceDisconnected);
         click(&mut h, (0, 0));
-        assert!(matches!(
-            h.app.overlay(),
-            Some(Overlay::DeviceDisconnected(_))
-        ));
+        assert!(matches!(h.app.overlay(), Some(Overlay::DeviceDisconnected)));
     }
 
     /// MAX-134: in the serial popup, a click on a field's `<` or `>` selects it and steps its

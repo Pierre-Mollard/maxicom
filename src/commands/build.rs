@@ -65,7 +65,7 @@ pub fn send_file(app: &App, args: &[ArgValue]) -> Result<Action, String> {
         Box::new(BufReader::new(file)),
         name,
         metadata.len(),
-        app.serial_config.bytes_per_sec(),
+        app.link_config().bytes_per_sec(),
         Duration::from_millis(delay_ms),
         Instant::now(),
     );
@@ -85,7 +85,7 @@ fn serial_only(app: &App, what: &str) -> Result<(), String> {
 /// The port's settings with `change`, for the loop to apply
 fn reconfigure(app: &App, change: impl FnOnce(&mut SerialConfig)) -> Result<Action, String> {
     serial_only(app, "line settings")?;
-    let mut config = app.serial_config.clone();
+    let mut config = app.link_config().clone();
     change(&mut config);
     Ok(Action::App(AppAction::Reconfigure(config)))
 }
@@ -141,7 +141,7 @@ pub fn rts(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     let [ArgValue::Bool(on)] = args else {
         unreachable!("rts takes on or off");
     };
-    if app.serial_config.flow_control == FlowControl::RtsCts {
+    if app.link_config().flow_control == FlowControl::RtsCts {
         return Err("hardware flow control drives RTS (flow none first)".to_string());
     }
     control(app, LineControl::Rts(*on))

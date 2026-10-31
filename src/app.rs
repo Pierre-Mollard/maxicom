@@ -30,7 +30,7 @@ use crate::{
         ScrollbarAction, SearchModeAction, SideViewAction, TerminalAction,
     },
     link::{
-        Address, LinkKind,
+        Address, LinkKind, LinkState,
         serial::{LineControl, SerialConfig},
     },
     notification::{NotificationManager, ToastLevel},
@@ -41,6 +41,7 @@ use crate::{
 };
 
 pub mod data_processing;
+pub mod device;
 pub mod line_mode;
 pub mod mash;
 pub mod raw_scroller;
@@ -107,7 +108,10 @@ enum ScrollbarHold {
 pub struct App {
     settings: SettingsConfig,
     pub key_resolver: KeyResolver,
-    pub serial_config: SerialConfig,
+    /// The link: its config, the device while open, the open running (MAX-168)
+    link: LinkState,
+    /// The missing device's popup waits for the restore question's answer (MAX-148)
+    disconnected_after_restore: bool,
     prefix_active: bool,
     overlay: Option<Overlay>,
     pub notifications: NotificationManager,
@@ -154,8 +158,6 @@ pub struct App {
     pub stats: Stats,
     /// The file `send-file` sends, a chunk per loop turn (MAX-12)
     transfer: Option<FileTransfer>,
-    /// The link is open, as the loop last said: the commands that need it refuse otherwise
-    link_open: bool,
     /// What a replay started while running set aside, to go back to (MAX-166)
     replaced_link: Option<Box<ReplacedLink>>,
     replay: ReplayState,
@@ -226,7 +228,8 @@ impl App {
             prefix_active: false,
             settings,
             key_resolver,
-            serial_config,
+            link: LinkState::new(serial_config),
+            disconnected_after_restore: false,
             overlay: None,
             notifications: NotificationManager::new(),
             viewport: ViewportSize::default(),
@@ -259,7 +262,6 @@ impl App {
                 sent_bytes: 0,
             },
             transfer: None,
-            link_open: false,
             replaced_link: None,
             replay: ReplayState::default(),
         };
@@ -420,13 +422,20 @@ impl App {
         self.commands_resume_at = None;
     }
 
-    /// Whether the link is open, which the loop sets before it runs a command (MAX-12)
-    pub fn set_link_open(&mut self, open: bool) {
-        self.link_open = open;
+    /// Whether the link is open: the commands that need it refuse otherwise (MAX-12)
+    pub fn is_link_open(&self) -> bool {
+        self.link.is_open()
     }
 
-    pub fn is_link_open(&self) -> bool {
-        self.link_open
+    /// The link's address and line settings (MAX-168)
+    pub fn link_config(&self) -> &SerialConfig {
+        self.link.config()
+    }
+
+    /// The link itself, for the other modules' tests to set its address (MAX-168)
+    #[cfg(test)]
+    pub fn link_mut(&mut self) -> &mut LinkState {
+        &mut self.link
     }
 
     /// A new session backup, for the port `open` switched to: the backups go by port (MAX-12)
@@ -436,14 +445,14 @@ impl App {
 
     /// What the current link can do, taken from its address (MAX-166)
     pub fn link_kind(&self) -> LinkKind {
-        self.serial_config.address.kind()
+        self.link.kind()
     }
 
     /// The line settings the status bar and the settings dialog show (MAX-166): a serial port's,
     /// a replayed serial session's from its meta; none for a TCP link nor a plain file
     pub fn line_settings(&self) -> Option<SessionLine> {
         match self.link_kind() {
-            LinkKind::Serial => Some(SessionLine::of(&self.serial_config)),
+            LinkKind::Serial => Some(SessionLine::of(self.link.config())),
             LinkKind::Tcp => None,
             LinkKind::Replay => self.recorded_line(),
         }
@@ -484,7 +493,7 @@ impl App {
         if self.link_kind().keeps_sessions() {
             self.recorder.pause_journal();
             self.replaced_link = Some(Box::new(ReplacedLink {
-                serial_config: self.serial_config.clone(),
+                serial_config: self.link.config().clone(),
                 mode: self.settings.mode,
                 encoding: self.settings.encoding,
                 line_mode,
@@ -492,7 +501,7 @@ impl App {
                 stats,
             }));
         }
-        self.serial_config.address = Address::Replay(path);
+        self.link.set_address(Address::Replay(path));
         self.settings.mode = Mode::Terminal;
         self.settings.encoding = session.map_or(live_encoding, |device| device.encoding);
         self.replay = ReplayState {
@@ -518,7 +527,7 @@ impl App {
             self.replay.ended = true;
             return false;
         };
-        self.serial_config = replaced.serial_config;
+        self.link.set_config(replaced.serial_config);
         self.settings.mode = replaced.mode;
         self.settings.encoding = replaced.encoding;
         self.line_mode = replaced.line_mode;
@@ -725,8 +734,8 @@ impl App {
                             self.terminal_mode.set_vt100_size(rows, cols);
                             UpdateEffect::None
                         }
+                        // the config changes once the port takes it (MAX-168)
                         OverlayResponse::ReconfigureSerial(new_cfg) => {
-                            self.serial_config = new_cfg.clone();
                             UpdateEffect::Reconfigure(new_cfg)
                         }
                         OverlayResponse::ReconnectSerial => UpdateEffect::ToggleAttachSerial,
@@ -1097,7 +1106,7 @@ impl App {
 
     /// What this session runs on, for its journal and to find a past one to restore
     fn session_device(&self) -> SessionDevice {
-        SessionDevice::new(&self.serial_config, self.settings.encoding)
+        SessionDevice::new(self.link.config(), self.settings.encoding)
     }
 
     /// Puts a past session in the history of both modes, before any live data (MAX-148): the
@@ -1912,8 +1921,20 @@ mod tests {
             KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap(),
             SerialConfig::default(),
         );
-        app.set_link_open(true);
+        set_link_open(&mut app, true);
         app
+    }
+
+    /// Opens or closes the app's link: a device that reads and writes nothing stands for an
+    /// open link
+    fn set_link_open(app: &mut App, open: bool) {
+        app.link.start(open.then(|| {
+            let path =
+                std::env::temp_dir().join(format!("maxicom_test_{}_open_link", std::process::id()));
+            std::fs::write(&path, b"").unwrap();
+            let replay = crate::link::replay::Replay::open(&path, Duration::ZERO).unwrap();
+            crate::link::ByteSource::Replay(replay)
+        }));
     }
 
     /// MAX-12: the command line runs its chain one action at a time, in order, each effect
@@ -1991,7 +2012,8 @@ mod tests {
         assert_eq!(last_error(&app), "send: nothing to send (2 more not run)");
         assert!(app.overlay().is_none());
 
-        app.serial_config.address = Address::parse("file:///tmp/capture.raw");
+        app.link
+            .set_address(Address::parse("file:///tmp/capture.raw"));
         let effects = run_line(&mut app, "help; send x");
         assert_eq!(effects.len(), 1);
         assert!(matches!(app.overlay(), Some(Overlay::Help(_))));
@@ -2056,7 +2078,8 @@ mod tests {
         assert!(effects(&mut app).is_empty());
 
         reload(&mut app);
-        app.serial_config.address = Address::parse("file:///tmp/capture.raw");
+        app.link
+            .set_address(Address::parse("file:///tmp/capture.raw"));
         app.feed_rx(uboot);
         assert!(effects(&mut app).is_empty());
     }
@@ -2210,12 +2233,13 @@ mod tests {
         run(&mut app, Instant::now());
         assert_eq!(last_toast(&app), "Mashing until '=> '");
         app.update(Action::App(AppAction::CancelCommands));
-        app.set_link_open(false);
+        set_link_open(&mut app, false);
         queue(&mut app, "mash ' ' '=> '");
         run(&mut app, Instant::now());
         assert!(last_toast(&app).starts_with("mash: the port isn't open"));
-        app.set_link_open(true);
-        app.serial_config.address = Address::parse("file:///tmp/capture.raw");
+        set_link_open(&mut app, true);
+        app.link
+            .set_address(Address::parse("file:///tmp/capture.raw"));
         queue(&mut app, "mash ' ' '=> '");
         run(&mut app, Instant::now());
         assert_eq!(last_toast(&app), "mash: a replay has no link to send to");
@@ -2283,8 +2307,8 @@ mod tests {
         use crate::link::serial::{CharSize, LineControl, SerialDevice, StopBits};
         let mut pty = Pty::open();
         let mut app = app();
-        app.serial_config.address = Address::Serial(pty.path.clone());
-        let mut device = SerialDevice::open(&pty.path, &app.serial_config).unwrap();
+        app.link.set_address(Address::Serial(pty.path.clone()));
+        let mut device = SerialDevice::open(&pty.path, app.link_config()).unwrap();
         // a pty has no modem lines
         assert!(device.control(LineControl::Dtr(true)).is_err());
         let mut run = |app: &mut App, line: &str| {
@@ -2294,7 +2318,7 @@ mod tests {
                 match app.update(action) {
                     UpdateEffect::Transmit(bytes) => device.write(&bytes).unwrap(),
                     UpdateEffect::Reconfigure(config) => match device.reconfigure(&config) {
-                        Ok(()) => app.serial_config = config,
+                        Ok(()) => app.link.set_config(config),
                         Err(_) => {
                             app.drop_pending_commands();
                         }
@@ -2317,13 +2341,13 @@ mod tests {
         let settings = run(&mut app, "baud 9600; framing 8N2");
         assert_eq!(settings.get_baud_rate().unwrap(), 9600);
         assert_eq!(settings.get_stop_bits().unwrap(), serial2::StopBits::Two);
-        assert_eq!(app.serial_config.baudrate, 9600);
-        assert_eq!(app.serial_config.stop_bits, StopBits::Two);
+        assert_eq!(app.link_config().baudrate, 9600);
+        assert_eq!(app.link_config().stop_bits, StopBits::Two);
 
         // a pty keeps 8 bits and no parity: the port refuses, the line stops there
         let settings = run(&mut app, "framing 7E1; send y");
         assert_eq!(settings.get_char_size().unwrap(), serial2::CharSize::Bits8);
-        assert_eq!(app.serial_config.char_size, CharSize::Bits8);
+        assert_eq!(app.link_config().char_size, CharSize::Bits8);
         assert!(pty.received(1, Duration::from_millis(50)).is_empty());
 
         run(&mut app, "dtr on; send x");
@@ -2352,8 +2376,8 @@ mod tests {
         use crate::link::serial::SerialDevice;
         let mut pty = Pty::open();
         let mut app = app();
-        app.serial_config.address = Address::Serial(pty.path.clone());
-        let mut device = SerialDevice::open(&pty.path, &app.serial_config).unwrap();
+        app.link.set_address(Address::Serial(pty.path.clone()));
+        let mut device = SerialDevice::open(&pty.path, app.link_config()).unwrap();
         // a turn of the main loop: what came in, the mash's step, the line's next commands
         let mut turn = |app: &mut App| {
             let mut buf = [0; 256];
@@ -2423,7 +2447,11 @@ mod tests {
     #[test]
     fn command_line_send_file() {
         let mut app = app();
-        app.serial_config.baudrate = 9600;
+        let config = SerialConfig {
+            baudrate: 9600,
+            ..app.link_config().clone()
+        };
+        app.link.set_config(config);
         let path =
             std::env::temp_dir().join(format!("maxicom_test_{}_send.txt", std::process::id()));
         std::fs::write(&path, [b'x'; 300]).unwrap();
@@ -2493,7 +2521,8 @@ mod tests {
             last_toast(&app)
         );
 
-        app.serial_config.address = Address::parse("file:///tmp/capture.raw");
+        app.link
+            .set_address(Address::parse("file:///tmp/capture.raw"));
         run_line(&mut app, &format!("send-file {file}"));
         assert_eq!(
             last_toast(&app),
@@ -2518,7 +2547,7 @@ mod tests {
             let mut controls = Vec::new();
             while let Some(action) = app.next_command_action(Instant::now()) {
                 match app.update(action) {
-                    UpdateEffect::Reconfigure(config) => app.serial_config = config,
+                    UpdateEffect::Reconfigure(config) => app.link.set_config(config),
                     UpdateEffect::LineControl(control) => controls.push(control),
                     _ => {}
                 }
@@ -2535,7 +2564,7 @@ mod tests {
         };
 
         run_line(&mut app, "baud 9600; framing 7e2; flow hw");
-        let config = &app.serial_config;
+        let config = app.link_config();
         assert_eq!(config.baudrate, 9600);
         assert_eq!(
             (config.char_size, config.parity, config.stop_bits),
@@ -2561,7 +2590,7 @@ mod tests {
         run_line(&mut app, "framing 9x1");
         assert!(last_error(&app).starts_with("framing: '9x1' isn't a framing"));
 
-        app.serial_config.address = Address::parse("tcp://localhost:4000");
+        app.link.set_address(Address::parse("tcp://localhost:4000"));
         run_line(&mut app, "baud 115200");
         assert_eq!(
             last_error(&app),
@@ -2572,7 +2601,8 @@ mod tests {
             last_error(&app),
             "dtr: a TCP link has no control lines, its bridge sets them (1 more not run)"
         );
-        app.serial_config.address = Address::parse("file:///tmp/capture.raw");
+        app.link
+            .set_address(Address::parse("file:///tmp/capture.raw"));
         run_line(&mut app, "break");
         assert_eq!(last_error(&app), "break: a replay has no control lines");
         assert!(run_line(&mut app, "dtr on; rts on").is_empty());
@@ -2582,7 +2612,7 @@ mod tests {
         );
         run_line(&mut app, "baud 115200");
         assert_eq!(last_error(&app), "baud: a replay has no line settings");
-        assert_eq!(app.serial_config.baudrate, 9600);
+        assert_eq!(app.link_config().baudrate, 9600);
     }
 
     /// MAX-12: `sleep` pauses the rest of the chain, which goes on once its time is up; the
@@ -2748,15 +2778,15 @@ mod tests {
             matches!(app.update(open), UpdateEffect::Open(address) if address == Address::parse("/dev/ttyUSB9"))
         );
         // the loop: the link closed, the line waiting for the open
-        app.set_link_open(false);
+        set_link_open(&mut app, false);
         app.pause_commands(now + Duration::from_secs(6));
         assert!(app.next_command_action(now).is_none());
-        app.set_link_open(true);
+        set_link_open(&mut app, true);
         app.resume_commands();
         let send = app.next_command_action(now).unwrap();
         assert!(matches!(app.update(send), UpdateEffect::Transmit(x) if x == b"x"));
 
-        app.set_link_open(false);
+        set_link_open(&mut app, false);
         queue_line(&mut app, "send y; help");
         assert!(app.next_command_action(now).is_none());
         assert_eq!(
@@ -2773,14 +2803,15 @@ mod tests {
         queue_line(&mut app, "baud 9600");
         assert!(app.next_command_action(now).is_some());
 
-        app.set_link_open(true);
+        set_link_open(&mut app, true);
         queue_line(&mut app, "open file:///tmp/x.raw");
         let open = app.next_command_action(now).unwrap();
         assert!(
             matches!(app.update(open), UpdateEffect::Replay { path, delay, session: None }
             if path == Path::new("/tmp/x.raw") && delay.is_zero())
         );
-        app.serial_config.address = Address::parse("file:///tmp/capture.raw");
+        app.link
+            .set_address(Address::parse("file:///tmp/capture.raw"));
         queue_line(&mut app, "open /dev/ttyUSB0");
         assert!(app.next_command_action(now).is_none());
         assert_eq!(
@@ -2823,7 +2854,7 @@ mod tests {
         let detach = Action::App(AppAction::DetachSerial);
         assert!(matches!(app.update(detach), UpdateEffect::StopReplay));
         app.stop_replay();
-        app.serial_config.address = Address::parse("file:///tmp/x.raw");
+        app.link.set_address(Address::parse("file:///tmp/x.raw"));
         let detach = Action::App(AppAction::DetachSerial);
         assert!(matches!(
             app.update(detach),
@@ -3263,7 +3294,7 @@ mod tests {
 
         app.start_replay(PathBuf::from("/tmp/a.raw"), None);
         assert_eq!(
-            app.serial_config.address,
+            app.link_config().address,
             Address::parse("file:///tmp/a.raw")
         );
         assert_eq!(app.settings().mode, Mode::Terminal);
@@ -3276,7 +3307,7 @@ mod tests {
         assert!(texts(&app).is_empty());
 
         assert!(app.stop_replay());
-        assert_eq!(app.serial_config.address, Address::parse("/dev/ttyUSB0"));
+        assert_eq!(app.link_config().address, Address::parse("/dev/ttyUSB0"));
         assert_eq!(app.settings().mode, Mode::Line);
         assert_eq!(texts(&app), ["live"]);
         assert!(app.terminal_mode.vt100_screen().contents().contains("live"));
@@ -3293,7 +3324,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
 
         let mut app = self::app();
-        app.serial_config.address = Address::parse("file:///tmp/a.raw");
+        app.link.set_address(Address::parse("file:///tmp/a.raw"));
         app.end_replay();
         app.start_replay(PathBuf::from("/tmp/b.raw"), None);
         assert!(!app.is_replay_ended());
@@ -3319,7 +3350,7 @@ mod tests {
         });
         assert_eq!(
             app.line_settings(),
-            Some(SessionLine::of(&app.serial_config))
+            Some(SessionLine::of(app.link_config()))
         );
         assert_eq!(app.recorded_line(), None);
 
@@ -3339,7 +3370,8 @@ mod tests {
         app.start_replay(PathBuf::from("/tmp/t.raw"), Some(&tcp));
         assert_eq!(app.line_settings(), None);
         assert!(app.stop_replay());
-        app.serial_config.address = Address::parse("tcp://192.168.1.50:4000");
+        app.link
+            .set_address(Address::parse("tcp://192.168.1.50:4000"));
         assert_eq!(app.line_settings(), None);
     }
 

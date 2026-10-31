@@ -513,7 +513,7 @@ impl Var {
                 let _ = write!(out, "{value}");
             }
             None if compact && self == Self::Port => {
-                out.push_str(&app.serial_config.address.tag());
+                out.push_str(&app.link_config().address.tag());
             }
             // the first name, then how many more
             None if compact && self == Self::TriggerNames => {
@@ -546,7 +546,7 @@ impl Var {
                     Mode::Line => "LINE",
                 }
             ),
-            Self::Port => write!(out, "{}", app.serial_config.address.label()),
+            Self::Port => write!(out, "{}", app.link_config().address.label()),
             // a port's, or a replayed session's from its meta (MAX-166)
             Self::Framing if let Some(line) = app.line_settings() => {
                 write!(out, "{}", line.framing())
@@ -1388,7 +1388,8 @@ mod tests {
     #[test]
     fn tcp_link_has_no_baud_nor_framing() {
         let mut a = app(Mode::Terminal);
-        a.serial_config.address = Address::parse("tcp://192.168.1.50:4000");
+        a.link_mut()
+            .set_address(Address::parse("tcp://192.168.1.50:4000"));
         let d = StatusBarConfig::default();
         assert_eq!(
             render(&d.left, &a),
@@ -1413,7 +1414,8 @@ mod tests {
     #[test]
     fn replay_shows_its_file_and_state() {
         let mut a = app(Mode::Terminal);
-        a.serial_config.address = Address::parse("file:///tmp/logs/boot.raw");
+        a.link_mut()
+            .set_address(Address::parse("file:///tmp/logs/boot.raw"));
         let d = StatusBarConfig::default();
         assert_eq!(
             render(&d.left, &a),
@@ -1696,7 +1698,7 @@ mod tests {
     #[test]
     fn variable_value_is_not_markup() {
         let mut a = app(Mode::Terminal);
-        a.serial_config.address = Address::parse("[x](bold)");
+        a.link_mut().set_address(Address::parse("[x](bold)"));
         assert_eq!(render("port {port}", &a), [plain("port [x](bold)")]);
     }
 
@@ -1768,7 +1770,7 @@ mod tests {
     fn variables_imply_clicks() {
         use KeyBindingAction::{Help, SKInputMode, SerialSettings};
         let mut a = app(Mode::Terminal);
-        a.serial_config.address = Address::parse("/dev/x");
+        a.link_mut().set_address(Address::parse("/dev/x"));
         let run = ClickAction::Run;
         assert_eq!(clicks("[ {mode} ](bold)", &a), [(0, 6, run(SKInputMode))]);
         assert_eq!(clicks("[{mode}](click=help)", &a), [(0, 4, run(Help))]);
@@ -1776,7 +1778,7 @@ mod tests {
             clicks("[{mode}](click=nope)", &a),
             [(0, 4, run(SKInputMode))]
         );
-        let baud = a.serial_config.baudrate.to_string().len() as u16;
+        let baud = a.link_config().baudrate.to_string().len() as u16;
         assert_eq!(
             clicks("port {port} | {baud} {rx_bytes}", &a),
             [(14, baud, run(SerialSettings))]

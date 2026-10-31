@@ -8,7 +8,7 @@ use crate::{
     commands::Invocation,
     configs::{KeyBindingAction, keybindings::KeyBindingDialogAction},
     inputs::DialogAction,
-    link::{Address, serial::SerialConfig},
+    link::serial::SerialConfig,
 };
 
 // Re-exports
@@ -38,8 +38,8 @@ pub enum Overlay {
     SerialSettings(SerialConfigDialog),
     FilePath(FilePathDialog),
     Screenshot(ScreenshotDialog),
-    DeviceDisconnected(Address),
-    DeviceDetached(Address),
+    DeviceDisconnected,
+    DeviceDetached,
     Error(ErrorDialog),
     ConfirmQuit,
     ActionMenu(ActionMenu),
@@ -138,9 +138,7 @@ impl Overlay {
     pub fn closes_on_click_outside(&self) -> bool {
         !matches!(
             self,
-            Overlay::DeviceDisconnected(_)
-                | Overlay::DeviceDetached(_)
-                | Overlay::RestoreSession(_)
+            Overlay::DeviceDisconnected | Overlay::DeviceDetached | Overlay::RestoreSession(_)
         )
     }
 
@@ -179,11 +177,11 @@ impl Overlay {
                 },
                 _ => OverlayResponse::Handled,
             },
-            Overlay::DeviceDisconnected(_) => match action {
+            Overlay::DeviceDisconnected => match action {
                 DialogAction::Close | DialogAction::Confirm => OverlayResponse::Quit,
                 _ => OverlayResponse::Handled,
             },
-            Overlay::DeviceDetached(_) => match action {
+            Overlay::DeviceDetached => match action {
                 DialogAction::Confirm => OverlayResponse::ReconnectSerial,
                 DialogAction::Close => OverlayResponse::Quit,
                 _ => OverlayResponse::Handled,

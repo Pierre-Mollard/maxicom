@@ -15,6 +15,7 @@
 pub mod address;
 pub mod replay;
 pub mod serial;
+pub mod state;
 pub mod tcp;
 
 use std::{
@@ -27,6 +28,7 @@ use std::{
 pub use address::Address;
 use replay::Replay;
 use serial::{LineControl, SerialConfig, SerialDevice, SerialError};
+pub use state::{LinkState, OpenFor, Reconfigured};
 use tcp::TcpDevice;
 
 /// A TCP connect gives up after this. Off the loop, except at start before the UI
