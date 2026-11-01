@@ -19,8 +19,19 @@ pub struct RxLineSplitter {
 
 impl RxLineSplitter {
     pub fn push(&mut self, byte: u8, rx_eol_mode: RxNewlineMode, now: DateTime<Local>) -> bool {
+        self.push_at(byte, rx_eol_mode, Some(now))
+    }
+
+    /// `push` for bytes received at `time`, none when it isn't known (a restored session's
+    /// bytes without their times, MAX-175)
+    pub fn push_at(
+        &mut self,
+        byte: u8,
+        rx_eol_mode: RxNewlineMode,
+        time: Option<DateTime<Local>>,
+    ) -> bool {
         if self.line.is_empty() {
-            self.timestamp = Some(now);
+            self.timestamp = time;
         }
 
         match byte {
@@ -42,7 +53,7 @@ impl RxLineSplitter {
                 if self.pending_carriage_return {
                     self.pending_carriage_return = false;
                     self.line.clear();
-                    self.timestamp = Some(now);
+                    self.timestamp = time;
                 }
                 self.line.push(byte);
             }
@@ -103,13 +114,13 @@ impl LogEntry {
         }
     }
 
-    /// A line decoded from the bytes received
-    pub fn received(text: String, wire: &[u8], timestamp: DateTime<Local>) -> Self {
+    /// A line decoded from the bytes received, at `timestamp` when it is known
+    pub fn received(text: String, wire: &[u8], timestamp: Option<DateTime<Local>>) -> Self {
         let wire = (wire != text.as_bytes()).then(|| wire.into());
         Self {
             text,
             wire,
-            timestamp: Some(timestamp),
+            timestamp,
         }
     }
 
@@ -502,7 +513,7 @@ mod tests {
     use crate::configs::TextEncoding;
 
     fn received(encoding: TextEncoding, wire: &[u8]) -> LogEntry {
-        LogEntry::received(encoding.decode(wire), wire, Local::now())
+        LogEntry::received(encoding.decode(wire), wire, Some(Local::now()))
     }
 
     /// Wire bytes are only stored when they differ from the text's UTF-8, and `wire_bytes`

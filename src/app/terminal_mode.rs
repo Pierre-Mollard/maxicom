@@ -18,7 +18,7 @@ use crate::{
         selection::{CopyActionResult, CopyModeState, Reveal, TextSource},
         term_answers::Answer,
     },
-    capture::Screenshot,
+    capture::{Screenshot, TimedChunk},
     configs::{SettingsConfig, TerminalDimensionMode, TextEncoding, settings::RawSideView},
     inputs::{
         CopyModeAction, SearchModeAction, SideViewAction, TerminalAction, ViPending,
@@ -92,6 +92,17 @@ impl TerminalMode {
     }
 
     pub fn process_rx(&mut self, encoding: TextEncoding, raw_bytes: &[u8]) {
+        self.process_rx_at(encoding, raw_bytes, Some(Local::now()));
+    }
+
+    /// `process_rx` for bytes received at `time`, none when it isn't known: the rows the cursor
+    /// goes through get no time then (MAX-175)
+    fn process_rx_at(
+        &mut self,
+        encoding: TextEncoding,
+        raw_bytes: &[u8],
+        time: Option<DateTime<Local>>,
+    ) {
         self.scroller.on_rx_received();
         self.search_text = None;
 
@@ -143,12 +154,14 @@ impl TerminalMode {
         }
 
         // every row the cursor went through gets this chunk's time, if it has none yet
-        let now = Local::now();
+        let Some(time) = time else {
+            return;
+        };
         let last_slot = self.row_timestamps.len().saturating_sub(1);
         let first = stamp_from.min(cursor_row).min(last_slot);
         let last = stamp_from.max(cursor_row).min(last_slot);
         for slot in self.row_timestamps.range_mut(first..=last) {
-            slot.get_or_insert(now);
+            slot.get_or_insert(time);
         }
     }
 
@@ -886,17 +899,19 @@ impl TerminalMode {
         self.raw_scroller.max_pan_x
     }
 
-    /// Replays a past session's raw bytes, then resets the modes it may have left set (the
-    /// alternate screen, application cursor keys, mouse reports, bracketed paste, a scroll
-    /// region, a hidden cursor, colors) so the keys and the mouse work. Then, like a `clear`,
-    /// the screen goes up into the scrollback and `separator` is written dimmed on the top row,
-    /// the cursor under it (MAX-176). The rows restored have no time: the raw bytes have none
-    /// (MAX-148)
-    pub fn restore(&mut self, encoding: TextEncoding, raw: &[u8], separator: &str) {
-        self.process_rx(encoding, raw);
+    /// Replays a past session's received chunks, each row at the time of the chunk that reached
+    /// it when known (MAX-175), then resets the modes they may have left set (the alternate
+    /// screen, application cursor keys, mouse reports, bracketed paste, a scroll region, a
+    /// hidden cursor, colors) so the keys and the mouse work. Then, like a `clear`, the screen
+    /// goes up into the scrollback and `separator` is written dimmed on the top row, the cursor
+    /// under it (MAX-176)
+    pub fn restore(&mut self, encoding: TextEncoding, chunks: &[TimedChunk], separator: &str) {
+        for chunk in chunks {
+            self.process_rx_at(encoding, chunk.bytes, chunk.time);
+        }
         // leaving it restores a saved cursor, so only when the session is in it
         if self.vt100_parser.screen().alternate_screen() {
-            self.process_rx(TextEncoding::Utf8, b"\x1b[?1049l");
+            self.process_rx_at(TextEncoding::Utf8, b"\x1b[?1049l", None);
         }
         let (row, col) = self.vt100_parser.screen().cursor_position();
         let mut reset = String::from(RESTORE_RESET);
@@ -905,7 +920,7 @@ impl TerminalMode {
         if col > 0 {
             reset.push_str("\r\n");
         }
-        self.process_rx(TextEncoding::Utf8, reset.as_bytes());
+        self.process_rx_at(TextEncoding::Utf8, reset.as_bytes(), None);
 
         // the rows up to the cursor's and the last one with text go into the scrollback, line
         // feeds on the bottom row pushing them up
@@ -920,10 +935,9 @@ impl TerminalMode {
         end.push_str("\x1b[1;1H\x1b[2m");
         end.push_str(separator);
         end.push_str("\x1b[0m\r\n");
-        self.process_rx(TextEncoding::Utf8, end.as_bytes());
+        self.process_rx_at(TextEncoding::Utf8, end.as_bytes(), None);
         // on the top row: its world row is the first after the scrollback
         self.restored_separator = Some(self.max_content_scrollback);
-        self.row_timestamps.iter_mut().for_each(|time| *time = None);
         // the queries of a past session are not answered (MAX-151)
         self.take_answers();
     }
@@ -1176,6 +1190,11 @@ mod tests {
     //! Bytes sent in terminal mode: typed keys (#31) and bracketed paste (#28).
 
     use super::*;
+
+    /// Bytes restored without their times
+    fn untimed(bytes: &[u8]) -> [TimedChunk<'_>; 1] {
+        [TimedChunk { bytes, time: None }]
+    }
     use crossterm::event::{KeyCode, KeyModifiers};
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -1654,7 +1673,7 @@ mod tests {
         let mut tm = TerminalMode::new(100, 24, 80);
         let raw =
             b"before\r\nkept\r\n\x1b[?1049h\x1b[?1h\x1b[?1000h\x1b[?2004h\x1b[?25l\x1b[5;10rvim";
-        tm.restore(TextEncoding::Utf8, raw, "-- restored --");
+        tm.restore(TextEncoding::Utf8, &untimed(raw), "-- restored --");
         let screen = tm.vt100_screen();
         assert!(!screen.alternate_screen());
         assert!(!screen.application_cursor());
@@ -1685,7 +1704,7 @@ mod tests {
 
         // a session that ended mid-line: the separator goes on the next one
         let mut tm = TerminalMode::new(100, 24, 80);
-        tm.restore(TextEncoding::Utf8, b"abc", "-- restored --");
+        tm.restore(TextEncoding::Utf8, &untimed(b"abc"), "-- restored --");
         let lines = tm.all_text_lines();
         let separator = lines.iter().position(|l| l == "-- restored --").unwrap();
         assert_eq!(lines[separator - 1], "abc", "{lines:?}");
@@ -1695,7 +1714,7 @@ mod tests {
         let mut tm = TerminalMode::new(100, 24, 80);
         tm.restore(
             TextEncoding::Utf8,
-            b"top\x1b[10;1Hstatus\x1b[2;1H",
+            &untimed(b"top\x1b[10;1Hstatus\x1b[2;1H"),
             "-- restored --",
         );
         let screen = tm.vt100_screen();
@@ -1738,7 +1757,11 @@ mod tests {
         let raw: String = (0..30).map(|i| format!("line {i:02}\r\n")).collect();
         for live in [None, Some("live")] {
             let mut tm = TerminalMode::new(100, 24, 80);
-            tm.restore(TextEncoding::Utf8, raw.as_bytes(), "-- restored --");
+            tm.restore(
+                TextEncoding::Utf8,
+                &untimed(raw.as_bytes()),
+                "-- restored --",
+            );
             if let Some(live) = live {
                 tm.process_rx(TextEncoding::Utf8, format!("{live}\r\n").as_bytes());
             }

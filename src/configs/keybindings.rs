@@ -33,9 +33,7 @@ pub enum KeyBindingAction {
     SKDisplayRaw,
     Help,
     Settings,
-    ToggleLogging,
-    RecordText,
-    RecordRaw,
+    Record,
     ResizeDialog,
     AutoResizeRemote,
     AutoResizeRemoteLine,
@@ -962,7 +960,7 @@ impl Default for KeyBindingsConfig {
             "z"     => KeyBindingAction::Help,
             "?"     => KeyBindingAction::Help,
             "s"     => KeyBindingAction::Settings,
-            "l"     => KeyBindingAction::ToggleLogging,
+            "l"     => KeyBindingAction::Record,
             "r"     => KeyBindingAction::ReloadConfig,
             "w"     => KeyBindingAction::ResizeDialog,
             "t"     => KeyBindingAction::AutoResizeEmulator,
@@ -1343,7 +1341,7 @@ mod tests {
     /// between words: the old `_` names are refused
     #[test]
     fn action_names() {
-        const NAMES: [(&str, KeyBindingAction); 45] = [
+        const NAMES: [(&str, KeyBindingAction); 43] = [
             ("quit", KeyBindingAction::Quit),
             ("toggle-input-mode", KeyBindingAction::SKInputMode),
             ("toggle-local-echo", KeyBindingAction::SKLocalEcho),
@@ -1360,9 +1358,7 @@ mod tests {
             ("screenshot-text", KeyBindingAction::ScreenshotTxt),
             ("help", KeyBindingAction::Help),
             ("settings", KeyBindingAction::Settings),
-            ("toggle-logging", KeyBindingAction::ToggleLogging),
-            ("record-text", KeyBindingAction::RecordText),
-            ("record-raw", KeyBindingAction::RecordRaw),
+            ("record", KeyBindingAction::Record),
             ("resize-dialog", KeyBindingAction::ResizeDialog),
             ("auto-resize-remote", KeyBindingAction::AutoResizeRemote),
             (

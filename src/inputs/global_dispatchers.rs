@@ -1,7 +1,7 @@
 /// Converts Keybinding config action to a real action within contexts (mostly no context needed)
 use crate::{
     app::App,
-    capture::{ScreenshotFormat, Stream},
+    capture::ScreenshotFormat,
     configs::{
         AppConfig, KeyBindingAction, KeyBindingCopyAction, KeyBindingLineAction,
         KeyBindingSearchAction, KeyBindingTerminalAction, keybindings::KeyBindingDialogAction,
@@ -51,9 +51,7 @@ impl KeyBindingAction {
             KeyBindingAction::Settings => Action::App(AppAction::OpenOverlay(Overlay::Settings(
                 SettingsDialog::new(),
             ))),
-            KeyBindingAction::ToggleLogging => Action::App(AppAction::ToggleLogging),
-            KeyBindingAction::RecordText => Action::App(AppAction::ToggleRecording(Stream::Text)),
-            KeyBindingAction::RecordRaw => Action::App(AppAction::ToggleRecording(Stream::Raw)),
+            KeyBindingAction::Record => Action::App(AppAction::ToggleRecording),
             KeyBindingAction::ResizeDialog => {
                 let (r, c) = app.terminal_mode.get_vt100_size();
                 Action::App(AppAction::OpenOverlay(Overlay::TerminalSize(

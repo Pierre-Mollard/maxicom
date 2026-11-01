@@ -7,9 +7,9 @@ use super::App;
 use crate::{
     app::types::LogEntry,
     capture::{
-        CaptureSource, RESTORE_RAW_TAIL, Session, SessionDevice, SessionReader, SessionText,
-        SessionWriter, Stream, expand_home, find_last_session, read_tail_bytes, read_tail_lines,
-        restore_separator,
+        CaptureSource, RESTORE_RAW_TAIL, Session, SessionDevice, SessionText, SessionWriter,
+        Stream, expand_home, find_last_session, read_tail_bytes, read_times, restore_separator,
+        timed_chunks,
     },
     configs::{Mode, settings::RestoreMode},
     overlays::{ErrorDialog, FilePathDialog, Overlay, SessionBrowser},
@@ -24,18 +24,12 @@ impl App {
     pub fn start_session(&mut self, dir: Option<PathBuf>) {
         // the browser lists the past sessions even with the backup off
         self.sessions_dir.clone_from(&dir);
-        let (capture, sessions) = (&self.settings.capture, &self.settings.sessions);
+        let sessions = &self.settings.sessions;
         if !sessions.enabled {
             return;
         }
         let device = self.session_device();
-        // the session's text is written as the capture settings say now, reloads aside
-        let text = SessionText {
-            timestamp: capture
-                .timestamp
-                .then(|| self.settings.timestamp_format.clone()),
-            tx_mark: capture.record_tx.then(|| capture.tx_mark.clone()),
-        };
+        let text = self.session_text();
         let result = match dir {
             Some(dir) => self
                 .recorder
@@ -65,23 +59,25 @@ impl App {
     }
 
     /// The captures follow the device, so their meta stays true (MAX-173): a new session backup
-    /// when the line settings or the encoding changed since it started; when its source
-    /// changed (another address too), the raw recording stops, the text recording gets a
+    /// when the line settings or the encoding changed since it started; when the recording's
+    /// source changed (another address too), a full recording stops, a text recording gets a
     /// marker line. The session's address is `opened`'s: a new port gets its session once it
     /// is open. Run before the received bytes are recorded, and on each tick for a change with
     /// nothing received after it
     pub fn follow_device(&mut self) {
-        let changed = |app: &App, stream| {
-            (app.recorder.source(stream)).is_some_and(|source| !app.is_current_source(source))
-        };
-        if changed(self, Stream::Raw) {
-            self.recorder.stop(Stream::Raw);
-            self.notify_warn("Raw recording stopped: the device changed");
-        }
-        if changed(self, Stream::Text) {
-            let source = self.capture_source();
-            let marker = source.marker(self.settings.encoding);
-            self.recorder.mark_device(&marker, source);
+        let changed =
+            (self.recorder.source()).is_some_and(|source| !self.is_current_source(source));
+        match self.recorder.recording().filter(|_| changed) {
+            Some(Stream::Full) => {
+                self.recorder.stop();
+                self.notify_warn("Full recording stopped: the device changed");
+            }
+            Some(Stream::Text) => {
+                let source = self.capture_source();
+                let marker = source.marker(self.settings.encoding);
+                self.recorder.mark_device(&marker, source);
+            }
+            None => {}
         }
 
         let config = self.link.config();
@@ -117,6 +113,18 @@ impl App {
             !self.link_kind().keeps_sessions() || device.same_setup(config, self.settings.encoding)
         };
         source.address == config.address && source.device.as_ref().is_none_or(same_setup)
+    }
+
+    /// How a session's or a full recording's text is written: as the capture settings say when
+    /// it starts, reloads aside
+    fn session_text(&self) -> SessionText {
+        let capture = &self.settings.capture;
+        SessionText {
+            timestamp: capture
+                .timestamp
+                .then(|| self.settings.timestamp_format.clone()),
+            tx_mark: capture.record_tx.then(|| capture.tx_mark.clone()),
+        }
     }
 
     /// What this session runs on, for its backup and to find a past one to restore
@@ -192,78 +200,65 @@ impl App {
     }
 
     /// Puts a past session in the history of both modes, before any live data (MAX-148): the
-    /// last lines of its text in line mode, read back with their times and marks, the end of
-    /// its raw bytes through the terminal, then a separator where the live data starts. A
-    /// session is its raw bytes and its meta; its text is a bonus: without it, line mode gets
-    /// the separator alone (MAX-172). Not recorded nor counted: the new session starts empty
+    /// end of its raw bytes, cut into lines in line mode as they were live (MAX-175) and
+    /// through the terminal, then a separator where the live data starts. A session is its raw
+    /// bytes and its meta; its text is for people to read, never read back (MAX-172). Not
+    /// recorded nor counted: the new session starts empty
     pub fn restore_session(&mut self, session: &Session) -> std::io::Result<()> {
         // a session from `find_last_session` has both
-        let (Some(raw_path), Some(meta), Some(started)) =
-            (session.raw_path(), &session.meta, session.started)
-        else {
+        let (Some(raw_path), Some(_)) = (session.raw_path(), &session.meta) else {
             return Err(std::io::Error::other("not a complete session"));
         };
-        let text = match session.text_path() {
-            Some(path) => read_tail_lines(path, self.settings.line_mode.history_size)?,
-            None => Vec::new(),
-        };
-        let raw = read_tail_bytes(raw_path, RESTORE_RAW_TAIL)?;
+        let (start, raw) = read_tail_bytes(raw_path, RESTORE_RAW_TAIL)?;
+        // without its times (a session before MAX-175, a crash), the lines have none
+        let times = (session.times_path())
+            .and_then(|path| read_times(path, start).ok())
+            .unwrap_or_default();
+        let chunks = timed_chunks(start, &raw, &times);
         let separator = restore_separator(session);
 
-        let text = String::from_utf8_lossy(&text);
-        let mut reader = SessionReader::new(&meta.text, started);
-        let lines = text.lines().map(|line| {
-            let line = reader.parse(line);
-            LogEntry::restored(line.text.to_string(), line.time)
-        });
-        self.line_mode.restore_entries(lines);
+        let (rx_eol, encoding) = (self.settings.line_mode.rx_eol, self.settings.encoding);
+        self.line_mode.restore_rx(rx_eol, encoding, &chunks);
         // like a `clear`, the separator on the top row (MAX-176)
         self.line_mode.clear_view();
         let separator_line = LogEntry::restored(separator.clone(), None);
         self.line_mode.restore_entries([separator_line]);
-        self.terminal_mode
-            .restore(self.settings.encoding, &raw, &separator);
+        self.terminal_mode.restore(encoding, &chunks, &separator);
         Ok(())
     }
 
-    /// Stops every recording, or opens the recording dialog on the mode's stream when none is on
-    pub fn toggle_logging(&mut self) {
-        if self.recorder.is_any_active() {
-            self.recorder.stop(Stream::Text);
-            self.recorder.stop(Stream::Raw);
-            self.notify_info("Recording stopped");
-        } else {
-            self.open_capture_dialog(self.mode_stream());
+    /// Stops the recording, or opens the recording dialog on the mode's stream when none runs
+    /// (MAX-175: one recording at a time, the dialog picks text or full)
+    pub fn toggle_recording(&mut self) {
+        match self.recorder.recording() {
+            Some(stream) => {
+                self.recorder.stop();
+                self.notify_info(format!("Stopped recording {}", stream.as_str()));
+            }
+            None => self.open_capture_dialog(self.mode_stream()),
         }
     }
 
-    pub fn toggle_recording(&mut self, stream: Stream) {
-        if self.recorder.is_active(stream) {
-            self.recorder.stop(stream);
-            self.notify_info(format!("Stopped recording {}", stream.as_str()));
-        } else {
-            self.open_capture_dialog(stream);
-        }
-    }
-
-    /// The dialog on `stream`, each stream's path made from `[capture]` now
+    /// The dialog on `stream`, the name made from `[capture]` now
     fn open_capture_dialog(&mut self, stream: Stream) {
         let capture = &self.settings.capture;
-        let path = |name| capture.path_for(name).to_string_lossy().into_owned();
-        let mut dialog =
-            FilePathDialog::new(stream, path(&capture.text_name), path(&capture.raw_name));
+        let path = capture
+            .path_for(&capture.name)
+            .to_string_lossy()
+            .into_owned();
+        let mut dialog = FilePathDialog::new(stream, path);
         if self.recorder.has_session() {
             dialog = dialog.with_session_backup();
         }
         self.open_overlay(Overlay::FilePath(dialog));
     }
 
-    /// The stream the recording toggle starts in each mode: text in line mode, raw in terminal
+    /// The stream the recording dialog starts on in each mode: text in line mode, full in terminal
     /// mode
     fn mode_stream(&self) -> Stream {
         match self.settings.mode {
             Mode::Line => Stream::Text,
-            Mode::Terminal => Stream::Raw,
+            Mode::Terminal => Stream::Full,
         }
     }
 
@@ -284,14 +279,26 @@ impl App {
             .record_tx(settings.encoding, timestamp_format, mark, bytes);
     }
 
-    /// Starts recording `stream` to `path`, as the recording dialog asked. A raw recording gets
-    /// a meta file when its device is known, so its replay decodes and shows its line settings
-    /// as a session's does: the live link's, or while replaying the replayed session's (a plain
-    /// file's isn't). A failure opens the error popup
+    /// Starts recording `stream` under the name `path`, as the recording dialog asked
+    /// (MAX-175): text to `<path>.log`, a full recording to the folder `<path>`. A full one
+    /// gets a meta file when its device is known, so its replay decodes and shows its line
+    /// settings as a session's does: the live link's, or while replaying the replayed
+    /// session's (a plain file's isn't). A failure opens the error popup
     pub fn start_capture(&mut self, path: &Path, stream: Stream, include_session: bool) {
         let path = expand_home(path);
         let source = self.capture_source();
-        match self.recorder.start(stream, path, include_session, source) {
+        let result = match stream {
+            Stream::Text => {
+                let mut file = path.into_os_string();
+                file.push(".log");
+                (self.recorder).start_text(Path::new(&file), include_session, source)
+            }
+            Stream::Full => {
+                let text = self.session_text();
+                (self.recorder).start_full(&path, include_session, source, &text)
+            }
+        };
+        match result {
             Ok(_) => {
                 self.notify_success(format!("Started recording {}", stream.as_str()));
             }
@@ -333,7 +340,7 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        app::tests::{app, record_raw_meta, set_line, texts, toasts},
+        app::tests::{app, record_full_meta, set_line, texts, toasts},
         capture::SessionMeta,
         configs::DualBufferMode,
         inputs::{Action, AppAction, DialogAction},
@@ -353,11 +360,11 @@ pub mod tests {
             std::env::temp_dir().join(format!("maxicom_test_{}_app_text.log", std::process::id()));
         let _ = std::fs::remove_file(&path);
         app.recorder
-            .start(Stream::Text, path.clone(), false, app.capture_source())
+            .start_text(&path, false, app.capture_source())
             .unwrap();
 
         app.feed_rx(b"seen\r\n");
-        app.recorder.stop(Stream::Text);
+        app.recorder.stop();
         assert!(app.line_mode.history().is_empty());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "seen\n");
         let _ = std::fs::remove_file(&path);
@@ -375,7 +382,7 @@ pub mod tests {
             std::env::temp_dir().join(format!("maxicom_test_{}_app_tx.log", std::process::id()));
         let _ = std::fs::remove_file(&path);
         app.recorder
-            .start(Stream::Text, path.clone(), false, app.capture_source())
+            .start_text(&path, false, app.capture_source())
             .unwrap();
 
         app.settings.mode = Mode::Line;
@@ -390,7 +397,7 @@ pub mod tests {
         app.record_tx(b"marked\r\n");
         app.settings.capture.tx_mark = String::new();
         app.record_tx(b"bare\r\n");
-        app.recorder.stop(Stream::Text);
+        app.recorder.stop();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "> line\nTX: marked\nbare\n"
@@ -398,13 +405,13 @@ pub mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    /// MAX-147: each stream's action opens the dialog on it or stops it alone; the
-    /// `toggle-logging` action (the `REC` click) stops both, and `REC` is on with either.
-    /// How: text and raw recordings to temp files, then each action in turn.
+    /// MAX-175: one recording at a time: `record` (the `REC` click) opens the dialog on the
+    /// mode's stream (text in line mode, full in terminal mode) when none runs, else stops it;
+    /// starting one stops the other, and `REC` is on with either.
+    /// How: `record` in each mode, then a text recording replaced by a full one, `record`.
     #[test]
-    fn recording_actions_per_stream() {
+    fn one_recording_at_a_time() {
         let mut app = app();
-        app.settings.mode = Mode::Line;
         let temp = |name: &str| {
             std::env::temp_dir().join(format!("maxicom_test_{}_{name}", std::process::id()))
         };
@@ -412,35 +419,34 @@ pub mod tests {
             Some(Overlay::FilePath(dialog)) => Some(dialog.stream),
             _ => None,
         };
+        for (mode, stream) in [(Mode::Line, Stream::Text), (Mode::Terminal, Stream::Full)] {
+            app.settings.mode = mode;
+            app.update(Action::App(AppAction::ToggleRecording));
+            assert_eq!(open_dialog(&app), Some(stream));
+            app.close_overlay();
+        }
 
-        app.update(Action::App(AppAction::ToggleRecording(Stream::Raw)));
-        assert_eq!(open_dialog(&app), Some(Stream::Raw));
-        app.close_overlay();
-        app.update(Action::App(AppAction::ToggleLogging));
-        assert_eq!(open_dialog(&app), Some(Stream::Text));
-        app.close_overlay();
-
         app.recorder
-            .start(Stream::Text, temp("act.log"), false, app.capture_source())
+            .start_text(&temp("act.log"), false, app.capture_source())
             .unwrap();
+        assert_eq!(app.recording(), Some(Stream::Text));
+        let text = SessionText::default();
         app.recorder
-            .start(Stream::Raw, temp("act.raw"), false, app.capture_source())
+            .start_full(&temp("act"), false, app.capture_source(), &text)
             .unwrap();
-        app.update(Action::App(AppAction::ToggleRecording(Stream::Raw)));
-        assert!(app.is_logging_active() && !app.is_recording(Stream::Raw));
-        app.recorder
-            .start(Stream::Raw, temp("act.raw"), false, app.capture_source())
-            .unwrap();
-        app.update(Action::App(AppAction::ToggleLogging));
-        assert!(!app.is_logging_active());
+        assert_eq!(app.recording(), Some(Stream::Full));
+        app.update(Action::App(AppAction::ToggleRecording));
+        assert_eq!(app.recording(), None);
         assert!(app.overlay().is_none());
         let _ = std::fs::remove_file(temp("act.log"));
-        let _ = std::fs::remove_file(temp("act.raw"));
+        let _ = std::fs::remove_dir_all(temp("act"));
     }
 
-    /// MAX-148: a restore puts the session's last lines in line mode with their times (a sent
-    /// line without its mark), then the separator without a time; the terminal gets the raw
-    /// bytes, back on the main screen. Nothing goes to the new session or the stats.
+    /// MAX-148: a restore puts the session's last lines in line mode, then the separator; the
+    /// terminal gets the raw bytes, back on the main screen. Nothing goes to the new session or
+    /// the stats. MAX-175: line mode is cut from the raw bytes, so a sent line isn't restored,
+    /// and the lines get their times from the session's `.times`; a last line not ended is
+    /// one too.
     /// How: a session with "> " marks and times, ending in the alternate screen; an app with
     /// its own session backup restores it.
     #[test]
@@ -466,9 +472,9 @@ pub mod tests {
         app.restore_session(&session).unwrap();
 
         let history: Vec<_> = app.line_mode.history().iter().collect();
-        let texts: Vec<_> = history.iter().map(|e| e.text.as_str()).collect();
-        assert_eq!(texts[..3], ["one", "two", "cmd"]);
-        assert!(texts[3].starts_with("── restored: ttyUSB0, "), "{texts:?}");
+        let texts = texts(&app);
+        assert_eq!(texts[..3], ["one", "two", "\x1b[?1049h\x1b[?1hvim"]);
+        assert_eq!(texts[3], "── restored", "{texts:?}");
         assert!(history[..3].iter().all(|e| e.timestamp.is_some()));
         assert_eq!(history[3].timestamp, None);
         // the live view starts on the separator (MAX-176)
@@ -496,9 +502,71 @@ pub mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// MAX-175: line mode restored shows what it showed live: the same entries, no blank or
+    /// repeated row for the lines sent in line mode (the session's `.log` has them, marked).
+    /// How: a shell-like exchange (an empty Enter, `ls`, zsh's mode resets) fed live to one
+    /// app and recorded with its sent lines in a session, restored in another.
+    #[test]
+    fn restored_line_mode_is_what_live_showed() {
+        let dir = crate::capture::tests::temp_dir("restore_as_live");
+        let rx: &[u8] = b"$ \x1b[?1l\x1b>\x1b[?2004l\r\r\n$ ls\x1b[?2004l\r\r\nfile\r\n";
+        let mut live = app();
+        live.feed_rx(rx);
+        let session = crate::capture::tests::write_test_session(
+            &dir,
+            "/dev/ttyUSB0",
+            &SessionText {
+                timestamp: None,
+                tx_mark: Some("> ".to_string()),
+            },
+            rx,
+            b"\r\nls\r\n",
+        );
+        let mut restored = app();
+        restored.restore_session(&session).unwrap();
+        let mut restored_texts = texts(&restored);
+        assert_eq!(restored_texts.pop().as_deref(), Some("── restored"));
+        assert_eq!(restored_texts, texts(&live));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// MAX-175: a restore gives each line the time its first byte was received, and each
+    /// terminal row the time the cursor reached it, as live, read from the session's `.times`.
+    /// How: a session receiving "one" then "\r\ntwo\r\n", its `.times` set to 1 s and 2 s.
+    #[test]
+    fn restore_takes_the_times_of_the_chunks() {
+        let dir = crate::capture::tests::temp_dir("restore_times");
+        let session = crate::capture::tests::write_test_session(
+            &dir,
+            "/dev/ttyUSB0",
+            &SessionText::default(),
+            b"one\r\ntwo\r\n",
+            b"",
+        );
+        std::fs::write(session.times_path().unwrap(), "0 1000\n3 2000\n").unwrap();
+        let second = |s| chrono::DateTime::from_timestamp(s, 0).map(Into::into);
+
+        let mut app = app();
+        app.terminal_mode.set_vt100_size(24, 80);
+        app.restore_session(&session).unwrap();
+        let times: Vec<_> = app
+            .line_mode
+            .history()
+            .iter()
+            .map(|e| e.timestamp)
+            .collect();
+        assert_eq!(times, [second(1), second(2), None]);
+        let lines = app.terminal_mode.all_text_lines();
+        let row = |text: &str| lines.iter().position(|l| l == text).unwrap();
+        let terminal = &app.terminal_mode;
+        assert_eq!(terminal.get_timeline_timestamp(row("one")), second(1));
+        assert_eq!(terminal.get_timeline_timestamp(row("two")), second(2));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// MAX-172: a session is its raw bytes and its meta, its text a bonus: without its `.log`
-    /// it is still found and restored, the terminal from the raw bytes, line mode with the
-    /// separator alone.
+    /// it is still found and restored, both modes from the raw bytes (line mode too since
+    /// MAX-175).
     /// How: a session written, its `.log` removed, then found and restored.
     #[test]
     fn session_without_text_restores_from_raw() {
@@ -517,7 +585,7 @@ pub mod tests {
         app.terminal_mode.set_vt100_size(24, 80);
         app.settings.sessions.restore = RestoreMode::Always;
         app.restore_last_session(Some(&dir), None);
-        assert_eq!(texts(&app), ["── restored"]);
+        assert_eq!(texts(&app), ["from raw", "── restored"]);
         let lines = app.terminal_mode.all_text_lines();
         let separator = lines
             .iter()
@@ -527,22 +595,32 @@ pub mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// MAX-172: a raw recording's meta starts when the recording does, or when the session
+    /// MAX-172: a full recording's meta starts when the recording does, or when the session
     /// started when it includes the session.
-    /// How: a session backup started, then two metas written a second later, with and without
-    /// the session.
+    /// How: a session backup started, then two metas written once the clock is a second later,
+    /// with and without the session.
     #[test]
     fn raw_recording_meta_starts_with_the_session_it_includes() {
         let dir = crate::capture::tests::temp_dir("meta_started");
         let mut app = app();
         app.start_session(Some(dir.join("sessions")));
-        let started = app.recorder.session_started().unwrap().timestamp();
-        std::thread::sleep(Duration::from_millis(1100));
+        let sessions = crate::capture::list_sessions(&dir.join("sessions")).unwrap();
+        let started = sessions[0].meta.as_ref().unwrap().started;
+        // the metas keep whole seconds of the wall clock, which a fixed sleep doesn't
+        // guarantee to pass (WSL2 steps it back at times): wait on the clock itself
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while chrono::Local::now().timestamp() <= started {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the clock didn't move"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
         let read = |name: &str| SessionMeta::read(&dir.join(name)).unwrap().started;
-        record_raw_meta(&mut app, &dir.join("with.raw"), true);
-        record_raw_meta(&mut app, &dir.join("without.raw"), false);
-        assert_eq!(read("with.meta"), started);
-        assert!(read("without.meta") > started);
+        record_full_meta(&mut app, &dir.join("with"), true);
+        record_full_meta(&mut app, &dir.join("without"), false);
+        assert_eq!(read("with/with.meta"), started);
+        assert!(read("without/without.meta") > started);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -578,12 +656,10 @@ pub mod tests {
         app.tick();
         drop(app);
 
-        let mut metas: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
+        let metas: Vec<_> = crate::capture::tests::session_paths(&dir)
+            .into_iter()
             .filter(|path| path.extension().is_some_and(|ext| ext == "meta"))
             .collect();
-        metas.sort();
         let sessions: Vec<_> = metas
             .iter()
             .map(|path| {
@@ -617,7 +693,7 @@ pub mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// MAX-173: a raw recording stops when what it records changes, with a toast: the baud,
+    /// MAX-173: a full recording stops when what it records changes, with a toast: the baud,
     /// the encoding, a replay starting or ending, another replay; a new flow control keeps it,
     /// and a replay's own encoding toggle too (its device comes from its file). The bytes
     /// after the change don't reach it.
@@ -625,48 +701,48 @@ pub mod tests {
     /// stopped by the encoding; one stopped by a replay; one during the replay, the encoding
     /// toggled, then stopped by the end of the replay.
     #[test]
-    fn raw_recording_stops_when_the_device_changes() {
+    fn full_recording_stops_when_the_device_changes() {
         let dir = crate::capture::tests::temp_dir("raw_follow");
         let mut app = app();
         // the toast is the last one: each start has its own before
         let stopped = |app: &App| {
             let last = toasts(app).pop();
-            !app.is_recording(Stream::Raw)
-                && last.as_deref() == Some("Raw recording stopped: the device changed")
+            app.recording().is_none()
+                && last.as_deref() == Some("Full recording stopped: the device changed")
         };
         let start = |app: &mut App, name: &str| {
-            app.start_capture(&dir.join(name), Stream::Raw, false);
-            assert!(app.is_recording(Stream::Raw));
+            app.start_capture(&dir.join(name), Stream::Full, false);
+            assert!(app.recording() == Some(Stream::Full));
         };
 
-        start(&mut app, "baud.raw");
+        start(&mut app, "baud");
         app.feed_rx(b"a");
         let mut line = app.link_config().line;
         line.flow_control = crate::link::serial::FlowControl::RtsCts;
         set_line(&mut app, line);
         app.tick();
-        assert!(app.is_recording(Stream::Raw));
+        assert!(app.recording() == Some(Stream::Full));
         line.baud = 9600;
         set_line(&mut app, line);
         app.feed_rx(b"b");
         assert!(stopped(&app));
-        assert_eq!(std::fs::read(dir.join("baud.raw")).unwrap(), b"a");
+        assert_eq!(std::fs::read(dir.join("baud/baud.raw")).unwrap(), b"a");
 
-        start(&mut app, "encoding.raw");
+        start(&mut app, "encoding");
         app.settings.encoding = crate::configs::TextEncoding::Cp437;
         app.tick();
         assert!(stopped(&app));
 
-        start(&mut app, "replay.raw");
+        start(&mut app, "replay");
         let session = crate::capture::tests::device("/dev/ttyUSB1");
         app.start_replay(dir.join("old.raw"), Some(&session));
         app.tick();
         assert!(stopped(&app));
 
-        start(&mut app, "during.raw");
+        start(&mut app, "during");
         app.settings.encoding = crate::configs::TextEncoding::Utf8;
         app.tick();
-        assert!(app.is_recording(Stream::Raw));
+        assert!(app.recording() == Some(Stream::Full));
         assert!(app.stop_replay());
         app.tick();
         assert!(stopped(&app));
@@ -684,7 +760,7 @@ pub mod tests {
         let mut app = app();
         let port = app.link_config().address.clone();
         app.settings.capture.timestamp = false;
-        app.start_capture(&path, Stream::Text, false);
+        app.start_capture(&dir.join("rec"), Stream::Text, false);
         app.feed_rx(b"a\r\n");
 
         let mut line = app.link_config().line;
@@ -698,8 +774,8 @@ pub mod tests {
         let session = crate::capture::tests::device("/dev/ttyUSB1");
         app.start_replay(dir.join("old.raw"), Some(&session));
         app.tick();
-        assert!(app.is_recording(Stream::Text));
-        app.recorder.stop(Stream::Text);
+        assert!(app.recording() == Some(Stream::Text));
+        app.recorder.stop();
 
         let text = std::fs::read_to_string(&path).unwrap();
         let lines: Vec<&str> = text.lines().collect();
@@ -739,7 +815,10 @@ pub mod tests {
             app.settings.sessions.restore = mode;
             app.settings.sessions.restore_max_age = Duration::from_secs(max_age);
             app.restore_last_session(Some(&dir), flag);
-            app.line_mode.history().iter().any(|e| e.text == "old line")
+            app.line_mode
+                .history()
+                .iter()
+                .any(|e| e.text == "old line\r\n")
         };
         assert!(restored(RestoreMode::Always, None, 3600));
         assert!(restored(RestoreMode::Always, None, 3600), "a second launch");

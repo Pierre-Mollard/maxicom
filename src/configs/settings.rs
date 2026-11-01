@@ -418,8 +418,10 @@ pub enum WrapMode {
     Truncate,
 }
 
-/// Recordings of what is received (MAX-147): a file is `dir` joined with the stream's strftime
-/// name, formatted when the recording dialog opens. An empty `dir` is the current directory.
+/// Recordings of what is received (MAX-147): a recording is `dir` joined with the strftime
+/// `name`, formatted when the recording dialog opens, without an extension: a text recording
+/// adds `.log`, a full one is a folder of that name (MAX-175). An empty `dir` is the current
+/// directory.
 /// `timestamp`, `record_tx` and `tx_mark` set the text lines, of the recordings and of the
 /// session backup, which takes them when it starts: `record_tx` adds the lines sent in line
 /// mode, after `tx_mark` (`> line`, none when empty)
@@ -427,8 +429,7 @@ pub enum WrapMode {
 #[serde(default)]
 pub struct CaptureConfig {
     pub dir: PathBuf,
-    pub text_name: String,
-    pub raw_name: String,
+    pub name: String,
     pub timestamp: bool,
     pub record_tx: bool,
     pub tx_mark: String,
@@ -438,8 +439,7 @@ impl Default for CaptureConfig {
     fn default() -> Self {
         Self {
             dir: PathBuf::new(),
-            text_name: String::from("maxicom_%Y%m%d_%H%M%S.log"),
-            raw_name: String::from("maxicom_%Y%m%d_%H%M%S.raw"),
+            name: String::from("maxicom_%Y%m%d_%H%M%S"),
             timestamp: true,
             record_tx: true,
             tx_mark: String::from("> "),
@@ -712,7 +712,7 @@ impl Default for StatusBarConfig {
                 "[⟳ mash ](mashing?(fg=secondary bold):hide click=cancel)",
                 "[⇡ {send_file} {send_percent:>3}% ](sending?(fg=secondary bold):hide)",
                 "[▷ {replay_state} {replay_percent:>3}% ](replaying?(fg=secondary bold):hide prio=5)",
-                "[● REC ](rec?(fg=warn bold):hide click=toggle-logging)",
+                "[● REC ](rec?(fg=warn bold):hide click=record)",
                 "[◀ ](wide?(pan_left?secondary:muted):hide click=pan-left)",
                 "[{pan_offset:>3}/{pan_max:<3}](wide?muted:hide)",
                 "[ ▶](wide?(pan_alert?(fg=warn bold):(pan_right?secondary:muted)):hide click=pan-right)",
@@ -945,8 +945,7 @@ impl SettingsConfig {
         };
 
         for (field, name) in [
-            ("capture.text_name", &self.capture.text_name),
-            ("capture.raw_name", &self.capture.raw_name),
+            ("capture.name", &self.capture.name),
             ("screenshot.name", &self.screenshot.name),
         ] {
             if let Err(err) = StrftimeItems::new(name).parse() {

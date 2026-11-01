@@ -1818,13 +1818,7 @@ mod tests {
     /// How: Cancel bound to `q` only, then to `q` and Ctrl-q (`q` comes first in the order).
     #[test]
     fn text_input_popups_hint_only_keys_they_route() {
-        let file = || {
-            Overlay::FilePath(FilePathDialog::new(
-                Stream::Text,
-                "log.txt".into(),
-                "log.raw".into(),
-            ))
-        };
+        let file = || Overlay::FilePath(FilePathDialog::new(Stream::Text, "log.txt".into()));
         let resize = || Overlay::TerminalSize(ResizeDialog::new(24, 80));
 
         let rows = popup_rows(file(), &[("q", "close"), ("enter", "confirm")]);
@@ -2122,11 +2116,7 @@ mod tests {
         let popups = [
             Overlay::Settings(SettingsDialog::new()),
             Overlay::LinkSettings(LineSettingsDialog::new(&LinkConfig::default())),
-            Overlay::FilePath(FilePathDialog::new(
-                Stream::Text,
-                "log.txt".into(),
-                "log.raw".into(),
-            )),
+            Overlay::FilePath(FilePathDialog::new(Stream::Text, "log.txt".into())),
             Overlay::TerminalSize(ResizeDialog::new(24, 80)),
         ];
         for overlay in popups {
@@ -2233,11 +2223,7 @@ mod tests {
     fn text_input_cursor_follows_the_text() {
         let popups = [
             (
-                Overlay::FilePath(FilePathDialog::new(
-                    Stream::Text,
-                    "log.txt".into(),
-                    "log.raw".into(),
-                )),
+                Overlay::FilePath(FilePathDialog::new(Stream::Text, "log.txt".into())),
                 "log.txt",
             ),
             (Overlay::TerminalSize(ResizeDialog::new(24, 80)), "24"),
@@ -2903,7 +2889,7 @@ mod tests {
         let hint_col = rows[hint_row as usize][..hint_col].chars().count();
         click(&mut h, (hint_col as u16, hint_row));
         assert!(h.app.overlay().is_none());
-        assert_eq!(h.app.line_mode.history()[0].text, "old line");
+        assert_eq!(h.app.line_mode.history()[0].text, "old line\r\n");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2924,6 +2910,8 @@ mod tests {
             b"restored words\r\n",
             b"",
         );
+        // without its times, as a session before MAX-175
+        std::fs::remove_file(session.times_path().unwrap()).unwrap();
         let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 70, 12, |settings| {
             settings.show_timestamps = true;
         });
@@ -4944,19 +4932,16 @@ mod tests {
 
         let rows = open(
             &mut h,
-            Overlay::FilePath(
-                FilePathDialog::new(Stream::Text, "x.log".into(), "x.raw".into())
-                    .with_session_backup(),
-            ),
+            Overlay::FilePath(FilePathDialog::new(Stream::Text, "x".into()).with_session_backup()),
         );
         // the stream row switches the stream (MAX-147)
-        press(&mut h, cell_of(&rows, " raw "));
+        press(&mut h, cell_of(&rows, " full "));
         assert!(matches!(
             h.app.overlay(),
-            Some(Overlay::FilePath(dialog)) if dialog.stream == Stream::Raw
+            Some(Overlay::FilePath(dialog)) if dialog.stream == Stream::Full
         ));
         let rows = h.draw();
-        assert!(has(&rows, "x.raw"), "{rows:#?}");
+        assert!(has(&rows, "x/"), "{rows:#?}");
         // so does the include row, with a session backup
         press(&mut h, cell_of(&rows, "since session start"));
         assert!(matches!(

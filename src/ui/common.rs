@@ -31,7 +31,7 @@ pub fn monitor_title(app: &App, area: &Rect, room: u16) -> String {
         area.width.saturating_sub(2),
         area.height.saturating_sub(2)
     );
-    let logging = app.is_logging_active();
+    let logging = app.recording().is_some();
     let (mode, mut details, missed, scroll_offset, pan_offset) = match app.settings().mode {
         Mode::Terminal => {
             let tm = &app.terminal_mode;

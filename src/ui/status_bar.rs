@@ -166,7 +166,7 @@
 //! center = "[{pan_left} ](pan_left?warn:hide)[{scroll_pos}](has_scroll?muted:hide)[ {pan_right}](pan_right_alert?(bg=warn fg=black bold):(pan_right?warn:hide))"
 //!
 //! # Right-aligned status with a red badge for recording (a click stops it) and a help button:
-//! right = "[ ● REC ](rec?(bg=warn fg=white bold):hide click=toggle-logging) [{scroll_pos_up}](has_scroll?muted:hide) [RX: {rx_bytes}](muted) | [TX: {tx_bytes}](muted) | [{time}](secondary) [?](muted click=help)"
+//! right = "[ ● REC ](rec?(bg=warn fg=white bold):hide click=record) [{scroll_pos_up}](has_scroll?muted:hide) [RX: {rx_bytes}](muted) | [TX: {tx_bytes}](muted) | [{time}](secondary) [?](muted click=help)"
 //! ```
 
 use std::borrow::Cow;
@@ -751,7 +751,7 @@ impl Cond {
             Self::Line => ctx == InputContext::LineInput,
             Self::Term => ctx == InputContext::Terminal,
             Self::Overlay => ctx == InputContext::Overlay || app.overlay().is_some(),
-            Self::Rec => app.is_logging_active(),
+            Self::Rec => app.recording().is_some(),
             Self::Session => app.has_session(),
             Self::Focused => app.is_app_focused(),
             Self::IsLive => scroll.is_bottom(),

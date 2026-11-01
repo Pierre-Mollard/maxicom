@@ -1,6 +1,5 @@
-use super::session::{Session, SessionText};
-use chrono::format::{Item, Parsed, StrftimeItems, parse_and_remainder};
-use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeZone};
+use super::session::Session;
+use chrono::{DateTime, Local};
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
@@ -9,95 +8,107 @@ use std::path::Path;
 pub const RESTORE_RAW_TAIL: u64 = 1 << 20;
 const TAIL_CHUNK: u64 = 64 * 1024;
 
-/// A line of a session's text read back: its time when it has one, whether it was sent, and
-/// its text without them
-#[derive(Debug, PartialEq)]
-pub struct SessionTextLine<'a> {
+/// Received bytes and when they were received, when that is known (MAX-175)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TimedChunk<'a> {
+    pub bytes: &'a [u8],
     pub time: Option<DateTime<Local>>,
-    pub tx: bool,
-    pub text: &'a str,
 }
 
-/// Reads a session's text lines back with the format they were written with (MAX-148). A time
-/// that doesn't parse leaves the whole line as text, with no time. A format without a date
-/// takes the session's start date, and the next day when the time goes back by more than 12
-/// hours (midnight: a sent line written before a pending received one goes back a little)
-pub struct SessionReader {
-    timestamp: Option<Vec<Item<'static>>>,
-    tx_mark: Option<String>,
-    date: NaiveDate,
-    last: Option<NaiveDateTime>,
-}
-
-impl SessionReader {
-    pub fn new(text: &SessionText, started: DateTime<Local>) -> Self {
-        Self {
-            timestamp: text
-                .timestamp
-                .as_deref()
-                .and_then(|format| StrftimeItems::new(format).parse_to_owned().ok()),
-            tx_mark: text.tx_mark.clone().filter(|mark| !mark.is_empty()),
-            date: started.date_naive(),
-            last: None,
-        }
-    }
-
-    /// One line, without its EOL
-    pub fn parse<'a>(&mut self, line: &'a str) -> SessionTextLine<'a> {
-        let (time, rest) = match self.parse_time(line) {
-            Some((time, rest)) => (Some(time), rest),
-            None => (None, line),
-        };
-        let sent = self
-            .tx_mark
-            .as_deref()
-            .and_then(|mark| rest.strip_prefix(mark));
-        SessionTextLine {
-            time,
-            tx: sent.is_some(),
-            text: sent.unwrap_or(rest),
-        }
-    }
-
-    /// The time at the start of `line` and the rest after its space, as `build_line` writes
-    fn parse_time<'a>(&mut self, line: &'a str) -> Option<(DateTime<Local>, &'a str)> {
-        let items = self.timestamp.as_ref()?;
-        let mut parsed = Parsed::new();
-        let rest = parse_and_remainder(&mut parsed, line, items.iter()).ok()?;
-        let rest = rest.strip_prefix(' ')?;
-        let time = match parsed.to_naive_datetime_with_offset(0) {
-            Ok(time) => time,
-            Err(_) => {
-                let mut time = self.date.and_time(parsed.to_naive_time().ok()?);
-                if self
-                    .last
-                    .is_some_and(|last| last - time > chrono::TimeDelta::hours(12))
-                {
-                    self.date = self.date.succ_opt()?;
-                    time = self.date.and_time(time.time());
-                }
-                time
-            }
-        };
-        self.last = Some(time);
-        Some((Local.from_local_datetime(&time).earliest()?, rest))
-    }
-}
-
-/// The end of the file at `path`, at most `max` bytes. When the file is longer, it starts after
-/// the first `\n` past the cut, so no line, escape sequence or UTF-8 char is cut
-pub fn read_tail_bytes(path: &Path, max: u64) -> io::Result<Vec<u8>> {
+/// The end of the file at `path`, at most `max` bytes, and where it starts in the file. When
+/// the file is longer, it starts after the first `\n` past the cut, so no line, escape sequence
+/// or UTF-8 char is cut
+pub fn read_tail_bytes(path: &Path, max: u64) -> io::Result<(u64, Vec<u8>)> {
     let mut file = File::open(path)?;
     let len = file.metadata()?.len();
-    let start = len.saturating_sub(max);
+    let mut start = len.saturating_sub(max);
     file.seek(SeekFrom::Start(start))?;
     let mut tail = Vec::new();
     file.read_to_end(&mut tail)?;
     if start > 0 {
         let first_line = memchr::memchr(b'\n', &tail).map_or(tail.len(), |i| i + 1);
         tail.drain(..first_line);
+        start += first_line as u64;
     }
-    Ok(tail)
+    Ok((start, tail))
+}
+
+/// A line of a session's `.times` file (MAX-175): where a received chunk starts in its `.raw`,
+/// and when it was received, in milliseconds since the Unix epoch
+pub fn times_line(offset: u64, time: DateTime<Local>) -> String {
+    format!("{offset} {}\n", time.timestamp_millis())
+}
+
+fn parse_times_line(line: &[u8]) -> Option<(u64, DateTime<Local>)> {
+    let line = std::str::from_utf8(line).ok()?;
+    let (offset, millis) = line.trim_end().split_once(' ')?;
+    let time = DateTime::from_timestamp_millis(millis.parse().ok()?)?;
+    Some((offset.parse().ok()?, time.with_timezone(&Local)))
+}
+
+/// The times of a session's chunks from raw offset `from` on, read back from the end of its
+/// `.times` file at `path`, the chunk holding `from` first (MAX-175). Read backwards by chunks,
+/// so a long session costs only its end; a line that doesn't parse is left out
+pub fn read_times(path: &Path, from: u64) -> io::Result<Vec<(u64, DateTime<Local>)>> {
+    read_times_by(path, from, TAIL_CHUNK)
+}
+
+fn read_times_by(path: &Path, from: u64, chunk: u64) -> io::Result<Vec<(u64, DateTime<Local>)>> {
+    let mut file = File::open(path)?;
+    let mut start = file.metadata()?.len();
+    let mut tail: Vec<u8> = Vec::new();
+    loop {
+        // the first whole line: the file's first, or the one after the first `\n`
+        let whole = match start {
+            0 => Some(&tail[..]),
+            _ => memchr::memchr(b'\n', &tail).map(|i| &tail[i + 1..]),
+        };
+        let reached = whole.and_then(|lines| lines.split(|&b| b == b'\n').next());
+        if start == 0
+            || reached
+                .and_then(parse_times_line)
+                .is_some_and(|(at, _)| at <= from)
+        {
+            let lines = whole.unwrap_or_default();
+            let times: Vec<_> = lines
+                .split(|&b| b == b'\n')
+                .filter_map(parse_times_line)
+                .collect();
+            let first = times.iter().rposition(|&(at, _)| at <= from).unwrap_or(0);
+            return Ok(times[first..].to_vec());
+        }
+        let read_from = start.saturating_sub(chunk);
+        let mut block = vec![0; (start - read_from) as usize];
+        file.seek(SeekFrom::Start(read_from))?;
+        file.read_exact(&mut block)?;
+        tail.splice(0..0, block);
+        start = read_from;
+    }
+}
+
+/// The raw bytes read from offset `start`, cut where each received chunk of `times` starts,
+/// each with its time (MAX-175). Bytes before the first time known (none at all without a
+/// `.times`) have none
+pub fn timed_chunks<'a>(
+    start: u64,
+    raw: &'a [u8],
+    times: &[(u64, DateTime<Local>)],
+) -> Vec<TimedChunk<'a>> {
+    let end = start + raw.len() as u64;
+    let at = |offset: u64| (offset.clamp(start, end) - start) as usize;
+    let cuts: Vec<_> = std::iter::once((0, None))
+        .chain(times.iter().map(|&(offset, time)| (at(offset), Some(time))))
+        .collect();
+    cuts.iter()
+        .enumerate()
+        .filter_map(|(i, &(from, time))| {
+            let to = cuts.get(i + 1).map_or(raw.len(), |&(next, _)| next);
+            (to > from).then(|| TimedChunk {
+                bytes: &raw[from..to],
+                time,
+            })
+        })
+        .collect()
 }
 
 /// The last `max` lines of the file at `path`, read backwards by chunks, so a big file costs
@@ -144,141 +155,80 @@ pub fn restore_separator(session: &Session) -> String {
 
 #[cfg(test)]
 mod tests {
-    //! Reading a session back: its text lines, the file tails and the separator.
+    //! Reading a session back: the file tails and the separator.
 
     use super::*;
-    use crate::capture::tests::{device, record, temp_dir};
-    use crate::capture::{Recorder, SessionLimits, find_last_session};
-    use crate::configs::TextEncoding;
+    use crate::capture::tests::temp_dir;
+    use chrono::TimeZone;
     use std::fs;
 
-    fn reader(timestamp: Option<&str>, tx_mark: Option<&str>) -> SessionReader {
-        let text = SessionText {
-            timestamp: timestamp.map(str::to_string),
-            tx_mark: tx_mark.map(str::to_string),
+    fn ms(millis: i64) -> DateTime<Local> {
+        DateTime::from_timestamp_millis(millis).unwrap().into()
+    }
+
+    /// MAX-175: the raw bytes are cut where each chunk's time starts; the bytes before the
+    /// first time have none, a tail starting mid-chunk takes that chunk's time, a time past the
+    /// end (a crash) gives nothing.
+    /// How: 10 bytes read from offset 100, times at 98, 104, 107 and 200; then times from 103
+    /// only; then no times.
+    #[test]
+    fn raw_cut_into_timed_chunks() {
+        let raw = b"0123456789";
+        let chunk = |bytes: &'static [u8], time| TimedChunk { bytes, time };
+        let times = [(98, ms(1)), (104, ms(2)), (107, ms(3)), (200, ms(4))];
+        assert_eq!(
+            timed_chunks(100, raw, &times),
+            [
+                chunk(b"0123", Some(ms(1))),
+                chunk(b"456", Some(ms(2))),
+                chunk(b"789", Some(ms(3))),
+            ]
+        );
+        assert_eq!(
+            timed_chunks(100, raw, &[(103, ms(5))]),
+            [chunk(b"012", None), chunk(b"3456789", Some(ms(5)))]
+        );
+        assert_eq!(timed_chunks(100, raw, &[]), [chunk(raw, None)]);
+    }
+
+    /// MAX-175: the `.times` are read back from the end, from the chunk holding the given raw
+    /// offset; a line that doesn't parse is left out.
+    /// How: 6 times written as the session writer does and a broken line, read from offsets 25
+    /// and 0 by 16-byte blocks (several blocks back), and past the last one.
+    #[test]
+    fn times_read_back_from_an_offset() {
+        let dir = temp_dir("times_tail");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("x.times");
+        let lines: Vec<String> = (0..6).map(|i| times_line(i * 10, ms(i as i64))).collect();
+        let text = format!("{}broken\n{}", lines[..3].concat(), lines[3..].concat());
+        fs::write(&path, text).unwrap();
+        let offsets = |from| -> Vec<u64> {
+            let times = read_times_by(&path, from, 16).unwrap();
+            times.iter().map(|&(offset, _)| offset).collect()
         };
-        let started = Local.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
-        SessionReader::new(&text, started)
-    }
-
-    fn at(day: u32, h: u32, m: u32, s: u32, ms: u32) -> Option<DateTime<Local>> {
-        let date = NaiveDate::from_ymd_opt(2026, 1, day)?;
-        Local
-            .from_local_datetime(&date.and_hms_milli_opt(h, m, s, ms)?)
-            .earliest()
-    }
-
-    /// MAX-148: a session's text line is read back with its format: the time (dated from the
-    /// session start, the next day past midnight, not on a sent line slightly earlier), the mark,
-    /// and a line whose time doesn't parse kept whole.
-    #[test]
-    fn session_lines_read_back() {
-        let mut r = reader(Some("[%H:%M:%S%.3f]"), Some("> "));
-        let line = |time, tx, text| SessionTextLine { time, tx, text };
-        assert_eq!(
-            r.parse("[23:59:59.500] rx"),
-            line(at(1, 23, 59, 59, 500), false, "rx")
-        );
-        assert_eq!(
-            r.parse("[23:59:59.400] > cmd"),
-            line(at(1, 23, 59, 59, 400), true, "cmd")
-        );
-        assert_eq!(
-            r.parse("[00:00:01.000] next day"),
-            line(at(2, 0, 0, 1, 0), false, "next day")
-        );
-        assert_eq!(
-            r.parse("[00:00:02.000] "),
-            line(at(2, 0, 0, 2, 0), false, "")
-        );
-        assert_eq!(r.parse("garbage > x"), line(None, false, "garbage > x"));
-        assert_eq!(r.parse("> no time"), line(None, true, "no time"));
-
-        let mut dated = reader(Some("%Y-%m-%d %H:%M:%S"), None);
-        assert_eq!(
-            dated.parse("2026-01-05 10:00:00 > a"),
-            line(at(5, 10, 0, 0, 0), false, "> a")
-        );
-    }
-
-    /// MAX-148: without a timestamp or a mark in the meta, the line is all text, received.
-    #[test]
-    fn session_lines_without_time_or_mark() {
-        let line = |text| SessionTextLine {
-            time: None,
-            tx: false,
-            text,
-        };
-        for (timestamp, mark) in [(None, None), (None, Some(""))] {
-            let mut r = reader(timestamp, mark);
-            assert_eq!(r.parse("[10:00:00.000] > a"), line("[10:00:00.000] > a"));
-        }
-        let mut r = reader(Some("[%H:%M:%S%.3f]"), Some(""));
-        assert_eq!(r.parse("[10:00:00.000] > a").text, "> a");
-    }
-
-    /// MAX-148: what the session backup writes, with each combination of timestamp and mark, reads
-    /// back as what was received and sent.
-    /// How: a session backup per combination, "rx" received and "tx" sent, its text parsed back.
-    #[test]
-    fn session_text_round_trip() {
-        let dir = temp_dir("session_round_trip");
-        for (i, (timestamp, tx_mark)) in [
-            (Some("[%H:%M:%S%.3f]"), Some("> ")),
-            (Some("%Y-%m-%dT%H:%M:%S"), Some("TX: ")),
-            (Some("[%H:%M:%S%.3f]"), None),
-            (None, Some("> ")),
-            (None, None),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let text = SessionText {
-                timestamp: timestamp.map(str::to_string),
-                tx_mark: tx_mark.map(str::to_string),
-            };
-            let port = format!("p{i}");
-            let mut recorder = Recorder::default();
-            recorder
-                .start_session(&dir, &device(&port), &text, SessionLimits::keep(20))
-                .unwrap();
-            record(&mut recorder, b"rx\n");
-            recorder.record_tx(TextEncoding::Utf8, None, None, b"tx\n");
-            drop(recorder);
-            let session = find_last_session(&dir, &device(&port), None).unwrap();
-
-            let log = fs::read_to_string(session.text_path().unwrap()).unwrap();
-            let meta = session.meta.as_ref().unwrap();
-            let mut r = SessionReader::new(&meta.text, session.started.unwrap());
-            let lines: Vec<_> = log.lines().map(|l| r.parse(l)).collect();
-            let has_time = timestamp.is_some();
-            assert_eq!(lines[0].text, "rx", "{log:?}");
-            assert_eq!(lines[0].time.is_some(), has_time, "{log:?}");
-            if tx_mark.is_some() {
-                assert_eq!((lines[1].tx, lines[1].text), (true, "tx"), "{log:?}");
-                assert_eq!(lines[1].time.is_some(), has_time, "{log:?}");
-            } else {
-                assert_eq!(lines.len(), 1, "{log:?}");
-            }
-        }
+        assert_eq!(offsets(25), [20, 30, 40, 50]);
+        assert_eq!(offsets(0), [0, 10, 20, 30, 40, 50]);
+        assert_eq!(offsets(99), [50]);
+        let times = read_times(&path, 30).unwrap();
+        assert_eq!(times[0], (30, ms(3)));
         let _ = fs::remove_dir_all(&dir);
     }
 
     /// MAX-148: the raw tail is the whole file when it fits, else it starts after the first
-    /// line ending past the cut.
+    /// line ending past the cut. MAX-175: with where it starts in the file.
     #[test]
     fn raw_tail_starts_on_a_line() {
         let dir = temp_dir("raw_tail");
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("x.raw");
-        fs::write(&path, b"aaaa\r\nbb\x1b[31mcc\r\ndd").unwrap();
-        assert_eq!(
-            read_tail_bytes(&path, 100).unwrap(),
-            b"aaaa\r\nbb\x1b[31mcc\r\ndd"
-        );
+        let raw = b"aaaa\r\nbb\x1b[31mcc\r\ndd";
+        fs::write(&path, raw).unwrap();
+        let tail = |max| read_tail_bytes(&path, max).unwrap();
+        assert_eq!(tail(100), (0, raw.to_vec()));
         // the cut falls inside "bb\x1b[31mcc": that line is dropped whole
-        assert_eq!(read_tail_bytes(&path, 10).unwrap(), b"dd");
-        assert_eq!(read_tail_bytes(&path, 2).unwrap(), b"");
+        assert_eq!(tail(10), (17, b"dd".to_vec()));
+        assert_eq!(tail(2), (19, Vec::new()));
         let _ = fs::remove_dir_all(&dir);
     }
 

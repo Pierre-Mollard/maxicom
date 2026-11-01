@@ -12,7 +12,7 @@ use crate::{
         selection::{CopySide, LogicalPosition, MouseUnit},
         transfer::FileTransfer,
     },
-    capture::{ScreenshotFormat, Stream},
+    capture::ScreenshotFormat,
     commands::Invocation,
     configs::{KeyBindingAction, KeyPattern, Mode, TextEncoding},
     inputs::mouse::handle_mouse,
@@ -55,8 +55,7 @@ pub enum AppAction {
     SetPrefix(bool),
     FocusGained(bool),
     ToggleSetting(SettingKey),
-    ToggleLogging,
-    ToggleRecording(Stream),
+    ToggleRecording,
     ToggleAttach,
     ReloadConfig,
     OpenOverlay(Overlay),
@@ -550,9 +549,8 @@ mod tests {
     fn text_input_popups_type_non_modal_keys() {
         let mut app = app();
         let file = crate::overlays::FilePathDialog::new(
-            Stream::Text,
+            crate::capture::Stream::Text,
             "log.txt".to_string(),
-            "log.raw".to_string(),
         );
         app.update(Action::App(AppAction::OpenOverlay(Overlay::FilePath(file))));
         let dialog = |event| handle_event(event, &app);
@@ -708,7 +706,7 @@ mod tests {
                 "f => run break",
                 "h => App(ToggleAttach)",
                 "k => Terminal(Screenshot(Ansi))",
-                "l => App(ToggleLogging)",
+                "l => App(ToggleRecording)",
                 "m => App(ToggleSetting(Mode))",
                 "o => App(ToggleSetting(TextEncoding))",
                 "p => run dtr; sleep; dtr",
@@ -779,9 +777,8 @@ mod tests {
         app.update(Action::Search(SearchModeAction::Cancel));
 
         let file = crate::overlays::FilePathDialog::new(
-            Stream::Text,
+            crate::capture::Stream::Text,
             "log.txt".to_string(),
-            "log.raw".to_string(),
         );
         app.update(Action::App(AppAction::OpenOverlay(Overlay::FilePath(file))));
         assert_eq!(

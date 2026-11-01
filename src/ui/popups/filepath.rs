@@ -39,10 +39,11 @@ pub fn render_filepath_popup(
         Line::from(""),
         Line::from(vec![
             Span::styled("▶ ", style),
-            Span::raw("File    : "),
+            Span::raw("Name    : "),
             Span::styled(path_str, style),
+            // the stream sets the extension, or the folder (MAX-175)
             Span::styled(
-                " [type filepath]",
+                dialog.suffix(),
                 Style::default().fg(theme.palette.text_muted),
             ),
         ]),
@@ -50,7 +51,7 @@ pub fn render_filepath_popup(
             Span::raw("  Stream  : "),
             stream_span(Stream::Text),
             Span::raw(" "),
-            stream_span(Stream::Raw),
+            stream_span(Stream::Full),
         ]),
     ];
     let mut hint_rows: Vec<(&[KeyBindingDialogAction], &str)> =

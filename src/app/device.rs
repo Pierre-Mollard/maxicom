@@ -690,14 +690,9 @@ mod tests {
             .unwrap();
         // the session files' raw bytes, the oldest first
         let raws = || -> Vec<Vec<u8>> {
-            let mut paths: Vec<_> = std::fs::read_dir(&sessions)
-                .unwrap()
-                .map(|entry| entry.unwrap().path())
-                .filter(|path| path.extension().is_some_and(|ext| ext == "raw"))
-                .collect();
-            paths.sort();
-            paths
+            crate::capture::tests::session_paths(&sessions)
                 .iter()
+                .filter(|path| path.extension().is_some_and(|ext| ext == "raw"))
                 .map(|path| std::fs::read(path).unwrap())
                 .collect()
         };

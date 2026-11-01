@@ -10,7 +10,8 @@ mod session;
 // Re-exports
 pub use recorder::{Recorder, SessionWriter, Stream};
 pub use restore::{
-    RESTORE_RAW_TAIL, SessionReader, read_tail_bytes, read_tail_lines, restore_separator,
+    RESTORE_RAW_TAIL, TimedChunk, read_tail_bytes, read_tail_lines, read_times, restore_separator,
+    timed_chunks,
 };
 pub use screenshot::{Screenshot, ScreenshotFormat};
 pub use session::{
@@ -59,6 +60,14 @@ pub mod tests {
 
     pub fn record(recorder: &mut Recorder, bytes: &[u8]) {
         recorder.record_rx(RxNewlineMode::Auto, TextEncoding::Utf8, None, bytes);
+    }
+
+    /// The files of every session in the session folder `dir`, sorted (MAX-175)
+    pub fn session_paths(dir: &Path) -> Vec<PathBuf> {
+        let sessions = super::list_sessions(dir).unwrap();
+        let mut paths: Vec<PathBuf> = sessions.into_iter().flat_map(|s| s.files).collect();
+        paths.sort();
+        paths
     }
 
     /// What a recording on `address` with no known device records (MAX-173)

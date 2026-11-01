@@ -1207,12 +1207,8 @@ impl App {
                 self.toggle_setting(setting);
                 UpdateEffect::None
             }
-            AppAction::ToggleLogging => {
-                self.toggle_logging();
-                UpdateEffect::None
-            }
-            AppAction::ToggleRecording(stream) => {
-                self.toggle_recording(stream);
+            AppAction::ToggleRecording => {
+                self.toggle_recording();
                 UpdateEffect::None
             }
             AppAction::OpenOverlay(overlay) => {
@@ -1622,13 +1618,9 @@ impl App {
         self.recorder.has_session()
     }
 
-    /// Some recording is on, what `REC` shows
-    pub fn is_logging_active(&self) -> bool {
-        self.recorder.is_any_active()
-    }
-
-    pub fn is_recording(&self, stream: Stream) -> bool {
-        self.recorder.is_active(stream)
+    /// What the recording running saves, if one runs: what `REC` shows
+    pub fn recording(&self) -> Option<Stream> {
+        self.recorder.recording()
     }
 
     pub fn focus_target(&self) -> FocusTarget {
@@ -1764,10 +1756,10 @@ pub mod tests {
             .collect()
     }
 
-    /// A raw recording to `path` started and stopped at once, for its meta file
-    pub fn record_raw_meta(app: &mut App, path: &Path, include_session: bool) {
-        app.start_capture(path, crate::capture::Stream::Raw, include_session);
-        app.recorder.stop(crate::capture::Stream::Raw);
+    /// A full recording to the folder `path` started and stopped at once, for its meta file
+    pub fn record_full_meta(app: &mut App, path: &Path, include_session: bool) {
+        app.start_capture(path, crate::capture::Stream::Full, include_session);
+        app.recorder.stop();
     }
 
     /// The line settings the port took, as the link sets them
@@ -3063,9 +3055,8 @@ pub mod tests {
         assert!(app.has_session() && !app.stop_replay());
         app.feed_rx(b"back\r\n");
         drop(app);
-        let raw = std::fs::read_dir(&dir)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
+        let raw = crate::capture::tests::session_paths(&dir)
+            .into_iter()
             .find(|path| path.extension().is_some_and(|ext| ext == "raw"))
             .unwrap();
         assert_eq!(std::fs::read(raw).unwrap(), b"live\r\nback\r\n");
@@ -3122,7 +3113,7 @@ pub mod tests {
         assert_eq!(app.line_settings(), None);
     }
 
-    /// MAX-163: a raw recording gets a meta file beside it, and a file replayed without a
+    /// MAX-163: a full recording gets a meta file beside its raw, and a file replayed without a
     /// session (`--replay`, `replay`) takes its device from its meta file: its encoding and
     /// line settings. A file without one has none. MAX-172: a recording while replaying writes
     /// the replayed session's device, none while replaying a plain file.
@@ -3133,9 +3124,7 @@ pub mod tests {
     fn replay_reads_the_meta_file_beside() {
         let dir = crate::capture::tests::temp_dir("replay_meta");
         std::fs::create_dir_all(&dir).unwrap();
-        let rec = dir.join("rec.raw");
         let plain = dir.join("plain.raw");
-        std::fs::write(&rec, b"x").unwrap();
         std::fs::write(&plain, b"x").unwrap();
 
         let mut app = app();
@@ -3146,24 +3135,26 @@ pub mod tests {
         };
         set_line(&mut app, line);
         app.settings.encoding = TextEncoding::Cp437;
-        record_raw_meta(&mut app, &rec, false);
-        assert!(dir.join("rec.meta").exists());
+        record_full_meta(&mut app, &dir.join("rec"), false);
+        assert!(dir.join("rec/rec.meta").exists());
+        let rec = dir.join("rec/rec.raw");
+        std::fs::write(&rec, b"x").unwrap();
 
         let mut app = self::app();
         app.open_replay(rec, Duration::ZERO, None).unwrap();
         assert_eq!(app.settings().encoding, TextEncoding::Cp437);
         assert_eq!(app.recorded_line(), Some(SessionLine::of(&line)));
 
-        let during = dir.join("during.raw");
-        record_raw_meta(&mut app, &during, false);
-        let meta = SessionMeta::read(&dir.join("during.meta")).unwrap();
+        record_full_meta(&mut app, &dir.join("during"), false);
+        let meta = SessionMeta::read(&dir.join("during/during.meta")).unwrap();
         assert_eq!(meta.device.encoding, TextEncoding::Cp437);
         assert_eq!(meta.device.line, Some(SessionLine::of(&line)));
 
         app.open_replay(plain, Duration::ZERO, None).unwrap();
         assert_eq!(app.recorded_line(), None);
-        record_raw_meta(&mut app, &dir.join("plain_during.raw"), false);
-        assert!(!dir.join("plain_during.meta").exists());
+        record_full_meta(&mut app, &dir.join("plain_during"), false);
+        assert!(dir.join("plain_during/plain_during.raw").exists());
+        assert!(!dir.join("plain_during/plain_during.meta").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

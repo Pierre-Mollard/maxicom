@@ -15,6 +15,7 @@ use crate::{
         selection::{CopyActionResult, CopyModeState, Reveal, TextSource},
         types::{LogEntry, RxLineSplitter, ViewportSize},
     },
+    capture::TimedChunk,
     configs::{
         LineDisplayMode, RawSideView, RxNewlineMode, SettingsConfig, TextEncoding, WrapMode,
     },
@@ -131,9 +132,19 @@ impl LineMode {
     }
 
     pub fn feed_rx(&mut self, rx_eol_mode: RxNewlineMode, encoding: TextEncoding, bytes: &[u8]) {
-        let now = Local::now();
+        self.feed_rx_at(rx_eol_mode, encoding, bytes, Some(Local::now()));
+    }
+
+    /// `feed_rx` for bytes received at `time`, none when it isn't known (MAX-175)
+    fn feed_rx_at(
+        &mut self,
+        rx_eol_mode: RxNewlineMode,
+        encoding: TextEncoding,
+        bytes: &[u8],
+        time: Option<DateTime<Local>>,
+    ) {
         for &b in bytes {
-            if self.partial_line.push(b, rx_eol_mode, now) {
+            if self.partial_line.push_at(b, rx_eol_mode, time) {
                 self.commit_partial_line(encoding);
             }
         }
@@ -143,7 +154,7 @@ impl LineMode {
 
     fn commit_partial_line(&mut self, encoding: TextEncoding) {
         let line = encoding.decode(self.partial_line.line());
-        let timestamp = self.partial_line.take_timestamp();
+        let timestamp = self.partial_line.timestamp();
         let entry = LogEntry::received(line, self.partial_line.line(), timestamp);
         self.partial_line.clear();
         self.push_entry(entry);
@@ -153,6 +164,25 @@ impl LineMode {
         let entry = LogEntry::new(line, self.partial_line.take_timestamp());
         self.push_entry(entry);
         self.rebase_line_refs();
+    }
+
+    /// A past session's received chunks cut into lines as they were live, before any live line
+    /// (MAX-175): line mode shows what it showed then, the lines sent aside (they aren't
+    /// received), each line at its first byte's time when known. A last line not ended is one
+    /// too, so the next one starts on its own
+    pub fn restore_rx(
+        &mut self,
+        rx_eol_mode: RxNewlineMode,
+        encoding: TextEncoding,
+        chunks: &[TimedChunk],
+    ) {
+        for chunk in chunks {
+            self.feed_rx_at(rx_eol_mode, encoding, chunk.bytes, chunk.time);
+        }
+        if !self.partial_line.line().is_empty() {
+            self.commit_partial_line(encoding);
+            self.rebase_line_refs();
+        }
     }
 
     /// Pushes lines restored from a session, before any live line (MAX-148)

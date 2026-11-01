@@ -1127,7 +1127,7 @@ mod tests {
             settings.line_mode.wrap_indent = indent;
             let time = chrono::TimeZone::with_ymd_and_hms(&chrono::Local, 2026, 10, 24, 12, 34, 56)
                 .unwrap();
-            let entry = LogEntry::received(TextEncoding::Utf8.decode(wire), wire, time);
+            let entry = LogEntry::received(TextEncoding::Utf8.decode(wire), wire, Some(time));
             let prefix = settings.line_prefixes().line.to_string();
             let line = history_entry_to_line(&entry, &settings, &[], 0, None, &theme, &prefix);
             rows_of(&prepare_view_layout(vec![line], &settings, &theme, width))
@@ -1216,7 +1216,7 @@ mod tests {
                         let entry = LogEntry::received(
                             TextEncoding::Utf8.decode(&wire),
                             &wire,
-                            chrono::Local::now(),
+                            Some(chrono::Local::now()),
                         );
                         let line =
                             history_entry_to_line(&entry, &settings, &[], 0, None, &theme, &prefix);

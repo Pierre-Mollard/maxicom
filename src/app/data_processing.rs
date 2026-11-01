@@ -763,7 +763,7 @@ mod tests {
         let entry = LogEntry::received(
             TextEncoding::Latin1.decode(wire),
             wire,
-            chrono::Local::now(),
+            Some(chrono::Local::now()),
         );
         assert_eq!(
             entry_display_text(&entry, LineDisplayMode::Hex),

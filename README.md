@@ -128,7 +128,7 @@ What changes from a serial port:
 ### COMMAND LINE
 
 - `Ctrl-A :` (`command-line`) opens a `:` prompt that runs commands: the
-  names of `keymap.toml` (`toggle-local-echo`, `record-raw`, ...), chained
+  names of `keymap.toml` (`toggle-local-echo`, `record`, ...), chained
   with `;`. Enter runs the line, Esc closes it. A line with an unknown command
   or a bad argument runs nothing: the error shows and the prompt stays.
 - Commands with arguments, quoted when they have spaces (`"..."` takes the
@@ -350,37 +350,43 @@ where its lines wrap, which `dimension_mode` decides.
 ### CAPTURE
 
 - What is what:
-  - A session is a `.raw` with its `.meta`, plus a `.log` as a bonus. The
-    `.raw` holds the bytes as received and the `.meta` what they were
-    received on (device, line settings, encoding), so a session replays and
-    restores as it was. Without its `.log` it still does: line mode then
-    gets the separator alone.
-  - A raw recording is the same thing made by hand: a `.raw` with its
-    `.meta` beside it.
+  - A session is a folder of its own, `<name>/<name>.raw` with its `.meta`
+    and `.times`, plus a `.log` to read. The `.raw` holds the bytes as
+    received, the `.times` when each chunk of them came, and the `.meta` what
+    they were received on (device, line settings, encoding), so a session
+    replays and restores as it was: both modes are rebuilt from the `.raw`,
+    the `.log` is never read back.
+  - A full recording is the same thing made by hand: the same files in a
+    folder of your choice.
   - A text recording (`.log`) is for keeping and reading only: decoded,
     split in lines, times and marks added, it can't be replayed the same.
 - Recordings: what is received, in any mode, to a file of your choice.
   - `text`  The received lines, decoded, one per line, after their time
             (`timestamp_format`) when `timestamp` is on. In line mode, the
             sent lines too, after `tx_mark`
-  - `raw`   The received bytes as is, replayable with `--replay <file>`,
-            with a `.meta` beside it (same name) so the replay decodes with
-            the encoding and shows the line settings it was recorded with.
-            During a replay, the replayed session's (none for a file
-            without a `.meta`). With the session included, the `.meta`
-            starts when the session did
-  Text and raw record apart, both at once if you want. `toggle-logging`
-  (`Ctrl-A l`, or a click on `● REC`) stops every recording, or opens the
-  recording dialog on the mode's stream (text in line mode, raw in terminal
-  mode). `record-text` and `record-raw` (no default keys, also in the
-  right-click menu) start or stop one stream.
-- The recording dialog: the path is prefilled, Enter starts.
-  - `Tab`        Switch the stream (swaps the default path unless edited)
-  - `Shift-Tab`  Include since session start: the file starts with everything
-                 the session backup holds, then keeps recording
-- Session backup: every session is recorded, raw and text, to
-  `~/.cache/maxicom/sessions/<date>_<time>_<port>` (`.log`, `.raw` and a small
-  `.meta` with the device and the text format), the time to the millisecond.
+  - `full`  A folder like a session's: the received bytes as is,
+            replayable with `--replay <folder>/<name>.raw`, their times, the
+            text, and a `.meta` so the replay decodes with the encoding and
+            shows the line settings it was recorded with. During a replay,
+            the replayed session's (no `.meta` for a file without one). With
+            the session included, every file starts with the session's and
+            the `.meta` when the session did. It stops, with a notice, when
+            the device changes (another port, baud, framing or encoding, a
+            replay starting or ending)
+  One recording at a time (a full one has the text too). `record`
+  (`Ctrl-A l`, a click on `● REC`, or `Record…` in the right-click menu)
+  stops it, or opens the recording dialog on the mode's stream (text in line
+  mode, full in terminal mode).
+- The recording dialog: the name is prefilled, without an extension: the
+  stream sets it, shown after the name (`.log`, or `/` for the folder).
+  Enter starts.
+  - `Tab`        Switch the stream
+  - `Shift-Tab`  Include since session start: the recording starts with
+                 everything the session backup holds, then keeps recording
+- Session backup: every session is recorded, raw and text, to a folder
+  `~/.cache/maxicom/sessions/<date>_<time>_<port>/` (`.log`, `.raw`, `.times`
+  and a small `.meta` with the device and the text format, all named like the
+  folder), the time to the millisecond.
   Flushed every 250 ms, so a crash or a `kill` loses almost nothing. It never
   lights `● REC`. Not in replay mode.
   - Its text is written with `timestamp`, `timestamp_format`, `record_tx` and
@@ -388,12 +394,12 @@ where its lines wrap, which `dimension_mode` decides.
     recordings only, never a running backup.
   - When a session starts, the sessions that received nothing are removed,
     then the oldest ones until `sessions.keep` are left and all the sessions
-    together (`.raw`, `.log` and `.meta`) fit `sessions.max_size`. The
+    together (all their files) fit `sessions.max_size`. The
     current session and one still running, here or in another maxicom
     (another port), count in the size but are never removed.
   - To recover a session by hand, open its `.log`, or replay its `.raw`
     (its `.meta` gives the encoding and the line settings):
-    `maxicom --replay ~/.cache/maxicom/sessions/20261028_141500123_ttyUSB0.raw`
+    `maxicom --replay ~/.cache/maxicom/sessions/20261028_141500123_ttyUSB0/20261028_141500123_ttyUSB0.raw`
   - A layout can show it with the `session` condition, e.g.
     `[◆](session?muted:hide)` (not in the default layout).
 - Restore: at startup, the last session of the same device can come back in
@@ -411,12 +417,10 @@ where its lines wrap, which `dimension_mode` decides.
   - The question: Enter or `y` restores, Esc or `n` skips; a click outside
     doesn't answer. What arrives meanwhile waits and comes after the
     restored part (up to 4 MiB, then the restore is skipped).
-  - What comes back: the last `line_mode.history_size` lines of the `.log`
-    (none without one), with their time read with the session's format (a
-    line whose time can't be read, or a session without times, shows a blank
-    time column), and the last 1 MiB of the `.raw`. A line starting with the
-    session's `tx_mark` comes back as a sent line, so a mark that device
-    output never starts with is best.
+  - What comes back: the last 1 MiB of the `.raw`, in both modes, cut in
+    lines as line mode did live (the lines sent in line mode aren't received:
+    they don't come back), each line and row at the time from the `.times`
+    (a session without one shows a blank time column).
   - After the terminal part, the modes a full-screen program may have left
     (alternate screen, cursor keys, mouse reports, scroll region) are reset.
   - The restored part isn't backed up again nor counted in RX, so the next
@@ -453,8 +457,7 @@ where its lines wrap, which `dimension_mode` decides.
 ```toml
 [capture]
 dir = ""                                 # recordings folder
-text_name = "maxicom_%Y%m%d_%H%M%S.log"
-raw_name = "maxicom_%Y%m%d_%H%M%S.raw"
+name = "maxicom_%Y%m%d_%H%M%S"           # no extension: .log, or a folder
 timestamp = true                         # time on each text line
 record_tx = true                         # sent lines in the text files (line mode)
 tx_mark = "> "                           # before each sent line, "" for none
@@ -574,7 +577,7 @@ right = '''
     hide, hidden, none
   - Mouse:
     `click=<action>` runs a keymap action (e.g. `help`, `settings`, `quit`,
-    `toggle-logging`) when the block is clicked
+    `record`) when the block is clicked
     `hover=<style>` styles the block under the mouse pointer, e.g.
     `hover=(bg=main fg=black)`, or `hover=none`; blocks without it take
     `hover` in `[ui.status_bar]` (default "reversed", "none" for no hover)

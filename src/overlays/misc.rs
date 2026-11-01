@@ -8,30 +8,23 @@ use crate::{
     overlays::{OverlayResponse, PopupTarget},
 };
 
-/// The recording dialog: the file and the stream it records (MAX-147). Switching the stream
-/// swaps in the other stream's default path, unless the path was edited. With a session
-/// backup running, `include_session` is whether the recording starts with its content
+/// The recording dialog: the name and the stream it records (MAX-147). The name has no
+/// extension, the stream sets what it becomes (MAX-175): `<name>.log` for text, the folder
+/// `<name>` for a full recording. With a session backup running, `include_session` is whether
+/// the recording starts with its content
 #[derive(Debug, Clone)]
 pub struct FilePathDialog {
     pub file_input: Input,
     pub stream: Stream,
     pub include_session: Option<bool>,
-    text_path: String,
-    raw_path: String,
 }
 
 impl FilePathDialog {
-    pub fn new(stream: Stream, text_path: String, raw_path: String) -> Self {
-        let path = match stream {
-            Stream::Text => &text_path,
-            Stream::Raw => &raw_path,
-        };
+    pub fn new(stream: Stream, path: String) -> Self {
         Self {
-            file_input: Input::new(path.clone()),
+            file_input: Input::new(path),
             stream,
             include_session: None,
-            text_path,
-            raw_path,
         }
     }
 
@@ -40,19 +33,17 @@ impl FilePathDialog {
         self
     }
 
-    fn default_path(&self, stream: Stream) -> &str {
-        match stream {
-            Stream::Text => &self.text_path,
-            Stream::Raw => &self.raw_path,
+    /// What the stream adds to the name, shown after it: the text file's extension, or the
+    /// folder's `/`
+    pub fn suffix(&self) -> &'static str {
+        match self.stream {
+            Stream::Text => ".log",
+            Stream::Full => "/",
         }
     }
 
     fn switch_stream(&mut self) {
-        let is_edited = self.file_input.value() != self.default_path(self.stream);
         self.stream = self.stream.other();
-        if !is_edited {
-            self.file_input = Input::new(self.default_path(self.stream).to_string());
-        }
     }
 
     pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
@@ -191,42 +182,28 @@ mod tests {
     use super::*;
 
     fn dialog() -> FilePathDialog {
-        FilePathDialog::new(Stream::Text, "a.log".to_string(), "a.raw".to_string())
+        FilePathDialog::new(Stream::Text, "a".to_string())
     }
 
-    /// Switching the stream swaps in its default path while the path wasn't edited, and Apply
-    /// starts the chosen stream.
+    /// MAX-175: the name has no extension, the stream sets what it saves: `.log` for text, a
+    /// folder for a full recording; switching keeps the name, and Apply starts the chosen
+    /// stream with it.
     /// How: Tab (CycleNext), then a click on the stream row (back to text), then Apply.
     #[test]
-    fn switching_the_stream_swaps_the_default_path() {
+    fn the_stream_sets_what_the_name_saves() {
         let mut dialog = dialog();
+        assert_eq!(dialog.suffix(), ".log");
         dialog.handle_action(DialogAction::CycleNext);
-        assert_eq!(
-            (dialog.stream, dialog.file_input.value()),
-            (Stream::Raw, "a.raw")
-        );
+        assert_eq!((dialog.stream, dialog.suffix()), (Stream::Full, "/"));
         dialog.handle_action(DialogAction::Pick(PopupTarget::CaptureStream));
         assert_eq!(
             (dialog.stream, dialog.file_input.value()),
-            (Stream::Text, "a.log")
+            (Stream::Text, "a")
         );
         assert!(matches!(
             dialog.handle_action(DialogAction::Confirm),
-            OverlayResponse::StartCapture { stream: Stream::Text, path, include_session: false } if path.as_os_str() == "a.log"
+            OverlayResponse::StartCapture { stream: Stream::Text, path, include_session: false } if path.as_os_str() == "a"
         ));
-    }
-
-    /// An edited path stays when the stream switches.
-    /// How: types "x" at the end, then Tab.
-    #[test]
-    fn switching_the_stream_keeps_an_edited_path() {
-        let mut dialog = dialog();
-        dialog.handle_action(DialogAction::Paste("x".to_string()));
-        dialog.handle_action(DialogAction::CycleNext);
-        assert_eq!(
-            (dialog.stream, dialog.file_input.value()),
-            (Stream::Raw, "a.logx")
-        );
     }
 
     /// With a session backup, Shift-Tab (CyclePrev) or a click on its row toggles "since

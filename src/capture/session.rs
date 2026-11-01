@@ -168,21 +168,28 @@ impl SessionLimits {
     }
 }
 
+/// The file of the session `stem` in the session folder `dir` with `extension`: each session
+/// has a folder of its own, named after it like its files (MAX-175)
+pub fn session_file(dir: &Path, stem: &str, extension: &str) -> PathBuf {
+    dir.join(stem).join(format!("{stem}.{extension}"))
+}
+
 /// Removes the empty sessions in `dir`, then the oldest so `limits.keep` are left and their
 /// files together fit `limits.max_size`, never `current` nor a session still running (MAX-148,
-/// MAX-163): those count in the size but stay. A session is the `.log`, `.raw` and `.meta`
-/// files of one stem, which starts with its date so the names sort by age
+/// MAX-163): those count in the size but stay. A session is the folder of one stem with its
+/// `.log`, `.raw` and `.meta` files; the stem starts with its date so the names sort by age
 pub fn prune_sessions(dir: &Path, limits: SessionLimits, current: &str) -> io::Result<()> {
     let mut sessions = session_files(dir)?;
-    let removable = |stem: &str| stem != current && !is_running(dir, stem);
+    let removable = |stem: &str| stem != current && !is_running(&dir.join(stem), stem);
+    let remove = |stem: &str| fs::remove_dir_all(dir.join(stem));
     // a launch that received nothing leaves an empty session, which would fill `keep`
-    sessions.retain(|stem, paths| {
-        let empty =
-            fs::metadata(dir.join(format!("{stem}.raw"))).map_or(true, |raw| raw.len() == 0);
+    sessions.retain(|stem, _| {
+        let raw = session_file(dir, stem, "raw");
+        let empty = fs::metadata(raw).map_or(true, |raw| raw.len() == 0);
         if !empty || !removable(stem) {
             return true;
         }
-        let _ = remove_files(paths);
+        let _ = remove(stem);
         false
     });
     let files_size = |paths: &[PathBuf]| -> u64 {
@@ -203,7 +210,7 @@ pub fn prune_sessions(dir: &Path, limits: SessionLimits, current: &str) -> io::R
         }
         if removable(stem) {
             let freed = files_size(paths);
-            if remove_files(paths).is_ok() {
+            if remove(stem).is_ok() {
                 size = size.saturating_sub(freed);
                 left -= 1;
             }
@@ -212,33 +219,29 @@ pub fn prune_sessions(dir: &Path, limits: SessionLimits, current: &str) -> io::R
     Ok(())
 }
 
-/// The session files in `dir` by stem, which starts with the date so they sort by age
+/// The session files in `dir` by stem, which starts with the date so they sort by age: the
+/// `.log`, `.raw`, `.meta` and `.times` files in the folder of each stem. A folder with none of them, and
+/// the files in `dir` itself, aren't sessions
 fn session_files(dir: &Path) -> io::Result<BTreeMap<String, Vec<PathBuf>>> {
     let mut sessions: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
     for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
-        let is_session = matches!(
-            path.extension().and_then(|ext| ext.to_str()),
-            Some("log" | "raw" | "meta")
-        );
-        if is_session && let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
-            sessions.entry(stem.to_string()).or_default().push(path);
+        let entry = entry?;
+        let Some(stem) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let files: Vec<PathBuf> = ["log", "raw", "meta", "times"]
+            .iter()
+            .map(|extension| session_file(dir, &stem, extension))
+            .filter(|path| path.is_file())
+            .collect();
+        if !files.is_empty() {
+            sessions.insert(stem, files);
         }
     }
     Ok(sessions)
-}
-
-/// Removes every file of `paths`, even after one fails, and gives the first error
-fn remove_files(paths: &[PathBuf]) -> io::Result<()> {
-    let mut result = Ok(());
-    for path in paths {
-        if let Err(err) = fs::remove_file(path)
-            && result.is_ok()
-        {
-            result = Err(err);
-        }
-    }
-    result
 }
 
 /// A session in the cache folder (MAX-148), what the restore and the session browser use: its
@@ -287,6 +290,11 @@ impl Session {
 
     pub fn raw_path(&self) -> Option<&Path> {
         self.file("raw")
+    }
+
+    /// When each chunk of the raw bytes was received (MAX-175)
+    pub fn times_path(&self) -> Option<&Path> {
+        self.file("times")
     }
 
     fn file(&self, extension: &str) -> Option<&Path> {
@@ -343,7 +351,7 @@ pub fn list_sessions(dir: &Path) -> io::Result<Vec<Session>> {
 }
 
 fn read_session(dir: &Path, stem: String, files: Vec<PathBuf>) -> Session {
-    let meta = SessionMeta::read(&dir.join(format!("{stem}.meta")));
+    let meta = SessionMeta::read(&session_file(dir, &stem, "meta"));
     let started = match &meta {
         Some(meta) => DateTime::from_timestamp(meta.started, 0).map(|t| t.with_timezone(&Local)),
         None => stem
@@ -351,11 +359,11 @@ fn read_session(dir: &Path, stem: String, files: Vec<PathBuf>) -> Session {
             .and_then(|date| NaiveDateTime::parse_from_str(date, "%Y%m%d_%H%M%S").ok())
             .and_then(|date| Local.from_local_datetime(&date).earliest()),
     };
-    let raw = fs::metadata(dir.join(format!("{stem}.raw"))).ok();
-    let log_len = fs::metadata(dir.join(format!("{stem}.log"))).map_or(0, |log| log.len());
+    let raw = fs::metadata(session_file(dir, &stem, "raw")).ok();
+    let log_len = fs::metadata(session_file(dir, &stem, "log")).map_or(0, |log| log.len());
     let raw_len = raw.as_ref().map_or(0, |raw| raw.len());
     Session {
-        running: is_running(dir, &stem),
+        running: is_running(&dir.join(&stem), &stem),
         ended: raw.and_then(|raw| raw.modified().ok()).map(DateTime::from),
         raw_len,
         size: log_len + raw_len,
@@ -378,13 +386,15 @@ pub fn sort_sessions(entries: &mut [Session], order: SessionOrder) {
     }
 }
 
-/// Deletes the files of `entry`, refused while it is still running
+/// Deletes the folder of `entry`, refused while it is still running
 pub fn delete_session(entry: &Session) -> io::Result<()> {
-    let dir = entry.files.first().and_then(|path| path.parent());
-    if dir.is_some_and(|dir| is_running(dir, &entry.stem)) {
+    let Some(folder) = entry.files.first().and_then(|path| path.parent()) else {
+        return Ok(());
+    };
+    if is_running(folder, &entry.stem) {
         return Err(io::Error::other("the session is still running"));
     }
-    remove_files(&entry.files)
+    fs::remove_dir_all(folder)
 }
 
 /// What deleting several sessions did: the sessions deleted and their size, the running ones
@@ -415,10 +425,10 @@ pub fn delete_sessions(entries: &[Session]) -> DeleteReport {
     report
 }
 
-/// Whether the session of `stem` is still running, here or in another maxicom: its session backup
-/// holds the lock on its `.raw`
-fn is_running(dir: &Path, stem: &str) -> bool {
-    File::open(dir.join(format!("{stem}.raw")))
+/// Whether the session of `stem` in its `folder` is still running, here or in another maxicom:
+/// its session backup holds the lock on its `.raw`
+fn is_running(folder: &Path, stem: &str) -> bool {
+    File::open(folder.join(format!("{stem}.raw")))
         .is_ok_and(|raw| matches!(raw.try_lock(), Err(fs::TryLockError::WouldBlock)))
 }
 
@@ -515,7 +525,7 @@ mod tests {
     }
 
     /// MAX-147: pruning keeps the newest sessions (all files of each, the meta file with them,
-    /// MAX-148) and leaves other files.
+    /// MAX-148; the folder of each, MAX-175) and leaves other files.
     /// How: 3 sessions that received something and a note, keep 2.
     #[test]
     fn prune_keeps_the_newest_sessions() {
@@ -532,16 +542,11 @@ mod tests {
             "20260103_000000_b.raw",
             "notes.txt",
         ] {
-            fs::write(dir.join(name), "x").unwrap();
+            put(&dir, name, "x");
         }
         prune_sessions(&dir, SessionLimits::keep(2), "20260103_000000_b").unwrap();
-        let mut left: Vec<_> = fs::read_dir(&dir)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-            .collect();
-        left.sort();
         assert_eq!(
-            left,
+            file_names(&dir),
             [
                 "20260102_000000_a.log",
                 "20260102_000000_a.meta",
@@ -562,8 +567,8 @@ mod tests {
         let dir = temp_dir("prune_size");
         fs::create_dir_all(&dir).unwrap();
         for day in 1..=4 {
-            fs::write(dir.join(format!("2026010{day}_000000_a.raw")), [b'x'; 60]).unwrap();
-            fs::write(dir.join(format!("2026010{day}_000000_a.log")), [b'x'; 40]).unwrap();
+            put(&dir, &format!("2026010{day}_000000_a.raw"), [b'x'; 60]);
+            put(&dir, &format!("2026010{day}_000000_a.log"), [b'x'; 40]);
         }
         let limits = |max| SessionLimits {
             keep: 10,
@@ -587,13 +592,36 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// The names of the files in `dir` and in its sessions' folders (MAX-175)
     fn file_names(dir: &Path) -> Vec<String> {
-        let mut names: Vec<_> = fs::read_dir(dir)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-            .collect();
+        let mut names = Vec::new();
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                names.extend(file_names(&path));
+            } else {
+                names.push(path.file_name().unwrap().to_string_lossy().into_owned());
+            }
+        }
         names.sort();
         names
+    }
+
+    /// Where `name` goes in the session folder `dir`: a session file (`<stem>.log|raw|meta`)
+    /// in its stem's folder, anything else in `dir` (MAX-175)
+    fn at(dir: &Path, name: &str) -> PathBuf {
+        match name.rsplit_once('.') {
+            Some((stem, extension @ ("log" | "raw" | "meta"))) => {
+                session_file(dir, stem, extension)
+            }
+            _ => dir.join(name),
+        }
+    }
+
+    fn put(dir: &Path, name: &str, content: impl AsRef<[u8]>) {
+        let path = at(dir, name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
     }
 
     /// MAX-148: empty sessions (an empty or missing `.raw`) are removed before counting, so
@@ -614,7 +642,7 @@ mod tests {
             ("20260104_000000_a.log", ""),
             ("20260105_000000_a.raw", ""),
         ] {
-            fs::write(dir.join(name), content).unwrap();
+            put(&dir, name, content);
         }
         prune_sessions(&dir, SessionLimits::keep(2), "20260105_000000_a").unwrap();
         assert_eq!(
@@ -631,7 +659,7 @@ mod tests {
             ("20260103_000000_a.raw", "x"),
             ("20260104_000000_a.raw", ""),
         ] {
-            fs::write(dir.join(name), content).unwrap();
+            put(&dir, name, content);
         }
         prune_sessions(&dir, SessionLimits::keep(3), "20260104_000000_a").unwrap();
         assert_eq!(
@@ -652,9 +680,9 @@ mod tests {
     fn prune_keeps_a_running_session() {
         let dir = temp_dir("prune_running");
         fs::create_dir_all(&dir).unwrap();
-        let other = dir.join("20260101_000000_other.raw");
-        fs::write(&other, "").unwrap();
-        fs::write(dir.join("20260102_000000_mine.raw"), "").unwrap();
+        let other = at(&dir, "20260101_000000_other.raw");
+        put(&dir, "20260101_000000_other.raw", "");
+        put(&dir, "20260102_000000_mine.raw", "");
         let lock = File::open(&other).unwrap();
         lock.try_lock().unwrap();
         prune_sessions(&dir, SessionLimits::keep(1), "20260102_000000_mine").unwrap();
@@ -676,9 +704,9 @@ mod tests {
             .into_iter()
             .find_map(|n| n.strip_suffix("_x.raw").map(|stem| format!("{stem}_x")))
             .unwrap();
-        assert!(is_running(&dir, &session));
+        assert!(is_running(&dir.join(&session), &session));
         drop(recorder);
-        assert!(!is_running(&dir, &session));
+        assert!(!is_running(&dir.join(&session), &session));
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -691,13 +719,13 @@ mod tests {
             device: device.clone(),
             text: SessionText::default(),
         };
-        fs::write(
-            dir.join(format!("{stem}.meta")),
+        put(
+            dir,
+            &format!("{stem}.meta"),
             toml::to_string(&meta).unwrap(),
-        )
-        .unwrap();
-        fs::write(dir.join(format!("{stem}.log")), "").unwrap();
-        fs::write(dir.join(format!("{stem}.raw")), raw).unwrap();
+        );
+        put(dir, &format!("{stem}.log"), "");
+        put(dir, &format!("{stem}.raw"), raw);
     }
 
     /// A meta file as maxicom wrote it before MAX-156 (version 1, the line settings at the top
@@ -738,7 +766,7 @@ tx_mark = "> "
         let tcp = device("tcp://192.168.1.50:4000");
         assert_eq!(tcp.line, None);
         write_session(&dir, "20260101_000000_192.168.1.50_4000", &tcp, b"rx");
-        let meta = fs::read_to_string(dir.join("20260101_000000_192.168.1.50_4000.meta")).unwrap();
+        let meta = fs::read_to_string(at(&dir, "20260101_000000_192.168.1.50_4000.meta")).unwrap();
         assert!(!meta.contains("baud") && !meta.contains("parity"), "{meta}");
 
         assert_eq!(
@@ -789,8 +817,8 @@ tx_mark = "> "
             ),
         ];
         for (stem, text) in &cases {
-            fs::write(dir.join(format!("{stem}.meta")), text).unwrap();
-            fs::write(dir.join(format!("{stem}.raw")), "rx").unwrap();
+            put(&dir, &format!("{stem}.meta"), text);
+            put(&dir, &format!("{stem}.raw"), "rx");
         }
         let sessions = list_sessions(&dir).unwrap();
         assert_eq!(sessions.len(), 2);
@@ -836,22 +864,22 @@ tx_mark = "> "
         write_session(&dir, "20260106_000000_ttyUSB0", &other_encoding, b"x");
         write_session(&dir, "20260107_000000_ttyUSB0", &mine, b"");
         write_session(&dir, "20260108_000000_ttyUSB0", &mine, b"x");
-        let meta = dir.join("20260108_000000_ttyUSB0.meta");
+        let meta = at(&dir, "20260108_000000_ttyUSB0.meta");
         let next_version = fs::read_to_string(&meta)
             .unwrap()
             .replace("version = 1", "version = 2");
         fs::write(&meta, next_version).unwrap();
         write_session(&dir, "20260109_000000_ttyUSB0", &mine, b"x");
-        fs::write(dir.join("20260109_000000_ttyUSB0.meta"), "not toml [").unwrap();
+        put(&dir, "20260109_000000_ttyUSB0.meta", "not toml [");
 
         let session = find_last_session(&dir, &mine, None).unwrap();
         assert_eq!(
             session.raw_path(),
-            Some(dir.join("20260102_000000_ttyUSB0.raw").as_path())
+            Some(at(&dir, "20260102_000000_ttyUSB0.raw").as_path())
         );
         assert_eq!(
             session.text_path(),
-            Some(dir.join("20260102_000000_ttyUSB0.log").as_path())
+            Some(at(&dir, "20260102_000000_ttyUSB0.log").as_path())
         );
         assert_eq!(session.raw_len, 4);
         assert_eq!(session.started.unwrap().timestamp(), 1_700_000_000);
@@ -874,7 +902,7 @@ tx_mark = "> "
         let two_hours_ago = SystemTime::now() - Duration::from_secs(2 * 3600);
         File::options()
             .write(true)
-            .open(dir.join("20260101_000000_ttyUSB0.raw"))
+            .open(at(&dir, "20260101_000000_ttyUSB0.raw"))
             .unwrap()
             .set_modified(two_hours_ago)
             .unwrap();
@@ -946,9 +974,9 @@ tx_mark = "> "
             b"abc\r\n",
             b"",
         );
-        fs::write(dir.join("20200101_120000_old.log"), "old\n").unwrap();
-        fs::write(dir.join("20200101_120000_old.raw"), "old\r\n").unwrap();
-        fs::write(dir.join("notes.txt"), "x").unwrap();
+        put(&dir, "20200101_120000_old.log", "old\n");
+        put(&dir, "20200101_120000_old.raw", "old\r\n");
+        put(&dir, "notes.txt", "x");
         let mut running = Recorder::default();
         running
             .start_session(
@@ -974,7 +1002,7 @@ tx_mark = "> "
         assert_eq!(usb.ended, with_meta.ended);
         assert_eq!(usb.raw_len, 5);
         assert_eq!(usb.size, 4 + 5);
-        assert_eq!(usb.files.len(), 3);
+        assert_eq!(usb.files.len(), 4);
         assert_eq!(usb.text_path(), with_meta.text_path());
 
         assert_eq!(old.meta, None);
@@ -1038,7 +1066,7 @@ tx_mark = "> "
         let dir = temp_dir("delete_sessions");
         write_test_session(&dir, "/dev/a", &SessionText::default(), b"aa\r\n", b"");
         write_test_session(&dir, "/dev/b", &SessionText::default(), b"bbb\r\n", b"");
-        fs::write(dir.join("notes.txt"), "x").unwrap();
+        put(&dir, "notes.txt", "x");
         let mut running = Recorder::default();
         running
             .start_session(
