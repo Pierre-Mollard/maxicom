@@ -79,7 +79,7 @@ impl AppConfig {
             .unwrap_or_else(|| PathBuf::from(CONFIG_FILE))
     }
 
-    pub fn default_journal_dir() -> Option<PathBuf> {
+    pub fn default_sessions_dir() -> Option<PathBuf> {
         dirs::cache_dir().map(|p| p.join(APP_DIR).join(SESSION_DIR))
     }
 

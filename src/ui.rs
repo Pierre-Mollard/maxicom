@@ -1440,11 +1440,11 @@ mod tests {
         crate::capture::tests::write_test_session(
             &dir,
             "/dev/ttyUSB0",
-            &crate::capture::JournalText::default(),
+            &crate::capture::SessionText::default(),
             b"old line\r\n",
             b"",
         );
-        h.app.settings_mut().capture.restore = crate::configs::settings::RestoreMode::Ask;
+        h.app.settings_mut().sessions.restore = crate::configs::settings::RestoreMode::Ask;
         h.app.restore_last_session(Some(&dir), None);
         assert_eq!(title_fg(&mut h, "Restore"), palette.text_good);
         let _ = std::fs::remove_dir_all(&dir);
@@ -1989,9 +1989,10 @@ mod tests {
         (x as u16, y)
     }
 
-    /// MAX-167: the trigger browser lists the triggers with their state (`◎` armed, `○` not) and the selected one's rule on the side; a click selects a row, a click on
-    /// the selected one or the Toggle button toggles it, Toggle all toggles them all, and it
-    /// stays open. The status bar's count opens it.
+    /// MAX-167: the trigger browser lists the triggers with their state (`◎` armed, `○` not) and
+    /// the selected one's rule on the side; a click selects a row, a click on the selected one or
+    /// the Toggle button toggles it, Toggle all toggles them all, and it stays open. The status
+    /// bar's count opens it.
     /// How: the default triggers, the popup opened by its action, then by the status bar.
     #[test]
     fn trigger_browser_lists_and_toggles() {
@@ -2144,11 +2145,11 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("maxicom_test_{}_browser_tcp", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let text = crate::capture::JournalText::default();
+        let text = crate::capture::SessionText::default();
         let port = "tcp://192.168.1.50:4000";
         crate::capture::tests::write_test_session(&dir, port, &text, b"rx\r\n", b"");
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
-        h.app.start_journal(Some(dir.clone()));
+        h.app.start_session(Some(dir.clone()));
         h.app.update(Action::App(AppAction::OpenSessions));
         let rows = h.draw();
         click(&mut h, cell_of(&rows, "192.168.1.50_4000"));
@@ -2163,24 +2164,24 @@ mod tests {
     /// what this device would restore) and previews the selected one; a click selects a row,
     /// and the buttons sort, delete one, and delete all once the question is answered.
     /// How: a session on this device, one on another port, and the app's own running
-    /// journal, in a temp folder.
+    /// session backup, in a temp folder.
     #[test]
     fn session_browser_lists_previews_and_deletes() {
         let dir =
             std::env::temp_dir().join(format!("maxicom_test_{}_browser_ui", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let text = crate::capture::JournalText::default();
+        let text = crate::capture::SessionText::default();
         let port = LinkConfig::default().address.to_string();
         crate::capture::tests::write_test_session(&dir, &port, &text, b"mine\r\n", b"");
         crate::capture::tests::write_test_session(&dir, "/dev/other", &text, b"theirs\r\n", b"");
-        // the names are to the millisecond: the app's journal must not get the same one
+        // the names are to the millisecond: the app's session backup must not get the same one
         std::thread::sleep(std::time::Duration::from_millis(2));
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
-        h.app.start_journal(Some(dir.clone()));
+        h.app.start_session(Some(dir.clone()));
         h.app.update(Action::App(AppAction::OpenSessions));
         let rows = h.draw();
         assert!(has(&rows, "Session backups"), "{rows:#?}");
-        // the app's own journal runs (empty), the past one on this port would restore
+        // the app's own session backup runs (empty), the past one on this port would restore
         let row_with = |rows: &[String], text: &str| -> String {
             rows.iter().find(|row| row.contains(text)).cloned().unwrap()
         };
@@ -2225,10 +2226,10 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
-        let text = crate::capture::JournalText::default();
+        let text = crate::capture::SessionText::default();
         crate::capture::tests::write_test_session(&dir, "/dev/other", &text, b"theirs\r\n", b"");
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
-        h.app.start_journal(Some(dir.clone()));
+        h.app.start_session(Some(dir.clone()));
         h.app.update(Action::App(AppAction::OpenSessions));
         let rows = h.draw();
         assert!(!has(&rows, "Back to live"), "{rows:#?}");
@@ -2280,7 +2281,7 @@ mod tests {
     /// between them keep the text color. The preview's port, times and size take the same
     /// colors.
     /// How: one past session written now on this device, so it is the restorable one, next to
-    /// the app's own running journal.
+    /// the app's own running session backup.
     #[test]
     fn session_browser_row_colors() {
         let dir = std::env::temp_dir().join(format!(
@@ -2289,12 +2290,12 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&dir);
         let port = LinkConfig::default().address.to_string();
-        let text = crate::capture::JournalText::default();
+        let text = crate::capture::SessionText::default();
         crate::capture::tests::write_test_session(&dir, &port, &text, b"mine\r\n", b"");
-        // the names are to the millisecond: the app's journal must not get the same one
+        // the names are to the millisecond: the app's session backup must not get the same one
         std::thread::sleep(std::time::Duration::from_millis(2));
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
-        h.app.start_journal(Some(dir.clone()));
+        h.app.start_session(Some(dir.clone()));
         h.app.update(Action::App(AppAction::OpenSessions));
         let rows = h.draw();
         let colors = h.theme.session_browser;
@@ -2339,11 +2340,11 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("maxicom_test_{}_browser_copy", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let text = crate::capture::JournalText::default();
+        let text = crate::capture::SessionText::default();
         let session =
             crate::capture::tests::write_test_session(&dir, "/dev/past", &text, b"x\r\n", b"");
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
-        h.app.start_journal(Some(dir.clone()));
+        h.app.start_session(Some(dir.clone()));
         h.app.update(Action::App(AppAction::OpenSessions));
         let rows = h.draw();
         let folder = dir.display().to_string();
@@ -2382,7 +2383,7 @@ mod tests {
             std::env::temp_dir().join(format!("maxicom_test_{}_browser_80", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
-        h.app.start_journal(Some(dir.clone()));
+        h.app.start_session(Some(dir.clone()));
         h.app.update(Action::App(AppAction::OpenSessions));
         let rows = h.draw();
         for label in [
@@ -2415,12 +2416,12 @@ mod tests {
         crate::capture::tests::write_test_session(
             &dir,
             "/dev/ttyUSB0",
-            &crate::capture::JournalText::default(),
+            &crate::capture::SessionText::default(),
             b"old line\r\n",
             b"",
         );
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
-        h.app.settings_mut().capture.restore = crate::configs::settings::RestoreMode::Ask;
+        h.app.settings_mut().sessions.restore = crate::configs::settings::RestoreMode::Ask;
         h.app.restore_last_session(Some(&dir), None);
         let rows = h.draw();
         assert!(
@@ -2444,7 +2445,7 @@ mod tests {
 
     /// MAX-148: a restored line without a time keeps the time column blank, its text lined up
     /// with a timed live line, and a click and a drag on it work as on any line.
-    /// How: a session journal without timestamps restored, then a live line; timestamps shown.
+    /// How: a session without timestamps restored, then a live line; timestamps shown.
     #[test]
     fn restored_line_without_time_lines_up_and_copies() {
         let dir = std::env::temp_dir().join(format!(
@@ -2455,7 +2456,7 @@ mod tests {
         let session = crate::capture::tests::write_test_session(
             &dir,
             "/dev/ttyUSB0",
-            &crate::capture::JournalText::default(),
+            &crate::capture::SessionText::default(),
             b"restored words\r\n",
             b"",
         );

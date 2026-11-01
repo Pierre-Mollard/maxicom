@@ -140,7 +140,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             return Ok(ExitCode::SUCCESS);
         }
         // the folder to look into the backups out of the app: `cd $(maxicom --cache-dir)`
-        Ok(ParseOutcome::CacheDir) => match AppConfig::default_journal_dir() {
+        Ok(ParseOutcome::CacheDir) => match AppConfig::default_sessions_dir() {
             Some(dir) => {
                 println!("{}", dir.display());
                 return Ok(ExitCode::SUCCESS);
@@ -183,10 +183,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut app = App::new(settings, key_resolver, link_config);
     app.set_triggers(triggers);
     if app.link_kind().keeps_sessions() {
-        // before the new journal, whose pruning could remove the last session (MAX-148)
-        let journal_dir = AppConfig::default_journal_dir();
-        app.restore_last_session(journal_dir.as_deref(), restore);
-        app.start_journal(journal_dir);
+        // before the new session backup, whose pruning could remove the last session (MAX-148)
+        let sessions_dir = AppConfig::default_sessions_dir();
+        app.restore_last_session(sessions_dir.as_deref(), restore);
+        app.start_session(sessions_dir);
     }
 
     // before the UI, so a file that doesn't open is said on the shell

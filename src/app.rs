@@ -12,18 +12,16 @@ use crate::{
         term_answers::answer_bytes,
         transfer::FileTransfer,
         triggers::Trigger,
-        types::{FocusTarget, FrameAreas, FrameMap, LogEntry, ViewportSize},
+        types::{FocusTarget, FrameAreas, FrameMap, ViewportSize},
     },
     capture::{
-        Journal, JournalReader, JournalText, RESTORE_RAW_TAIL, Recorder, ScreenshotFormat, Session,
-        SessionDevice, SessionLine, SessionMeta, Stream, create_parent_dirs, expand_home,
-        find_last_session, read_tail_bytes, read_tail_lines, restore_separator,
+        Recorder, ScreenshotFormat, SessionDevice, SessionLine, SessionWriter, Stream,
+        create_parent_dirs, expand_home,
     },
     commands::{CommandError, Invocation, Target},
     configs::{
         DualBufferMode, KeyBindingAction, KeyResolver, Mode, SettingsConfig, StatusBarLayout,
-        TextEncoding, WrapMode,
-        settings::{PrefixWrapBehavior, RestoreMode},
+        TextEncoding, WrapMode, settings::PrefixWrapBehavior,
     },
     inputs::{
         Action, AppAction, ClickHoldAction, CopyModeAction, HistoryAction, LineInputAction,
@@ -35,12 +33,10 @@ use crate::{
         serial::{LineControl, LineSettings},
     },
     notification::{NotificationManager, ToastLevel},
-    overlays::{
-        ErrorDialog, FilePathDialog, Overlay, OverlayResponse, PopupTarget, ScreenshotDialog,
-        SessionBrowser, SettingKey,
-    },
+    overlays::{Overlay, OverlayResponse, PopupTarget, ScreenshotDialog, SettingKey},
 };
 
+pub mod capture;
 pub mod data_processing;
 pub mod device;
 pub mod line_mode;
@@ -89,8 +85,6 @@ impl Stats {
     }
 }
 
-/// The most kept while the restore dialog asks: past it, the dialog closes without a restore
-const HELD_RX_MAX: usize = 4 << 20;
 /// How often a drag held at the history's edge scrolls it (MAX-126)
 const DRAG_SCROLL_EVERY: Duration = Duration::from_millis(50);
 /// How long the scrollbar's `▲` or `▼` (MAX-142), or a click target that repeats (MAX-143), is
@@ -174,15 +168,15 @@ struct ReplacedLink {
     line_mode: LineMode,
     terminal_mode: TerminalMode,
     stats: Stats,
-    journal: Option<Journal>,
+    session: Option<SessionWriter>,
 }
 
-/// The replay running (MAX-166), new for each one: the line settings of the session it plays,
-/// when it plays one recorded on a serial port, and whether it read its whole file or was
-/// stopped without a link to go back to. Meaningless while the link isn't a replay
+/// The replay running (MAX-166), new for each one: the device of the session it plays, when
+/// its meta gives it, and whether it read its whole file or was stopped without a link to go
+/// back to. Meaningless while the link isn't a replay
 #[derive(Debug, Default)]
 struct ReplayState {
-    line: Option<SessionLine>,
+    device: Option<SessionDevice>,
     ended: bool,
 }
 
@@ -442,11 +436,6 @@ impl App {
         &mut self.link
     }
 
-    /// A new session backup, for the port `open` switched to: the backups go by port (MAX-12)
-    pub fn restart_journal(&mut self) {
-        self.start_journal(self.sessions_dir.clone());
-    }
-
     /// What the current link can do, taken from its address (MAX-166)
     pub fn link_kind(&self) -> LinkKind {
         self.link.kind()
@@ -466,13 +455,14 @@ impl App {
     /// set. None for a plain file, a session recorded over TCP, or a link that isn't a replay
     pub fn recorded_line(&self) -> Option<SessionLine> {
         (self.link_kind() == LinkKind::Replay)
-            .then_some(self.replay.line)
+            .then_some(self.replay.device.as_ref())
             .flatten()
+            .and_then(|device| device.line)
     }
 
     /// The replay of the file at `path` takes the link's place, on a reset terminal in terminal
     /// mode (MAX-166). A live link is set aside with its encoding, histories and counts, its
-    /// journal paused; what it was sending stops. A replay replacing a replay keeps the live
+    /// session backup paused; what it was sending stops. A replay replacing a replay keeps the live
     /// link. A session backup (`session`) decodes with its own encoding, a plain file with the
     /// live link's
     pub fn start_replay(&mut self, path: PathBuf, session: Option<&SessionDevice>) {
@@ -491,14 +481,14 @@ impl App {
                 line_mode,
                 terminal_mode,
                 stats,
-                journal: self.recorder.take_journal(),
+                session: self.recorder.take_session(),
             }));
         }
         self.link.set_address(Address::Replay(path));
         self.fit_mode_to_link();
         self.settings.encoding = session.map_or(live_encoding, |device| device.encoding);
         self.replay = ReplayState {
-            line: session.and_then(|device| device.line),
+            device: session.cloned(),
             ended: false,
         };
     }
@@ -552,7 +542,7 @@ impl App {
     }
 
     /// Puts back the live link the replay replaced, for the loop to open, and resumes its
-    /// journal (MAX-166). False when there is none: a replay from the command line
+    /// session backup (MAX-166). False when there is none: a replay from the command line
     pub fn stop_replay(&mut self) -> bool {
         let Some(replaced) = self.replaced_link.take() else {
             self.replay.ended = true;
@@ -564,7 +554,7 @@ impl App {
         self.line_mode = replaced.line_mode;
         self.terminal_mode = replaced.terminal_mode;
         self.stats = replaced.stats;
-        self.recorder.set_journal(replaced.journal);
+        self.recorder.set_session(replaced.session);
         true
     }
 
@@ -782,27 +772,7 @@ impl App {
                             stream,
                             include_session,
                         } => {
-                            let path = expand_home(&path);
-                            match self.recorder.start(stream, path.clone(), include_session) {
-                                Ok(_) => {
-                                    self.notify_success(format!(
-                                        "Started recording {}",
-                                        stream.as_str()
-                                    ));
-                                    if stream == Stream::Raw {
-                                        self.write_recording_meta(&path);
-                                    }
-                                }
-                                Err(e) => {
-                                    self.open_overlay(Overlay::Error(
-                                        ErrorDialog::new(
-                                            "Capture Failed",
-                                            "Could not open file for writing",
-                                        )
-                                        .with_details(e),
-                                    ));
-                                }
-                            }
+                            self.start_capture(&path, stream, include_session);
                             UpdateEffect::None
                         }
                         OverlayResponse::HandledNotify { message, warn } => {
@@ -1023,13 +993,13 @@ impl App {
     }
 
     /// `screenshot <name>` (MAX-12): saved at once, its format from its extension (`.ans` the
-    /// colors, else text, `.txt` added to a name without one), a bare name in `screenshot_dir`
+    /// colors, else text, `.txt` added to a name without one), a bare name in `screenshot.dir`
     fn save_screenshot_as(&mut self, name: &Path) {
         let format = match name.extension() {
             Some(ext) if ext == "ans" => ScreenshotFormat::Ansi,
             _ => ScreenshotFormat::Text,
         };
-        let mut path = self.settings.capture.screenshot_dir.join(name);
+        let mut path = self.settings.screenshot.dir.join(name);
         if path.extension().is_none() {
             path.set_extension(format.extension());
         }
@@ -1054,169 +1024,9 @@ impl App {
             return;
         }
         let shot = self.terminal_mode.screenshot();
-        let stem = self.settings.capture.screenshot_stem();
+        let stem = self.settings.screenshot.stem();
         let dialog = ScreenshotDialog::new(format, &stem.to_string_lossy(), shot);
         self.open_overlay(Overlay::Screenshot(dialog));
-    }
-
-    /// Restores the last session on this device found in `dir` when `restore` (`--restore` /
-    /// `--no-restore`) or else `capture.restore` says so, with a toast either way. With `ask`,
-    /// a dialog asks first, and what is received meanwhile waits for the answer. To call
-    /// before `start_journal`, whose pruning could remove it (MAX-148)
-    pub fn restore_last_session(&mut self, dir: Option<&Path>, restore: Option<bool>) {
-        let capture = &self.settings.capture;
-        let mode = match restore {
-            Some(true) => RestoreMode::Always,
-            Some(false) => RestoreMode::Never,
-            None => capture.restore,
-        };
-        let Some(dir) = dir.filter(|_| mode != RestoreMode::Never) else {
-            return;
-        };
-        let max_age = (!capture.restore_max_age.is_zero()).then_some(capture.restore_max_age);
-        let Some(session) = find_last_session(dir, &self.session_device(), max_age) else {
-            return;
-        };
-        if mode == RestoreMode::Ask {
-            self.held_rx = Some(Vec::new());
-            self.open_overlay(Overlay::RestoreSession(Box::new(session)));
-        } else {
-            self.restore_now(&session);
-        }
-    }
-
-    /// Keeps `chunk` while the restore dialog is open, so the restored data comes before it.
-    /// When the dialog was replaced by another popup, or too much came in, what was kept is
-    /// fed without a restore, then `chunk` is not kept
-    fn hold_rx(&mut self, chunk: &[u8]) -> bool {
-        let Some(held) = &mut self.held_rx else {
-            return false;
-        };
-        let asking = matches!(self.overlay, Some(Overlay::RestoreSession(_)));
-        if asking && held.len() + chunk.len() <= HELD_RX_MAX {
-            held.extend_from_slice(chunk);
-            return true;
-        }
-        if asking {
-            self.close_overlay();
-            self.notify_warn("Session not restored: too much data came in while asking");
-        }
-        self.release_held_rx();
-        false
-    }
-
-    fn release_held_rx(&mut self) {
-        if let Some(held) = self.held_rx.take() {
-            self.feed(&held, false);
-        }
-    }
-
-    /// The answer of the restore dialog: the session first when `yes`, then what came in
-    fn answer_restore(&mut self, session: &Session, yes: bool) {
-        if yes {
-            self.restore_now(session);
-        }
-        self.release_held_rx();
-    }
-
-    fn restore_now(&mut self, session: &Session) {
-        match self.restore_session(session) {
-            Ok(()) => self.notify_info(format!("Restored the session of {}", session.time_span())),
-            Err(err) => self.notify_warn(format!("Session not restored: {err}")),
-        }
-    }
-
-    /// The session browser on the session folder, the session this device would restore marked
-    /// (MAX-148)
-    fn open_session_browser(&mut self) {
-        let Some(dir) = self.sessions_dir.clone() else {
-            self.notify_warn("No session folder");
-            return;
-        };
-        let capture = &self.settings.capture;
-        let max_age = (!capture.restore_max_age.is_zero()).then_some(capture.restore_max_age);
-        let restorable =
-            find_last_session(&dir, &self.session_device(), max_age).map(|session| session.stem);
-        let mut browser = SessionBrowser::new(dir, restorable);
-        if let Some(replaced) = &self.replaced_link {
-            let raw = replaced
-                .journal
-                .as_ref()
-                .map(|j| j.raw_path().to_path_buf());
-            browser = browser.with_live(raw);
-        }
-        self.open_overlay(Overlay::Sessions(Box::new(browser)));
-    }
-
-    /// What this session runs on, for its journal and to find a past one to restore
-    fn session_device(&self) -> SessionDevice {
-        SessionDevice::new(self.link.config(), self.settings.encoding)
-    }
-
-    /// The meta file next to a raw recording, so its replay decodes and shows its line
-    /// settings as the session's does (MAX-163). None while replaying, whose device isn't
-    /// known whole
-    fn write_recording_meta(&mut self, raw: &Path) {
-        if !self.link_kind().keeps_sessions() {
-            return;
-        }
-        let meta = SessionMeta::new(
-            chrono::Local::now(),
-            self.session_device(),
-            JournalText::default(),
-        );
-        if let Err(err) = meta.write(&SessionMeta::path_of(raw)) {
-            self.notify_warn(format!("No meta file for the raw recording: {err}"));
-        }
-    }
-
-    /// Puts a past session in the history of both modes, before any live data (MAX-148): the
-    /// last lines of its text in line mode, read back with their times and marks, the end of
-    /// its raw bytes through the terminal, then a separator where the live data starts. Not
-    /// recorded nor counted: the new session starts empty
-    pub fn restore_session(&mut self, session: &Session) -> std::io::Result<()> {
-        // a session from `find_last_session` has all three
-        let (Some(text_path), Some(raw_path), Some(meta), Some(started)) = (
-            session.text_path(),
-            session.raw_path(),
-            &session.meta,
-            session.started,
-        ) else {
-            return Err(std::io::Error::other("not a complete session"));
-        };
-        let text = read_tail_lines(text_path, self.settings.line_mode.history_size)?;
-        let raw = read_tail_bytes(raw_path, RESTORE_RAW_TAIL)?;
-        let separator = restore_separator(session);
-
-        let text = String::from_utf8_lossy(&text);
-        let mut reader = JournalReader::new(&meta.text, started);
-        let lines = text.lines().map(|line| {
-            let line = reader.parse(line);
-            LogEntry::restored(line.text.to_string(), line.time)
-        });
-        let separator_line = LogEntry::restored(separator.clone(), None);
-        self.line_mode
-            .restore_entries(lines.chain(std::iter::once(separator_line)));
-        self.terminal_mode
-            .restore(self.settings.encoding, &raw, &separator);
-        Ok(())
-    }
-
-    /// Records what was sent to the text streams, in line mode only: in terminal mode the keys
-    /// go one by one and the remote echoes them, so the received text has them (MAX-147)
-    pub fn record_tx(&mut self, bytes: &[u8]) {
-        let settings = &self.settings;
-        if settings.mode != Mode::Line {
-            return;
-        }
-        let capture = &settings.capture;
-        let timestamp_format = capture
-            .timestamp
-            .then_some(settings.timestamp_format.as_str());
-        // the journal records them as it started, whatever `record_tx` is now (MAX-148)
-        let mark = capture.record_tx.then_some(capture.tx_mark.as_str());
-        self.recorder
-            .record_tx(settings.encoding, timestamp_format, mark, bytes);
     }
 
     /// Returns true when something on screen changed with time alone (needs a redraw)
@@ -1677,14 +1487,11 @@ impl App {
         new_term.rows = term.rows;
         new_term.cols = term.cols;
 
-        let (capture, new_capture) = (&old.capture, &mut settings.capture);
-        keep("capture.journal", capture.journal != new_capture.journal);
-        keep(
-            "capture.journal_keep",
-            capture.journal_keep != new_capture.journal_keep,
-        );
-        new_capture.journal = capture.journal;
-        new_capture.journal_keep = capture.journal_keep;
+        let (sessions, new_sessions) = (&old.sessions, &mut settings.sessions);
+        keep("sessions.enabled", sessions.enabled != new_sessions.enabled);
+        keep("sessions.keep", sessions.keep != new_sessions.keep);
+        new_sessions.enabled = sessions.enabled;
+        new_sessions.keep = sessions.keep;
 
         settings.refresh_timestamp_width();
         self.settings = settings;
@@ -1777,75 +1584,6 @@ impl App {
         }
     }
 
-    /// The stream the recording toggle starts in each mode: text in line mode, raw in terminal
-    /// mode
-    fn mode_stream(&self) -> Stream {
-        match self.settings.mode {
-            Mode::Line => Stream::Text,
-            Mode::Terminal => Stream::Raw,
-        }
-    }
-
-    /// Stops every recording, or opens the recording dialog on the mode's stream when none is on
-    fn toggle_logging(&mut self) {
-        if self.recorder.is_any_active() {
-            self.recorder.stop(Stream::Text);
-            self.recorder.stop(Stream::Raw);
-            self.notify_info("Recording stopped");
-        } else {
-            self.open_capture_dialog(self.mode_stream());
-        }
-    }
-
-    fn toggle_recording(&mut self, stream: Stream) {
-        if self.recorder.is_active(stream) {
-            self.recorder.stop(stream);
-            self.notify_info(format!("Stopped recording {}", stream.as_str()));
-        } else {
-            self.open_capture_dialog(stream);
-        }
-    }
-
-    /// The dialog on `stream`, each stream's path made from `[capture]` now
-    fn open_capture_dialog(&mut self, stream: Stream) {
-        let capture = &self.settings.capture;
-        let path = |name| capture.path_for(name).to_string_lossy().into_owned();
-        let mut dialog =
-            FilePathDialog::new(stream, path(&capture.text_name), path(&capture.raw_name));
-        if self.recorder.has_journal() {
-            dialog = dialog.with_session_backup();
-        }
-        self.open_overlay(Overlay::FilePath(dialog));
-    }
-
-    /// Starts the session backup in `dir` when `capture.journal` is on. Without it, a toast
-    /// says so and the app runs on (MAX-147)
-    pub fn start_journal(&mut self, dir: Option<PathBuf>) {
-        // the browser lists the past sessions even with the backup off
-        self.sessions_dir.clone_from(&dir);
-        let capture = &self.settings.capture;
-        if !capture.journal {
-            return;
-        }
-        let device = self.session_device();
-        // the journal's text is written as the capture settings say now, reloads aside
-        let text = JournalText {
-            timestamp: capture
-                .timestamp
-                .then(|| self.settings.timestamp_format.clone()),
-            tx_mark: capture.record_tx.then(|| capture.tx_mark.clone()),
-        };
-        let result = match dir {
-            Some(dir) => self
-                .recorder
-                .start_journal(&dir, &device, &text, capture.journal_keep),
-            None => Err(std::io::Error::other("no cache folder")),
-        };
-        if let Err(err) = result {
-            self.notify_warn(format!("Session backup off: {err}"));
-        }
-    }
-
     #[inline]
     pub fn settings(&self) -> &SettingsConfig {
         &self.settings
@@ -1862,9 +1600,9 @@ impl App {
         self.prefix_active
     }
 
-    /// The session backup runs, what the optional `journal` status bar condition shows
-    pub fn has_journal(&self) -> bool {
-        self.recorder.has_journal()
+    /// The session backup runs, what the optional `session` status bar condition shows
+    pub fn has_session(&self) -> bool {
+        self.recorder.has_session()
     }
 
     /// Some recording is on, what `REC` shows
@@ -1976,14 +1714,19 @@ impl App {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     //! App-level wiring of the viewport (#35) and of a config reload (MAX-112).
 
     use super::*;
-    use crate::{configs::KeyBindingsConfig, inputs::DialogAction};
+    use crate::{
+        app::capture::tests::asking_app,
+        capture::{SessionMeta, SessionText},
+        configs::KeyBindingsConfig,
+        inputs::DialogAction,
+    };
 
     /// An app whose link is open
-    fn app() -> App {
+    pub fn app() -> App {
         let mut app = App::new(
             SettingsConfig::default(),
             KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap(),
@@ -1991,6 +1734,17 @@ mod tests {
         );
         set_link_open(&mut app, true);
         app
+    }
+
+    /// The history's texts without their EOL, the separator as its start
+    pub fn texts(app: &App) -> Vec<String> {
+        let history = app.line_mode.history().iter();
+        history
+            .map(|e| match e.text.trim_end_matches(['\r', '\n']) {
+                text if text.starts_with("── restored") => "── restored".to_string(),
+                text => text.to_string(),
+            })
+            .collect()
     }
 
     /// The line settings the port took, as the link sets them
@@ -2953,7 +2707,7 @@ mod tests {
 
     /// MAX-12: `set` turns an on/off setting on or off (nothing when it is so already),
     /// `encoding` sets the encoding, `search` opens the search bar on its text with its matches,
-    /// `screenshot` saves the terminal at once in `screenshot_dir`, as text or with its colors
+    /// `screenshot` saves the terminal at once in `screenshot.dir`, as text or with its colors
     /// (`.ans`), and refuses in line mode.
     /// How: each command run, then the state it left.
     #[test]
@@ -3011,7 +2765,7 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("maxicom_test_{}_screenshots", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        app.settings.capture.screenshot_dir = dir.clone();
+        app.settings.screenshot.dir = dir.clone();
         app.settings.mode = Mode::Terminal;
         app.feed_rx(b"\x1b[31mred\x1b[0m");
         run_line(&mut app, "screenshot shot; screenshot shot.ans");
@@ -3051,104 +2805,6 @@ mod tests {
             }
             _ => panic!("the command line is closed"),
         }
-    }
-
-    /// MAX-147: a text recording gets what is received in terminal mode too, even when line
-    /// mode isn't fed (it used to go quiet there).
-    /// How: `ActiveOnly` buffering in terminal mode, a text recording, one line received.
-    #[test]
-    fn text_recording_follows_rx_in_terminal_mode() {
-        let mut app = app();
-        app.settings.mode = Mode::Terminal;
-        app.settings.dual_mode_buffering = DualBufferMode::ActiveOnly;
-        app.settings.capture.timestamp = false;
-        let path =
-            std::env::temp_dir().join(format!("maxicom_test_{}_app_text.log", std::process::id()));
-        let _ = std::fs::remove_file(&path);
-        app.recorder
-            .start(Stream::Text, path.clone(), false)
-            .unwrap();
-
-        app.feed_rx(b"seen\r\n");
-        app.recorder.stop(Stream::Text);
-        assert!(app.line_mode.history().is_empty());
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "seen\n");
-        let _ = std::fs::remove_file(&path);
-    }
-
-    /// MAX-147: sent lines are recorded in line mode after `capture.tx_mark`, not in terminal
-    /// mode nor with `capture.record_tx` off.
-    /// How: a text recording, one send in each case, then one with the mark "TX: " and one
-    /// with no mark.
-    #[test]
-    fn tx_is_recorded_in_line_mode_only() {
-        let mut app = app();
-        app.settings.capture.timestamp = false;
-        let path =
-            std::env::temp_dir().join(format!("maxicom_test_{}_app_tx.log", std::process::id()));
-        let _ = std::fs::remove_file(&path);
-        app.recorder
-            .start(Stream::Text, path.clone(), false)
-            .unwrap();
-
-        app.settings.mode = Mode::Line;
-        app.record_tx(b"line\r\n");
-        app.settings.mode = Mode::Terminal;
-        app.record_tx(b"terminal\r");
-        app.settings.mode = Mode::Line;
-        app.settings.capture.record_tx = false;
-        app.record_tx(b"off\r\n");
-        app.settings.capture.record_tx = true;
-        app.settings.capture.tx_mark = "TX: ".to_string();
-        app.record_tx(b"marked\r\n");
-        app.settings.capture.tx_mark = String::new();
-        app.record_tx(b"bare\r\n");
-        app.recorder.stop(Stream::Text);
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            "> line\nTX: marked\nbare\n"
-        );
-        let _ = std::fs::remove_file(&path);
-    }
-
-    /// MAX-147: each stream's action opens the dialog on it or stops it alone; the
-    /// `toggle-logging` action (the `REC` click) stops both, and `REC` is on with either.
-    /// How: text and raw recordings to temp files, then each action in turn.
-    #[test]
-    fn recording_actions_per_stream() {
-        let mut app = app();
-        app.settings.mode = Mode::Line;
-        let temp = |name: &str| {
-            std::env::temp_dir().join(format!("maxicom_test_{}_{name}", std::process::id()))
-        };
-        let open_dialog = |app: &App| match app.overlay() {
-            Some(Overlay::FilePath(dialog)) => Some(dialog.stream),
-            _ => None,
-        };
-
-        app.update(Action::App(AppAction::ToggleRecording(Stream::Raw)));
-        assert_eq!(open_dialog(&app), Some(Stream::Raw));
-        app.close_overlay();
-        app.update(Action::App(AppAction::ToggleLogging));
-        assert_eq!(open_dialog(&app), Some(Stream::Text));
-        app.close_overlay();
-
-        app.recorder
-            .start(Stream::Text, temp("act.log"), false)
-            .unwrap();
-        app.recorder
-            .start(Stream::Raw, temp("act.raw"), false)
-            .unwrap();
-        app.update(Action::App(AppAction::ToggleRecording(Stream::Raw)));
-        assert!(app.is_logging_active() && !app.is_recording(Stream::Raw));
-        app.recorder
-            .start(Stream::Raw, temp("act.raw"), false)
-            .unwrap();
-        app.update(Action::App(AppAction::ToggleLogging));
-        assert!(!app.is_logging_active());
-        assert!(app.overlay().is_none());
-        let _ = std::fs::remove_file(temp("act.log"));
-        let _ = std::fs::remove_file(temp("act.raw"));
     }
 
     /// Setting toggles that re-lay out the view reuse the last size `render` gave, not a
@@ -3255,7 +2911,7 @@ mod tests {
         let mut settings = SettingsConfig::default();
         settings.line_mode.history_size = 7;
         settings.terminal_mode.rows = 50;
-        settings.capture.journal = false;
+        settings.sessions.enabled = false;
         settings.inactivity_detach_timeout = Duration::from_secs(9);
         settings.rx_buffer_size = 512;
         settings.encoding.toggle();
@@ -3270,7 +2926,7 @@ mod tests {
             defaults.line_mode.history_size
         );
         assert_eq!(app.settings.terminal_mode.rows, defaults.terminal_mode.rows);
-        assert!(app.settings.capture.journal);
+        assert!(app.settings.sessions.enabled);
         assert_eq!(
             app.settings.inactivity_detach_timeout,
             Duration::from_secs(9)
@@ -3281,7 +2937,7 @@ mod tests {
             toasts(&app),
             [
                 "Config reloaded; restart to apply: line_mode.history_size, terminal_mode.rows, \
-              capture.journal"
+              sessions.enabled"
             ]
         );
     }
@@ -3299,7 +2955,7 @@ mod tests {
     /// MAX-147: a screenshot action takes the screen at once, then opens its dialog prefilled
     /// with `[capture]`'s folder, name and the format's extension; Enter saves that screen
     /// there, creating the folders.
-    /// How: a temp `screenshot_dir` that doesn't exist, a fixed name, "hi" on the screen at
+    /// How: a temp `screenshot.dir` that doesn't exist, a fixed name, "hi" on the screen at
     /// the action, " later" received while the dialog is open.
     #[test]
     fn screenshot_dialog_prefills_and_saves() {
@@ -3307,8 +2963,8 @@ mod tests {
         app.settings.mode = Mode::Terminal;
         let dir = std::env::temp_dir().join(format!("maxicom_test_{}_shots", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        app.settings.capture.screenshot_dir = dir.join("new");
-        app.settings.capture.screenshot_name = "shot".to_string();
+        app.settings.screenshot.dir = dir.join("new");
+        app.settings.screenshot.name = "shot".to_string();
         app.terminal_mode.process_rx(app.settings.encoding, b"hi");
 
         app.update(Action::Terminal(TerminalAction::Screenshot(
@@ -3342,69 +2998,19 @@ mod tests {
         assert!(!app.terminal_mode.has_pending_flash());
     }
 
-    /// MAX-148: a restore puts the session's last lines in line mode with their times (a sent
-    /// line without its mark), then the separator without a time; the terminal gets the raw
-    /// bytes, back on the main screen. Nothing goes to the new session's journal or the stats.
-    /// How: a session with "> " marks and times, ending in the alternate screen; an app with
-    /// its own journal restores it.
-    #[test]
-    fn restore_fills_both_modes_and_records_nothing() {
-        let base =
-            std::env::temp_dir().join(format!("maxicom_test_{}_restore", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
-        let text = JournalText {
-            timestamp: Some("[%H:%M:%S%.3f]".to_string()),
-            tx_mark: Some("> ".to_string()),
-        };
-        let session = crate::capture::tests::write_test_session(
-            &base.join("old"),
-            "/dev/ttyUSB0",
-            &text,
-            b"one\r\ntwo\r\n\x1b[?1049h\x1b[?1hvim",
-            b"cmd\r\n",
-        );
-
-        let mut app = app();
-        app.terminal_mode.set_vt100_size(24, 80);
-        app.start_journal(Some(base.join("new")));
-        app.restore_session(&session).unwrap();
-
-        let history: Vec<_> = app.line_mode.history().iter().collect();
-        let texts: Vec<_> = history.iter().map(|e| e.text.as_str()).collect();
-        assert_eq!(texts[..3], ["one", "two", "cmd"]);
-        assert!(texts[3].starts_with("── restored: ttyUSB0, "), "{texts:?}");
-        assert!(history[..3].iter().all(|e| e.timestamp.is_some()));
-        assert_eq!(history[3].timestamp, None);
-
-        let screen = app.terminal_mode.vt100_screen();
-        assert!(!screen.alternate_screen() && !screen.application_cursor());
-        assert!(screen.contents().contains("one\ntwo\n── restored"));
-        assert!(screen.contents().contains("── restored: ttyUSB0, "));
-        assert_eq!(app.stats.rx(), 0);
-
-        drop(app);
-        for entry in std::fs::read_dir(base.join("new")).unwrap() {
-            let path = entry.unwrap().path();
-            if path.extension().is_some_and(|ext| ext != "meta") {
-                assert_eq!(std::fs::read(&path).unwrap(), b"", "{path:?}");
-            }
-        }
-        let _ = std::fs::remove_dir_all(&base);
-    }
-
     /// MAX-166: a replay started while running takes the link's place, on fresh histories in
-    /// terminal mode; the live link is set aside with its histories, counts and mode, its
-    /// journal paused, and stopping the replay puts it all back, the journal going on in the
-    /// same files. A replay replacing a replay keeps the live link; a replay from the command
-    /// line has none to go back to: its stop ends it. A new replay isn't ended.
-    /// How: "live" received in line mode with a journal, a replay, "replayed" fed, a second
+    /// terminal mode; the live link is set aside with its histories, counts and mode, its session
+    /// backup paused, and stopping the replay puts it all back, the session backup going on in the
+    /// same files. A replay replacing a replay keeps the live link; a replay from the command line
+    /// has none to go back to: its stop ends it. A new replay isn't ended.
+    /// How: "live" received in line mode with a session backup, a replay, "replayed" fed, a second
     /// replay, the stop, "back" received; then an app on an ended replay from the start.
     #[test]
     fn replay_sets_the_live_link_aside() {
         let dir = crate::capture::tests::temp_dir("replay_aside");
         let mut app = app();
         app.settings_mut().mode = Mode::Line;
-        app.start_journal(Some(dir.clone()));
+        app.start_session(Some(dir.clone()));
         app.feed_rx(b"live\r\n");
         app.stats.update_rx(6);
 
@@ -3414,7 +3020,7 @@ mod tests {
             "file:///tmp/a.raw".parse::<Address>().unwrap()
         );
         assert_eq!(app.settings().mode, Mode::Terminal);
-        assert!(texts(&app).is_empty() && !app.has_journal());
+        assert!(texts(&app).is_empty() && !app.has_session());
         assert!(!app.terminal_mode.vt100_screen().contents().contains("live"));
         assert_eq!(app.stats.rx(), 0);
         app.feed_rx(b"replayed\r\n");
@@ -3431,7 +3037,7 @@ mod tests {
         assert_eq!(texts(&app), ["live"]);
         assert!(app.terminal_mode.vt100_screen().contents().contains("live"));
         assert_eq!(app.stats.rx(), 6);
-        assert!(app.has_journal() && !app.stop_replay());
+        assert!(app.has_session() && !app.stop_replay());
         app.feed_rx(b"back\r\n");
         drop(app);
         let raw = std::fs::read_dir(&dir)
@@ -3495,9 +3101,11 @@ mod tests {
 
     /// MAX-163: a raw recording gets a meta file beside it, and a file replayed without a
     /// session (`--replay`, `replay`) takes its device from its meta file: its encoding and
-    /// line settings. A file without one has none; a recording while replaying writes none.
+    /// line settings. A file without one has none. MAX-172: a recording while replaying writes
+    /// the replayed session's device, none while replaying a plain file.
     /// How: a cp437 port at 9600 7E1 records `rec.raw`, then replays it from a UTF-8 app at
-    /// the default line; a plain file; a recording made during the replay.
+    /// the default line; a recording made during that replay; a plain file, and a recording
+    /// during its replay.
     #[test]
     fn replay_reads_the_meta_file_beside() {
         let dir = crate::capture::tests::temp_dir("replay_meta");
@@ -3515,7 +3123,7 @@ mod tests {
         };
         set_line(&mut app, line);
         app.settings.encoding = TextEncoding::Cp437;
-        app.write_recording_meta(&rec);
+        app.write_recording_meta(&rec, false);
         assert!(dir.join("rec.meta").exists());
 
         let mut app = self::app();
@@ -3524,144 +3132,15 @@ mod tests {
         assert_eq!(app.recorded_line(), Some(SessionLine::of(&line)));
 
         let during = dir.join("during.raw");
-        app.write_recording_meta(&during);
-        assert!(!dir.join("during.meta").exists());
+        app.write_recording_meta(&during, false);
+        let meta = SessionMeta::read(&dir.join("during.meta")).unwrap();
+        assert_eq!(meta.device.encoding, TextEncoding::Cp437);
+        assert_eq!(meta.device.line, Some(SessionLine::of(&line)));
 
         app.open_replay(plain, Duration::ZERO, None).unwrap();
         assert_eq!(app.recorded_line(), None);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// MAX-148: the last session restores at startup with `always` or `--restore`, not with
-    /// `never`, `ask` (before its answer) or `--no-restore`, nor when older than
-    /// `restore_max_age`; `0` is no limit. A session restores again on the next launch.
-    /// How: one session on the app's port, then each case on a fresh app.
-    #[test]
-    fn last_session_restores_as_settings_say() {
-        let dir =
-            std::env::temp_dir().join(format!("maxicom_test_{}_restore_last", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let port = LinkConfig::default().address.to_string();
-        let session = crate::capture::tests::write_test_session(
-            &dir,
-            &port,
-            &JournalText::default(),
-            b"old line\r\n",
-            b"",
-        );
-        let restored = |mode: RestoreMode, flag: Option<bool>, max_age: u64| {
-            let mut app = app();
-            app.settings.capture.restore = mode;
-            app.settings.capture.restore_max_age = Duration::from_secs(max_age);
-            app.restore_last_session(Some(&dir), flag);
-            app.line_mode.history().iter().any(|e| e.text == "old line")
-        };
-        assert!(restored(RestoreMode::Always, None, 3600));
-        assert!(restored(RestoreMode::Always, None, 3600), "a second launch");
-        assert!(!restored(RestoreMode::Never, None, 3600));
-        // `ask` asks first: nothing restored before the answer
-        assert!(!restored(RestoreMode::Ask, None, 3600));
-        assert!(restored(RestoreMode::Never, Some(true), 3600));
-        assert!(!restored(RestoreMode::Always, Some(false), 3600));
-
-        let two_hours_ago = std::time::SystemTime::now() - Duration::from_secs(2 * 3600);
-        std::fs::File::options()
-            .write(true)
-            .open(session.raw_path().unwrap())
-            .unwrap()
-            .set_modified(two_hours_ago)
-            .unwrap();
-        assert!(!restored(RestoreMode::Always, None, 3600));
-        assert!(restored(RestoreMode::Always, None, 0));
-
-        let mut app = app();
-        app.settings.capture.restore = RestoreMode::Always;
-        app.restore_last_session(None, None);
-        assert!(app.line_mode.history().is_empty(), "no cache folder");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// An app whose `ask` dialog is open on a session with "old line", and its folder.
-    fn asking_app(name: &str) -> (App, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!("maxicom_test_{}_{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        crate::capture::tests::write_test_session(
-            &dir,
-            &LinkConfig::default().address.to_string(),
-            &JournalText::default(),
-            b"old line\r\n",
-            b"",
-        );
-        let mut app = app();
-        app.settings.mode = Mode::Line;
-        app.settings.capture.restore = RestoreMode::Ask;
-        app.restore_last_session(Some(&dir), None);
-        assert!(matches!(app.overlay(), Some(Overlay::RestoreSession(_))));
-        (app, dir)
-    }
-
-    /// The history's texts without their EOL, the separator as its start
-    fn texts(app: &App) -> Vec<String> {
-        let history = app.line_mode.history().iter();
-        history
-            .map(|e| match e.text.trim_end_matches(['\r', '\n']) {
-                text if text.starts_with("── restored") => "── restored".to_string(),
-                text => text.to_string(),
-            })
-            .collect()
-    }
-
-    /// MAX-148: with `ask`, what comes in while the dialog is open waits; Enter (or `y`)
-    /// restores the session first, then feeds it; Esc (or `n`) feeds it without a restore.
-    /// How: "live" received while asking, then each answer on a fresh app.
-    #[test]
-    fn ask_dialog_holds_rx_until_the_answer() {
-        let key = |c| {
-            DialogAction::HandleKey(crossterm::event::KeyEvent::new(
-                crossterm::event::KeyCode::Char(c),
-                crossterm::event::KeyModifiers::NONE,
-            ))
-        };
-        for (answer, restored) in [
-            (DialogAction::Confirm, true),
-            (key('y'), true),
-            (DialogAction::Close, false),
-            (key('n'), false),
-        ] {
-            let (mut app, dir) = asking_app("ask_answer");
-            app.feed_rx(b"live\r\n");
-            assert!(app.line_mode.history().is_empty());
-            app.update(Action::Overlay(answer));
-            assert!(app.overlay().is_none());
-            let expected: &[&str] = if restored {
-                &["old line", "── restored", "live"]
-            } else {
-                &["live"]
-            };
-            assert_eq!(texts(&app), expected);
-            app.feed_rx(b"after\r\n");
-            assert_eq!(texts(&app).last().unwrap(), "after");
-            let _ = std::fs::remove_dir_all(&dir);
-        }
-    }
-
-    /// MAX-148: the held data is never stuck: when another popup replaced the dialog, or more
-    /// than the cap came in, it is fed without a restore.
-    #[test]
-    fn ask_dialog_never_keeps_rx_stuck() {
-        let (mut app, dir) = asking_app("ask_stuck");
-        app.feed_rx(b"held\r\n");
-        app.open_overlay(Overlay::ConfirmQuit);
-        app.feed_rx(b"next\r\n");
-        assert_eq!(texts(&app), ["held", "next"]);
-
-        let (mut app, _) = asking_app("ask_stuck");
-        app.feed_rx(b"held\r\n");
-        app.feed_rx(&vec![b'x'; HELD_RX_MAX]);
-        assert!(app.overlay().is_none());
-        assert_eq!(texts(&app), ["held"]);
-        app.feed_rx(b"\r\n");
-        assert_eq!(texts(&app)[1].len(), HELD_RX_MAX);
+        app.write_recording_meta(&dir.join("plain_during.raw"), false);
+        assert!(!dir.join("plain_during.meta").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -3718,7 +3197,7 @@ mod tests {
         let session = crate::capture::tests::write_test_session(
             &base,
             "/dev/ttyUSB0",
-            &JournalText::default(),
+            &SessionText::default(),
             b"old\r\n\x1b[5n",
             b"",
         );

@@ -1,5 +1,5 @@
 //! The app driving its link (MAX-168): what the link does, said as notices and popups, the
-//! command line chain resumed or failed, the journal switched. `LinkState` keeps the link's
+//! command line chain resumed or failed, the session backup switched. `LinkState` keeps the link's
 //! own rules. The loop calls `start_link` once, `poll_link` each turn and `dispatch` for each
 //! action
 use std::{
@@ -250,7 +250,7 @@ impl App {
                 let switched = previous != *address;
                 self.notify_success(format!("Opened {address}"));
                 if switched {
-                    self.restart_journal();
+                    self.restart_session();
                 }
                 self.resume_commands();
             }
@@ -286,9 +286,9 @@ impl App {
         }
     }
 
-    /// The current link closes and the new one opens as a reconnect does, without waiting: the
-    /// rest of the command line waits for its result (MAX-12). A replay that set the live link
-    /// aside ends first, so the switch starts from the live link, its journal and its encoding
+    /// The current link closes and the new one opens as a reconnect does, without waiting: the rest
+    /// of the command line waits for its result (MAX-12). A replay that set the live link aside
+    /// ends first, so the switch starts from the live link, its session backup and its encoding
     /// (MAX-171)
     fn open_link(&mut self, address: Address) {
         if self.replaced_link.is_some() {
@@ -445,7 +445,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        capture::JournalText,
+        capture::SessionText,
         configs::{KeyBindingsConfig, KeyResolver, SettingsConfig, TextEncoding},
         inputs::AppAction,
         link::{LinkConfig, state::REOPEN_EVERY},
@@ -659,13 +659,13 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    /// MAX-171: `open` during a replay that set a live link aside ends the replay first: the
-    /// live link comes back with its encoding and its journal, then the new link opens with a
-    /// journal of its own, and the attach key no longer goes back to the old link. Opening the
-    /// live link again keeps its journal.
-    /// How: a TCP link with a journal, "one" received; a cp437 session file replayed; `open`
-    /// onto a second listener, "two" received there, then the attach key; the session files
-    /// read back. Then the same with `open` onto the live link, "again" received.
+    /// MAX-171: `open` during a replay that set a live link aside ends the replay first: the live
+    /// link comes back with its encoding and its session backup, then the new link opens with a
+    /// session backup of its own, and the attach key no longer goes back to the old link. Opening
+    /// the live link again keeps its session backup.
+    /// How: a TCP link with a session backup, "one" received; a cp437 session file replayed; `open`
+    /// onto a second listener, "two" received there, then the attach key; the session files read
+    /// back. Then the same with `open` onto the live link, "again" received.
     #[test]
     fn open_during_a_replay_ends_it_first() {
         let root = std::env::temp_dir().join(format!(
@@ -685,7 +685,7 @@ mod tests {
             },
             TextEncoding::Cp437,
         );
-        SessionMeta::new(chrono::Local::now(), device, JournalText::default())
+        SessionMeta::new(chrono::Local::now(), device, SessionText::default())
             .write(&SessionMeta::path_of(&replayed))
             .unwrap();
         // the session files' raw bytes, the oldest first
@@ -703,7 +703,7 @@ mod tests {
         };
         let live_with_replay = || {
             let (mut app, mut peer) = connected(&first, &first_address);
-            app.start_journal(Some(sessions.clone()));
+            app.start_session(Some(sessions.clone()));
             peer.write_all(b"one\r\n").unwrap();
             poll_until(&mut app, "one", |app| app.stats.rx() == 5);
             let live_encoding = app.settings().encoding;

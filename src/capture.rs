@@ -8,13 +8,13 @@ mod screenshot;
 mod session;
 
 // Re-exports
-pub use recorder::{Journal, Recorder, Stream};
+pub use recorder::{Recorder, SessionWriter, Stream};
 pub use restore::{
-    JournalReader, RESTORE_RAW_TAIL, read_tail_bytes, read_tail_lines, restore_separator,
+    RESTORE_RAW_TAIL, SessionReader, read_tail_bytes, read_tail_lines, restore_separator,
 };
 pub use screenshot::{Screenshot, ScreenshotFormat};
 pub use session::{
-    JournalText, Session, SessionDevice, SessionLine, SessionMeta, SessionOrder, delete_session,
+    Session, SessionDevice, SessionLine, SessionMeta, SessionOrder, SessionText, delete_session,
     delete_sessions, find_last_session, list_sessions, sort_sessions,
 };
 
@@ -79,12 +79,12 @@ pub mod tests {
         dir
     }
 
-    /// A session journal written in `dir` on `port` the way a run would: `rx` received, then `tx`
+    /// A session written in `dir` on `port` the way a run would: `rx` received, then `tx`
     /// sent in line mode, and the session found back
     pub fn write_test_session(
         dir: &Path,
         port: &str,
-        text: &JournalText,
+        text: &SessionText,
         rx: &[u8],
         tx: &[u8],
     ) -> Session {
@@ -96,7 +96,7 @@ pub mod tests {
             TextEncoding::Utf8,
         );
         let mut recorder = Recorder::default();
-        recorder.start_journal(dir, &device, text, 20).unwrap();
+        recorder.start_session(dir, &device, text, 20).unwrap();
         recorder.record_rx(RxNewlineMode::Auto, TextEncoding::Utf8, None, rx);
         if !tx.is_empty() {
             recorder.record_tx(TextEncoding::Utf8, None, None, tx);

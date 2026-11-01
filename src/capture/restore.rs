@@ -1,4 +1,4 @@
-use super::session::{JournalText, Session};
+use super::session::{Session, SessionText};
 use chrono::format::{Item, Parsed, StrftimeItems, parse_and_remainder};
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeZone};
 use std::fs::File;
@@ -9,28 +9,28 @@ use std::path::Path;
 pub const RESTORE_RAW_TAIL: u64 = 1 << 20;
 const TAIL_CHUNK: u64 = 64 * 1024;
 
-/// A line of a journal's text read back: its time when it has one, whether it was sent, and
+/// A line of a session's text read back: its time when it has one, whether it was sent, and
 /// its text without them
 #[derive(Debug, PartialEq)]
-pub struct JournalLine<'a> {
+pub struct SessionTextLine<'a> {
     pub time: Option<DateTime<Local>>,
     pub tx: bool,
     pub text: &'a str,
 }
 
-/// Reads a journal's text lines back with the format they were written with (MAX-148). A time
+/// Reads a session's text lines back with the format they were written with (MAX-148). A time
 /// that doesn't parse leaves the whole line as text, with no time. A format without a date
 /// takes the session's start date, and the next day when the time goes back by more than 12
 /// hours (midnight: a sent line written before a pending received one goes back a little)
-pub struct JournalReader {
+pub struct SessionReader {
     timestamp: Option<Vec<Item<'static>>>,
     tx_mark: Option<String>,
     date: NaiveDate,
     last: Option<NaiveDateTime>,
 }
 
-impl JournalReader {
-    pub fn new(text: &JournalText, started: DateTime<Local>) -> Self {
+impl SessionReader {
+    pub fn new(text: &SessionText, started: DateTime<Local>) -> Self {
         Self {
             timestamp: text
                 .timestamp
@@ -43,7 +43,7 @@ impl JournalReader {
     }
 
     /// One line, without its EOL
-    pub fn parse<'a>(&mut self, line: &'a str) -> JournalLine<'a> {
+    pub fn parse<'a>(&mut self, line: &'a str) -> SessionTextLine<'a> {
         let (time, rest) = match self.parse_time(line) {
             Some((time, rest)) => (Some(time), rest),
             None => (None, line),
@@ -52,7 +52,7 @@ impl JournalReader {
             .tx_mark
             .as_deref()
             .and_then(|mark| rest.strip_prefix(mark));
-        JournalLine {
+        SessionTextLine {
             time,
             tx: sent.is_some(),
             text: sent.unwrap_or(rest),
@@ -144,7 +144,7 @@ pub fn restore_separator(session: &Session) -> String {
 
 #[cfg(test)]
 mod tests {
-    //! Reading a session back: the journal lines, the file tails and the separator.
+    //! Reading a session back: its text lines, the file tails and the separator.
 
     use super::*;
     use crate::capture::tests::{device, record, temp_dir};
@@ -152,13 +152,13 @@ mod tests {
     use crate::configs::TextEncoding;
     use std::fs;
 
-    fn reader(timestamp: Option<&str>, tx_mark: Option<&str>) -> JournalReader {
-        let text = JournalText {
+    fn reader(timestamp: Option<&str>, tx_mark: Option<&str>) -> SessionReader {
+        let text = SessionText {
             timestamp: timestamp.map(str::to_string),
             tx_mark: tx_mark.map(str::to_string),
         };
         let started = Local.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
-        JournalReader::new(&text, started)
+        SessionReader::new(&text, started)
     }
 
     fn at(day: u32, h: u32, m: u32, s: u32, ms: u32) -> Option<DateTime<Local>> {
@@ -168,13 +168,13 @@ mod tests {
             .earliest()
     }
 
-    /// MAX-148: a journal line is read back with its format: the time (dated from the session
-    /// start, the next day past midnight, not on a sent line slightly earlier), the mark, and
-    /// a line whose time doesn't parse kept whole.
+    /// MAX-148: a session's text line is read back with its format: the time (dated from the
+    /// session start, the next day past midnight, not on a sent line slightly earlier), the mark,
+    /// and a line whose time doesn't parse kept whole.
     #[test]
-    fn journal_lines_read_back() {
+    fn session_lines_read_back() {
         let mut r = reader(Some("[%H:%M:%S%.3f]"), Some("> "));
-        let line = |time, tx, text| JournalLine { time, tx, text };
+        let line = |time, tx, text| SessionTextLine { time, tx, text };
         assert_eq!(
             r.parse("[23:59:59.500] rx"),
             line(at(1, 23, 59, 59, 500), false, "rx")
@@ -203,8 +203,8 @@ mod tests {
 
     /// MAX-148: without a timestamp or a mark in the meta, the line is all text, received.
     #[test]
-    fn journal_lines_without_time_or_mark() {
-        let line = |text| JournalLine {
+    fn session_lines_without_time_or_mark() {
+        let line = |text| SessionTextLine {
             time: None,
             tx: false,
             text,
@@ -217,12 +217,12 @@ mod tests {
         assert_eq!(r.parse("[10:00:00.000] > a").text, "> a");
     }
 
-    /// MAX-148: what the journal writes, with each combination of timestamp and mark, reads
+    /// MAX-148: what the session backup writes, with each combination of timestamp and mark, reads
     /// back as what was received and sent.
-    /// How: a journal per combination, "rx" received and "tx" sent, its text parsed back.
+    /// How: a session backup per combination, "rx" received and "tx" sent, its text parsed back.
     #[test]
-    fn journal_text_round_trip() {
-        let dir = temp_dir("journal_round_trip");
+    fn session_text_round_trip() {
+        let dir = temp_dir("session_round_trip");
         for (i, (timestamp, tx_mark)) in [
             (Some("[%H:%M:%S%.3f]"), Some("> ")),
             (Some("%Y-%m-%dT%H:%M:%S"), Some("TX: ")),
@@ -233,14 +233,14 @@ mod tests {
         .into_iter()
         .enumerate()
         {
-            let text = JournalText {
+            let text = SessionText {
                 timestamp: timestamp.map(str::to_string),
                 tx_mark: tx_mark.map(str::to_string),
             };
             let port = format!("p{i}");
             let mut recorder = Recorder::default();
             recorder
-                .start_journal(&dir, &device(&port), &text, 20)
+                .start_session(&dir, &device(&port), &text, 20)
                 .unwrap();
             record(&mut recorder, b"rx\n");
             recorder.record_tx(TextEncoding::Utf8, None, None, b"tx\n");
@@ -249,7 +249,7 @@ mod tests {
 
             let log = fs::read_to_string(session.text_path().unwrap()).unwrap();
             let meta = session.meta.as_ref().unwrap();
-            let mut r = JournalReader::new(&meta.text, session.started.unwrap());
+            let mut r = SessionReader::new(&meta.text, session.started.unwrap());
             let lines: Vec<_> = log.lines().map(|l| r.parse(l)).collect();
             let has_time = timestamp.is_some();
             assert_eq!(lines[0].text, "rx", "{log:?}");

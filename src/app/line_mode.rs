@@ -143,7 +143,7 @@ impl LineMode {
         self.rebase_line_refs();
     }
 
-    /// Pushes lines restored from a session journal, before any live line (MAX-148)
+    /// Pushes lines restored from a session, before any live line (MAX-148)
     pub fn restore_entries(&mut self, entries: impl IntoIterator<Item = LogEntry>) {
         for entry in entries {
             self.push_entry(entry);

@@ -56,7 +56,7 @@ impl SessionBrowser {
     }
 
     /// A replay set the live link aside: the browser can go back to it, and `raw` is its
-    /// session's `.raw` (none without a journal)
+    /// session's `.raw` (none without a session backup)
     pub fn with_live(mut self, raw: Option<PathBuf>) -> Self {
         self.live = true;
         self.live_raw = raw;
@@ -169,10 +169,10 @@ impl SessionBrowser {
         }
     }
 
-    /// The selected session's `.raw` to replay, with its meta's encoding and line settings. Not
-    /// a session still running, here or in another maxicom: its journal grows, and on Windows
-    /// its lock keeps it from being read. The live link's own session, which a replay paused,
-    /// goes back to it instead
+    /// The selected session's `.raw` to replay, with its meta's encoding and line settings. Not a
+    /// session still running, here or in another maxicom: its session backup grows, and on Windows
+    /// its lock keeps it from being read. The live link's own session, which a replay paused, goes
+    /// back to it instead
     fn replay_selected(&self) -> OverlayResponse {
         let Some(session) = self.selected_session() else {
             return OverlayResponse::Handled;
@@ -292,7 +292,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        capture::{JournalText, Recorder, SessionDevice, tests::write_test_session},
+        capture::{Recorder, SessionDevice, SessionText, tests::write_test_session},
         configs::TextEncoding,
         link::{Address, LinkConfig},
     };
@@ -309,10 +309,10 @@ mod tests {
         DialogAction::HandleKey(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
     }
 
-    /// Sessions on ports a and b, then a running journal on "live", in a fresh folder.
+    /// Sessions on ports a and b, then a running session backup on "live", in a fresh folder.
     fn folder(name: &str) -> (PathBuf, Recorder) {
         let dir = temp_dir(name);
-        let text = JournalText::default();
+        let text = SessionText::default();
         write_test_session(&dir, "/dev/a", &text, b"line of a\r\n", b"");
         write_test_session(&dir, "/dev/b", &text, b"line of b\r\n", b"");
         let device = SessionDevice::new(
@@ -323,7 +323,7 @@ mod tests {
             TextEncoding::Utf8,
         );
         let mut running = Recorder::default();
-        running.start_journal(&dir, &device, &text, 20).unwrap();
+        running.start_session(&dir, &device, &text, 20).unwrap();
         (dir, running)
     }
 

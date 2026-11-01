@@ -169,7 +169,7 @@ What changes from a serial port:
   - `encoding utf8|ascii|cp437|latin1`: how the received bytes are read.
   - `search <text>`: opens the search bar on the text, its matches shown.
   - `screenshot <name>`: saves the terminal at once, without the dialog, in
-    `screenshot_dir` for a bare name: `.ans` keeps the colors, else text
+    `screenshot.dir` for a bare name: `.ans` keeps the colors, else text
     (`.txt` added to a name without an extension). Terminal mode only.
   - While the port isn't open (detached, lost, reconnecting), `send`,
     `send-file` and the control lines refuse; `baud`, `framing` and `flow`
@@ -345,14 +345,26 @@ where its lines wrap, which `dimension_mode` decides.
 
 ### CAPTURE
 
+- What is what:
+  - A session is a `.raw` with its `.meta`, plus a `.log` as a bonus. The
+    `.raw` holds the bytes as received and the `.meta` what they were
+    received on (device, line settings, encoding), so a session replays and
+    restores as it was. Without its `.log` it still does: line mode then
+    gets the separator alone.
+  - A raw recording is the same thing made by hand: a `.raw` with its
+    `.meta` beside it.
+  - A text recording (`.log`) is for keeping and reading only: decoded,
+    split in lines, times and marks added, it can't be replayed the same.
 - Recordings: what is received, in any mode, to a file of your choice.
   - `text`  The received lines, decoded, one per line, after their time
             (`timestamp_format`) when `timestamp` is on. In line mode, the
             sent lines too, after `tx_mark`
   - `raw`   The received bytes as is, replayable with `--replay <file>`,
             with a `.meta` beside it (same name) so the replay decodes with
-            the encoding and shows the line settings it was recorded with
-            (none when recorded during a replay)
+            the encoding and shows the line settings it was recorded with.
+            During a replay, the replayed session's (none for a file
+            without a `.meta`). With the session included, the `.meta`
+            starts when the session did
   Text and raw record apart, both at once if you want. `toggle-logging`
   (`Ctrl-A l`, or a click on `● REC`) stops every recording, or opens the
   recording dialog on the mode's stream (text in line mode, raw in terminal
@@ -362,7 +374,7 @@ where its lines wrap, which `dimension_mode` decides.
   - `Tab`        Switch the stream (swaps the default path unless edited)
   - `Shift-Tab`  Include since session start: the file starts with everything
                  the session backup holds, then keeps recording
-- Session backup (journal): every session is recorded, text and raw, to
+- Session backup: every session is recorded, raw and text, to
   `~/.cache/maxicom/sessions/<date>_<time>_<port>` (`.log`, `.raw` and a small
   `.meta` with the device and the text format), the time to the millisecond.
   Flushed every 250 ms, so a crash or a `kill` loses almost nothing. It never
@@ -371,18 +383,18 @@ where its lines wrap, which `dimension_mode` decides.
     `tx_mark` as they are when the session starts; a reload changes the
     recordings only, never a running backup.
   - At startup, the sessions that received nothing are removed, then the
-    oldest past `journal_keep`. A session still running, here or in another
+    oldest past `sessions.keep`. A session still running, here or in another
     maxicom (another port), is never removed.
   - To recover a session by hand, open its `.log`, or replay its `.raw`
     (its `.meta` gives the encoding and the line settings):
     `maxicom --replay ~/.cache/maxicom/sessions/20261028_141500123_ttyUSB0.raw`
-  - A layout can show it with the `journal` condition, e.g.
-    `[◆](journal?muted:hide)` (not in the default layout).
+  - A layout can show it with the `session` condition, e.g.
+    `[◆](session?muted:hide)` (not in the default layout).
 - Restore: at startup, the last session of the same device can come back in
   the history, the lines in line mode and the screen and scrollback in
   terminal mode, then a separator line
   `── restored: ttyUSB0, 2026-10-28 14:15 → 16:40 ──` before the live data.
-  - `restore` in `[capture]`: `always` (default) restores, `ask` asks at
+  - `restore` in `[sessions]`: `always` (default) restores, `ask` asks at
     startup, `never` doesn't. `--restore` (restore without asking) and
     `--no-restore` decide for one launch. Never in replay mode.
   - The same device: the same machine (hostname), port, baud, data bits,
@@ -393,12 +405,12 @@ where its lines wrap, which `dimension_mode` decides.
   - The question: Enter or `y` restores, Esc or `n` skips; a click outside
     doesn't answer. What arrives meanwhile waits and comes after the
     restored part (up to 4 MiB, then the restore is skipped).
-  - What comes back: the last `line_mode.history_size` lines of the `.log`,
-    with their time read with the session's format (a line whose time can't
-    be read, or a session without times, shows a blank time column), and the
-    last 1 MiB of the `.raw`. A line starting with the session's `tx_mark`
-    comes back as a sent line, so a mark that device output never starts with
-    is best.
+  - What comes back: the last `line_mode.history_size` lines of the `.log`
+    (none without one), with their time read with the session's format (a
+    line whose time can't be read, or a session without times, shows a blank
+    time column), and the last 1 MiB of the `.raw`. A line starting with the
+    session's `tx_mark` comes back as a sent line, so a mark that device
+    output never starts with is best.
   - After the terminal part, the modes a full-screen program may have left
     (alternate screen, cursor keys, mouse reports, scroll region) are reset.
   - The restored part isn't backed up again nor counted in RX, so the next
@@ -428,7 +440,9 @@ where its lines wrap, which `dimension_mode` decides.
 - Paths: a leading `~` is the home folder, missing folders are created, an
   empty dir is the current one. Names are strftime templates, formatted when
   the dialog opens.
-- `[capture]` in `config.toml`, with the defaults:
+- In `config.toml`, with the defaults. `[capture]` is the recordings, its
+  text settings also the session backup's; `[sessions]` the session backup
+  and the restore; `[screenshot]` the screenshots:
 
 ```toml
 [capture]
@@ -438,12 +452,16 @@ raw_name = "maxicom_%Y%m%d_%H%M%S.raw"
 timestamp = true                         # time on each text line
 record_tx = true                         # sent lines in the text files (line mode)
 tx_mark = "> "                           # before each sent line, "" for none
-journal = true                           # session backup (read at startup)
-journal_keep = 20                        # sessions kept
+
+[sessions]
+enabled = true                           # session backup (read at startup)
+keep = 20                                # sessions kept
 restore = "always"                       # always, ask or never
 restore_max_age = "24h"                  # since it ended, "0s": no limit
-screenshot_dir = ""
-screenshot_name = "screen_%Y%m%d_%H%M%S" # the format adds .txt or .ans
+
+[screenshot]
+dir = ""
+name = "screen_%Y%m%d_%H%M%S"            # the format adds .txt or .ans
 ```
 
 ### THEME
@@ -493,7 +511,7 @@ screenshot_name = "screen_%Y%m%d_%H%M%S" # the format adds .txt or .ans
   - Modes & Focus:
     - prefix         Prefix key (Ctrl-A) is active
     - rec            File capture is active (alias: logging)
-    - journal        Session backup is running (alias: backup)
+    - session        Session backup is running (alias: backup)
     - line           Line input active (alias: linemode)
     - term           Terminal mode active (alias: terminal)
     - copy           Scrollback mode active (alias: copymode)

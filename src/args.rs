@@ -7,7 +7,7 @@ use crate::link::{
 
 /// `link_config` is the link to open, a replay for `--replay` (MAX-168); `replay_delay` is
 /// `--delay`, for a replay only. `restore` is `--restore` / `--no-restore`, the last one given,
-/// over `capture.restore`
+/// over `sessions.restore`
 #[derive(Debug)]
 pub enum ParseOutcome {
     Run {
@@ -174,7 +174,7 @@ Options:
       --delay <ms>         Time to wait between chunks of a replay, in milliseconds
 
       --restore            Restore the last session on this device into the history
-      --no-restore         Start with an empty history, whatever capture.restore says
+      --no-restore         Start with an empty history, whatever sessions.restore says
       --cache-dir          Print the session backups folder and exit
 
   -h, --help               Print help
@@ -198,7 +198,7 @@ mod tests {
         }
     }
 
-    /// MAX-148: `--restore` and `--no-restore` override `capture.restore`, the last one given
+    /// MAX-148: `--restore` and `--no-restore` override `sessions.restore`, the last one given
     /// wins, and without them the setting decides.
     #[test]
     fn restore_flags() {

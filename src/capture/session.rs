@@ -14,12 +14,12 @@ use std::time::{Duration, SystemTime};
 
 pub const SESSION_META_VERSION: u32 = 1;
 
-/// How a journal's text lines are written, taken from the capture settings when it starts and
+/// How a session's text lines are written, taken from the capture settings when it starts and
 /// kept in its meta file, so it can be read back (MAX-148): the timestamp format when it is
 /// on, and the mark before sent lines when they are recorded. A reload changes the user
-/// recordings only, so one journal never mixes two formats
+/// recordings only, so one session backup never mixes two formats
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JournalText {
+pub struct SessionText {
     pub timestamp: Option<String>,
     pub tx_mark: Option<String>,
 }
@@ -88,11 +88,11 @@ pub struct SessionMeta {
     pub version: u32,
     pub started: i64,
     pub device: SessionDevice,
-    pub text: JournalText,
+    pub text: SessionText,
 }
 
 impl SessionMeta {
-    pub fn new(started: DateTime<Local>, device: SessionDevice, text: JournalText) -> Self {
+    pub fn new(started: DateTime<Local>, device: SessionDevice, text: SessionText) -> Self {
         Self {
             version: SESSION_META_VERSION,
             started: started.timestamp(),
@@ -349,7 +349,7 @@ pub fn delete_sessions(entries: &[Session]) -> DeleteReport {
     report
 }
 
-/// Whether the session of `stem` is still running, here or in another maxicom: its journal
+/// Whether the session of `stem` is still running, here or in another maxicom: its session backup
 /// holds the lock on its `.raw`
 fn is_running(dir: &Path, stem: &str) -> bool {
     File::open(dir.join(format!("{stem}.raw")))
@@ -357,7 +357,7 @@ fn is_running(dir: &Path, stem: &str) -> bool {
 }
 
 /// The newest session in `dir` recorded on `device` that received something, isn't running
-/// and ended within `max_age` of now when given. To call before `start_journal`, whose
+/// and ended within `max_age` of now when given. To call before `start_session`, whose
 /// pruning could remove it
 pub fn find_last_session(
     dir: &Path,
@@ -522,8 +522,8 @@ mod tests {
     }
 
     /// MAX-148: a session still running elsewhere (its `.raw` locked) is never pruned, empty
-    /// or old; once its lock is gone, it is. A journal holds that lock while it runs.
-    /// How: an empty session locked as another maxicom would, keep 1; then a real journal.
+    /// or old; once its lock is gone, it is. A session backup holds that lock while it runs.
+    /// How: an empty session locked as another maxicom would, keep 1; then a real session backup.
     #[test]
     fn prune_keeps_a_running_session() {
         let dir = temp_dir("prune_running");
@@ -541,7 +541,7 @@ mod tests {
 
         let mut recorder = Recorder::default();
         recorder
-            .start_journal(&dir, &device("x"), &JournalText::default(), 20)
+            .start_session(&dir, &device("x"), &SessionText::default(), 20)
             .unwrap();
         let session = file_names(&dir)
             .into_iter()
@@ -553,14 +553,14 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// Writes a session of `stem` in `dir` as `start_journal` would, with `raw` received.
+    /// Writes a session of `stem` in `dir` as `start_session` would, with `raw` received.
     fn write_session(dir: &Path, stem: &str, device: &SessionDevice, raw: &[u8]) {
         fs::create_dir_all(dir).unwrap();
         let meta = SessionMeta {
             version: SESSION_META_VERSION,
             started: 1_700_000_000,
             device: device.clone(),
-            text: JournalText::default(),
+            text: SessionText::default(),
         };
         fs::write(
             dir.join(format!("{stem}.meta")),
@@ -627,12 +627,12 @@ tx_mark = "> "
         assert_eq!(found_stem(&dir, &serial, None), None);
         let _ = fs::remove_dir_all(&dir);
 
-        // a real journal names its files after the address, which reads back whole
-        let dir = temp_dir("tcp_journal");
+        // a real session backup names its files after the address, which reads back whole
+        let dir = temp_dir("tcp_session");
         let session = crate::capture::tests::write_test_session(
             &dir,
             "tcp://192.168.1.50:4000",
-            &JournalText::default(),
+            &SessionText::default(),
             b"rx\n",
             b"",
         );
@@ -758,18 +758,18 @@ tx_mark = "> "
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// MAX-148: the journal's meta file holds the device, so its session is found again.
-    /// How: a journal started and fed, then dropped, then looked up.
+    /// MAX-148: the session's meta file holds the device, so its session is found again.
+    /// How: a session backup started and fed, then dropped, then looked up.
     #[test]
-    fn journal_session_is_found_again() {
-        let dir = temp_dir("journal_meta");
+    fn session_is_found_again() {
+        let dir = temp_dir("session_meta");
         let mine = device("/dev/ttyUSB0");
         let mut recorder = Recorder::default();
-        let text = JournalText {
+        let text = SessionText {
             timestamp: Some("[%H:%M]".to_string()),
             tx_mark: None,
         };
-        recorder.start_journal(&dir, &mine, &text, 20).unwrap();
+        recorder.start_session(&dir, &mine, &text, 20).unwrap();
         record(&mut recorder, b"hello\n");
         drop(recorder);
         let session = find_last_session(&dir, &mine, None).unwrap();
@@ -782,14 +782,14 @@ tx_mark = "> "
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// MAX-148: two journals started in the same second on one port stay two sessions, the
+    /// MAX-148: two session backups started in the same second on one port stay two sessions, the
     /// second one newer: a relaunch never appends to the last session nor overwrites its meta.
     #[test]
-    fn journals_in_one_second_stay_apart() {
+    fn sessions_in_one_second_stay_apart() {
         let dir = temp_dir("same_second");
-        let first = write_test_session(&dir, "/dev/x", &JournalText::default(), b"one\r\n", b"");
+        let first = write_test_session(&dir, "/dev/x", &SessionText::default(), b"one\r\n", b"");
         std::thread::sleep(Duration::from_millis(2));
-        let second = write_test_session(&dir, "/dev/x", &JournalText::default(), b"two\r\n", b"");
+        let second = write_test_session(&dir, "/dev/x", &SessionText::default(), b"two\r\n", b"");
         assert_ne!(first.stem, second.stem);
         assert!(second.stem > first.stem);
         let sessions = list_sessions(&dir).unwrap();
@@ -803,7 +803,7 @@ tx_mark = "> "
     /// MAX-148: the session list has every session, the newest first, with its meta when it
     /// has one (else the start comes from its name), its size (`.log` and `.raw`), its last
     /// write and whether it runs; other files aren't sessions, and no folder is no session.
-    /// How: a session with a meta, one from before MAX-148, a running journal and a note.
+    /// How: a session with a meta, one from before MAX-148, a running session backup and a note.
     #[test]
     fn sessions_are_listed() {
         let dir = temp_dir("list_sessions");
@@ -811,7 +811,7 @@ tx_mark = "> "
         let with_meta = write_test_session(
             &dir,
             "/dev/ttyUSB0",
-            &JournalText::default(),
+            &SessionText::default(),
             b"abc\r\n",
             b"",
         );
@@ -820,7 +820,7 @@ tx_mark = "> "
         fs::write(dir.join("notes.txt"), "x").unwrap();
         let mut running = Recorder::default();
         running
-            .start_journal(&dir, &device("live"), &JournalText::default(), 20)
+            .start_session(&dir, &device("live"), &SessionText::default(), 20)
             .unwrap();
 
         let entries = list_sessions(&dir).unwrap();
@@ -833,7 +833,7 @@ tx_mark = "> "
 
         let meta = usb.meta.as_ref().unwrap();
         assert_eq!(meta.device.address.to_string(), "/dev/ttyUSB0");
-        assert_eq!(meta.text, JournalText::default());
+        assert_eq!(meta.text, SessionText::default());
         assert_eq!(usb.started, with_meta.started);
         assert_eq!(usb.ended, with_meta.ended);
         assert_eq!(usb.raw_len, 5);
@@ -896,16 +896,16 @@ tx_mark = "> "
 
     /// MAX-148: deleting a session removes its files only, and is refused while it runs;
     /// deleting all keeps the running ones and says what it did.
-    /// How: two past sessions, a running journal and a note.
+    /// How: two past sessions, a running session backup and a note.
     #[test]
     fn sessions_are_deleted_but_running_ones() {
         let dir = temp_dir("delete_sessions");
-        write_test_session(&dir, "/dev/a", &JournalText::default(), b"aa\r\n", b"");
-        write_test_session(&dir, "/dev/b", &JournalText::default(), b"bbb\r\n", b"");
+        write_test_session(&dir, "/dev/a", &SessionText::default(), b"aa\r\n", b"");
+        write_test_session(&dir, "/dev/b", &SessionText::default(), b"bbb\r\n", b"");
         fs::write(dir.join("notes.txt"), "x").unwrap();
         let mut running = Recorder::default();
         running
-            .start_journal(&dir, &device("live"), &JournalText::default(), 20)
+            .start_session(&dir, &device("live"), &SessionText::default(), 20)
             .unwrap();
 
         let entries = list_sessions(&dir).unwrap();

@@ -1,5 +1,5 @@
 use super::create_parent_dirs;
-use super::session::{JournalText, SessionDevice, SessionMeta, prune_sessions, session_tag};
+use super::session::{SessionDevice, SessionMeta, SessionText, prune_sessions, session_tag};
 use crate::app::types::RxLineSplitter;
 use crate::configs::{RxNewlineMode, TextEncoding};
 use chrono::format::{Item, StrftimeItems};
@@ -73,13 +73,14 @@ impl Stream {
 /// The session backup (MAX-147): everything received since startup, as text and raw, in the
 /// cache folder. It runs apart from the user's recordings, which can start with its content.
 /// Taken out of the recorder while a replay sets the live link aside (MAX-171)
-pub struct Journal {
+pub struct SessionWriter {
     text: LogFile,
     raw: LogFile,
     text_path: PathBuf,
     raw_path: PathBuf,
     timestamp: Option<TimestampFormat>,
     tx_mark: Option<String>,
+    started: DateTime<Local>,
 }
 
 /// Recordings of what is received, fed whatever the mode shows: text and raw are started and
@@ -89,7 +90,7 @@ pub struct Journal {
 pub struct Recorder {
     text: Option<LogFile>,
     raw: Option<LogFile>,
-    journal: Option<Journal>,
+    session: Option<SessionWriter>,
     lines: RxLineSplitter,
     timestamp: Option<TimestampFormat>,
     line_buf: Vec<u8>,
@@ -119,10 +120,10 @@ impl Recorder {
         include_session: bool,
     ) -> io::Result<()> {
         let mut file = LogFile::open(&path)?;
-        if include_session && let Some(journal) = &mut self.journal {
+        if include_session && let Some(session) = &mut self.session {
             let (backup, backup_path) = match stream {
-                Stream::Text => (&mut journal.text, &journal.text_path),
-                Stream::Raw => (&mut journal.raw, &journal.raw_path),
+                Stream::Text => (&mut session.text, &session.text_path),
+                Stream::Raw => (&mut session.raw, &session.raw_path),
             };
             // copying a file into itself would never end
             if fs::canonicalize(&path)? == fs::canonicalize(backup_path)? {
@@ -145,11 +146,11 @@ impl Recorder {
     /// Starts the session backup in `dir`, named after now and the port, its text written as
     /// `text` says, with its meta file for a later restore, then removes the oldest sessions
     /// there so `keep` are left (at least the new one)
-    pub fn start_journal(
+    pub fn start_session(
         &mut self,
         dir: &Path,
         device: &SessionDevice,
-        text: &JournalText,
+        text: &SessionText,
         keep: usize,
     ) -> io::Result<()> {
         let now = Local::now();
@@ -170,37 +171,43 @@ impl Recorder {
         // one (MAX-148). The OS drops it with the process, even killed. A file system without
         // locks only loses that guard
         let _ = raw.writer.get_ref().try_lock();
-        self.journal = Some(Journal {
+        self.session = Some(SessionWriter {
             text: LogFile::open(&text_path)?,
             raw,
             text_path,
             raw_path,
             timestamp: text.timestamp.as_deref().map(TimestampFormat::new),
             tx_mark: text.tx_mark.clone(),
+            started: now,
         });
         prune_sessions(dir, keep.max(1), &stem)
     }
 
-    pub fn has_journal(&self) -> bool {
-        self.journal.is_some()
+    /// When the session backup started, what a recording that includes it starts with
+    pub fn session_started(&self) -> Option<DateTime<Local>> {
+        self.session.as_ref().map(|session| session.started)
+    }
+
+    pub fn has_session(&self) -> bool {
+        self.session.is_some()
     }
 
     /// The session backup out of the recorder, flushed, which records nothing until it is set
-    /// back with `set_journal` (MAX-166). Its files stay open, and its lock with them, so no
+    /// back with `set_session` (MAX-166). Its files stay open, and its lock with them, so no
     /// pruning removes it. The line being cut is dropped at both ends, so a line never mixes
     /// the live bytes and the replayed ones
-    pub fn take_journal(&mut self) -> Option<Journal> {
-        let mut journal = self.journal.take();
-        if let Some(journal) = &mut journal {
-            let _ = journal.text.flush();
-            let _ = journal.raw.flush();
+    pub fn take_session(&mut self) -> Option<SessionWriter> {
+        let mut session = self.session.take();
+        if let Some(session) = &mut session {
+            let _ = session.text.flush();
+            let _ = session.raw.flush();
         }
         self.lines = RxLineSplitter::default();
-        journal
+        session
     }
 
-    pub fn set_journal(&mut self, journal: Option<Journal>) {
-        self.journal = journal;
+    pub fn set_session(&mut self, session: Option<SessionWriter>) {
+        self.session = session;
         self.lines = RxLineSplitter::default();
     }
 
@@ -222,11 +229,11 @@ impl Recorder {
     }
 
     pub fn flush_if_due(&mut self) {
-        let journal = self
-            .journal
+        let session = self
+            .session
             .iter_mut()
             .flat_map(|j| [&mut j.text, &mut j.raw]);
-        for file in self.text.iter_mut().chain(&mut self.raw).chain(journal) {
+        for file in self.text.iter_mut().chain(&mut self.raw).chain(session) {
             let _ = file.flush_if_due();
         }
     }
@@ -240,8 +247,8 @@ impl Recorder {
         timestamp_format: Option<&str>,
         bytes: &[u8],
     ) {
-        let journal_raw = self.journal.as_mut().map(|j| &mut j.raw);
-        for file in self.raw.iter_mut().chain(journal_raw) {
+        let session_raw = self.session.as_mut().map(|j| &mut j.raw);
+        for file in self.raw.iter_mut().chain(session_raw) {
             let _ = file.writer.write_all(bytes);
         }
 
@@ -252,7 +259,7 @@ impl Recorder {
         for &b in bytes {
             if lines.push(b, rx_eol_mode, now) {
                 let timestamp = lines.take_timestamp();
-                if self.text.is_some() || self.journal.is_some() {
+                if self.text.is_some() || self.session.is_some() {
                     let text = encoding.decode_cow(lines.line());
                     self.write_text(timestamp, &text, Some(""), false);
                 }
@@ -265,7 +272,7 @@ impl Recorder {
 
     /// Records sent bytes as text, one line for each line they hold (CR, LF or CRLF ends one),
     /// at the time they are sent: to the text recording after `mark` (`> line`, `None` when
-    /// TX isn't recorded), to the journal after its own mark. Raw stays what is received, to
+    /// TX isn't recorded), to the session backup after its own mark. Raw stays what is received, to
     /// be replayed. An RX line still pending is written when it ends, after these
     pub fn record_tx(
         &mut self,
@@ -274,7 +281,7 @@ impl Recorder {
         mark: Option<&str>,
         bytes: &[u8],
     ) {
-        if self.text.is_none() && self.journal.is_none() {
+        if self.text.is_none() && self.session.is_none() {
             return;
         }
         self.set_timestamp_format(timestamp_format);
@@ -295,8 +302,8 @@ impl Recorder {
         }
     }
 
-    /// Writes a text line to the text recording after `mark` and to the journal after its own
-    /// mark (a sent line when `tx`), each with its own timestamp format. A `None` mark leaves
+    /// Writes a text line to the text recording after `mark` and to the session backup after its
+    /// own mark (a sent line when `tx`), each with its own timestamp format. A `None` mark leaves
     /// that file out. The line is built once when both are written the same way
     fn write_text(&mut self, time: DateTime<Local>, text: &str, mark: Option<&str>, tx: bool) {
         // the format and mark `line_buf` was built with
@@ -306,24 +313,24 @@ impl Recorder {
             let _ = file.writer.write_all(&self.line_buf);
             built = Some((self.timestamp.as_ref().map(|t| t.format.as_str()), mark));
         }
-        if let Some(journal) = &mut self.journal {
+        if let Some(session) = &mut self.session {
             let mark = if tx {
-                journal.tx_mark.as_deref()
+                session.tx_mark.as_deref()
             } else {
                 Some("")
             };
             if let Some(mark) = mark {
-                let format = journal.timestamp.as_ref().map(|t| t.format.as_str());
+                let format = session.timestamp.as_ref().map(|t| t.format.as_str());
                 if built != Some((format, mark)) {
-                    build_line(&mut self.line_buf, &journal.timestamp, time, mark, text);
+                    build_line(&mut self.line_buf, &session.timestamp, time, mark, text);
                 }
-                let _ = journal.text.writer.write_all(&self.line_buf);
+                let _ = session.text.writer.write_all(&self.line_buf);
             }
         }
     }
 }
 
-impl Journal {
+impl SessionWriter {
     /// Its `.raw`: the session the browser marks as this maxicom's own
     pub fn raw_path(&self) -> &Path {
         &self.raw_path
@@ -551,13 +558,13 @@ mod tests {
     /// How: backup in a temp folder, "a\n" received, a text recording including the session,
     /// "b\n" received, then the backup files read back.
     #[test]
-    fn journal_records_apart_and_a_recording_can_start_with_it() {
-        let dir = temp_dir("journal");
+    fn session_records_apart_and_a_recording_can_start_with_it() {
+        let dir = temp_dir("session");
         let mut recorder = Recorder::default();
         recorder
-            .start_journal(&dir, &device("port"), &JournalText::default(), 20)
+            .start_session(&dir, &device("port"), &SessionText::default(), 20)
             .unwrap();
-        assert!(recorder.has_journal() && !recorder.is_any_active());
+        assert!(recorder.has_session() && !recorder.is_any_active());
         record(&mut recorder, b"a\n");
 
         let path = dir.join("mine.log");
@@ -579,25 +586,25 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// MAX-166: a paused journal records nothing, a user recording still does, and the journal
-    /// goes on in the same files once resumed; the line cut at the pause is dropped.
-    /// How: "a\n" and half a line received, the journal paused, a text recording started, "b\n"
-    /// received, the journal resumed, "c\n" received, then the files read back.
+    /// MAX-166: a paused session backup records nothing, a user recording still does, and the
+    /// session backup goes on in the same files once resumed; the line cut at the pause is dropped.
+    /// How: "a\n" and half a line received, the session backup paused, a text recording started,
+    /// "b\n" received, the session backup resumed, "c\n" received, then the files read back.
     #[test]
-    fn paused_journal_records_nothing() {
-        let dir = temp_dir("journal_paused");
+    fn paused_session_records_nothing() {
+        let dir = temp_dir("session_paused");
         let mut recorder = Recorder::default();
         recorder
-            .start_journal(&dir, &device("port"), &JournalText::default(), 20)
+            .start_session(&dir, &device("port"), &SessionText::default(), 20)
             .unwrap();
         record(&mut recorder, b"a\nhal");
-        let journal = recorder.take_journal();
-        assert!(journal.is_some() && !recorder.has_journal());
+        let session = recorder.take_session();
+        assert!(session.is_some() && !recorder.has_session());
         let path = dir.join("mine.log");
         recorder.start(Stream::Text, path.clone(), true).unwrap();
         record(&mut recorder, b"b\n");
-        recorder.set_journal(journal);
-        assert!(recorder.has_journal());
+        recorder.set_session(session);
+        assert!(recorder.has_session());
         record(&mut recorder, b"c\n");
         assert_eq!(stop_and_read(&mut recorder, Stream::Text, &path), b"b\nc\n");
 
@@ -615,15 +622,15 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// A raw recording can start with the backup's `.raw` while the journal holds its lock
+    /// A raw recording can start with the backup's `.raw` while the session backup holds its lock
     /// (Windows blocks reads from another handle), and the backup still appends after it.
     /// How: "a\n" received, a raw recording including the session, "b\n" received.
     #[test]
     fn raw_recording_starts_with_the_locked_backup() {
-        let dir = temp_dir("journal_raw");
+        let dir = temp_dir("session_raw");
         let mut recorder = Recorder::default();
         recorder
-            .start_journal(&dir, &device("port"), &JournalText::default(), 20)
+            .start_session(&dir, &device("port"), &SessionText::default(), 20)
             .unwrap();
         record(&mut recorder, b"a\n");
 
@@ -649,12 +656,12 @@ mod tests {
     fn tx_lines_go_to_text_streams_only() {
         let dir = temp_dir("tx");
         let mut recorder = Recorder::default();
-        let text = JournalText {
+        let text = SessionText {
             timestamp: None,
             tx_mark: Some("> ".to_string()),
         };
         recorder
-            .start_journal(&dir, &device("port"), &text, 20)
+            .start_session(&dir, &device("port"), &text, 20)
             .unwrap();
         let text = start(&mut recorder, Stream::Text, "tx_text");
         let raw = start(&mut recorder, Stream::Raw, "tx_raw");
@@ -675,22 +682,22 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// MAX-148: the journal keeps the text format it started with, whatever the recording
+    /// MAX-148: the session backup keeps the text format it started with, whatever the recording
     /// uses later, and records sent lines only when it started with a mark.
-    /// How: the journal with "[j]" and "J ", the recording with "[r]" and "R ", then a TX
-    /// with the recording's TX off; a second journal started without a mark.
+    /// How: the session backup with "[j]" and "J ", the recording with "[r]" and "R ", then a TX
+    /// with the recording's TX off; a second session backup started without a mark.
     #[test]
-    fn journal_keeps_its_text_format() {
-        let dir = temp_dir("journal_format");
+    fn session_keeps_its_text_format() {
+        let dir = temp_dir("session_format");
         let mut recorder = Recorder::default();
-        let text = JournalText {
+        let text = SessionText {
             timestamp: Some("[j]".to_string()),
             tx_mark: Some("J ".to_string()),
         };
         recorder
-            .start_journal(&dir, &device("a"), &text, 20)
+            .start_session(&dir, &device("a"), &text, 20)
             .unwrap();
-        let rec = start(&mut recorder, Stream::Text, "journal_format");
+        let rec = start(&mut recorder, Stream::Text, "session_format");
         let enc = TextEncoding::Utf8;
         recorder.record_rx(RxNewlineMode::Auto, enc, Some("[r]"), b"rx\n");
         recorder.record_tx(enc, Some("[r]"), Some("R "), b"tx\n");
@@ -708,7 +715,7 @@ mod tests {
 
         let mut recorder = Recorder::default();
         recorder
-            .start_journal(&dir, &device("b"), &JournalText::default(), 20)
+            .start_session(&dir, &device("b"), &SessionText::default(), 20)
             .unwrap();
         record(&mut recorder, b"rx\n");
         recorder.record_tx(enc, None, Some("> "), b"tx\n");

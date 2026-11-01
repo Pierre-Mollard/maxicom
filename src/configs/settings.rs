@@ -370,12 +370,9 @@ pub enum WrapMode {
 
 /// Recordings of what is received (MAX-147): a file is `dir` joined with the stream's strftime
 /// name, formatted when the recording dialog opens. An empty `dir` is the current directory.
-/// `journal` backs up every session, apart from them, in the cache folder, keeping the last
-/// `journal_keep` sessions. `record_tx` adds the lines sent in line mode to the text files,
-/// after `tx_mark` (`> line`, none when empty). `restore` puts the last session on the same
-/// device back in the history at startup, when it ended within `restore_max_age` (0: no limit,
-/// MAX-148). A screenshot is `screenshot_dir` joined with `screenshot_name` and the format's
-/// extension, prefilled in its dialog
+/// `timestamp`, `record_tx` and `tx_mark` set the text lines, of the recordings and of the
+/// session backup, which takes them when it starts: `record_tx` adds the lines sent in line
+/// mode, after `tx_mark` (`> line`, none when empty)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CaptureConfig {
@@ -385,13 +382,6 @@ pub struct CaptureConfig {
     pub timestamp: bool,
     pub record_tx: bool,
     pub tx_mark: String,
-    pub journal: bool,
-    pub journal_keep: usize,
-    pub screenshot_dir: PathBuf,
-    pub screenshot_name: String,
-    pub restore: RestoreMode,
-    #[serde(with = "humantime_serde")]
-    pub restore_max_age: Duration,
 }
 
 impl Default for CaptureConfig {
@@ -403,12 +393,6 @@ impl Default for CaptureConfig {
             timestamp: true,
             record_tx: true,
             tx_mark: String::from("> "),
-            journal: true,
-            journal_keep: 20,
-            screenshot_dir: PathBuf::new(),
-            screenshot_name: String::from("screen_%Y%m%d_%H%M%S"),
-            restore: RestoreMode::default(),
-            restore_max_age: Duration::from_secs(24 * 3600),
         }
     }
 }
@@ -417,11 +401,63 @@ impl CaptureConfig {
     pub fn path_for(&self, name: &str) -> PathBuf {
         self.dir.join(chrono::Local::now().format(name).to_string())
     }
+}
 
+/// The session backup (MAX-172): with `enabled`, every session is recorded in the cache
+/// folder, the last `keep` sessions kept. `restore` puts the last session on the same device
+/// back in the history at startup, when it ended within `restore_max_age` (0: no limit,
+/// MAX-148)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SessionsConfig {
+    pub enabled: bool,
+    pub keep: usize,
+    pub restore: RestoreMode,
+    #[serde(with = "humantime_serde")]
+    pub restore_max_age: Duration,
+}
+
+impl Default for SessionsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            keep: 20,
+            restore: RestoreMode::default(),
+            restore_max_age: Duration::from_secs(24 * 3600),
+        }
+    }
+}
+
+/// A screenshot is `dir` joined with `name` (strftime) and the format's extension, prefilled
+/// in its dialog (MAX-147)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScreenshotConfig {
+    pub dir: PathBuf,
+    pub name: String,
+}
+
+impl Default for ScreenshotConfig {
+    fn default() -> Self {
+        Self {
+            dir: PathBuf::new(),
+            name: String::from("screen_%Y%m%d_%H%M%S"),
+        }
+    }
+}
+
+impl SessionsConfig {
+    /// How old a session can be to restore: none when `restore_max_age` is 0
+    pub fn max_age(&self) -> Option<Duration> {
+        (!self.restore_max_age.is_zero()).then_some(self.restore_max_age)
+    }
+}
+
+impl ScreenshotConfig {
     /// The screenshot path without its extension, which comes with the format
-    pub fn screenshot_stem(&self) -> PathBuf {
-        let name = chrono::Local::now().format(&self.screenshot_name);
-        self.screenshot_dir.join(name.to_string())
+    pub fn stem(&self) -> PathBuf {
+        let name = chrono::Local::now().format(&self.name);
+        self.dir.join(name.to_string())
     }
 }
 
@@ -627,6 +663,8 @@ pub struct SettingsConfig {
     pub line_mode: LineModeConfig,
     pub terminal_mode: TerminalModeConfig,
     pub capture: CaptureConfig,
+    pub sessions: SessionsConfig,
+    pub screenshot: ScreenshotConfig,
     pub theme_path: Option<PathBuf>,
     pub keybindings_path: Option<PathBuf>,
     pub highlights_path: Option<PathBuf>,
@@ -653,6 +691,8 @@ impl Default for SettingsConfig {
             line_mode: LineModeConfig::default(),
             terminal_mode: TerminalModeConfig::default(),
             capture: CaptureConfig::default(),
+            sessions: SessionsConfig::default(),
+            screenshot: ScreenshotConfig::default(),
             inactivity_detach_timeout: DEFAULT_INACTIVITY_DETACH,
             theme_path: None,
             keybindings_path: None,
@@ -752,7 +792,7 @@ impl SettingsConfig {
         for (field, name) in [
             ("capture.text_name", &self.capture.text_name),
             ("capture.raw_name", &self.capture.raw_name),
-            ("capture.screenshot_name", &self.capture.screenshot_name),
+            ("screenshot.name", &self.screenshot.name),
         ] {
             if let Err(err) = StrftimeItems::new(name).parse() {
                 return Err(ConfigValidationError::InvalidCaptureName {
@@ -919,16 +959,16 @@ mod tests {
     }
 
     /// MAX-148: `restore_max_age` defaults to 24 hours; both read from the config, the age as
-    /// a human duration, `0` included. MAX-163: `capture.restore` defaults to `always`.
+    /// a human duration, `0` included. MAX-163: `sessions.restore` defaults to `always`.
     #[test]
     fn restore_settings_parse() {
-        let capture = CaptureConfig::default();
-        assert_eq!(capture.restore, RestoreMode::Always);
-        assert_eq!(capture.restore_max_age, Duration::from_secs(24 * 3600));
-        let parse = |toml: &str| toml::from_str::<CaptureConfig>(toml).unwrap();
-        let capture = parse("restore = \"ask\"\nrestore_max_age = \"2h 30m\"");
-        assert_eq!(capture.restore, RestoreMode::Ask);
-        assert_eq!(capture.restore_max_age, Duration::from_secs(9000));
+        let sessions = SessionsConfig::default();
+        assert_eq!(sessions.restore, RestoreMode::Always);
+        assert_eq!(sessions.restore_max_age, Duration::from_secs(24 * 3600));
+        let parse = |toml: &str| toml::from_str::<SessionsConfig>(toml).unwrap();
+        let sessions = parse("restore = \"ask\"\nrestore_max_age = \"2h 30m\"");
+        assert_eq!(sessions.restore, RestoreMode::Ask);
+        assert_eq!(sessions.restore_max_age, Duration::from_secs(9000));
         assert!(parse("restore_max_age = \"0s\"").restore_max_age.is_zero());
         assert_eq!(parse("restore = \"never\"").restore, RestoreMode::Never);
     }

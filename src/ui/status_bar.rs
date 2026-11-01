@@ -77,7 +77,7 @@
 //! |---------------------------------|--------------------------------------------|----------------------------------------------------------|
 //! | `prefix`                        | —                                          | Leader prefix key (`Ctrl-A`) is currently active         |
 //! | `rec`                           | `logging`                                  | File recording / capture session is active               |
-//! | `journal`                       | `backup`                                   | The session backup runs (not in the default layout)      |
+//! | `session`                       | `backup`                                   | The session backup runs (not in the default layout)      |
 //! | `line`                          | `linemode`                                 | Line Input mode is active                                |
 //! | `term`                          | `terminal`                                 | Direct Terminal mode is active                           |
 //! | `copy`                          | `copymode`                                 | Copy / Backlog Scrollback mode is active                 |
@@ -681,7 +681,7 @@ enum Cond {
     Term,
     Overlay,
     Rec,
-    Journal,
+    Session,
     Focused,
     IsLive,
     IsTop,
@@ -716,7 +716,7 @@ impl Cond {
             "term" | "terminal" => Self::Term,
             "overlay" | "popup" => Self::Overlay,
             "rec" | "logging" => Self::Rec,
-            "journal" | "backup" => Self::Journal,
+            "session" | "backup" => Self::Session,
             "focused" => Self::Focused,
             "is_live" | "live" | "is_bottom" | "bottom" | "bot" => Self::IsLive,
             "is_top" | "top" => Self::IsTop,
@@ -752,7 +752,7 @@ impl Cond {
             Self::Term => ctx == InputContext::Terminal,
             Self::Overlay => ctx == InputContext::Overlay || app.overlay().is_some(),
             Self::Rec => app.is_logging_active(),
-            Self::Journal => app.has_journal(),
+            Self::Session => app.has_session(),
             Self::Focused => app.is_app_focused(),
             Self::IsLive => scroll.is_bottom(),
             Self::IsTop => scroll.is_top(),
@@ -1640,26 +1640,26 @@ mod tests {
         );
     }
 
-    /// MAX-147: `journal` is true while the session backup runs, which never lights `rec`.
+    /// MAX-147: `session` is true while the session backup runs, which never lights `rec`.
     /// How: a backup started in a temp folder.
     #[test]
-    fn journal_condition() {
+    fn session_condition() {
         let mut a = app(Mode::Line);
-        let template = "[j](journal?red:blue)[r](rec?red:blue)";
+        let template = "[s](session?red:blue)[r](rec?red:blue)";
         assert_eq!(
             render(template, &a),
             [
-                span("j", "Some(Blue)", BG, "NONE"),
+                span("s", "Some(Blue)", BG, "NONE"),
                 span("r", "Some(Blue)", BG, "NONE")
             ]
         );
         let dir =
-            std::env::temp_dir().join(format!("maxicom_test_{}_journal_cond", std::process::id()));
-        a.start_journal(Some(dir.clone()));
+            std::env::temp_dir().join(format!("maxicom_test_{}_session_cond", std::process::id()));
+        a.start_session(Some(dir.clone()));
         assert_eq!(
             render(template, &a),
             [
-                span("j", "Some(Red)", BG, "NONE"),
+                span("s", "Some(Red)", BG, "NONE"),
                 span("r", "Some(Blue)", BG, "NONE")
             ]
         );

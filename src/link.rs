@@ -93,7 +93,7 @@ impl LinkKind {
         self != LinkKind::Replay
     }
 
-    /// Whether the link has a session backup: the journal, its pruning and the restore of the
+    /// Whether the link has a session backup: its recording, its pruning and the restore of the
     /// last session. A replay is a file already
     pub fn keeps_sessions(self) -> bool {
         self != LinkKind::Replay
