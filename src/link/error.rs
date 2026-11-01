@@ -23,7 +23,7 @@ pub enum LinkError {
         rejected_fields: Vec<String>,
         source: io::Error,
     },
-    /// Port was closed on the other side or USB unplugged (EOF on read)
+    /// The link was closed on the other side, or the USB unplugged (EOF on read)
     InputClosed,
     /// Unexpected error while reading bytes
     ReadFailed(io::Error),
@@ -85,10 +85,13 @@ impl fmt::Display for LinkError {
                 }
             }
             Self::InputClosed => {
-                write!(f, "serial device input closed (EOF / cable unplugged)")
+                write!(
+                    f,
+                    "the link closed (unplugged, or closed on the other side)"
+                )
             }
             Self::ReadFailed(source) => {
-                write!(f, "failed to read from serial port: {source}")
+                write!(f, "failed to read from the link: {source}")
             }
             Self::WriteFailed {
                 bytes_attempted,
@@ -96,7 +99,7 @@ impl fmt::Display for LinkError {
             } => {
                 write!(
                     f,
-                    "failed to write {bytes_attempted} bytes to serial port: {source}"
+                    "failed to write {bytes_attempted} bytes to the link: {source}"
                 )
             }
             Self::ControlFailed(source) => write!(f, "failed to set the line: {source}"),

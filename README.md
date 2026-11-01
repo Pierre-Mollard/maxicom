@@ -142,17 +142,19 @@ What changes from a serial port:
   - `break [ms]`: holds the line in break, 250 ms by default. The rest of the
     line waits for its end.
   - `baud <rate>`, `framing <8N1>`, `flow none|hw|sw`: change the port's
-    settings, as the serial settings popup does. On a detached port they are
+    settings, as the link settings popup does. On a detached port they are
     kept for when it opens.
 
   These six need a serial port: a TCP link (its bridge owns the lines and the
   settings) and a replay refuse them.
-  - `open <port>`: switches to another serial port or `tcp://host:port`, the
-    settings kept (`open /dev/ttyUSB1`, `open tcp://192.168.1.50:4000`). The
-    path completes from the disk. The rest of the line waits until it is
+  - `open <address>`: switches to another serial port, `tcp://host:port` or a
+    replay of `file://path`, the settings kept (`open /dev/ttyUSB1`,
+    `open tcp://192.168.1.50:4000`). A bad address is refused before the line
+    runs. It completes the schemes and the serial ports the system lists, then
+    paths after `file://` or a `/`. The rest of the line waits until it is
     open: `open COM4; send AT\r`. A port that fails to open brings the last
     one back. Another port starts a new session backup, as they go by port.
-    `detach-serial` detaches and attaches the port, as `Ctrl-A h` does.
+    `toggle-attach` detaches and attaches the link, as `Ctrl-A h` does.
   - `set <setting> on|off`: `local-echo`, `timestamps`, `mouse` or
     `answer-queries`; nothing when it is so already (the settings with more
     values cycle with their keys).
@@ -532,7 +534,7 @@ screenshot_name = "screen_%Y%m%d_%H%M%S" # the format adds .txt or .ans
 
 - Clicks: a block without `click=` runs what its first variable implies:
   - {mode}                       Switch between LINE and TERM
-  - {baud}, {framing}            Open the serial port settings ({port} does nothing)
+  - {baud}, {framing}            Open the link settings ({port} does nothing)
   - {copy_side}                  Switch the copy cursor's panel
   - {pan_left}, {pan_right}      Pan left / right
   - {pan_offset}, {pan_max}      Back to the left edge

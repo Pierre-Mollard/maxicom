@@ -322,7 +322,7 @@ mod tests {
         write_test_session(&dir, "/dev/b", &text, b"line of b\r\n", b"");
         let device = SessionDevice::new(
             &LinkConfig {
-                address: Address::parse("live"),
+                address: "live".parse::<Address>().unwrap(),
                 ..LinkConfig::default()
             },
             TextEncoding::Utf8,
@@ -385,7 +385,10 @@ mod tests {
             match browser.handle_action(action) {
                 OverlayResponse::ReplaySession { path, device } => {
                     assert_eq!(path, raw);
-                    assert_eq!(device.unwrap().address, Address::parse("/dev/a"));
+                    assert_eq!(
+                        device.unwrap().address,
+                        "/dev/a".parse::<Address>().unwrap()
+                    );
                 }
                 _ => panic!("no replay"),
             }

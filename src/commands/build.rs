@@ -177,18 +177,18 @@ fn link_open(app: &App) -> Result<(), String> {
 /// `open <port | tcp://host:port | file://path>`: the link switches to it, its settings kept;
 /// the rest of the line waits for it to be open. A `file://` is a replay, without delay
 pub fn open(app: &App, args: &[ArgValue]) -> Result<Action, String> {
-    let [ArgValue::Path(text)] = args else {
-        unreachable!("open takes a port");
+    let [ArgValue::Address(address)] = args else {
+        unreachable!("open takes an address");
     };
-    match Address::parse(&text.to_string_lossy()) {
+    match address {
         Address::Replay(path) => Ok(Action::App(AppAction::Replay {
-            path: expand_home(&path),
+            path: expand_home(path),
             delay: Duration::ZERO,
         })),
         _ if app.link_kind() == LinkKind::Replay => {
             Err("a replay can't open a link (replay-stop ends it)".to_string())
         }
-        address => Ok(Action::App(AppAction::Open(address))),
+        address => Ok(Action::App(AppAction::Open(address.clone()))),
     }
 }
 

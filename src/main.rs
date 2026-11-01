@@ -16,11 +16,11 @@ use ratatui::DefaultTerminal;
 
 use crate::{
     app::{App, UpdateEffect, selection::copy_via_osc52, triggers::Trigger},
-    args::{ParseOutcome, RunMode, parse_args, print_help},
+    args::{ParseOutcome, parse_args, print_help},
     configs::{
-        AppConfig, ConfigsError, KeyResolver, KeywordHighlight, Mode, SettingsConfig, ThemeConfig,
+        AppConfig, ConfigsError, KeyResolver, KeywordHighlight, SettingsConfig, ThemeConfig,
     },
-    link::{Address, ByteSource, LinkConfig, LinkError, replay::Replay},
+    link::{Address, ByteSource, LinkError},
     overlays::{ErrorDialog, Overlay},
     ui::{PostRenderEffect, layout::LayoutWarning, render, status_bar::CompiledStatusBar},
 };
@@ -129,8 +129,12 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
     };
 
-    let (run_mode, restore) = match parse_args() {
-        Ok(ParseOutcome::Run { mode, restore }) => (mode, restore),
+    let (link_config, replay_delay, restore) = match parse_args() {
+        Ok(ParseOutcome::Run {
+            link_config,
+            replay_delay,
+            restore,
+        }) => (link_config, replay_delay, restore),
         Ok(ParseOutcome::Help) => {
             print_help();
             return Ok(ExitCode::SUCCESS);
@@ -152,15 +156,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
     };
 
-    let device: Option<ByteSource> = match &run_mode {
+    let device: Option<ByteSource> = match &link_config.address {
         // connected in the loop, like a reconnect, so the UI is up and says it's connecting.
         // The arguments refused a malformed address
-        RunMode::Live(LinkConfig {
-            address: Address::Tcp(_),
-            ..
-        }) => None,
-        // serial without tcp for sure here
-        RunMode::Live(cfg) => match link::open(cfg) {
+        Address::Tcp(_) => None,
+        // opened by the app below, as the `replay` command does (MAX-168)
+        Address::Replay(_) => None,
+        Address::Serial(_) => match link::open(&link_config) {
             Ok(dev) => Some(dev),
             Err(LinkError::OpenFailed { ref source, .. })
                 if source.kind() == ErrorKind::NotFound =>
@@ -173,49 +175,37 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Ok(ExitCode::FAILURE);
             }
         },
-        RunMode::Replay {
-            file_path,
-            delay_ms,
-        } => match Replay::open(file_path, Duration::from_millis(*delay_ms)) {
-            Ok(replay) => Some(ByteSource::Replay(replay)),
-            Err(err) => {
-                eprintln!(
-                    "maxicom: could not open replay file {}: {err}",
-                    file_path.display()
-                );
-                return Ok(ExitCode::FAILURE);
-            }
-        },
     };
-
-    let mut guard = TerminalGuard::init()?;
-    // set from `ui.mouse` in the loop, so its toggle and a reload apply it too (MAX-113)
-    let mut mouse_captured = false;
 
     let mut running: bool = true;
     let mut input_buffer = vec![0u8; settings.rx_buffer_size];
 
-    let link_config = match &run_mode {
-        RunMode::Live(cfg) => cfg.clone(),
-        RunMode::Replay { file_path, .. } => LinkConfig {
-            address: Address::Replay(file_path.clone()),
-            ..LinkConfig::default()
-        },
-    };
     let mut app = App::new(settings, key_resolver, link_config);
     app.set_triggers(triggers);
-    let kind = app.link_kind();
-    if !kind.writes() {
-        app.settings_mut().mode = Mode::Terminal;
-    }
-    if kind.keeps_sessions() {
+    if app.link_kind().keeps_sessions() {
         // before the new journal, whose pruning could remove the last session (MAX-148)
         let journal_dir = AppConfig::default_journal_dir();
         app.restore_last_session(journal_dir.as_deref(), restore);
         app.start_journal(journal_dir);
     }
 
-    app.start_link(device);
+    // before the UI, so a file that doesn't open is said on the shell
+    if let Address::Replay(path) = &app.link_config().address {
+        let path = path.clone();
+        if let Err(err) = app.open_replay(path.clone(), replay_delay, None) {
+            eprintln!(
+                "maxicom: could not open replay file {}: {err}",
+                path.display()
+            );
+            return Ok(ExitCode::FAILURE);
+        }
+    } else {
+        app.start_link(device);
+    }
+
+    let mut guard = TerminalGuard::init()?;
+    // set from `ui.mouse` in the loop, so its toggle and a reload apply it too (MAX-113)
+    let mut mouse_captured = false;
 
     let mut last_layout_warnings: Vec<LayoutWarning> = Vec::default();
     let mut needs_redraw = true;
@@ -276,10 +266,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         execute_clipboard_copy(&mut app, &text, Some(&what));
                     }
                     UpdateEffect::ReloadConfig => match load_runtime_config(&config_path) {
-                        Ok(mut config) => {
-                            if !app.link_kind().writes() {
-                                config.settings.mode = Mode::Terminal;
-                            }
+                        Ok(config) => {
                             input_buffer.resize(config.settings.rx_buffer_size, 0);
                             theme = config.theme;
                             highlight_rules = config.highlight_rules;

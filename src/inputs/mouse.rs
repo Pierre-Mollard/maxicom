@@ -119,7 +119,8 @@ fn open_menu(event: MouseEvent, app: &App) -> Action {
     if app.overlay().is_none() && app.has_paste_buffer() && is_paste_target(&event, app) {
         return Action::App(AppAction::PasteBuffer);
     }
-    let menu = ActionMenu::new((event.column, event.row), app.settings().mode, |stream| {
+    let at = (event.column, event.row);
+    let menu = ActionMenu::new(at, app.settings().mode, app.link_kind(), |stream| {
         app.is_recording(stream)
     });
     Action::App(AppAction::OpenOverlay(Overlay::ActionMenu(menu)))

@@ -1,7 +1,7 @@
-//! Where the link's bytes come from (MAX-166): read once from the form the CLI, `open` and the
-//! settings dialog take, then matched on, never parsed again. The kind, what the link can do,
-//! is taken from it and never stored next to it
-use std::{borrow::Cow, fmt, path::PathBuf};
+//! Where the link's bytes come from (MAX-166): read once from the form the CLI, `open` and a
+//! session's meta file take, and checked there (MAX-168), then matched on, never parsed again.
+//! The kind, what the link can do, is taken from it and never stored next to it
+use std::{borrow::Cow, fmt, path::PathBuf, str::FromStr};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -17,19 +17,37 @@ pub enum Address {
     Replay(PathBuf),
 }
 
-impl Address {
-    /// `tcp://host:port` is a TCP link, `file://path` a replay, anything else a serial device.
-    /// The prefixes are lowercase only: `FILE://x` is a device name
-    pub fn parse(text: &str) -> Self {
+/// `tcp://host:port` is a TCP link, `file://path` a replay, anything else a serial device.
+/// The prefixes are lowercase only: `FILE://x` is a device name. Refused: an empty device or
+/// path, and a TCP address that isn't `host:port`, as it would never open
+impl FromStr for Address {
+    type Err = String;
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
         if let Some(path) = text.strip_prefix("file://") {
-            Address::Replay(PathBuf::from(path))
+            if path.is_empty() {
+                return Err("file:// needs a path".to_string());
+            }
+            Ok(Address::Replay(PathBuf::from(path)))
         } else if let Some(addr) = text.strip_prefix("tcp://") {
-            Address::Tcp(addr.to_string())
+            check_host_port(addr)?;
+            Ok(Address::Tcp(addr.to_string()))
+        } else if text.is_empty() {
+            Err("the device is empty".to_string())
         } else {
-            Address::Serial(text.to_string())
+            Ok(Address::Serial(text.to_string()))
         }
     }
+}
 
+/// Whether `addr` has the `host:port` shape, without resolving it
+fn check_host_port(addr: &str) -> Result<(), String> {
+    match addr.rsplit_once(':') {
+        Some((host, port)) if !host.is_empty() && port.parse::<u16>().is_ok() => Ok(()),
+        _ => Err(format!("'{addr}' is not host:port")),
+    }
+}
+
+impl Address {
     pub fn kind(&self) -> LinkKind {
         match self {
             Address::Serial(_) => LinkKind::Serial,
@@ -65,7 +83,7 @@ fn last_part(text: &str) -> &str {
     text.rsplit(['/', '\\']).next().unwrap_or(text)
 }
 
-/// The form `parse` reads back
+/// The form `from_str` reads back
 impl fmt::Display for Address {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -86,7 +104,7 @@ impl Serialize for Address {
 impl<'de> Deserialize<'de> for Address {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let text = Cow::<str>::deserialize(deserializer)?;
-        Ok(Address::parse(&text))
+        text.parse().map_err(serde::de::Error::custom)
     }
 }
 
@@ -135,19 +153,62 @@ mod tests {
             ),
         ];
         for (text, kind, label, tag) in table {
-            let address = Address::parse(text);
+            let address: Address = text.parse().unwrap();
             assert_eq!(address.kind(), kind, "{text}");
             assert_eq!(address.to_string(), text);
             assert_eq!(address.label(), label, "{text}");
             assert_eq!(address.tag(), tag, "{text}");
         }
         assert_eq!(
-            Address::parse("tcp://192.168.1.50:4000"),
-            Address::Tcp("192.168.1.50:4000".to_string())
+            "tcp://192.168.1.50:4000".parse(),
+            Ok(Address::Tcp("192.168.1.50:4000".to_string()))
         );
         assert_eq!(
-            Address::parse("file:///tmp/x.raw"),
-            Address::Replay(PathBuf::from("/tmp/x.raw"))
+            "file:///tmp/x.raw".parse(),
+            Ok(Address::Replay(PathBuf::from("/tmp/x.raw")))
         );
+    }
+
+    /// An address that could never open is refused when it is read: a TCP address that isn't
+    /// `host:port` (checked without a name lookup), an empty device, an empty file path.
+    /// How: good and bad TCP addresses, then the empty forms.
+    #[test]
+    fn bad_addresses_refused() {
+        for good in [
+            "192.168.1.50:4000",
+            "localhost:23",
+            "esp32.local:4000",
+            "[::1]:4000",
+        ] {
+            assert!(format!("tcp://{good}").parse::<Address>().is_ok(), "{good}");
+        }
+        for bad in [
+            "192.168.1.50",
+            ":4000",
+            "host:",
+            "host:notaport",
+            "host:70000",
+            "",
+        ] {
+            assert_eq!(
+                format!("tcp://{bad}").parse::<Address>(),
+                Err(format!("'{bad}' is not host:port"))
+            );
+        }
+        assert!("".parse::<Address>().is_err());
+        assert!("file://".parse::<Address>().is_err());
+    }
+
+    /// A meta file's bad address fails its read instead of giving a link that never opens.
+    /// How: a struct holding an address, read from TOML.
+    #[test]
+    fn bad_address_fails_deserialize() {
+        #[derive(Deserialize)]
+        struct Holder {
+            #[allow(dead_code)]
+            port: Address,
+        }
+        assert!(toml::from_str::<Holder>("port = \"tcp://host:1\"").is_ok());
+        assert!(toml::from_str::<Holder>("port = \"tcp://host\"").is_err());
     }
 }

@@ -42,7 +42,7 @@ pub enum KeyBindingAction {
     AutoResizeEmulator,
     ScreenshotTxt,
     ScreenshotBytes,
-    SerialSettings,
+    LinkSettings,
     EnterCopyMode,
     EnterSearch,
     ScrollUp,
@@ -58,7 +58,7 @@ pub enum KeyBindingAction {
     PanSideLeft,
     ClearHistory,
     Sessions,
-    DetachSerial,
+    ToggleAttach,
     ExitPrefix,
     ReloadConfig,
     ToggleMouse,
@@ -964,7 +964,7 @@ impl Default for KeyBindingsConfig {
             "r"     => KeyBindingAction::ReloadConfig,
             "w"     => KeyBindingAction::ResizeDialog,
             "t"     => KeyBindingAction::AutoResizeEmulator,
-            "d"     => KeyBindingAction::SerialSettings,
+            "d"     => KeyBindingAction::LinkSettings,
             "k"     => KeyBindingAction::ScreenshotBytes,
             "up"    => KeyBindingAction::ScrollUp,
             "down"  => KeyBindingAction::ScrollDown,
@@ -978,7 +978,7 @@ impl Default for KeyBindingsConfig {
             "/"     => KeyBindingAction::EnterSearch,
             ":"     => KeyBindingAction::CommandLine,
             "a"     => KeyBindingAction::ExitPrefix,
-            "h"     => KeyBindingAction::DetachSerial,
+            "h"     => KeyBindingAction::ToggleAttach,
             "T"     => KeyBindingAction::Triggers,
             "f"     => "break", // a break like minicom's
             "p"     => "dtr off; sleep 100; dtr on", // DTR pulse which resets most boards
@@ -1367,7 +1367,7 @@ mod tests {
                 KeyBindingAction::AutoResizeRemoteLine,
             ),
             ("auto-resize-emulator", KeyBindingAction::AutoResizeEmulator),
-            ("serial-settings", KeyBindingAction::SerialSettings),
+            ("link-settings", KeyBindingAction::LinkSettings),
             ("enter-copy-mode", KeyBindingAction::EnterCopyMode),
             ("enter-search", KeyBindingAction::EnterSearch),
             ("scroll-up", KeyBindingAction::ScrollUp),
@@ -1384,7 +1384,7 @@ mod tests {
             ("clear-history", KeyBindingAction::ClearHistory),
             ("sessions", KeyBindingAction::Sessions),
             ("exit-prefix", KeyBindingAction::ExitPrefix),
-            ("detach-serial", KeyBindingAction::DetachSerial),
+            ("toggle-attach", KeyBindingAction::ToggleAttach),
             ("reload-config", KeyBindingAction::ReloadConfig),
             ("toggle-mouse", KeyBindingAction::ToggleMouse),
             ("command-line", KeyBindingAction::CommandLine),
@@ -1421,7 +1421,7 @@ mod tests {
         assert_eq!(resolver.direct_commands[&key("f5")].text, "send-hex 03");
         assert_eq!(
             resolver.prefix_actions[&key("h")],
-            KeyBindingAction::DetachSerial
+            KeyBindingAction::ToggleAttach
         );
         assert!(!resolver.prefix_commands.contains_key(&key("h")));
         // the default ones

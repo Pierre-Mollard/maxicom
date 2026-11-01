@@ -119,6 +119,25 @@ impl LinkKind {
         // TODO: (MAX-161) "telnet TCP" for telnet://, and the later kinds without line settings
         (self == LinkKind::Tcp).then_some(["raw", "TCP"])
     }
+
+    /// What the popups, notices and menu call the link at the start of a label: "Serial port
+    /// detached" (MAX-168)
+    pub fn name(self) -> &'static str {
+        match self {
+            LinkKind::Serial => "Serial port",
+            LinkKind::Tcp => "TCP connection",
+            LinkKind::Replay => "Replay",
+        }
+    }
+
+    /// The same inside a sentence: "Could not read from the serial port"
+    pub fn noun(self) -> &'static str {
+        match self {
+            LinkKind::Serial => "serial port",
+            LinkKind::Tcp => "TCP connection",
+            LinkKind::Replay => "replay",
+        }
+    }
 }
 
 /// Opens the link `config.address` names, waiting for it: a serial port, or a TCP
@@ -204,7 +223,7 @@ mod tests {
 
     fn config(address: &str) -> LinkConfig {
         LinkConfig {
-            address: Address::parse(address),
+            address: address.parse::<Address>().unwrap(),
             ..LinkConfig::default()
         }
     }

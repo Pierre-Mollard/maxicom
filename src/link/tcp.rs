@@ -45,18 +45,6 @@ impl TcpDevice {
         }))
     }
 
-    /// Whether `addr` has the `host:port` shape, without resolving it: a malformed one would
-    /// never connect, so it fails at start instead of being retried
-    pub fn check_address(addr: &str) -> io::Result<()> {
-        match addr.rsplit_once(':') {
-            Some((host, port)) if !host.is_empty() && port.parse::<u16>().is_ok() => Ok(()),
-            _ => Err(io::Error::new(
-                ErrorKind::InvalidInput,
-                format!("'{addr}' is not host:port"),
-            )),
-        }
-    }
-
     fn connect_to(addr: SocketAddr, timeout: Duration) -> io::Result<Self> {
         let stream = TcpStream::connect_timeout(&addr, timeout)?;
         // typed keys leave at once instead of waiting to fill a packet (Nagle)
@@ -185,29 +173,5 @@ mod tests {
     fn bad_address_is_an_error() {
         assert!(TcpDevice::connect("127.0.0.1:notaport", TIMEOUT).is_err());
         assert!(TcpDevice::connect("127.0.0.1", TIMEOUT).is_err());
-    }
-
-    /// The address shape is checked without a name lookup.
-    /// How: good and bad addresses.
-    #[test]
-    fn address_shape() {
-        for good in [
-            "192.168.1.50:4000",
-            "localhost:23",
-            "esp32.local:4000",
-            "[::1]:4000",
-        ] {
-            assert!(TcpDevice::check_address(good).is_ok(), "{good}");
-        }
-        for bad in [
-            "192.168.1.50",
-            ":4000",
-            "host:",
-            "host:notaport",
-            "host:70000",
-            "",
-        ] {
-            assert!(TcpDevice::check_address(bad).is_err(), "{bad}");
-        }
     }
 }

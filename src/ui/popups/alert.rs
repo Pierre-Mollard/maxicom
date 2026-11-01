@@ -9,7 +9,7 @@ use ratatui::{
 use crate::{
     capture::Session,
     configs::{KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
-    link::Address,
+    link::{Address, LinkKind},
     overlays::{ErrorDialog, PopupTarget},
     ui::{
         common::popup_area,
@@ -18,6 +18,87 @@ use crate::{
     },
 };
 
+/// What the disconnected and detached popups say for each kind of link (MAX-168): the
+/// headline, the address between the words before and after it, the next line
+struct LinkAlert {
+    headline: &'static str,
+    before: &'static str,
+    after: &'static str,
+    next: &'static str,
+}
+
+impl LinkAlert {
+    fn disconnected(kind: LinkKind) -> Self {
+        match kind {
+            LinkKind::Serial => Self {
+                headline: "⚠ SERIAL PORT DISCONNECTED ⚠",
+                before: "Port ",
+                after: " was closed or unplugged.",
+                next: "Waiting for it to come back...",
+            },
+            LinkKind::Tcp => Self {
+                headline: "⚠ TCP CONNECTION LOST ⚠",
+                before: "",
+                after: " closed the connection or stopped answering.",
+                next: "Reconnecting...",
+            },
+            // a replay never reopens, so this popup isn't shown for one
+            LinkKind::Replay => Self {
+                headline: "⚠ REPLAY STOPPED ⚠",
+                before: "File ",
+                after: " can't be read.",
+                next: "",
+            },
+        }
+    }
+
+    fn detached(kind: LinkKind) -> Self {
+        match kind {
+            LinkKind::Serial => Self {
+                headline: "⚠ SERIAL PORT DETACHED ⚠",
+                before: "Port ",
+                after: " was released.",
+                next: "Other programs can open it now.",
+            },
+            LinkKind::Tcp => Self {
+                headline: "⚠ TCP CONNECTION DETACHED ⚠",
+                before: "The connection to ",
+                after: " was closed.",
+                next: "Another client can connect now.",
+            },
+            // a replay doesn't detach, so this popup isn't shown for one
+            LinkKind::Replay => Self {
+                headline: "⚠ REPLAY DETACHED ⚠",
+                before: "File ",
+                after: " was released.",
+                next: "",
+            },
+        }
+    }
+
+    fn lines(self, address: &Address, theme: &ThemeConfig) -> Vec<Line<'static>> {
+        vec![
+            Line::from(Span::styled(
+                self.headline,
+                Style::default()
+                    .fg(theme.palette.text_warn)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::raw(self.before),
+                Span::styled(
+                    address.to_string(),
+                    Style::default().fg(theme.palette.secondary),
+                ),
+                Span::raw(self.after),
+            ]),
+            Line::from(self.next),
+            Line::from(""),
+        ]
+    }
+}
+
 pub fn render_disconnected_popup(
     address: &Address,
     resolver: &KeyResolver,
@@ -25,25 +106,7 @@ pub fn render_disconnected_popup(
     theme: &ThemeConfig,
     targets: &mut Vec<(Rect, PopupTarget)>,
 ) -> Rect {
-    let text = vec![
-        Line::from(Span::styled(
-            "⚠ SERIAL DEVICE DISCONNECTED ⚠",
-            Style::default()
-                .fg(theme.palette.text_warn)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from(vec![
-            Span::raw("Device "),
-            Span::styled(
-                address.to_string(),
-                Style::default().fg(theme.palette.secondary),
-            ),
-            Span::raw(" was closed or unplugged."),
-        ]),
-        Line::from("Waiting for port to reconnect..."),
-        Line::from(""),
-    ];
+    let text = LinkAlert::disconnected(address.kind()).lines(address, theme);
     let hints = key_hints(
         resolver,
         false,
@@ -67,25 +130,7 @@ pub fn render_detached_popup(
     theme: &ThemeConfig,
     targets: &mut Vec<(Rect, PopupTarget)>,
 ) -> Rect {
-    let text = vec![
-        Line::from(Span::styled(
-            "⚠ SERIAL DEVICE DETACHED ⚠",
-            Style::default()
-                .fg(theme.palette.text_warn)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from(vec![
-            Span::raw("Device "),
-            Span::styled(
-                address.to_string(),
-                Style::default().fg(theme.palette.secondary),
-            ),
-            Span::raw(" was released."),
-        ]),
-        Line::from("The serial port is free..."),
-        Line::from(""),
-    ];
+    let text = LinkAlert::detached(address.kind()).lines(address, theme);
     let hints = key_hints(
         resolver,
         false,
@@ -96,7 +141,7 @@ pub fn render_detached_popup(
         theme,
     );
 
-    render_alert("Connection Lost", text, hints, frame, theme, targets)
+    render_alert("Detached", text, hints, frame, theme, targets)
 }
 
 pub fn render_error_popup(

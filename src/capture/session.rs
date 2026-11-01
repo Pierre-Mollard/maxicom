@@ -388,7 +388,7 @@ mod tests {
     /// How: an address of each kind.
     #[test]
     fn session_tags() {
-        let tag = |text| session_tag(&Address::parse(text));
+        let tag = |text: &str| session_tag(&text.parse::<Address>().unwrap());
         assert_eq!(tag("/dev/ttyUSB0"), "ttyUSB0");
         assert_eq!(tag("COM3"), "COM3");
         // no ':' in a Windows file name (MAX-156)

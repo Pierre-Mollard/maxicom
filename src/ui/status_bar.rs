@@ -137,7 +137,7 @@
 //! | Variable                                                   | Click                     |
 //! |------------------------------------------------------------|---------------------------|
 //! | `{mode}`                                                   | `toggle-input-mode`       |
-//! | `{baud}`, `{framing}`                                      | `serial-settings`         |
+//! | `{baud}`, `{framing}`                                      | `link-settings`           |
 //! | `{copy_side}`                                              | the copy cursor's panel   |
 //! | `{pan_left}`, `{pan_right}`                                | `pan-left`, `pan-right`   |
 //! | `{pan_offset}`, `{pan_max}`                                | `pan-home`                |
@@ -481,7 +481,7 @@ impl Var {
     fn click(self) -> Option<ClickAction> {
         let action = match self {
             Self::Mode => KeyBindingAction::SKInputMode,
-            Self::Baud | Self::Framing => KeyBindingAction::SerialSettings,
+            Self::Baud | Self::Framing => KeyBindingAction::LinkSettings,
             Self::PanLeft => KeyBindingAction::PanLeft,
             Self::PanRight => KeyBindingAction::PanRight,
             Self::PanOffset | Self::PanMax => KeyBindingAction::PanHome,
@@ -1441,7 +1441,7 @@ mod tests {
     fn tcp_link_has_no_baud_nor_framing() {
         let mut a = app(Mode::Terminal);
         a.link_mut()
-            .set_address(Address::parse("tcp://192.168.1.50:4000"));
+            .set_address("tcp://192.168.1.50:4000".parse::<Address>().unwrap());
         let d = StatusBarConfig::default();
         assert_eq!(
             render(&d.left, &a),
@@ -1467,7 +1467,7 @@ mod tests {
     fn replay_shows_its_file_and_state() {
         let mut a = app(Mode::Terminal);
         a.link_mut()
-            .set_address(Address::parse("file:///tmp/logs/boot.raw"));
+            .set_address("file:///tmp/logs/boot.raw".parse::<Address>().unwrap());
         let d = StatusBarConfig::default();
         assert_eq!(
             render(&d.left, &a),
@@ -1783,7 +1783,8 @@ mod tests {
     #[test]
     fn variable_value_is_not_markup() {
         let mut a = app(Mode::Terminal);
-        a.link_mut().set_address(Address::parse("[x](bold)"));
+        a.link_mut()
+            .set_address("[x](bold)".parse::<Address>().unwrap());
         assert_eq!(render("port {port}", &a), [plain("port [x](bold)")]);
     }
 
@@ -1853,9 +1854,10 @@ mod tests {
     /// `{copy_side}`.
     #[test]
     fn variables_imply_clicks() {
-        use KeyBindingAction::{Help, SKInputMode, SerialSettings};
+        use KeyBindingAction::{Help, LinkSettings, SKInputMode};
         let mut a = app(Mode::Terminal);
-        a.link_mut().set_address(Address::parse("/dev/x"));
+        a.link_mut()
+            .set_address("/dev/x".parse::<Address>().unwrap());
         let run = ClickAction::Run;
         assert_eq!(clicks("[ {mode} ](bold)", &a), [(0, 6, run(SKInputMode))]);
         assert_eq!(clicks("[{mode}](click=help)", &a), [(0, 4, run(Help))]);
@@ -1866,7 +1868,7 @@ mod tests {
         let baud = a.link_config().line.baud.to_string().len() as u16;
         assert_eq!(
             clicks("port {port} | {baud} {rx_bytes}", &a),
-            [(14, baud, run(SerialSettings))]
+            [(14, baud, run(LinkSettings))]
         );
         assert_eq!(clicks("[RX {rx_bytes}](muted)", &a), []);
 
@@ -1961,11 +1963,11 @@ mod tests {
     /// MAX-139: a padded variable is clickable over its whole width.
     #[test]
     fn padded_variable_click() {
-        use KeyBindingAction::SerialSettings;
+        use KeyBindingAction::LinkSettings;
         let a = app(Mode::Terminal);
         assert_eq!(
             clicks("{baud:10}", &a),
-            [(0, 10, ClickAction::Run(SerialSettings))]
+            [(0, 10, ClickAction::Run(LinkSettings))]
         );
     }
 

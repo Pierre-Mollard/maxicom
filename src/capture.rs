@@ -54,7 +54,7 @@ pub mod tests {
     pub fn device(address: &str) -> SessionDevice {
         SessionDevice::new(
             &LinkConfig {
-                address: Address::parse(address),
+                address: address.parse::<Address>().unwrap(),
                 ..LinkConfig::default()
             },
             TextEncoding::Utf8,
@@ -79,7 +79,7 @@ pub mod tests {
     ) -> Session {
         let device = SessionDevice::new(
             &LinkConfig {
-                address: Address::parse(port),
+                address: port.parse::<Address>().unwrap(),
                 ..LinkConfig::default()
             },
             TextEncoding::Utf8,

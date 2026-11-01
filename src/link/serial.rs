@@ -278,6 +278,17 @@ pub struct SerialDevice {
     port: SerialPort,
 }
 
+/// The serial ports the system lists, sorted, to complete `open`'s address (MAX-168); none
+/// where it can't list them, or for a name that isn't UTF-8
+pub fn port_names() -> Vec<String> {
+    let ports = SerialPort::available_ports().unwrap_or_default();
+    let mut names: Vec<String> = (ports.into_iter())
+        .filter_map(|port| port.into_os_string().into_string().ok())
+        .collect();
+    names.sort_unstable();
+    names
+}
+
 impl SerialDevice {
     /// Opens `device` with the line settings `line`
     pub fn open(device: &str, line: &LineSettings) -> Result<Self, LinkError> {

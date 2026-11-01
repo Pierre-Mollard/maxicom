@@ -266,6 +266,7 @@ impl App {
             replaced_link: None,
             replay: ReplayState::default(),
         };
+        app.fit_mode_to_link();
         app.warn_shadowed_keys();
         app
     }
@@ -492,12 +493,20 @@ impl App {
             }));
         }
         self.link.set_address(Address::Replay(path));
-        self.settings.mode = Mode::Terminal;
+        self.fit_mode_to_link();
         self.settings.encoding = session.map_or(live_encoding, |device| device.encoding);
         self.replay = ReplayState {
             line: session.and_then(|device| device.line),
             ended: false,
         };
+    }
+
+    /// Terminal mode on a link that isn't written (a replay), as line mode is for typing to it
+    /// (MAX-168): at start, on a reload and when a replay starts
+    fn fit_mode_to_link(&mut self) {
+        if !self.link_kind().writes() {
+            self.settings.mode = Mode::Terminal;
+        }
     }
 
     /// Fresh histories of both modes and fresh counts for a replay to play on, the ones they
@@ -1440,8 +1449,8 @@ impl App {
                 }
             }
             // the live link a replay replaced comes back with the attach key too (MAX-166)
-            AppAction::DetachSerial if self.replaced_link.is_some() => UpdateEffect::StopReplay,
-            AppAction::DetachSerial => UpdateEffect::ToggleAttach,
+            AppAction::ToggleAttach if self.replaced_link.is_some() => UpdateEffect::StopReplay,
+            AppAction::ToggleAttach => UpdateEffect::ToggleAttach,
             AppAction::ReloadConfig => UpdateEffect::ReloadConfig,
             AppAction::SideView(action) => self.update_side_view(action),
             // the menu's selection follows the pointer, the other parts are only drawn
@@ -1645,6 +1654,7 @@ impl App {
 
         settings.refresh_timestamp_width();
         self.settings = settings;
+        self.fit_mode_to_link();
         self.key_resolver = key_resolver;
         self.prefix_active = false;
         self.update_viewport(self.viewport);
@@ -1807,7 +1817,9 @@ impl App {
         &self.settings
     }
 
-    #[inline]
+    /// The settings, for the other modules' tests to change (MAX-168: the loop no longer sets
+    /// the mode)
+    #[cfg(test)]
     pub fn settings_mut(&mut self) -> &mut SettingsConfig {
         &mut self.settings
     }
@@ -1981,7 +1993,7 @@ mod tests {
             app.update(Action::Overlay(DialogAction::Confirm))
         };
         let echo = app.settings.local_echo;
-        let effect = run_line(&mut app, "toggle-local-echo; reload-config; detach-serial");
+        let effect = run_line(&mut app, "toggle-local-echo; reload-config; toggle-attach");
         assert!(matches!(effect, UpdateEffect::None));
         assert!(app.overlay().is_none());
         let mut effects = Vec::new();
@@ -2044,7 +2056,7 @@ mod tests {
         assert!(app.overlay().is_none());
 
         app.link
-            .set_address(Address::parse("file:///tmp/capture.raw"));
+            .set_address("file:///tmp/capture.raw".parse::<Address>().unwrap());
         let effects = run_line(&mut app, "help; send x");
         assert_eq!(effects.len(), 1);
         assert!(matches!(app.overlay(), Some(Overlay::Help(_))));
@@ -2110,7 +2122,7 @@ mod tests {
 
         reload(&mut app);
         app.link
-            .set_address(Address::parse("file:///tmp/capture.raw"));
+            .set_address("file:///tmp/capture.raw".parse::<Address>().unwrap());
         app.feed_rx(uboot);
         assert!(effects(&mut app).is_empty());
     }
@@ -2270,7 +2282,7 @@ mod tests {
         assert!(last_toast(&app).starts_with("mash: the port isn't open"));
         set_link_open(&mut app, true);
         app.link
-            .set_address(Address::parse("file:///tmp/capture.raw"));
+            .set_address("file:///tmp/capture.raw".parse::<Address>().unwrap());
         queue(&mut app, "mash ' ' '=> '");
         run(&mut app, Instant::now());
         assert_eq!(last_toast(&app), "mash: a replay has no link to send to");
@@ -2551,7 +2563,7 @@ mod tests {
         );
 
         app.link
-            .set_address(Address::parse("file:///tmp/capture.raw"));
+            .set_address("file:///tmp/capture.raw".parse::<Address>().unwrap());
         run_line(&mut app, &format!("send-file {file}"));
         assert_eq!(
             last_toast(&app),
@@ -2623,7 +2635,8 @@ mod tests {
         run_line(&mut app, "framing 9x1");
         assert!(last_error(&app).starts_with("framing: '9x1' isn't a framing"));
 
-        app.link.set_address(Address::parse("tcp://localhost:4000"));
+        app.link
+            .set_address("tcp://localhost:4000".parse::<Address>().unwrap());
         run_line(&mut app, "baud 115200");
         assert_eq!(
             last_error(&app),
@@ -2635,7 +2648,7 @@ mod tests {
             "dtr: a TCP link has no control lines, its bridge sets them (1 more not run)"
         );
         app.link
-            .set_address(Address::parse("file:///tmp/capture.raw"));
+            .set_address("file:///tmp/capture.raw".parse::<Address>().unwrap());
         run_line(&mut app, "break");
         assert_eq!(last_error(&app), "break: a replay has no control lines");
         assert!(run_line(&mut app, "dtr on; rts on").is_empty());
@@ -2785,7 +2798,8 @@ mod tests {
 
     /// MAX-12: `open` gives the port for the loop to open, its settings kept; the loop pauses
     /// the line until its result, which resumes it or fails it. While the link isn't open,
-    /// `send` and the control lines refuse; a replay refuses `open`.
+    /// `send` and the control lines refuse; a replay refuses `open`, and so does an address
+    /// that could never open (MAX-168).
     /// How: the loop's part played by the test.
     #[test]
     fn command_line_open() {
@@ -2808,7 +2822,7 @@ mod tests {
         queue_line(&mut app, "open /dev/ttyUSB9; send x");
         let open = app.next_command_action(now).unwrap();
         assert!(
-            matches!(app.update(open), UpdateEffect::Open(address) if address == Address::parse("/dev/ttyUSB9"))
+            matches!(app.update(open), UpdateEffect::Open(address) if address == "/dev/ttyUSB9".parse::<Address>().unwrap())
         );
         // the loop: the link closed, the line waiting for the open
         set_link_open(&mut app, false);
@@ -2843,8 +2857,18 @@ mod tests {
             matches!(app.update(open), UpdateEffect::Replay { path, delay, session: None }
             if path == Path::new("/tmp/x.raw") && delay.is_zero())
         );
+        // MAX-168: an address that could never open is refused when the line is read, and
+        // the line stays open to be fixed
+        queue_line(&mut app, "open tcp://host");
+        assert!(app.next_command_action(now).is_none());
+        assert_eq!(
+            last_toast(&app),
+            "open: bad argument 1: 'host' is not host:port"
+        );
+        assert!(matches!(app.overlay(), Some(Overlay::CommandLine(_))));
+        app.close_overlay();
         app.link
-            .set_address(Address::parse("file:///tmp/capture.raw"));
+            .set_address("file:///tmp/capture.raw".parse::<Address>().unwrap());
         queue_line(&mut app, "open /dev/ttyUSB0");
         assert!(app.next_command_action(now).is_none());
         assert_eq!(
@@ -2884,11 +2908,12 @@ mod tests {
             run(&mut app, "replay-stop"),
             Some(UpdateEffect::StopReplay)
         ));
-        let detach = Action::App(AppAction::DetachSerial);
+        let detach = Action::App(AppAction::ToggleAttach);
         assert!(matches!(app.update(detach), UpdateEffect::StopReplay));
         app.stop_replay();
-        app.link.set_address(Address::parse("file:///tmp/x.raw"));
-        let detach = Action::App(AppAction::DetachSerial);
+        app.link
+            .set_address("file:///tmp/x.raw".parse::<Address>().unwrap());
+        let detach = Action::App(AppAction::ToggleAttach);
         assert!(matches!(app.update(detach), UpdateEffect::ToggleAttach));
     }
 
@@ -3161,6 +3186,33 @@ mod tests {
         assert_eq!(toasts(&app), ["Config reloaded"]);
     }
 
+    /// MAX-168: a link that isn't written is shown in terminal mode, whatever the settings say:
+    /// from the start and after a reload; a serial port keeps the mode it is given.
+    /// How: line mode in the settings, on a replay address then on a serial port.
+    #[test]
+    fn replay_keeps_terminal_mode() {
+        let line_settings = || {
+            let mut settings = SettingsConfig::default();
+            settings.mode = Mode::Line;
+            settings
+        };
+        let keys = || KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
+        let on = |address: &str| LinkConfig {
+            address: address.parse().unwrap(),
+            ..LinkConfig::default()
+        };
+
+        let mut app = App::new(line_settings(), keys(), on("file:///tmp/boot.raw"));
+        assert_eq!(app.settings.mode, Mode::Terminal);
+        app.apply_reload(line_settings(), keys());
+        assert_eq!(app.settings.mode, Mode::Terminal);
+
+        let mut app = App::new(line_settings(), keys(), on("/dev/ttyUSB0"));
+        assert_eq!(app.settings.mode, Mode::Line);
+        app.apply_reload(line_settings(), keys());
+        assert_eq!(app.settings.mode, Mode::Line);
+    }
+
     /// Settings only read at startup keep their running value and are named in a notice;
     /// the cheap ones (inactivity timeout, RX buffer) are taken.
     #[test]
@@ -3325,7 +3377,7 @@ mod tests {
         app.start_replay(PathBuf::from("/tmp/a.raw"), None);
         assert_eq!(
             app.link_config().address,
-            Address::parse("file:///tmp/a.raw")
+            "file:///tmp/a.raw".parse::<Address>().unwrap()
         );
         assert_eq!(app.settings().mode, Mode::Terminal);
         assert!(texts(&app).is_empty() && !app.has_journal());
@@ -3337,7 +3389,10 @@ mod tests {
         assert!(texts(&app).is_empty());
 
         assert!(app.stop_replay());
-        assert_eq!(app.link_config().address, Address::parse("/dev/ttyUSB0"));
+        assert_eq!(
+            app.link_config().address,
+            "/dev/ttyUSB0".parse::<Address>().unwrap()
+        );
         assert_eq!(app.settings().mode, Mode::Line);
         assert_eq!(texts(&app), ["live"]);
         assert!(app.terminal_mode.vt100_screen().contents().contains("live"));
@@ -3354,7 +3409,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
 
         let mut app = self::app();
-        app.link.set_address(Address::parse("file:///tmp/a.raw"));
+        app.link
+            .set_address("file:///tmp/a.raw".parse::<Address>().unwrap());
         app.end_replay();
         app.start_replay(PathBuf::from("/tmp/b.raw"), None);
         assert!(!app.is_replay_ended());
@@ -3399,7 +3455,7 @@ mod tests {
         assert_eq!(app.line_settings(), None);
         assert!(app.stop_replay());
         app.link
-            .set_address(Address::parse("tcp://192.168.1.50:4000"));
+            .set_address("tcp://192.168.1.50:4000".parse::<Address>().unwrap());
         assert_eq!(app.line_settings(), None);
     }
 

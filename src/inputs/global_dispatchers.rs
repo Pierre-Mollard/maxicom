@@ -10,6 +10,7 @@ use crate::{
         Action, AppAction, CopyModeAction, DialogAction, HistoryAction, LineInputAction,
         SearchModeAction, SideViewAction, TerminalAction,
     },
+    link::serial,
     overlays::{
         CommandLine, HelpDialog, LineSettingsDialog, Overlay, ResizeDialog, SettingKey,
         TriggerBrowser,
@@ -72,10 +73,10 @@ impl KeyBindingAction {
             KeyBindingAction::ScreenshotTxt => {
                 Action::Terminal(TerminalAction::Screenshot(ScreenshotFormat::Text))
             }
-            KeyBindingAction::SerialSettings => {
+            KeyBindingAction::LinkSettings => {
                 let dialog = LineSettingsDialog::new(app.link_config())
                     .with_recorded_line(app.recorded_line());
-                Action::App(AppAction::OpenOverlay(Overlay::SerialSettings(dialog)))
+                Action::App(AppAction::OpenOverlay(Overlay::LinkSettings(dialog)))
             }
             KeyBindingAction::ScrollUp => Action::History(HistoryAction::ScrollUp(1)),
             KeyBindingAction::ScrollDown => Action::History(HistoryAction::ScrollDown(1)),
@@ -96,7 +97,7 @@ impl KeyBindingAction {
             }
             KeyBindingAction::ClearHistory => Action::History(HistoryAction::Clear),
             KeyBindingAction::ExitPrefix => Action::App(AppAction::SetPrefix(false)),
-            KeyBindingAction::DetachSerial => Action::App(AppAction::DetachSerial),
+            KeyBindingAction::ToggleAttach => Action::App(AppAction::ToggleAttach),
             KeyBindingAction::ReloadConfig => Action::App(AppAction::ReloadConfig),
             KeyBindingAction::Sessions => Action::App(AppAction::OpenSessions),
             KeyBindingAction::ToggleMouse => {
@@ -114,9 +115,9 @@ impl KeyBindingAction {
             KeyBindingAction::CommandLine => {
                 let history = app.command_history().iter().cloned().collect();
                 let triggers = app.triggers().iter().map(|t| t.name.clone()).collect();
-                Action::App(AppAction::OpenOverlay(Overlay::CommandLine(
-                    CommandLine::new(history, triggers),
-                )))
+                Action::App(AppAction::OpenOverlay(Overlay::CommandLine(Box::new(
+                    CommandLine::new(history, triggers, serial::port_names()),
+                ))))
             }
         }
     }

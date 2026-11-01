@@ -3,6 +3,7 @@
 //! own rules. The loop calls `start_link` once, `poll_link` each turn and `dispatch` for each
 //! action
 use std::{
+    io,
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -146,12 +147,12 @@ impl App {
                 true
             }
             Some(Err(e)) => {
+                let summary = format!(
+                    "Could not send the bytes to the {}",
+                    self.link_kind().noun()
+                );
                 self.open_overlay(Overlay::Error(
-                    ErrorDialog::new(
-                        "Serial Write Failed",
-                        "Failed to transmit bytes to serial port",
-                    )
-                    .with_details(e),
+                    ErrorDialog::new("Write Failed", summary).with_details(e),
                 ));
                 false
             }
@@ -175,20 +176,20 @@ impl App {
                 }
                 Err(LinkError::InputClosed) => {
                     self.show_disconnected();
-                    self.notify_warn("Device Lost");
+                    self.notify_warn(format!("{} lost", self.link_kind().name()));
                     turn.redraw = true;
                     break;
                 }
                 Err(LinkError::ReadFailed(e)) => {
+                    let summary = format!("Could not read from the {}", self.link_kind().noun());
                     self.open_overlay(Overlay::Error(
-                        ErrorDialog::new("Serial Read Error", "Could not read from device buffer")
-                            .with_details(e),
+                        ErrorDialog::new("Read Failed", summary).with_details(e),
                     ));
                     turn.redraw = true;
                     break;
                 }
                 Err(e) => {
-                    self.notify_error("Serial read error unkown");
+                    self.notify_error(format!("{} read error", self.link_kind().name()));
                     return Err(e);
                 }
             }
@@ -294,16 +295,26 @@ impl App {
         self.close_link_popups();
     }
 
-    /// The file in place of the link, which closes: no wait, a file opens at once (MAX-166)
+    /// The file in place of the link, which closes: no wait, a file opens at once (MAX-166).
+    /// For `replay` and `open file://` while running, and for `--replay` at start (MAX-168)
+    pub fn open_replay(
+        &mut self,
+        path: PathBuf,
+        delay: Duration,
+        session: Option<&SessionDevice>,
+    ) -> io::Result<()> {
+        let replay = Replay::open(&path, delay)?;
+        self.link.set_replay(replay);
+        self.start_replay(path.clone(), session);
+        self.notify_info(format!("Replaying {}", path.display()));
+        self.close_link_popups();
+        Ok(())
+    }
+
+    /// A replay asked while running: a file that doesn't open stops the command line chain
     fn replay_file(&mut self, path: PathBuf, delay: Duration, session: Option<SessionDevice>) {
-        match Replay::open(&path, delay) {
-            Ok(replay) => {
-                self.link.set_replay(replay);
-                self.start_replay(path.clone(), session.as_ref());
-                self.notify_info(format!("Replaying {}", path.display()));
-                self.close_link_popups();
-            }
-            Err(e) => self.fail_commands(format!("replay: {}: {e}", path.display())),
+        if let Err(e) = self.open_replay(path.clone(), delay, session.as_ref()) {
+            self.fail_commands(format!("replay: {}: {e}", path.display()));
         }
     }
 
@@ -327,7 +338,7 @@ impl App {
         if self.link.is_open() {
             self.link.detach();
             self.show_detached();
-            self.notify_warn("Serial Port Released (Detached)");
+            self.notify_warn(format!("{} detached", self.link_kind().name()));
         } else {
             self.begin_open(OpenFor::Attach);
         }
@@ -432,7 +443,7 @@ mod tests {
             SettingsConfig::default(),
             KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap(),
             LinkConfig {
-                address: Address::parse(address),
+                address: address.parse::<Address>().unwrap(),
                 ..LinkConfig::default()
             },
         )
@@ -491,7 +502,7 @@ mod tests {
         drop(peer);
         poll_until(&mut app, "lost", |app| !app.link.is_open());
         assert!(matches!(app.overlay(), Some(Overlay::DeviceDisconnected)));
-        assert!(toasts(&app).contains(&"Device Lost".to_string()));
+        assert!(toasts(&app).contains(&"TCP connection lost".to_string()));
     }
 
     /// MAX-168: `open` switches the link and resumes the command line on success; a failed
@@ -502,9 +513,9 @@ mod tests {
         let (first, first_address) = listener();
         let (second, second_address) = listener();
         let (mut app, _peer) = connected(&first, &first_address);
-        app.dispatch(Action::App(AppAction::Open(Address::parse(
-            &second_address,
-        ))));
+        app.dispatch(Action::App(AppAction::Open(
+            second_address.parse::<Address>().unwrap(),
+        )));
         assert!(!app.link.is_open());
         assert!(toasts(&app).contains(&format!("Opening {second_address}")));
         let _second_peer = second.accept().unwrap();
@@ -513,11 +524,11 @@ mod tests {
 
         let (closed, closed_address) = listener();
         drop(closed);
-        app.dispatch(Action::App(AppAction::Open(Address::parse(
-            &closed_address,
-        ))));
+        app.dispatch(Action::App(AppAction::Open(
+            closed_address.parse::<Address>().unwrap(),
+        )));
         poll_until(&mut app, "failed", |app| {
-            app.link_config().address == Address::parse(&second_address)
+            app.link_config().address == second_address.parse::<Address>().unwrap()
         });
         let failed = toasts(&app);
         assert!(
@@ -536,7 +547,7 @@ mod tests {
     fn detach_then_attach() {
         let (listener, address) = listener();
         let (mut app, _peer) = connected(&listener, &address);
-        app.dispatch(Action::App(AppAction::DetachSerial));
+        app.dispatch(Action::App(AppAction::ToggleAttach));
         assert!(!app.link.is_open());
         assert!(matches!(app.overlay(), Some(Overlay::DeviceDetached)));
         app.open_overlay(Overlay::ConfirmQuit);
@@ -549,7 +560,7 @@ mod tests {
         assert!(!app.link.is_open());
 
         app.close_overlay();
-        app.dispatch(Action::App(AppAction::DetachSerial));
+        app.dispatch(Action::App(AppAction::ToggleAttach));
         let _peer = listener.accept().unwrap();
         poll_until(&mut app, "attached", |app| app.link.is_open());
         assert!(toasts(&app).contains(&format!("Reconnected to {address}")));
@@ -626,7 +637,10 @@ mod tests {
         );
 
         app.dispatch(Action::App(AppAction::StopReplay));
-        assert_eq!(app.link_config().address, Address::parse(&address));
+        assert_eq!(
+            app.link_config().address,
+            address.parse::<Address>().unwrap()
+        );
         let _peer = listener.accept().unwrap();
         poll_until(&mut app, "back", |app| app.link.is_open());
         let _ = std::fs::remove_file(&path);

@@ -1,21 +1,18 @@
-use std::{env, path::PathBuf};
+use std::{env, time::Duration};
 
 use crate::link::{
-    Address, LinkConfig,
+    LinkConfig, LinkKind,
     serial::{CharSize, FlowControl, Parity, StopBits},
-    tcp::TcpDevice,
 };
 
-#[derive(Debug, Clone)]
-pub enum RunMode {
-    Live(LinkConfig),
-    Replay { file_path: PathBuf, delay_ms: u64 },
-}
-/// `restore` is `--restore` / `--no-restore`, the last one given, over `capture.restore`
+/// `link_config` is the link to open, a replay for `--replay` (MAX-168); `replay_delay` is
+/// `--delay`, for a replay only. `restore` is `--restore` / `--no-restore`, the last one given,
+/// over `capture.restore`
 #[derive(Debug)]
 pub enum ParseOutcome {
     Run {
-        mode: RunMode,
+        link_config: LinkConfig,
+        replay_delay: Duration,
         restore: Option<bool>,
     },
     Help,
@@ -54,8 +51,7 @@ pub fn parse_args() -> Result<ParseOutcome, ParseError> {
 fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ParseOutcome, ParseError> {
     let mut args = args.into_iter();
     let mut link_config = LinkConfig::default();
-    let mut replay_file: Option<PathBuf> = None;
-    let mut replay_delay: u64 = 0;
+    let mut replay_delay = Duration::ZERO;
     let mut restore: Option<bool> = None;
     // the line options given, refused on a link whose bridge sets the line (MAX-156)
     let mut line_options: Vec<&'static str> = Vec::new();
@@ -66,7 +62,9 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ParseOutcom
                 let path = args
                     .next()
                     .ok_or(ParseError::MissingValue("Missing file path for --replay"))?;
-                replay_file = Some(PathBuf::from(path));
+                link_config.address = format!("file://{path}")
+                    .parse()
+                    .map_err(ParseError::BadFormat)?;
             }
             "--delay" => {
                 let val = args.next().ok_or(ParseError::MissingValue(
@@ -74,15 +72,18 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ParseOutcom
                 ))?;
                 replay_delay = val
                     .parse::<u64>()
+                    .map(Duration::from_millis)
                     .map_err(|_| ParseError::BadFormat(format!("Invalid delay '{val}'")))?;
             }
             "--port" | "-p" => {
                 let port = args.next().ok_or(ParseError::MissingValue("--port"))?;
-                link_config.address = Address::parse(&port);
+                link_config.address = port.parse().map_err(ParseError::BadFormat)?;
             }
             "--tcp" => {
                 let addr = args.next().ok_or(ParseError::MissingValue("--tcp"))?;
-                link_config.address = Address::Tcp(addr);
+                link_config.address = format!("tcp://{addr}")
+                    .parse()
+                    .map_err(ParseError::BadFormat)?;
             }
             "--baud" | "-b" => {
                 line_options.push("--baud");
@@ -122,7 +123,9 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ParseOutcom
             }
             "--cache-dir" => return Ok(ParseOutcome::CacheDir),
             // the device without `--port`: `maxicom /dev/ttyUSB0`, `maxicom tcp://host:port`
-            device if !device.starts_with('-') => link_config.address = Address::parse(device),
+            device if !device.starts_with('-') => {
+                link_config.address = device.parse().map_err(ParseError::BadFormat)?;
+            }
 
             unknown => {
                 return Err(ParseError::UnknownArgument(unknown.to_string()));
@@ -130,24 +133,18 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ParseOutcom
         }
     }
 
-    let mode = if let Some(file_path) = replay_file {
-        RunMode::Replay {
-            file_path,
-            delay_ms: replay_delay,
-        }
-    } else {
-        if let Address::Tcp(addr) = &link_config.address {
-            // a malformed address would never connect
-            TcpDevice::check_address(addr).map_err(|e| ParseError::BadFormat(e.to_string()))?;
-            if let Some(option) = line_options.first() {
-                return Err(ParseError::BadFormat(format!(
-                    "{option} doesn't apply to a TCP link: its bridge sets the line"
-                )));
-            }
-        }
-        RunMode::Live(link_config)
-    };
-    Ok(ParseOutcome::Run { mode, restore })
+    if link_config.address.kind() == LinkKind::Tcp
+        && let Some(option) = line_options.first()
+    {
+        return Err(ParseError::BadFormat(format!(
+            "{option} doesn't apply to a TCP link: its bridge sets the line"
+        )));
+    }
+    Ok(ParseOutcome::Run {
+        link_config,
+        replay_delay,
+        restore,
+    })
 }
 
 pub fn print_help() {
@@ -158,8 +155,9 @@ maxicom — serial terminal
 Usage:
   maxicom [OPTIONS] [DEVICE]
 
-  DEVICE                   A serial port (/dev/ttyUSB0, COM3) or a TCP link
-                           (tcp://192.168.1.50:4000), same as --port
+  DEVICE                   A serial port (/dev/ttyUSB0, COM3), a TCP link
+                           (tcp://192.168.1.50:4000) or a file to replay
+                           (file://boot.raw), same as --port
 
 Options:
   -p, --port <DEVICE>      Device to open [default: /dev/ttyUSB0]
@@ -172,8 +170,8 @@ Options:
       --parity <n|e|o>     Parity: none, even, odd [default: none]
       --flow <none|hw|sw>  Flow control: none, rtscts (hw), xonxoff (sw) [default: none]
 
-  -r, --replay <PATH>      File to replay raw bytes to terminal instead of serial device
-      --delay <ms>         Time to wait between chunks in millisecond
+  -r, --replay <PATH>      A file's raw bytes in place of a device, same as file://PATH
+      --delay <ms>         Time to wait between chunks of a replay, in milliseconds
 
       --restore            Restore the last session on this device into the history
       --no-restore         Start with an empty history, whatever capture.restore says
@@ -188,7 +186,10 @@ Options:
 mod tests {
     //! Command line options.
 
+    use std::path::PathBuf;
+
     use super::*;
+    use crate::link::Address;
 
     fn restore_of(args: &[&str]) -> Option<bool> {
         match parse_args_from(args.iter().map(|a| a.to_string())).unwrap() {
@@ -219,13 +220,10 @@ mod tests {
         }
     }
 
-    fn live_port(args: &[&str]) -> Result<String, String> {
+    fn address_of(args: &[&str]) -> Result<String, String> {
         match parse_args_from(args.iter().map(|a| a.to_string())) {
-            Ok(ParseOutcome::Run {
-                mode: RunMode::Live(config),
-                ..
-            }) => Ok(config.address.to_string()),
-            Ok(_) => panic!("not a live run"),
+            Ok(ParseOutcome::Run { link_config, .. }) => Ok(link_config.address.to_string()),
+            Ok(_) => panic!("not a run"),
             Err(err) => Err(err.to_string()),
         }
     }
@@ -234,17 +232,47 @@ mod tests {
     /// last one given wins.
     #[test]
     fn device_forms() {
-        assert_eq!(live_port(&[]).unwrap(), "/dev/ttyUSB0");
-        assert_eq!(live_port(&["/dev/ttyACM0"]).unwrap(), "/dev/ttyACM0");
-        assert_eq!(live_port(&["COM3", "-b", "9600"]).unwrap(), "COM3");
+        assert_eq!(address_of(&[]).unwrap(), "/dev/ttyUSB0");
+        assert_eq!(address_of(&["/dev/ttyACM0"]).unwrap(), "/dev/ttyACM0");
+        assert_eq!(address_of(&["COM3", "-b", "9600"]).unwrap(), "COM3");
         let tcp = "tcp://192.168.1.50:4000";
-        assert_eq!(live_port(&[tcp]).unwrap(), tcp);
-        assert_eq!(live_port(&["--tcp", "192.168.1.50:4000"]).unwrap(), tcp);
-        assert_eq!(live_port(&["-p", "/dev/ttyUSB1", tcp]).unwrap(), tcp);
+        assert_eq!(address_of(&[tcp]).unwrap(), tcp);
+        assert_eq!(address_of(&["--tcp", "192.168.1.50:4000"]).unwrap(), tcp);
+        assert_eq!(address_of(&["-p", "/dev/ttyUSB1", tcp]).unwrap(), tcp);
         assert_eq!(
-            live_port(&[tcp, "-p", "/dev/ttyUSB1"]).unwrap(),
+            address_of(&[tcp, "-p", "/dev/ttyUSB1"]).unwrap(),
             "/dev/ttyUSB1"
         );
+    }
+
+    /// MAX-168: `--replay` is a replay address, as `file://` is, with its delay; the last
+    /// device given wins over it, and a replay with no path is refused.
+    /// How: the replay forms, then a device after `--replay`.
+    #[test]
+    fn replay_forms() {
+        let run = |args: &[&str]| match parse_args_from(args.iter().map(|a| a.to_string())) {
+            Ok(ParseOutcome::Run {
+                link_config,
+                replay_delay,
+                ..
+            }) => (link_config.address, replay_delay),
+            _ => panic!("not a run"),
+        };
+        let replay = Address::Replay(PathBuf::from("/tmp/boot.raw"));
+        assert_eq!(
+            run(&["--replay", "/tmp/boot.raw"]),
+            (replay.clone(), Duration::ZERO)
+        );
+        assert_eq!(
+            run(&["-r", "/tmp/boot.raw", "--delay", "20"]),
+            (replay.clone(), Duration::from_millis(20))
+        );
+        assert_eq!(run(&["file:///tmp/boot.raw"]).0, replay);
+        assert_eq!(
+            address_of(&["-r", "/tmp/boot.raw", "COM3"]).unwrap(),
+            "COM3"
+        );
+        assert!(address_of(&["--replay", ""]).is_err());
     }
 
     /// MAX-156: a TCP link refuses a malformed address and the line options, which its bridge
@@ -254,15 +282,15 @@ mod tests {
         let tcp = "tcp://192.168.1.50:4000";
         for option in [&["-b", "9600"][..], &["--parity", "e"], &["--flow", "hw"]] {
             let args = [&[tcp][..], option].concat();
-            let err = live_port(&args).unwrap_err();
+            let err = address_of(&args).unwrap_err();
             assert!(err.contains("doesn't apply to a TCP link"), "{err}");
         }
         assert!(
-            live_port(&["tcp://localhost"])
+            address_of(&["tcp://localhost"])
                 .unwrap_err()
                 .contains("host:port")
         );
-        assert!(live_port(&["--tcp", "host:notaport"]).is_err());
-        assert!(live_port(&["/dev/ttyUSB0", "-b", "9600", "--parity", "e"]).is_ok());
+        assert!(address_of(&["--tcp", "host:notaport"]).is_err());
+        assert!(address_of(&["/dev/ttyUSB0", "-b", "9600", "--parity", "e"]).is_ok());
     }
 }

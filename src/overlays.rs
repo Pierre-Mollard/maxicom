@@ -35,7 +35,7 @@ pub enum Overlay {
     Help(HelpDialog),
     Settings,
     TerminalSize(ResizeDialog),
-    SerialSettings(LineSettingsDialog),
+    LinkSettings(LineSettingsDialog),
     FilePath(FilePathDialog),
     Screenshot(ScreenshotDialog),
     DeviceDisconnected,
@@ -45,7 +45,7 @@ pub enum Overlay {
     ActionMenu(ActionMenu),
     RestoreSession(Box<Session>),
     Sessions(Box<SessionBrowser>),
-    CommandLine(CommandLine),
+    CommandLine(Box<CommandLine>),
     Triggers(TriggerBrowser),
 }
 
@@ -145,7 +145,7 @@ impl Overlay {
     pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
         match self {
             Overlay::Help(dialog) => dialog.handle_action(action),
-            Overlay::SerialSettings(dialog) => dialog.handle_action(action),
+            Overlay::LinkSettings(dialog) => dialog.handle_action(action),
             Overlay::TerminalSize(dialog) => dialog.handle_action(action),
             Overlay::FilePath(dialog) => dialog.handle_action(action),
             Overlay::Screenshot(dialog) => dialog.handle_action(action),

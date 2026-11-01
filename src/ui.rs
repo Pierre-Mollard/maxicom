@@ -227,7 +227,7 @@ fn render_active_overlay(
         Some(Overlay::TerminalSize(dialog)) => {
             render_resize_popup(dialog, resolver, frame, theme, &mut targets)
         }
-        Some(Overlay::SerialSettings(dialog)) => {
+        Some(Overlay::LinkSettings(dialog)) => {
             render_reconfigure_popup(dialog, resolver, frame, theme, &mut targets)
         }
         Some(Overlay::FilePath(dialog)) => {
@@ -1047,7 +1047,7 @@ mod tests {
     /// Popup hints show the keys of the user's keymap (MAX-73).
     #[test]
     fn popup_hints_follow_the_keymap() {
-        let serial = || Overlay::SerialSettings(LineSettingsDialog::new(&LinkConfig::default()));
+        let serial = || Overlay::LinkSettings(LineSettingsDialog::new(&LinkConfig::default()));
 
         let rows = popup_rows(serial(), &[]);
         assert!(has(&rows, "Enter Apply · Esc Cancel"), "{rows:#?}");
@@ -1076,11 +1076,11 @@ mod tests {
             s.ui.show_borders = true;
             s.ui.status_bar.layout = StatusBarLayout::Box;
         });
-        let mut command_line = CommandLine::new(Vec::new(), Vec::new());
+        let mut command_line = CommandLine::new(Vec::new(), Vec::new(), Vec::new());
         command_line.handle_action(DialogAction::Paste("help".into()));
         h.app
             .update(Action::App(AppAction::OpenOverlay(Overlay::CommandLine(
-                command_line,
+                Box::new(command_line),
             ))));
 
         // 64 wide, 3 high, centered: the row inside the border and the padding column
@@ -1109,11 +1109,11 @@ mod tests {
     #[test]
     fn command_line_scroll_and_click() {
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
-        let mut command_line = CommandLine::new(Vec::new(), Vec::new());
+        let mut command_line = CommandLine::new(Vec::new(), Vec::new(), Vec::new());
         command_line.handle_action(DialogAction::Paste("0123456789".repeat(8)));
         h.app
             .update(Action::App(AppAction::OpenOverlay(Overlay::CommandLine(
-                command_line,
+                Box::new(command_line),
             ))));
         let input_cursor = |h: &Harness| match h.app.overlay() {
             Some(Overlay::CommandLine(command_line)) => command_line.input.visual_cursor(),
@@ -1152,11 +1152,11 @@ mod tests {
             s.ui.status_bar.layout = StatusBarLayout::Box;
         });
         let open = |h: &mut Harness, text: &str| {
-            let mut command_line = CommandLine::new(Vec::new(), Vec::new());
+            let mut command_line = CommandLine::new(Vec::new(), Vec::new(), Vec::new());
             command_line.handle_action(DialogAction::Paste(text.into()));
             h.app
                 .update(Action::App(AppAction::OpenOverlay(Overlay::CommandLine(
-                    command_line,
+                    Box::new(command_line),
                 ))));
             h.draw()
         };
@@ -1269,7 +1269,9 @@ mod tests {
         // a long port path wraps instead of being cut; the popup shows the link's address
         let port = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A50285BI-if00-port0";
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
-        h.app.link_mut().set_address(Address::parse(port));
+        h.app
+            .link_mut()
+            .set_address(port.parse::<Address>().unwrap());
         h.app.update(Action::App(AppAction::OpenOverlay(
             Overlay::DeviceDisconnected,
         )));
@@ -1283,6 +1285,35 @@ mod tests {
         let error = ErrorDialog::new("Oops", "it broke");
         let rows = popup_rows(Overlay::Error(error), &[("x", "close")]);
         assert!(has(&rows, "x Dismiss"), "{rows:#?}");
+    }
+
+    /// MAX-168: the disconnected and detached popups say the link's kind: a serial port's
+    /// words for a port, a connection's for a TCP link.
+    /// How: both popups on the default port, then on a TCP address.
+    #[test]
+    fn link_popups_follow_the_kind() {
+        let rows = popup_rows(Overlay::DeviceDisconnected, &[]);
+        assert!(has(&rows, "SERIAL PORT DISCONNECTED"), "{rows:#?}");
+        assert!(has(&rows, "Waiting for it to come back"), "{rows:#?}");
+        let rows = popup_rows(Overlay::DeviceDetached, &[]);
+        assert!(has(&rows, "SERIAL PORT DETACHED"), "{rows:#?}");
+        assert!(has(&rows, "Other programs can open it now"), "{rows:#?}");
+
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        h.app
+            .link_mut()
+            .set_address("tcp://192.168.1.50:4000".parse::<Address>().unwrap());
+        for (overlay, words) in [
+            (Overlay::DeviceDisconnected, "TCP CONNECTION LOST"),
+            (Overlay::DeviceDetached, "TCP CONNECTION DETACHED"),
+        ] {
+            h.app.update(Action::App(AppAction::OpenOverlay(overlay)));
+            let rows = h.draw();
+            assert!(has(&rows, words), "{rows:#?}");
+            assert!(has(&rows, "192.168.1.50:4000"), "{rows:#?}");
+            assert!(!has(&rows, "SERIAL") && !has(&rows, "Port "), "{rows:#?}");
+            h.app.close_overlay();
+        }
     }
 
     /// MAX-12: the help's third tab lists the keys bound to a command line, the direct ones
@@ -1463,7 +1494,7 @@ mod tests {
     fn popups_fit_their_content() {
         let popups = [
             Overlay::Settings,
-            Overlay::SerialSettings(LineSettingsDialog::new(&LinkConfig::default())),
+            Overlay::LinkSettings(LineSettingsDialog::new(&LinkConfig::default())),
             Overlay::FilePath(FilePathDialog::new(
                 Stream::Text,
                 "log.txt".into(),
@@ -1492,7 +1523,7 @@ mod tests {
     #[test]
     fn serial_popup_values_are_readable() {
         let dialog = LineSettingsDialog::new(&LinkConfig::default());
-        let rows = popup_rows(Overlay::SerialSettings(dialog), &[]);
+        let rows = popup_rows(Overlay::LinkSettings(dialog), &[]);
         assert!(has(&rows, "< 8 >"), "{rows:#?}");
         assert!(has(&rows, "< 1 >"), "{rows:#?}");
     }
@@ -1503,13 +1534,10 @@ mod tests {
     #[test]
     fn serial_popup_for_a_tcp_link() {
         let config = LinkConfig {
-            address: Address::parse("tcp://192.168.1.50:4000"),
+            address: "tcp://192.168.1.50:4000".parse::<Address>().unwrap(),
             ..LinkConfig::default()
         };
-        let rows = popup_rows(
-            Overlay::SerialSettings(LineSettingsDialog::new(&config)),
-            &[],
-        );
+        let rows = popup_rows(Overlay::LinkSettings(LineSettingsDialog::new(&config)), &[]);
         assert!(has(&rows, "Network Link"), "{rows:#?}");
         assert!(has(&rows, "tcp://192.168.1.50:4000"), "{rows:#?}");
         assert!(
@@ -1538,7 +1566,7 @@ mod tests {
     #[test]
     fn serial_popup_for_a_session_replay() {
         let config = LinkConfig {
-            address: Address::parse("file:///tmp/boot.raw"),
+            address: "file:///tmp/boot.raw".parse::<Address>().unwrap(),
             ..LinkConfig::default()
         };
         let line = crate::capture::SessionLine {
@@ -1546,7 +1574,7 @@ mod tests {
             framing: "7E1".parse().unwrap(),
         };
         let dialog = LineSettingsDialog::new(&config).with_recorded_line(Some(line));
-        let rows = popup_rows(Overlay::SerialSettings(dialog), &[]);
+        let rows = popup_rows(Overlay::LinkSettings(dialog), &[]);
         assert!(has(&rows, "Recorded    : 9600 7E1"), "{rows:#?}");
         assert!(has(&rows, "A replay plays what was recorded"), "{rows:#?}");
         assert!(!has(&rows, "Baud Rate"), "{rows:#?}");
@@ -1557,13 +1585,10 @@ mod tests {
     #[test]
     fn serial_popup_for_a_replay() {
         let config = LinkConfig {
-            address: Address::parse("file:///tmp/boot.raw"),
+            address: "file:///tmp/boot.raw".parse::<Address>().unwrap(),
             ..LinkConfig::default()
         };
-        let rows = popup_rows(
-            Overlay::SerialSettings(LineSettingsDialog::new(&config)),
-            &[],
-        );
+        let rows = popup_rows(Overlay::LinkSettings(LineSettingsDialog::new(&config)), &[]);
         assert!(
             has(&rows, "Replay") && !has(&rows, "Network Link"),
             "{rows:#?}"
@@ -2015,7 +2040,7 @@ mod tests {
         assert!(path.extension().is_some_and(|ext| ext == "raw"));
         assert_eq!(
             session.as_ref().unwrap().address,
-            Address::parse("/dev/other")
+            "/dev/other".parse::<Address>().unwrap()
         );
         assert!(h.app.overlay().is_none());
 
@@ -2351,7 +2376,7 @@ mod tests {
         let baud = h.app.link_config().line.baud.to_string();
         let rows = h.draw();
         click(&mut h, status_cell(&rows, &baud));
-        assert!(matches!(h.app.overlay(), Some(Overlay::SerialSettings(_))));
+        assert!(matches!(h.app.overlay(), Some(Overlay::LinkSettings(_))));
 
         let (_, without_2) = bar_at(15);
         assert!(without_2.starts_with(" LINE ") && !without_2.contains("115200"));
@@ -3855,18 +3880,19 @@ mod tests {
         assert!(!reversed(&h, echo));
         h.app.close_overlay();
 
-        h.app.update(Action::App(AppAction::OpenOverlay(
-            Overlay::SerialSettings(LineSettingsDialog::new(&LinkConfig::default())),
-        )));
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::LinkSettings(
+                LineSettingsDialog::new(&LinkConfig::default()),
+            ))));
         let rows = h.draw();
         let before = match h.app.overlay() {
-            Some(Overlay::SerialSettings(d)) => d.selected_field,
+            Some(Overlay::LinkSettings(d)) => d.selected_field,
             _ => unreachable!(),
         };
         moved(&mut h, cell_of(&rows, "Parity"));
         h.draw();
         match h.app.overlay() {
-            Some(Overlay::SerialSettings(d)) => assert_eq!(d.selected_field, before),
+            Some(Overlay::LinkSettings(d)) => assert_eq!(d.selected_field, before),
             _ => panic!("serial popup closed"),
         }
     }
@@ -4115,7 +4141,7 @@ mod tests {
         let rows = h.draw();
         let baud = h.app.link_config().line.baud.to_string();
         click(&mut h, status_cell(&rows, &baud));
-        assert!(matches!(h.app.overlay(), Some(Overlay::SerialSettings(_))));
+        assert!(matches!(h.app.overlay(), Some(Overlay::LinkSettings(_))));
         h.app.close_overlay();
 
         for (text, help) in [("?", true), ("≡", false)] {
@@ -4156,7 +4182,7 @@ mod tests {
             mouse_do(h, MouseEventKind::Up(MouseButton::Left), at);
             effect
         };
-        let serial = || Overlay::SerialSettings(LineSettingsDialog::new(&LinkConfig::default()));
+        let serial = || Overlay::LinkSettings(LineSettingsDialog::new(&LinkConfig::default()));
 
         let rows = open(&mut h, serial());
         click(&mut h, cell_of(&rows, "Parity"));
@@ -4288,13 +4314,13 @@ mod tests {
 
         let rows = open(
             &mut h,
-            Overlay::SerialSettings(LineSettingsDialog::new(&LinkConfig::default())),
+            Overlay::LinkSettings(LineSettingsDialog::new(&LinkConfig::default())),
         );
         let parity = cell_of(&rows, "Parity");
         click(&mut h, parity);
         click(&mut h, parity);
         match h.app.overlay() {
-            Some(Overlay::SerialSettings(d)) => {
+            Some(Overlay::LinkSettings(d)) => {
                 assert_eq!(d.selected_field, LineSettingField::Parity);
                 assert_ne!(d.line.framing.parity, Parity::None);
             }
@@ -4321,9 +4347,10 @@ mod tests {
         use crate::link::serial::Parity;
         use crate::overlays::LineSettingField;
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
-        h.app.update(Action::App(AppAction::OpenOverlay(
-            Overlay::SerialSettings(LineSettingsDialog::new(&LinkConfig::default())),
-        )));
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::LinkSettings(
+                LineSettingsDialog::new(&LinkConfig::default()),
+            ))));
         let rows = h.draw();
         // the arrows of a row: its first `<` and its last `>`
         let arrows = |rows: &[String], label: &str| {
@@ -4334,7 +4361,7 @@ mod tests {
             ((left, y), (right, y))
         };
         let dialog = |h: &Harness| match h.app.overlay() {
-            Some(Overlay::SerialSettings(d)) => d.clone(),
+            Some(Overlay::LinkSettings(d)) => d.clone(),
             _ => panic!("serial popup closed"),
         };
         let parity = dialog(&h).line.framing.parity;
