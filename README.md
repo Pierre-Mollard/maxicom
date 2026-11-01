@@ -212,14 +212,18 @@ What changes from a serial port:
   `Ctrl-A p` pulses DTR (`dtr off; sleep 100; dtr on`), which resets most
   boards, and `Ctrl-A u` toggles the `u-boot` trigger. The help's Commands
   tab lists the keys bound to a line and every command.
-- The word before the cursor has its completions listed (command names with
-  their help, then the values of the argument it is). Tab and Shift-Tab put
-  them in its place in turn, then Up and Down too; a lone one, or a click, is
-  taken with a space after it.
-- Otherwise Up and Down walk the lines that ran, as in the TX input: the
-  newest first, back to the line being typed. `history_size` in
-  `[command_line]` (default `100`) keeps that many, for the session only; a
-  reload applies at once.
+- Typed text has the completions of the word before the cursor listed
+  (command names with their help, then the values of the argument it is).
+  A help too long for the list is cut, but the selected one's, which wraps.
+  Tab, Shift-Tab, Up and Down put them in its place in turn; a lone one, or
+  a click, is taken with a space after it. An empty line, or a line recalled
+  from the history, lists nothing until Tab (which lists without picking)
+  or typing.
+- Without a list, Up and Down walk the lines that ran, as in the TX input:
+  the newest first, back to the line being typed, only the ones starting
+  with what was typed (`send ` then Up walks the `send` lines).
+  `history_size` in `[command_line]` (default `100`) keeps that many, for the
+  session only; a reload applies at once.
 - `layout` in `[command_line]` (default `"popup"`): `"popup"` draws it in a
   centered popup of one row, `"status_bar"` over the status bar's row, or in
   the popup when the status bar isn't shown.
@@ -382,9 +386,11 @@ where its lines wrap, which `dimension_mode` decides.
   - Its text is written with `timestamp`, `timestamp_format`, `record_tx` and
     `tx_mark` as they are when the session starts; a reload changes the
     recordings only, never a running backup.
-  - At startup, the sessions that received nothing are removed, then the
-    oldest past `sessions.keep`. A session still running, here or in another
-    maxicom (another port), is never removed.
+  - When a session starts, the sessions that received nothing are removed,
+    then the oldest ones until `sessions.keep` are left and all the sessions
+    together (`.raw`, `.log` and `.meta`) fit `sessions.max_size`. The
+    current session and one still running, here or in another maxicom
+    (another port), count in the size but are never removed.
   - To recover a session by hand, open its `.log`, or replay its `.raw`
     (its `.meta` gives the encoding and the line settings):
     `maxicom --replay ~/.cache/maxicom/sessions/20261028_141500123_ttyUSB0.raw`
@@ -455,7 +461,8 @@ tx_mark = "> "                           # before each sent line, "" for none
 
 [sessions]
 enabled = true                           # session backup (read at startup)
-keep = 20                                # sessions kept
+keep = 200                               # sessions kept
+max_size = "200M"                        # all sessions together, K/M/G/T, "0": no limit
 restore = "always"                       # always, ask or never
 restore_max_age = "24h"                  # since it ended, "0s": no limit
 
@@ -475,6 +482,22 @@ name = "screen_%Y%m%d_%H%M%S"            # the format adds .txt or .ans
   - `[content](style)`            Styled text span
   - `[content](cond?true:false)`  Conditional style
   - `(style1 style2)`             Group multiple styles with spaces
+  - `\` at the end of a line      Joins the next line, its indentation dropped
+
+- Several lines: a template can be written one block per line, each line but
+  the last ending with `\`. In a `'''` string TOML keeps the `\` for the
+  status bar; in a `"""` string TOML joins the lines itself. The default
+  config file is written that way:
+
+```toml
+right = '''
+[{scroll_pos_up} ](has_scroll?muted:hide prio=2)\
+    [RX: {rx_bytes:4h}](muted prio=3)\
+    [ | ](muted prio=3)\
+    ...'''
+```
+
+  A space before the `\` stays, as between `[{time}](...) ` and `[?](...)`.
 
 - Variables:
   - {mode}           "TERM" or "LINE"

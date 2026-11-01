@@ -38,7 +38,7 @@ impl App {
         let result = match dir {
             Some(dir) => self
                 .recorder
-                .start_session(&dir, &device, &text, sessions.keep),
+                .start_session(&dir, &device, &text, sessions.limits()),
             None => Err(std::io::Error::other("no cache folder")),
         };
         if let Err(err) = result {

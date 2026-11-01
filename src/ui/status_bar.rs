@@ -785,6 +785,7 @@ impl Cond {
 
 impl CompiledTemplate {
     pub fn new(template: &str, theme: &ThemeConfig) -> Self {
+        let template = &*join_lines(template);
         let mut segments = Vec::new();
         let mut cursor = 0;
 
@@ -953,6 +954,33 @@ impl CompiledTemplate {
         }
         (spans, clicks)
     }
+}
+
+/// A template written on several lines (MAX-163): `\` at the end of a line joins the next one,
+/// its indentation dropped, as TOML does in `"""` strings and doesn't in `'''` ones. Any other
+/// `\` stays
+fn join_lines(template: &str) -> Cow<'_, str> {
+    if !template.contains('\\') {
+        return Cow::Borrowed(template);
+    }
+    let mut joined = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(at) = rest.find('\\') {
+        joined.push_str(&rest[..at]);
+        let after = &rest[at + 1..];
+        match after
+            .strip_prefix("\r\n")
+            .or_else(|| after.strip_prefix('\n'))
+        {
+            Some(next) => rest = next.trim_start_matches([' ', '\t']),
+            None => {
+                joined.push('\\');
+                rest = after;
+            }
+        }
+    }
+    joined.push_str(rest);
+    Cow::Owned(joined)
 }
 
 /// Splits text into literals and known `{variables}`, with their `{name:spec}` format; an
@@ -1638,6 +1666,27 @@ mod tests {
             render("[m](mouse?red:blue)", &l),
             [span("m", "Some(Blue)", BG, "NONE")]
         );
+    }
+
+    /// MAX-163: `\` at the end of a line joins the next one, its indentation (spaces, tabs)
+    /// dropped, with LF or CRLF; a space before the `\` stays; another `\` stays as written.
+    /// The default templates, written one block per line, join into one line.
+    /// How: the same template on one line and on three, rendered; the joins alone.
+    #[test]
+    fn templates_join_lines_ending_in_backslash() {
+        let a = app(Mode::Line);
+        let one = "[a](red) [b](blue)[c](green)";
+        let three = "[a](red) \\\n    [b](blue)\\\r\n\t[c](green)";
+        assert_eq!(render(three, &a), render(one, &a));
+        assert_eq!(join_lines("a\\b\\"), "a\\b\\");
+        assert_eq!(join_lines("a\\\n\n  b"), "a\n  b");
+
+        let defaults = StatusBarConfig::default();
+        for template in [&defaults.left, &defaults.center, &defaults.right] {
+            assert!(template.contains("\\\n"));
+            let joined = join_lines(template);
+            assert!(!joined.contains(['\\', '\n']), "{joined}");
+        }
     }
 
     /// MAX-147: `session` is true while the session backup runs, which never lights `rec`.

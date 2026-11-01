@@ -1,5 +1,7 @@
 use super::create_parent_dirs;
-use super::session::{SessionDevice, SessionMeta, SessionText, prune_sessions, session_tag};
+use super::session::{
+    SessionDevice, SessionLimits, SessionMeta, SessionText, prune_sessions, session_tag,
+};
 use crate::app::types::RxLineSplitter;
 use crate::configs::{RxNewlineMode, TextEncoding};
 use chrono::format::{Item, StrftimeItems};
@@ -145,13 +147,13 @@ impl Recorder {
 
     /// Starts the session backup in `dir`, named after now and the port, its text written as
     /// `text` says, with its meta file for a later restore, then removes the oldest sessions
-    /// there so `keep` are left (at least the new one)
+    /// there past `limits` (at least the new one stays)
     pub fn start_session(
         &mut self,
         dir: &Path,
         device: &SessionDevice,
         text: &SessionText,
-        keep: usize,
+        limits: SessionLimits,
     ) -> io::Result<()> {
         let now = Local::now();
         // to the millisecond: a relaunch within the second must not append to the last
@@ -180,7 +182,11 @@ impl Recorder {
             tx_mark: text.tx_mark.clone(),
             started: now,
         });
-        prune_sessions(dir, keep.max(1), &stem)
+        let limits = SessionLimits {
+            keep: limits.keep.max(1),
+            ..limits
+        };
+        prune_sessions(dir, limits, &stem)
     }
 
     /// When the session backup started, what a recording that includes it starts with
@@ -562,7 +568,12 @@ mod tests {
         let dir = temp_dir("session");
         let mut recorder = Recorder::default();
         recorder
-            .start_session(&dir, &device("port"), &SessionText::default(), 20)
+            .start_session(
+                &dir,
+                &device("port"),
+                &SessionText::default(),
+                SessionLimits::keep(20),
+            )
             .unwrap();
         assert!(recorder.has_session() && !recorder.is_any_active());
         record(&mut recorder, b"a\n");
@@ -595,7 +606,12 @@ mod tests {
         let dir = temp_dir("session_paused");
         let mut recorder = Recorder::default();
         recorder
-            .start_session(&dir, &device("port"), &SessionText::default(), 20)
+            .start_session(
+                &dir,
+                &device("port"),
+                &SessionText::default(),
+                SessionLimits::keep(20),
+            )
             .unwrap();
         record(&mut recorder, b"a\nhal");
         let session = recorder.take_session();
@@ -630,7 +646,12 @@ mod tests {
         let dir = temp_dir("session_raw");
         let mut recorder = Recorder::default();
         recorder
-            .start_session(&dir, &device("port"), &SessionText::default(), 20)
+            .start_session(
+                &dir,
+                &device("port"),
+                &SessionText::default(),
+                SessionLimits::keep(20),
+            )
             .unwrap();
         record(&mut recorder, b"a\n");
 
@@ -661,7 +682,7 @@ mod tests {
             tx_mark: Some("> ".to_string()),
         };
         recorder
-            .start_session(&dir, &device("port"), &text, 20)
+            .start_session(&dir, &device("port"), &text, SessionLimits::keep(20))
             .unwrap();
         let text = start(&mut recorder, Stream::Text, "tx_text");
         let raw = start(&mut recorder, Stream::Raw, "tx_raw");
@@ -695,7 +716,7 @@ mod tests {
             tx_mark: Some("J ".to_string()),
         };
         recorder
-            .start_session(&dir, &device("a"), &text, 20)
+            .start_session(&dir, &device("a"), &text, SessionLimits::keep(20))
             .unwrap();
         let rec = start(&mut recorder, Stream::Text, "session_format");
         let enc = TextEncoding::Utf8;
@@ -715,7 +736,12 @@ mod tests {
 
         let mut recorder = Recorder::default();
         recorder
-            .start_session(&dir, &device("b"), &SessionText::default(), 20)
+            .start_session(
+                &dir,
+                &device("b"),
+                &SessionText::default(),
+                SessionLimits::keep(20),
+            )
             .unwrap();
         record(&mut recorder, b"rx\n");
         recorder.record_tx(enc, None, Some("> "), b"tx\n");

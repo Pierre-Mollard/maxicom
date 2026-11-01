@@ -17,6 +17,7 @@ use crate::{
     overlays::{CommandLine, PopupTarget},
     ui::{
         common::{popup_area, prompt_view},
+        layout::wrap_line_by_words,
         popups::{key_hints, popup_block, row_area},
     },
 };
@@ -26,6 +27,9 @@ pub const COMMAND_LINE_WIDTH: u16 = 64;
 
 /// Rows of the completion list at most: it scrolls to keep the selection in view
 pub const COMPLETION_ROWS: usize = 8;
+
+/// The narrowest help column the selected candidate's help wraps in; narrower, it is cut
+const MIN_HELP_WRAP: usize = 12;
 
 /// The command line and its completion list (MAX-12): over the status bar with `layout =
 /// "status_bar"` when the bar is drawn (`status_bar` its area), else in its popup. Returns the
@@ -184,7 +188,10 @@ fn render_input_row(
 }
 
 /// The completion of the word before the cursor: a list under `anchor` (the popup), or above it
-/// (the status bar), one column inside it on each side. Each row is a click target
+/// (the status bar), one column inside it on each side. Each candidate is a row, cut at the
+/// list's width, but the selected one, whose help wraps under the help column (MAX-163). The
+/// list shows `COMPLETION_ROWS` rows at most, scrolled to keep the selected one whole in view.
+/// Each row is a click target on its candidate
 fn render_completion_list(
     command_line: &CommandLine,
     anchor: Rect,
@@ -197,13 +204,77 @@ fn render_completion_list(
     if candidates.is_empty() {
         return;
     }
-    let rows = candidates.len().min(COMPLETION_ROWS);
     let value_width = candidates
         .iter()
         .map(|c| c.value.width())
         .max()
         .unwrap_or(0);
-    let height = rows as u16 + 2;
+    let help_style = Style::default().fg(theme.palette.text_muted);
+    let selected = command_line.selected;
+
+    // the selected help's rows, in the room left of the list's borders and padding
+    let help_width = usize::from(anchor.width.saturating_sub(6)).saturating_sub(value_width + 2);
+    let selected_help: Vec<Line> = match selected.map(|i| candidates[i].help) {
+        Some(help) if !help.is_empty() && help_width >= MIN_HELP_WRAP => {
+            let help = Line::from(Span::styled(help, help_style));
+            (wrap_line_by_words(help, help_width, 0, 0).into_iter())
+                .map(|row| Line::from(row.spans))
+                .collect()
+        }
+        _ => Vec::new(),
+    };
+    let height_of = |i: usize| match selected {
+        Some(s) if s == i => selected_help.len().clamp(1, COMPLETION_ROWS),
+        _ => 1,
+    };
+    // the first shown: the selected one at the bottom once the list scrolls
+    let first = selected.map_or(0, |s| {
+        let (mut first, mut used) = (s, height_of(s));
+        while first > 0 && used < COMPLETION_ROWS {
+            first -= 1;
+            used += 1;
+        }
+        first
+    });
+
+    let mut lines: Vec<Line> = Vec::new();
+    // each candidate shown: its index, first row and row count
+    let mut shown: Vec<(usize, usize, usize)> = Vec::new();
+    for (i, candidate) in candidates.iter().enumerate().skip(first) {
+        let room = COMPLETION_ROWS - lines.len();
+        if room == 0 {
+            break;
+        }
+        let style = if selected == Some(i) {
+            *theme.command_line.selected
+        } else {
+            *theme.command_line.text
+        };
+        let value = Span::styled(format!("{:<value_width$}", candidate.value), style);
+        let start = lines.len();
+        if selected == Some(i) && !selected_help.is_empty() {
+            // the next rows under the help column
+            let indent = " ".repeat(value_width + 2);
+            for (row, help) in selected_help.iter().take(room).enumerate() {
+                let lead = if row == 0 {
+                    vec![value.clone(), Span::raw("  ")]
+                } else {
+                    vec![Span::raw(indent.clone())]
+                };
+                lines.push(Line::from([lead, help.spans.clone()].concat()));
+            }
+        } else {
+            let mut spans = vec![value];
+            if !candidate.help.is_empty() {
+                spans.push(Span::raw("  "));
+                spans.push(Span::styled(candidate.help, help_style));
+            }
+            lines.push(Line::from(spans));
+        }
+        shown.push((i, start, lines.len() - start));
+    }
+
+    let height = lines.len() as u16 + 2;
     let y = if below {
         anchor.bottom()
     } else {
@@ -222,33 +293,12 @@ fn render_completion_list(
     frame.render_widget(Clear, area);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-
-    let first = command_line
-        .selected
-        .map_or(0, |selected| (selected + 1).saturating_sub(rows));
-    let help_style = Style::default().fg(theme.palette.text_muted);
-    let lines: Vec<Line> = candidates
-        .iter()
-        .enumerate()
-        .skip(first)
-        .take(rows)
-        .map(|(i, candidate)| {
-            let style = if command_line.selected == Some(i) {
-                *theme.command_line.selected
-            } else {
-                *theme.command_line.text
-            };
-            let value = format!("{:<value_width$}", candidate.value);
-            let mut spans = vec![Span::styled(value, style)];
-            if !candidate.help.is_empty() {
-                spans.push(Span::raw("  "));
-                spans.push(Span::styled(candidate.help, help_style));
-            }
-            Line::from(spans)
-        })
-        .collect();
     frame.render_widget(Paragraph::new(lines), inner);
-    for row in 0..rows.min(inner.height as usize) {
-        targets.push((row_area(inner, row), PopupTarget::Completion(first + row)));
+    for (i, start, rows) in shown {
+        for row in start..start + rows {
+            if row < inner.height as usize {
+                targets.push((row_area(inner, row), PopupTarget::Completion(i)));
+            }
+        }
     }
 }

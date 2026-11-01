@@ -9,6 +9,8 @@ use std::{
 use chrono::format::strftime::StrftimeItems;
 use serde::{Deserialize, Serialize};
 
+use crate::capture::SessionLimits;
+
 pub const DEFAULT_INACTIVITY_DETACH: Duration = Duration::from_secs(4 * 3600);
 pub const MIN_RX_BUF_SIZE: usize = 512;
 pub const MAX_RX_BUF_SIZE: usize = 65_536;
@@ -404,14 +406,15 @@ impl CaptureConfig {
 }
 
 /// The session backup (MAX-172): with `enabled`, every session is recorded in the cache
-/// folder, the last `keep` sessions kept. `restore` puts the last session on the same device
-/// back in the history at startup, when it ended within `restore_max_age` (0: no limit,
-/// MAX-148)
+/// folder, the last `keep` sessions kept, all together up to `max_size` (`0`: no limit,
+/// MAX-163). `restore` puts the last session on the same device back in the history at
+/// startup, when it ended within `restore_max_age` (0: no limit, MAX-148)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SessionsConfig {
     pub enabled: bool,
     pub keep: usize,
+    pub max_size: ByteSize,
     pub restore: RestoreMode,
     #[serde(with = "humantime_serde")]
     pub restore_max_age: Duration,
@@ -421,9 +424,93 @@ impl Default for SessionsConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            keep: 20,
+            keep: 200,
+            max_size: ByteSize(200 << 20),
             restore: RestoreMode::default(),
             restore_max_age: Duration::from_secs(24 * 3600),
+        }
+    }
+}
+
+impl SessionsConfig {
+    /// How old a session can be to restore: none when `restore_max_age` is 0
+    pub fn max_age(&self) -> Option<Duration> {
+        (!self.restore_max_age.is_zero()).then_some(self.restore_max_age)
+    }
+
+    /// What the session folder keeps
+    pub fn limits(&self) -> SessionLimits {
+        SessionLimits {
+            keep: self.keep,
+            max_size: (self.max_size.0 > 0).then_some(self.max_size.0),
+        }
+    }
+}
+
+/// A size in bytes, written as the status bar shows sizes: a number and a unit, `K`, `M`, `G`
+/// or `T`, by 1024, with an optional `B` or `iB` (`200M`, `1.5GB`, `512KiB`), bare bytes
+/// without one (MAX-163)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ByteSize(pub u64);
+
+impl std::str::FromStr for ByteSize {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let text = text.trim();
+        let split = text
+            .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .unwrap_or(text.len());
+        let (number, unit) = text.split_at(split);
+        let unit = unit.trim_start().to_ascii_uppercase();
+        let unit = (unit.strip_suffix("IB").or_else(|| unit.strip_suffix('B'))).unwrap_or(&unit);
+        let shift = match unit {
+            "" => 0,
+            "K" => 10,
+            "M" => 20,
+            "G" => 30,
+            "T" => 40,
+            _ => return Err(format!("unknown size unit in \"{text}\" (K, M, G or T)")),
+        };
+        let number: f64 = number
+            .parse()
+            .map_err(|_| format!("not a size: \"{text}\" (e.g. \"200M\")"))?;
+        Ok(Self((number * (1u64 << shift) as f64).round() as u64))
+    }
+}
+
+impl Display for ByteSize {
+    /// In the biggest unit that writes it whole
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let units = [(40, "T"), (30, "G"), (20, "M"), (10, "K")];
+        match units
+            .iter()
+            .find(|&&(shift, _)| self.0 > 0 && self.0.is_multiple_of(1u64 << shift))
+        {
+            Some(&(shift, unit)) => write!(f, "{}{unit}", self.0 >> shift),
+            None => write!(f, "{}", self.0),
+        }
+    }
+}
+
+impl Serialize for ByteSize {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for ByteSize {
+    /// A string with its unit, or a bare number of bytes
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Bytes(u64),
+            Text(String),
+        }
+        match Raw::deserialize(deserializer)? {
+            Raw::Bytes(bytes) => Ok(Self(bytes)),
+            Raw::Text(text) => text.parse().map_err(serde::de::Error::custom),
         }
     }
 }
@@ -443,13 +530,6 @@ impl Default for ScreenshotConfig {
             dir: PathBuf::new(),
             name: String::from("screen_%Y%m%d_%H%M%S"),
         }
-    }
-}
-
-impl SessionsConfig {
-    /// How old a session can be to restore: none when `restore_max_age` is 0
-    pub fn max_age(&self) -> Option<Duration> {
-        (!self.restore_max_age.is_zero()).then_some(self.restore_max_age)
     }
 }
 
@@ -569,20 +649,47 @@ pub struct StatusBarConfig {
 impl Default for StatusBarConfig {
     fn default() -> Self {
         Self {
-            left: String::from(
-                "[ {mode} ](prefix?(bg=secondary fg=black bold):copy_raw?(bg=red fg=black bold):copy?(bg=magenta fg=black bold):search?(bg=blue fg=white bold):(fg=primary bold))[ {copy_side}](copy_raw?(fg=red bold):copy?(fg=magenta bold):hide)[ {port}](prio=3)[ |](muted prio=3)[ ](prio=2)[{baud}](primary prio=2)[ ](prio=4)[{framing}](prio=4)",
-            ),
-            center: String::from(
-                "[◎ {trigger_count} ](armed?(fg=warn bold):hide)[⟳ mash ](mashing?(fg=secondary bold):hide click=cancel)[⇡ {send_file} {send_percent:>3}% ](sending?(fg=secondary bold):hide)[▷ {replay_state} {replay_percent:>3}% ](replaying?(fg=secondary bold):hide prio=5)[● REC ](rec?(fg=warn bold):hide click=toggle-logging)[◀ ](wide?(pan_left?secondary:muted):hide click=pan-left)[{pan_offset:>3}/{pan_max:<3}](wide?muted:hide)[ ▶](wide?(pan_alert?(fg=warn bold):(pan_right?secondary:muted)):hide click=pan-right)",
-            ),
-            right: String::from(
-                "[{scroll_pos_up} ](has_scroll?muted:hide prio=2)[RX: {rx_bytes:4h}](muted prio=3)[ | ](muted prio=3)[TX: {tx_bytes:4h}](muted prio=3)[ | ](muted prio=4)[{time}](secondary prio=4) [?](muted click=help hover=(bg=primary fg=black)) [≡](muted click=settings hover=(bg=secondary fg=black)) ",
-            ),
+            left: block_lines(&[
+                "[ {mode} ](prefix?(bg=secondary fg=black bold):copy_raw?(bg=red fg=black bold):copy?(bg=magenta fg=black bold):search?(bg=blue fg=white bold):(fg=primary bold))",
+                "[ {copy_side}](copy_raw?(fg=red bold):copy?(fg=magenta bold):hide)",
+                "[ {port}](prio=3)",
+                "[ |](muted prio=3)",
+                "[ ](prio=2)",
+                "[{baud}](primary prio=2)",
+                "[ ](prio=4)",
+                "[{framing}](prio=4)",
+            ]),
+            center: block_lines(&[
+                "[◎ {trigger_count} ](armed?(fg=warn bold):hide)",
+                "[⟳ mash ](mashing?(fg=secondary bold):hide click=cancel)",
+                "[⇡ {send_file} {send_percent:>3}% ](sending?(fg=secondary bold):hide)",
+                "[▷ {replay_state} {replay_percent:>3}% ](replaying?(fg=secondary bold):hide prio=5)",
+                "[● REC ](rec?(fg=warn bold):hide click=toggle-logging)",
+                "[◀ ](wide?(pan_left?secondary:muted):hide click=pan-left)",
+                "[{pan_offset:>3}/{pan_max:<3}](wide?muted:hide)",
+                "[ ▶](wide?(pan_alert?(fg=warn bold):(pan_right?secondary:muted)):hide click=pan-right)",
+            ]),
+            right: block_lines(&[
+                "[{scroll_pos_up} ](has_scroll?muted:hide prio=2)",
+                "[RX: {rx_bytes:4h}](muted prio=3)",
+                "[ | ](muted prio=3)",
+                "[TX: {tx_bytes:4h}](muted prio=3)",
+                "[ | ](muted prio=4)",
+                "[{time}](secondary prio=4) ",
+                "[?](muted click=help hover=(bg=primary fg=black)) ",
+                "[≡](muted click=settings hover=(bg=secondary fg=black)) ",
+            ]),
             time_format: String::from("%H:%M:%S"),
             hover: String::from("reversed"),
             layout: StatusBarLayout::Border,
         }
     }
+}
+
+/// A default status bar template written one block per line (MAX-163): each line but the last
+/// ends with `\`, which the template parser joins with the next one, its indentation dropped
+fn block_lines(blocks: &[&str]) -> String {
+    blocks.join("\\\n    ")
 }
 
 impl StatusBarConfig {
@@ -971,6 +1078,54 @@ mod tests {
         assert_eq!(sessions.restore_max_age, Duration::from_secs(9000));
         assert!(parse("restore_max_age = \"0s\"").restore_max_age.is_zero());
         assert_eq!(parse("restore = \"never\"").restore, RestoreMode::Never);
+    }
+
+    /// MAX-163: `max_size` reads a number with a unit by 1024 (`B` and `iB` optional, any
+    /// case), a decimal, or bare bytes; `0` is no limit; it writes back in its biggest whole
+    /// unit; a bad unit or number fails the config.
+    #[test]
+    fn session_max_size_parses() {
+        let parse = |toml: &str| toml::from_str::<SessionsConfig>(toml).map(|s| s.max_size.0);
+        assert_eq!(parse("max_size = \"200M\""), Ok(200 << 20));
+        assert_eq!(parse("max_size = \"200MB\""), Ok(200 << 20));
+        assert_eq!(parse("max_size = \"512KiB\""), Ok(512 << 10));
+        assert_eq!(parse("max_size = \"1.5gb\""), Ok(3 << 29));
+        assert_eq!(parse("max_size = \"100\""), Ok(100));
+        assert_eq!(parse("max_size = 100"), Ok(100));
+        assert!(parse("max_size = \"200X\"").is_err());
+        assert!(parse("max_size = \"big\"").is_err());
+
+        let defaults = SessionsConfig::default();
+        assert_eq!(defaults.limits().max_size, Some(200 << 20));
+        assert_eq!(defaults.keep, 200);
+        let unlimited = toml::from_str::<SessionsConfig>("max_size = \"0\"").unwrap();
+        assert_eq!(unlimited.limits().max_size, None);
+
+        for size in [200 << 20, 3 << 29, 1000, 0] {
+            let text = ByteSize(size).to_string();
+            assert_eq!(text.parse(), Ok(ByteSize(size)), "{text}");
+        }
+        assert_eq!(ByteSize(200 << 20).to_string(), "200M");
+        assert_eq!(ByteSize(3 << 29).to_string(), "1536M");
+    }
+
+    /// MAX-163: the default status bar templates are written to the config file one block per
+    /// line, in `'''` literal strings where TOML keeps each `\`, and read back the same.
+    /// How: the default `[ui.status_bar]` written as the default config file is, then parsed.
+    #[test]
+    fn status_bar_templates_written_one_block_per_line() {
+        let config = StatusBarConfig::default();
+        let written = toml::to_string_pretty(&config).unwrap();
+        assert!(
+            written.contains("left = '''\n[ {mode} ](prefix?"),
+            "{written}"
+        );
+        assert!(
+            written.contains("\\\n    [ {copy_side}](copy_raw?"),
+            "{written}"
+        );
+        assert!(written.contains("[{framing}](prio=4)'''"), "{written}");
+        assert_eq!(toml::from_str::<StatusBarConfig>(&written).unwrap(), config);
     }
 
     /// The cached timestamp width matches a formatted timestamp, and feeds the line gutter.

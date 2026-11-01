@@ -121,10 +121,30 @@ impl SessionMeta {
     }
 }
 
-/// Removes the empty sessions in `dir`, then the oldest so `keep` are left, never `current`
-/// nor a session still running (MAX-148). A session is the `.log`, `.raw` and `.meta` files of
-/// one stem, which starts with its date so the names sort by age
-pub fn prune_sessions(dir: &Path, keep: usize, current: &str) -> io::Result<()> {
+/// How many sessions the session folder keeps, and up to what size all together (MAX-163):
+/// `max_size` none for no limit
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionLimits {
+    pub keep: usize,
+    pub max_size: Option<u64>,
+}
+
+#[cfg(test)]
+impl SessionLimits {
+    /// `keep` sessions, whatever their size
+    pub const fn keep(keep: usize) -> Self {
+        Self {
+            keep,
+            max_size: None,
+        }
+    }
+}
+
+/// Removes the empty sessions in `dir`, then the oldest so `limits.keep` are left and their
+/// files together fit `limits.max_size`, never `current` nor a session still running (MAX-148,
+/// MAX-163): those count in the size but stay. A session is the `.log`, `.raw` and `.meta`
+/// files of one stem, which starts with its date so the names sort by age
+pub fn prune_sessions(dir: &Path, limits: SessionLimits, current: &str) -> io::Result<()> {
     let mut sessions = session_files(dir)?;
     let removable = |stem: &str| stem != current && !is_running(dir, stem);
     // a launch that received nothing leaves an empty session, which would fill `keep`
@@ -137,10 +157,28 @@ pub fn prune_sessions(dir: &Path, keep: usize, current: &str) -> io::Result<()> 
         let _ = remove_files(paths);
         false
     });
-    let old = sessions.len().saturating_sub(keep);
-    for (stem, paths) in sessions.iter().take(old) {
+    let files_size = |paths: &[PathBuf]| -> u64 {
+        paths
+            .iter()
+            .filter_map(|p| fs::metadata(p).ok())
+            .map(|m| m.len())
+            .sum()
+    };
+    let mut size: u64 = sessions.values().map(|paths| files_size(paths)).sum();
+    let mut left = sessions.len();
+    // the oldest first
+    for (stem, paths) in &sessions {
+        let too_many = left > limits.keep;
+        let too_big = limits.max_size.is_some_and(|max| size > max);
+        if !too_many && !too_big {
+            break;
+        }
         if removable(stem) {
-            let _ = remove_files(paths);
+            let freed = files_size(paths);
+            if remove_files(paths).is_ok() {
+                size = size.saturating_sub(freed);
+                left -= 1;
+            }
         }
     }
     Ok(())
@@ -443,7 +481,7 @@ mod tests {
         ] {
             fs::write(dir.join(name), "x").unwrap();
         }
-        prune_sessions(&dir, 2, "20260103_000000_b").unwrap();
+        prune_sessions(&dir, SessionLimits::keep(2), "20260103_000000_b").unwrap();
         let mut left: Vec<_> = fs::read_dir(&dir)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())
@@ -459,6 +497,39 @@ mod tests {
                 "20260103_000000_b.raw",
                 "notes.txt"
             ]
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// MAX-163: past `max_size`, the oldest sessions go until the rest fits, whatever `keep`;
+    /// the current session counts but stays, even alone over the limit.
+    /// How: 4 sessions of 100 bytes (60 raw, 40 log), the newest current; 250 bytes, then 50.
+    #[test]
+    fn prune_keeps_the_folder_under_its_size() {
+        let dir = temp_dir("prune_size");
+        fs::create_dir_all(&dir).unwrap();
+        for day in 1..=4 {
+            fs::write(dir.join(format!("2026010{day}_000000_a.raw")), [b'x'; 60]).unwrap();
+            fs::write(dir.join(format!("2026010{day}_000000_a.log")), [b'x'; 40]).unwrap();
+        }
+        let limits = |max| SessionLimits {
+            keep: 10,
+            max_size: Some(max),
+        };
+        prune_sessions(&dir, limits(250), "20260104_000000_a").unwrap();
+        assert_eq!(
+            file_names(&dir),
+            [
+                "20260103_000000_a.log",
+                "20260103_000000_a.raw",
+                "20260104_000000_a.log",
+                "20260104_000000_a.raw"
+            ]
+        );
+        prune_sessions(&dir, limits(50), "20260104_000000_a").unwrap();
+        assert_eq!(
+            file_names(&dir),
+            ["20260104_000000_a.log", "20260104_000000_a.raw"]
         );
         let _ = fs::remove_dir_all(&dir);
     }
@@ -492,7 +563,7 @@ mod tests {
         ] {
             fs::write(dir.join(name), content).unwrap();
         }
-        prune_sessions(&dir, 2, "20260105_000000_a").unwrap();
+        prune_sessions(&dir, SessionLimits::keep(2), "20260105_000000_a").unwrap();
         assert_eq!(
             file_names(&dir),
             ["20260103_000000_a.raw", "20260105_000000_a.raw"]
@@ -509,7 +580,7 @@ mod tests {
         ] {
             fs::write(dir.join(name), content).unwrap();
         }
-        prune_sessions(&dir, 3, "20260104_000000_a").unwrap();
+        prune_sessions(&dir, SessionLimits::keep(3), "20260104_000000_a").unwrap();
         assert_eq!(
             file_names(&dir),
             [
@@ -533,15 +604,20 @@ mod tests {
         fs::write(dir.join("20260102_000000_mine.raw"), "").unwrap();
         let lock = File::open(&other).unwrap();
         lock.try_lock().unwrap();
-        prune_sessions(&dir, 1, "20260102_000000_mine").unwrap();
+        prune_sessions(&dir, SessionLimits::keep(1), "20260102_000000_mine").unwrap();
         assert!(other.exists());
         drop(lock);
-        prune_sessions(&dir, 1, "20260102_000000_mine").unwrap();
+        prune_sessions(&dir, SessionLimits::keep(1), "20260102_000000_mine").unwrap();
         assert!(!other.exists());
 
         let mut recorder = Recorder::default();
         recorder
-            .start_session(&dir, &device("x"), &SessionText::default(), 20)
+            .start_session(
+                &dir,
+                &device("x"),
+                &SessionText::default(),
+                SessionLimits::keep(20),
+            )
             .unwrap();
         let session = file_names(&dir)
             .into_iter()
@@ -769,7 +845,9 @@ tx_mark = "> "
             timestamp: Some("[%H:%M]".to_string()),
             tx_mark: None,
         };
-        recorder.start_session(&dir, &mine, &text, 20).unwrap();
+        recorder
+            .start_session(&dir, &mine, &text, SessionLimits::keep(20))
+            .unwrap();
         record(&mut recorder, b"hello\n");
         drop(recorder);
         let session = find_last_session(&dir, &mine, None).unwrap();
@@ -820,7 +898,12 @@ tx_mark = "> "
         fs::write(dir.join("notes.txt"), "x").unwrap();
         let mut running = Recorder::default();
         running
-            .start_session(&dir, &device("live"), &SessionText::default(), 20)
+            .start_session(
+                &dir,
+                &device("live"),
+                &SessionText::default(),
+                SessionLimits::keep(20),
+            )
             .unwrap();
 
         let entries = list_sessions(&dir).unwrap();
@@ -905,7 +988,12 @@ tx_mark = "> "
         fs::write(dir.join("notes.txt"), "x").unwrap();
         let mut running = Recorder::default();
         running
-            .start_session(&dir, &device("live"), &SessionText::default(), 20)
+            .start_session(
+                &dir,
+                &device("live"),
+                &SessionText::default(),
+                SessionLimits::keep(20),
+            )
             .unwrap();
 
         let entries = list_sessions(&dir).unwrap();

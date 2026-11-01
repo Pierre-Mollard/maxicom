@@ -10,10 +10,11 @@ use crate::{
 };
 
 /// The command line (MAX-12): a `:` prompt whose line runs as commands on Enter. A line that
-/// doesn't parse runs nothing and stays open to be fixed. The word before the cursor has its
-/// completion listed: Tab and Shift-Tab put a candidate in its place, then Up and Down too; a
-/// lone one or a click takes it and moves on to the next word. Otherwise Up and Down walk the
-/// lines that ran, as the TX input's history
+/// doesn't parse runs nothing and stays open to be fixed. Typed text has the completion of the
+/// word before the cursor listed: Tab, Shift-Tab, Up and Down put a candidate in its place; a
+/// lone one or a click takes it and moves on to the next word. An empty line, or one recalled
+/// from the history, lists nothing until Tab or typing (MAX-163); without a list, Up and Down
+/// walk the lines that ran starting with the text typed
 #[derive(Debug, Clone, Default)]
 pub struct CommandLine {
     pub input: Input,
@@ -22,8 +23,10 @@ pub struct CommandLine {
     /// The completion of the word as typed, kept while its candidates are cycled
     pub completion: Completion,
     pub selected: Option<usize>,
+    /// Whether the completion is listed: it is empty while not
+    listed: bool,
     /// The app's command history when it opened, the oldest first, the line shown from it, and
-    /// the line typed before walking it
+    /// the line typed before walking it, which the lines walked start with
     history: Vec<String>,
     history_index: Option<usize>,
     draft: String,
@@ -45,33 +48,61 @@ impl CommandLine {
         command_line
     }
 
-    /// An older line (`up`) or a newer one from the history in place of the line; past the
-    /// newest, the line typed before
+    /// An older line (`up`) or a newer one from the history in place of the line, among the
+    /// ones starting with the line typed before; past the newest, that line. Its completion
+    /// isn't listed until Tab or typing
     fn walk_history(&mut self, up: bool) {
-        let index = match (self.history_index, up) {
-            (None, true) if !self.history.is_empty() => {
-                self.draft = self.input.value().to_string();
-                Some(self.history.len() - 1)
+        if self.history_index.is_none() {
+            if !up {
+                return;
             }
-            (Some(i), true) => Some(i.saturating_sub(1)),
-            (Some(i), false) if i + 1 < self.history.len() => Some(i + 1),
-            (Some(_), false) => None,
-            (None, _) => return,
+            self.draft = self.input.value().to_string();
+        }
+        let matches = |i: &usize| self.history[*i].starts_with(&self.draft);
+        let index = match (self.history_index, up) {
+            (None, _) => (0..self.history.len()).rev().find(matches),
+            (Some(i), true) => (0..i).rev().find(matches).or(Some(i)),
+            (Some(i), false) => (i + 1..self.history.len()).find(matches),
         };
+        if index.is_none() && self.history_index.is_none() {
+            return;
+        }
         let text = match index {
             Some(i) => self.history[i].clone(),
             None => std::mem::take(&mut self.draft),
         };
         self.history_index = index;
         self.input = Input::new(text);
+        self.listed = false;
         self.refresh();
     }
 
-    /// The completion of the word now before the cursor, none selected
+    /// The completion of the word now before the cursor when listed, none selected
     fn refresh(&mut self) {
         let before_cursor = &self.input.value()[..self.cursor_byte()];
-        self.completion = commands::complete(before_cursor, &self.trigger_names, &self.ports);
+        self.completion = if self.listed {
+            commands::complete(before_cursor, &self.trigger_names, &self.ports)
+        } else {
+            Completion::default()
+        };
         self.selected = None;
+    }
+
+    /// After an edit: the completion listed while there is text, the history walk over
+    fn edited(&mut self) {
+        self.history_index = None;
+        self.listed = !self.input.value().is_empty();
+        self.refresh();
+    }
+
+    /// The next candidate, or the list first when it isn't shown
+    fn tab(&mut self, forward: bool) {
+        if self.listed {
+            self.cycle(forward);
+        } else {
+            self.listed = true;
+            self.refresh();
+        }
     }
 
     fn cursor_byte(&self) -> usize {
@@ -142,32 +173,36 @@ impl CommandLine {
                 },
             },
             DialogAction::CycleNext => {
-                self.cycle(true);
+                self.tab(true);
                 OverlayResponse::Handled
             }
             DialogAction::CyclePrev => {
-                self.cycle(false);
+                self.tab(false);
                 OverlayResponse::Handled
             }
             DialogAction::HandleKey(key) => {
-                let cycling = self.selected.is_some();
+                let listing = !self.completion.candidates.is_empty();
                 match key.code {
-                    KeyCode::Down if cycling => self.cycle(true),
-                    KeyCode::Up if cycling => self.cycle(false),
+                    KeyCode::Down if listing => self.cycle(true),
+                    KeyCode::Up if listing => self.cycle(false),
                     KeyCode::Down => self.walk_history(false),
                     KeyCode::Up => self.walk_history(true),
                     _ => {
+                        let before = self.input.clone();
                         dispatch_input_key(&mut self.input, key);
-                        self.history_index = None;
-                        self.refresh();
+                        // a move of the cursor alone keeps the list as it is
+                        if self.input.value() == before.value() {
+                            self.refresh();
+                        } else {
+                            self.edited();
+                        }
                     }
                 }
                 OverlayResponse::Handled
             }
             DialogAction::Paste(text) => {
                 paste_into_input(&mut self.input, &text);
-                self.history_index = None;
-                self.refresh();
+                self.edited();
                 OverlayResponse::Handled
             }
             DialogAction::ClickAt(column) => {
@@ -188,9 +223,11 @@ impl CommandLine {
 mod tests {
     use super::*;
 
+    /// A command line with `text` typed: its completion listed
     fn line(text: &str) -> CommandLine {
         let mut command_line = CommandLine {
             input: Input::new(text.to_string()),
+            listed: !text.is_empty(),
             ..CommandLine::default()
         };
         command_line.refresh();
@@ -248,15 +285,28 @@ mod tests {
         DialogAction::HandleKey(crossterm::event::KeyEvent::from(code))
     }
 
-    /// The command line opens with every command listed
+    /// MAX-163: the command line opens listing nothing; Tab lists every command, none
+    /// selected, then the next Tab puts the first in; typing lists, and erasing it all hides
+    /// the list again.
+    /// How: Tab twice on a fresh line; then a letter typed and erased.
     #[test]
-    fn opens_with_every_command() {
-        let command_line = CommandLine::new(Vec::new(), Vec::new(), Vec::new());
+    fn empty_line_lists_on_tab() {
+        let mut command_line = CommandLine::new(Vec::new(), Vec::new(), Vec::new());
+        assert!(command_line.completion.candidates.is_empty());
+        command_line.handle_action(DialogAction::CycleNext);
         assert_eq!(
             command_line.completion.candidates.len(),
             commands::COMMANDS.len()
         );
-        assert_eq!(command_line.selected, None);
+        assert_eq!((value(&command_line), command_line.selected), ("", None));
+        command_line.handle_action(DialogAction::CycleNext);
+        assert_eq!(command_line.selected, Some(0));
+
+        let mut command_line = CommandLine::new(Vec::new(), Vec::new(), Vec::new());
+        command_line.handle_action(key(KeyCode::Char('t')));
+        assert!(!command_line.completion.candidates.is_empty());
+        command_line.handle_action(key(KeyCode::Backspace));
+        assert!(command_line.completion.candidates.is_empty());
     }
 
     /// Tab, Down, Shift-Tab and Up put the candidates of the typed word in its place, in turn;
@@ -284,6 +334,7 @@ mod tests {
     fn cycle_in_the_middle() {
         let mut command_line = CommandLine {
             input: Input::new("toggle-d; help".to_string()).with_cursor(8),
+            listed: true,
             ..CommandLine::default()
         };
         command_line.refresh();
@@ -318,15 +369,20 @@ mod tests {
     }
 
     /// Up and Down walk the history as the TX input: from the newest, the typed line back past
-    /// it; an edit starts from the edited line
+    /// it; an edit starts from the edited line. MAX-163: only the lines starting with the text
+    /// typed when the walk started.
+    /// How: a history of four lines, walked from an empty line, then from "send " (no
+    /// completion), then from a recalled line edited.
     #[test]
     fn walk_the_history() {
-        let mut command_line = CommandLine::new(
-            vec!["help".into(), "toggle-mouse".into()],
-            Vec::new(),
-            Vec::new(),
-        );
-        command_line.handle_action(DialogAction::Paste("zz".into()));
+        let history = ["help", "send a", "toggle-mouse", "send b"];
+        let new = || {
+            CommandLine::new(
+                history.iter().map(|line| line.to_string()).collect(),
+                Vec::new(),
+                Vec::new(),
+            )
+        };
         let up = |command_line: &mut CommandLine| {
             command_line.handle_action(key(KeyCode::Up));
             command_line.input.value().to_string()
@@ -335,33 +391,62 @@ mod tests {
             command_line.handle_action(key(KeyCode::Down));
             command_line.input.value().to_string()
         };
-        assert_eq!(up(&mut command_line), "toggle-mouse");
-        assert_eq!(up(&mut command_line), "help");
-        assert_eq!(up(&mut command_line), "help");
-        assert_eq!(down(&mut command_line), "toggle-mouse");
-        assert_eq!(down(&mut command_line), "zz");
-        assert_eq!(down(&mut command_line), "zz");
 
+        let mut command_line = new();
+        assert_eq!(down(&mut command_line), "");
+        assert_eq!(up(&mut command_line), "send b");
+        assert_eq!(up(&mut command_line), "toggle-mouse");
+        assert_eq!(up(&mut command_line), "send a");
+        assert_eq!(up(&mut command_line), "help");
+        assert_eq!(up(&mut command_line), "help");
+        assert_eq!(down(&mut command_line), "send a");
+
+        let mut command_line = new();
+        command_line.handle_action(DialogAction::Paste("send ".into()));
+        assert!(command_line.completion.candidates.is_empty());
+        assert_eq!(up(&mut command_line), "send b");
+        assert_eq!(up(&mut command_line), "send a");
+        assert_eq!(up(&mut command_line), "send a");
+        assert_eq!(down(&mut command_line), "send b");
+        assert_eq!(down(&mut command_line), "send ");
+        assert_eq!(down(&mut command_line), "send ");
+
+        command_line.handle_action(DialogAction::Paste("x".into()));
+        assert_eq!(up(&mut command_line), "send x", "no line starts with it");
+
+        let mut command_line = new();
         up(&mut command_line);
         command_line.handle_action(key(KeyCode::Char('x')));
-        assert_eq!(up(&mut command_line), "toggle-mouse");
-        assert_eq!(down(&mut command_line), "toggle-mousex");
+        assert_eq!(value(&command_line), "send bx");
+        assert!(command_line.completion.candidates.is_empty());
+        assert_eq!(up(&mut command_line), "send bx", "no line starts with it");
     }
 
-    /// With the completion listed but none selected, Up walks the history; once Tab selected a
-    /// candidate, Up and Down move in the list
+    /// MAX-163: a line recalled from the history lists nothing, so Up and Down keep walking;
+    /// Tab lists its completion, and then they move in the list. Typed text with candidates
+    /// moves in the list at once.
+    /// How: Up on an empty line, Up again, Tab, Down; then "toggle-d" typed and Down.
     #[test]
-    fn arrows_walk_the_history_until_tab() {
-        let mut command_line = CommandLine::new(vec!["help".into()], Vec::new(), Vec::new());
-        assert!(!command_line.completion.candidates.is_empty());
+    fn arrows_move_in_the_list_when_one_is_shown() {
+        let history = vec!["help".into(), "toggle-d".into()];
+        let mut command_line = CommandLine::new(history.clone(), Vec::new(), Vec::new());
+        command_line.handle_action(key(KeyCode::Up));
+        assert_eq!(value(&command_line), "toggle-d");
+        assert!(command_line.completion.candidates.is_empty());
         command_line.handle_action(key(KeyCode::Up));
         assert_eq!(value(&command_line), "help");
-
-        let mut command_line = CommandLine::new(vec!["help".into()], Vec::new(), Vec::new());
-        command_line.handle_action(DialogAction::Paste("toggle-d".into()));
-        command_line.handle_action(DialogAction::CycleNext);
         command_line.handle_action(key(KeyCode::Down));
-        assert_eq!(value(&command_line), "toggle-display-raw");
+        command_line.handle_action(DialogAction::CycleNext);
+        assert_eq!(command_line.completion.candidates.len(), 3);
+        command_line.handle_action(key(KeyCode::Down));
+        assert_eq!(value(&command_line), "toggle-display-mode");
+
+        let mut command_line = CommandLine::new(history, Vec::new(), Vec::new());
+        command_line.handle_action(DialogAction::Paste("toggle-d".into()));
+        command_line.handle_action(key(KeyCode::Down));
+        assert_eq!(value(&command_line), "toggle-display-mode");
+        command_line.handle_action(key(KeyCode::Up));
+        assert_eq!(value(&command_line), "toggle-display-timestamp");
     }
 
     /// A folder taken is followed by no space: its entries are completed next

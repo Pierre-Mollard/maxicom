@@ -292,7 +292,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        capture::{Recorder, SessionDevice, SessionText, tests::write_test_session},
+        capture::{Recorder, SessionDevice, SessionLimits, SessionText, tests::write_test_session},
         configs::TextEncoding,
         link::{Address, LinkConfig},
     };
@@ -323,7 +323,9 @@ mod tests {
             TextEncoding::Utf8,
         );
         let mut running = Recorder::default();
-        running.start_session(&dir, &device, &text, 20).unwrap();
+        running
+            .start_session(&dir, &device, &text, SessionLimits::keep(20))
+            .unwrap();
         (dir, running)
     }
 

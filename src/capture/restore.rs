@@ -148,7 +148,7 @@ mod tests {
 
     use super::*;
     use crate::capture::tests::{device, record, temp_dir};
-    use crate::capture::{Recorder, find_last_session};
+    use crate::capture::{Recorder, SessionLimits, find_last_session};
     use crate::configs::TextEncoding;
     use std::fs;
 
@@ -240,7 +240,7 @@ mod tests {
             let port = format!("p{i}");
             let mut recorder = Recorder::default();
             recorder
-                .start_session(&dir, &device(&port), &text, 20)
+                .start_session(&dir, &device(&port), &text, SessionLimits::keep(20))
                 .unwrap();
             record(&mut recorder, b"rx\n");
             recorder.record_tx(TextEncoding::Utf8, None, None, b"tx\n");

@@ -1324,6 +1324,83 @@ mod tests {
         assert!(rows[22].starts_with("│:toggle-d"), "{:?}", rows[22]);
     }
 
+    /// MAX-163: only the selected candidate's help wraps, its next rows under the help column;
+    /// the other helps are cut on their row. A click on a wrapped row takes its candidate. A
+    /// scrolled list keeps all the selected one's rows in view, in its 8 rows.
+    /// How: `replay-` typed on a 60-column screen, `replay-restart` (the longest help) selected,
+    /// a click on its second row; then every command listed, cycled to `replay-restart`.
+    #[test]
+    fn command_line_selected_help_wraps() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 60, 24);
+        let mut command_line = CommandLine::new(Vec::new(), Vec::new(), Vec::new());
+        command_line.handle_action(DialogAction::Paste("replay-".into()));
+        let restart = (command_line.completion.candidates.iter())
+            .position(|c| c.value == "replay-restart")
+            .unwrap();
+        for _ in 0..=restart {
+            command_line.handle_action(DialogAction::CycleNext);
+        }
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::CommandLine(
+                Box::new(command_line),
+            ))));
+        let rows = h.draw();
+
+        let (help_x, y) = cell_of(&rows, "Play the replay again from the start,");
+        assert!(
+            rows[usize::from(y)].contains("replay-restart  Play"),
+            "{rows:#?}"
+        );
+        assert_eq!(
+            cell_of(&rows, "on a clean screen"),
+            (help_x, y + 1),
+            "{rows:#?}"
+        );
+
+        // `replay-stop`'s help is longer than its column: cut, on its row alone
+        let (_, stop_y) = cell_of(&rows, "replay-stop ");
+        assert!(
+            rows[usize::from(stop_y)].contains("Stop the replay"),
+            "{rows:#?}"
+        );
+        assert!(!has(&rows, "it replaced"), "{rows:#?}");
+
+        click(&mut h, (help_x + 2, y + 1));
+        let rows = h.draw();
+        assert!(has(&rows, ":replay-restart "), "{rows:#?}");
+
+        // every command listed, scrolled: the selected one at the bottom, all its rows shown,
+        // in 8 rows all together
+        h.app.close_overlay();
+        let mut command_line = CommandLine::new(Vec::new(), Vec::new(), Vec::new());
+        command_line.handle_action(DialogAction::CycleNext);
+        while command_line.input.value() != "replay-restart" {
+            command_line.handle_action(DialogAction::CycleNext);
+        }
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::CommandLine(
+                Box::new(command_line),
+            ))));
+        let rows = h.draw();
+        // the list's corners in its second column
+        let corner = |c: char| (rows.iter()).position(|row| row.chars().nth(1) == Some(c));
+        let (top, bottom) = (corner('┌').unwrap(), corner('└').unwrap());
+        assert_eq!(bottom - top - 1, 8, "{rows:#?}");
+        let at = (rows.iter())
+            .position(|row| row.contains("│ replay-restart "))
+            .unwrap();
+        let help_x = rows[at].find("Play").unwrap();
+        let help: Vec<&str> = rows[at..bottom]
+            .iter()
+            .map(|row| row[help_x..].trim_end_matches([' ', '│']))
+            .collect();
+        assert!(help.len() > 1, "{rows:#?}");
+        assert_eq!(
+            help.join(" "),
+            "Play the replay again from the start, on a clean screen"
+        );
+    }
+
     /// MAX-12: the default status bar shows the file `send-file` sends and its progress, only
     /// while it is sent; a click on it stops it.
     #[test]

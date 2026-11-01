@@ -1490,8 +1490,13 @@ impl App {
         let (sessions, new_sessions) = (&old.sessions, &mut settings.sessions);
         keep("sessions.enabled", sessions.enabled != new_sessions.enabled);
         keep("sessions.keep", sessions.keep != new_sessions.keep);
+        keep(
+            "sessions.max_size",
+            sessions.max_size != new_sessions.max_size,
+        );
         new_sessions.enabled = sessions.enabled;
         new_sessions.keep = sessions.keep;
+        new_sessions.max_size = sessions.max_size;
 
         settings.refresh_timestamp_width();
         self.settings = settings;

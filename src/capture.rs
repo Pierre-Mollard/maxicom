@@ -14,8 +14,8 @@ pub use restore::{
 };
 pub use screenshot::{Screenshot, ScreenshotFormat};
 pub use session::{
-    Session, SessionDevice, SessionLine, SessionMeta, SessionOrder, SessionText, delete_session,
-    delete_sessions, find_last_session, list_sessions, sort_sessions,
+    Session, SessionDevice, SessionLimits, SessionLine, SessionMeta, SessionOrder, SessionText,
+    delete_session, delete_sessions, find_last_session, list_sessions, sort_sessions,
 };
 
 use std::fs;
@@ -96,7 +96,9 @@ pub mod tests {
             TextEncoding::Utf8,
         );
         let mut recorder = Recorder::default();
-        recorder.start_session(dir, &device, text, 20).unwrap();
+        recorder
+            .start_session(dir, &device, text, SessionLimits::keep(20))
+            .unwrap();
         recorder.record_rx(RxNewlineMode::Auto, TextEncoding::Utf8, None, rx);
         if !tx.is_empty() {
             recorder.record_tx(TextEncoding::Utf8, None, None, tx);
