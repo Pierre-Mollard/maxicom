@@ -40,6 +40,27 @@ pub struct SessionDevice {
     pub encoding: TextEncoding,
 }
 
+/// What a recording records (MAX-173): the link's address, and the device its meta says when
+/// it is known (a replay of a plain file has none)
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaptureSource {
+    pub address: Address,
+    pub device: Option<SessionDevice>,
+}
+
+impl CaptureSource {
+    /// The line a text recording gets where the device changed to this one, its text decoded
+    /// with `encoding` from there: `── device: ttyUSB1, 115200 8N1, UTF8 ──`, the line
+    /// settings left out when unknown or none (MAX-173)
+    pub fn marker(&self, encoding: TextEncoding) -> String {
+        let line = (self.device.as_ref())
+            .and_then(|device| device.line)
+            .map(|line| format!("{} {}, ", line.baud, line.framing))
+            .unwrap_or_default();
+        format!("── device: {}, {line}{encoding} ──", self.address.tag())
+    }
+}
+
 /// The line settings that change the bytes received: the baud rate and the framing. Flow
 /// control doesn't, so it isn't here. In the file the framing's fields sit next to `baud`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +92,13 @@ impl SessionDevice {
             line,
             encoding,
         }
+    }
+
+    /// Whether the bytes received on `config` decoded with `encoding` are the ones this device
+    /// says: the same line settings and encoding. The address isn't compared (MAX-173)
+    pub fn same_setup(&self, config: &LinkConfig, encoding: TextEncoding) -> bool {
+        let line = (self.line.is_some()).then(|| SessionLine::of(&config.line));
+        self.line == line && self.encoding == encoding
     }
 
     /// Whether `line` is there exactly when the kind of link has line settings. serde reads
@@ -448,6 +476,31 @@ mod tests {
     use super::*;
     use crate::capture::Recorder;
     use crate::capture::tests::{device, record, temp_dir, write_test_session};
+
+    /// MAX-173: the device marker of a text recording names the port, its line settings when
+    /// known, and the encoding the text is decoded with from there.
+    /// How: a serial port, a TCP link (no line settings), a replay of a plain file (no device).
+    #[test]
+    fn device_markers() {
+        let source = |address: &str| {
+            let device = device(address);
+            CaptureSource {
+                address: device.address.clone(),
+                device: Some(device),
+            }
+        };
+        let utf8 = TextEncoding::Utf8;
+        assert_eq!(
+            source("/dev/ttyUSB1").marker(TextEncoding::Cp437),
+            "── device: ttyUSB1, 115200 8N1, CP437 ──"
+        );
+        assert_eq!(
+            source("tcp://10.0.0.2:4000").marker(utf8),
+            "── device: 10.0.0.2:4000, UTF8 ──"
+        );
+        let plain = crate::capture::tests::source("file:///tmp/old.raw");
+        assert_eq!(plain.marker(utf8), "── device: old.raw, UTF8 ──");
+    }
 
     /// The session tag keeps the last part of the address, safe for a file name.
     /// How: an address of each kind.

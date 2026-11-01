@@ -1,6 +1,7 @@
 use super::create_parent_dirs;
 use super::session::{
-    SessionDevice, SessionLimits, SessionMeta, SessionText, prune_sessions, session_tag,
+    CaptureSource, SessionDevice, SessionLimits, SessionMeta, SessionText, prune_sessions,
+    session_tag,
 };
 use crate::app::types::RxLineSplitter;
 use crate::configs::{RxNewlineMode, TextEncoding};
@@ -83,6 +84,7 @@ pub struct SessionWriter {
     timestamp: Option<TimestampFormat>,
     tx_mark: Option<String>,
     started: DateTime<Local>,
+    device: SessionDevice,
 }
 
 /// Recordings of what is received, fed whatever the mode shows: text and raw are started and
@@ -92,6 +94,8 @@ pub struct SessionWriter {
 pub struct Recorder {
     text: Option<LogFile>,
     raw: Option<LogFile>,
+    text_source: Option<CaptureSource>,
+    raw_source: Option<CaptureSource>,
     session: Option<SessionWriter>,
     lines: RxLineSplitter,
     timestamp: Option<TimestampFormat>,
@@ -114,12 +118,14 @@ impl Recorder {
     }
 
     /// Starts recording `stream` to `path`, first copying in what the session backup holds
-    /// when `include_session`
+    /// when `include_session`. The recording keeps `source`; a raw one writes its device as its
+    /// meta, started with the session it includes (MAX-163, MAX-173)
     pub fn start(
         &mut self,
         stream: Stream,
         path: PathBuf,
         include_session: bool,
+        source: CaptureSource,
     ) -> io::Result<()> {
         let mut file = LogFile::open(&path)?;
         if include_session && let Some(session) = &mut self.session {
@@ -141,8 +147,40 @@ impl Recorder {
             reader.seek(SeekFrom::Start(0))?;
             io::copy(&mut reader, &mut file.writer)?;
         }
+        match stream {
+            Stream::Text => self.text_source = Some(source),
+            Stream::Raw => {
+                // after the check above: never over the session backup's own meta
+                if let Some(device) = &source.device {
+                    let started = (self.session_started())
+                        .filter(|_| include_session)
+                        .unwrap_or_else(Local::now);
+                    SessionMeta::new(started, device.clone(), SessionText::default())
+                        .write(&SessionMeta::path_of(&path))?;
+                }
+                self.raw_source = Some(source);
+            }
+        }
         *self.slot(stream) = Some(file);
         Ok(())
+    }
+
+    /// What the recording of `stream` records, while one runs (MAX-173)
+    pub fn source(&self, stream: Stream) -> Option<&CaptureSource> {
+        match stream {
+            Stream::Text => self.text_source.as_ref(),
+            Stream::Raw => self.raw_source.as_ref(),
+        }
+    }
+
+    /// The device changed under the text recording: `marker` on a line of its own, and `source`
+    /// is what it records from there (MAX-173). An RX line pending is written when it ends,
+    /// after it
+    pub fn mark_device(&mut self, marker: &str, source: CaptureSource) {
+        if let Some(file) = &mut self.text {
+            let _ = writeln!(file.writer, "{marker}");
+            self.text_source = Some(source);
+        }
     }
 
     /// Starts the session backup in `dir`, named after now and the port, its text written as
@@ -181,6 +219,7 @@ impl Recorder {
             timestamp: text.timestamp.as_deref().map(TimestampFormat::new),
             tx_mark: text.tx_mark.clone(),
             started: now,
+            device: device.clone(),
         });
         let limits = SessionLimits {
             keep: limits.keep.max(1),
@@ -192,6 +231,11 @@ impl Recorder {
     /// When the session backup started, what a recording that includes it starts with
     pub fn session_started(&self) -> Option<DateTime<Local>> {
         self.session.as_ref().map(|session| session.started)
+    }
+
+    /// The device the session backup's meta says it records (MAX-173)
+    pub fn session_device(&self) -> Option<&SessionDevice> {
+        self.session.as_ref().map(|session| &session.device)
     }
 
     pub fn has_session(&self) -> bool {
@@ -218,6 +262,10 @@ impl Recorder {
     }
 
     pub fn stop(&mut self, stream: Stream) {
+        match stream {
+            Stream::Text => self.text_source = None,
+            Stream::Raw => self.raw_source = None,
+        }
         if let Some(mut file) = self.slot(stream).take() {
             let _ = file.flush();
         }
@@ -404,7 +452,7 @@ mod tests {
 
     use super::*;
     use crate::capture::find_last_session;
-    use crate::capture::tests::{device, record, temp_dir};
+    use crate::capture::tests::{device, record, source, temp_dir};
 
     fn temp_log_path(name: &str) -> PathBuf {
         let path =
@@ -416,7 +464,9 @@ mod tests {
     /// Starts the stream to a fresh temp file.
     fn start(recorder: &mut Recorder, stream: Stream, name: &str) -> PathBuf {
         let path = temp_log_path(name);
-        recorder.start(stream, path.clone(), false).unwrap();
+        recorder
+            .start(stream, path.clone(), false, source("port"))
+            .unwrap();
         path
     }
 
@@ -579,7 +629,9 @@ mod tests {
         record(&mut recorder, b"a\n");
 
         let path = dir.join("mine.log");
-        recorder.start(Stream::Text, path.clone(), true).unwrap();
+        recorder
+            .start(Stream::Text, path.clone(), true, source("port"))
+            .unwrap();
         record(&mut recorder, b"b\n");
         assert_eq!(stop_and_read(&mut recorder, Stream::Text, &path), b"a\nb\n");
 
@@ -617,7 +669,9 @@ mod tests {
         let session = recorder.take_session();
         assert!(session.is_some() && !recorder.has_session());
         let path = dir.join("mine.log");
-        recorder.start(Stream::Text, path.clone(), true).unwrap();
+        recorder
+            .start(Stream::Text, path.clone(), true, source("port"))
+            .unwrap();
         record(&mut recorder, b"b\n");
         recorder.set_session(session);
         assert!(recorder.has_session());
@@ -656,7 +710,9 @@ mod tests {
         record(&mut recorder, b"a\n");
 
         let path = dir.join("mine.raw");
-        recorder.start(Stream::Raw, path.clone(), true).unwrap();
+        recorder
+            .start(Stream::Raw, path.clone(), true, source("port"))
+            .unwrap();
         record(&mut recorder, b"b\n");
         assert_eq!(stop_and_read(&mut recorder, Stream::Raw, &path), b"a\nb\n");
 
@@ -757,7 +813,9 @@ mod tests {
         let dir = temp_dir("folders");
         let path = dir.join("a").join("b").join("x.raw");
         let mut recorder = Recorder::default();
-        recorder.start(Stream::Raw, path.clone(), false).unwrap();
+        recorder
+            .start(Stream::Raw, path.clone(), false, source("port"))
+            .unwrap();
         record(&mut recorder, b"x");
         assert_eq!(stop_and_read(&mut recorder, Stream::Raw, &path), b"x");
         let _ = fs::remove_dir_all(&dir);

@@ -7,8 +7,9 @@ use super::App;
 use crate::{
     app::types::LogEntry,
     capture::{
-        RESTORE_RAW_TAIL, Session, SessionDevice, SessionMeta, SessionReader, SessionText, Stream,
-        expand_home, find_last_session, read_tail_bytes, read_tail_lines, restore_separator,
+        CaptureSource, RESTORE_RAW_TAIL, Session, SessionDevice, SessionReader, SessionText,
+        SessionWriter, Stream, expand_home, find_last_session, read_tail_bytes, read_tail_lines,
+        restore_separator,
     },
     configs::{Mode, settings::RestoreMode},
     overlays::{ErrorDialog, FilePathDialog, Overlay, SessionBrowser},
@@ -49,6 +50,73 @@ impl App {
     /// A new session backup, for the port `open` switched to: the backups go by port (MAX-12)
     pub fn restart_session(&mut self) {
         self.start_session(self.sessions_dir.clone());
+    }
+
+    /// The session backup set aside while a replay replaces the live link (MAX-166): out of the
+    /// recorder, its files kept open and locked, so no pruning removes it, and nothing recorded
+    /// until `resume_session`
+    pub fn pause_session(&mut self) -> Option<SessionWriter> {
+        self.recorder.take_session()
+    }
+
+    /// The session backup `pause_session` set aside records again, the live link back
+    pub fn resume_session(&mut self, session: Option<SessionWriter>) {
+        self.recorder.set_session(session);
+    }
+
+    /// The captures follow the device, so their meta stays true (MAX-173): a new session backup
+    /// when the line settings or the encoding changed since it started; when its source
+    /// changed (another address too), the raw recording stops, the text recording gets a
+    /// marker line. The session's address is `opened`'s: a new port gets its session once it
+    /// is open. Run before the received bytes are recorded, and on each tick for a change with
+    /// nothing received after it
+    pub fn follow_device(&mut self) {
+        let changed = |app: &App, stream| {
+            (app.recorder.source(stream)).is_some_and(|source| !app.is_current_source(source))
+        };
+        if changed(self, Stream::Raw) {
+            self.recorder.stop(Stream::Raw);
+            self.notify_warn("Raw recording stopped: the device changed");
+        }
+        if changed(self, Stream::Text) {
+            let source = self.capture_source();
+            let marker = source.marker(self.settings.encoding);
+            self.recorder.mark_device(&marker, source);
+        }
+
+        let config = self.link.config();
+        let changed = self.recorder.session_device().is_some_and(|device| {
+            device.address == config.address && !device.same_setup(config, self.settings.encoding)
+        });
+        if changed {
+            // ended first: a new one that fails to start leaves none, not the stale one
+            drop(self.recorder.take_session());
+            self.restart_session();
+        }
+    }
+
+    /// What a recording started now records: the link's address and device, a replay's device
+    /// the one its meta gave, if any (MAX-173)
+    fn capture_source(&self) -> CaptureSource {
+        let device = if self.link_kind().keeps_sessions() {
+            Some(self.session_device())
+        } else {
+            self.replay.device.clone()
+        };
+        CaptureSource {
+            address: self.link.config().address.clone(),
+            device,
+        }
+    }
+
+    /// Whether the link still gives what `source` says: the same address, and for a live link
+    /// the same line settings and encoding (a replay's device comes from its file)
+    fn is_current_source(&self, source: &CaptureSource) -> bool {
+        let config = self.link.config();
+        let same_setup = |device: &SessionDevice| {
+            !self.link_kind().keeps_sessions() || device.same_setup(config, self.settings.encoding)
+        };
+        source.address == config.address && source.device.as_ref().is_none_or(same_setup)
     }
 
     /// What this session runs on, for its backup and to find a past one to restore
@@ -199,28 +267,6 @@ impl App {
         }
     }
 
-    /// The meta file next to a raw recording, so its replay decodes and shows its line
-    /// settings as the session's does (MAX-163): the live link's device, or while replaying the
-    /// replayed session's, when its meta gave it (a plain file's device isn't known: no meta).
-    /// It starts when the session started when it includes it (MAX-172)
-    pub fn write_recording_meta(&mut self, raw: &Path, include_session: bool) {
-        let device = if self.link_kind().keeps_sessions() {
-            self.session_device()
-        } else {
-            match &self.replay.device {
-                Some(device) => device.clone(),
-                None => return,
-            }
-        };
-        let started = (self.recorder.session_started())
-            .filter(|_| include_session)
-            .unwrap_or_else(chrono::Local::now);
-        let meta = SessionMeta::new(started, device, SessionText::default());
-        if let Err(err) = meta.write(&SessionMeta::path_of(raw)) {
-            self.notify_warn(format!("No meta file for the raw recording: {err}"));
-        }
-    }
-
     /// Records what was sent to the text streams, in line mode only: in terminal mode the keys
     /// go one by one and the remote echoes them, so the received text has them (MAX-147)
     pub fn record_tx(&mut self, bytes: &[u8]) {
@@ -238,16 +284,16 @@ impl App {
             .record_tx(settings.encoding, timestamp_format, mark, bytes);
     }
 
-    /// Starts recording `stream` to `path`, as the recording dialog asked; a raw recording gets
-    /// its meta file. A failure opens the error popup
+    /// Starts recording `stream` to `path`, as the recording dialog asked. A raw recording gets
+    /// a meta file when its device is known, so its replay decodes and shows its line settings
+    /// as a session's does: the live link's, or while replaying the replayed session's (a plain
+    /// file's isn't). A failure opens the error popup
     pub fn start_capture(&mut self, path: &Path, stream: Stream, include_session: bool) {
         let path = expand_home(path);
-        match self.recorder.start(stream, path.clone(), include_session) {
+        let source = self.capture_source();
+        match self.recorder.start(stream, path, include_session, source) {
             Ok(_) => {
                 self.notify_success(format!("Started recording {}", stream.as_str()));
-                if stream == Stream::Raw {
-                    self.write_recording_meta(&path, include_session);
-                }
             }
             Err(e) => {
                 self.open_overlay(Overlay::Error(
@@ -287,7 +333,8 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        app::tests::{app, texts},
+        app::tests::{app, record_raw_meta, set_line, texts, toasts},
+        capture::SessionMeta,
         configs::DualBufferMode,
         inputs::{Action, AppAction, DialogAction},
         link::LinkConfig,
@@ -306,7 +353,7 @@ pub mod tests {
             std::env::temp_dir().join(format!("maxicom_test_{}_app_text.log", std::process::id()));
         let _ = std::fs::remove_file(&path);
         app.recorder
-            .start(Stream::Text, path.clone(), false)
+            .start(Stream::Text, path.clone(), false, app.capture_source())
             .unwrap();
 
         app.feed_rx(b"seen\r\n");
@@ -328,7 +375,7 @@ pub mod tests {
             std::env::temp_dir().join(format!("maxicom_test_{}_app_tx.log", std::process::id()));
         let _ = std::fs::remove_file(&path);
         app.recorder
-            .start(Stream::Text, path.clone(), false)
+            .start(Stream::Text, path.clone(), false, app.capture_source())
             .unwrap();
 
         app.settings.mode = Mode::Line;
@@ -374,15 +421,15 @@ pub mod tests {
         app.close_overlay();
 
         app.recorder
-            .start(Stream::Text, temp("act.log"), false)
+            .start(Stream::Text, temp("act.log"), false, app.capture_source())
             .unwrap();
         app.recorder
-            .start(Stream::Raw, temp("act.raw"), false)
+            .start(Stream::Raw, temp("act.raw"), false, app.capture_source())
             .unwrap();
         app.update(Action::App(AppAction::ToggleRecording(Stream::Raw)));
         assert!(app.is_logging_active() && !app.is_recording(Stream::Raw));
         app.recorder
-            .start(Stream::Raw, temp("act.raw"), false)
+            .start(Stream::Raw, temp("act.raw"), false, app.capture_source())
             .unwrap();
         app.update(Action::App(AppAction::ToggleLogging));
         assert!(!app.is_logging_active());
@@ -492,10 +539,181 @@ pub mod tests {
         let started = app.recorder.session_started().unwrap().timestamp();
         std::thread::sleep(Duration::from_millis(1100));
         let read = |name: &str| SessionMeta::read(&dir.join(name)).unwrap().started;
-        app.write_recording_meta(&dir.join("with.raw"), true);
-        app.write_recording_meta(&dir.join("without.raw"), false);
+        record_raw_meta(&mut app, &dir.join("with.raw"), true);
+        record_raw_meta(&mut app, &dir.join("without.raw"), false);
         assert_eq!(read("with.meta"), started);
         assert!(read("without.meta") > started);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// MAX-173: the session backup follows the device: a new baud, framing or encoding starts
+    /// a new session whose meta says it, the bytes after the change in it; a new flow control
+    /// keeps the session (not in the meta). With nothing received, the tick starts it.
+    /// How: a session, "a" received; `flow` changed, "b"; `baud` and `framing`, "c"; the
+    /// encoding, then a tick. The sessions' meta and raw files read back in order.
+    #[test]
+    fn session_backup_follows_the_device() {
+        let dir = crate::capture::tests::temp_dir("follow_device");
+        let mut app = app();
+        app.start_session(Some(dir.clone()));
+        let line = |app: &App| app.link_config().line;
+        // sessions are named to the millisecond: within one, the next takes over the files, so
+        // the changes below wait a little
+        app.feed_rx(b"a");
+
+        let mut flow = line(&app);
+        flow.flow_control = crate::link::serial::FlowControl::RtsCts;
+        set_line(&mut app, flow);
+        app.feed_rx(b"b");
+
+        std::thread::sleep(Duration::from_millis(2));
+        let mut new_line = line(&app);
+        new_line.baud = 9600;
+        new_line.framing = "7E1".parse().unwrap();
+        set_line(&mut app, new_line);
+        app.feed_rx(b"c");
+
+        std::thread::sleep(Duration::from_millis(2));
+        app.settings.encoding = crate::configs::TextEncoding::Cp437;
+        app.tick();
+        drop(app);
+
+        let mut metas: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "meta"))
+            .collect();
+        metas.sort();
+        let sessions: Vec<_> = metas
+            .iter()
+            .map(|path| {
+                let device = SessionMeta::read(path).unwrap().device;
+                let raw = std::fs::read(path.with_extension("raw")).unwrap();
+                let line = device.line.unwrap();
+                let raw = String::from_utf8(raw).unwrap();
+                (line.baud, line.framing.to_string(), device.encoding, raw)
+            })
+            .collect();
+        use crate::configs::TextEncoding::{Cp437, Utf8};
+        let framing = |f: &str| {
+            f.parse::<crate::link::serial::Framing>()
+                .unwrap()
+                .to_string()
+        };
+        let default = LinkConfig::default().line;
+        assert_eq!(
+            sessions,
+            [
+                (
+                    default.baud,
+                    default.framing.to_string(),
+                    Utf8,
+                    "ab".to_string()
+                ),
+                (9600, framing("7E1"), Utf8, "c".to_string()),
+                (9600, framing("7E1"), Cp437, String::new()),
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// MAX-173: a raw recording stops when what it records changes, with a toast: the baud,
+    /// the encoding, a replay starting or ending, another replay; a new flow control keeps it,
+    /// and a replay's own encoding toggle too (its device comes from its file). The bytes
+    /// after the change don't reach it.
+    /// How: a recording on the live link, `flow` then `baud` changed with "b" received; one
+    /// stopped by the encoding; one stopped by a replay; one during the replay, the encoding
+    /// toggled, then stopped by the end of the replay.
+    #[test]
+    fn raw_recording_stops_when_the_device_changes() {
+        let dir = crate::capture::tests::temp_dir("raw_follow");
+        let mut app = app();
+        // the toast is the last one: each start has its own before
+        let stopped = |app: &App| {
+            let last = toasts(app).pop();
+            !app.is_recording(Stream::Raw)
+                && last.as_deref() == Some("Raw recording stopped: the device changed")
+        };
+        let start = |app: &mut App, name: &str| {
+            app.start_capture(&dir.join(name), Stream::Raw, false);
+            assert!(app.is_recording(Stream::Raw));
+        };
+
+        start(&mut app, "baud.raw");
+        app.feed_rx(b"a");
+        let mut line = app.link_config().line;
+        line.flow_control = crate::link::serial::FlowControl::RtsCts;
+        set_line(&mut app, line);
+        app.tick();
+        assert!(app.is_recording(Stream::Raw));
+        line.baud = 9600;
+        set_line(&mut app, line);
+        app.feed_rx(b"b");
+        assert!(stopped(&app));
+        assert_eq!(std::fs::read(dir.join("baud.raw")).unwrap(), b"a");
+
+        start(&mut app, "encoding.raw");
+        app.settings.encoding = crate::configs::TextEncoding::Cp437;
+        app.tick();
+        assert!(stopped(&app));
+
+        start(&mut app, "replay.raw");
+        let session = crate::capture::tests::device("/dev/ttyUSB1");
+        app.start_replay(dir.join("old.raw"), Some(&session));
+        app.tick();
+        assert!(stopped(&app));
+
+        start(&mut app, "during.raw");
+        app.settings.encoding = crate::configs::TextEncoding::Utf8;
+        app.tick();
+        assert!(app.is_recording(Stream::Raw));
+        assert!(app.stop_replay());
+        app.tick();
+        assert!(stopped(&app));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// MAX-173: a text recording keeps running through device changes, a marker line where
+    /// each happens, before the lines received after it; a new flow control gets none.
+    /// How: a text recording, "a" received; `flow` changed, "b"; `baud`, "c"; a replay of a
+    /// session started (nothing received, the tick sees it).
+    #[test]
+    fn text_recording_marks_device_changes() {
+        let dir = crate::capture::tests::temp_dir("text_follow");
+        let path = dir.join("rec.log");
+        let mut app = app();
+        let port = app.link_config().address.clone();
+        app.settings.capture.timestamp = false;
+        app.start_capture(&path, Stream::Text, false);
+        app.feed_rx(b"a\r\n");
+
+        let mut line = app.link_config().line;
+        line.flow_control = crate::link::serial::FlowControl::RtsCts;
+        set_line(&mut app, line);
+        app.feed_rx(b"b\r\n");
+        line.baud = 9600;
+        set_line(&mut app, line);
+        app.feed_rx(b"c\r\n");
+
+        let session = crate::capture::tests::device("/dev/ttyUSB1");
+        app.start_replay(dir.join("old.raw"), Some(&session));
+        app.tick();
+        assert!(app.is_recording(Stream::Text));
+        app.recorder.stop(Stream::Text);
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        let marker = format!("── device: {}, 9600 8N1, UTF8 ──", port.tag());
+        assert_eq!(
+            lines,
+            [
+                "a",
+                "b",
+                marker.as_str(),
+                "c",
+                "── device: old.raw, 115200 8N1, UTF8 ──"
+            ]
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

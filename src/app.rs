@@ -482,7 +482,7 @@ impl App {
                 line_mode,
                 terminal_mode,
                 stats,
-                session: self.recorder.take_session(),
+                session: self.pause_session(),
             }));
         }
         self.link.set_address(Address::Replay(path));
@@ -555,7 +555,7 @@ impl App {
         self.line_mode = replaced.line_mode;
         self.terminal_mode = replaced.terminal_mode;
         self.stats = replaced.stats;
-        self.recorder.set_session(replaced.session);
+        self.resume_session(replaced.session);
         true
     }
 
@@ -945,6 +945,7 @@ impl App {
     /// Feeds both modes. The remote's queries are answered when `live` (not held while the
     /// restore dialog asked) and in terminal mode only (MAX-151)
     fn feed(&mut self, chunk: &[u8], live: bool) {
+        self.follow_device();
         let settings = &self.settings;
         let timestamp_format = settings
             .capture
@@ -1032,6 +1033,7 @@ impl App {
 
     /// Returns true when something on screen changed with time alone (needs a redraw)
     pub fn tick(&mut self) -> bool {
+        self.follow_device();
         self.recorder.flush_if_due();
 
         let toasts_expired = self.notifications.tick();
@@ -1762,8 +1764,14 @@ pub mod tests {
             .collect()
     }
 
+    /// A raw recording to `path` started and stopped at once, for its meta file
+    pub fn record_raw_meta(app: &mut App, path: &Path, include_session: bool) {
+        app.start_capture(path, crate::capture::Stream::Raw, include_session);
+        app.recorder.stop(crate::capture::Stream::Raw);
+    }
+
     /// The line settings the port took, as the link sets them
-    fn set_line(app: &mut App, line: LineSettings) {
+    pub fn set_line(app: &mut App, line: LineSettings) {
         let config = LinkConfig {
             line,
             ..app.link_config().clone()
@@ -2842,7 +2850,7 @@ pub mod tests {
         assert_eq!((scroller.view_width, scroller.view_height), (100, 30));
     }
 
-    fn toasts(app: &App) -> Vec<String> {
+    pub fn toasts(app: &App) -> Vec<String> {
         app.notifications
             .active_toasts()
             .iter()
@@ -3138,7 +3146,7 @@ pub mod tests {
         };
         set_line(&mut app, line);
         app.settings.encoding = TextEncoding::Cp437;
-        app.write_recording_meta(&rec, false);
+        record_raw_meta(&mut app, &rec, false);
         assert!(dir.join("rec.meta").exists());
 
         let mut app = self::app();
@@ -3147,14 +3155,14 @@ pub mod tests {
         assert_eq!(app.recorded_line(), Some(SessionLine::of(&line)));
 
         let during = dir.join("during.raw");
-        app.write_recording_meta(&during, false);
+        record_raw_meta(&mut app, &during, false);
         let meta = SessionMeta::read(&dir.join("during.meta")).unwrap();
         assert_eq!(meta.device.encoding, TextEncoding::Cp437);
         assert_eq!(meta.device.line, Some(SessionLine::of(&line)));
 
         app.open_replay(plain, Duration::ZERO, None).unwrap();
         assert_eq!(app.recorded_line(), None);
-        app.write_recording_meta(&dir.join("plain_during.raw"), false);
+        record_raw_meta(&mut app, &dir.join("plain_during.raw"), false);
         assert!(!dir.join("plain_during.meta").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }

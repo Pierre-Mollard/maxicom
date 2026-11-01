@@ -14,8 +14,8 @@ pub use restore::{
 };
 pub use screenshot::{Screenshot, ScreenshotFormat};
 pub use session::{
-    Session, SessionDevice, SessionLimits, SessionLine, SessionMeta, SessionOrder, SessionText,
-    delete_session, delete_sessions, find_last_session, list_sessions, sort_sessions,
+    CaptureSource, Session, SessionDevice, SessionLimits, SessionLine, SessionMeta, SessionOrder,
+    SessionText, delete_session, delete_sessions, find_last_session, list_sessions, sort_sessions,
 };
 
 use std::fs;
@@ -59,6 +59,14 @@ pub mod tests {
 
     pub fn record(recorder: &mut Recorder, bytes: &[u8]) {
         recorder.record_rx(RxNewlineMode::Auto, TextEncoding::Utf8, None, bytes);
+    }
+
+    /// What a recording on `address` with no known device records (MAX-173)
+    pub fn source(address: &str) -> CaptureSource {
+        CaptureSource {
+            address: address.parse::<Address>().unwrap(),
+            device: None,
+        }
     }
 
     /// A device on `address`, on this machine.
