@@ -71,8 +71,9 @@ impl Stream {
 }
 
 /// The session backup (MAX-147): everything received since startup, as text and raw, in the
-/// cache folder. It runs apart from the user's recordings, which can start with its content
-struct Journal {
+/// cache folder. It runs apart from the user's recordings, which can start with its content.
+/// Taken out of the recorder while a replay sets the live link aside (MAX-171)
+pub struct Journal {
     text: LogFile,
     raw: LogFile,
     text_path: PathBuf,
@@ -89,8 +90,6 @@ pub struct Recorder {
     text: Option<LogFile>,
     raw: Option<LogFile>,
     journal: Option<Journal>,
-    /// The journal a replay paused (MAX-166): open and locked, recording nothing
-    paused_journal: Option<Journal>,
     lines: RxLineSplitter,
     timestamp: Option<TimestampFormat>,
     line_buf: Vec<u8>,
@@ -186,29 +185,22 @@ impl Recorder {
         self.journal.is_some()
     }
 
-    /// Stops recording to the session backup until `resume_journal`, its files kept open, and
-    /// its lock with them, so no pruning removes it (MAX-166). The line being cut is dropped
-    /// at both ends, so a line never mixes the live bytes and the replayed ones
-    pub fn pause_journal(&mut self) {
-        if let Some(mut journal) = self.journal.take() {
+    /// The session backup out of the recorder, flushed, which records nothing until it is set
+    /// back with `set_journal` (MAX-166). Its files stay open, and its lock with them, so no
+    /// pruning removes it. The line being cut is dropped at both ends, so a line never mixes
+    /// the live bytes and the replayed ones
+    pub fn take_journal(&mut self) -> Option<Journal> {
+        let mut journal = self.journal.take();
+        if let Some(journal) = &mut journal {
             let _ = journal.text.flush();
             let _ = journal.raw.flush();
-            self.paused_journal = Some(journal);
         }
         self.lines = RxLineSplitter::default();
+        journal
     }
 
-    /// The `.raw` of the journal a replay paused, which is this maxicom's own running session
-    pub fn paused_journal_raw(&self) -> Option<&Path> {
-        self.paused_journal
-            .as_ref()
-            .map(|journal| journal.raw_path.as_path())
-    }
-
-    pub fn resume_journal(&mut self) {
-        if let Some(journal) = self.paused_journal.take() {
-            self.journal = Some(journal);
-        }
+    pub fn set_journal(&mut self, journal: Option<Journal>) {
+        self.journal = journal;
         self.lines = RxLineSplitter::default();
     }
 
@@ -328,6 +320,13 @@ impl Recorder {
                 let _ = journal.text.writer.write_all(&self.line_buf);
             }
         }
+    }
+}
+
+impl Journal {
+    /// Its `.raw`: the session the browser marks as this maxicom's own
+    pub fn raw_path(&self) -> &Path {
+        &self.raw_path
     }
 }
 
@@ -592,12 +591,12 @@ mod tests {
             .start_journal(&dir, &device("port"), &JournalText::default(), 20)
             .unwrap();
         record(&mut recorder, b"a\nhal");
-        recorder.pause_journal();
-        assert!(!recorder.has_journal());
+        let journal = recorder.take_journal();
+        assert!(journal.is_some() && !recorder.has_journal());
         let path = dir.join("mine.log");
         recorder.start(Stream::Text, path.clone(), true).unwrap();
         record(&mut recorder, b"b\n");
-        recorder.resume_journal();
+        recorder.set_journal(journal);
         assert!(recorder.has_journal());
         record(&mut recorder, b"c\n");
         assert_eq!(stop_and_read(&mut recorder, Stream::Text, &path), b"b\nc\n");

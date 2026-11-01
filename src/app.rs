@@ -15,7 +15,7 @@ use crate::{
         types::{FocusTarget, FrameAreas, FrameMap, LogEntry, ViewportSize},
     },
     capture::{
-        JournalReader, JournalText, RESTORE_RAW_TAIL, Recorder, ScreenshotFormat, Session,
+        Journal, JournalReader, JournalText, RESTORE_RAW_TAIL, Recorder, ScreenshotFormat, Session,
         SessionDevice, SessionLine, SessionMeta, Stream, create_parent_dirs, expand_home,
         find_last_session, read_tail_bytes, read_tail_lines, restore_separator,
     },
@@ -165,7 +165,8 @@ pub struct App {
 }
 
 /// The live link a replay replaced (MAX-166): its settings, the mode, the encoding, the
-/// histories of both modes and the counts, put back as they were when the replay stops
+/// histories of both modes, the counts and its session backup, put back as they were when the
+/// replay stops (MAX-171: the backup kept here only, so it can't stay behind)
 struct ReplacedLink {
     link_config: LinkConfig,
     mode: Mode,
@@ -173,6 +174,7 @@ struct ReplacedLink {
     line_mode: LineMode,
     terminal_mode: TerminalMode,
     stats: Stats,
+    journal: Option<Journal>,
 }
 
 /// The replay running (MAX-166), new for each one: the line settings of the session it plays,
@@ -482,7 +484,6 @@ impl App {
             None => self.settings.encoding,
         };
         if self.link_kind().keeps_sessions() {
-            self.recorder.pause_journal();
             self.replaced_link = Some(Box::new(ReplacedLink {
                 link_config: self.link.config().clone(),
                 mode: self.settings.mode,
@@ -490,6 +491,7 @@ impl App {
                 line_mode,
                 terminal_mode,
                 stats,
+                journal: self.recorder.take_journal(),
             }));
         }
         self.link.set_address(Address::Replay(path));
@@ -562,7 +564,7 @@ impl App {
         self.line_mode = replaced.line_mode;
         self.terminal_mode = replaced.terminal_mode;
         self.stats = replaced.stats;
-        self.recorder.resume_journal();
+        self.recorder.set_journal(replaced.journal);
         true
     }
 
@@ -1127,8 +1129,11 @@ impl App {
         let restorable =
             find_last_session(&dir, &self.session_device(), max_age).map(|session| session.stem);
         let mut browser = SessionBrowser::new(dir, restorable);
-        if self.replaced_link.is_some() {
-            let raw = self.recorder.paused_journal_raw().map(Path::to_path_buf);
+        if let Some(replaced) = &self.replaced_link {
+            let raw = replaced
+                .journal
+                .as_ref()
+                .map(|j| j.raw_path().to_path_buf());
             browser = browser.with_live(raw);
         }
         self.open_overlay(Overlay::Sessions(Box::new(browser)));

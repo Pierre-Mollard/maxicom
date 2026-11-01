@@ -287,8 +287,13 @@ impl App {
     }
 
     /// The current link closes and the new one opens as a reconnect does, without waiting: the
-    /// rest of the command line waits for its result (MAX-12)
+    /// rest of the command line waits for its result (MAX-12). A replay that set the live link
+    /// aside ends first, so the switch starts from the live link, its journal and its encoding
+    /// (MAX-171)
     fn open_link(&mut self, address: Address) {
+        if self.replaced_link.is_some() {
+            self.stop_replay();
+        }
         self.link.switch_to(address);
         self.pause_commands(Instant::now() + CONNECT_TIMEOUT * 2);
         self.notify_info(format!("Opening {}", self.link.config().address));
@@ -440,7 +445,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        configs::{KeyBindingsConfig, KeyResolver, SettingsConfig},
+        capture::JournalText,
+        configs::{KeyBindingsConfig, KeyResolver, SettingsConfig, TextEncoding},
         inputs::AppAction,
         link::{LinkConfig, state::REOPEN_EVERY},
     };
@@ -651,6 +657,94 @@ mod tests {
         let _peer = listener.accept().unwrap();
         poll_until(&mut app, "back", |app| app.link.is_open());
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// MAX-171: `open` during a replay that set a live link aside ends the replay first: the
+    /// live link comes back with its encoding and its journal, then the new link opens with a
+    /// journal of its own, and the attach key no longer goes back to the old link. Opening the
+    /// live link again keeps its journal.
+    /// How: a TCP link with a journal, "one" received; a cp437 session file replayed; `open`
+    /// onto a second listener, "two" received there, then the attach key; the session files
+    /// read back. Then the same with `open` onto the live link, "again" received.
+    #[test]
+    fn open_during_a_replay_ends_it_first() {
+        let root = std::env::temp_dir().join(format!(
+            "maxicom_test_{}_open_during_replay",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let sessions = root.join("sessions");
+        let replayed = root.join("files").join("replayed.raw");
+        std::fs::create_dir_all(replayed.parent().unwrap()).unwrap();
+        std::fs::write(&replayed, b"old\r\n").unwrap();
+        let (first, first_address) = listener();
+        let device = SessionDevice::new(
+            &LinkConfig {
+                address: first_address.parse::<Address>().unwrap(),
+                ..LinkConfig::default()
+            },
+            TextEncoding::Cp437,
+        );
+        SessionMeta::new(chrono::Local::now(), device, JournalText::default())
+            .write(&SessionMeta::path_of(&replayed))
+            .unwrap();
+        // the session files' raw bytes, the oldest first
+        let raws = || -> Vec<Vec<u8>> {
+            let mut paths: Vec<_> = std::fs::read_dir(&sessions)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "raw"))
+                .collect();
+            paths.sort();
+            paths
+                .iter()
+                .map(|path| std::fs::read(path).unwrap())
+                .collect()
+        };
+        let live_with_replay = || {
+            let (mut app, mut peer) = connected(&first, &first_address);
+            app.start_journal(Some(sessions.clone()));
+            peer.write_all(b"one\r\n").unwrap();
+            poll_until(&mut app, "one", |app| app.stats.rx() == 5);
+            let live_encoding = app.settings().encoding;
+            app.dispatch(Action::App(AppAction::Replay {
+                path: replayed.clone(),
+                delay: Duration::ZERO,
+            }));
+            assert_eq!(app.settings().encoding, TextEncoding::Cp437);
+            (app, live_encoding)
+        };
+        let open = |app: &mut App, address: &str, listener: &TcpListener, text: &[u8]| {
+            app.dispatch(Action::App(AppAction::Open(
+                address.parse::<Address>().unwrap(),
+            )));
+            let (mut peer, _) = listener.accept().unwrap();
+            poll_until(app, "opened", |app| app.link.is_open());
+            peer.write_all(text).unwrap();
+            let text = String::from_utf8_lossy(text).trim().to_string();
+            poll_until(app, "received", |app| {
+                app.terminal_mode.vt100_screen().contents().contains(&text)
+            });
+        };
+
+        let (second, second_address) = listener();
+        let (mut app, live_encoding) = live_with_replay();
+        open(&mut app, &second_address, &second, b"two\r\n");
+        assert!(app.replaced_link.is_none());
+        assert_eq!(app.settings().encoding, live_encoding);
+        app.dispatch(Action::App(AppAction::ToggleAttach));
+        assert!(matches!(app.overlay(), Some(Overlay::DeviceDetached)));
+        let second_address = second_address.parse::<Address>().unwrap();
+        assert_eq!(app.link_config().address, second_address);
+        drop(app);
+        assert_eq!(raws(), [b"one\r\n".to_vec(), b"two\r\n".to_vec()]);
+
+        std::fs::remove_dir_all(&sessions).unwrap();
+        let (mut app, _) = live_with_replay();
+        open(&mut app, &first_address, &first, b"again\r\n");
+        drop(app);
+        assert_eq!(raws(), [b"one\r\nagain\r\n".to_vec()]);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// MAX-166: the replay controls from the command line: a paused replay reads nothing

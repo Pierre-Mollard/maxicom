@@ -8,7 +8,7 @@ mod screenshot;
 mod session;
 
 // Re-exports
-pub use recorder::{Recorder, Stream};
+pub use recorder::{Journal, Recorder, Stream};
 pub use restore::{
     JournalReader, RESTORE_RAW_TAIL, read_tail_bytes, read_tail_lines, restore_separator,
 };
