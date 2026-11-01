@@ -64,6 +64,7 @@ impl ActionMenu {
         items.extend([
             ("Session backups…", KeyBindingAction::Sessions),
             ("Triggers…", KeyBindingAction::Triggers),
+            ("Clear", KeyBindingAction::Clear),
             ("Clear history", KeyBindingAction::ClearHistory),
             (attach, KeyBindingAction::ToggleAttach),
             ("Reload config", KeyBindingAction::ReloadConfig),

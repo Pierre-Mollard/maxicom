@@ -97,6 +97,7 @@ impl KeyBindingAction {
             KeyBindingAction::PanSideLeft => {
                 Action::App(AppAction::SideView(SideViewAction::PanLeft(2)))
             }
+            KeyBindingAction::Clear => Action::History(HistoryAction::ClearView),
             KeyBindingAction::ClearHistory => Action::History(HistoryAction::Clear),
             KeyBindingAction::ExitPrefix => Action::App(AppAction::SetPrefix(false)),
             KeyBindingAction::ToggleAttach => Action::App(AppAction::ToggleAttach),

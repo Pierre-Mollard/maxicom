@@ -136,6 +136,7 @@ pub enum HistoryAction {
     PanLeft(usize),
     PanRight(usize),
     Clear,
+    ClearView,
     ScrollTo(usize),
 }
 
@@ -702,6 +703,7 @@ mod tests {
                 "Shift-t => open Triggers",
                 "Up => History(ScrollUp(1))",
                 "[ => CopyMode(Enter)",
+                "c => History(ClearView)",
                 "d => open LinkSettings",
                 "f => run break",
                 "h => App(ToggleAttach)",

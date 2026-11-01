@@ -17,6 +17,7 @@ use crate::{
     app::{
         App,
         data_processing::{entry_display_text, entry_display_to_wire_map, map_disp_byte_to_raw},
+        line_mode::ViewFloor,
         scroller::ScrollStatus,
         search::SearchMatch,
         selection::{CopySide, Reveal},
@@ -505,6 +506,33 @@ pub fn render_monitor(
         Some(meta.first_text_row() + sub_row)
     };
 
+    // ---- The live view's floor (MAX-176) ----
+    //
+    // After a `clear` (a restore) the live view starts on the floor entry, blank rows under the
+    // last line, while the lines from there don't fill it. Its top row is the floor entry's
+    // first text row less the rows scrolled above it; only a view still live has it, and the
+    // floor goes once the normal live view starts lower (new lines filled the blank rows). The
+    // floor entry may be the partial RX line, or not received yet: the window's end then
+    let live_top = total_visual_rows.saturating_sub(content_height);
+    let is_live = clamped_scroll == 0 && app.line_mode.rows_below() == 0;
+    let floor = app
+        .line_mode
+        .view_floor()
+        .filter(|_| is_live)
+        .and_then(|floor| {
+            let local = floor.line_idx.checked_sub(start_idx)?;
+            let row = match layout.line_layouts.get(local) {
+                Some(meta) => meta.first_text_row(),
+                None if local == layout.line_layouts.len() => total_visual_rows,
+                None => return None,
+            };
+            Some((row, floor.rows_above))
+        });
+    let floor_top = |(row, above): (usize, usize)| row.saturating_sub(above);
+    if floor.is_none() {
+        app.line_mode.set_view_floor(None);
+    }
+
     let paragraph_y_offset: usize = if row_scrolling {
         // Plain scrolling (#36): where the view's bottom row was (the anchor's last row, minus
         // its rows hidden below), then moved up by the rows scrolled since the last frame (down
@@ -512,9 +540,30 @@ pub fn render_monitor(
         let anchor = &entries[focus_entry - start_idx];
         let rows_below = app.line_mode.rows_below().min(rows_of(anchor) - 1);
         let anchor_bottom = anchor.visual_row_start + rows_of(anchor) - 1 - rows_below;
-        let bottom = anchor_bottom as isize - pending_rows;
+        let mut bottom = anchor_bottom as isize - pending_rows;
 
-        if end_idx == total_entries && bottom >= last_row as isize {
+        // On the floor the scrolled rows move it (never under its entry) while blank rows still
+        // show; past that, the view it reached is a normal one, its bottom row a view lower
+        let floor = floor.map(|(row, above)| {
+            let above = (above as isize + pending_rows).max(0) as usize;
+            (row, above)
+        });
+        let on_floor = floor.filter(|&floor| floor_top(floor) > live_top);
+        if let Some((row, above)) = floor
+            && on_floor.is_none()
+        {
+            app.line_mode.set_view_floor(None);
+            bottom = (floor_top((row, above)) + content_height) as isize - 1;
+        }
+
+        if let Some((row, above)) = on_floor {
+            let line_idx = app.line_mode.view_floor().map_or(0, |floor| floor.line_idx);
+            app.line_mode.set_view_floor(Some(ViewFloor {
+                line_idx,
+                rows_above: above,
+            }));
+            floor_top((row, above))
+        } else if end_idx == total_entries && bottom >= last_row as isize {
             // Reached the last entry's last row: back to the live view, aligned to the bottom
             // of everything laid out (partial RX line included)
             app.line_mode.scroll_to_bottom();
@@ -543,9 +592,9 @@ pub fn render_monitor(
         // the window (else it is more than a view height away from the focus: not shown)
         let kept_top = || {
             let rows_below = app.line_mode.rows_below();
-            if clamped_scroll == 0 && rows_below == 0 {
-                let live_top = total_visual_rows.saturating_sub(content_height);
-                return (end_idx == total_entries).then_some(live_top);
+            if is_live {
+                let top = floor.map_or(live_top, floor_top).max(live_top);
+                return (end_idx == total_entries).then_some(top);
             }
             let local = (total_entries - 1 - clamped_scroll).checked_sub(start_idx)?;
             let meta = entries.get(local)?;
@@ -567,8 +616,22 @@ pub fn render_monitor(
             (Some(Reveal::Edge), Some(_)) => target_visual_row + 1 - content_height,
             _ => centered,
         };
-        let max_offset = total_visual_rows.saturating_sub(content_height);
-        let offset = offset.min(max_offset);
+        // On the floor, a view still higher than the live top moves the floor, as scrolling
+        // does (never under its entry); a lower one is a normal view and the floor goes
+        let offset = match (floor, app.line_mode.view_floor()) {
+            (Some((row, _)), Some(view_floor)) if offset > live_top => {
+                let offset = offset.min(row);
+                app.line_mode.set_view_floor(Some(ViewFloor {
+                    rows_above: row - offset,
+                    ..view_floor
+                }));
+                offset
+            }
+            _ => {
+                app.line_mode.set_view_floor(None);
+                offset.min(live_top)
+            }
+        };
         // the next frames scroll from this view
         let bottom = (offset + content_height).saturating_sub(1).min(last_row);
         store_position(app, bottom);

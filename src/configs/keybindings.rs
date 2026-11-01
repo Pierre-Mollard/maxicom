@@ -66,6 +66,7 @@ pub enum KeyBindingAction {
     CancelCommands,
     ToggleTriggers,
     Triggers,
+    Clear,
 }
 
 impl FromStr for KeyBindingAction {
@@ -956,6 +957,7 @@ impl Default for KeyBindingsConfig {
             "B"     => KeyBindingAction::SKDisplayRaw,
             "M"     => KeyBindingAction::ToggleMouse,
             "S"     => KeyBindingAction::Sessions,
+            "c"     => KeyBindingAction::Clear,
             "C"     => KeyBindingAction::ClearHistory,
             "z"     => KeyBindingAction::Help,
             "?"     => KeyBindingAction::Help,
@@ -1266,7 +1268,7 @@ mod tests {
     }
 
     /// MAX-155: clear_history moved from Ctrl-D (stolen from the remote) to prefix + `C`,
-    /// shifted because it wipes the history.
+    /// shifted because it wipes the history; `c` is the `clear` that keeps it (MAX-176).
     #[test]
     fn clear_history_default_key() {
         let resolver = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
@@ -1277,7 +1279,8 @@ mod tests {
                 .direct_actions
                 .contains_key(&"ctrl-d".parse().unwrap())
         );
-        assert!(!resolver.prefix_actions.contains_key(&"c".parse().unwrap()));
+        let action = resolver.prefix_actions[&"c".parse().unwrap()];
+        assert_eq!(action, KeyBindingAction::Clear);
     }
 
     /// MAX-155: a key bound in a mode section is reported when the prefix or `[direct_actions]`
@@ -1340,7 +1343,7 @@ mod tests {
     /// between words: the old `_` names are refused
     #[test]
     fn action_names() {
-        const NAMES: [(&str, KeyBindingAction); 44] = [
+        const NAMES: [(&str, KeyBindingAction); 45] = [
             ("quit", KeyBindingAction::Quit),
             ("toggle-input-mode", KeyBindingAction::SKInputMode),
             ("toggle-local-echo", KeyBindingAction::SKLocalEcho),
@@ -1391,6 +1394,7 @@ mod tests {
             ("cancel", KeyBindingAction::CancelCommands),
             ("toggle-triggers", KeyBindingAction::ToggleTriggers),
             ("triggers", KeyBindingAction::Triggers),
+            ("clear", KeyBindingAction::Clear),
         ];
         for (name, action) in NAMES {
             assert_eq!(name.parse::<KeyBindingAction>().unwrap(), action, "{name}");

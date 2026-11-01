@@ -148,9 +148,11 @@ impl App {
             let line = reader.parse(line);
             LogEntry::restored(line.text.to_string(), line.time)
         });
+        self.line_mode.restore_entries(lines);
+        // like a `clear`, the separator on the top row (MAX-176)
+        self.line_mode.clear_view();
         let separator_line = LogEntry::restored(separator.clone(), None);
-        self.line_mode
-            .restore_entries(lines.chain(std::iter::once(separator_line)));
+        self.line_mode.restore_entries([separator_line]);
         self.terminal_mode
             .restore(self.settings.encoding, &raw, &separator);
         Ok(())
@@ -422,11 +424,19 @@ pub mod tests {
         assert!(texts[3].starts_with("── restored: ttyUSB0, "), "{texts:?}");
         assert!(history[..3].iter().all(|e| e.timestamp.is_some()));
         assert_eq!(history[3].timestamp, None);
+        // the live view starts on the separator (MAX-176)
+        let floor = app.line_mode.view_floor().map(|floor| floor.line_idx);
+        assert_eq!(floor, Some(3));
 
         let screen = app.terminal_mode.vt100_screen();
         assert!(!screen.alternate_screen() && !screen.application_cursor());
-        assert!(screen.contents().contains("one\ntwo\n── restored"));
-        assert!(screen.contents().contains("── restored: ttyUSB0, "));
+        assert!(screen.contents().starts_with("── restored: ttyUSB0, "));
+        let lines = app.terminal_mode.all_text_lines();
+        let separator = lines
+            .iter()
+            .position(|l| l.starts_with("── restored"))
+            .unwrap();
+        assert_eq!(lines[separator - 2..separator], ["one", "two"], "{lines:?}");
         assert_eq!(app.stats.rx(), 0);
 
         drop(app);
@@ -461,8 +471,12 @@ pub mod tests {
         app.settings.sessions.restore = RestoreMode::Always;
         app.restore_last_session(Some(&dir), None);
         assert_eq!(texts(&app), ["── restored"]);
-        let screen = app.terminal_mode.vt100_screen();
-        assert!(screen.contents().contains("from raw\n── restored"));
+        let lines = app.terminal_mode.all_text_lines();
+        let separator = lines
+            .iter()
+            .position(|l| l.starts_with("── restored"))
+            .unwrap();
+        assert_eq!(lines[separator - 1], "from raw", "{lines:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

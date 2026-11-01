@@ -721,6 +721,154 @@ mod tests {
         assert_eq!(cursor_cell(&mut h).1, height - 2, "{rows:#?}");
     }
 
+    /// 30 numbered lines, the live view cleared, then a separator, as a restore does (MAX-176):
+    /// the history's rows, the text columns only (the scrollbar left out)
+    fn cleared_view() -> (Harness, usize) {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 40, 12);
+        for i in 0..30 {
+            h.feed(format!("line {i:02}\r\n").as_bytes());
+        }
+        h.app.line_mode.clear_view();
+        h.feed(b"-- restored --\r\n");
+        h.draw();
+        let height = h.app.frame_areas().content.height as usize;
+        (h, height)
+    }
+
+    fn text_rows(h: &mut Harness, height: usize) -> Vec<String> {
+        h.draw()[..height]
+            .iter()
+            .map(|row| {
+                row.chars()
+                    .take(39)
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    /// MAX-176: after a `clear` the separator is on the top row, blank rows under it, filled by
+    /// the new lines; once they reach the bottom the normal live view takes over.
+    /// How: 30 lines and the separator, cleared; 1 new line, then 12 more (the view is 10).
+    #[test]
+    fn cleared_view_starts_on_the_separator() {
+        let (mut h, height) = cleared_view();
+        let rows = text_rows(&mut h, height);
+        assert_eq!(rows[0], "│ -- restored --", "{rows:#?}");
+        assert!(rows[1..].iter().all(String::is_empty), "{rows:#?}");
+
+        h.feed(b"new\r\n");
+        let rows = text_rows(&mut h, height);
+        assert_eq!(rows[..3], ["│ -- restored --", "│ new", ""], "{rows:#?}");
+
+        for i in 0..12 {
+            h.feed(format!("more {i:02}\r\n").as_bytes());
+        }
+        let rows = text_rows(&mut h, height);
+        assert_eq!(rows[height - 1], "│ more 11", "{rows:#?}");
+        assert_eq!(h.app.line_mode.view_floor(), None);
+    }
+
+    /// MAX-176: from the cleared view, scrolling moves row by row: up shows the restored lines
+    /// one row at a time, also past the point where the blank rows are gone (the view becomes a
+    /// normal one); down comes back, never lower than the separator on the top row.
+    /// How: cleared on the separator (row 30) with 1 new line, a view of 10 rows: up 3, 3, 3
+    /// (the top at line 21 is under the live top, 22), then down 9 from the floor.
+    #[test]
+    fn cleared_view_scrolls_by_rows() {
+        let (mut h, height) = cleared_view();
+        h.feed(b"new\r\n");
+        let top = |h: &mut Harness| text_rows(h, height)[0].clone();
+        h.scroll(HistoryAction::ScrollUp(3));
+        assert_eq!(top(&mut h), "│ line 27");
+        h.scroll(HistoryAction::ScrollDown(9));
+        assert_eq!(top(&mut h), "│ -- restored --");
+        assert!(h.app.line_mode.view_floor().is_some());
+
+        h.scroll(HistoryAction::ScrollUp(3));
+        assert_eq!(top(&mut h), "│ line 27");
+        h.scroll(HistoryAction::ScrollUp(3));
+        assert_eq!(top(&mut h), "│ line 24");
+        h.scroll(HistoryAction::ScrollUp(3));
+        assert_eq!(top(&mut h), "│ line 21");
+        assert_eq!(h.app.line_mode.view_floor(), None);
+        h.scroll(HistoryAction::ScrollUp(1));
+        assert_eq!(top(&mut h), "│ line 20");
+        // back down: the normal live view, the floor is gone
+        h.scroll(HistoryAction::ScrollToBottom);
+        assert_eq!(top(&mut h), "│ line 22");
+    }
+
+    /// MAX-176: copy mode entered on the cleared view keeps it (the cursor is shown); a step
+    /// above it moves the view one row, as scrolling does. A search jump into the restored
+    /// lines drops the floor.
+    /// How: cleared with 1 new line; Enter, Up (the separator), Up (line 29, above the view).
+    #[test]
+    fn cleared_view_in_copy_mode_and_search() {
+        let (mut h, height) = cleared_view();
+        h.feed(b"new\r\n");
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        let rows = text_rows(&mut h, height);
+        assert_eq!(rows[0], "│ -- restored --", "{rows:#?}");
+        assert_eq!(cursor_cell(&mut h).1, 1);
+        h.app.update(Action::CopyMode(CopyModeAction::MoveUp));
+        let rows = text_rows(&mut h, height);
+        assert_eq!(rows[0], "│ -- restored --", "{rows:#?}");
+        assert!(h.app.line_mode.view_floor().is_some());
+        h.app.update(Action::CopyMode(CopyModeAction::MoveUp));
+        let rows = text_rows(&mut h, height);
+        assert_eq!(
+            rows[..3],
+            ["│ line 29", "│ -- restored --", "│ new"],
+            "{rows:#?}"
+        );
+        assert_eq!(cursor_cell(&mut h).1, 0);
+
+        let (mut h, height) = cleared_view();
+        search(&mut h, "line 05");
+        let rows = text_rows(&mut h, height);
+        assert!(rows.iter().any(|row| row == "│ line 05"), "{rows:#?}");
+        assert_eq!(h.app.line_mode.view_floor(), None);
+    }
+
+    /// MAX-176: the `clear` command starts the live view on the next line: blank rows, then the
+    /// new lines from the top; the lines before stay a scroll up. A prompt not ended yet (the
+    /// partial RX line) stays on the top row and its line keeps it there once ended.
+    /// How: 30 lines, cleared; 1 new line, scroll up 1. Then 30 lines and a `$ ` prompt,
+    /// cleared; the prompt ended by the echoed `ls`.
+    #[test]
+    fn clear_starts_the_view_on_the_next_line() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 40, 12);
+        h.draw();
+        let height = h.app.frame_areas().content.height as usize;
+        for i in 0..30 {
+            h.feed(format!("line {i:02}\r\n").as_bytes());
+        }
+        h.app.update(Action::History(HistoryAction::ClearView));
+        let rows = text_rows(&mut h, height);
+        assert!(rows.iter().all(String::is_empty), "{rows:#?}");
+        h.feed(b"new\r\n");
+        let rows = text_rows(&mut h, height);
+        assert_eq!(rows[..2], ["│ new", ""], "{rows:#?}");
+        h.scroll(HistoryAction::ScrollUp(1));
+        let rows = text_rows(&mut h, height);
+        assert_eq!(rows[..3], ["│ line 29", "│ new", ""], "{rows:#?}");
+
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 40, 12);
+        for i in 0..30 {
+            h.feed(format!("line {i:02}\r\n").as_bytes());
+        }
+        h.feed(b"$ ");
+        h.app.update(Action::History(HistoryAction::ClearView));
+        let rows = text_rows(&mut h, height);
+        assert!(rows[0].ends_with('$'), "{rows:#?}");
+        assert!(rows[1..].iter().all(String::is_empty), "{rows:#?}");
+        h.feed(b"ls\r\n");
+        let rows = text_rows(&mut h, height);
+        assert_eq!(rows[..2], ["│ $ ls", ""], "{rows:#?}");
+    }
+
     /// Truncate mode scrolled up and panned right shows the same rows and columns once the
     /// paragraph only gets the visible rows (#5b).
     /// How: 40 numbered lines wider than the view, scroll up 5 rows, pan right 3 columns (the
@@ -2781,6 +2929,8 @@ mod tests {
         });
         h.app.restore_session(&session).unwrap();
         h.feed(b"live words\r\n");
+        // the restore starts the view on its separator (MAX-176): the line is a row above
+        h.scroll(HistoryAction::ScrollUp(1));
         let rows = h.draw();
         let (restored_x, restored_y) = cell_of(&rows, "restored words");
         assert_eq!(restored_x, cell_of(&rows, "live words").0, "{rows:#?}");

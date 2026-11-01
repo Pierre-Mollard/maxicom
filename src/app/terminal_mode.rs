@@ -59,6 +59,9 @@ pub struct TerminalMode {
     flash_until: Option<Instant>,
     row_timestamps: VecDeque<Option<DateTime<Local>>>,
     search_text: Option<Vec<String>>,
+    /// The restore separator's world row, until the grid first takes the view's size: a
+    /// taller grid pulls rows back from the scrollback and would move it down (MAX-176)
+    restored_separator: Option<usize>,
 }
 
 impl TerminalMode {
@@ -84,6 +87,7 @@ impl TerminalMode {
             flash_until: None,
             row_timestamps: VecDeque::from(vec![None; rows as usize]),
             search_text: None,
+            restored_separator: None,
         }
     }
 
@@ -195,8 +199,61 @@ impl TerminalMode {
             }
         }
 
+        self.restore_separator_on_top();
         self.clamp_pan_x(viewport.cols);
         self.reconcile_both_vertical_scroll();
+    }
+
+    /// Once the grid has the view's size after a restore: the separator back on the top row if
+    /// growing the grid pulled rows down from the scrollback, the lines after it under it
+    /// (MAX-176)
+    fn restore_separator_on_top(&mut self) {
+        let Some(world_row) = self.restored_separator.take() else {
+            return;
+        };
+        let Some(row) = world_row.checked_sub(self.max_content_scrollback) else {
+            return;
+        };
+        let cursor_row = self.vt100_parser.screen().cursor_position().0;
+        self.push_rows_up((row as u16).min(cursor_row));
+    }
+
+    /// The `clear` command, like a shell's but the history kept: the rows above the cursor's go
+    /// up into the scrollback, the cursor's row (a prompt) on top (MAX-176)
+    pub fn clear_view(&mut self) {
+        self.scroll_to_bottom();
+        let cursor_row = self.vt100_parser.screen().cursor_position().0;
+        self.push_rows_up(cursor_row);
+    }
+
+    /// `up` rows into the scrollback, line feeds on the bottom row pushing the screen up, the
+    /// cursor going up with its row. Not on the alternate screen: it has no scrollback
+    fn push_rows_up(&mut self, up: u16) {
+        let screen = self.vt100_parser.screen();
+        let (cursor_row, cursor_col) = screen.cursor_position();
+        if up == 0 || screen.alternate_screen() {
+            return;
+        }
+        let rows = self.get_vt100_size().0;
+        let cursor_time = self.cursor_row_time();
+        let feeds = "\n".repeat(up as usize);
+        let moves = format!(
+            "\x1b[{rows};1H{feeds}\x1b[{};{}H",
+            cursor_row - up + 1,
+            cursor_col + 1
+        );
+        self.process_rx(TextEncoding::Utf8, moves.as_bytes());
+        // the cursor didn't go through a row: its own keeps the time it had
+        let slot =
+            self.max_content_scrollback + self.vt100_parser.screen().cursor_position().0 as usize;
+        if let Some(time) = self.row_timestamps.get_mut(slot) {
+            *time = cursor_time;
+        }
+    }
+
+    fn cursor_row_time(&self) -> Option<DateTime<Local>> {
+        let row = self.vt100_parser.screen().cursor_position().0 as usize;
+        self.get_timeline_timestamp(self.max_content_scrollback + row)
     }
 
     pub fn row_has_content(&self, row: u16) -> bool {
@@ -218,6 +275,9 @@ impl TerminalMode {
         }
         self.search_state.rebase_after_eviction(evicted);
         self.copy_state.rebase_after_eviction(evicted);
+        self.restored_separator = self
+            .restored_separator
+            .and_then(|row| row.checked_sub(evicted));
     }
 
     pub fn total_timeline_len(&self) -> usize {
@@ -234,6 +294,7 @@ impl TerminalMode {
         self.vt100_parser = new_parser(rows, cols, self.max_history_lines);
         self.row_timestamps = VecDeque::from(vec![None; rows as usize]);
         self.search_text = None;
+        self.restored_separator = None;
 
         self.max_content_scrollback = 0;
         self.pan_offset_y = 0;
@@ -827,8 +888,9 @@ impl TerminalMode {
 
     /// Replays a past session's raw bytes, then resets the modes it may have left set (the
     /// alternate screen, application cursor keys, mouse reports, bracketed paste, a scroll
-    /// region, a hidden cursor, colors) so the keys and the mouse work, and writes `separator`
-    /// dimmed on a line of its own. The rows restored have no time: the raw bytes have none
+    /// region, a hidden cursor, colors) so the keys and the mouse work. Then, like a `clear`,
+    /// the screen goes up into the scrollback and `separator` is written dimmed on the top row,
+    /// the cursor under it (MAX-176). The rows restored have no time: the raw bytes have none
     /// (MAX-148)
     pub fn restore(&mut self, encoding: TextEncoding, raw: &[u8], separator: &str) {
         self.process_rx(encoding, raw);
@@ -837,16 +899,30 @@ impl TerminalMode {
             self.process_rx(TextEncoding::Utf8, b"\x1b[?1049l");
         }
         let (row, col) = self.vt100_parser.screen().cursor_position();
-        let mut end = String::from(RESTORE_RESET);
-        end.push_str(&format!("\x1b[{};{}H", row + 1, col + 1));
-        // on a line of its own: a new one only when the cursor isn't at the start of one
+        let mut reset = String::from(RESTORE_RESET);
+        reset.push_str(&format!("\x1b[{};{}H", row + 1, col + 1));
+        // the cursor's line is kept: a new one only when the cursor isn't at the start of one
         if col > 0 {
-            end.push_str("\r\n");
+            reset.push_str("\r\n");
         }
-        end.push_str("\x1b[2m");
+        self.process_rx(TextEncoding::Utf8, reset.as_bytes());
+
+        // the rows up to the cursor's and the last one with text go into the scrollback, line
+        // feeds on the bottom row pushing them up
+        let rows = self.get_vt100_size().0;
+        let cursor_row = self.vt100_parser.screen().cursor_position().0;
+        let below_text = (0..rows)
+            .rev()
+            .find(|&row| self.row_has_content(row))
+            .map_or(0, |last| last + 1);
+        let mut end = format!("\x1b[{rows};1H");
+        end.push_str(&"\n".repeat(cursor_row.max(below_text) as usize));
+        end.push_str("\x1b[1;1H\x1b[2m");
         end.push_str(separator);
         end.push_str("\x1b[0m\r\n");
         self.process_rx(TextEncoding::Utf8, end.as_bytes());
+        // on the top row: its world row is the first after the scrollback
+        self.restored_separator = Some(self.max_content_scrollback);
         self.row_timestamps.iter_mut().for_each(|time| *time = None);
         // the queries of a past session are not answered (MAX-151)
         self.take_answers();
@@ -1585,10 +1661,15 @@ mod tests {
         assert_eq!(screen.mouse_protocol_mode(), vt100::MouseProtocolMode::None);
         assert!(!screen.bracketed_paste());
         assert!(!screen.hide_cursor());
+        // like a `clear`: the separator on the top row, the restored rows in the scrollback
         let contents = screen.contents();
-        assert!(
-            contents.starts_with("before\nkept\n-- restored --"),
-            "{contents:?}"
+        assert!(contents.starts_with("-- restored --"), "{contents:?}");
+        let lines = tm.all_text_lines();
+        let separator = lines.iter().position(|l| l == "-- restored --").unwrap();
+        assert_eq!(
+            lines[separator - 2..separator],
+            ["before", "kept"],
+            "{lines:?}"
         );
         assert!(tm.row_timestamps.iter().all(Option::is_none));
 
@@ -1605,8 +1686,77 @@ mod tests {
         // a session that ended mid-line: the separator goes on the next one
         let mut tm = TerminalMode::new(100, 24, 80);
         tm.restore(TextEncoding::Utf8, b"abc", "-- restored --");
-        let contents = tm.vt100_screen().contents();
-        assert!(contents.starts_with("abc\n-- restored --"), "{contents:?}");
+        let lines = tm.all_text_lines();
+        let separator = lines.iter().position(|l| l == "-- restored --").unwrap();
+        assert_eq!(lines[separator - 1], "abc", "{lines:?}");
+
+        // text left under the cursor (a full-screen program's) goes up too: none stays under
+        // the separator
+        let mut tm = TerminalMode::new(100, 24, 80);
+        tm.restore(
+            TextEncoding::Utf8,
+            b"top\x1b[10;1Hstatus\x1b[2;1H",
+            "-- restored --",
+        );
+        let screen = tm.vt100_screen();
+        assert_eq!(screen.contents().trim_end(), "-- restored --");
+        assert_eq!(screen.cursor_position(), (1, 0));
+        let lines = tm.all_text_lines();
+        assert!(lines.iter().any(|l| l == "status"), "{lines:?}");
+    }
+
+    /// MAX-176: `clear` puts the cursor's row (a prompt) on the top row, the rows above it in
+    /// the scrollback, the cursor's column kept; on the alternate screen it does nothing.
+    /// How: 3 lines and a `$ ` prompt in a 24-row grid, cleared; then a full-screen program's.
+    #[test]
+    fn clear_puts_the_cursor_row_on_top() {
+        let mut tm = TerminalMode::new(100, 24, 80);
+        tm.process_rx(TextEncoding::Utf8, b"one\r\ntwo\r\nthree\r\n$ ");
+        tm.clear_view();
+        let screen = tm.vt100_screen();
+        assert_eq!(screen.contents().trim_end(), "$");
+        assert_eq!(screen.cursor_position(), (0, 2));
+        let lines = tm.all_text_lines();
+        let prompt = lines.iter().position(|l| l.trim_end() == "$").unwrap();
+        assert_eq!(lines[..prompt], ["one", "two", "three"], "{lines:?}");
+
+        let mut tm = TerminalMode::new(100, 24, 80);
+        tm.process_rx(TextEncoding::Utf8, b"\x1b[?1049h\x1b[5;1Hmenu");
+        tm.clear_view();
+        let screen = tm.vt100_screen();
+        assert_eq!(screen.cursor_position(), (4, 4));
+        assert!(screen.contents().starts_with("\n\n\n\nmenu"));
+    }
+
+    /// MAX-176: the restore separator stays on the top row when the first frame grows the grid
+    /// (vt100 pulls rows back from the scrollback then), also with lines received before the
+    /// grid got its size (an app started in line mode); the restored lines stay a scroll up.
+    /// How: 30 lines restored in a 24-row grid, grown to 50 rows by `grow_only`; then the same
+    /// with a live line received before.
+    #[test]
+    fn restore_separator_stays_on_top_when_the_grid_grows() {
+        let raw: String = (0..30).map(|i| format!("line {i:02}\r\n")).collect();
+        for live in [None, Some("live")] {
+            let mut tm = TerminalMode::new(100, 24, 80);
+            tm.restore(TextEncoding::Utf8, raw.as_bytes(), "-- restored --");
+            if let Some(live) = live {
+                tm.process_rx(TextEncoding::Utf8, format!("{live}\r\n").as_bytes());
+            }
+            let viewport = ViewportSize::new(80, 50);
+            tm.update_viewport(viewport, TerminalDimensionMode::GrowOnly, 24, 80);
+            assert_eq!(tm.get_vt100_size().0, 50);
+            let screen = tm.vt100_screen();
+            let rows: Vec<String> = screen.rows(0, 80).take(3).collect();
+            let expected = ["-- restored --", live.unwrap_or(""), ""];
+            assert_eq!(rows, expected, "{live:?}");
+            let cursor_row = if live.is_some() { 2 } else { 1 };
+            assert_eq!(screen.cursor_position(), (cursor_row, 0), "{live:?}");
+            let lines = tm.all_text_lines();
+            let separator = lines.iter().position(|l| l == "-- restored --").unwrap();
+            assert_eq!(lines[separator - 1], "line 29", "{lines:?}");
+            // the line feeds give the cursor's row no time (the live line's gave it one)
+            assert_eq!(tm.cursor_row_time().is_some(), live.is_some());
+        }
     }
 
     /// MAX-151: Alt-R tells the remote the emulator's size, where its lines wrap, the size the

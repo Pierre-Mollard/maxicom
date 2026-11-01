@@ -72,6 +72,17 @@ pub struct LineMode {
     copy_cursor_shown: bool,
     /// The entry and char starting the view's bottom row in the last frame
     bottom_row_start: Option<(usize, usize)>,
+    /// Where the live view starts while the lines after it don't fill it, like after a
+    /// `clear` (MAX-176)
+    view_floor: Option<ViewFloor>,
+}
+
+/// The entry the live view starts on, and the rows scrolled above it while blank rows still
+/// show under the last line
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ViewFloor {
+    pub line_idx: usize,
+    pub rows_above: usize,
 }
 
 impl LineMode {
@@ -106,6 +117,7 @@ impl LineMode {
             copy_reveal: None,
             copy_cursor_shown: false,
             bottom_row_start: None,
+            view_floor: None,
         }
     }
 
@@ -179,11 +191,38 @@ impl LineMode {
         }
         self.search_state.rebase_after_eviction(evicted);
         self.copy_state.rebase_after_eviction(evicted);
+        self.view_floor = self.view_floor.and_then(|floor| {
+            Some(ViewFloor {
+                line_idx: floor.line_idx.checked_sub(evicted)?,
+                ..floor
+            })
+        });
     }
 
     pub fn clear_history(&mut self) {
         self.local_history.clear();
         self.row_heights.clear();
+        self.view_floor = None;
+    }
+
+    /// The `clear` command: the live view starts on the next entry (the partial RX line, a
+    /// prompt, while it isn't ended), blank rows under it until new lines fill them, the
+    /// entries before it a scroll up away (MAX-176)
+    pub fn clear_view(&mut self) {
+        self.scroll_to_bottom();
+        self.view_floor = Some(ViewFloor {
+            line_idx: self.local_history.len(),
+            rows_above: 0,
+        });
+    }
+    #[inline]
+    pub fn view_floor(&self) -> Option<ViewFloor> {
+        self.view_floor
+    }
+    /// Kept by the render while the view is on it, dropped once the view is past it
+    #[inline]
+    pub fn set_view_floor(&mut self, floor: Option<ViewFloor>) {
+        self.view_floor = floor;
     }
 
     /// Read-only slice/iterator of completed lines

@@ -1414,6 +1414,7 @@ impl App {
             (Mode::Line, HistoryAction::Clear) => {
                 self.line_mode.clear_history();
             }
+            (Mode::Line, HistoryAction::ClearView) => self.line_mode.clear_view(),
             (Mode::Line, HistoryAction::PanLeft(cols)) => {
                 self.line_mode.pan_to_left(cols);
             }
@@ -1445,6 +1446,7 @@ impl App {
                 self.terminal_mode.pan_to_left(cols, self.viewport.cols);
             }
             (Mode::Terminal, HistoryAction::Clear) => self.terminal_mode.clear_history(),
+            (Mode::Terminal, HistoryAction::ClearView) => self.terminal_mode.clear_view(),
             (Mode::Line, HistoryAction::ScrollTo(rows)) => self.line_mode.scroll_to_row(rows),
             (Mode::Terminal, HistoryAction::ScrollTo(rows)) => {
                 self.terminal_mode.scroll_to_row(rows)
