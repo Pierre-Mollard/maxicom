@@ -183,11 +183,7 @@ impl Default for LineModeStyles {
             prompt: ConfigStyle::from_bg(Color::Reset),
             line_prefix: ConfigStyle::from_fg(Color::DarkGray),
             line_indent_prefix: ConfigStyle::from_fg(Color::DarkGray),
-            line_partial_prefix: ConfigStyle::new(
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            line_partial_prefix: ConfigStyle::from_fg(Color::DarkGray),
             timestamp: ConfigStyle::from_fg(Color::Yellow),
         }
     }

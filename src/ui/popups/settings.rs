@@ -9,7 +9,10 @@ use ratatui::{
 use crate::{
     app::App,
     capture::shorten_home,
-    configs::{AppConfig, PrefixWrapBehavior, ThemeConfig, keybindings::KeyBindingDialogAction},
+    configs::{
+        AppConfig, PrefixWrapBehavior, ThemeConfig, keybindings::KeyBindingDialogAction,
+        settings::PrefixPlace,
+    },
     overlays::{PopupTarget, SettingKey, SettingsDialog},
     ui::popups::{FORM_WIDTH, form_area, key_hints, popup_block, row_area, section},
 };
@@ -34,6 +37,11 @@ pub fn render_settings_popup(
         PrefixWrapBehavior::None => "None",
         PrefixWrapBehavior::Prefix => "Prefix",
         PrefixWrapBehavior::Timestamp => "Timestamp",
+    };
+    let prefix_place_str = match app.settings().line_mode.prefix_place {
+        PrefixPlace::Inset => "Inset",
+        PrefixPlace::Border => "Border",
+        PrefixPlace::None => "None",
     };
     let echo_str = if app.settings().local_echo {
         "ON"
@@ -94,6 +102,10 @@ pub fn render_settings_popup(
         (
             Some(SettingKey::IdentWrap),
             row("I", "Indent Wrap", indent_str),
+        ),
+        (
+            Some(SettingKey::PrefixPlace),
+            row("P", "Prefix Place", prefix_place_str),
         ),
         (
             Some(SettingKey::DisplayMode),

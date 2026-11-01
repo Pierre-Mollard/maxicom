@@ -43,6 +43,7 @@ impl SettingsDialog {
                 KeyCode::Char('w' | 'W') => toggle(SettingKey::LineWrap),
                 KeyCode::Char('m' | 'M') => toggle(SettingKey::Mode),
                 KeyCode::Char('i' | 'I') => toggle(SettingKey::IdentWrap),
+                KeyCode::Char('p' | 'P') => toggle(SettingKey::PrefixPlace),
                 KeyCode::Char('d' | 'D') => toggle(SettingKey::DisplayMode),
                 KeyCode::Char('b' | 'B') => toggle(SettingKey::DisplayRaw),
                 KeyCode::Char('t' | 'T') => toggle(SettingKey::DisplayTimestamp),

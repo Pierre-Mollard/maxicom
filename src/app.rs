@@ -21,7 +21,8 @@ use crate::{
     commands::{CommandError, Invocation, Target},
     configs::{
         DualBufferMode, KeyBindingAction, KeyResolver, Mode, SettingsConfig, StatusBarLayout,
-        TextEncoding, WrapMode, settings::PrefixWrapBehavior,
+        TextEncoding, WrapMode,
+        settings::{PrefixPlace, PrefixWrapBehavior},
     },
     inputs::{
         Action, AppAction, ClickHoldAction, CopyModeAction, HistoryAction, LineInputAction,
@@ -1551,6 +1552,13 @@ impl App {
                     PrefixWrapBehavior::None => PrefixWrapBehavior::Prefix,
                     PrefixWrapBehavior::Prefix => PrefixWrapBehavior::Timestamp,
                     PrefixWrapBehavior::Timestamp => PrefixWrapBehavior::None,
+                }
+            }
+            SettingKey::PrefixPlace => {
+                self.settings.line_mode.prefix_place = match self.settings.line_mode.prefix_place {
+                    PrefixPlace::Inset => PrefixPlace::Border,
+                    PrefixPlace::Border => PrefixPlace::None,
+                    PrefixPlace::None => PrefixPlace::Inset,
                 }
             }
             SettingKey::DisplayMode => {

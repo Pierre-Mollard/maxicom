@@ -326,9 +326,15 @@ mod tests {
             let mut settings = SettingsConfig::default();
             settings.mode = Mode::Line;
             settings.show_timestamps = false;
-            // the rows the tests expect have no border, whatever the default, and their small
-            // screens aren't compact (MAX-136)
+            // the rows the tests expect have no border and a 2-column inset "│ " prefix,
+            // whatever the defaults, and their small screens aren't compact (MAX-136)
             settings.ui.show_borders = false;
+            settings.line_mode.prefix_place = crate::configs::settings::PrefixPlace::Inset;
+            settings.line_mode.inset_prefix = crate::configs::settings::InsetPrefix {
+                line: String::from("│ "),
+                wrap: String::from("│ "),
+                partial: String::from("│…"),
+            };
             settings.ui.compact_cols = 0;
             settings.ui.compact_rows = 0;
             settings.line_mode.display_mode = display_mode;
@@ -480,6 +486,239 @@ mod tests {
             rows.iter().any(|row| row.contains("78 E9 79 0A")),
             "{rows:#?}"
         );
+    }
+
+    /// The rows `prefix_place` marks: a line, a wrapped row and the partial RX line (MAX-163).
+    /// Fed: a short line, a line wrapping over two rows, then a partial line; drawn 40 wide.
+    fn prefix_rows(tweak: impl FnOnce(&mut SettingsConfig)) -> Vec<String> {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 40, 12, |s| {
+            s.line_mode.prefix_place = crate::configs::settings::PrefixPlace::Border;
+            tweak(s);
+        });
+        h.feed(b"short\r\n");
+        h.feed(format!("{}\r\n", "word ".repeat(10)).as_bytes());
+        h.feed(b"part");
+        h.draw()
+    }
+
+    /// `border`: the text starts at the pane's first column, the left border cell marks the
+    /// wrapped row `┆` and the partial line `╎`, a line keeps the plain `│`.
+    #[test]
+    fn border_prefix_marks_the_left_border() {
+        let rows = prefix_rows(|s| s.ui.show_borders = true);
+        let short = rows.iter().position(|row| row.contains("short")).unwrap();
+        assert!(rows[short].starts_with("│short"), "{rows:#?}");
+        assert!(rows[short + 1].starts_with("│word word"), "{rows:#?}");
+        assert!(rows[short + 2].starts_with("┆word"), "{rows:#?}");
+        assert!(rows[short + 3].starts_with("╎part"), "{rows:#?}");
+        assert!(rows[short + 4].starts_with("│ "), "{rows:#?}");
+    }
+
+    /// `border` with no left border: nothing marks the rows, the text starts at column 0.
+    #[test]
+    fn border_prefix_without_borders_marks_nothing() {
+        let rows = prefix_rows(|_| {});
+        let short = rows.iter().position(|row| row.contains("short")).unwrap();
+        assert!(rows[short].starts_with("short"), "{rows:#?}");
+        assert!(rows[short + 1].starts_with("word word"), "{rows:#?}");
+        assert!(!rows[short + 2].starts_with(['┆', '│']), "{rows:#?}");
+        assert!(rows[short + 3].starts_with("part"), "{rows:#?}");
+        assert!(rows[short + 4].trim().is_empty(), "{rows:#?}");
+    }
+
+    /// `border` with timestamps: the marks go in the column after the timestamp, merged with
+    /// it, and the separator runs down the rows with no text.
+    /// How: `%M:%S` timestamps (5 columns), the default wrap indent under the timestamp.
+    #[test]
+    fn border_prefix_follows_the_timestamp() {
+        let rows = prefix_rows(|s| {
+            s.show_timestamps = true;
+            s.timestamp_format = String::from("%M:%S");
+            s.refresh_timestamp_width();
+        });
+        let after_time = |row: usize| rows[row].chars().skip(5).collect::<String>();
+        let short = rows.iter().position(|row| row.contains("short")).unwrap();
+        assert!(after_time(short).starts_with("│short"), "{rows:#?}");
+        assert!(after_time(short + 2).starts_with("┆word"), "{rows:#?}");
+        assert!(rows[short + 2].starts_with("     ┆"), "{rows:#?}");
+        assert!(after_time(short + 3).starts_with("╎part"), "{rows:#?}");
+        assert_eq!(after_time(short + 4).trim_end(), "│", "{rows:#?}");
+    }
+
+    /// `inset` with timestamps: the `│` bar follows the timestamp, the default prefixes come
+    /// after it, on every row kind; the bar runs down the rows with no text.
+    /// How: `%M:%S` timestamps (5 columns), the default wrap indent under the timestamp.
+    #[test]
+    fn inset_prefix_after_the_timestamp_bar() {
+        let rows = prefix_rows(|s| {
+            s.line_mode.prefix_place = crate::configs::settings::PrefixPlace::Inset;
+            s.line_mode.inset_prefix = crate::configs::settings::InsetPrefix::default();
+            s.show_timestamps = true;
+            s.timestamp_format = String::from("%M:%S");
+            s.refresh_timestamp_width();
+        });
+        let after_time = |row: usize| rows[row].chars().skip(5).collect::<String>();
+        let short = rows.iter().position(|row| row.contains("short")).unwrap();
+        assert!(after_time(short).starts_with("│> short"), "{rows:#?}");
+        assert!(rows[short + 2].starts_with("     │  word"), "{rows:#?}");
+        assert!(after_time(short + 3).starts_with("│… part"), "{rows:#?}");
+        assert_eq!(after_time(short + 4).trim_end(), "│", "{rows:#?}");
+    }
+
+    /// `inset` without timestamps: no bar of its own, the prefixes follow the box border (no
+    /// `││`), and the rows with no text stay blank.
+    #[test]
+    fn inset_prefix_after_the_border() {
+        let rows = prefix_rows(|s| {
+            s.line_mode.prefix_place = crate::configs::settings::PrefixPlace::Inset;
+            s.line_mode.inset_prefix = crate::configs::settings::InsetPrefix::default();
+            s.ui.show_borders = true;
+        });
+        let short = rows.iter().position(|row| row.contains("short")).unwrap();
+        assert!(rows[short].starts_with("│> short"), "{rows:#?}");
+        assert!(rows[short + 2].starts_with("│  word"), "{rows:#?}");
+        assert!(rows[short + 3].starts_with("│… part"), "{rows:#?}");
+        assert!(rows[short + 4].starts_with("│ "), "{rows:#?}");
+    }
+
+    /// `none` with timestamps: still the `│` bar after the timestamp, no marks, down to the
+    /// bottom of the pane, also with no entry yet.
+    /// How: `%M:%S` timestamps (5 columns), 12 rows with a prompt and a status bar row below
+    /// the pane (10 rows).
+    #[test]
+    fn none_keeps_the_timestamp_bar() {
+        let tweak = |s: &mut SettingsConfig| {
+            s.line_mode.prefix_place = crate::configs::settings::PrefixPlace::None;
+            s.show_timestamps = true;
+            s.timestamp_format = String::from("%M:%S");
+            s.refresh_timestamp_width();
+        };
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 40, 12, tweak);
+        let rows = h.draw();
+        let bar_column = |row: &String| row.chars().nth(5) == Some('│');
+        assert!(rows[..10].iter().all(bar_column), "{rows:#?}");
+
+        let rows = prefix_rows(tweak);
+        let after_time = |row: usize| rows[row].chars().skip(5).collect::<String>();
+        let short = rows.iter().position(|row| row.contains("short")).unwrap();
+        assert!(after_time(short).starts_with("│short"), "{rows:#?}");
+        assert!(rows[short + 2].starts_with("     │word"), "{rows:#?}");
+        assert!(after_time(short + 3).starts_with("│part"), "{rows:#?}");
+        assert_eq!(after_time(short + 4).trim_end(), "│", "{rows:#?}");
+    }
+
+    /// `entry_spacing`: blank rows before each entry, in the text and in the raw panel next to
+    /// it; the mouse finds no text on them; in `border` they keep the plain border.
+    /// How: 2 short lines with 1 row of spacing, the raw panel in Hex (80 columns for it).
+    #[test]
+    fn entry_spacing_puts_blank_rows_before_entries() {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+            s.line_mode.entry_spacing = 1;
+            s.raw_side.view = RawSideView::Hex;
+        });
+        h.feed(b"a\r\nb\r\n");
+        let rows = h.draw();
+        // the text, left of the raw panel, and no bytes in the panel
+        let blank = |row: &String| row.chars().take(40).all(|c| c == ' ') && !row.contains("0A");
+        assert!(blank(&rows[0]), "{rows:#?}");
+        assert!(
+            rows[1].starts_with("│ a") && rows[1].contains("61"),
+            "{rows:#?}"
+        );
+        assert!(blank(&rows[2]), "{rows:#?}");
+        assert!(
+            rows[3].starts_with("│ b") && rows[3].contains("62"),
+            "{rows:#?}"
+        );
+        let text_rows = &h.app.frame_map().text_rows;
+        assert!(text_rows[0].is_none() && text_rows[2].is_none());
+        assert_eq!(text_rows[1].as_ref().map(|row| row.line_idx), Some(0));
+        assert_eq!(text_rows[3].as_ref().map(|row| row.line_idx), Some(1));
+        let raw_rows = &h.app.frame_map().raw_rows;
+        assert!(raw_rows[0].is_none() && raw_rows[2].is_none());
+        assert_eq!(raw_rows[3].as_ref().map(|row| row.line_idx), Some(1));
+
+        let rows = prefix_rows(|s| {
+            s.ui.show_borders = true;
+            s.line_mode.entry_spacing = 1;
+        });
+        let short = rows.iter().position(|row| row.contains("short")).unwrap();
+        assert!(rows[short - 1].starts_with("│ "), "{rows:#?}");
+        assert!(rows[short + 1].starts_with("│ "), "{rows:#?}");
+        assert!(rows[short + 2].starts_with("│word"), "{rows:#?}");
+        assert!(rows[short + 3].starts_with("┆word"), "{rows:#?}");
+        assert!(rows[short + 4].starts_with("│ "), "{rows:#?}");
+        assert!(rows[short + 5].starts_with("╎part"), "{rows:#?}");
+    }
+
+    /// `entry_spacing` counts in the scroll: every entry is its gap and its rows, also when the
+    /// height is counted without laying the entry out (Truncate, byte modes).
+    /// How: 100 numbered lines with 1 row of spacing, in Pretty, Hex and Truncate: the rows
+    /// to scroll are 200 less a view; live, the last line is on the bottom row.
+    #[test]
+    fn entry_spacing_counts_in_the_scroll() {
+        for (display_mode, wrap_mode) in [
+            (LineDisplayMode::Pretty, crate::configs::WrapMode::Word),
+            (LineDisplayMode::Hex, crate::configs::WrapMode::Word),
+            (LineDisplayMode::Pretty, crate::configs::WrapMode::Truncate),
+        ] {
+            let mut h = Harness::line_mode_with(display_mode, 40, 12, |s| {
+                s.line_mode.entry_spacing = 1;
+                s.line_mode.wrap_mode = wrap_mode;
+            });
+            for i in 0..100 {
+                h.feed(format!("line {i:02}\r\n").as_bytes());
+            }
+            let rows = h.draw();
+            let height = h.app.frame_areas().content.height as usize;
+            let status = h.app.line_mode.scroll_status();
+            assert_eq!(
+                status.max_scroll,
+                200 - height,
+                "{display_mode:?} {wrap_mode:?}"
+            );
+            // the text, left of the scrollbar
+            let blank = |row: &String| row.chars().take(39).all(|c| c == ' ');
+            assert!(!blank(&rows[height - 1]), "{rows:#?}");
+            assert!(blank(&rows[height - 2]), "{rows:#?}");
+        }
+    }
+
+    /// `entry_spacing` in copy mode: the cursor is drawn on the text rows, a step up skips the
+    /// gap; entered from a view whose bottom row is a gap, it goes to the entry above, shown.
+    /// How: 100 numbered lines with 1 row of spacing; from the live view, then scrolled 1 row.
+    #[test]
+    fn entry_spacing_in_copy_mode() {
+        let numbered = || {
+            let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 40, 12, |s| {
+                s.line_mode.entry_spacing = 1;
+            });
+            for i in 0..100 {
+                h.feed(format!("line {i:02}\r\n").as_bytes());
+            }
+            h.draw();
+            let height = h.app.frame_areas().content.height;
+            (h, height)
+        };
+        let (mut h, height) = numbered();
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        let rows = h.draw();
+        assert_eq!(cursor_cell(&mut h).1, height - 1, "{rows:#?}");
+        h.app.update(Action::CopyMode(CopyModeAction::MoveUp));
+        let rows = h.draw();
+        let y = cursor_cell(&mut h).1;
+        assert_eq!(y, height - 3, "{rows:#?}");
+        assert!(rows[y as usize].contains("line 98"), "{rows:#?}");
+
+        let (mut h, height) = numbered();
+        h.scroll(HistoryAction::ScrollUp(1));
+        let rows = h.draw();
+        let gap = &rows[height as usize - 1];
+        assert!(gap.chars().take(39).all(|c| c == ' '), "{rows:#?}");
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        let rows = h.draw();
+        assert_eq!(h.app.line_mode.copy_state().cursor.line_idx, 98);
+        assert_eq!(cursor_cell(&mut h).1, height - 2, "{rows:#?}");
     }
 
     /// Truncate mode scrolled up and panned right shows the same rows and columns once the
@@ -3471,6 +3710,32 @@ mod tests {
         click(&mut h, size_mode);
         assert_eq!(h.app.settings().terminal_mode.dimension_mode, FixedCols);
         assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
+    }
+
+    /// MAX-163: `P` in the settings popup cycles `prefix_place` (inset, border, none) and the
+    /// row shows it; a click on the row cycles it too.
+    #[test]
+    fn settings_popup_prefix_place() {
+        use crate::configs::settings::PrefixPlace::{Border, Inset, None};
+        use crossterm::event::KeyCode::Char;
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 30);
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::Settings(
+                SettingsDialog::new(),
+            ))));
+        let rows = h.draw();
+        let place = cell_of(&rows, "Prefix Place");
+        assert!(rows[place.1 as usize].contains("Inset"), "{rows:#?}");
+
+        key_do(&mut h, Char('p'), KeyModifiers::NONE);
+        let rows = h.draw();
+        assert_eq!(h.app.settings().line_mode.prefix_place, Border);
+        assert!(rows[place.1 as usize].contains("Border"), "{rows:#?}");
+
+        click(&mut h, place);
+        assert_eq!(h.app.settings().line_mode.prefix_place, None);
+        key_do(&mut h, Char('P'), KeyModifiers::NONE);
+        assert_eq!(h.app.settings().line_mode.prefix_place, Inset);
     }
 
     /// MAX-130: in terminal mode a right-click on the grid opens the menu only while the

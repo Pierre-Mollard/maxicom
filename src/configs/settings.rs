@@ -291,6 +291,54 @@ pub enum PrefixWrapBehavior {
     Timestamp,
 }
 
+/// Where line mode marks its rows (full line, wrapped row, partial RX line): inside the pane
+/// with the `inset_prefix` strings, in the left border with border glyphs, or nowhere. With
+/// timestamps on, a `│` bar follows the timestamp in every mode and is the border `border`
+/// marks
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PrefixPlace {
+    Inset,
+    #[default]
+    Border,
+    None,
+}
+
+/// The glyphs `prefix_place = "border"` marks the rows with; `BORDER_LINE` is also the bar
+/// after the timestamp
+pub const BORDER_LINE: &str = "│";
+pub const BORDER_WRAP: &str = "┆";
+pub const BORDER_PARTIAL: &str = "╎";
+
+/// What starts the rows with `prefix_place = "inset"`: a line, a wrapped row, the partial RX
+/// line. As wide as each other, so the text of every row kind lines up
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InsetPrefix {
+    pub line: String,
+    pub wrap: String,
+    pub partial: String,
+}
+
+impl Default for InsetPrefix {
+    fn default() -> Self {
+        Self {
+            line: String::from("> "),
+            wrap: String::from("  "),
+            partial: String::from("… "),
+        }
+    }
+}
+
+/// The prefixes laid out at the start of line mode rows, as `prefix_place` puts them, and the
+/// separator drawn on the rows without text
+pub struct LinePrefixes<'a> {
+    pub line: Cow<'a, str>,
+    pub indent: Cow<'a, str>,
+    pub partial: Cow<'a, str>,
+    pub separator: &'static str,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalDimensionMode {
@@ -552,9 +600,9 @@ pub struct LineModeConfig {
     pub history_size: usize,
     pub send_history_size: usize,
     pub show_partial_rx: bool,
-    pub line_prefix: String,
-    pub line_indent_prefix: String,
-    pub line_partial_prefix: String,
+    pub entry_spacing: usize,
+    pub prefix_place: PrefixPlace,
+    pub inset_prefix: InsetPrefix,
     pub unfocused_cursor_glyph: String,
     pub prompt_prefix: String,
     pub prompt_vi_prefix: String,
@@ -573,9 +621,9 @@ impl Default for LineModeConfig {
             history_size: 1000,
             send_history_size: 1000,
             show_partial_rx: true,
-            line_prefix: String::from("│ "),
-            line_indent_prefix: String::from("│ "),
-            line_partial_prefix: String::from("│…"),
+            entry_spacing: 0,
+            prefix_place: PrefixPlace::default(),
+            inset_prefix: InsetPrefix::default(),
             unfocused_cursor_glyph: String::from("█"),
             prompt_prefix: String::from("> "),
             prompt_vi_prefix: String::from("< "),
@@ -933,9 +981,56 @@ impl SettingsConfig {
             width += self.timestamp_width;
         }
 
-        width += self.line_mode.line_prefix.chars().count();
+        width += self.line_prefixes().line.chars().count();
 
         width
+    }
+
+    /// The prefixes line mode rows start with: the `│` bar when timestamps are on (the
+    /// timestamp's border), then the `inset_prefix` strings in `inset`. In `border` the bar
+    /// takes the border glyphs; without timestamps there is no bar and the render marks the
+    /// left border cell instead (`markers_in_border`), nothing when there is no left border
+    pub fn line_prefixes<'a>(&'a self) -> LinePrefixes<'a> {
+        let bar = if self.show_timestamps {
+            BORDER_LINE
+        } else {
+            ""
+        };
+        let barred = |prefix: &'a str| -> Cow<'a, str> {
+            if bar.is_empty() {
+                Cow::Borrowed(prefix)
+            } else {
+                Cow::Owned(format!("{bar}{prefix}"))
+            }
+        };
+        match self.line_mode.prefix_place {
+            PrefixPlace::Inset => {
+                let inset = &self.line_mode.inset_prefix;
+                LinePrefixes {
+                    line: barred(&inset.line),
+                    indent: barred(&inset.wrap),
+                    partial: barred(&inset.partial),
+                    separator: bar,
+                }
+            }
+            PrefixPlace::Border if self.show_timestamps => LinePrefixes {
+                line: Cow::Borrowed(BORDER_LINE),
+                indent: Cow::Borrowed(BORDER_WRAP),
+                partial: Cow::Borrowed(BORDER_PARTIAL),
+                separator: BORDER_LINE,
+            },
+            PrefixPlace::Border | PrefixPlace::None => LinePrefixes {
+                line: Cow::Borrowed(bar),
+                indent: Cow::Borrowed(bar),
+                partial: Cow::Borrowed(bar),
+                separator: bar,
+            },
+        }
+    }
+
+    /// Whether the row markers go in the left border cell, when there is one
+    pub fn markers_in_border(&self) -> bool {
+        self.line_mode.prefix_place == PrefixPlace::Border && !self.show_timestamps
     }
 }
 
@@ -1137,7 +1232,7 @@ mod tests {
         settings.show_timestamps = true;
         assert_eq!(
             settings.line_gutter_width(),
-            14 + settings.line_mode.line_prefix.chars().count()
+            14 + settings.line_prefixes().line.chars().count()
         );
     }
 }

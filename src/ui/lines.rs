@@ -5,6 +5,7 @@ use std::{
 
 use ratatui::{
     Frame,
+    buffer::Buffer,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
@@ -23,7 +24,9 @@ use crate::{
     },
     configs::{
         KeywordHighlight, LineDisplayMode, SettingsConfig, ThemeConfig, WrapMode,
-        settings::{PrefixWrapBehavior, RawSideView, raw_view_to_display_mode},
+        settings::{
+            BORDER_PARTIAL, BORDER_WRAP, PrefixWrapBehavior, RawSideView, raw_view_to_display_mode,
+        },
     },
     ui::{
         PostRenderEffect,
@@ -116,7 +119,13 @@ pub fn render_monitor(
     let wrap_mode = app.settings().line_mode.wrap_mode;
     let raw_view = app.settings().raw_side.view;
 
-    if total_entries == 0 || content_width == 0 || content_height == 0 {
+    if content_width == 0 || content_height == 0 {
+        return PostRenderEffect::None;
+    }
+    if total_entries == 0 {
+        // no text yet, the separator still runs down the pane
+        let marks = vec![RowMark::Empty; content_height];
+        draw_row_marks(app, frame.buffer_mut(), content_area, &marks, 0, theme);
         return PostRenderEffect::None;
     }
 
@@ -217,6 +226,8 @@ pub fn render_monitor(
         std::mem::discriminant(&app.settings().line_mode.wrap_indent).hash(&mut hasher);
         app.settings().show_timestamps.hash(&mut hasher);
         app.settings().line_gutter_width().hash(&mut hasher);
+        std::mem::discriminant(&app.settings().line_mode.prefix_place).hash(&mut hasher);
+        app.settings().line_mode.entry_spacing.hash(&mut hasher);
         hasher.finish()
     };
     let mut row_heights = app.line_mode.take_row_heights(heights_key);
@@ -230,7 +241,7 @@ pub fn render_monitor(
     // Laying out entries one at a time is what lets the window stop as soon as it has enough
     // rows; `PreparedLayout::concat` then joins them as if they had been laid out together
     let search = app.line_mode.search();
-    let line_prefix_cached = app.settings().line_mode.line_prefix.clone();
+    let line_prefix_cached = app.settings().line_prefixes().line.to_string();
     let lay_out_entry = |global_idx: usize| {
         let entry = &app.line_mode.history()[global_idx];
         let line_matches: Vec<(usize, &SearchMatch)> = if is_search_active {
@@ -372,8 +383,8 @@ pub fn render_monitor(
     let gutter_ends_with_space = gutter_width == 0
         || app
             .settings()
-            .line_mode
-            .line_prefix
+            .line_prefixes()
+            .line
             .ends_with(char::is_whitespace);
     let indent_width = continuation_indent(app.settings()).width();
     for (idx, height) in row_heights.iter_mut().enumerate() {
@@ -391,6 +402,8 @@ pub fn render_monitor(
             ),
             _ => None,
         };
+        // the counts leave out the gap rows the layout puts before the text
+        let counted = counted.map(|rows| rows + app.settings().line_mode.entry_spacing);
         *height = counted.unwrap_or_else(|| lay_out_entry(idx).visual_lines.len()) as u32;
     }
 
@@ -418,7 +431,7 @@ pub fn render_monitor(
                 partial_spans.push(Span::styled(time, theme.line_mode.timestamp));
             }
 
-            let partial_prefix = app.settings().line_mode.line_partial_prefix.to_string();
+            let partial_prefix = app.settings().line_prefixes().partial.to_string();
             let partial_prefix_style = *theme.line_mode.line_partial_prefix;
             partial_spans.push(Span::styled(partial_prefix, partial_prefix_style));
             partial_spans.extend(format_line_content(&partial_raw, display_mode, theme));
@@ -453,7 +466,7 @@ pub fn render_monitor(
     // Only the window's entries count for the scroll position, not the partial RX line drawn
     // after them
     let entries = &layout.line_layouts[..end_idx - start_idx];
-    let rows_of = |meta: &LogicalLineLayout| meta.sub_lines.len().max(1);
+    let rows_of = LogicalLineLayout::rows;
     let last_row = entries
         .last()
         .map_or(0, |meta| meta.visual_row_start + rows_of(meta) - 1);
@@ -489,7 +502,7 @@ pub fn render_monitor(
             }
             remaining -= sub.content_char_len;
         }
-        Some(meta.visual_row_start + sub_row)
+        Some(meta.first_text_row() + sub_row)
     };
 
     let paragraph_y_offset: usize = if row_scrolling {
@@ -575,9 +588,15 @@ pub fn render_monitor(
     let bottom = (paragraph_y_offset + content_height)
         .saturating_sub(1)
         .min(last_row);
-    let local = entries.partition_point(|meta| meta.visual_row_start <= bottom) - 1;
+    let mut local = entries.partition_point(|meta| meta.visual_row_start <= bottom) - 1;
+    // a bottom row in a gap: the text of its entry is below the view, the entry above ends in it
+    if bottom < entries[local].first_text_row() && local > 0 {
+        local -= 1;
+    }
     let meta = &entries[local];
-    let sub_row = (bottom - meta.visual_row_start).min(meta.sub_lines.len().saturating_sub(1));
+    let sub_row = bottom
+        .saturating_sub(meta.first_text_row())
+        .min(meta.sub_lines.len().saturating_sub(1));
     let char_idx = meta.sub_lines[..sub_row]
         .iter()
         .map(|sub| sub.content_char_len)
@@ -732,6 +751,10 @@ pub fn render_monitor(
         );
     }
 
+    let partial_idx =
+        (layout.line_layouts.len() > end_idx - start_idx).then_some(end_idx - start_idx);
+    let marks = row_marks(&layout, partial_idx, paragraph_y_offset, content_height);
+
     let mut visible_rows = layout.visual_lines;
     let first_row = paragraph_y_offset.min(visible_rows.len());
     let last_row = (first_row + content_height).min(visible_rows.len());
@@ -741,6 +764,14 @@ pub fn render_monitor(
         .style(*theme.line_mode.history)
         .scroll((0, line_x_offset.min(u16::MAX as usize) as u16));
     frame.render_widget(history_paragraph, content_area);
+    draw_row_marks(
+        app,
+        frame.buffer_mut(),
+        content_area,
+        &marks,
+        line_x_offset,
+        theme,
+    );
 
     apply_keyword_highlights(frame.buffer_mut(), content_area, highlights);
 
@@ -755,7 +786,7 @@ pub fn render_monitor(
             && cursor_line < end_idx
             && let Some(line_meta) = layout.line_layouts.get(cursor_line - start_idx)
         {
-            let mut resolved_row = line_meta.visual_row_start;
+            let mut resolved_row = line_meta.first_text_row();
             let mut resolved_col = 0;
             let mut remaining = cursor_char;
 
@@ -763,7 +794,7 @@ pub fn render_monitor(
                 let is_last_sub_line = sub_idx == line_meta.sub_lines.len().saturating_sub(1);
 
                 if remaining < sub.content_char_len || is_last_sub_line {
-                    resolved_row = line_meta.visual_row_start + sub_idx;
+                    resolved_row = line_meta.first_text_row() + sub_idx;
 
                     let mut gutter_to_skip = sub.gutter_chars;
                     let mut content_to_take = remaining;
@@ -958,20 +989,111 @@ pub fn render_input_prompt(app: &mut App, frame: &mut Frame, area: Rect, theme: 
     }
 }
 
+/// What starts a screen row of the line view: an entry's first row, a wrapped row, the
+/// partial RX line's first row, or no text
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RowMark {
+    Line,
+    Wrap,
+    Partial,
+    Empty,
+}
+
+/// The mark of each screen row, from the window row on the view's top line. `partial_idx` is
+/// the partial RX line's place in `layout.line_layouts`, when it is drawn
+fn row_marks(
+    layout: &PreparedLayout,
+    partial_idx: Option<usize>,
+    first_row: usize,
+    height: usize,
+) -> Vec<RowMark> {
+    (first_row..first_row + height)
+        .map(|window_row| {
+            if window_row >= layout.visual_lines.len() {
+                return RowMark::Empty;
+            }
+            let local = layout
+                .line_layouts
+                .partition_point(|meta| meta.visual_row_start <= window_row)
+                - 1;
+            let first_text_row = layout.line_layouts[local].first_text_row();
+            if window_row < first_text_row {
+                RowMark::Empty
+            } else if window_row > first_text_row {
+                RowMark::Wrap
+            } else if partial_idx == Some(local) {
+                RowMark::Partial
+            } else {
+                RowMark::Line
+            }
+        })
+        .collect()
+}
+
+/// Line mode's marks over the drawn text (MAX-163): with `prefix_place = "border"` and no
+/// timestamps, the wrapped and partial rows' glyphs in the left border cell (the plain border
+/// marks a line); and the separator on the rows with no text, so it runs down to the bottom of
+/// the pane. It sits where the prefixes start, after the timestamp, moved by the pan
+fn draw_row_marks(
+    app: &App,
+    buf: &mut Buffer,
+    content_area: Rect,
+    marks: &[RowMark],
+    x_offset: usize,
+    theme: &ThemeConfig,
+) {
+    let settings = app.settings();
+    let rows = || marks.iter().zip(content_area.rows());
+
+    if settings.markers_in_border() && app.show_borders() && content_area.x > 0 {
+        let x = content_area.x - 1;
+        for (mark, row) in rows() {
+            match mark {
+                RowMark::Wrap => {
+                    buf[(x, row.y)].set_symbol(BORDER_WRAP);
+                }
+                RowMark::Partial => {
+                    buf[(x, row.y)]
+                        .set_symbol(BORDER_PARTIAL)
+                        .set_style(*theme.line_mode.line_partial_prefix);
+                }
+                RowMark::Line | RowMark::Empty => {}
+            }
+        }
+    }
+
+    let prefixes = settings.line_prefixes();
+    if prefixes.separator.is_empty() {
+        return;
+    }
+    let timestamp_width = settings
+        .line_gutter_width()
+        .saturating_sub(prefixes.line.width());
+    let Some(col) = timestamp_width.checked_sub(x_offset) else {
+        return;
+    };
+    let style = *theme.line_mode.line_prefix;
+    let width = (content_area.width as usize).saturating_sub(col);
+    for (_, row) in rows().filter(|(mark, _)| **mark == RowMark::Empty) {
+        buf.set_stringn(row.x + col as u16, row.y, prefixes.separator, width, style);
+    }
+}
+
 /// Columns a continuation row (a wrapped entry's second row and after) starts in, before its
 /// spans: where the copy cursor and a mouse click count from
 fn continuation_indent_width(settings: &SettingsConfig) -> usize {
+    let prefixes = settings.line_prefixes();
     match settings.line_mode.wrap_indent {
         PrefixWrapBehavior::None => 0,
-        PrefixWrapBehavior::Prefix => settings.line_mode.line_indent_prefix.width(),
+        PrefixWrapBehavior::Prefix => prefixes.indent.width(),
         PrefixWrapBehavior::Timestamp => {
-            let prefix_w = settings.line_mode.line_prefix.width();
+            let prefix_w = prefixes.line.width();
             let ts_width = if settings.show_timestamps {
                 settings.line_gutter_width().saturating_sub(prefix_w)
             } else {
                 0
             };
-            ts_width + settings.line_mode.line_indent_prefix.width()
+            ts_width + prefixes.indent.width()
         }
     }
 }
@@ -999,7 +1121,8 @@ fn map_text_rows(
         let row = local.checked_sub(1).and_then(|local| {
             let meta = &entries[local];
             let line_idx = start_idx + local;
-            let sub_idx = window_row - meta.visual_row_start;
+            // no text in the gap rows before the entry
+            let sub_idx = window_row.checked_sub(meta.first_text_row())?;
             let Some(sub) = meta.sub_lines.get(sub_idx) else {
                 // an empty entry still takes a row
                 return (sub_idx == 0).then_some(TextRow {
@@ -1089,7 +1212,7 @@ pub fn render_raw_side_panel(
         let global_idx = start_idx + local_layout_idx;
 
         let visual_sub_count = entry_layout.sub_lines.len();
-        let entry_visual_end = current_visual_row + visual_sub_count;
+        let entry_visual_end = current_visual_row + entry_layout.gap + visual_sub_count;
 
         if entry_visual_end <= visible_visual_start {
             current_visual_row = entry_visual_end;
@@ -1098,6 +1221,17 @@ pub fn render_raw_side_panel(
         if current_visual_row >= visible_visual_end {
             break;
         }
+
+        // the gap rows before the entry are blank in the panel too
+        for gap_row in current_visual_row..current_visual_row + entry_layout.gap {
+            if (visible_visual_start..visible_visual_end).contains(&gap_row) {
+                visible_raw_lines.push(Line::default());
+                if map_rows {
+                    raw_rows.push(None);
+                }
+            }
+        }
+        let first_text_row = current_visual_row + entry_layout.gap;
 
         if let Some(entry) = history.get(global_idx) {
             let raw_bytes = entry.wire_bytes();
@@ -1129,7 +1263,7 @@ pub fn render_raw_side_panel(
             };
 
             for (sub_idx, sub) in entry_layout.sub_lines.iter().enumerate() {
-                let line_y = current_visual_row + sub_idx;
+                let line_y = first_text_row + sub_idx;
                 let is_last_sub = sub_idx == visual_sub_count.saturating_sub(1);
 
                 let sub_char_end = (char_offset + sub.content_char_len)
@@ -1341,7 +1475,7 @@ mod tests {
 
     fn spans(entry: &LogEntry, settings: &SettingsConfig) -> Vec<(String, Style)> {
         let theme = ThemeConfig::default();
-        let prefix = settings.line_mode.line_prefix.clone();
+        let prefix = settings.line_prefixes().line.to_string();
         history_entry_to_line(entry, settings, &[], 0, None, &theme, &prefix)
             .spans
             .into_iter()
@@ -1362,14 +1496,11 @@ mod tests {
             line[0],
             ("[12:34:56]".to_string(), *theme.line_mode.timestamp)
         );
-        assert_eq!(line[1].0, settings.line_mode.line_prefix);
+        assert_eq!(line[1].0, settings.line_prefixes().line);
         assert_eq!(line[2].0, "hello");
 
         settings.show_timestamps = false;
-        assert_eq!(
-            spans(&entry, &settings)[0].0,
-            settings.line_mode.line_prefix
-        );
+        assert_eq!(spans(&entry, &settings)[0].0, settings.line_prefixes().line);
     }
 
     /// MAX-148: an entry without a time keeps the time column blank, as wide as a time, so its

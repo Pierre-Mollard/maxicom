@@ -209,6 +209,7 @@ pub enum SettingKey {
     Mode,
     LineWrap,
     IdentWrap,
+    PrefixPlace,
     DisplayTimestamp,
     TextEncoding,
     DisplayMode,

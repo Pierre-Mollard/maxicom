@@ -242,10 +242,25 @@ pub struct VisualSubLine {
     pub visual_width: usize,
 }
 
+/// One line laid out: from `visual_row_start`, its `gap` blank rows (`entry_spacing`), then
+/// one row per sub-line
 #[derive(Debug, Clone)]
 pub struct LogicalLineLayout {
     pub visual_row_start: usize,
+    pub gap: usize,
     pub sub_lines: Vec<VisualSubLine>,
+}
+
+impl LogicalLineLayout {
+    /// The row of the first sub-line, after the gap
+    pub fn first_text_row(&self) -> usize {
+        self.visual_row_start + self.gap
+    }
+
+    /// The rows it takes, gap included (an empty line still takes a row)
+    pub fn rows(&self) -> usize {
+        self.gap + self.sub_lines.len().max(1)
+    }
 }
 
 pub struct PreparedLayout {
@@ -672,17 +687,16 @@ pub fn wrap_line_by_chars(
 /// What starts the continuation rows of a wrapped line (`wrap_indent`): nothing, the indent
 /// prefix, or the indent prefix after blanks as wide as the timestamp
 pub fn continuation_indent(settings: &SettingsConfig) -> String {
+    let prefixes = settings.line_prefixes();
     let base_prefix = match settings.line_mode.wrap_indent {
         PrefixWrapBehavior::None => "",
-        PrefixWrapBehavior::Prefix | PrefixWrapBehavior::Timestamp => {
-            &settings.line_mode.line_indent_prefix
-        }
+        PrefixWrapBehavior::Prefix | PrefixWrapBehavior::Timestamp => &prefixes.indent,
     };
 
     let timestamp_pad = if settings.line_mode.wrap_indent == PrefixWrapBehavior::Timestamp
         && settings.show_timestamps
     {
-        let prefix_w = settings.line_mode.line_prefix.width();
+        let prefix_w = prefixes.line.width();
         let ts_width = settings.line_gutter_width().saturating_sub(prefix_w);
         " ".repeat(ts_width)
     } else {
@@ -754,9 +768,11 @@ pub fn prepare_view_layout(
     let full_indent_prefix = continuation_indent(settings);
     let indent_width = full_indent_prefix.width();
     let indent_style = *theme.line_mode.line_indent_prefix;
+    let gap = settings.line_mode.entry_spacing;
 
     for line in lines {
         let visual_row_start = visual_lines.len();
+        visual_lines.extend(std::iter::repeat_n(Line::default(), gap));
 
         if content_width > 0 && matches!(wrap_mode, WrapMode::Word | WrapMode::Char) {
             let subs = match wrap_mode {
@@ -785,6 +801,7 @@ pub fn prepare_view_layout(
             }
             line_layouts.push(LogicalLineLayout {
                 visual_row_start,
+                gap,
                 sub_lines: subs,
             });
         } else {
@@ -797,6 +814,7 @@ pub fn prepare_view_layout(
             visual_lines.push(Line::from(spans.clone()));
             line_layouts.push(LogicalLineLayout {
                 visual_row_start,
+                gap,
                 sub_lines: vec![VisualSubLine {
                     spans,
                     gutter_chars,
@@ -979,9 +997,10 @@ mod tests {
         let word = "0123456789".repeat(15);
         for wrap_mode in [WrapMode::Word, WrapMode::Char] {
             let mut settings = SettingsConfig::default();
+            settings.line_mode.prefix_place = crate::configs::settings::PrefixPlace::Inset;
             settings.line_mode.wrap_mode = wrap_mode;
-            let prefix = settings.line_mode.line_prefix.clone();
-            let indent = settings.line_mode.line_indent_prefix.clone();
+            let prefix = settings.line_prefixes().line.to_string();
+            let indent = settings.line_prefixes().indent.to_string();
 
             let input = line(&[prefix.as_str(), word.as_str()]);
             let layout = prepare_view_layout(vec![input], &settings, &theme, 59);
@@ -1093,6 +1112,15 @@ mod tests {
         let theme = ThemeConfig::default();
         let laid_out = |mode, wire: &[u8], width, timestamps, indent| {
             let mut settings = SettingsConfig::default();
+            // the goldens were written with 2-column "│ " prefixes: the timestamp bar then a
+            // blank, or the whole prefix without timestamps
+            let pad = if timestamps { " " } else { "│ " };
+            settings.line_mode.prefix_place = crate::configs::settings::PrefixPlace::Inset;
+            settings.line_mode.inset_prefix = crate::configs::settings::InsetPrefix {
+                line: String::from(pad),
+                wrap: String::from(pad),
+                partial: String::from(pad),
+            };
             settings.line_mode.display_mode = mode;
             settings.show_timestamps = timestamps;
             settings.timestamp_format = String::from("%M:%S");
@@ -1100,7 +1128,7 @@ mod tests {
             let time = chrono::TimeZone::with_ymd_and_hms(&chrono::Local, 2026, 10, 24, 12, 34, 56)
                 .unwrap();
             let entry = LogEntry::received(TextEncoding::Utf8.decode(wire), wire, time);
-            let prefix = settings.line_mode.line_prefix.clone();
+            let prefix = settings.line_prefixes().line.to_string();
             let line = history_entry_to_line(&entry, &settings, &[], 0, None, &theme, &prefix);
             rows_of(&prepare_view_layout(vec![line], &settings, &theme, width))
         };
@@ -1176,10 +1204,11 @@ mod tests {
             for timestamps in [false, true] {
                 for indent in [PrefixWrapBehavior::None, PrefixWrapBehavior::Prefix] {
                     let mut settings = SettingsConfig::default();
+                    settings.line_mode.prefix_place = crate::configs::settings::PrefixPlace::Inset;
                     settings.line_mode.display_mode = mode;
                     settings.show_timestamps = timestamps;
                     settings.line_mode.wrap_indent = indent;
-                    let prefix = settings.line_mode.line_prefix.clone();
+                    let prefix = settings.line_prefixes().line.to_string();
                     let gutter = settings.line_gutter_width();
                     let indent_width = continuation_indent(&settings).width();
                     for len in [0, 1, 2, 5, 13, 31, 60] {
