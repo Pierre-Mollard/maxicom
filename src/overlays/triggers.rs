@@ -4,16 +4,17 @@ use crossterm::event::KeyCode;
 
 use crate::{
     inputs::DialogAction,
-    overlays::{OverlayResponse, PopupTarget},
+    overlays::{OverlayResponse, PopupTarget, copy_path},
 };
 
 /// How far PageUp and PageDown move the selection
 const PAGE: usize = 10;
 
 /// The trigger browser (MAX-167): the rules of `triggers.toml` and whether each is armed, the
-/// selected one's config on the side. Enter, a click on the selected row or its button toggles
-/// it; `a` toggles them all, `c` copies the file's path. The names are the app's when it opened (a reload closes nothing,
-/// a row past the rules is ignored); the states are read from the app on each frame
+/// selected one's config on the side. Enter, Tab, Space, a click on the selected row or its
+/// button toggles it; Left (h) disarms it and Right (l) arms it (MAX-163); `a` toggles them
+/// all, `c` copies the file's path. The names are the app's when it opened (a reload closes
+/// nothing, a row past the rules is ignored); the states are read from the app on each frame
 #[derive(Debug, Clone, Default)]
 pub struct TriggerBrowser {
     pub names: Vec<String>,
@@ -40,9 +41,12 @@ impl TriggerBrowser {
             DialogAction::PageDown => self.selected = (self.selected + PAGE).min(last),
             DialogAction::Home => self.selected = 0,
             DialogAction::End => self.selected = last,
-            DialogAction::Confirm | DialogAction::Pick(PopupTarget::TriggerToggle) => {
-                return self.toggle_selected();
-            }
+            DialogAction::Confirm
+            | DialogAction::CycleNext
+            | DialogAction::CyclePrev
+            | DialogAction::Pick(PopupTarget::TriggerToggle) => return self.toggle_selected(),
+            DialogAction::Left => return self.arm_selected(false),
+            DialogAction::Right => return self.arm_selected(true),
             // a click selects, a click on the selected one toggles it
             DialogAction::Pick(PopupTarget::TriggerRow(idx)) if idx == self.selected => {
                 return self.toggle_selected();
@@ -51,11 +55,13 @@ impl TriggerBrowser {
             DialogAction::Pick(PopupTarget::TriggerToggleAll) => {
                 return OverlayResponse::ToggleTrigger(None);
             }
-            DialogAction::Pick(PopupTarget::TriggerCopyPath) => return self.copy_path(),
+            DialogAction::Pick(PopupTarget::TriggerCopyPath) => {
+                return copy_path(&self.path, "triggers file");
+            }
             DialogAction::HandleKey(key) => match key.code {
                 KeyCode::Char(' ') => return self.toggle_selected(),
                 KeyCode::Char('a') => return OverlayResponse::ToggleTrigger(None),
-                KeyCode::Char('c') => return self.copy_path(),
+                KeyCode::Char('c') => return copy_path(&self.path, "triggers file"),
                 _ => {}
             },
             _ => {}
@@ -63,17 +69,20 @@ impl TriggerBrowser {
         OverlayResponse::Handled
     }
 
-    /// The file's path to the clipboard, to open it out of the app
-    fn copy_path(&self) -> OverlayResponse {
-        OverlayResponse::HandledCopy {
-            text: self.path.display().to_string(),
-            what: "triggers file path".to_string(),
-        }
-    }
-
     fn toggle_selected(&self) -> OverlayResponse {
         match self.names.get(self.selected) {
             Some(name) => OverlayResponse::ToggleTrigger(Some(name.clone())),
+            None => OverlayResponse::Handled,
+        }
+    }
+
+    /// The selected one armed (`on`) or disarmed, whatever it is now
+    fn arm_selected(&self, on: bool) -> OverlayResponse {
+        match self.names.get(self.selected) {
+            Some(name) => OverlayResponse::ArmTrigger {
+                name: name.clone(),
+                on,
+            },
             None => OverlayResponse::Handled,
         }
     }
@@ -136,11 +145,40 @@ mod tests {
         ));
     }
 
+    /// MAX-163: Tab, Space and Shift-Tab (cycle next, previous) toggle the selected one; Left
+    /// disarms it and Right arms it, whatever it is now.
+    /// How: the second rule selected, each action's response.
+    #[test]
+    fn arrows_set_and_tab_toggles() {
+        let path = PathBuf::from("/conf/triggers.toml");
+        let mut browser = TriggerBrowser::new(vec!["login".into(), "u-boot".into()], path);
+        browser.handle_action(DialogAction::Down);
+        let u_boot = Some(Some("u-boot".to_string()));
+        for cycle in [DialogAction::CycleNext, DialogAction::CyclePrev] {
+            assert_eq!(toggles(browser.handle_action(cycle)), u_boot);
+        }
+        let arms = |response| match response {
+            OverlayResponse::ArmTrigger { name, on } => Some((name, on)),
+            _ => None,
+        };
+        let u_boot = |on| Some(("u-boot".to_string(), on));
+        assert_eq!(
+            arms(browser.handle_action(DialogAction::Left)),
+            u_boot(false)
+        );
+        assert_eq!(
+            arms(browser.handle_action(DialogAction::Right)),
+            u_boot(true)
+        );
+    }
+
     /// With no rule, nothing to toggle but all, which says so.
     #[test]
     fn empty() {
         let mut browser = TriggerBrowser::new(Vec::new(), PathBuf::new());
         assert_eq!(toggles(browser.handle_action(DialogAction::Confirm)), None);
+        let right = browser.handle_action(DialogAction::Right);
+        assert!(matches!(right, OverlayResponse::Handled));
         browser.handle_action(DialogAction::End);
         assert_eq!(browser.selected, 0);
         assert_eq!(toggles(browser.handle_action(key('a'))), Some(None));

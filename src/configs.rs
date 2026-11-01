@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use crate::capture::expand_home;
+
 pub mod highlights;
 pub mod keybindings;
 pub mod settings;
@@ -105,32 +107,45 @@ impl AppConfig {
             .unwrap_or_else(|| PathBuf::from(TRIGGERS_FILE))
     }
 
+    /// The folder of the config files
+    pub fn config_dir() -> PathBuf {
+        let path = Self::default_config_path();
+        path.parent().map(Path::to_path_buf).unwrap_or_default()
+    }
+
+    /// The config folder, then each config file a `*_path` setting puts out of it, with what
+    /// they are: what the help and the settings show and copy (MAX-163)
+    pub fn config_paths(settings: &SettingsConfig) -> Vec<(&'static str, PathBuf)> {
+        let dir = Self::config_dir();
+        let files = [
+            ("theme file", Self::active_theme_path(settings)),
+            ("keymap file", Self::active_keybindings_path(settings)),
+            ("highlights file", Self::active_highlight_path(settings)),
+            ("triggers file", Self::active_triggers_path(settings)),
+        ];
+        let moved = (files.into_iter()).filter(|(_, path)| path.parent() != Some(dir.as_path()));
+        std::iter::once(("config folder", dir.clone()))
+            .chain(moved)
+            .collect()
+    }
+
+    /// A `*_path` setting, `~` the home folder as in a shell (MAX-163), else the default path
     pub fn active_theme_path(settings: &SettingsConfig) -> PathBuf {
-        settings
-            .theme_path
-            .clone()
-            .unwrap_or_else(Self::default_theme_path)
+        (settings.theme_path.as_deref()).map_or_else(Self::default_theme_path, expand_home)
     }
 
     pub fn active_keybindings_path(settings: &SettingsConfig) -> PathBuf {
-        settings
-            .keybindings_path
-            .clone()
-            .unwrap_or_else(Self::default_keybindings_path)
+        (settings.keybindings_path.as_deref())
+            .map_or_else(Self::default_keybindings_path, expand_home)
     }
 
     pub fn active_highlight_path(settings: &SettingsConfig) -> PathBuf {
-        settings
-            .highlights_path
-            .clone()
-            .unwrap_or_else(Self::default_highlights_path)
+        (settings.highlights_path.as_deref())
+            .map_or_else(Self::default_highlights_path, expand_home)
     }
 
     pub fn active_triggers_path(settings: &SettingsConfig) -> PathBuf {
-        settings
-            .triggers_path
-            .clone()
-            .unwrap_or_else(Self::default_triggers_path)
+        (settings.triggers_path.as_deref()).map_or_else(Self::default_triggers_path, expand_home)
     }
 }
 
@@ -164,5 +179,67 @@ impl std::error::Error for ConfigsError {
             Self::Highlight(err) => Some(err),
             Self::Triggers(err) => Some(err),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// MAX-163: the config folder comes first, then only the files a `*_path` setting puts
+    /// out of it, in the theme, keymap, highlights, triggers order.
+    /// How: the default settings, then a theme elsewhere, a keymap set inside the folder and
+    /// triggers elsewhere.
+    #[test]
+    fn config_paths_list_the_folder_and_the_files_out_of_it() {
+        let dir = AppConfig::config_dir();
+        let settings = SettingsConfig::default();
+        assert_eq!(
+            AppConfig::config_paths(&settings),
+            [("config folder", dir.clone())]
+        );
+
+        let mut settings = SettingsConfig::default();
+        settings.theme_path = Some(PathBuf::from("/themes/dark.toml"));
+        settings.keybindings_path = Some(dir.join("other_keymap.toml"));
+        settings.triggers_path = Some(PathBuf::from("/boards/triggers.toml"));
+        assert_eq!(
+            AppConfig::config_paths(&settings),
+            [
+                ("config folder", dir),
+                ("theme file", PathBuf::from("/themes/dark.toml")),
+                ("triggers file", PathBuf::from("/boards/triggers.toml")),
+            ]
+        );
+    }
+
+    /// MAX-163: a `*_path` setting starting with `~` is in the home folder, not in a `~` folder
+    /// of the working directory. Only the paths are computed, nothing is written.
+    #[test]
+    fn config_file_paths_expand_home() {
+        let home = dirs::home_dir().unwrap();
+        let mut settings = SettingsConfig::default();
+        settings.theme_path = Some(PathBuf::from("~/maxicom_test/themes"));
+        settings.keybindings_path = Some(PathBuf::from("~/maxicom_test/keybindings"));
+        settings.highlights_path = Some(PathBuf::from("~/maxicom_test/highlights"));
+        settings.triggers_path = Some(PathBuf::from("~/maxicom_test/triggers"));
+        let dir = home.join("maxicom_test");
+        assert_eq!(AppConfig::active_theme_path(&settings), dir.join("themes"));
+        assert_eq!(
+            AppConfig::active_keybindings_path(&settings),
+            dir.join("keybindings")
+        );
+        assert_eq!(
+            AppConfig::active_highlight_path(&settings),
+            dir.join("highlights")
+        );
+        assert_eq!(
+            AppConfig::active_triggers_path(&settings),
+            dir.join("triggers")
+        );
+        assert_eq!(
+            AppConfig::config_paths(&settings)[1],
+            ("theme file", dir.join("themes"))
+        );
     }
 }

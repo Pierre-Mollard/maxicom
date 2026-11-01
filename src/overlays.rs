@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Module to reduce inter modules exchange or something
 use crossterm::event::KeyCode;
@@ -6,7 +6,7 @@ use crossterm::event::KeyCode;
 use crate::{
     capture::{Session, SessionDevice, Stream},
     commands::Invocation,
-    configs::{KeyBindingAction, keybindings::KeyBindingDialogAction},
+    configs::{AppConfig, KeyBindingAction, SettingsConfig, keybindings::KeyBindingDialogAction},
     inputs::DialogAction,
     link::serial::LineSettings,
 };
@@ -19,6 +19,7 @@ pub use misc::{ErrorDialog, FilePathDialog, ScreenshotDialog};
 pub use reconfigure::{LineSettingField, LineSettingsDialog};
 pub use resize::{ResizeDialog, ResizeField};
 pub use sessions::SessionBrowser;
+pub use settings::SettingsDialog;
 pub use triggers::TriggerBrowser;
 
 pub mod command_line;
@@ -28,12 +29,13 @@ pub mod misc;
 pub mod reconfigure;
 pub mod resize;
 pub mod sessions;
+pub mod settings;
 pub mod triggers;
 
 #[derive(Debug, Clone)]
 pub enum Overlay {
     Help(HelpDialog),
-    Settings,
+    Settings(SettingsDialog),
     TerminalSize(ResizeDialog),
     LinkSettings(LineSettingsDialog),
     FilePath(FilePathDialog),
@@ -79,6 +81,7 @@ pub enum PopupTarget {
     TriggerToggle,
     TriggerToggleAll,
     TriggerCopyPath,
+    ConfigPath(usize),
 }
 
 pub enum OverlayResponse {
@@ -122,6 +125,10 @@ pub enum OverlayResponse {
         what: String,
     },
     ToggleTrigger(Option<String>),
+    ArmTrigger {
+        name: String,
+        on: bool,
+    },
 }
 
 impl Overlay {
@@ -142,9 +149,13 @@ impl Overlay {
         )
     }
 
-    pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
+    pub fn handle_action(
+        &mut self,
+        action: DialogAction,
+        settings: &SettingsConfig,
+    ) -> OverlayResponse {
         match self {
-            Overlay::Help(dialog) => dialog.handle_action(action),
+            Overlay::Help(dialog) => dialog.handle_action(action, settings),
             Overlay::LinkSettings(dialog) => dialog.handle_action(action),
             Overlay::TerminalSize(dialog) => dialog.handle_action(action),
             Overlay::FilePath(dialog) => dialog.handle_action(action),
@@ -186,45 +197,7 @@ impl Overlay {
                 DialogAction::Close => OverlayResponse::Quit,
                 _ => OverlayResponse::Handled,
             },
-            Overlay::Settings => match action {
-                DialogAction::Close => OverlayResponse::Close,
-                DialogAction::Pick(PopupTarget::Setting(key)) => {
-                    OverlayResponse::ToggleSetting(key)
-                }
-                DialogAction::HandleKey(key) => match key.code {
-                    KeyCode::Char('e' | 'E') => {
-                        OverlayResponse::ToggleSetting(SettingKey::LocalEcho)
-                    }
-                    KeyCode::Char('w' | 'W') => {
-                        OverlayResponse::ToggleSetting(SettingKey::LineWrap)
-                    }
-                    KeyCode::Char('m' | 'M') => OverlayResponse::ToggleSetting(SettingKey::Mode),
-                    KeyCode::Char('i' | 'I') => {
-                        OverlayResponse::ToggleSetting(SettingKey::IdentWrap)
-                    }
-                    KeyCode::Char('d' | 'D') => {
-                        OverlayResponse::ToggleSetting(SettingKey::DisplayMode)
-                    }
-                    KeyCode::Char('b' | 'B') => {
-                        OverlayResponse::ToggleSetting(SettingKey::DisplayRaw)
-                    }
-                    KeyCode::Char('t' | 'T') => {
-                        OverlayResponse::ToggleSetting(SettingKey::DisplayTimestamp)
-                    }
-                    KeyCode::Char('x' | 'X') => {
-                        OverlayResponse::ToggleSetting(SettingKey::TextEncoding)
-                    }
-                    KeyCode::Char('u' | 'U') => OverlayResponse::ToggleSetting(SettingKey::Mouse),
-                    KeyCode::Char('s' | 'S') => {
-                        OverlayResponse::ToggleSetting(SettingKey::DimensionMode)
-                    }
-                    KeyCode::Char('a' | 'A') => {
-                        OverlayResponse::ToggleSetting(SettingKey::AnswerQueries)
-                    }
-                    _ => OverlayResponse::Handled,
-                },
-                _ => OverlayResponse::Handled,
-            },
+            Overlay::Settings(dialog) => dialog.handle_action(action, settings),
         }
     }
 }
@@ -243,4 +216,21 @@ pub enum SettingKey {
     Mouse,
     DimensionMode,
     AnswerQueries,
+}
+
+/// The path of `what` to the clipboard, for a look at the files out of the app (MAX-154)
+pub fn copy_path(path: &Path, what: &str) -> OverlayResponse {
+    OverlayResponse::HandledCopy {
+        text: path.display().to_string(),
+        what: format!("{what} path"),
+    }
+}
+
+/// The `index`th of the config folder and the files out of it, as the help and the settings
+/// list them (MAX-163)
+pub fn copy_config_path(settings: &SettingsConfig, index: usize) -> OverlayResponse {
+    match AppConfig::config_paths(settings).into_iter().nth(index) {
+        Some((what, path)) => copy_path(&path, what),
+        None => OverlayResponse::Handled,
+    }
 }

@@ -222,7 +222,9 @@ fn render_active_overlay(
     let resolver = &app.key_resolver;
     let mut command_line_prompt = None;
     let area = match app.overlay() {
-        Some(Overlay::Settings) => render_settings_popup(app, frame, theme, &mut targets),
+        Some(Overlay::Settings(dialog)) => {
+            render_settings_popup(app, dialog, frame, theme, &mut targets)
+        }
         Some(Overlay::Help(dialog)) => render_help_popup(app, dialog, frame, theme, &mut targets),
         Some(Overlay::TerminalSize(dialog)) => {
             render_resize_popup(dialog, resolver, frame, theme, &mut targets)
@@ -295,7 +297,7 @@ mod tests {
         link::{Address, LinkConfig},
         overlays::{
             CommandLine, ErrorDialog, FilePathDialog, HelpDialog, LineSettingsDialog, ResizeDialog,
-            ScreenshotDialog,
+            ScreenshotDialog, SettingsDialog,
         },
     };
     use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -1057,12 +1059,129 @@ mod tests {
 
         let rows = popup_rows(Overlay::Help(HelpDialog::new()), &[]);
         assert!(
-            has(&rows, "Left/Right Category · Up/Down Move · Esc Close"),
+            has(
+                &rows,
+                "Left/Right Category · Up/Down Move · c Config folder · Esc Close"
+            ),
             "{rows:#?}"
         );
 
-        let rows = popup_rows(Overlay::Settings, &[("x", "close")]);
+        let rows = popup_rows(Overlay::Settings(SettingsDialog::new()), &[("x", "close")]);
         assert!(has(&rows, "x Return"), "{rows:#?}");
+    }
+
+    /// MAX-163: the settings show the config folder and the files a setting puts out of it;
+    /// `c` or a click on the folder copies its path, the file's number or a click on it the
+    /// file's, a number with no file nothing. The
+    /// help copies the folder with `c`, from any tab, or a click on its hint.
+    /// How: a theme set out of the folder; the settings popup drawn, `c`, clicks on both rows,
+    /// `1` and `2`;
+    /// then the help, `c` on its second tab and a click on the hint.
+    #[test]
+    fn settings_and_help_copy_the_config_folder() {
+        use crossterm::event::KeyCode::{Char, Right};
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 40);
+        h.app.settings_mut().theme_path = Some("/themes/dark.toml".into());
+        let folder = crate::configs::AppConfig::config_dir();
+        let folder_text = crate::capture::shorten_home(&folder);
+        let copies = |effect: UpdateEffect| match effect {
+            UpdateEffect::CopyToClipboardAs { text, what } => Some((text, what)),
+            _ => None,
+        };
+        let folder_copy = Some((
+            folder.display().to_string(),
+            "config folder path".to_string(),
+        ));
+        let press =
+            |h: &mut Harness, (x, y)| mouse_do(h, MouseEventKind::Down(MouseButton::Left), (x, y));
+
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::Settings(
+                SettingsDialog::new(),
+            ))));
+        let rows = h.draw();
+        assert!(
+            has(&rows, &format!("[C] Config       : {folder_text}")),
+            "{rows:#?}"
+        );
+        assert!(
+            has(&rows, "[1] Theme        : /themes/dark.toml"),
+            "{rows:#?}"
+        );
+        assert_eq!(
+            copies(key_do(&mut h, Char('c'), KeyModifiers::NONE)),
+            folder_copy
+        );
+        assert_eq!(
+            copies(press(&mut h, cell_of(&rows, "[C] Config"))),
+            folder_copy
+        );
+        let theme = Some((
+            "/themes/dark.toml".to_string(),
+            "theme file path".to_string(),
+        ));
+        assert_eq!(
+            copies(press(&mut h, cell_of(&rows, "/themes/dark.toml"))),
+            theme
+        );
+        assert_eq!(copies(key_do(&mut h, Char('1'), KeyModifiers::NONE)), theme);
+        assert_eq!(copies(key_do(&mut h, Char('2'), KeyModifiers::NONE)), None);
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
+
+        h.app.update(Action::Overlay(DialogAction::Close));
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::Help(
+                HelpDialog::new(),
+            ))));
+        key_do(&mut h, Right, KeyModifiers::NONE);
+        assert_eq!(
+            copies(key_do(&mut h, Char('c'), KeyModifiers::NONE)),
+            folder_copy
+        );
+        let rows = h.draw();
+        assert_eq!(
+            copies(press(&mut h, cell_of(&rows, "Config folder"))),
+            folder_copy
+        );
+        assert!(matches!(h.app.overlay(), Some(Overlay::Help(_))));
+    }
+
+    /// MAX-163: on a screen too short for the settings, the popup scrolls with a scrollbar; the
+    /// wheel and Down/End bring the last rows in view, the click targets follow the rows.
+    /// How: a 12-row screen; the popup drawn, End, drawn again, a click on the config row.
+    #[test]
+    fn settings_scroll_on_a_short_screen() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 12);
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::Settings(
+                SettingsDialog::new(),
+            ))));
+        let rows = h.draw();
+        assert!(has(&rows, "General"), "{rows:#?}");
+        assert!(!has(&rows, "[C] Config"), "{rows:#?}");
+        assert!(has(&rows, "▼"), "{rows:#?}");
+
+        h.app.update(Action::Overlay(DialogAction::End));
+        let rows = h.draw();
+        assert!(!has(&rows, "General"), "{rows:#?}");
+        assert!(has(&rows, "[C] Config"), "{rows:#?}");
+        let folder = crate::configs::AppConfig::config_dir()
+            .display()
+            .to_string();
+        let press = mouse_do(
+            &mut h,
+            MouseEventKind::Down(MouseButton::Left),
+            cell_of(&rows, "[C] Config"),
+        );
+        assert!(matches!(
+            press,
+            UpdateEffect::CopyToClipboardAs { ref text, .. } if *text == folder
+        ));
+
+        h.app.update(Action::Overlay(DialogAction::Home));
+        mouse_do(&mut h, MouseEventKind::ScrollDown, (50, 6));
+        let rows = h.draw();
+        assert!(!has(&rows, "General"), "{rows:#?}");
     }
 
     /// MAX-12: the command line is a centered bordered popup of one row, or with `layout =
@@ -1537,7 +1656,7 @@ mod tests {
     #[test]
     fn popups_fit_their_content() {
         let popups = [
-            Overlay::Settings,
+            Overlay::Settings(SettingsDialog::new()),
             Overlay::LinkSettings(LineSettingsDialog::new(&LinkConfig::default())),
             Overlay::FilePath(FilePathDialog::new(
                 Stream::Text,
@@ -1919,6 +2038,50 @@ mod tests {
         let rows = h.draw();
         click(&mut h, cell_of(&rows, "◎ 1"));
         assert!(matches!(h.app.overlay(), Some(Overlay::Triggers(_))));
+    }
+
+    /// MAX-163: in the trigger browser, j/k and Up/Down move; l/Right arm the selected one and
+    /// h/Left disarm it, a second press changing nothing and saying nothing; Tab, Space and
+    /// Shift-Tab toggle it.
+    /// How: the default triggers, each key typed through the keymap, the armed ones and the
+    /// toasts read after each.
+    #[test]
+    fn trigger_browser_keys() {
+        use crossterm::event::KeyCode::{BackTab, Char, Down, Left, Right, Tab, Up};
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
+        h.app
+            .set_triggers(crate::configs::TriggersConfig::default().compile().unwrap());
+        h.app.update(KeyBindingAction::Triggers.to_action(&h.app));
+        let none = KeyModifiers::NONE;
+        let toasts = |h: &Harness| h.app.notifications.active_toasts().len();
+        let mut press = |code, mods| {
+            key_do(&mut h, code, mods);
+            assert!(matches!(h.app.overlay(), Some(Overlay::Triggers(_))));
+            let armed: Vec<String> = h
+                .app
+                .armed_triggers()
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            (armed, toasts(&h))
+        };
+        let (_, before) = press(Char('j'), none);
+        assert_eq!(
+            press(Char('l'), none),
+            (vec!["u-boot".to_string()], before + 1)
+        );
+        assert_eq!(press(Right, none), (vec!["u-boot".to_string()], before + 1));
+        assert_eq!(press(Char('h'), none).0, Vec::<String>::new());
+        let (_, count) = press(Left, none);
+        assert_eq!(count, before + 2);
+        press(Char('k'), none);
+        assert_eq!(press(Right, none).0, ["login"]);
+        press(Down, none);
+        assert_eq!(press(Tab, none).0, ["login", "u-boot"]);
+        assert_eq!(press(Char(' '), none).0, ["login"]);
+        assert_eq!(press(BackTab, KeyModifiers::SHIFT).0, ["login", "u-boot"]);
+        press(Up, none);
+        assert_eq!(press(Char('h'), none).0, ["u-boot"]);
     }
 
     /// MAX-167: the trigger browser is as big as its text and buttons, every trigger's config
@@ -2429,7 +2592,7 @@ mod tests {
         assert_eq!(cut, " LINE  ? ≡ ");
         let rows = h.draw();
         click(&mut h, status_cell(&rows, "≡"));
-        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
     }
 
     /// MAX-166: the default bar's replay block is the first one left out when the bar doesn't
@@ -2480,7 +2643,7 @@ mod tests {
         click(&mut h, (21, 9));
         assert!(h.app.overlay().is_none());
         click(&mut h, (23, 9));
-        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
 
         let (_, rows) = bar_at(18);
         assert_eq!(rows[9], "LLLLLLLLLL CC RRRR");
@@ -3154,10 +3317,10 @@ mod tests {
         // the first row is selected, and shows its key
         assert!(rows[4].contains("▶ Help"), "{:?}", rows[4]);
         click(&mut h, cell_of(&rows, "Settings"));
-        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
 
         right_click(&mut h, (10, 3));
-        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
         h.app.close_overlay();
 
         right_click(&mut h, (10, 3));
@@ -3213,7 +3376,9 @@ mod tests {
         assert_eq!(h.app.terminal_mode.get_vt100_size().1, 99);
 
         h.app
-            .update(Action::App(AppAction::OpenOverlay(Overlay::Settings)));
+            .update(Action::App(AppAction::OpenOverlay(Overlay::Settings(
+                SettingsDialog::new(),
+            ))));
         let rows = h.draw();
         assert!(rows.iter().any(|row| row.contains("Terminal Mode")));
         let size_mode = cell_of(&rows, "Size Mode");
@@ -3227,7 +3392,7 @@ mod tests {
 
         click(&mut h, size_mode);
         assert_eq!(h.app.settings().terminal_mode.dimension_mode, FixedCols);
-        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
     }
 
     /// MAX-130: in terminal mode a right-click on the grid opens the menu only while the
@@ -3439,7 +3604,9 @@ mod tests {
 
         moved(&mut h, a);
         h.app
-            .update(Action::App(AppAction::OpenOverlay(Overlay::Settings)));
+            .update(Action::App(AppAction::OpenOverlay(Overlay::Settings(
+                SettingsDialog::new(),
+            ))));
         h.draw();
         assert_ne!(cell(&h, a).bg, Color::Red);
     }
@@ -3492,7 +3659,7 @@ mod tests {
         moved(&mut h, help);
         assert_eq!(bg_at(&h, help), Some(h.theme.palette.main));
         click(&mut h, status_cell(&rows, "≡"));
-        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
         h.app.close_overlay();
         click(&mut h, status_cell(&rows, "LINE"));
         assert_eq!(h.app.settings().mode, Mode::Terminal);
@@ -3547,7 +3714,7 @@ mod tests {
         assert_eq!(bg_at(&h, status_cell(&rows, "/dev/")), background);
 
         click(&mut h, status_cell(&rows, "≡"));
-        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
         h.app.close_overlay();
         click(&mut h, status_cell(&rows, "LINE"));
         assert_eq!(h.app.settings().mode, Mode::Terminal);
@@ -3583,13 +3750,13 @@ mod tests {
         assert!(rows[23].contains("SEARCH"), "{:?}", rows[23]);
         assert!(!rows[23].contains("TERM "), "{:?}", rows[23]);
         click(&mut h, settings);
-        assert!(!matches!(h.app.overlay(), Some(Overlay::Settings)));
+        assert!(!matches!(h.app.overlay(), Some(Overlay::Settings(_))));
 
         h.app.update(Action::Search(SearchModeAction::Cancel));
         let rows = h.draw();
         assert!(rows[23].starts_with("└─ TERM "), "{:?}", rows[23]);
         click(&mut h, settings);
-        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
     }
 
     /// MAX-139: the pan shows once, in the status bar's center as `◀ offset/max ▶`, the numbers
@@ -3884,7 +4051,7 @@ mod tests {
         moved(&mut h, help);
         assert_eq!(bg_at(&h, help), Some(h.theme.palette.main));
         click(&mut h, bar_cell("≡"));
-        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
         h.app.close_overlay();
 
         h.app.settings_mut().ui.show_borders = false;
@@ -3912,7 +4079,7 @@ mod tests {
         moved(&mut h, status_cell(&rows, "?"));
         assert!(h.app.is_prefix_active());
         key_do(&mut h, Char('s'), KeyModifiers::NONE);
-        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
     }
 
     /// MAX-131: the menu's selection follows the pointer, so Enter runs the row under it; in
@@ -3944,7 +4111,7 @@ mod tests {
         let rows = h.draw();
         assert!(rows[5].contains("▶ Settings"), "{:?}", rows[5]);
         h.app.update(Action::Overlay(DialogAction::Confirm));
-        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
 
         let rows = h.draw();
         let echo = cell_of(&rows, "Local Echo");
@@ -3991,7 +4158,7 @@ mod tests {
             click(&mut h, (x + dx, y));
             let opened = match h.app.overlay() {
                 Some(Overlay::Help(_)) => "help",
-                Some(Overlay::Settings) => "settings",
+                Some(Overlay::Settings(_)) => "settings",
                 Some(Overlay::ConfirmQuit) => "quit",
                 _ => "none",
             };
@@ -4226,7 +4393,7 @@ mod tests {
             click(&mut h, status_cell(&rows, text));
             match h.app.overlay() {
                 Some(Overlay::Help(_)) => assert!(help, "{text}"),
-                Some(Overlay::Settings) => assert!(!help, "{text}"),
+                Some(Overlay::Settings(_)) => assert!(!help, "{text}"),
                 _ => panic!("{text}: no popup"),
             }
             h.app.close_overlay();
@@ -4240,7 +4407,7 @@ mod tests {
         click(&mut h, (x - 2, y));
         assert!(h.app.overlay().is_none());
         click(&mut h, (x + 3, y));
-        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
     }
 
     /// MAX-125: a click on a popup's key hint runs it as its key would: Apply and Cancel in
@@ -4383,7 +4550,7 @@ mod tests {
         click(&mut h, (0, 0));
         assert!(h.app.overlay().is_none());
 
-        let rows = open(&mut h, Overlay::Settings);
+        let rows = open(&mut h, Overlay::Settings(SettingsDialog::new()));
         assert!(!h.app.settings().local_echo);
         click(&mut h, cell_of(&rows, "Local Echo"));
         assert!(h.app.settings().local_echo);

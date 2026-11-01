@@ -22,11 +22,22 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+// TODO: those 3 functions should go somewhere else?
+
 /// Creates the missing folders of `path`, so a file can be written there
 pub fn create_parent_dirs(path: &Path) -> io::Result<()> {
     match path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => fs::create_dir_all(parent),
         _ => Ok(()),
+    }
+}
+
+/// The path with the home folder written `~`, for a short display
+pub fn shorten_home(path: &Path) -> String {
+    match dirs::home_dir().and_then(|home| path.strip_prefix(home).ok().map(Path::to_path_buf)) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+        Some(rest) => format!("~/{}", rest.display()),
+        None => path.display().to_string(),
     }
 }
 
@@ -104,5 +115,17 @@ pub mod tests {
         );
         assert_eq!(expand_home(Path::new("a/~/x")), Path::new("a/~/x"));
         assert_eq!(expand_home(Path::new("~x")), Path::new("~x"));
+    }
+
+    /// MAX-163: the home folder is written `~`, a path out of it as it is.
+    #[test]
+    fn home_shortened() {
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(
+            shorten_home(&home.join(".config/maxicom")),
+            "~/.config/maxicom"
+        );
+        assert_eq!(shorten_home(&home), "~");
+        assert_eq!(shorten_home(Path::new("/etc/x")), "/etc/x");
     }
 }

@@ -105,6 +105,14 @@ What changes from a serial port:
 
 ## CONFIG
 
+- The config files are in `~/.config/maxicom/` (`config.toml`, `theme.toml`,
+  `keymap.toml`, `highlights.toml`, `triggers.toml`). The settings popup
+  shows that folder, and any file `theme_path`, `keybindings_path`,
+  `highlights_path` or `triggers_path` puts elsewhere (`~` is the home
+  folder); `C` or a click on the folder copies its path, the file's number
+  (`1`, `2`, ...) or a click on it copies the file's. The popup scrolls when
+  the screen is too short for it. In the help, `c` copies the folder's path.
+
 ### UI
 
 - `title_details` in `[ui]` (default `false`): the history box's title shows
@@ -247,9 +255,10 @@ rearm = true
   `armed = true` starts one armed.
 - `Ctrl-A T` (`triggers`, also in the right-click menu) opens the trigger
   browser: the triggers and their state (`◎` armed, `○` not), the selected
-  one's rule on the side. Enter, space, a click on the selected
-  one or its button toggle it, `a` toggles them all (armed when none is,
-  else disarmed), `c` copies the file's path.
+  one's rule on the side. `j`/`k` or Up/Down move. Enter, Tab, Space, a
+  click on the selected one or its button toggle it; `l`/Right arms it and
+  `h`/Left disarms it. `a` toggles them all (armed when none is, else
+  disarmed), `c` copies the file's path.
 - `Ctrl-A u` toggles `u-boot`; `toggle-triggers` (no key by default) toggles
   them all; `trigger on|off|toggle [name]` does it from a command line or a
   key, so one key can arm and reset:

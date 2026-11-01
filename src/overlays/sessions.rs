@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crossterm::event::KeyCode;
 
@@ -8,7 +8,7 @@ use crate::{
         sort_sessions,
     },
     inputs::DialogAction,
-    overlays::{OverlayResponse, PopupTarget},
+    overlays::{OverlayResponse, PopupTarget, copy_path},
     ui::status_bar::write_human,
 };
 
@@ -129,7 +129,9 @@ impl SessionBrowser {
             DialogAction::Pick(PopupTarget::SessionDeleteAll) => return self.ask_delete_all(),
             DialogAction::Pick(PopupTarget::SessionSort) => self.switch_order(),
             DialogAction::Pick(PopupTarget::SessionCopyLog) => return self.copy_log_path(),
-            DialogAction::Pick(PopupTarget::SessionCopyFolder) => return copy(&self.dir, "folder"),
+            DialogAction::Pick(PopupTarget::SessionCopyFolder) => {
+                return copy_path(&self.dir, "folder");
+            }
             DialogAction::Pick(PopupTarget::SessionReload) => return self.reload_folder(),
             DialogAction::HandleKey(key) => match key.code {
                 KeyCode::Char('p') => return self.replay_selected(),
@@ -138,7 +140,7 @@ impl SessionBrowser {
                 KeyCode::Char('D') => return self.ask_delete_all(),
                 KeyCode::Char('s') => self.switch_order(),
                 KeyCode::Char('c') => return self.copy_log_path(),
-                KeyCode::Char('C') => return copy(&self.dir, "folder"),
+                KeyCode::Char('C') => return copy_path(&self.dir, "folder"),
                 KeyCode::Char('r') => return self.reload_folder(),
                 _ => {}
             },
@@ -232,7 +234,7 @@ impl SessionBrowser {
 
     fn copy_log_path(&self) -> OverlayResponse {
         match self.selected_session().and_then(Session::text_path) {
-            Some(path) => copy(path, "session log"),
+            Some(path) => copy_path(path, "session log"),
             None => notify("No session log to copy".to_string(), false),
         }
     }
@@ -280,14 +282,6 @@ pub fn size(bytes: u64) -> String {
     out
 }
 
-/// The path of `what` to the clipboard, for a look at the files out of the app (MAX-154)
-fn copy(path: &Path, what: &str) -> OverlayResponse {
-    OverlayResponse::HandledCopy {
-        text: path.display().to_string(),
-        what: format!("{what} path"),
-    }
-}
-
 fn notify(message: String, warn: bool) -> OverlayResponse {
     OverlayResponse::HandledNotify { message, warn }
 }
@@ -303,6 +297,7 @@ mod tests {
         link::{Address, LinkConfig},
     };
     use crossterm::event::{KeyEvent, KeyModifiers};
+    use std::path::Path;
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("maxicom_test_{}_{name}", std::process::id()));

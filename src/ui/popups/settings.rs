@@ -3,18 +3,20 @@ use ratatui::{
     layout::Rect,
     style::Style,
     text::{Line, Span},
-    widgets::{Clear, Paragraph},
+    widgets::{Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 
 use crate::{
     app::App,
-    configs::{PrefixWrapBehavior, ThemeConfig, keybindings::KeyBindingDialogAction},
-    overlays::{PopupTarget, SettingKey},
+    capture::shorten_home,
+    configs::{AppConfig, PrefixWrapBehavior, ThemeConfig, keybindings::KeyBindingDialogAction},
+    overlays::{PopupTarget, SettingKey, SettingsDialog},
     ui::popups::{FORM_WIDTH, form_area, key_hints, popup_block, row_area, section},
 };
 
 pub fn render_settings_popup(
     app: &App,
+    dialog: &SettingsDialog,
     frame: &mut Frame,
     theme: &ThemeConfig,
     targets: &mut Vec<(Rect, PopupTarget)>,
@@ -66,7 +68,7 @@ pub fn render_settings_popup(
         "OFF"
     };
     // each row with the setting a click on it toggles (MAX-113)
-    let rows = [
+    let rows = vec![
         (None, section("General", theme)),
         (Some(SettingKey::Mode), row("M", "Input Mode", mode_str)),
         (
@@ -108,6 +110,38 @@ pub fn render_settings_popup(
             row("A", "Query Answers", answers_str),
         ),
     ];
+    let mut rows: Vec<(Option<PopupTarget>, Line)> = (rows.into_iter())
+        .map(|(key, line)| (key.map(PopupTarget::Setting), line))
+        .collect();
+    // the config folder, then the files out of it; a click copies one (MAX-163)
+    rows.push((None, Line::from("")));
+    rows.push((None, section("Files", theme)));
+    for (index, (what, path)) in AppConfig::config_paths(app.settings())
+        .into_iter()
+        .enumerate()
+    {
+        // "theme file" is `Theme`, the folder `[C] Config`
+        let name = what.split(' ').next().unwrap_or(what);
+        let mut chars = name.chars();
+        let label: String = chars
+            .next()
+            .into_iter()
+            .flat_map(char::to_uppercase)
+            .chain(chars)
+            .collect();
+        // `c` copies the folder, a digit the file of that number (MAX-163)
+        let key = if index == 0 {
+            "[C] ".to_string()
+        } else {
+            format!("[{index}] ")
+        };
+        let line = Line::from(vec![
+            Span::styled(key, Style::default().fg(theme.palette.secondary)),
+            Span::raw(format!("{label:<13}: ")),
+            Span::styled(shorten_home(&path), Style::default().fg(theme.palette.main)),
+        ]);
+        rows.push((Some(PopupTarget::ConfigPath(index)), line));
+    }
 
     let hints = key_hints(
         &app.key_resolver,
@@ -121,13 +155,40 @@ pub fn render_settings_popup(
     frame.render_widget(Clear, area);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    for (y, (key, _)) in rows.iter().enumerate() {
-        if let Some(key) = key {
-            targets.push((row_area(inner, y), PopupTarget::Setting(*key)));
+
+    // too short for every row: scrolled, a scrollbar in the right padding (MAX-163)
+    let visible = inner.height as usize;
+    let max_scroll = rows.len().saturating_sub(visible);
+    dialog.max_scroll.set(max_scroll);
+    let scroll = dialog.scroll.min(max_scroll);
+    for (y, (target, _)) in rows.iter().enumerate().skip(scroll).take(visible) {
+        if let Some(target) = target {
+            targets.push((row_area(inner, y - scroll), *target));
         }
     }
     hints.push_block_targets(area, targets);
     let text: Vec<Line> = rows.into_iter().map(|(_, line)| line).collect();
-    frame.render_widget(Paragraph::new(text), inner);
+    frame.render_widget(Paragraph::new(text).scroll((scroll as u16, 0)), inner);
+    if max_scroll > 0 {
+        let mut state = ScrollbarState::new(max_scroll)
+            .viewport_content_length(visible)
+            .position(scroll);
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("▲"))
+            .end_symbol(Some("▼"))
+            .thumb_symbol("█")
+            .track_symbol(Some("│"))
+            .thumb_style(*theme.ui.scrollbar_thumb)
+            .track_style(*theme.ui.scrollbar_track)
+            .begin_style(*theme.ui.scrollbar_thumb)
+            .end_style(*theme.ui.scrollbar_thumb);
+        let bar = Rect {
+            x: inner.right(),
+            width: 1,
+            ..inner
+        }
+        .intersection(area);
+        frame.render_stateful_widget(scrollbar, bar, &mut state);
+    }
     area
 }

@@ -746,7 +746,7 @@ impl App {
             Action::Search(action) => self.update_action_search_mode(action),
             Action::Overlay(action) => {
                 if let Some(mut overlay) = self.overlay.take() {
-                    let response = overlay.handle_action(action);
+                    let response = overlay.handle_action(action, &self.settings);
                     match response {
                         OverlayResponse::Handled => {
                             self.overlay = Some(overlay); // overlay taken, so give back
@@ -817,6 +817,15 @@ impl App {
                         OverlayResponse::ToggleTrigger(name) => {
                             self.overlay = Some(overlay);
                             self.toggle_triggers(name.as_deref());
+                            UpdateEffect::None
+                        }
+                        OverlayResponse::ArmTrigger { name, on } => {
+                            self.overlay = Some(overlay);
+                            let armed = (self.triggers.iter())
+                                .any(|trigger| trigger.name == name && trigger.is_armed());
+                            if armed != on {
+                                self.arm_triggers(on, Some(&name));
+                            }
                             UpdateEffect::None
                         }
                         OverlayResponse::HandledCopy { text, what } => {

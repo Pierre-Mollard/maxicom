@@ -1,8 +1,11 @@
 use std::cell::Cell;
 
+use crossterm::event::KeyCode;
+
 use crate::{
+    configs::SettingsConfig,
     inputs::DialogAction,
-    overlays::{OverlayResponse, PopupTarget},
+    overlays::{OverlayResponse, PopupTarget, copy_config_path},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -85,7 +88,11 @@ impl HelpDialog {
         Self::default()
     }
 
-    pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
+    pub fn handle_action(
+        &mut self,
+        action: DialogAction,
+        settings: &SettingsConfig,
+    ) -> OverlayResponse {
         let max = self.max_scroll.get();
 
         match action {
@@ -131,6 +138,11 @@ impl HelpDialog {
             DialogAction::End => {
                 self.scroll = max;
                 OverlayResponse::Handled
+            }
+            // the config folder, from any tab (MAX-163)
+            DialogAction::Pick(PopupTarget::ConfigPath(index)) => copy_config_path(settings, index),
+            DialogAction::HandleKey(key) if key.code == KeyCode::Char('c') => {
+                copy_config_path(settings, 0)
             }
             _ => OverlayResponse::Handled,
         }

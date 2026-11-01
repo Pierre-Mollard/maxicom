@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use crossterm::event::{KeyCode, KeyModifiers};
 use unicode_width::UnicodeWidthStr;
 
 use ratatui::{
@@ -14,11 +15,11 @@ use ratatui::{
 use crate::{
     app::App,
     commands::COMMANDS,
-    configs::{KeyBindingAction, ThemeConfig, keybindings::KeyBindingDialogAction},
+    configs::{KeyBindingAction, KeyPattern, ThemeConfig, keybindings::KeyBindingDialogAction},
     overlays::{HelpCategory, HelpDialog, PopupTarget},
     ui::{
         common::popup_area,
-        popups::{key_hints, popup_block},
+        popups::{Hints, hint_spans, popup_block},
     },
 };
 
@@ -44,35 +45,21 @@ pub fn render_help_popup(
 
     let is_compact_vertical = area.height < 14;
 
-    let hints = if is_compact_vertical {
+    let (hints, spots) = if is_compact_vertical {
         Default::default()
     } else {
-        key_hints(
-            &app.key_resolver,
-            false,
-            &[
-                (
-                    &[
-                        KeyBindingDialogAction::NavLeft,
-                        KeyBindingDialogAction::NavRight,
-                    ],
-                    "Category",
-                ),
-                (
-                    &[
-                        KeyBindingDialogAction::NavUp,
-                        KeyBindingDialogAction::NavDown,
-                    ],
-                    "Move",
-                ),
-                (&[KeyBindingDialogAction::Close], "Close"),
-            ],
-            theme,
-        )
+        footer(app, theme)
     };
     // the tabs row starts the content, no top padding needed
     let outer_block = popup_block("Help", &hints, theme).padding(Padding::horizontal(1));
-    hints.push_block_targets(area, targets);
+    // after the corner and the space `popup_block` puts before them
+    let (x, y) = (area.x + 2, area.bottom().saturating_sub(1));
+    for (start, width, target) in spots {
+        let spot = Rect::new(x.saturating_add(start), y, width, 1).intersection(area);
+        if !spot.is_empty() {
+            targets.push((spot, target));
+        }
+    }
 
     let inner_area = outer_block.inner(area);
     frame.render_widget(outer_block, area);
@@ -351,6 +338,47 @@ pub fn render_help_popup(
         );
     }
     area
+}
+
+/// The keys in the bottom border, and where each is for the mouse: the dialog's, and `c`
+/// copying the config folder (MAX-163)
+fn footer<'a>(app: &App, theme: &ThemeConfig) -> (Hints<'a>, Vec<(u16, u16, PopupTarget)>) {
+    let keys = |actions: &[KeyBindingDialogAction]| -> Vec<(KeyPattern, PopupTarget)> {
+        (actions.iter())
+            .filter_map(|&action| {
+                let key = app.key_resolver.dialog_keys(action).into_iter().next()?;
+                Some((key, PopupTarget::Hint(action)))
+            })
+            .collect()
+    };
+    let copy = KeyPattern {
+        code: KeyCode::Char('c'),
+        modifiers: KeyModifiers::NONE,
+    };
+    let buttons = [
+        (
+            keys(&[
+                KeyBindingDialogAction::NavLeft,
+                KeyBindingDialogAction::NavRight,
+            ]),
+            "Category",
+        ),
+        (
+            keys(&[
+                KeyBindingDialogAction::NavUp,
+                KeyBindingDialogAction::NavDown,
+            ]),
+            "Move",
+        ),
+        (vec![(copy, PopupTarget::ConfigPath(0))], "Config folder"),
+        (keys(&[KeyBindingDialogAction::Close]), "Close"),
+    ];
+    let (line, spots) = hint_spans(buttons, theme);
+    let hints = Hints {
+        line,
+        spots: Vec::new(),
+    };
+    (hints, spots)
 }
 
 /// The tab bar. When the tabs don't all fit, a column on each edge takes a `◀` or `▶` where

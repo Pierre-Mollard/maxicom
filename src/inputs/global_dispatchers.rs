@@ -13,7 +13,7 @@ use crate::{
     link::serial,
     overlays::{
         CommandLine, HelpDialog, LineSettingsDialog, Overlay, ResizeDialog, SettingKey,
-        TriggerBrowser,
+        SettingsDialog, TriggerBrowser,
     },
 };
 
@@ -48,7 +48,9 @@ impl KeyBindingAction {
             KeyBindingAction::Help => {
                 Action::App(AppAction::OpenOverlay(Overlay::Help(HelpDialog::new())))
             }
-            KeyBindingAction::Settings => Action::App(AppAction::OpenOverlay(Overlay::Settings)),
+            KeyBindingAction::Settings => Action::App(AppAction::OpenOverlay(Overlay::Settings(
+                SettingsDialog::new(),
+            ))),
             KeyBindingAction::ToggleLogging => Action::App(AppAction::ToggleLogging),
             KeyBindingAction::RecordText => Action::App(AppAction::ToggleRecording(Stream::Text)),
             KeyBindingAction::RecordRaw => Action::App(AppAction::ToggleRecording(Stream::Raw)),

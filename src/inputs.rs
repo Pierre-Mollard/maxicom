@@ -406,6 +406,7 @@ mod tests {
     use crate::{
         configs::{KeyBindingsConfig, KeyResolver, SettingsConfig},
         link::LinkConfig,
+        overlays::SettingsDialog,
     };
     use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -571,7 +572,9 @@ mod tests {
             Action::Overlay(DialogAction::CyclePrev)
         ));
 
-        app.update(Action::App(AppAction::OpenOverlay(Overlay::Settings)));
+        app.update(Action::App(AppAction::OpenOverlay(Overlay::Settings(
+            SettingsDialog::new(),
+        ))));
         assert!(matches!(
             handle_event(plain(KeyCode::Char('q')), &app),
             Action::Overlay(DialogAction::Close)
@@ -792,7 +795,9 @@ mod tests {
         );
         app.update(Action::Overlay(DialogAction::Close));
 
-        app.update(Action::App(AppAction::OpenOverlay(Overlay::Settings)));
+        app.update(Action::App(AppAction::OpenOverlay(Overlay::Settings(
+            SettingsDialog::new(),
+        ))));
         assert_eq!(
             walk(&app, "field"),
             [
