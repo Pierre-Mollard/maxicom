@@ -16,8 +16,8 @@ use crate::{
     },
     capture::{
         JournalReader, JournalText, RESTORE_RAW_TAIL, Recorder, ScreenshotFormat, Session,
-        SessionDevice, SessionLine, Stream, create_parent_dirs, expand_home, find_last_session,
-        read_tail_bytes, read_tail_lines, restore_separator,
+        SessionDevice, SessionLine, SessionMeta, Stream, create_parent_dirs, expand_home,
+        find_last_session, read_tail_bytes, read_tail_lines, restore_separator,
     },
     commands::{CommandError, Invocation, Target},
     configs::{
@@ -781,12 +781,15 @@ impl App {
                             include_session,
                         } => {
                             let path = expand_home(&path);
-                            match self.recorder.start(stream, path, include_session) {
+                            match self.recorder.start(stream, path.clone(), include_session) {
                                 Ok(_) => {
                                     self.notify_success(format!(
                                         "Started recording {}",
                                         stream.as_str()
                                     ));
+                                    if stream == Stream::Raw {
+                                        self.write_recording_meta(&path);
+                                    }
                                 }
                                 Err(e) => {
                                     self.open_overlay(Overlay::Error(
@@ -1134,6 +1137,23 @@ impl App {
     /// What this session runs on, for its journal and to find a past one to restore
     fn session_device(&self) -> SessionDevice {
         SessionDevice::new(self.link.config(), self.settings.encoding)
+    }
+
+    /// The meta file next to a raw recording, so its replay decodes and shows its line
+    /// settings as the session's does (MAX-163). None while replaying, whose device isn't
+    /// known whole
+    fn write_recording_meta(&mut self, raw: &Path) {
+        if !self.link_kind().keeps_sessions() {
+            return;
+        }
+        let meta = SessionMeta::new(
+            chrono::Local::now(),
+            self.session_device(),
+            JournalText::default(),
+        );
+        if let Err(err) = meta.write(&SessionMeta::path_of(raw)) {
+            self.notify_warn(format!("No meta file for the raw recording: {err}"));
+        }
     }
 
     /// Puts a past session in the history of both modes, before any live data (MAX-148): the
@@ -3457,6 +3477,45 @@ mod tests {
         app.link
             .set_address("tcp://192.168.1.50:4000".parse::<Address>().unwrap());
         assert_eq!(app.line_settings(), None);
+    }
+
+    /// MAX-163: a raw recording gets a meta file beside it, and a file replayed without a
+    /// session (`--replay`, `replay`) takes its device from its meta file: its encoding and
+    /// line settings. A file without one has none; a recording while replaying writes none.
+    /// How: a cp437 port at 9600 7E1 records `rec.raw`, then replays it from a UTF-8 app at
+    /// the default line; a plain file; a recording made during the replay.
+    #[test]
+    fn replay_reads_the_meta_file_beside() {
+        let dir = crate::capture::tests::temp_dir("replay_meta");
+        std::fs::create_dir_all(&dir).unwrap();
+        let rec = dir.join("rec.raw");
+        let plain = dir.join("plain.raw");
+        std::fs::write(&rec, b"x").unwrap();
+        std::fs::write(&plain, b"x").unwrap();
+
+        let mut app = app();
+        let line = LineSettings {
+            baud: 9600,
+            framing: "7E1".parse().unwrap(),
+            ..LineSettings::default()
+        };
+        set_line(&mut app, line);
+        app.settings.encoding = TextEncoding::Cp437;
+        app.write_recording_meta(&rec);
+        assert!(dir.join("rec.meta").exists());
+
+        let mut app = self::app();
+        app.open_replay(rec, Duration::ZERO, None).unwrap();
+        assert_eq!(app.settings().encoding, TextEncoding::Cp437);
+        assert_eq!(app.recorded_line(), Some(SessionLine::of(&line)));
+
+        let during = dir.join("during.raw");
+        app.write_recording_meta(&during);
+        assert!(!dir.join("during.meta").exists());
+
+        app.open_replay(plain, Duration::ZERO, None).unwrap();
+        assert_eq!(app.recorded_line(), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// MAX-148: the last session restores at startup with `always` or `--restore`, not with

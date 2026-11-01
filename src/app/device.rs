@@ -10,7 +10,7 @@ use std::{
 
 use super::{App, UpdateEffect};
 use crate::{
-    capture::SessionDevice,
+    capture::{SessionDevice, SessionMeta},
     inputs::Action,
     link::{
         Address, ByteSource, CONNECT_TIMEOUT, LinkError, LinkKind, OpenFor, Reconfigured,
@@ -296,7 +296,9 @@ impl App {
     }
 
     /// The file in place of the link, which closes: no wait, a file opens at once (MAX-166).
-    /// For `replay` and `open file://` while running, and for `--replay` at start (MAX-168)
+    /// For `replay` and `open file://` while running, and for `--replay` at start (MAX-168).
+    /// Without a `session`, the file's own meta file gives the device, when it has one
+    /// (MAX-163)
     pub fn open_replay(
         &mut self,
         path: PathBuf,
@@ -305,6 +307,11 @@ impl App {
     ) -> io::Result<()> {
         let replay = Replay::open(&path, delay)?;
         self.link.set_replay(replay);
+        let meta = session
+            .is_none()
+            .then(|| SessionMeta::read(&SessionMeta::path_of(&path)))
+            .flatten();
+        let session = session.or(meta.as_ref().map(|meta| &meta.device));
         self.start_replay(path.clone(), session);
         self.notify_info(format!("Replaying {}", path.display()));
         self.close_link_popups();

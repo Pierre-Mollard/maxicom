@@ -129,6 +129,9 @@
 //!    and plain text always stay;
 //! 3. without the center part, then the right part cut from its left, whole blocks only.
 //!
+//! The center part goes in the middle of the room the left and right parts leave, as drawn
+//! once they fit, so it moves when they change width.
+//!
 //! ## Clicks
 //! A block without `click=` runs what its first variable implies; a variable in plain text is
 //! clickable on its own. The others (`{port}`, `{rx_bytes}`, `{tx_bytes}`, `{time}`,
@@ -1224,17 +1227,25 @@ fn widths(parts: &[Option<DrawnPart>; 3]) -> [u16; 3] {
     })
 }
 
-/// Whether the parts fit in `room` columns as they are drawn, the left one at the start, the
-/// right one at the end and the center one in the middle, a column apart (MAX-139)
-fn fits(room: u16, [left, center, right]: [u16; 3]) -> bool {
+/// Where the center part starts in `room` columns: in the middle of the room the left and
+/// right parts leave, a column apart from each (MAX-163). None when it doesn't fit there
+fn center_start(room: u16, [left, center, right]: [u16; 3]) -> Option<u16> {
     let [room, left, center, right] = [room, left, center, right].map(u32::from);
     let gap = |a: u32, b: u32| u32::from(a > 0 && b > 0);
+    let from = left + gap(left, center);
+    let to = room.checked_sub(right + gap(center, right))?;
+    let free = to.checked_sub(from)?.checked_sub(center)?;
+    u16::try_from(from + free / 2).ok()
+}
+
+/// Whether the parts fit in `room` columns as they are drawn, the left one at the start, the
+/// right one at the end and the center one between them, a column apart (MAX-139)
+fn fits(room: u16, widths @ [left, center, right]: [u16; 3]) -> bool {
     if center == 0 {
-        return left + gap(left, right) + right <= room;
+        let gap = u32::from(left > 0 && right > 0);
+        return u32::from(left) + gap + u32::from(right) <= u32::from(room);
     }
-    let start = (room / 2).saturating_sub(center / 2);
-    let end = start + center;
-    left + gap(left, center) <= start && end + gap(center, right) + right <= room
+    center_start(room, widths).is_some()
 }
 
 pub fn render_status_bar<'a>(
@@ -1338,20 +1349,20 @@ pub fn render_status_bar<'a>(
         }
     }
 
+    let center = center_start(room, widths(&parts)).unwrap_or(0);
     let alignments = [Alignment::Left, Alignment::Center, Alignment::Right];
     for (drawn, alignment) in parts.into_iter().zip(alignments) {
         let Some((spans, clicks)) = drawn else {
             continue;
         };
         let line = Line::from(spans);
-        // where the paragraph starts the line, as ratatui works it out
         let width = line.width() as u16;
-        let start = parts_area.x
-            + match alignment {
-                Alignment::Left => 0,
-                Alignment::Center => (room / 2).saturating_sub(width / 2),
-                Alignment::Right => room.saturating_sub(width),
-            };
+        let offset = match alignment {
+            Alignment::Left => 0,
+            Alignment::Center => center,
+            Alignment::Right => room.saturating_sub(width),
+        };
+        let start = parts_area.x + offset;
         for (col, width, action, hover) in clicks {
             let cell = Rect::new(start.saturating_add(col), parts_area.y, width, 1)
                 .intersection(parts_area);
@@ -1363,7 +1374,12 @@ pub fn render_status_bar<'a>(
                 });
             }
         }
-        frame.render_widget(Paragraph::new(line).alignment(alignment), parts_area);
+        let area = Rect {
+            x: start,
+            width: width.min(room.saturating_sub(offset)),
+            ..parts_area
+        };
+        frame.render_widget(Paragraph::new(line), area);
     }
     targets
 }

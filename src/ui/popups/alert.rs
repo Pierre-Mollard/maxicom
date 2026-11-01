@@ -1,7 +1,7 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Clear, Padding, Paragraph, Wrap},
 };
@@ -120,7 +120,8 @@ pub fn render_disconnected_popup(
         theme,
     );
 
-    render_alert("Connection Lost", text, hints, frame, theme, targets)
+    let tone = theme.palette.text_warn;
+    render_alert("Connection Lost", tone, text, hints, frame, theme, targets)
 }
 
 pub fn render_detached_popup(
@@ -141,7 +142,8 @@ pub fn render_detached_popup(
         theme,
     );
 
-    render_alert("Detached", text, hints, frame, theme, targets)
+    let tone = theme.palette.text_warn;
+    render_alert("Detached", tone, text, hints, frame, theme, targets)
 }
 
 pub fn render_error_popup(
@@ -187,7 +189,8 @@ pub fn render_error_popup(
         theme,
     );
 
-    render_alert(err.title, lines, hints, frame, theme, targets)
+    let tone = theme.palette.text_warn;
+    render_alert(err.title, tone, lines, hints, frame, theme, targets)
 }
 
 pub fn render_confirm_quit_popup(
@@ -215,7 +218,8 @@ pub fn render_confirm_quit_popup(
         theme,
     );
 
-    render_alert("Quit", text, hints, frame, theme, targets)
+    let tone = theme.palette.main;
+    render_alert("Quit", tone, text, hints, frame, theme, targets)
 }
 
 /// The startup question when a past session on this device can be restored (MAX-148)
@@ -251,26 +255,29 @@ pub fn render_restore_popup(
         theme,
     );
 
-    render_alert("Restore", text, hints, frame, theme, targets)
+    let tone = theme.palette.text_good;
+    render_alert("Restore", tone, text, hints, frame, theme, targets)
 }
 
-/// A warning box sized to `lines` and the `hints` under them once wrapped at its width (a long
-/// port path or error cause wraps). The hints are click targets (MAX-125)
+/// A box sized to `lines` and the `hints` under them once wrapped at its width (a long port
+/// path or error cause wraps), its border and title in `tone`: warn for a problem, else the
+/// question's (MAX-163). The hints are click targets (MAX-125)
 fn render_alert<'a>(
     title: &str,
+    tone: Color,
     mut lines: Vec<Line<'a>>,
     hints: Hints<'a>,
     frame: &mut Frame,
     theme: &ThemeConfig,
     targets: &mut Vec<(Rect, PopupTarget)>,
 ) -> Rect {
-    let warn = Style::default().fg(theme.palette.text_warn);
+    let tone = Style::default().fg(tone);
     let block = Block::bordered()
         .title(Span::styled(
             format!(" {title} "),
-            warn.add_modifier(Modifier::BOLD),
+            tone.add_modifier(Modifier::BOLD),
         ))
-        .border_style(warn)
+        .border_style(tone)
         .style(*theme.popup.background)
         .padding(Padding::horizontal(1));
 

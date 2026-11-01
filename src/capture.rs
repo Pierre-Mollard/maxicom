@@ -14,7 +14,7 @@ pub use restore::{
 };
 pub use screenshot::{Screenshot, ScreenshotFormat};
 pub use session::{
-    JournalText, Session, SessionDevice, SessionLine, SessionOrder, delete_session,
+    JournalText, Session, SessionDevice, SessionLine, SessionMeta, SessionOrder, delete_session,
     delete_sessions, find_last_session, list_sessions, sort_sessions,
 };
 

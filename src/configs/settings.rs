@@ -349,12 +349,13 @@ pub enum DualBufferMode {
 }
 
 /// When the last session on the same device is restored at startup (MAX-148): `ask` asks
+/// first; `always` by default, the separator line marking where the live data starts (MAX-163)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum RestoreMode {
     Never,
-    #[default]
     Ask,
+    #[default]
     Always,
 }
 
@@ -902,8 +903,6 @@ mod tests {
 
     use super::*;
 
-    /// MAX-148: `capture.restore` defaults to `ask` and `restore_max_age` to 24 hours; both
-    /// read from the config, the age as a human duration, `0` included.
     /// MAX-151: the answer settings are on by default, groups by name; `colors` is no group
     #[test]
     fn answer_settings_parse() {
@@ -919,14 +918,16 @@ mod tests {
         assert!(parse("answer_groups = [\"colors\"]").is_err());
     }
 
+    /// MAX-148: `restore_max_age` defaults to 24 hours; both read from the config, the age as
+    /// a human duration, `0` included. MAX-163: `capture.restore` defaults to `always`.
     #[test]
     fn restore_settings_parse() {
         let capture = CaptureConfig::default();
-        assert_eq!(capture.restore, RestoreMode::Ask);
+        assert_eq!(capture.restore, RestoreMode::Always);
         assert_eq!(capture.restore_max_age, Duration::from_secs(24 * 3600));
         let parse = |toml: &str| toml::from_str::<CaptureConfig>(toml).unwrap();
-        let capture = parse("restore = \"always\"\nrestore_max_age = \"2h 30m\"");
-        assert_eq!(capture.restore, RestoreMode::Always);
+        let capture = parse("restore = \"ask\"\nrestore_max_age = \"2h 30m\"");
+        assert_eq!(capture.restore, RestoreMode::Ask);
         assert_eq!(capture.restore_max_age, Duration::from_secs(9000));
         assert!(parse("restore_max_age = \"0s\"").restore_max_age.is_zero());
         assert_eq!(parse("restore = \"never\"").restore, RestoreMode::Never);

@@ -1287,6 +1287,50 @@ mod tests {
         assert!(has(&rows, "x Dismiss"), "{rows:#?}");
     }
 
+    /// MAX-163: an alert's border and title take its tone: the link and error alerts warn,
+    /// the quit question is neutral, the restore question is good news.
+    /// How: each popup opened, the color of the first letter of its title.
+    #[test]
+    fn alert_tones() {
+        let title_fg = |h: &mut Harness, title: &str| {
+            let rows = h.draw();
+            let (x, y) = cell_of(&rows, &format!(" {title} "));
+            h.terminal.backend().buffer()[(x + 1, y)].fg
+        };
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        let palette = h.theme.palette;
+        let error = ErrorDialog::new("Oops", "it broke");
+        for (overlay, title, color) in [
+            (
+                Overlay::DeviceDisconnected,
+                "Connection Lost",
+                palette.text_warn,
+            ),
+            (Overlay::DeviceDetached, "Detached", palette.text_warn),
+            (Overlay::Error(error), "Oops", palette.text_warn),
+            (Overlay::ConfirmQuit, "Quit", palette.main),
+        ] {
+            h.app.update(Action::App(AppAction::OpenOverlay(overlay)));
+            assert_eq!(title_fg(&mut h, title), color, "{title}");
+            h.app.update(Action::Overlay(DialogAction::Close));
+        }
+
+        let dir =
+            std::env::temp_dir().join(format!("maxicom_test_{}_alert_tones", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        crate::capture::tests::write_test_session(
+            &dir,
+            "/dev/ttyUSB0",
+            &crate::capture::JournalText::default(),
+            b"old line\r\n",
+            b"",
+        );
+        h.app.settings_mut().capture.restore = crate::configs::settings::RestoreMode::Ask;
+        h.app.restore_last_session(Some(&dir), None);
+        assert_eq!(title_fg(&mut h, "Restore"), palette.text_good);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// MAX-168: the disconnected and detached popups say the link's kind: a serial port's
     /// words for a port, a connection's for a TCP link.
     /// How: both popups on the default port, then on a TCP address.
@@ -2409,6 +2453,39 @@ mod tests {
             }
         }
         assert!(shown);
+    }
+
+    /// MAX-163: the center part goes in the middle of the room the left and right parts
+    /// leave, not of the row, and its click lands where it is drawn; it stays while it fits
+    /// there, a column from each.
+    /// How: a 10-column left, a 2-column center, a 4-column right, no borders; at 40 columns
+    /// the room is 11..35, so the center starts at 22 (the row's middle would be 19); at 18 it
+    /// just fits at 11, at 17 it goes.
+    #[test]
+    fn status_bar_center_between_the_parts() {
+        let bar_at = |width| {
+            let mut h = Harness::line_mode(LineDisplayMode::Pretty, width, 10);
+            let mut config = h.app.settings().ui.status_bar.clone();
+            config.left = "LLLLLLLLLL".to_string();
+            config.center = "[CC](click=settings)".to_string();
+            config.right = "RRRR".to_string();
+            h.status_bar = CompiledStatusBar::new(&config, &h.theme);
+            let rows = h.draw();
+            (h, rows)
+        };
+        let (mut h, rows) = bar_at(40);
+        let middle = " ".repeat(12);
+        let right = " ".repeat(12);
+        assert_eq!(rows[9], format!("LLLLLLLLLL{middle}CC{right}RRRR"));
+        click(&mut h, (21, 9));
+        assert!(h.app.overlay().is_none());
+        click(&mut h, (23, 9));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings)));
+
+        let (_, rows) = bar_at(18);
+        assert_eq!(rows[9], "LLLLLLLLLL CC RRRR");
+        let (_, rows) = bar_at(17);
+        assert_eq!(rows[9], "LLLLLLLLLL   RRRR");
     }
 
     /// MAX-139: whatever the width, the bar's parts never write over each other, in every

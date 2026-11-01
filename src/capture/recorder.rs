@@ -1,7 +1,5 @@
 use super::create_parent_dirs;
-use super::session::{
-    JournalText, SESSION_META_VERSION, SessionDevice, SessionMeta, prune_sessions, session_tag,
-};
+use super::session::{JournalText, SessionDevice, SessionMeta, prune_sessions, session_tag};
 use crate::app::types::RxLineSplitter;
 use crate::configs::{RxNewlineMode, TextEncoding};
 use chrono::format::{Item, StrftimeItems};
@@ -165,15 +163,9 @@ impl Recorder {
         );
         let text_path = dir.join(format!("{stem}.log"));
         let raw_path = dir.join(format!("{stem}.raw"));
-        let meta = SessionMeta {
-            version: SESSION_META_VERSION,
-            started: now.timestamp(),
-            device: device.clone(),
-            text: text.clone(),
-        };
-        let meta = toml::to_string(&meta).map_err(io::Error::other)?;
         create_parent_dirs(&text_path)?;
-        fs::write(dir.join(format!("{stem}.meta")), meta)?;
+        SessionMeta::new(now, device.clone(), text.clone())
+            .write(&SessionMeta::path_of(&raw_path))?;
         let raw = LogFile::open(&raw_path)?;
         // held while the session runs, so no pruning removes it, from this maxicom or another
         // one (MAX-148). The OS drops it with the process, even killed. A file system without

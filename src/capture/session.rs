@@ -91,6 +91,36 @@ pub struct SessionMeta {
     pub text: JournalText,
 }
 
+impl SessionMeta {
+    pub fn new(started: DateTime<Local>, device: SessionDevice, text: JournalText) -> Self {
+        Self {
+            version: SESSION_META_VERSION,
+            started: started.timestamp(),
+            device,
+            text,
+        }
+    }
+
+    /// The meta file of a `.raw`: the same name with `.meta`, as a session's or a raw
+    /// recording's (MAX-163)
+    pub fn path_of(raw: &Path) -> PathBuf {
+        raw.with_extension("meta")
+    }
+
+    /// The meta in `path`; none when missing, broken or of another version
+    pub fn read(path: &Path) -> Option<Self> {
+        fs::read_to_string(path)
+            .ok()
+            .and_then(|meta| toml::from_str::<Self>(&meta).ok())
+            .filter(|meta| meta.version == SESSION_META_VERSION && meta.device.is_whole())
+    }
+
+    pub fn write(&self, path: &Path) -> io::Result<()> {
+        let meta = toml::to_string(self).map_err(io::Error::other)?;
+        fs::write(path, meta)
+    }
+}
+
 /// Removes the empty sessions in `dir`, then the oldest so `keep` are left, never `current`
 /// nor a session still running (MAX-148). A session is the `.log`, `.raw` and `.meta` files of
 /// one stem, which starts with its date so the names sort by age
@@ -247,10 +277,7 @@ pub fn list_sessions(dir: &Path) -> io::Result<Vec<Session>> {
 }
 
 fn read_session(dir: &Path, stem: String, files: Vec<PathBuf>) -> Session {
-    let meta = fs::read_to_string(dir.join(format!("{stem}.meta")))
-        .ok()
-        .and_then(|meta| toml::from_str::<SessionMeta>(&meta).ok())
-        .filter(|meta| meta.version == SESSION_META_VERSION && meta.device.is_whole());
+    let meta = SessionMeta::read(&dir.join(format!("{stem}.meta")));
     let started = match &meta {
         Some(meta) => DateTime::from_timestamp(meta.started, 0).map(|t| t.with_timezone(&Local)),
         None => stem

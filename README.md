@@ -340,7 +340,10 @@ where its lines wrap, which `dimension_mode` decides.
   - `text`  The received lines, decoded, one per line, after their time
             (`timestamp_format`) when `timestamp` is on. In line mode, the
             sent lines too, after `tx_mark`
-  - `raw`   The received bytes as is, replayable with `--replay <file>`
+  - `raw`   The received bytes as is, replayable with `--replay <file>`,
+            with a `.meta` beside it (same name) so the replay decodes with
+            the encoding and shows the line settings it was recorded with
+            (none when recorded during a replay)
   Text and raw record apart, both at once if you want. `toggle-logging`
   (`Ctrl-A l`, or a click on `● REC`) stops every recording, or opens the
   recording dialog on the mode's stream (text in line mode, raw in terminal
@@ -361,7 +364,8 @@ where its lines wrap, which `dimension_mode` decides.
   - At startup, the sessions that received nothing are removed, then the
     oldest past `journal_keep`. A session still running, here or in another
     maxicom (another port), is never removed.
-  - To recover a session by hand, open its `.log`, or replay its `.raw`:
+  - To recover a session by hand, open its `.log`, or replay its `.raw`
+    (its `.meta` gives the encoding and the line settings):
     `maxicom --replay ~/.cache/maxicom/sessions/20261028_141500123_ttyUSB0.raw`
   - A layout can show it with the `journal` condition, e.g.
     `[◆](journal?muted:hide)` (not in the default layout).
@@ -369,8 +373,8 @@ where its lines wrap, which `dimension_mode` decides.
   the history, the lines in line mode and the screen and scrollback in
   terminal mode, then a separator line
   `── restored: ttyUSB0, 2026-10-28 14:15 → 16:40 ──` before the live data.
-  - `restore` in `[capture]`: `ask` (default) asks at startup, `always`
-    restores, `never` doesn't. `--restore` (restore without asking) and
+  - `restore` in `[capture]`: `always` (default) restores, `ask` asks at
+    startup, `never` doesn't. `--restore` (restore without asking) and
     `--no-restore` decide for one launch. Never in replay mode.
   - The same device: the same machine (hostname), port, baud, data bits,
     parity, stop bits and encoding. The session must have received something,
@@ -427,7 +431,7 @@ record_tx = true                         # sent lines in the text files (line mo
 tx_mark = "> "                           # before each sent line, "" for none
 journal = true                           # session backup (read at startup)
 journal_keep = 20                        # sessions kept
-restore = "ask"                          # ask, always or never
+restore = "always"                       # always, ask or never
 restore_max_age = "24h"                  # since it ended, "0s": no limit
 screenshot_dir = ""
 screenshot_name = "screen_%Y%m%d_%H%M%S" # the format adds .txt or .ans
