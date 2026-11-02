@@ -1,8 +1,9 @@
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Padding},
+    widgets::{Block, Padding, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 
 use crate::{
@@ -51,6 +52,30 @@ pub fn form_area(parent: Rect, width: u16, lines: usize) -> Rect {
 /// Row `y` of a popup's inner area, as a click target (MAX-113): cut to the area
 pub fn row_area(inner: Rect, y: usize) -> Rect {
     Rect::new(inner.x, inner.y + y as u16, inner.width, 1).intersection(inner)
+}
+
+/// A popup's scrollbar in the column `bar`, for content scrolled to `position` of
+/// `max_scroll` with `visible` rows shown: the help's, the settings', the session browser's
+/// (MAX-175)
+pub fn render_scrollbar(
+    frame: &mut Frame,
+    bar: Rect,
+    (position, max_scroll, visible): (usize, usize, usize),
+    theme: &ThemeConfig,
+) {
+    let mut state = ScrollbarState::new(max_scroll)
+        .viewport_content_length(visible)
+        .position(position);
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"))
+        .thumb_symbol("█")
+        .track_symbol(Some("│"))
+        .thumb_style(*theme.ui.scrollbar_thumb)
+        .track_style(*theme.ui.scrollbar_track)
+        .begin_style(*theme.ui.scrollbar_thumb)
+        .end_style(*theme.ui.scrollbar_thumb);
+    frame.render_stateful_widget(scrollbar, bar, &mut state);
 }
 
 /// A section header inside a popup

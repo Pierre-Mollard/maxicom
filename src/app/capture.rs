@@ -7,12 +7,12 @@ use super::App;
 use crate::{
     app::types::LogEntry,
     capture::{
-        CaptureSource, RESTORE_RAW_TAIL, Session, SessionDevice, SessionText, SessionWriter,
-        Stream, expand_home, find_last_session, read_tail_bytes, read_times, restore_separator,
-        timed_chunks,
+        CaptureDevice, CaptureFormat, CaptureSource, RESTORE_RAW_TAIL, RecordingWriter, Session,
+        Stream, find_last_session, read_tail_bytes, read_times, restore_separator, timed_chunks,
     },
     configs::{Mode, settings::RestoreMode},
     overlays::{ErrorDialog, FilePathDialog, Overlay, SessionBrowser},
+    paths::expand_home,
 };
 
 /// The most kept while the restore dialog asks: past it, the dialog closes without a restore
@@ -29,7 +29,7 @@ impl App {
             return;
         }
         let device = self.session_device();
-        let text = self.session_text();
+        let text = self.capture_format();
         let result = match dir {
             Some(dir) => self
                 .recorder
@@ -49,12 +49,12 @@ impl App {
     /// The session backup set aside while a replay replaces the live link (MAX-166): out of the
     /// recorder, its files kept open and locked, so no pruning removes it, and nothing recorded
     /// until `resume_session`
-    pub fn pause_session(&mut self) -> Option<SessionWriter> {
+    pub fn pause_session(&mut self) -> Option<RecordingWriter> {
         self.recorder.take_session()
     }
 
     /// The session backup `pause_session` set aside records again, the live link back
-    pub fn resume_session(&mut self, session: Option<SessionWriter>) {
+    pub fn resume_session(&mut self, session: Option<RecordingWriter>) {
         self.recorder.set_session(session);
     }
 
@@ -97,7 +97,7 @@ impl App {
         let device = if self.link_kind().keeps_sessions() {
             Some(self.session_device())
         } else {
-            self.replay.device.clone()
+            self.replay_device().cloned()
         };
         CaptureSource {
             address: self.link.config().address.clone(),
@@ -109,7 +109,7 @@ impl App {
     /// the same line settings and encoding (a replay's device comes from its file)
     fn is_current_source(&self, source: &CaptureSource) -> bool {
         let config = self.link.config();
-        let same_setup = |device: &SessionDevice| {
+        let same_setup = |device: &CaptureDevice| {
             !self.link_kind().keeps_sessions() || device.same_setup(config, self.settings.encoding)
         };
         source.address == config.address && source.device.as_ref().is_none_or(same_setup)
@@ -117,9 +117,9 @@ impl App {
 
     /// How a session's or a full recording's text is written: as the capture settings say when
     /// it starts, reloads aside
-    fn session_text(&self) -> SessionText {
+    fn capture_format(&self) -> CaptureFormat {
         let capture = &self.settings.capture;
-        SessionText {
+        CaptureFormat {
             timestamp: capture
                 .timestamp
                 .then(|| self.settings.timestamp_format.clone()),
@@ -128,8 +128,8 @@ impl App {
     }
 
     /// What this session runs on, for its backup and to find a past one to restore
-    fn session_device(&self) -> SessionDevice {
-        SessionDevice::new(self.link.config(), self.settings.encoding)
+    fn session_device(&self) -> CaptureDevice {
+        CaptureDevice::new(self.link.config(), self.settings.encoding)
     }
 
     /// Restores the last session on this device found in `dir` when `restore` (`--restore` /
@@ -290,11 +290,11 @@ impl App {
         let result = match stream {
             Stream::Text => {
                 let mut file = path.into_os_string();
-                file.push(".log");
+                file.push(Stream::Text.suffix());
                 (self.recorder).start_text(Path::new(&file), include_session, source)
             }
             Stream::Full => {
-                let text = self.session_text();
+                let text = self.capture_format();
                 (self.recorder).start_full(&path, include_session, source, &text)
             }
         };
@@ -322,7 +322,7 @@ impl App {
         let restorable =
             find_last_session(&dir, &self.session_device(), max_age).map(|session| session.stem);
         let mut browser = SessionBrowser::new(dir, restorable);
-        if let Some(replaced) = &self.replaced_link {
+        if let Some(replaced) = self.replaced_link() {
             let raw = replaced
                 .session
                 .as_ref()
@@ -341,7 +341,7 @@ pub mod tests {
     use super::*;
     use crate::{
         app::tests::{app, record_full_meta, set_line, texts, toasts},
-        capture::SessionMeta,
+        capture::RecordingMeta,
         configs::DualBufferMode,
         inputs::{Action, AppAction, DialogAction},
         link::LinkConfig,
@@ -430,7 +430,7 @@ pub mod tests {
             .start_text(&temp("act.log"), false, app.capture_source())
             .unwrap();
         assert_eq!(app.recording(), Some(Stream::Text));
-        let text = SessionText::default();
+        let text = CaptureFormat::default();
         app.recorder
             .start_full(&temp("act"), false, app.capture_source(), &text)
             .unwrap();
@@ -454,7 +454,7 @@ pub mod tests {
         let base =
             std::env::temp_dir().join(format!("maxicom_test_{}_restore", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
-        let text = SessionText {
+        let text = CaptureFormat {
             timestamp: Some("[%H:%M:%S%.3f]".to_string()),
             tx_mark: Some("> ".to_string()),
         };
@@ -515,7 +515,7 @@ pub mod tests {
         let session = crate::capture::tests::write_test_session(
             &dir,
             "/dev/ttyUSB0",
-            &SessionText {
+            &CaptureFormat {
                 timestamp: None,
                 tx_mark: Some("> ".to_string()),
             },
@@ -539,7 +539,7 @@ pub mod tests {
         let session = crate::capture::tests::write_test_session(
             &dir,
             "/dev/ttyUSB0",
-            &SessionText::default(),
+            &CaptureFormat::default(),
             b"one\r\ntwo\r\n",
             b"",
         );
@@ -575,7 +575,7 @@ pub mod tests {
         let session = crate::capture::tests::write_test_session(
             &dir,
             &port,
-            &SessionText::default(),
+            &CaptureFormat::default(),
             b"from raw\r\n",
             b"",
         );
@@ -616,7 +616,7 @@ pub mod tests {
             );
             std::thread::sleep(Duration::from_millis(20));
         }
-        let read = |name: &str| SessionMeta::read(&dir.join(name)).unwrap().started;
+        let read = |name: &str| RecordingMeta::read(&dir.join(name)).unwrap().started;
         record_full_meta(&mut app, &dir.join("with"), true);
         record_full_meta(&mut app, &dir.join("without"), false);
         assert_eq!(read("with/with.meta"), started);
@@ -663,7 +663,7 @@ pub mod tests {
         let sessions: Vec<_> = metas
             .iter()
             .map(|path| {
-                let device = SessionMeta::read(path).unwrap().device;
+                let device = RecordingMeta::read(path).unwrap().device;
                 let raw = std::fs::read(path.with_extension("raw")).unwrap();
                 let line = device.line.unwrap();
                 let raw = String::from_utf8(raw).unwrap();
@@ -806,7 +806,7 @@ pub mod tests {
         let session = crate::capture::tests::write_test_session(
             &dir,
             &port,
-            &SessionText::default(),
+            &CaptureFormat::default(),
             b"old line\r\n",
             b"",
         );
@@ -852,7 +852,7 @@ pub mod tests {
         crate::capture::tests::write_test_session(
             &dir,
             &LinkConfig::default().address.to_string(),
-            &SessionText::default(),
+            &CaptureFormat::default(),
             b"old line\r\n",
             b"",
         );

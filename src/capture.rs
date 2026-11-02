@@ -1,6 +1,6 @@
 //! What is captured of the serial data (MAX-152): the recordings and the session backup
 //! (`recorder`), the session store (`session`), reading a session back (`restore`), the
-//! terminal screenshots (`screenshot`), and the path helpers they share
+//! terminal screenshots (`screenshot`)
 
 mod recorder;
 mod restore;
@@ -8,55 +8,27 @@ mod screenshot;
 mod session;
 
 // Re-exports
-pub use recorder::{Recorder, SessionWriter, Stream};
+pub use recorder::{Recorder, RecordingWriter, Stream};
 pub use restore::{
     RESTORE_RAW_TAIL, TimedChunk, read_tail_bytes, read_tail_lines, read_times, restore_separator,
     timed_chunks,
 };
 pub use screenshot::{Screenshot, ScreenshotFormat};
 pub use session::{
-    CaptureSource, Session, SessionDevice, SessionLimits, SessionLine, SessionMeta, SessionOrder,
-    SessionText, delete_session, delete_sessions, find_last_session, list_sessions, sort_sessions,
+    CaptureDevice, CaptureFormat, CaptureLine, CaptureSource, RecordingMeta, Session,
+    SessionLimits, SessionOrder, delete_session, delete_sessions, find_last_session, list_sessions,
+    recording_raw, sort_sessions,
 };
-
-use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
-
-// TODO: those 3 functions should go somewhere else?
-
-/// Creates the missing folders of `path`, so a file can be written there
-pub fn create_parent_dirs(path: &Path) -> io::Result<()> {
-    match path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => fs::create_dir_all(parent),
-        _ => Ok(()),
-    }
-}
-
-/// The path with the home folder written `~`, for a short display
-pub fn shorten_home(path: &Path) -> String {
-    match dirs::home_dir().and_then(|home| path.strip_prefix(home).ok().map(Path::to_path_buf)) {
-        Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
-        Some(rest) => format!("~/{}", rest.display()),
-        None => path.display().to_string(),
-    }
-}
-
-/// `~` at the start of a path is the home folder, as in a shell
-pub fn expand_home(path: &Path) -> PathBuf {
-    match (path.strip_prefix("~"), dirs::home_dir()) {
-        (Ok(rest), Some(home)) => home.join(rest),
-        _ => path.to_path_buf(),
-    }
-}
 
 #[cfg(test)]
 pub mod tests {
-    //! The path helpers, and the helpers the capture tests and the other modules' tests share.
+    //! The helpers the capture tests and the other modules' tests share.
 
     use super::*;
     use crate::configs::{RxNewlineMode, TextEncoding};
     use crate::link::{Address, LinkConfig};
+    use std::fs;
+    use std::path::{Path, PathBuf};
 
     pub fn record(recorder: &mut Recorder, bytes: &[u8]) {
         recorder.record_rx(RxNewlineMode::Auto, TextEncoding::Utf8, None, bytes);
@@ -79,8 +51,8 @@ pub mod tests {
     }
 
     /// A device on `address`, on this machine.
-    pub fn device(address: &str) -> SessionDevice {
-        SessionDevice::new(
+    pub fn device(address: &str) -> CaptureDevice {
+        CaptureDevice::new(
             &LinkConfig {
                 address: address.parse::<Address>().unwrap(),
                 ..LinkConfig::default()
@@ -101,11 +73,11 @@ pub mod tests {
     pub fn write_test_session(
         dir: &Path,
         port: &str,
-        text: &SessionText,
+        text: &CaptureFormat,
         rx: &[u8],
         tx: &[u8],
     ) -> Session {
-        let device = SessionDevice::new(
+        let device = CaptureDevice::new(
             &LinkConfig {
                 address: port.parse::<Address>().unwrap(),
                 ..LinkConfig::default()
@@ -122,29 +94,5 @@ pub mod tests {
         }
         drop(recorder);
         find_last_session(dir, &device, None).unwrap()
-    }
-
-    /// `~` is the home folder only as the first part of a path.
-    #[test]
-    fn home_expansion() {
-        let home = dirs::home_dir().unwrap();
-        assert_eq!(
-            expand_home(Path::new("~/logs/x.log")),
-            home.join("logs/x.log")
-        );
-        assert_eq!(expand_home(Path::new("a/~/x")), Path::new("a/~/x"));
-        assert_eq!(expand_home(Path::new("~x")), Path::new("~x"));
-    }
-
-    /// MAX-163: the home folder is written `~`, a path out of it as it is.
-    #[test]
-    fn home_shortened() {
-        let home = dirs::home_dir().unwrap();
-        assert_eq!(
-            shorten_home(&home.join(".config/maxicom")),
-            "~/.config/maxicom"
-        );
-        assert_eq!(shorten_home(&home), "~");
-        assert_eq!(shorten_home(Path::new("/etc/x")), "/etc/x");
     }
 }

@@ -43,7 +43,7 @@ pub fn render_filepath_popup(
             Span::styled(path_str, style),
             // the stream sets the extension, or the folder (MAX-175)
             Span::styled(
-                dialog.suffix(),
+                dialog.stream.suffix(),
                 Style::default().fg(theme.palette.text_muted),
             ),
         ]),

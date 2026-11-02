@@ -34,6 +34,7 @@ mod inputs;
 mod link;
 mod notification;
 mod overlays;
+mod paths;
 mod terminal;
 mod ui;
 

@@ -292,7 +292,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        capture::{Recorder, SessionDevice, SessionLimits, SessionText, tests::write_test_session},
+        capture::{
+            CaptureDevice, CaptureFormat, Recorder, SessionLimits, tests::write_test_session,
+        },
         configs::TextEncoding,
         link::{Address, LinkConfig},
     };
@@ -312,10 +314,10 @@ mod tests {
     /// Sessions on ports a and b, then a running session backup on "live", in a fresh folder.
     fn folder(name: &str) -> (PathBuf, Recorder) {
         let dir = temp_dir(name);
-        let text = SessionText::default();
+        let text = CaptureFormat::default();
         write_test_session(&dir, "/dev/a", &text, b"line of a\r\n", b"");
         write_test_session(&dir, "/dev/b", &text, b"line of b\r\n", b"");
-        let device = SessionDevice::new(
+        let device = CaptureDevice::new(
             &LinkConfig {
                 address: "live".parse::<Address>().unwrap(),
                 ..LinkConfig::default()
@@ -509,7 +511,9 @@ mod tests {
         match browser.handle_action(key('y')) {
             OverlayResponse::HandledNotify { message, warn } => {
                 assert!(!warn);
-                assert_eq!(message, "Deleted 2 sessions (42B), 1 running kept");
+                // the size is all their files' (MAX-175)
+                assert!(message.starts_with("Deleted 2 sessions ("), "{message}");
+                assert!(message.ends_with("), 1 running kept"), "{message}");
             }
             _ => panic!("no toast"),
         }

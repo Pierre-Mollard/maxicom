@@ -3,18 +3,20 @@ use ratatui::{
     layout::Rect,
     style::Style,
     text::{Line, Span},
-    widgets::{Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::{Clear, Paragraph},
 };
 
 use crate::{
     app::App,
-    capture::shorten_home,
     configs::{
         AppConfig, PrefixWrapBehavior, ThemeConfig, keybindings::KeyBindingDialogAction,
         settings::PrefixPlace,
     },
     overlays::{PopupTarget, SettingKey, SettingsDialog},
-    ui::popups::{FORM_WIDTH, form_area, key_hints, popup_block, row_area, section},
+    paths::shorten_home,
+    ui::popups::{
+        FORM_WIDTH, form_area, key_hints, popup_block, render_scrollbar, row_area, section,
+    },
 };
 
 pub fn render_settings_popup(
@@ -182,25 +184,13 @@ pub fn render_settings_popup(
     let text: Vec<Line> = rows.into_iter().map(|(_, line)| line).collect();
     frame.render_widget(Paragraph::new(text).scroll((scroll as u16, 0)), inner);
     if max_scroll > 0 {
-        let mut state = ScrollbarState::new(max_scroll)
-            .viewport_content_length(visible)
-            .position(scroll);
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(Some("▲"))
-            .end_symbol(Some("▼"))
-            .thumb_symbol("█")
-            .track_symbol(Some("│"))
-            .thumb_style(*theme.ui.scrollbar_thumb)
-            .track_style(*theme.ui.scrollbar_track)
-            .begin_style(*theme.ui.scrollbar_thumb)
-            .end_style(*theme.ui.scrollbar_thumb);
         let bar = Rect {
             x: inner.right(),
             width: 1,
             ..inner
         }
         .intersection(area);
-        frame.render_stateful_widget(scrollbar, bar, &mut state);
+        render_scrollbar(frame, bar, (scroll, max_scroll, visible), theme);
     }
     area
 }

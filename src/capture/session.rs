@@ -14,29 +14,29 @@ use std::time::{Duration, SystemTime};
 
 pub const SESSION_META_VERSION: u32 = 1;
 
-/// How a session's text lines are written, taken from the capture settings when it starts and
-/// kept in its meta file, so it can be read back (MAX-148): the timestamp format when it is
-/// on, and the mark before sent lines when they are recorded. A reload changes the user
-/// recordings only, so one session backup never mixes two formats
+/// How the text lines of a session or a full recording are written (MAX-148, MAX-175), taken
+/// from the capture settings when it starts and kept in its meta file (the session browser
+/// shows it): the timestamp format when it is on, and the mark before sent lines when they are
+/// recorded. A reload changes the text recordings only, so one session never mixes two formats
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SessionText {
+pub struct CaptureFormat {
     pub timestamp: Option<String>,
     pub tx_mark: Option<String>,
 }
 
-/// What a session was recorded on (MAX-148): a session restores only on the same machine,
-/// address, line settings and encoding, as bytes from another baud or encoding are garbage.
-/// `address` is the link's, which gives its kind (MAX-156), written `port` in the file as
-/// before; `line` its line settings when maxicom sets them (a serial port, not a TCP link): a
-/// new kind of link never changes the file. In the file the line settings sit at the top of
-/// `[device]`, as before
+/// What a session or a full recording was recorded on (MAX-148, MAX-175): a session restores
+/// only on the same machine, address, line settings and encoding, as bytes from another baud
+/// or encoding are garbage. `address` is the link's, which gives its kind (MAX-156), written
+/// `port` in the file as before; `line` its line settings when maxicom sets them (a serial
+/// port, not a TCP link): a new kind of link never changes the file. In the file the line
+/// settings sit at the top of `[device]`, as before
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SessionDevice {
+pub struct CaptureDevice {
     pub host: String,
     #[serde(rename = "port")]
     pub address: Address,
     #[serde(flatten)]
-    pub line: Option<SessionLine>,
+    pub line: Option<CaptureLine>,
     pub encoding: TextEncoding,
 }
 
@@ -45,7 +45,7 @@ pub struct SessionDevice {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CaptureSource {
     pub address: Address,
-    pub device: Option<SessionDevice>,
+    pub device: Option<CaptureDevice>,
 }
 
 impl CaptureSource {
@@ -64,13 +64,13 @@ impl CaptureSource {
 /// The line settings that change the bytes received: the baud rate and the framing. Flow
 /// control doesn't, so it isn't here. In the file the framing's fields sit next to `baud`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SessionLine {
+pub struct CaptureLine {
     pub baud: u32,
     #[serde(flatten)]
     pub framing: Framing,
 }
 
-impl SessionLine {
+impl CaptureLine {
     pub fn of(line: &LineSettings) -> Self {
         Self {
             baud: line.baud,
@@ -79,13 +79,13 @@ impl SessionLine {
     }
 }
 
-impl SessionDevice {
+impl CaptureDevice {
     pub fn new(config: &LinkConfig, encoding: TextEncoding) -> Self {
         let line = config
             .address
             .kind()
             .has_line_settings()
-            .then(|| SessionLine::of(&config.line));
+            .then(|| CaptureLine::of(&config.line));
         Self {
             host: hostname(),
             address: config.address.clone(),
@@ -97,7 +97,7 @@ impl SessionDevice {
     /// Whether the bytes received on `config` decoded with `encoding` are the ones this device
     /// says: the same line settings and encoding. The address isn't compared (MAX-173)
     pub fn same_setup(&self, config: &LinkConfig, encoding: TextEncoding) -> bool {
-        let line = (self.line.is_some()).then(|| SessionLine::of(&config.line));
+        let line = (self.line.is_some()).then(|| CaptureLine::of(&config.line));
         self.line == line && self.encoding == encoding
     }
 
@@ -109,18 +109,18 @@ impl SessionDevice {
     }
 }
 
-/// The `<stem>.meta` file of a session, written when it starts. A file of another `version`
-/// is read as none, and never restores
+/// The `.meta` file of a session or a full recording, written when it starts. A file of
+/// another `version` is read as none, and never restores
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SessionMeta {
+pub struct RecordingMeta {
     pub version: u32,
     pub started: i64,
-    pub device: SessionDevice,
-    pub text: SessionText,
+    pub device: CaptureDevice,
+    pub text: CaptureFormat,
 }
 
-impl SessionMeta {
-    pub fn new(started: DateTime<Local>, device: SessionDevice, text: SessionText) -> Self {
+impl RecordingMeta {
+    pub fn new(started: DateTime<Local>, device: CaptureDevice, text: CaptureFormat) -> Self {
         Self {
             version: SESSION_META_VERSION,
             started: started.timestamp(),
@@ -168,10 +168,39 @@ impl SessionLimits {
     }
 }
 
+/// The file with `extension` of the recording in `folder` (a session's, a full recording's):
+/// its files are named after the folder, `<folder>/<name>.<extension>` (MAX-175)
+pub fn folder_file(folder: &Path, extension: &str) -> PathBuf {
+    let name = folder.file_name().unwrap_or_default().to_string_lossy();
+    folder.join(format!("{name}.{extension}"))
+}
+
 /// The file of the session `stem` in the session folder `dir` with `extension`: each session
-/// has a folder of its own, named after it like its files (MAX-175)
+/// has a folder of its own, named after it (MAX-175)
 pub fn session_file(dir: &Path, stem: &str, extension: &str) -> PathBuf {
-    dir.join(stem).join(format!("{stem}.{extension}"))
+    folder_file(&dir.join(stem), extension)
+}
+
+/// The `.raw` a replay plays for `path` (MAX-175): a recording's folder (a session's, a full
+/// recording's) gives the `.raw` named after it, a `.meta` the `.raw` beside it, a `.raw`
+/// itself, with or without a meta (another tool's capture). Anything else isn't a recording, a
+/// `.log` neither: its text can't be replayed as it was received
+pub fn recording_raw(path: &Path) -> io::Result<PathBuf> {
+    let not_one = || {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a recording (a .raw, its .meta or its folder)",
+        )
+    };
+    if path.is_dir() {
+        let raw = folder_file(path, "raw");
+        return raw.is_file().then_some(raw).ok_or_else(not_one);
+    }
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("raw") => Ok(path.to_path_buf()),
+        Some("meta") => Ok(path.with_extension("raw")),
+        _ => Err(not_one()),
+    }
 }
 
 /// Removes the empty sessions in `dir`, then the oldest so `limits.keep` are left and their
@@ -180,7 +209,7 @@ pub fn session_file(dir: &Path, stem: &str, extension: &str) -> PathBuf {
 /// `.log`, `.raw` and `.meta` files; the stem starts with its date so the names sort by age
 pub fn prune_sessions(dir: &Path, limits: SessionLimits, current: &str) -> io::Result<()> {
     let mut sessions = session_files(dir)?;
-    let removable = |stem: &str| stem != current && !is_running(&dir.join(stem), stem);
+    let removable = |stem: &str| stem != current && !is_running(&dir.join(stem));
     let remove = |stem: &str| fs::remove_dir_all(dir.join(stem));
     // a launch that received nothing leaves an empty session, which would fill `keep`
     sessions.retain(|stem, _| {
@@ -245,15 +274,16 @@ fn session_files(dir: &Path) -> io::Result<BTreeMap<String, Vec<PathBuf>>> {
 }
 
 /// A session in the cache folder (MAX-148), what the restore and the session browser use: its
-/// meta file when it has one (none before MAX-148), when it started (from the meta, else from
-/// its name) and last received (the raw file's time, right even after a crash), the size of
-/// its `.raw` and of its `.log` and `.raw` together, and whether it is still running, here or
-/// in another maxicom
+/// folder and files (MAX-175), its meta file when it has one (none before MAX-148), when it
+/// started (from the meta, else from its name) and last received (the raw file's time, right
+/// even after a crash), the size of its `.raw` and of all its files, and whether it is still
+/// running, here or in another maxicom
 #[derive(Debug, Clone, PartialEq)]
 pub struct Session {
     pub stem: String,
+    pub folder: PathBuf,
     pub files: Vec<PathBuf>,
-    pub meta: Option<SessionMeta>,
+    pub meta: Option<RecordingMeta>,
     pub started: Option<DateTime<Local>>,
     pub ended: Option<DateTime<Local>>,
     pub raw_len: u64,
@@ -351,7 +381,8 @@ pub fn list_sessions(dir: &Path) -> io::Result<Vec<Session>> {
 }
 
 fn read_session(dir: &Path, stem: String, files: Vec<PathBuf>) -> Session {
-    let meta = SessionMeta::read(&session_file(dir, &stem, "meta"));
+    let folder = dir.join(&stem);
+    let meta = RecordingMeta::read(&folder_file(&folder, "meta"));
     let started = match &meta {
         Some(meta) => DateTime::from_timestamp(meta.started, 0).map(|t| t.with_timezone(&Local)),
         None => stem
@@ -359,17 +390,22 @@ fn read_session(dir: &Path, stem: String, files: Vec<PathBuf>) -> Session {
             .and_then(|date| NaiveDateTime::parse_from_str(date, "%Y%m%d_%H%M%S").ok())
             .and_then(|date| Local.from_local_datetime(&date).earliest()),
     };
-    let raw = fs::metadata(session_file(dir, &stem, "raw")).ok();
-    let log_len = fs::metadata(session_file(dir, &stem, "log")).map_or(0, |log| log.len());
+    let raw = fs::metadata(folder_file(&folder, "raw")).ok();
     let raw_len = raw.as_ref().map_or(0, |raw| raw.len());
+    // all its files, as pruning counts them (MAX-175)
+    let size = (files.iter())
+        .filter_map(|path| fs::metadata(path).ok())
+        .map(|file| file.len())
+        .sum();
     Session {
-        running: is_running(&dir.join(&stem), &stem),
+        running: is_running(&folder),
         ended: raw.and_then(|raw| raw.modified().ok()).map(DateTime::from),
         raw_len,
-        size: log_len + raw_len,
+        size,
         meta,
         started,
         stem,
+        folder,
         files,
     }
 }
@@ -388,13 +424,10 @@ pub fn sort_sessions(entries: &mut [Session], order: SessionOrder) {
 
 /// Deletes the folder of `entry`, refused while it is still running
 pub fn delete_session(entry: &Session) -> io::Result<()> {
-    let Some(folder) = entry.files.first().and_then(|path| path.parent()) else {
-        return Ok(());
-    };
-    if is_running(folder, &entry.stem) {
+    if is_running(&entry.folder) {
         return Err(io::Error::other("the session is still running"));
     }
-    fs::remove_dir_all(folder)
+    fs::remove_dir_all(&entry.folder)
 }
 
 /// What deleting several sessions did: the sessions deleted and their size, the running ones
@@ -425,10 +458,10 @@ pub fn delete_sessions(entries: &[Session]) -> DeleteReport {
     report
 }
 
-/// Whether the session of `stem` in its `folder` is still running, here or in another maxicom:
-/// its session backup holds the lock on its `.raw`
-fn is_running(folder: &Path, stem: &str) -> bool {
-    File::open(folder.join(format!("{stem}.raw")))
+/// Whether the session in `folder` is still running, here or in another maxicom: its session
+/// backup holds the lock on its `.raw`
+fn is_running(folder: &Path) -> bool {
+    File::open(folder_file(folder, "raw"))
         .is_ok_and(|raw| matches!(raw.try_lock(), Err(fs::TryLockError::WouldBlock)))
 }
 
@@ -437,7 +470,7 @@ fn is_running(folder: &Path, stem: &str) -> bool {
 /// pruning could remove it
 pub fn find_last_session(
     dir: &Path,
-    device: &SessionDevice,
+    device: &CaptureDevice,
     max_age: Option<Duration>,
 ) -> Option<Session> {
     let is_recent = |ended: Option<DateTime<Local>>| {
@@ -510,6 +543,33 @@ mod tests {
         );
         let plain = crate::capture::tests::source("file:///tmp/old.raw");
         assert_eq!(plain.marker(utf8), "── device: old.raw, UTF8 ──");
+    }
+
+    /// MAX-175: a replay plays a recording's `.raw`, found from its folder, its `.meta` or
+    /// itself (a `.raw` without a meta too); a `.log`, any other file and a folder without its
+    /// `.raw` aren't recordings.
+    /// How: a full recording's folder with its files, a stray `.raw`, a `.log`, an empty folder.
+    #[test]
+    fn recording_raw_from_a_folder_a_meta_or_itself() {
+        let dir = temp_dir("recording_raw");
+        put(&dir, "20260101_000000_x.raw", "x");
+        put(&dir, "20260101_000000_x.meta", "");
+        let folder = dir.join("20260101_000000_x");
+        let raw = folder.join("20260101_000000_x.raw");
+        assert_eq!(recording_raw(&folder).unwrap(), raw);
+        assert_eq!(recording_raw(&raw.with_extension("meta")).unwrap(), raw);
+        assert_eq!(recording_raw(&raw).unwrap(), raw);
+        assert_eq!(
+            recording_raw(&dir.join("other.raw")).unwrap(),
+            dir.join("other.raw")
+        );
+        for not_one in [raw.with_extension("log"), dir.join("notes.txt")] {
+            let err = recording_raw(&not_one).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{not_one:?}");
+        }
+        fs::create_dir_all(dir.join("empty")).unwrap();
+        assert!(recording_raw(&dir.join("empty")).is_err());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// The session tag keeps the last part of the address, safe for a file name.
@@ -696,7 +756,7 @@ mod tests {
             .start_session(
                 &dir,
                 &device("x"),
-                &SessionText::default(),
+                &CaptureFormat::default(),
                 SessionLimits::keep(20),
             )
             .unwrap();
@@ -704,20 +764,20 @@ mod tests {
             .into_iter()
             .find_map(|n| n.strip_suffix("_x.raw").map(|stem| format!("{stem}_x")))
             .unwrap();
-        assert!(is_running(&dir.join(&session), &session));
+        assert!(is_running(&dir.join(&session)));
         drop(recorder);
-        assert!(!is_running(&dir.join(&session), &session));
+        assert!(!is_running(&dir.join(&session)));
         let _ = fs::remove_dir_all(&dir);
     }
 
     /// Writes a session of `stem` in `dir` as `start_session` would, with `raw` received.
-    fn write_session(dir: &Path, stem: &str, device: &SessionDevice, raw: &[u8]) {
+    fn write_session(dir: &Path, stem: &str, device: &CaptureDevice, raw: &[u8]) {
         fs::create_dir_all(dir).unwrap();
-        let meta = SessionMeta {
+        let meta = RecordingMeta {
             version: SESSION_META_VERSION,
             started: 1_700_000_000,
             device: device.clone(),
-            text: SessionText::default(),
+            text: CaptureFormat::default(),
         };
         put(
             dir,
@@ -752,7 +812,7 @@ tx_mark = "> "
     /// How: the saved v1 text, read then written again.
     #[test]
     fn meta_v1_still_reads() {
-        let meta: SessionMeta = toml::from_str(META_V1).unwrap();
+        let meta: RecordingMeta = toml::from_str(META_V1).unwrap();
         assert_eq!(meta.device.address.to_string(), "/dev/ttyUSB0");
         assert_eq!(toml::to_string(&meta).unwrap(), META_V1);
     }
@@ -777,7 +837,7 @@ tx_mark = "> "
             found_stem(&dir, &device("tcp://192.168.1.51:4000"), None),
             None
         );
-        let serial = SessionDevice {
+        let serial = CaptureDevice {
             line: device("/dev/ttyUSB0").line,
             ..tcp.clone()
         };
@@ -789,7 +849,7 @@ tx_mark = "> "
         let session = crate::capture::tests::write_test_session(
             &dir,
             "tcp://192.168.1.50:4000",
-            &SessionText::default(),
+            &CaptureFormat::default(),
             b"rx\n",
             b"",
         );
@@ -826,7 +886,7 @@ tx_mark = "> "
         let _ = fs::remove_dir_all(&dir);
     }
 
-    fn found_stem(dir: &Path, device: &SessionDevice, max_age: Option<Duration>) -> Option<String> {
+    fn found_stem(dir: &Path, device: &CaptureDevice, max_age: Option<Duration>) -> Option<String> {
         let session = find_last_session(dir, device, max_age)?;
         Some(session.raw_path()?.file_stem()?.to_str()?.to_string())
     }
@@ -841,7 +901,7 @@ tx_mark = "> "
         let mine = device("/dev/ttyUSB0");
         write_session(&dir, "20260101_000000_ttyUSB0", &mine, b"old");
         write_session(&dir, "20260102_000000_ttyUSB0", &mine, b"good");
-        let other_host = SessionDevice {
+        let other_host = CaptureDevice {
             host: format!("{}-other", mine.host),
             ..mine.clone()
         };
@@ -852,12 +912,12 @@ tx_mark = "> "
             &device("/dev/ttyUSB1"),
             b"x",
         );
-        let other_baud = SessionDevice {
-            line: mine.line.map(|line| SessionLine { baud: 9600, ..line }),
+        let other_baud = CaptureDevice {
+            line: mine.line.map(|line| CaptureLine { baud: 9600, ..line }),
             ..mine.clone()
         };
         write_session(&dir, "20260105_000000_ttyUSB0", &other_baud, b"x");
-        let other_encoding = SessionDevice {
+        let other_encoding = CaptureDevice {
             encoding: TextEncoding::Latin1,
             ..mine.clone()
         };
@@ -922,7 +982,7 @@ tx_mark = "> "
         let dir = temp_dir("session_meta");
         let mine = device("/dev/ttyUSB0");
         let mut recorder = Recorder::default();
-        let text = SessionText {
+        let text = CaptureFormat {
             timestamp: Some("[%H:%M]".to_string()),
             tx_mark: None,
         };
@@ -946,9 +1006,9 @@ tx_mark = "> "
     #[test]
     fn sessions_in_one_second_stay_apart() {
         let dir = temp_dir("same_second");
-        let first = write_test_session(&dir, "/dev/x", &SessionText::default(), b"one\r\n", b"");
+        let first = write_test_session(&dir, "/dev/x", &CaptureFormat::default(), b"one\r\n", b"");
         std::thread::sleep(Duration::from_millis(2));
-        let second = write_test_session(&dir, "/dev/x", &SessionText::default(), b"two\r\n", b"");
+        let second = write_test_session(&dir, "/dev/x", &CaptureFormat::default(), b"two\r\n", b"");
         assert_ne!(first.stem, second.stem);
         assert!(second.stem > first.stem);
         let sessions = list_sessions(&dir).unwrap();
@@ -970,7 +1030,7 @@ tx_mark = "> "
         let with_meta = write_test_session(
             &dir,
             "/dev/ttyUSB0",
-            &SessionText::default(),
+            &CaptureFormat::default(),
             b"abc\r\n",
             b"",
         );
@@ -982,7 +1042,7 @@ tx_mark = "> "
             .start_session(
                 &dir,
                 &device("live"),
-                &SessionText::default(),
+                &CaptureFormat::default(),
                 SessionLimits::keep(20),
             )
             .unwrap();
@@ -997,12 +1057,19 @@ tx_mark = "> "
 
         let meta = usb.meta.as_ref().unwrap();
         assert_eq!(meta.device.address.to_string(), "/dev/ttyUSB0");
-        assert_eq!(meta.text, SessionText::default());
+        assert_eq!(meta.text, CaptureFormat::default());
         assert_eq!(usb.started, with_meta.started);
         assert_eq!(usb.ended, with_meta.ended);
         assert_eq!(usb.raw_len, 5);
-        assert_eq!(usb.size, 4 + 5);
+        // all its files: the `.log`, the `.raw`, the `.meta` and the `.times` (MAX-175)
+        let files_size = |session: &Session| -> u64 {
+            let files = session.files.iter();
+            files.map(|path| fs::metadata(path).unwrap().len()).sum()
+        };
+        assert_eq!(usb.size, files_size(usb));
+        assert!(usb.size > 4 + 5);
         assert_eq!(usb.files.len(), 4);
+        assert_eq!(usb.folder, usb.files[0].parent().unwrap());
         assert_eq!(usb.text_path(), with_meta.text_path());
 
         assert_eq!(old.meta, None);
@@ -1018,6 +1085,7 @@ tx_mark = "> "
     fn sessions_sort_by_device() {
         let entry = |stem: &str| Session {
             stem: stem.to_string(),
+            folder: PathBuf::new(),
             files: Vec::new(),
             meta: None,
             started: None,
@@ -1064,15 +1132,15 @@ tx_mark = "> "
     #[test]
     fn sessions_are_deleted_but_running_ones() {
         let dir = temp_dir("delete_sessions");
-        write_test_session(&dir, "/dev/a", &SessionText::default(), b"aa\r\n", b"");
-        write_test_session(&dir, "/dev/b", &SessionText::default(), b"bbb\r\n", b"");
+        write_test_session(&dir, "/dev/a", &CaptureFormat::default(), b"aa\r\n", b"");
+        write_test_session(&dir, "/dev/b", &CaptureFormat::default(), b"bbb\r\n", b"");
         put(&dir, "notes.txt", "x");
         let mut running = Recorder::default();
         running
             .start_session(
                 &dir,
                 &device("live"),
-                &SessionText::default(),
+                &CaptureFormat::default(),
                 SessionLimits::keep(20),
             )
             .unwrap();
@@ -1086,9 +1154,13 @@ tx_mark = "> "
         delete_session(a).unwrap();
         assert!(a.files.iter().all(|path| !path.exists()));
 
-        let report = delete_sessions(&list_sessions(&dir).unwrap());
+        let entries = list_sessions(&dir).unwrap();
+        let deleted: u64 = (entries.iter().filter(|e| !e.running))
+            .map(|e| e.size)
+            .sum();
+        let report = delete_sessions(&entries);
         assert_eq!((report.deleted, report.running), (1, 1));
-        assert_eq!(report.size, 4 + 5);
+        assert_eq!(report.size, deleted);
         assert!(report.error.is_none());
         let left: Vec<_> = list_sessions(&dir).unwrap();
         assert_eq!(left.len(), 1);

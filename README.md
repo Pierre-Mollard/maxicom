@@ -365,7 +365,7 @@ where its lines wrap, which `dimension_mode` decides.
             (`timestamp_format`) when `timestamp` is on. In line mode, the
             sent lines too, after `tx_mark`
   - `full`  A folder like a session's: the received bytes as is,
-            replayable with `--replay <folder>/<name>.raw`, their times, the
+            replayable with `--replay <folder>`, their times, the
             text, and a `.meta` so the replay decodes with the encoding and
             shows the line settings it was recorded with. During a replay,
             the replayed session's (no `.meta` for a file without one). With
@@ -397,9 +397,13 @@ where its lines wrap, which `dimension_mode` decides.
     together (all their files) fit `sessions.max_size`. The
     current session and one still running, here or in another maxicom
     (another port), count in the size but are never removed.
-  - To recover a session by hand, open its `.log`, or replay its `.raw`
-    (its `.meta` gives the encoding and the line settings):
-    `maxicom --replay ~/.cache/maxicom/sessions/20261028_141500123_ttyUSB0/20261028_141500123_ttyUSB0.raw`
+  - To recover a session by hand, open its `.log`, or replay it (its
+    `.meta` gives the encoding and the line settings):
+    `maxicom --replay ~/.cache/maxicom/sessions/20261028_141500123_ttyUSB0`
+- A replay (`--replay`, `replay`, `open file://`) takes a recording's
+  folder, its `.raw` or its `.meta`, or any `.raw` (another tool's capture,
+  played without a meta). A `.log` is refused: its text isn't what was
+  received.
   - A layout can show it with the `session` condition, e.g.
     `[◆](session?muted:hide)` (not in the default layout).
 - Restore: at startup, the last session of the same device can come back in

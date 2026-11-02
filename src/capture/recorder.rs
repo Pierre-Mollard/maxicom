@@ -1,11 +1,11 @@
-use super::create_parent_dirs;
 use super::restore::times_line;
 use super::session::{
-    CaptureSource, SessionDevice, SessionLimits, SessionMeta, SessionText, prune_sessions,
-    session_tag,
+    CaptureDevice, CaptureFormat, CaptureSource, RecordingMeta, SessionLimits, folder_file,
+    prune_sessions, session_tag,
 };
 use crate::app::types::RxLineSplitter;
 use crate::configs::{RxNewlineMode, TextEncoding};
+use crate::paths::create_parent_dirs;
 use chrono::format::{Item, StrftimeItems};
 use chrono::{DateTime, Local};
 use std::fs::{self, File, OpenOptions};
@@ -74,6 +74,15 @@ impl Stream {
             Self::Full => Self::Text,
         }
     }
+
+    /// What the recording adds to its name: the text file's extension, or the full
+    /// recording's folder `/` (MAX-175)
+    pub fn suffix(self) -> &'static str {
+        match self {
+            Self::Text => ".log",
+            Self::Full => "/",
+        }
+    }
 }
 
 /// The files of a session (MAX-147) or of a full recording (MAX-175), `<stem>.log`, `.raw`,
@@ -81,7 +90,7 @@ impl Stream {
 /// was received (`times`, at `raw_len`), and the device. The session backup runs apart from the
 /// user's recordings, which can start with its content; it is taken out of the recorder while
 /// a replay sets the live link aside (MAX-171)
-pub struct SessionWriter {
+pub struct RecordingWriter {
     text: LogFile,
     raw: LogFile,
     times: LogFile,
@@ -91,25 +100,33 @@ pub struct SessionWriter {
     timestamp: Option<TimestampFormat>,
     tx_mark: Option<String>,
     started: DateTime<Local>,
-    device: Option<SessionDevice>,
+    device: Option<CaptureDevice>,
 }
 
-/// The user's recording: text, or full (MAX-175). One at a time: a full one has the text too
-enum Recording {
-    Text(LogFile),
-    Full(Box<SessionWriter>),
+/// The user's recording (MAX-175), one at a time, and what it records (MAX-173)
+struct Recording {
+    kind: RecordingKind,
+    source: CaptureSource,
+}
+
+/// A text recording, its lines timed as the capture settings say at the moment (a reload
+/// changes them), or a full one: a folder like a session's, which has the text too
+enum RecordingKind {
+    Text {
+        file: LogFile,
+        timestamp: Option<TimestampFormat>,
+    },
+    Full(Box<RecordingWriter>),
 }
 
 /// What is received, fed whatever the mode shows, to the session backup and the user's
-/// recording, which keeps what it records (`source`, MAX-173). The lines are cut even when
-/// nothing records text, so a recording started mid-line still gets that whole line
+/// recording. The lines are cut even when nothing records text, so a recording started
+/// mid-line still gets that whole line
 #[derive(Default)]
 pub struct Recorder {
     recording: Option<Recording>,
-    source: Option<CaptureSource>,
-    session: Option<SessionWriter>,
+    session: Option<RecordingWriter>,
     lines: RxLineSplitter,
-    timestamp: Option<TimestampFormat>,
     line_buf: Vec<u8>,
 }
 
@@ -138,8 +155,11 @@ impl Recorder {
             copy_file(&mut session.text, &mut file)?;
         }
         self.stop();
-        self.recording = Some(Recording::Text(file));
-        self.source = Some(source);
+        let kind = RecordingKind::Text {
+            file,
+            timestamp: None,
+        };
+        self.recording = Some(Recording { kind, source });
         Ok(())
     }
 
@@ -153,19 +173,21 @@ impl Recorder {
         folder: &Path,
         include_session: bool,
         source: CaptureSource,
-        text: &SessionText,
+        text: &CaptureFormat,
     ) -> io::Result<()> {
-        let stem = folder
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no folder name"))?;
+        if folder.file_name().is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "no folder name",
+            ));
+        }
         let session = self.session.as_mut().filter(|_| include_session);
         // before anything is written: never over the session backup's own files
         if let Some(session) = &session {
-            refuse_backup_file(&folder.join(format!("{stem}.raw")), &session.raw_path)?;
+            refuse_backup_file(&folder_file(folder, "raw"), &session.raw_path)?;
         }
         let started = session.as_ref().map_or_else(Local::now, |s| s.started);
-        let mut full = SessionWriter::create(folder, stem, source.device.as_ref(), text, started)?;
+        let mut full = RecordingWriter::create(folder, source.device.as_ref(), text, started)?;
         if let Some(session) = session {
             copy_file(&mut session.text, &mut full.text)?;
             copy_file(&mut session.raw, &mut full.raw)?;
@@ -173,23 +195,25 @@ impl Recorder {
             full.raw_len = session.raw_len;
         }
         self.stop();
-        self.recording = Some(Recording::Full(Box::new(full)));
-        self.source = Some(source);
+        let kind = RecordingKind::Full(Box::new(full));
+        self.recording = Some(Recording { kind, source });
         Ok(())
     }
 
     /// What the recording records, while one runs (MAX-173)
     pub fn source(&self) -> Option<&CaptureSource> {
-        self.source.as_ref()
+        self.recording.as_ref().map(|recording| &recording.source)
     }
 
     /// The device changed under a text recording: `marker` on a line of its own, and `source`
     /// is what it records from there (MAX-173). An RX line pending is written when it ends,
     /// after it
     pub fn mark_device(&mut self, marker: &str, source: CaptureSource) {
-        if let Some(Recording::Text(file)) = &mut self.recording {
+        if let Some(recording) = &mut self.recording
+            && let RecordingKind::Text { file, .. } = &mut recording.kind
+        {
             let _ = writeln!(file.writer, "{marker}");
-            self.source = Some(source);
+            recording.source = source;
         }
     }
 
@@ -199,8 +223,8 @@ impl Recorder {
     pub fn start_session(
         &mut self,
         dir: &Path,
-        device: &SessionDevice,
-        text: &SessionText,
+        device: &CaptureDevice,
+        text: &CaptureFormat,
         limits: SessionLimits,
     ) -> io::Result<()> {
         let now = Local::now();
@@ -211,7 +235,7 @@ impl Recorder {
             now.format("%Y%m%d_%H%M%S%3f"),
             session_tag(&device.address)
         );
-        let session = SessionWriter::create(&dir.join(&stem), &stem, Some(device), text, now)?;
+        let session = RecordingWriter::create(&dir.join(&stem), Some(device), text, now)?;
         // held while the session runs, so no pruning removes it, from this maxicom or another
         // one (MAX-148). The OS drops it with the process, even killed. A file system without
         // locks only loses that guard
@@ -225,7 +249,7 @@ impl Recorder {
     }
 
     /// The device the session backup's meta says it records (MAX-173)
-    pub fn session_device(&self) -> Option<&SessionDevice> {
+    pub fn session_device(&self) -> Option<&CaptureDevice> {
         self.session
             .as_ref()
             .and_then(|session| session.device.as_ref())
@@ -239,7 +263,7 @@ impl Recorder {
     /// back with `set_session` (MAX-166). Its files stay open, and its lock with them, so no
     /// pruning removes it. The line being cut is dropped at both ends, so a line never mixes
     /// the live bytes and the replayed ones
-    pub fn take_session(&mut self) -> Option<SessionWriter> {
+    pub fn take_session(&mut self) -> Option<RecordingWriter> {
         let mut session = self.session.take();
         if let Some(session) = &mut session {
             session.flush();
@@ -248,42 +272,47 @@ impl Recorder {
         session
     }
 
-    pub fn set_session(&mut self, session: Option<SessionWriter>) {
+    pub fn set_session(&mut self, session: Option<RecordingWriter>) {
         self.session = session;
         self.lines = RxLineSplitter::default();
     }
 
     /// Stops the recording, if one runs
     pub fn stop(&mut self) {
-        self.source = None;
-        match self.recording.take() {
-            Some(Recording::Text(mut file)) => {
+        match self.recording.take().map(|recording| recording.kind) {
+            Some(RecordingKind::Text { mut file, .. }) => {
                 let _ = file.flush();
             }
-            Some(Recording::Full(mut full)) => full.flush(),
+            Some(RecordingKind::Full(mut full)) => full.flush(),
             None => {}
         }
     }
 
     /// What the recording running saves
     pub fn recording(&self) -> Option<Stream> {
-        self.recording.as_ref().map(|recording| match recording {
-            Recording::Text(_) => Stream::Text,
-            Recording::Full(_) => Stream::Full,
-        })
+        self.recording
+            .as_ref()
+            .map(|recording| match recording.kind {
+                RecordingKind::Text { .. } => Stream::Text,
+                RecordingKind::Full(_) => Stream::Full,
+            })
+    }
+
+    fn kind(&mut self) -> Option<&mut RecordingKind> {
+        self.recording.as_mut().map(|recording| &mut recording.kind)
     }
 
     fn text_file(&mut self) -> Option<&mut LogFile> {
-        match &mut self.recording {
-            Some(Recording::Text(file)) => Some(file),
+        match self.kind() {
+            Some(RecordingKind::Text { file, .. }) => Some(file),
             _ => None,
         }
     }
 
     /// The writers of the session backup and of a full recording
-    fn writers(&mut self) -> impl Iterator<Item = &mut SessionWriter> {
-        let full = match &mut self.recording {
-            Some(Recording::Full(full)) => Some(&mut **full),
+    fn writers(&mut self) -> impl Iterator<Item = &mut RecordingWriter> {
+        let full = match self.recording.as_mut().map(|recording| &mut recording.kind) {
+            Some(RecordingKind::Full(full)) => Some(&mut **full),
             _ => None,
         };
         self.session.iter_mut().chain(full)
@@ -360,12 +389,15 @@ impl Recorder {
         self.flush_if_due();
     }
 
-    /// Parses `format` when it isn't the one already parsed
+    /// The text recording's format: `format` parsed when it isn't the one already parsed
     fn set_timestamp_format(&mut self, format: Option<&str>) {
+        let Some(RecordingKind::Text { timestamp, .. }) = self.kind() else {
+            return;
+        };
         match format {
-            None => self.timestamp = None,
-            Some(format) if self.timestamp.as_ref().is_some_and(|t| t.format == format) => {}
-            Some(format) => self.timestamp = Some(TimestampFormat::new(format)),
+            None => *timestamp = None,
+            Some(format) if timestamp.as_ref().is_some_and(|t| t.format == format) => {}
+            Some(format) => *timestamp = Some(TimestampFormat::new(format)),
         }
     }
 
@@ -384,13 +416,13 @@ impl Recorder {
             }
             let _ = file.writer.write_all(&self.line_buf);
         };
-        let (text_file, full) = match &mut self.recording {
-            Some(Recording::Text(file)) => (Some(file), None),
-            Some(Recording::Full(full)) => (None, Some(&mut **full)),
+        let (text_file, full) = match self.recording.as_mut().map(|recording| &mut recording.kind) {
+            Some(RecordingKind::Text { file, timestamp }) => (Some((file, &*timestamp)), None),
+            Some(RecordingKind::Full(full)) => (None, Some(&mut **full)),
             None => (None, None),
         };
-        if let (Some(file), Some(mark)) = (text_file, mark) {
-            write(file, &self.timestamp, mark);
+        if let (Some((file, timestamp)), Some(mark)) = (text_file, mark) {
+            write(file, timestamp, mark);
         }
         for writer in self.session.iter_mut().chain(full) {
             let mark = if tx {
@@ -405,22 +437,21 @@ impl Recorder {
     }
 }
 
-impl SessionWriter {
-    /// The files `<stem>.log`, `.raw` and `.times` in `folder`, created with it, and the meta
-    /// when `device` is known, started at `started`, the text written as `text` says
+impl RecordingWriter {
+    /// The `.log`, `.raw` and `.times` files in `folder`, created with it, and the meta when
+    /// `device` is known, started at `started`, the text written as `text` says
     fn create(
         folder: &Path,
-        stem: &str,
-        device: Option<&SessionDevice>,
-        text: &SessionText,
+        device: Option<&CaptureDevice>,
+        text: &CaptureFormat,
         started: DateTime<Local>,
     ) -> io::Result<Self> {
-        let path = |extension: &str| folder.join(format!("{stem}.{extension}"));
+        let path = |extension: &str| folder_file(folder, extension);
         let (text_path, raw_path) = (path("log"), path("raw"));
         create_parent_dirs(&raw_path)?;
         if let Some(device) = device {
-            SessionMeta::new(started, device.clone(), text.clone())
-                .write(&SessionMeta::path_of(&raw_path))?;
+            RecordingMeta::new(started, device.clone(), text.clone())
+                .write(&RecordingMeta::path_of(&raw_path))?;
         }
         Ok(Self {
             text: LogFile::open(&text_path)?,
@@ -563,10 +594,7 @@ mod tests {
     fn data_path(stream: Stream, path: &Path) -> PathBuf {
         match stream {
             Stream::Text => path.to_path_buf(),
-            Stream::Full => {
-                let stem = path.file_name().unwrap().to_string_lossy();
-                path.join(format!("{stem}.raw"))
-            }
+            Stream::Full => folder_file(path, "raw"),
         }
     }
 
@@ -576,7 +604,7 @@ mod tests {
         let source = source("port");
         match stream {
             Stream::Text => recorder.start_text(&path, false, source),
-            Stream::Full => recorder.start_full(&path, false, source, &SessionText::default()),
+            Stream::Full => recorder.start_full(&path, false, source, &CaptureFormat::default()),
         }
         .unwrap();
         data_path(stream, &path)
@@ -732,7 +760,7 @@ mod tests {
             .start_session(
                 &dir,
                 &device("port"),
-                &SessionText::default(),
+                &CaptureFormat::default(),
                 SessionLimits::keep(20),
             )
             .unwrap();
@@ -767,7 +795,7 @@ mod tests {
             .start_session(
                 &dir,
                 &device("port"),
-                &SessionText::default(),
+                &CaptureFormat::default(),
                 SessionLimits::keep(20),
             )
             .unwrap();
@@ -808,14 +836,14 @@ mod tests {
             .start_session(
                 &dir,
                 &device("port"),
-                &SessionText::default(),
+                &CaptureFormat::default(),
                 SessionLimits::keep(20),
             )
             .unwrap();
         record(&mut recorder, b"a\n");
 
         let mine = temp_log_path("mine");
-        let text = SessionText::default();
+        let text = CaptureFormat::default();
         recorder
             .start_full(&mine, true, source("port"), &text)
             .unwrap();
@@ -856,7 +884,7 @@ mod tests {
             .start_session(
                 &dir,
                 &device("port"),
-                &SessionText::default(),
+                &CaptureFormat::default(),
                 SessionLimits::keep(20),
             )
             .unwrap();
@@ -885,7 +913,7 @@ mod tests {
     fn tx_lines_go_to_text_files_only() {
         let dir = temp_dir("tx");
         let mut recorder = Recorder::default();
-        let text = SessionText {
+        let text = CaptureFormat {
             timestamp: None,
             tx_mark: Some("> ".to_string()),
         };
@@ -922,7 +950,7 @@ mod tests {
     fn session_keeps_its_text_format() {
         let dir = temp_dir("session_format");
         let mut recorder = Recorder::default();
-        let text = SessionText {
+        let text = CaptureFormat {
             timestamp: Some("[j]".to_string()),
             tx_mark: Some("J ".to_string()),
         };
@@ -950,7 +978,7 @@ mod tests {
             .start_session(
                 &dir,
                 &device("b"),
-                &SessionText::default(),
+                &CaptureFormat::default(),
                 SessionLimits::keep(20),
             )
             .unwrap();
@@ -968,7 +996,7 @@ mod tests {
         let dir = temp_dir("folders");
         let path = dir.join("a").join("b").join("x");
         let mut recorder = Recorder::default();
-        let text = SessionText::default();
+        let text = CaptureFormat::default();
         recorder
             .start_full(&path, false, source("port"), &text)
             .unwrap();

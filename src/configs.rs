@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::capture::expand_home;
+use crate::paths::expand_home;
 
 pub mod highlights;
 pub mod keybindings;

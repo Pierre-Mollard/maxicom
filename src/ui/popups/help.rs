@@ -9,7 +9,7 @@ use ratatui::{
     style::{Modifier, Style},
     symbols,
     text::{Line, Span},
-    widgets::{Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs},
+    widgets::{Clear, Padding, Paragraph, Tabs},
 };
 
 use crate::{
@@ -19,7 +19,7 @@ use crate::{
     overlays::{HelpCategory, HelpDialog, PopupTarget},
     ui::{
         common::popup_area,
-        popups::{Hints, hint_spans, popup_block},
+        popups::{Hints, hint_spans, popup_block, render_scrollbar},
     },
 };
 
@@ -314,28 +314,8 @@ pub fn render_help_popup(
     frame.render_widget(paragraph, text_area);
 
     if scrolls {
-        let mut scrollbar_state = ScrollbarState::new(max_scroll)
-            .viewport_content_length(visible_height)
-            .position(current_scroll);
-
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(Some("▲"))
-            .end_symbol(Some("▼"))
-            .thumb_symbol("█")
-            .track_symbol(Some("│"))
-            .thumb_style(*theme.ui.scrollbar_thumb)
-            .track_style(*theme.ui.scrollbar_track)
-            .begin_style(*theme.ui.scrollbar_thumb)
-            .end_style(*theme.ui.scrollbar_thumb);
-
-        frame.render_stateful_widget(
-            scrollbar,
-            content_area.inner(Margin {
-                vertical: 0,
-                horizontal: 0,
-            }),
-            &mut scrollbar_state,
-        );
+        let scroll = (current_scroll, max_scroll, visible_height);
+        render_scrollbar(frame, content_area, scroll, theme);
     }
     area
 }

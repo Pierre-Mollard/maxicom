@@ -17,7 +17,7 @@ use crate::{
     },
     ui::{
         common::popup_area,
-        popups::{Hints, hint_spans, popup_block, section},
+        popups::{Hints, hint_spans, popup_block, render_scrollbar, section},
     },
 };
 
@@ -168,7 +168,8 @@ pub fn render_sessions_popup(
 /// One row per session from the one that keeps the selection in view, its marks first:
 /// `●` running, `↺` what this device would restore, `?` no meta file. Its columns are
 /// colored as `lsd -l` does (MAX-153): the date by the age of the last write, the size by its
-/// magnitude, the port by its name
+/// magnitude, the port by its name. More sessions than rows: a scrollbar in the gap after the
+/// list (MAX-175)
 fn render_list(
     browser: &SessionBrowser,
     area: Rect,
@@ -223,6 +224,16 @@ fn render_list(
         })
         .collect();
     frame.render_widget(Paragraph::new(lines), area);
+
+    let max_scroll = browser.sessions.len().saturating_sub(height);
+    if max_scroll > 0 {
+        let bar = Rect {
+            x: area.right(),
+            width: 1,
+            ..area
+        };
+        render_scrollbar(frame, bar, (first, max_scroll, height), theme);
+    }
 }
 
 /// The date's color by the age of the session's last write, muted when its times aren't known.

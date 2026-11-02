@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use crossterm::event::KeyCode;
 
 use crate::{
-    capture::{Session, SessionDevice, Stream},
+    capture::{CaptureDevice, Session, Stream},
     commands::Invocation,
     configs::{AppConfig, KeyBindingAction, SettingsConfig, keybindings::KeyBindingDialogAction},
     inputs::DialogAction,
@@ -112,7 +112,7 @@ pub enum OverlayResponse {
     RestoreSession(bool),
     ReplaySession {
         path: PathBuf,
-        device: Option<SessionDevice>,
+        device: Option<CaptureDevice>,
     },
     /// Back to the live link a replay set aside, from the browser (MAX-166)
     StopReplay,

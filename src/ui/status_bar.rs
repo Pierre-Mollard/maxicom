@@ -1510,8 +1510,8 @@ mod tests {
     #[test]
     fn replay_shows_its_file_and_state() {
         let mut a = app(Mode::Terminal);
-        a.link_mut()
-            .set_address("file:///tmp/logs/boot.raw".parse::<Address>().unwrap());
+        // as a replay starts: the replay state comes with the address (MAX-175)
+        a.start_replay(std::path::PathBuf::from("/tmp/logs/boot.raw"), None);
         let d = StatusBarConfig::default();
         assert_eq!(
             render(&d.left, &a),
@@ -1572,7 +1572,7 @@ mod tests {
     fn session_replay_shows_its_recorded_line() {
         let mut a = app(Mode::Terminal);
         let mut session = crate::capture::tests::device("/dev/ttyACM1");
-        session.line = Some(crate::capture::SessionLine {
+        session.line = Some(crate::capture::CaptureLine {
             baud: 9600,
             framing: "7E1".parse().unwrap(),
         });

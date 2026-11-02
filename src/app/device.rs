@@ -10,7 +10,7 @@ use std::{
 
 use super::{App, UpdateEffect};
 use crate::{
-    capture::{SessionDevice, SessionMeta},
+    capture::{CaptureDevice, RecordingMeta, recording_raw},
     inputs::Action,
     link::{
         Address, ByteSource, CONNECT_TIMEOUT, LinkError, LinkKind, OpenFor, Reconfigured,
@@ -291,7 +291,7 @@ impl App {
     /// ends first, so the switch starts from the live link, its session backup and its encoding
     /// (MAX-171)
     fn open_link(&mut self, address: Address) {
-        if self.replaced_link.is_some() {
+        if self.replaced_link().is_some() {
             self.stop_replay();
         }
         self.link.switch_to(address);
@@ -302,19 +302,21 @@ impl App {
 
     /// The file in place of the link, which closes: no wait, a file opens at once (MAX-166).
     /// For `replay` and `open file://` while running, and for `--replay` at start (MAX-168).
-    /// Without a `session`, the file's own meta file gives the device, when it has one
-    /// (MAX-163)
+    /// `path` is a recording: its `.raw`, its `.meta` or its folder; anything else is refused
+    /// (MAX-175). Without a `session`, the recording's meta file gives the device, when it has
+    /// one (MAX-163)
     pub fn open_replay(
         &mut self,
         path: PathBuf,
         delay: Duration,
-        session: Option<&SessionDevice>,
+        session: Option<&CaptureDevice>,
     ) -> io::Result<()> {
+        let path = recording_raw(&path)?;
         let replay = Replay::open(&path, delay)?;
         self.link.set_replay(replay);
         let meta = session
             .is_none()
-            .then(|| SessionMeta::read(&SessionMeta::path_of(&path)))
+            .then(|| RecordingMeta::read(&RecordingMeta::path_of(&path)))
             .flatten();
         let session = session.or(meta.as_ref().map(|meta| &meta.device));
         self.start_replay(path.clone(), session);
@@ -324,7 +326,7 @@ impl App {
     }
 
     /// A replay asked while running: a file that doesn't open stops the command line chain
-    fn replay_file(&mut self, path: PathBuf, delay: Duration, session: Option<SessionDevice>) {
+    fn replay_file(&mut self, path: PathBuf, delay: Duration, session: Option<CaptureDevice>) {
         if let Err(e) = self.open_replay(path.clone(), delay, session.as_ref()) {
             self.fail_commands(format!("replay: {}: {e}", path.display()));
         }
@@ -445,7 +447,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        capture::SessionText,
+        capture::CaptureFormat,
         configs::{KeyBindingsConfig, KeyResolver, SettingsConfig, TextEncoding},
         inputs::AppAction,
         link::{LinkConfig, state::REOPEN_EVERY},
@@ -678,15 +680,15 @@ mod tests {
         std::fs::create_dir_all(replayed.parent().unwrap()).unwrap();
         std::fs::write(&replayed, b"old\r\n").unwrap();
         let (first, first_address) = listener();
-        let device = SessionDevice::new(
+        let device = CaptureDevice::new(
             &LinkConfig {
                 address: first_address.parse::<Address>().unwrap(),
                 ..LinkConfig::default()
             },
             TextEncoding::Cp437,
         );
-        SessionMeta::new(chrono::Local::now(), device, SessionText::default())
-            .write(&SessionMeta::path_of(&replayed))
+        RecordingMeta::new(chrono::Local::now(), device, CaptureFormat::default())
+            .write(&RecordingMeta::path_of(&replayed))
             .unwrap();
         // the session files' raw bytes, the oldest first
         let raws = || -> Vec<Vec<u8>> {
@@ -725,7 +727,7 @@ mod tests {
         let (second, second_address) = listener();
         let (mut app, live_encoding) = live_with_replay();
         open(&mut app, &second_address, &second, b"two\r\n");
-        assert!(app.replaced_link.is_none());
+        assert!(app.replaced_link().is_none());
         assert_eq!(app.settings().encoding, live_encoding);
         app.dispatch(Action::App(AppAction::ToggleAttach));
         assert!(matches!(app.overlay(), Some(Overlay::DeviceDetached)));
@@ -745,8 +747,8 @@ mod tests {
     /// MAX-166: the replay controls from the command line: a paused replay reads nothing
     /// until resumed, its delay changes, a restart plays it again from the top on a clean
     /// screen, not ended; each refuses with its reason when it would change nothing, and all
-    /// refuse without a replay.
-    /// How: a 3-line file replayed with a long delay, then each command.
+    /// refuse without a replay. MAX-175: a `.log` isn't replayed.
+    /// How: a `.log` refused, then a 3-line file replayed with a long delay, then each command.
     #[test]
     fn replay_controls() {
         let run = |app: &mut App, line: &str| {
@@ -762,6 +764,20 @@ mod tests {
             run(&mut app, "replay-pause"),
             "replay-pause: no replay runs"
         );
+
+        // a text recording isn't replayed: what it holds isn't what was received (MAX-175)
+        let log = std::env::temp_dir().join(format!(
+            "maxicom_test_{}_device_controls.log",
+            std::process::id()
+        ));
+        std::fs::write(&log, b"one\n").unwrap();
+        let refused = run(&mut app, &format!("replay {}", log.display()));
+        assert!(
+            refused.ends_with("not a recording (a .raw, its .meta or its folder)"),
+            "{refused}"
+        );
+        assert_ne!(app.link_kind(), LinkKind::Replay);
+        let _ = std::fs::remove_file(&log);
 
         let path = std::env::temp_dir().join(format!(
             "maxicom_test_{}_device_controls.raw",

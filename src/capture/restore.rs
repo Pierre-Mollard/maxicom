@@ -259,6 +259,7 @@ mod tests {
         let day = |d, h| Local.with_ymd_and_hms(2026, 1, d, h, 15, 0).unwrap();
         let mut session = Session {
             stem: "20260101_101500_ttyUSB0".to_string(),
+            folder: std::path::PathBuf::new(),
             files: Vec::new(),
             meta: None,
             started: Some(day(1, 10)),

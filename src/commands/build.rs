@@ -8,7 +8,6 @@ use std::{
 
 use crate::{
     app::{App, mash::Mash, transfer::FileTransfer},
-    capture::expand_home,
     commands::ArgValue,
     configs::{Mode, TextEncoding},
     inputs::{Action, AppAction, SearchModeAction},
@@ -18,6 +17,7 @@ use crate::{
         serial::{FlowControl, Framing, LineControl, LineSettings},
     },
     overlays::SettingKey,
+    paths::expand_home,
 };
 
 /// `send` and `send-hex`: their bytes, to the link

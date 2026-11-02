@@ -33,15 +33,6 @@ impl FilePathDialog {
         self
     }
 
-    /// What the stream adds to the name, shown after it: the text file's extension, or the
-    /// folder's `/`
-    pub fn suffix(&self) -> &'static str {
-        match self.stream {
-            Stream::Text => ".log",
-            Stream::Full => "/",
-        }
-    }
-
     fn switch_stream(&mut self) {
         self.stream = self.stream.other();
     }
@@ -192,9 +183,9 @@ mod tests {
     #[test]
     fn the_stream_sets_what_the_name_saves() {
         let mut dialog = dialog();
-        assert_eq!(dialog.suffix(), ".log");
+        assert_eq!(dialog.stream.suffix(), ".log");
         dialog.handle_action(DialogAction::CycleNext);
-        assert_eq!((dialog.stream, dialog.suffix()), (Stream::Full, "/"));
+        assert_eq!((dialog.stream, dialog.stream.suffix()), (Stream::Full, "/"));
         dialog.handle_action(DialogAction::Pick(PopupTarget::CaptureStream));
         assert_eq!(
             (dialog.stream, dialog.file_input.value()),

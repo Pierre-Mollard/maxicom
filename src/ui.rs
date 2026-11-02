@@ -1470,7 +1470,7 @@ mod tests {
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 40);
         h.app.settings_mut().theme_path = Some("/themes/dark.toml".into());
         let folder = crate::configs::AppConfig::config_dir();
-        let folder_text = crate::capture::shorten_home(&folder);
+        let folder_text = crate::paths::shorten_home(&folder);
         let copies = |effect: UpdateEffect| match effect {
             UpdateEffect::CopyToClipboardAs { text, what } => Some((text, what)),
             _ => None,
@@ -1898,7 +1898,7 @@ mod tests {
         crate::capture::tests::write_test_session(
             &dir,
             "/dev/ttyUSB0",
-            &crate::capture::SessionText::default(),
+            &crate::capture::CaptureFormat::default(),
             b"old line\r\n",
             b"",
         );
@@ -2186,7 +2186,7 @@ mod tests {
             address: "file:///tmp/boot.raw".parse::<Address>().unwrap(),
             ..LinkConfig::default()
         };
-        let line = crate::capture::SessionLine {
+        let line = crate::capture::CaptureLine {
             baud: 9600,
             framing: "7E1".parse().unwrap(),
         };
@@ -2595,7 +2595,7 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("maxicom_test_{}_browser_tcp", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let text = crate::capture::SessionText::default();
+        let text = crate::capture::CaptureFormat::default();
         let port = "tcp://192.168.1.50:4000";
         crate::capture::tests::write_test_session(&dir, port, &text, b"rx\r\n", b"");
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
@@ -2610,6 +2610,53 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// MAX-175: the session browser draws a scrollbar after its list when the sessions don't
+    /// all fit, its thumb following the selection; none when they fit.
+    /// How: 15 sessions in a short screen, then the selection moved to the last one; then 1
+    /// session (and the app's own).
+    #[test]
+    fn session_browser_scrollbar() {
+        let dir =
+            std::env::temp_dir().join(format!("maxicom_test_{}_browser_bar", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let text = crate::capture::CaptureFormat::default();
+        for i in 0..15 {
+            let port = format!("/dev/p{i:02}");
+            crate::capture::tests::write_test_session(&dir, &port, &text, b"x\r\n", b"");
+        }
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 20);
+        h.app.start_session(Some(dir.clone()));
+        h.app.update(Action::App(AppAction::OpenSessions));
+        let rows = h.draw();
+        let (bar_x, top) = cell_of(&rows, "▲");
+        let thumb = |rows: &[String]| {
+            (rows.iter().enumerate())
+                .find(|(_, row)| row.chars().nth(bar_x as usize) == Some('█'))
+                .map(|(y, _)| y)
+                .unwrap()
+        };
+        let first = thumb(&rows);
+        assert_eq!(first, top as usize + 1, "{rows:#?}");
+        for _ in 0..15 {
+            h.app.update(Action::Overlay(DialogAction::Down));
+        }
+        let rows = h.draw();
+        assert!(thumb(&rows) > first, "{rows:#?}");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        crate::capture::tests::write_test_session(&dir, "/dev/one", &text, b"x\r\n", b"");
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 20);
+        h.app.start_session(Some(dir.clone()));
+        h.app.update(Action::App(AppAction::OpenSessions));
+        let rows = h.draw();
+        assert!(
+            has(&rows, "Session backups") && has(&rows, "one"),
+            "{rows:#?}"
+        );
+        assert!(!has(&rows, "▲"), "{rows:#?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// MAX-148: the session browser lists the sessions with their marks (`●` running, `↺`
     /// what this device would restore) and previews the selected one; a click selects a row,
     /// and the buttons sort, delete one, and delete all once the question is answered.
@@ -2620,7 +2667,7 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("maxicom_test_{}_browser_ui", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let text = crate::capture::SessionText::default();
+        let text = crate::capture::CaptureFormat::default();
         let port = LinkConfig::default().address.to_string();
         crate::capture::tests::write_test_session(&dir, &port, &text, b"mine\r\n", b"");
         crate::capture::tests::write_test_session(&dir, "/dev/other", &text, b"theirs\r\n", b"");
@@ -2631,12 +2678,16 @@ mod tests {
         h.app.update(Action::App(AppAction::OpenSessions));
         let rows = h.draw();
         assert!(has(&rows, "Session backups"), "{rows:#?}");
-        // the app's own session backup runs (empty), the past one on this port would restore
+        // the app's own session backup runs, the past one on this port would restore
         let row_with = |rows: &[String], text: &str| -> String {
             rows.iter().find(|row| row.contains(text)).cloned().unwrap()
         };
-        assert!(row_with(&rows, "  0B  ttyUSB0").contains('●'), "{rows:#?}");
-        assert!(row_with(&rows, "11B  ttyUSB0").contains('↺'), "{rows:#?}");
+        let row_has = |rows: &[String], parts: &[&str]| {
+            rows.iter()
+                .any(|row| parts.iter().all(|part| row.contains(part)))
+        };
+        assert!(row_has(&rows, &["●", "ttyUSB0"]), "{rows:#?}");
+        assert!(row_has(&rows, &["↺", "ttyUSB0"]), "{rows:#?}");
         let other = row_with(&rows, "  other ");
         assert!(!other.contains(['●', '↺', '?']), "{rows:#?}");
 
@@ -2659,8 +2710,8 @@ mod tests {
         assert!(has(&rows, "Delete 1 session ("), "{rows:#?}");
         click(&mut h, cell_on_row(&rows, "Cancel", "Delete"));
         let rows = h.draw();
-        assert!(!has(&rows, "11B  ttyUSB0"), "{rows:#?}");
-        assert!(row_with(&rows, "  0B  ttyUSB0").contains('●'), "{rows:#?}");
+        assert!(!row_has(&rows, &["↺", "ttyUSB0"]), "{rows:#?}");
+        assert!(row_has(&rows, &["●", "ttyUSB0"]), "{rows:#?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2676,7 +2727,7 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
-        let text = crate::capture::SessionText::default();
+        let text = crate::capture::CaptureFormat::default();
         crate::capture::tests::write_test_session(&dir, "/dev/other", &text, b"theirs\r\n", b"");
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
         h.app.start_session(Some(dir.clone()));
@@ -2740,7 +2791,7 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&dir);
         let port = LinkConfig::default().address.to_string();
-        let text = crate::capture::SessionText::default();
+        let text = crate::capture::CaptureFormat::default();
         crate::capture::tests::write_test_session(&dir, &port, &text, b"mine\r\n", b"");
         // the names are to the millisecond: the app's session backup must not get the same one
         std::thread::sleep(std::time::Duration::from_millis(2));
@@ -2753,7 +2804,11 @@ mod tests {
         let (x, y) = cell_of(&rows, "↺");
         assert_eq!(fg_at((x, y)), colors.mark_restorable, "{rows:#?}");
         assert_eq!(fg_at((x + 2, y)), colors.date_hour, "{rows:#?}");
-        let (size_x, _) = cell_of(&rows, "11B");
+        // the size is all its files', the meta and times too (MAX-175)
+        let sessions = crate::capture::list_sessions(&dir).unwrap();
+        let past = sessions.iter().find(|session| !session.running).unwrap();
+        let size_text = crate::overlays::sessions::size(past.size);
+        let (size_x, _) = cell_on_row(&rows, "↺", &size_text);
         assert_eq!(fg_at((size_x, y)), colors.size_small, "{rows:#?}");
         // the gaps and the size's padding aren't colored, so a reversed column ends with its
         // text
@@ -2761,7 +2816,7 @@ mod tests {
         assert_eq!(fg_at((x + 1, y)), text, "{rows:#?}");
         assert_eq!(fg_at((x + 2 + 16, y)), text, "{rows:#?}");
         assert_eq!(fg_at((size_x - 1, y)), text, "{rows:#?}");
-        let tag = cell_on_row(&rows, "11B", "ttyUSB0");
+        let tag = cell_on_row(&rows, "↺", "ttyUSB0");
         assert_eq!(fg_at(tag), colors.port_color("ttyUSB0"), "{rows:#?}");
 
         // the preview's port, times and size take the same colors as the row
@@ -2790,7 +2845,7 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("maxicom_test_{}_browser_copy", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let text = crate::capture::SessionText::default();
+        let text = crate::capture::CaptureFormat::default();
         let session =
             crate::capture::tests::write_test_session(&dir, "/dev/past", &text, b"x\r\n", b"");
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
@@ -2866,7 +2921,7 @@ mod tests {
         crate::capture::tests::write_test_session(
             &dir,
             "/dev/ttyUSB0",
-            &crate::capture::SessionText::default(),
+            &crate::capture::CaptureFormat::default(),
             b"old line\r\n",
             b"",
         );
@@ -2906,7 +2961,7 @@ mod tests {
         let session = crate::capture::tests::write_test_session(
             &dir,
             "/dev/ttyUSB0",
-            &crate::capture::SessionText::default(),
+            &crate::capture::CaptureFormat::default(),
             b"restored words\r\n",
             b"",
         );

@@ -1,5 +1,5 @@
 use crate::{
-    capture::SessionLine,
+    capture::CaptureLine,
     inputs::DialogAction,
     link::{
         Address, LinkConfig,
@@ -51,7 +51,7 @@ pub struct LineSettingsDialog {
     pub address: Address,
     pub line: LineSettings,
     /// What a replayed session was recorded with, shown as a replay has nothing to set (MAX-166)
-    pub recorded_line: Option<SessionLine>,
+    pub recorded_line: Option<CaptureLine>,
 }
 
 impl LineSettingsDialog {
@@ -70,7 +70,7 @@ impl LineSettingsDialog {
         }
     }
 
-    pub fn with_recorded_line(mut self, line: Option<SessionLine>) -> Self {
+    pub fn with_recorded_line(mut self, line: Option<CaptureLine>) -> Self {
         self.recorded_line = line;
         self
     }

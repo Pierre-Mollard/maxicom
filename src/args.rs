@@ -170,7 +170,8 @@ Options:
       --parity <n|e|o>     Parity: none, even, odd [default: none]
       --flow <none|hw|sw>  Flow control: none, rtscts (hw), xonxoff (sw) [default: none]
 
-  -r, --replay <PATH>      A file's raw bytes in place of a device, same as file://PATH
+  -r, --replay <PATH>      A recording in place of a device (its folder, .raw or
+                           .meta), same as file://PATH
       --delay <ms>         Time to wait between chunks of a replay, in milliseconds
 
       --restore            Restore the last session on this device into the history

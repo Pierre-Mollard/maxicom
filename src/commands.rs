@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::{
-    app::App, capture::expand_home, configs::KeyBindingAction, inputs::Action, link::Address,
+    app::App, configs::KeyBindingAction, inputs::Action, link::Address, paths::expand_home,
 };
 
 pub mod build;
