@@ -98,6 +98,8 @@
 //! | `wide`                          | `pannable`                                 | The content is wider than the view: it can pan           |
 //! | `new_data`                      | `unread`, `missed`                         | Data arrived while scrolled up, not seen yet             |
 //! | `mouse`                         | —                                          | Mouse capture is on (`ui.mouse`)                         |
+//! | `add_cr`                        | —                                          | Add CR is on: a received LF read as CR LF (`add_cr`)     |
+//! | `add_lf`                        | —                                          | Add LF is on: a received CR read as CR LF (`add_lf`)     |
 //! | `line_settings`                 | `serial`                                   | Line settings to show: a serial port, a replayed session |
 //! | `sending`                       | `send_file`                                | A file is being sent (`send-file`)                       |
 //! | `armed`                         | `trigger`                                  | A trigger is armed, ready to fire (`triggers.toml`)      |
@@ -701,6 +703,8 @@ enum Cond {
     Armed,
     Mashing,
     Replaying,
+    AddCr,
+    AddLf,
     /// Unknown condition name, always false
     Unknown,
 }
@@ -736,6 +740,8 @@ impl Cond {
             "armed" | "trigger" => Self::Armed,
             "mashing" | "mash" => Self::Mashing,
             "replaying" | "replay" => Self::Replaying,
+            "add_cr" => Self::AddCr,
+            "add_lf" => Self::AddLf,
             _ => Self::Unknown,
         }
     }
@@ -778,6 +784,8 @@ impl Cond {
             Self::Armed => app.triggers().iter().any(|trigger| trigger.is_armed()),
             Self::Mashing => app.mash().is_some(),
             Self::Replaying => app.link_kind() == LinkKind::Replay,
+            Self::AddCr => app.settings().add_cr,
+            Self::AddLf => app.settings().add_lf,
             Self::Unknown => false,
         }
     }
@@ -2099,5 +2107,23 @@ mod tests {
         assert_eq!(text_with("{pan_left}", &a, Fit::default()), "◀ (3)");
         assert_eq!(text_with("{pan_left}", &a, compact), "◀3");
         assert_eq!(text_with("{pan_right}", &a, compact), "117▶");
+    }
+
+    /// MAX-181: `add_cr` / `add_lf` hold while their setting is on, in both modes.
+    #[test]
+    fn add_cr_add_lf_conditions() {
+        for mode in [Mode::Terminal, Mode::Line] {
+            let mut app = app(mode);
+            assert!(!Cond::AddCr.eval(&app) && !Cond::AddLf.eval(&app));
+            app.settings_mut().add_cr = true;
+            assert!(
+                Cond::AddCr.eval(&app) && !Cond::AddLf.eval(&app),
+                "{mode:?}"
+            );
+            app.settings_mut().add_lf = true;
+            assert!(Cond::AddLf.eval(&app), "{mode:?}");
+        }
+        assert_eq!(Cond::from_name("add_cr"), Cond::AddCr);
+        assert_eq!(Cond::from_name("ADD_LF"), Cond::AddLf);
     }
 }

@@ -4,7 +4,7 @@ use super::session::{
     folder_file, prune_sessions, session_tag,
 };
 use crate::app::types::RxLineSplitter;
-use crate::configs::{RxNewlineMode, TextEncoding};
+use crate::configs::TextEncoding;
 use crate::paths::create_parent_dirs;
 use chrono::format::{Item, StrftimeItems};
 use chrono::{DateTime, Local};
@@ -346,9 +346,11 @@ impl Recorder {
     /// Records received bytes: as is to the raw files with their time, and each line they end,
     /// without its EOL, to the text files, after its first byte's time when `timestamp_format`
     /// is given
+    /// The raw bytes to the raw writers, their lines to the text ones, a lone CR ending one
+    /// with `add_lf` (MAX-181)
     pub fn record_rx(
         &mut self,
-        rx_eol_mode: RxNewlineMode,
+        add_lf: bool,
         encoding: TextEncoding,
         timestamp_format: Option<&str>,
         bytes: &[u8],
@@ -362,17 +364,24 @@ impl Recorder {
         // taken out while the lines are written, as the writes borrow the recorder
         let mut lines = std::mem::take(&mut self.lines);
         for &b in bytes {
-            if lines.push(b, rx_eol_mode, now) {
-                let timestamp = lines.take_timestamp();
-                if self.writes_text() {
-                    let text = encoding.decode_cow(lines.line());
-                    self.write_text(timestamp, &text, Some(""), false);
-                }
-                lines.clear();
+            if lines.ends_at_cr(b, add_lf) {
+                self.write_rx_line(&mut lines, encoding);
+            }
+            if lines.push(b, now) {
+                self.write_rx_line(&mut lines, encoding);
             }
         }
         self.lines = lines;
         self.flush_if_due();
+    }
+
+    fn write_rx_line(&mut self, lines: &mut RxLineSplitter, encoding: TextEncoding) {
+        let timestamp = lines.take_timestamp();
+        if self.writes_text() {
+            let text = encoding.decode_cow(lines.line());
+            self.write_text(timestamp, &text, Some(""), false);
+        }
+        lines.clear();
     }
 
     fn writes_text(&self) -> bool {
@@ -695,12 +704,7 @@ mod tests {
     fn text_timestamp_is_the_format_as_is() {
         let mut recorder = Recorder::default();
         let path = start(&mut recorder, Stream::Text, "ts");
-        recorder.record_rx(
-            RxNewlineMode::Auto,
-            TextEncoding::Utf8,
-            Some("[ts]"),
-            b"abc\n",
-        );
+        recorder.record_rx(false, TextEncoding::Utf8, Some("[ts]"), b"abc\n");
         assert_eq!(
             stop_and_read(&mut recorder, Stream::Text, &path),
             b"[ts] abc\n"
@@ -715,9 +719,9 @@ mod tests {
         let mut recorder = Recorder::default();
         let path = start(&mut recorder, Stream::Text, "ts_change");
         let enc = TextEncoding::Utf8;
-        recorder.record_rx(RxNewlineMode::Auto, enc, Some("[a]"), b"one\n");
-        recorder.record_rx(RxNewlineMode::Auto, enc, Some("[b]"), b"two\n");
-        recorder.record_rx(RxNewlineMode::Auto, enc, None, b"\xFF\n");
+        recorder.record_rx(false, enc, Some("[a]"), b"one\n");
+        recorder.record_rx(false, enc, Some("[b]"), b"two\n");
+        recorder.record_rx(false, enc, None, b"\xFF\n");
         assert_eq!(
             stop_and_read(&mut recorder, Stream::Text, &path),
             "[a] one\n[b] two\n\u{FFFD}\n".as_bytes()
@@ -741,12 +745,7 @@ mod tests {
     fn raw_is_received_bytes_and_text_is_decoded() {
         let mut recorder = Recorder::default();
         let raw = start(&mut recorder, Stream::Full, "decoded");
-        recorder.record_rx(
-            RxNewlineMode::Auto,
-            TextEncoding::Latin1,
-            None,
-            b"\xE9\x1b[31mred\r\n",
-        );
+        recorder.record_rx(false, TextEncoding::Latin1, None, b"\xE9\x1b[31mred\r\n");
         recorder.stop();
         let text = fs::read(raw.with_extension("log")).unwrap();
         assert_eq!(text, "é\x1b[31mred\n".as_bytes());
@@ -986,7 +985,7 @@ mod tests {
             .unwrap();
         let rec = start(&mut recorder, Stream::Text, "session_format");
         let enc = TextEncoding::Utf8;
-        recorder.record_rx(RxNewlineMode::Auto, enc, Some("[r]"), b"rx\n");
+        recorder.record_rx(false, enc, Some("[r]"), b"rx\n");
         recorder.record_tx(enc, Some("[r]"), Some("R "), b"tx\n");
         recorder.record_tx(enc, None, None, b"off\n");
         assert_eq!(

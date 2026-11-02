@@ -77,6 +77,9 @@ pub fn render_settings_popup(
     } else {
         "OFF"
     };
+    let on_off = |on: bool| if on { "ON" } else { "OFF" };
+    let add_cr_str = on_off(app.settings().add_cr);
+    let add_lf_str = on_off(app.settings().add_lf);
     // each row with the setting a click on it toggles (MAX-113)
     let rows = vec![
         (None, section("General", theme)),
@@ -98,6 +101,8 @@ pub fn render_settings_popup(
             row("B", "Byte Inspect", raw_display_str),
         ),
         (Some(SettingKey::Mouse), row("U", "Mouse", mouse_str)),
+        (Some(SettingKey::AddCr), row("R", "Add CR", add_cr_str)),
+        (Some(SettingKey::AddLf), row("F", "Add LF", add_lf_str)),
         (None, Line::from("")),
         (None, section("Line Mode", theme)),
         (Some(SettingKey::LineWrap), row("W", "Line Wrap", wrap_str)),

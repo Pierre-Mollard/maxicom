@@ -17,7 +17,7 @@ cargo build
 ```
 
 ```bash
-cargo run --bin maxicom --profile profiling -- --baud 115200 --port /tmp/maxicom-shell-test
+cargo run --bin maxicom --profile profiling -- --baudrate 115200 --device /tmp/maxicom-shell-test
 ```
 
 - Run the bin utility "fake_device" for testing dumb programs
@@ -27,7 +27,7 @@ cargo run --bin maxicom --profile profiling -- --baud 115200 --port /tmp/maxicom
 ```
 
 ```bash
-cargo run --bin maxicom --profile profiling -- --baud 115200 --port /tmp/maxicom
+cargo run --bin maxicom --profile profiling -- --baudrate 115200 --device /tmp/maxicom
 ```
 
 - Run a device over TCP (`tcp://` links): a shell on `127.0.0.1:4000`, one per
@@ -39,7 +39,7 @@ cargo run --bin maxicom --profile profiling -- --baud 115200 --port /tmp/maxicom
 ```
 
 ```bash
-cargo run --bin maxicom -- --port tcp://127.0.0.1:4000
+cargo run --bin maxicom -- --device tcp://127.0.0.1:4000
 ```
 
 - Profile (flame chart) with sample
@@ -49,7 +49,7 @@ cargo build --bin maxicom --profile profiling
 ```
 
 ```bash
-samply record ./target/profiling/maxicom --baud 115200 --port /tmp/maxicom-shell-test
+samply record ./target/profiling/maxicom --baudrate 115200 --device /tmp/maxicom-shell-test
 ```
 
 - Check license compat
@@ -63,9 +63,30 @@ cargo deny check
 `maxicom [OPTIONS] [DEVICE]`, all the options with `maxicom --help`.
 
 - A serial port: `maxicom /dev/ttyUSB0 -b 921600`, `maxicom COM3`, or with
-  `--port`.
+  `-D, --device` as minicom (`maxicom -D /dev/ttyUSB0 -b 115200`). minicom's
+  `-C <file>` (record the received text to that file), `-H` (the raw side
+  panel in hex), `-R <encoding>` and `-v` work too, and an option's value can
+  be glued to it (`--baudrate=9600`, `-b9600`).
 - A device over TCP: `maxicom tcp://192.168.1.50:4000`, or
   `--tcp 192.168.1.50:4000`.
+- Without a device or line options, the `[link]` section of `config.toml` gives
+  them (read at startup, the options over it):
+
+  ```toml
+  [link]
+  device = ""        # empty: none, a device must be given
+  baud = 115200
+  bits = 8
+  parity = "none"    # none, even, odd
+  stop_bits = 1
+  flow = "none"      # none, rtscts, xonxoff
+  ```
+
+  A port's name depends on the adapter (`/dev/ttyUSB0`, `COM3`,
+  `/dev/cu.usbserial-XXXX`), so there's no default one: with no device
+  anywhere maxicom stops and lists the serial ports it sees.
+  Flow control is off by default, where
+  minicom has RTS/CTS on: most USB-UART boards don't wire those lines.
 
 ### TCP LINKS
 
@@ -90,7 +111,7 @@ What changes from a serial port:
   their raw mode.
 - No line settings: the bridge sets the baud and the framing. The status bar
   shows `raw TCP` in their place (the `line_settings` condition hides them),
-  the serial settings popup shows the address only, and `--baud`, `--bits`,
+  the serial settings popup shows the address only, and `--baudrate`, `--bits`,
   `--parity`, `--stop-bits`, `--flow` are refused.
 - The UI never waits for the network: it says "Connecting to …"; a host down
   or not listening yet shows "Connection Lost" and is retried every 500 ms,
@@ -112,6 +133,19 @@ What changes from a serial port:
   folder); `C` or a click on the folder copies its path, the file's number
   (`1`, `2`, ...) or a click on it copies the file's. The popup scrolls when
   the screen is too short for it. In the help, `c` copies the folder's path.
+- `add_cr` and `add_lf` (default `false`), minicom's add CR / add LF, for a
+  device that ends its lines with LF only (staircase text in terminal mode)
+  or CR only (lines written over each other in both modes): `add_cr` reads a
+  lone LF as CR LF, `add_lf` a lone CR as CR LF. The device's own CR LF stays
+  one line break. In line mode only `add_lf` changes something (an LF already
+  ends a line): a lone CR ends its line instead of starting it over. They apply
+  to the next bytes, in both modes and the text recordings (a session's
+  restored part too); the raw recordings, the raw side panel and the triggers
+  get the bytes as received. `Ctrl-A u` / `Ctrl-A a`, `set add-cr on|off`,
+  `set add-lf on|off`, `R` / `F` in the settings popup; `+CR` / `+LF` in the
+  status bar while on. What Enter sends in line mode is `tx_eol` in
+  `[line_mode]` (`lf` default, `cr`, `crlf`); in terminal mode Enter sends CR,
+  as a terminal does.
 
 ### UI
 
@@ -162,7 +196,7 @@ What changes from a serial port:
     paths after `file://` or a `/`. The rest of the line waits until it is
     open: `open COM4; send AT\r`. A port that fails to open brings the last
     one back. Another port starts a new session backup, as they go by port.
-    `toggle-attach` detaches and attaches the link, as `Ctrl-A h` does.
+    `toggle-attach` detaches and attaches the link, as `Ctrl-A D` does.
   - `set <setting> on|off`: `local-echo`, `timestamps`, `mouse` or
     `answer-queries`; nothing when it is so already (the settings with more
     values cycle with their keys).
@@ -208,9 +242,9 @@ What changes from a serial port:
   starts with `cancel`), and it doesn't go in the history. Like the other
   keys of these sections, it does nothing in copy mode and search. A line that
   doesn't parse stops the keymap from loading, naming its key (a reload keeps
-  the running one). The default keymap has two: `Ctrl-A f` sends a break,
-  `Ctrl-A p` pulses DTR (`dtr off; sleep 100; dtr on`), which resets most
-  boards, and `Ctrl-A u` toggles the `u-boot` trigger. The help's Commands
+  the running one). The default keymap has three: `Ctrl-A f` sends a break,
+  `Ctrl-A h` pulses DTR (`dtr off; sleep 100; dtr on`), which resets most
+  boards, and `Ctrl-A U` toggles the `u-boot` trigger. The help's Commands
   tab lists the keys bound to a line and every command.
 - Typed text has the completions of the word before the cursor listed
   (command names with their help, then the values of the argument it is).
@@ -221,7 +255,7 @@ What changes from a serial port:
   or typing.
 - Without a list, Up and Down walk the lines that ran, as in the TX input:
   the newest first, back to the line being typed, only the ones starting
-  with what was typed (`send ` then Up walks the `send` lines).
+  with what was typed (`send` then Up walks the `send` lines).
   `history_size` in `[command_line]` (default `100`) keeps that many, for the
   session only; a reload applies at once.
 - `layout` in `[command_line]` (default `"popup"`): `"popup"` draws it in a
@@ -263,7 +297,7 @@ rearm = true
   click on the selected one or its button toggle it; `l`/Right arms it and
   `h`/Left disarms it. `a` toggles them all (armed when none is, else
   disarmed), `c` copies the file's path.
-- `Ctrl-A u` toggles `u-boot`; `toggle-triggers` (no key by default) toggles
+- `Ctrl-A U` toggles `u-boot`; `toggle-triggers` (no key by default) toggles
   them all; `trigger on|off|toggle [name]` does it from a command line or a
   key, so one key can arm and reset:
   `trigger on u-boot; dtr off; rts on; rts off`.
@@ -432,7 +466,7 @@ where its lines wrap, which `dimension_mode` decides.
   - The restored part isn't backed up again nor counted in RX, so the next
     launch restores this session's own data (or the same one again if this
     one received nothing).
-- Session browser: `sessions` (`Ctrl-A S`, or Session backups in the
+- Session browser: `sessions` (`Ctrl-A j`, or Session backups in the
   right-click menu) lists every backup on the left, whatever its device, and
   shows the selected one on the right (device, format, times, size, its last
   lines).
@@ -443,9 +477,8 @@ where its lines wrap, which `dimension_mode` decides.
   - `D`             Delete all but the running ones, asked first (`y` / `n`)
   - `s`             Sort by date (newest first) or by device
   - `Esc`           Close
-  A keymap file from before has no `S` binding: add `S = "sessions"` under
-  `[prefix_actions]` in `keymap.toml`, or delete the file to get the new
-  defaults.
+  A keymap file from before has the old prefix keys (MAX-181 moved them to
+  minicom's): delete `keymap.toml` to get the new defaults.
 - Screenshots (terminal mode): `screenshot-bytes` (`Ctrl-A k`) and
   `screenshot-text` (no default key, Screenshot in the right-click menu) take
   the screen at once, in both formats, then a dialog asks where to save it.
@@ -471,7 +504,7 @@ tx_mark = "> "                           # before each sent line, "" for none
 [sessions]
 enabled = true                           # session backup (read at startup)
 keep = 200                               # sessions kept
-max_size = "200M"                        # all sessions together, K/M/G/T, "0": no limit
+max_size = "200M"                        # all sessions, K/M/G/T, "0": no limit
 restore = "always"                       # always, ask or never
 restore_max_age = "24h"                  # since it ended, "0s": no limit
 
@@ -506,7 +539,7 @@ right = '''
     ...'''
 ```
 
-  A space before the `\` stays, as between `[{time}](...) ` and `[?](...)`.
+  A space before the `\` stays, as between `[{time}](...)` and `[?](...)`.
 
 - Variables:
   - {mode}           "TERM" or "LINE"
@@ -626,3 +659,7 @@ right = '''
   - `box`              In a box of its own, 3 rows high
   `border` and `box` need borders, else they are `line`. With borders on,
   `line` and `band` are inset one column each side.
+
+### Author
+
+Pierre Mollard

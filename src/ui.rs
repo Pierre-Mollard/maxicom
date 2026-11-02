@@ -288,8 +288,8 @@ mod tests {
         },
         capture::{Screenshot, ScreenshotFormat, Stream},
         configs::{
-            KeyBindingsConfig, KeyResolver, LineDisplayMode, RawSideView, RxNewlineMode,
-            SettingsConfig, TextEncoding,
+            KeyBindingsConfig, KeyResolver, LineDisplayMode, RawSideView, SettingsConfig,
+            TextEncoding,
         },
         inputs::{
             Action, AppAction, CopyModeAction, DialogAction, HistoryAction, SearchModeAction,
@@ -360,9 +360,7 @@ mod tests {
         }
 
         fn feed_as(&mut self, encoding: TextEncoding, bytes: &[u8]) {
-            self.app
-                .line_mode
-                .feed_rx(RxNewlineMode::Auto, encoding, bytes);
+            self.app.line_mode.feed_rx(false, encoding, bytes);
         }
 
         fn scroll(&mut self, action: HistoryAction) {
@@ -1414,7 +1412,8 @@ mod tests {
     /// Rows of a frame drawn with `overlay` open and the `[dialog_actions]` of `keymap`
     /// (the default ones when empty)
     fn popup_rows(overlay: Overlay, keymap: &[(&str, &str)]) -> Vec<String> {
-        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        // the settings popup is 26 rows tall since MAX-181's add CR / add LF
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 30);
         if !keymap.is_empty() {
             let config = KeyBindingsConfig {
                 dialog_actions: keymap
@@ -1960,8 +1959,9 @@ mod tests {
         let row_of = |rows: &[String], text: &str| rows.iter().position(|row| row.contains(text));
         let f5 = row_of(&rows, "F5 ").expect("F5");
         assert!(rows[f5].contains("-> send-hex 03"), "{rows:#?}");
-        assert_eq!(row_of(&rows, "Ctrl-a + f "), Some(f5 + 1), "{rows:#?}");
-        let pulse = row_of(&rows, "Ctrl-a + p -> dtr off; sleep 100; dtr on");
+        // the shifted keys sort first: `U`, the u-boot trigger
+        assert_eq!(row_of(&rows, "Ctrl-a + f "), Some(f5 + 2), "{rows:#?}");
+        let pulse = row_of(&rows, "Ctrl-a + h       -> dtr off; sleep 100; dtr on");
         assert!(pulse.is_some(), "{rows:#?}");
         assert!(has(&rows, "on the command line (Ctrl-a :)"), "{rows:#?}");
 
@@ -4598,7 +4598,7 @@ mod tests {
 
     /// MAX-131: mouse moves don't cancel a pending prefix: a move over nothing (ignored) or a
     /// hover between Ctrl-A and its key still lets the key run.
-    /// How: Ctrl-A, moves over the history and onto the status bar's `?`, then `s`.
+    /// How: Ctrl-A, moves over the history and onto the status bar's `?`, then `o`.
     #[test]
     fn mouse_moves_keep_the_prefix() {
         use crossterm::event::KeyCode::Char;
@@ -4614,7 +4614,7 @@ mod tests {
         moved(&mut h, (6, 5));
         moved(&mut h, status_cell(&rows, "?"));
         assert!(h.app.is_prefix_active());
-        key_do(&mut h, Char('s'), KeyModifiers::NONE);
+        key_do(&mut h, Char('o'), KeyModifiers::NONE);
         assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
     }
 
@@ -4832,6 +4832,47 @@ mod tests {
         h.app.settings_mut().mode = Mode::Terminal;
         assert!(!at(&mut h, 40, 24));
         assert_eq!(content(&h), Rect::new(0, 0, 40, 24));
+    }
+
+    /// MAX-181 step 0: with the default `[ui]`, terminal mode keeps its borders down to
+    /// `compact_cols` x `compact_rows` (50x14): an 80x24 screen leaves a 78x22 view, the status
+    /// bar in the bottom border. Below it the borders and the status bar go all at once, the
+    /// prefix included.
+    /// How: 80x24, 60x16 and 59x24 with borders, then 49x24 compact, with and without the
+    /// prefix.
+    #[test]
+    fn default_compact_thresholds() {
+        use ratatui::layout::Rect;
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 24, |s| {
+            s.mode = Mode::Terminal;
+            s.ui = crate::configs::settings::UiConfig::default();
+        });
+        let at = |h: &mut Harness, w, rows| {
+            h.terminal.backend_mut().resize(w, rows);
+            let drawn = h.draw();
+            let layout = ScreenLayout::compute(Rect::new(0, 0, w, rows), &h.app);
+            (
+                drawn[0].starts_with('┌'),
+                h.app.frame_areas().content,
+                layout,
+            )
+        };
+
+        for (w, rows) in [(80, 24), (60, 16), (59, 24)] {
+            let (borders, content, layout) = at(&mut h, w, rows);
+            assert!(borders, "{w}x{rows}");
+            assert_eq!(content, Rect::new(1, 1, w - 2, rows - 2), "{w}x{rows}");
+            let bar = Rect::new(2, rows - 1, w - 4, 1);
+            assert_eq!(layout.status_bar_area, Some(bar), "{w}x{rows}");
+        }
+
+        for prefix in [false, true] {
+            h.app.update(Action::App(AppAction::SetPrefix(prefix)));
+            let (borders, content, layout) = at(&mut h, 49, 24);
+            assert!(!borders, "prefix {prefix}");
+            assert_eq!(content, Rect::new(0, 0, 49, 24), "prefix {prefix}");
+            assert_eq!(layout.status_bar_area, None, "prefix {prefix}");
+        }
     }
 
     /// MAX-140: a `grow_only` grid taller than the view (the window shrank) shows its rows down

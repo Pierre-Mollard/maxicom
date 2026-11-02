@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::VecDeque,
     time::{Duration, Instant},
 };
@@ -62,6 +63,8 @@ pub struct TerminalMode {
     /// The restore separator's world row, until the grid first takes the view's size: a
     /// taller grid pulls rows back from the scrollback and would move it down (MAX-176)
     restored_separator: Option<usize>,
+    /// The last byte from the device was a CR, for add CR / add LF across chunks (MAX-181)
+    rx_after_cr: bool,
 }
 
 impl TerminalMode {
@@ -88,7 +91,20 @@ impl TerminalMode {
             row_timestamps: VecDeque::from(vec![None; rows as usize]),
             search_text: None,
             restored_separator: None,
+            rx_after_cr: false,
         }
+    }
+
+    /// The device's bytes, with minicom's add CR / add LF when on (MAX-181)
+    pub fn process_device_rx(
+        &mut self,
+        encoding: TextEncoding,
+        raw_bytes: &[u8],
+        add_cr: bool,
+        add_lf: bool,
+    ) {
+        let bytes = add_newlines(raw_bytes, add_cr, add_lf, &mut self.rx_after_cr);
+        self.process_rx(encoding, &bytes);
     }
 
     pub fn process_rx(&mut self, encoding: TextEncoding, raw_bytes: &[u8]) {
@@ -1106,6 +1122,39 @@ fn with_world_row<T>(
     Some(value)
 }
 
+/// minicom's add CR (a lone LF made CR LF) and add LF (a CR made CR LF) for the emulator, the
+/// device's own CR LF left as one line break: its LF is dropped when add LF already put one.
+/// `after_cr` carries the last byte's CR across chunks. CR and LF are the same byte in every
+/// encoding the app reads (MAX-181)
+pub fn add_newlines<'a>(
+    bytes: &'a [u8],
+    add_cr: bool,
+    add_lf: bool,
+    after_cr: &mut bool,
+) -> Cow<'a, [u8]> {
+    if !add_cr && !add_lf {
+        if let Some(&last) = bytes.last() {
+            *after_cr = last == b'\r';
+        }
+        return Cow::Borrowed(bytes);
+    }
+    let mut out = Vec::with_capacity(bytes.len() + bytes.len() / 8);
+    for &byte in bytes {
+        match byte {
+            b'\r' if add_lf => out.extend_from_slice(b"\r\n"),
+            b'\n' if *after_cr => {
+                if !add_lf {
+                    out.push(b'\n');
+                }
+            }
+            b'\n' if add_cr => out.extend_from_slice(b"\r\n"),
+            _ => out.push(byte),
+        }
+        *after_cr = byte == b'\r';
+    }
+    Cow::Owned(out)
+}
+
 /// Bytes sent to the remote for a key typed in terminal mode (legacy xterm encoding). When the
 /// remote turned on application cursor mode (DECCKM, `ESC[?1h`), unmodified arrows, Home and End
 /// are sent as `ESC O x` instead of `ESC [ x`, like xterm does. Modified ones (`ESC[1;5A`) are the
@@ -1807,5 +1856,33 @@ mod tests {
             stty(&mut tm),
             "stty rows 40 cols 120; export LINES=40 COLUMNS=120\n"
         );
+    }
+
+    /// MAX-181: add CR makes a lone LF CR LF, add LF a CR CR LF; the device's own CR LF stays
+    /// one line break with either, also split across two chunks; both off leaves the bytes.
+    /// How: each input with each setting, then CR LF split between two calls.
+    #[test]
+    fn add_newlines_cases() {
+        let run = |bytes: &[u8], add_cr, add_lf| {
+            let mut after_cr = false;
+            add_newlines(bytes, add_cr, add_lf, &mut after_cr).into_owned()
+        };
+        let input = b"a\nb\rc\r\nd";
+        assert_eq!(run(input, false, false), input);
+        assert_eq!(run(input, true, false), b"a\r\nb\rc\r\nd");
+        assert_eq!(run(input, false, true), b"a\nb\r\nc\r\nd");
+        assert_eq!(run(input, true, true), b"a\r\nb\r\nc\r\nd");
+
+        for (add_cr, add_lf) in [(true, false), (false, true), (true, true)] {
+            let mut after_cr = false;
+            let first = add_newlines(b"x\r", add_cr, add_lf, &mut after_cr).into_owned();
+            let second = add_newlines(b"\ny", add_cr, add_lf, &mut after_cr).into_owned();
+            assert_eq!([first, second].concat(), b"x\r\ny", "{add_cr} {add_lf}");
+        }
+        // off, the last CR is still known when it's turned on before the LF comes
+        let mut after_cr = false;
+        let _ = add_newlines(b"x\r", false, false, &mut after_cr);
+        let lf = add_newlines(b"\n", true, false, &mut after_cr);
+        assert_eq!(lf.as_ref(), b"\n");
     }
 }

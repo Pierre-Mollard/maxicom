@@ -189,6 +189,8 @@ pub static COMMANDS: &[CommandSpec] = {
         ),
         CommandSpec::action("toggle-local-echo", A::SKLocalEcho, "Toggle local echo"),
         CommandSpec::action("toggle-line-wrap", A::SKLineWrap, "Toggle line wrap"),
+        CommandSpec::action("toggle-add-cr", A::SKAddCr, "Read a received LF as CR LF"),
+        CommandSpec::action("toggle-add-lf", A::SKAddLf, "Read a received CR as CR LF"),
         CommandSpec::action(
             "toggle-display-timestamp",
             A::SKDisplayTimestamp,
@@ -432,7 +434,7 @@ pub static COMMANDS: &[CommandSpec] = {
                 arg("state", ArgKind::Bool),
             ],
             build::set,
-            "Set local-echo, timestamps, mouse or answer-queries on or off",
+            "Set local-echo, timestamps, mouse, answer-queries, add-cr or add-lf on or off",
         ),
         CommandSpec::build(
             "encoding",
@@ -978,6 +980,8 @@ mod tests {
             A::ToggleTriggers => 40,
             A::Triggers => 41,
             A::Clear => 42,
+            A::SKAddCr => 43,
+            A::SKAddLf => 44,
         }
     }
 
@@ -997,7 +1001,7 @@ mod tests {
             })
             .collect();
         indexes.sort_unstable();
-        assert_eq!(indexes, (0..43).collect::<Vec<_>>());
+        assert_eq!(indexes, (0..45).collect::<Vec<_>>());
     }
 
     /// The help writes a required argument in angle brackets, an optional one in square ones

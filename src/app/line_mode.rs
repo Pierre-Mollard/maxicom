@@ -16,9 +16,7 @@ use crate::{
         types::{LogEntry, RxLineSplitter, ViewportSize},
     },
     capture::TimedChunk,
-    configs::{
-        LineDisplayMode, RawSideView, RxNewlineMode, SettingsConfig, TextEncoding, WrapMode,
-    },
+    configs::{LineDisplayMode, RawSideView, SettingsConfig, TextEncoding, WrapMode},
     inputs::{
         CopyModeAction, LineInputAction, SearchModeAction, SideViewAction, ViMode, ViState,
         click_input_at, dispatch_input_key, dispatch_input_key_vi,
@@ -131,20 +129,24 @@ impl LineMode {
         self.partial_line.timestamp()
     }
 
-    pub fn feed_rx(&mut self, rx_eol_mode: RxNewlineMode, encoding: TextEncoding, bytes: &[u8]) {
-        self.feed_rx_at(rx_eol_mode, encoding, bytes, Some(Local::now()));
+    /// The received bytes cut into lines, a lone CR ending one with `add_lf` (MAX-181)
+    pub fn feed_rx(&mut self, add_lf: bool, encoding: TextEncoding, bytes: &[u8]) {
+        self.feed_rx_at(add_lf, encoding, bytes, Some(Local::now()));
     }
 
     /// `feed_rx` for bytes received at `time`, none when it isn't known (MAX-175)
     fn feed_rx_at(
         &mut self,
-        rx_eol_mode: RxNewlineMode,
+        add_lf: bool,
         encoding: TextEncoding,
         bytes: &[u8],
         time: Option<DateTime<Local>>,
     ) {
         for &b in bytes {
-            if self.partial_line.push_at(b, rx_eol_mode, time) {
+            if self.partial_line.ends_at_cr(b, add_lf) {
+                self.commit_partial_line(encoding);
+            }
+            if self.partial_line.push_at(b, time) {
                 self.commit_partial_line(encoding);
             }
         }
@@ -170,14 +172,9 @@ impl LineMode {
     /// (MAX-175): line mode shows what it showed then, the lines sent aside (they aren't
     /// received), each line at its first byte's time when known. A last line not ended is one
     /// too, so the next one starts on its own
-    pub fn restore_rx(
-        &mut self,
-        rx_eol_mode: RxNewlineMode,
-        encoding: TextEncoding,
-        chunks: &[TimedChunk],
-    ) {
+    pub fn restore_rx(&mut self, add_lf: bool, encoding: TextEncoding, chunks: &[TimedChunk]) {
         for chunk in chunks {
-            self.feed_rx_at(rx_eol_mode, encoding, chunk.bytes, chunk.time);
+            self.feed_rx_at(add_lf, encoding, chunk.bytes, chunk.time);
         }
         if !self.partial_line.line().is_empty() {
             self.commit_partial_line(encoding);
@@ -899,7 +896,7 @@ mod tests {
     #[test]
     fn crlf_line_is_committed_with_its_eol() {
         let mut lm = line_mode(10);
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"abc\r\ndef\n");
+        lm.feed_rx(false, TextEncoding::Utf8, b"abc\r\ndef\n");
         assert_eq!(texts(&lm), ["abc\r\n", "def\n"]);
         assert!(lm.partial_rx().is_empty());
     }
@@ -909,32 +906,32 @@ mod tests {
     #[test]
     fn line_split_across_chunks() {
         let mut lm = line_mode(10);
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"ab");
+        lm.feed_rx(false, TextEncoding::Utf8, b"ab");
         assert_eq!(lm.partial_rx(), b"ab");
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"c\n");
+        lm.feed_rx(false, TextEncoding::Utf8, b"c\n");
         assert_eq!(texts(&lm), ["abc\n"]);
     }
 
-    /// In Auto mode a lone CR restarts the line (progress-bar style).
+    /// A lone CR restarts the line (progress-bar style).
     /// How: "10%\r20%\n" keeps only the last part.
     #[test]
     fn lone_cr_overwrites_line_in_auto_mode() {
         let mut lm = line_mode(10);
-        lm.feed_rx(
-            RxNewlineMode::Auto,
-            TextEncoding::Utf8,
-            b"progress 10%\rprogress 20%\n",
-        );
+        lm.feed_rx(false, TextEncoding::Utf8, b"progress 10%\rprogress 20%\n");
         assert_eq!(texts(&lm), ["progress 20%\n"]);
     }
 
-    /// In LfOnly mode a lone CR stays inside the line.
-    /// How: "a\rb\n" is stored as is.
+    /// MAX-181: with add LF a lone CR ends its line, with its bytes as received; the
+    /// device's CR LF stays one line, also split across two chunks.
+    /// How: "a\rb\n", then "c\r" and "\nd\n" fed apart.
     #[test]
-    fn lone_cr_is_kept_in_lf_only_mode() {
+    fn add_lf_ends_a_line_at_a_lone_cr() {
         let mut lm = line_mode(10);
-        lm.feed_rx(RxNewlineMode::LfOnly, TextEncoding::Utf8, b"a\rb\n");
-        assert_eq!(texts(&lm), ["a\rb\n"]);
+        lm.feed_rx(true, TextEncoding::Utf8, b"a\rb\n");
+        assert_eq!(texts(&lm), ["a\r", "b\n"]);
+        lm.feed_rx(true, TextEncoding::Utf8, b"c\r");
+        lm.feed_rx(true, TextEncoding::Utf8, b"\nd\n");
+        assert_eq!(texts(&lm), ["a\r", "b\n", "c\r\n", "d\n"]);
     }
 
     /// History keeps only the newest max_lines entries.
@@ -942,7 +939,7 @@ mod tests {
     #[test]
     fn history_is_capped() {
         let mut lm = line_mode(2);
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"1\n2\n3\n");
+        lm.feed_rx(false, TextEncoding::Utf8, b"1\n2\n3\n");
         assert_eq!(texts(&lm), ["2\n", "3\n"]);
     }
 
@@ -951,7 +948,7 @@ mod tests {
     #[test]
     fn search_matches_follow_their_line_when_history_is_full() {
         let mut lm = line_mode(2);
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"a\ntarget\n");
+        lm.feed_rx(false, TextEncoding::Utf8, b"a\ntarget\n");
         *lm.search_mut() = SearchState {
             active: true,
             query: Input::from("target"),
@@ -960,12 +957,12 @@ mod tests {
         lm.update_search_matches(LineDisplayMode::Pretty, RawSideView::Hex);
         assert_eq!(lm.search().matches[0].line_idx, 1);
 
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"other\n");
+        lm.feed_rx(false, TextEncoding::Utf8, b"other\n");
         let idx = lm.search().matches[0].line_idx;
         assert_eq!(lm.history()[idx].text, "target\n");
 
         // once its line is dropped too, the match is gone
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"more\n");
+        lm.feed_rx(false, TextEncoding::Utf8, b"more\n");
         assert!(lm.search().matches.is_empty());
     }
 
@@ -974,9 +971,9 @@ mod tests {
     #[test]
     fn copy_cursor_follows_its_line_when_history_is_full() {
         let mut lm = line_mode(3);
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"a\nb\nc\n");
+        lm.feed_rx(false, TextEncoding::Utf8, b"a\nb\nc\n");
         lm.copy_state.enter_at(1, 0);
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"d\n");
+        lm.feed_rx(false, TextEncoding::Utf8, b"d\n");
         assert_eq!(lm.history()[lm.copy_state().cursor.line_idx].text, "b\n");
     }
 
@@ -1023,7 +1020,7 @@ mod tests {
     #[test]
     fn push_history_rebases_line_refs() {
         let mut lm = line_mode(2);
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"a\ntarget\n");
+        lm.feed_rx(false, TextEncoding::Utf8, b"a\ntarget\n");
         lm.copy_state.enter_at(1, 0);
         lm.push_history("echo".to_string());
         assert_eq!(lm.copy_state().cursor.line_idx, 0);
@@ -1034,7 +1031,7 @@ mod tests {
     #[test]
     fn latin1_line_keeps_wire_bytes() {
         let mut lm = line_mode(10);
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Latin1, &[0xE9, b'\n']);
+        lm.feed_rx(false, TextEncoding::Latin1, &[0xE9, b'\n']);
         assert_eq!(lm.history()[0].text, "é\n");
         assert_eq!(lm.history()[0].wire_bytes(), [0xE9, b'\n']);
     }
@@ -1064,7 +1061,7 @@ mod tests {
         let mut lm = line_mode(10);
         let mut line = wire.to_vec();
         line.push(b'\n');
-        lm.feed_rx(RxNewlineMode::Auto, encoding, &line);
+        lm.feed_rx(false, encoding, &line);
         lm
     }
 
@@ -1141,7 +1138,7 @@ mod tests {
     #[test]
     fn query_cursor_keys_keep_the_current_match() {
         let mut lm = line_mode(10);
-        lm.feed_rx(RxNewlineMode::Auto, TextEncoding::Utf8, b"hit a\nhit b\n");
+        lm.feed_rx(false, TextEncoding::Utf8, b"hit a\nhit b\n");
         lm.search_state.active = true;
         lm.search_state.query = tui_input::Input::new("hit".to_string());
         lm.update_search_matches(LineDisplayMode::Pretty, RawSideView::Hex);

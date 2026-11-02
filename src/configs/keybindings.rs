@@ -65,6 +65,8 @@ pub enum KeyBindingAction {
     ToggleTriggers,
     Triggers,
     Clear,
+    SKAddCr,
+    SKAddLf,
 }
 
 impl FromStr for KeyBindingAction {
@@ -951,20 +953,24 @@ impl Default for KeyBindingsConfig {
             "q"     => KeyBindingAction::Quit,
             "x"     => KeyBindingAction::Quit,
             "m"     => KeyBindingAction::SKInputMode,
-            "o"     => KeyBindingAction::SKTextEncoding,
+            "O"     => KeyBindingAction::SKTextEncoding,
+            "e"     => KeyBindingAction::SKLocalEcho,
+            "w"     => KeyBindingAction::SKLineWrap,
+            "t"     => KeyBindingAction::SKDisplayTimestamp,
             "B"     => KeyBindingAction::SKDisplayRaw,
             "M"     => KeyBindingAction::ToggleMouse,
-            "S"     => KeyBindingAction::Sessions,
+            "j"     => KeyBindingAction::Sessions,
             "c"     => KeyBindingAction::Clear,
             "C"     => KeyBindingAction::ClearHistory,
             "z"     => KeyBindingAction::Help,
             "?"     => KeyBindingAction::Help,
+            "o"     => KeyBindingAction::Settings,
             "s"     => KeyBindingAction::Settings,
             "l"     => KeyBindingAction::Record,
             "r"     => KeyBindingAction::ReloadConfig,
-            "w"     => KeyBindingAction::ResizeDialog,
-            "t"     => KeyBindingAction::AutoResizeEmulator,
-            "d"     => KeyBindingAction::LinkSettings,
+            "W"     => KeyBindingAction::ResizeDialog,
+            "E"     => KeyBindingAction::AutoResizeEmulator,
+            "p"     => KeyBindingAction::LinkSettings,
             "k"     => KeyBindingAction::ScreenshotBytes,
             "up"    => KeyBindingAction::ScrollUp,
             "down"  => KeyBindingAction::ScrollDown,
@@ -975,14 +981,16 @@ impl Default for KeyBindingsConfig {
             "pageup"      => KeyBindingAction::PageUp,
             "pagedown"    => KeyBindingAction::PageDown,
             "["     => KeyBindingAction::EnterCopyMode,
+            "b"     => KeyBindingAction::EnterCopyMode,
             "/"     => KeyBindingAction::EnterSearch,
             ":"     => KeyBindingAction::CommandLine,
-            "a"     => KeyBindingAction::ExitPrefix,
-            "h"     => KeyBindingAction::ToggleAttach,
+            "u"     => KeyBindingAction::SKAddCr,
+            "a"     => KeyBindingAction::SKAddLf,
+            "D"     => KeyBindingAction::ToggleAttach,
             "T"     => KeyBindingAction::Triggers,
             "f"     => "break", // a break like minicom's
-            "p"     => "dtr off; sleep 100; dtr on", // DTR pulse which resets most boards
-            "u"     => "trigger toggle u-boot", // the default triggers.toml's
+            "h"     => "dtr off; sleep 100; dtr on", // DTR pulse which resets most boards
+            "U"     => "trigger toggle u-boot", // the default triggers.toml's
         };
 
         let line_mode = default_bindings! {
@@ -1210,13 +1218,14 @@ mod tests {
         assert!(keys(&resolver, KeyBindingDialogAction::Close).is_empty());
     }
 
-    /// Reload is on prefix + r, and the resize dialog moved to prefix + w (MAX-112).
+    /// Reload is on prefix + r (MAX-112), and the resize dialog on prefix + W: `w` is
+    /// minicom's line wrap (MAX-181).
     #[test]
     fn reload_and_resize_default_keys() {
         let resolver = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
         let prefix_action = |key: &str| resolver.prefix_actions[&key.parse().unwrap()];
         assert_eq!(prefix_action("r"), KeyBindingAction::ReloadConfig);
-        assert_eq!(prefix_action("w"), KeyBindingAction::ResizeDialog);
+        assert_eq!(prefix_action("W"), KeyBindingAction::ResizeDialog);
         assert_eq!(
             "reload-config".parse::<KeyBindingAction>().unwrap(),
             KeyBindingAction::ReloadConfig
@@ -1255,15 +1264,16 @@ mod tests {
         );
     }
 
-    /// MAX-148: prefix + `S` opens the session browser, apart from `s` (settings).
+    /// MAX-148: prefix + `j` opens the session browser (MAX-181: `d` is the directory, as
+    /// minicom's), and `o` the settings, minicom's configure key.
     #[test]
     fn sessions_default_key() {
         let resolver = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
-        let action = resolver.prefix_actions[&"S".parse().unwrap()];
+        let action = resolver.prefix_actions[&"j".parse().unwrap()];
         assert_eq!(action, KeyBindingAction::Sessions);
         assert_eq!(action.to_string(), "sessions");
         assert_eq!("sessions".parse::<KeyBindingAction>().unwrap(), action);
-        let settings = resolver.prefix_actions[&"s".parse().unwrap()];
+        let settings = resolver.prefix_actions[&"o".parse().unwrap()];
         assert_eq!(settings, KeyBindingAction::Settings);
     }
 
@@ -1343,7 +1353,7 @@ mod tests {
     /// between words: the old `_` names are refused
     #[test]
     fn action_names() {
-        const NAMES: [(&str, KeyBindingAction); 43] = [
+        const NAMES: [(&str, KeyBindingAction); 45] = [
             ("quit", KeyBindingAction::Quit),
             ("toggle-input-mode", KeyBindingAction::SKInputMode),
             ("toggle-local-echo", KeyBindingAction::SKLocalEcho),
@@ -1393,6 +1403,8 @@ mod tests {
             ("toggle-triggers", KeyBindingAction::ToggleTriggers),
             ("triggers", KeyBindingAction::Triggers),
             ("clear", KeyBindingAction::Clear),
+            ("toggle-add-cr", KeyBindingAction::SKAddCr),
+            ("toggle-add-lf", KeyBindingAction::SKAddLf),
         ];
         for (name, action) in NAMES {
             assert_eq!(name.parse::<KeyBindingAction>().unwrap(), action, "{name}");
@@ -1422,13 +1434,13 @@ mod tests {
         assert_eq!((f6.text.as_str(), f6.invocations.len()), (esp32, 7));
         assert_eq!(resolver.direct_commands[&key("f5")].text, "send-hex 03");
         assert_eq!(
-            resolver.prefix_actions[&key("h")],
+            resolver.prefix_actions[&key("D")],
             KeyBindingAction::ToggleAttach
         );
-        assert!(!resolver.prefix_commands.contains_key(&key("h")));
+        assert!(!resolver.prefix_commands.contains_key(&key("D")));
         // the default ones
         assert_eq!(resolver.prefix_commands[&key("f")].invocations.len(), 1);
-        assert_eq!(resolver.prefix_commands[&key("p")].invocations.len(), 3);
+        assert_eq!(resolver.prefix_commands[&key("h")].invocations.len(), 3);
         assert_eq!(
             resolver.shadowed_keys(),
             ["F5 in [line_mode] (taken by [direct_actions])"]

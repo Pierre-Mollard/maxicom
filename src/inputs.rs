@@ -664,7 +664,7 @@ mod tests {
 
     /// MAX-155 step 0: what each key of the default keymap does in each context. A key not
     /// listed is handed on as typed (to the device, the line editor, the search query, the copy
-    /// mode keys or the popup). The next steps of MAX-155 change these tables.
+    /// mode keys or the popup). MAX-181: the prefix keys follow minicom's.
     #[test]
     fn default_keymap_per_context() {
         let mut app = app();
@@ -698,26 +698,33 @@ mod tests {
                 "Shift-Right => App(SideView(PanRight(2)))",
                 "Shift-b => App(ToggleSetting(DisplayRaw))",
                 "Shift-c => History(Clear)",
+                "Shift-d => App(ToggleAttach)",
+                "Shift-e => Terminal(AutoResizeEmulatorToViewer)",
                 "Shift-m => App(ToggleSetting(Mouse))",
-                "Shift-s => App(OpenSessions)",
+                "Shift-o => App(ToggleSetting(TextEncoding))",
                 "Shift-t => open Triggers",
+                "Shift-u => run trigger",
+                "Shift-w => open TerminalSize",
                 "Up => History(ScrollUp(1))",
                 "[ => CopyMode(Enter)",
+                "a => App(ToggleSetting(AddLf))",
+                "b => CopyMode(Enter)",
                 "c => History(ClearView)",
-                "d => open LinkSettings",
+                "e => App(ToggleSetting(LocalEcho))",
                 "f => run break",
-                "h => App(ToggleAttach)",
+                "h => run dtr; sleep; dtr",
+                "j => App(OpenSessions)",
                 "k => Terminal(Screenshot(Ansi))",
                 "l => App(ToggleRecording)",
                 "m => App(ToggleSetting(Mode))",
-                "o => App(ToggleSetting(TextEncoding))",
-                "p => run dtr; sleep; dtr",
+                "o => open Settings",
+                "p => open LinkSettings",
                 "q => App(Quit)",
                 "r => App(ReloadConfig)",
                 "s => open Settings",
-                "t => Terminal(AutoResizeEmulatorToViewer)",
-                "u => run trigger",
-                "w => open TerminalSize",
+                "t => App(ToggleSetting(DisplayTimestamp))",
+                "u => App(ToggleSetting(AddCr))",
+                "w => App(ToggleSetting(LineWrap))",
                 "x => App(Quit)",
                 "z => open Help"
             ]
@@ -852,6 +859,26 @@ mod tests {
                 "Up => LineInput(HistoryUp)"
             ]
         );
+    }
+
+    /// MAX-181: line wrap cycles line mode's wrap in both modes; in terminal mode it also
+    /// warns that the emulator isn't wrapped by it (it always wraps).
+    /// How: prefix + `w` in line mode, then in terminal mode.
+    #[test]
+    fn line_wrap_warns_in_terminal_mode() {
+        use crate::{app::tests::toasts, configs::WrapMode};
+        let mut app = app();
+        let wrap_key = |app: &mut App| {
+            app.update(Action::App(AppAction::SetPrefix(true)));
+            let action = handle_event(plain(KeyCode::Char('w')), app);
+            app.update(action);
+            (app.settings().line_mode.wrap_mode, toasts(app))
+        };
+        app.settings_mut().mode = Mode::Line;
+        assert_eq!(wrap_key(&mut app), (WrapMode::Char, vec![]));
+        app.settings_mut().mode = Mode::Terminal;
+        let warned = vec!["Line wrap: line mode only".to_string()];
+        assert_eq!(wrap_key(&mut app), (WrapMode::Truncate, warned));
     }
 
     /// MAX-155: in terminal mode these keys reach the device as they were typed, the ones the

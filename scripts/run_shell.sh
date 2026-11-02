@@ -15,5 +15,5 @@ exec socat -d -d \
   pty,raw,echo=0,link=/tmp/maxicom-shell-test \
   exec:"zsh -l",pty,stderr,setsid,sane
 
-# cargo run --bin maxicom -- --port /tmp/maxicom-shell-test --baud 115200
+# cargo run --bin maxicom -- --device /tmp/maxicom-shell-test --baudrate 115200
 # or another terminal open /tmp/maxicom-shell-test to interact with interactive shell (like minicom)

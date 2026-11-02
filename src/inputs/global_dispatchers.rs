@@ -96,6 +96,8 @@ impl KeyBindingAction {
                 Action::App(AppAction::SideView(SideViewAction::PanLeft(2)))
             }
             KeyBindingAction::Clear => Action::History(HistoryAction::ClearView),
+            KeyBindingAction::SKAddCr => Action::App(AppAction::ToggleSetting(SettingKey::AddCr)),
+            KeyBindingAction::SKAddLf => Action::App(AppAction::ToggleSetting(SettingKey::AddLf)),
             KeyBindingAction::ClearHistory => Action::History(HistoryAction::Clear),
             KeyBindingAction::ExitPrefix => Action::App(AppAction::SetPrefix(false)),
             KeyBindingAction::ToggleAttach => Action::App(AppAction::ToggleAttach),

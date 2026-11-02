@@ -258,7 +258,14 @@ pub fn replay_speed(app: &App, args: &[ArgValue]) -> Result<Action, String> {
 }
 
 /// The settings `set` turns on or off, by name
-pub const ON_OFF_SETTINGS: &[&str] = &["local-echo", "timestamps", "mouse", "answer-queries"];
+pub const ON_OFF_SETTINGS: &[&str] = &[
+    "local-echo",
+    "timestamps",
+    "mouse",
+    "answer-queries",
+    "add-cr",
+    "add-lf",
+];
 
 /// `set <setting> on|off`: nothing when it is so already
 pub fn set(app: &App, args: &[ArgValue]) -> Result<Action, String> {
@@ -270,6 +277,8 @@ pub fn set(app: &App, args: &[ArgValue]) -> Result<Action, String> {
         "timestamps" => SettingKey::DisplayTimestamp,
         "mouse" => SettingKey::Mouse,
         "answer-queries" => SettingKey::AnswerQueries,
+        "add-cr" => SettingKey::AddCr,
+        "add-lf" => SettingKey::AddLf,
         _ => unreachable!("set takes one of ON_OFF_SETTINGS"),
     };
     let is_on = app.setting_is_on(key).expect("an on/off setting");

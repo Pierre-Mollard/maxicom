@@ -25,13 +25,13 @@ pub mod tests {
     //! The helpers the capture tests and the other modules' tests share.
 
     use super::*;
-    use crate::configs::{RxNewlineMode, TextEncoding};
+    use crate::configs::TextEncoding;
     use crate::link::{Address, LinkConfig};
     use std::fs;
     use std::path::{Path, PathBuf};
 
     pub fn record(recorder: &mut Recorder, bytes: &[u8]) {
-        recorder.record_rx(RxNewlineMode::Auto, TextEncoding::Utf8, None, bytes);
+        recorder.record_rx(false, TextEncoding::Utf8, None, bytes);
     }
 
     /// The files of every session in the session folder `dir`, sorted (MAX-175)
@@ -88,7 +88,7 @@ pub mod tests {
         recorder
             .start_session(dir, &device, text, SessionLimits::keep(20))
             .unwrap();
-        recorder.record_rx(RxNewlineMode::Auto, TextEncoding::Utf8, None, rx);
+        recorder.record_rx(false, TextEncoding::Utf8, None, rx);
         if !tx.is_empty() {
             recorder.record_tx(TextEncoding::Utf8, None, None, tx);
         }

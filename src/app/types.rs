@@ -3,13 +3,14 @@ use ratatui::{layout::Rect, style::Style};
 
 use crate::{
     app::selection::{CopySide, LogicalPosition},
-    configs::{KeyBindingAction, KeyBindingSearchAction, RxNewlineMode},
+    configs::{KeyBindingAction, KeyBindingSearchAction},
     overlays::PopupTarget,
 };
 
-/// Received bytes cut into lines the way line mode shows them: LF ends a line, and with CrLf
-/// or Auto a CR followed by anything else starts it over. Shared by line mode and the
-/// recorder, so a recording has the same lines whatever the mode (MAX-147)
+/// Received bytes cut into lines the way line mode shows them: LF ends a line, and a CR
+/// followed by anything else starts it over (add LF makes a lone CR end it, MAX-181). Shared
+/// by line mode and the recorder, so a recording has the same lines whatever the mode
+/// (MAX-147)
 #[derive(Debug, Default)]
 pub struct RxLineSplitter {
     line: Vec<u8>,
@@ -18,32 +19,22 @@ pub struct RxLineSplitter {
 }
 
 impl RxLineSplitter {
-    pub fn push(&mut self, byte: u8, rx_eol_mode: RxNewlineMode, now: DateTime<Local>) -> bool {
-        self.push_at(byte, rx_eol_mode, Some(now))
+    pub fn push(&mut self, byte: u8, now: DateTime<Local>) -> bool {
+        self.push_at(byte, Some(now))
     }
 
     /// `push` for bytes received at `time`, none when it isn't known (a restored session's
     /// bytes without their times, MAX-175)
-    pub fn push_at(
-        &mut self,
-        byte: u8,
-        rx_eol_mode: RxNewlineMode,
-        time: Option<DateTime<Local>>,
-    ) -> bool {
+    pub fn push_at(&mut self, byte: u8, time: Option<DateTime<Local>>) -> bool {
         if self.line.is_empty() {
             self.timestamp = time;
         }
 
         match byte {
-            b'\r' => match rx_eol_mode {
-                RxNewlineMode::CrLf | RxNewlineMode::Auto => {
-                    self.pending_carriage_return = true;
-                    self.line.push(b'\r');
-                }
-                RxNewlineMode::LfOnly => {
-                    self.line.push(b'\r');
-                }
-            },
+            b'\r' => {
+                self.pending_carriage_return = true;
+                self.line.push(b'\r');
+            }
             b'\n' => {
                 self.line.push(b'\n');
                 self.pending_carriage_return = false;
@@ -75,6 +66,12 @@ impl RxLineSplitter {
     #[inline]
     pub fn clear(&mut self) {
         self.line.clear();
+    }
+
+    /// With add LF, a CR not followed by LF ends its line instead of starting it over: true
+    /// when `byte` comes after such a CR, the line to take before `byte` is pushed (MAX-181)
+    pub fn ends_at_cr(&self, byte: u8, add_lf: bool) -> bool {
+        add_lf && self.pending_carriage_return && byte != b'\n'
     }
 
     /// When the line started, now if nothing was received

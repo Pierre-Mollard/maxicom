@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 
 use super::App;
 use crate::{
-    app::types::LogEntry,
+    app::{terminal_mode::add_newlines, types::LogEntry},
     capture::{
         CaptureDevice, CaptureFormat, CaptureSource, RESTORE_RAW_TAIL, RecordingWriter, Session,
-        Stream, TerminalSize, find_last_session, read_tail_bytes, read_times, restore_separator,
-        timed_chunks,
+        Stream, TerminalSize, TimedChunk, find_last_session, read_tail_bytes, read_times,
+        restore_separator, timed_chunks,
     },
     configs::{Mode, settings::RestoreMode},
     overlays::{ErrorDialog, FilePathDialog, Overlay, SessionBrowser},
@@ -222,8 +222,9 @@ impl App {
         let chunks = timed_chunks(start, &raw, &times);
         let separator = restore_separator(session);
 
-        let (rx_eol, encoding) = (self.settings.line_mode.rx_eol, self.settings.encoding);
-        self.line_mode.restore_rx(rx_eol, encoding, &chunks);
+        let settings = &self.settings;
+        let (add_cr, add_lf, encoding) = (settings.add_cr, settings.add_lf, settings.encoding);
+        self.line_mode.restore_rx(add_lf, encoding, &chunks);
         // like a `clear`, the separator on the top row (MAX-176)
         self.line_mode.clear_view();
         let separator_line = LogEntry::restored(separator.clone(), None);
@@ -232,7 +233,18 @@ impl App {
         if let Some(size) = meta.terminal {
             self.terminal_mode.set_vt100_size(size.rows, size.cols);
         }
-        self.terminal_mode.restore(encoding, &chunks, &separator);
+        // add CR / add LF as live, through all the chunks (MAX-181)
+        let mut after_cr = false;
+        let shown: Vec<_> = (chunks.iter())
+            .map(|chunk| add_newlines(chunk.bytes, add_cr, add_lf, &mut after_cr))
+            .collect();
+        let shown_chunks: Vec<TimedChunk> = (chunks.iter().zip(&shown))
+            .map(|(chunk, bytes)| TimedChunk {
+                bytes,
+                time: chunk.time,
+            })
+            .collect();
+        (self.terminal_mode).restore(encoding, &shown_chunks, &separator);
         Ok(())
     }
 
@@ -295,20 +307,33 @@ impl App {
     /// session's (a plain file's isn't). A failure opens the error popup
     pub fn start_capture(&mut self, path: &Path, stream: Stream, include_session: bool) {
         let path = expand_home(path);
-        let source = self.capture_source();
-        let result = match stream {
+        match stream {
             Stream::Text => {
                 let mut file = path.into_os_string();
                 file.push(Stream::Text.suffix());
-                (self.recorder).start_text(Path::new(&file), include_session, source)
+                self.start_text_capture(Path::new(&file), include_session);
             }
             Stream::Full => {
+                let source = self.capture_source();
                 let text = self.capture_format();
-                (self.recorder).start_full(&path, include_session, source, &text)
+                let result = (self.recorder).start_full(&path, include_session, source, &text);
+                self.report_capture_start(result, stream);
             }
-        };
+        }
+    }
+
+    /// Starts the text recording in the file `file` as it's named, as minicom's `-C` does
+    /// (MAX-181)
+    pub fn start_text_capture(&mut self, file: &Path, include_session: bool) {
+        let file = expand_home(file);
+        let source = self.capture_source();
+        let result = (self.recorder).start_text(&file, include_session, source);
+        self.report_capture_start(result, Stream::Text);
+    }
+
+    fn report_capture_start(&mut self, result: std::io::Result<()>, stream: Stream) {
         match result {
-            Ok(_) => {
+            Ok(()) => {
                 self.notify_success(format!("Started recording {}", stream.as_str()));
             }
             Err(e) => {
@@ -791,6 +816,28 @@ pub mod tests {
         assert!(app.stop_replay());
         app.tick();
         assert!(stopped(&app));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// MAX-181: minicom's `-C` records the text to the file as named, no `.log` added, where
+    /// the dialog's name gets one.
+    /// How: `-C`'s start on `boot.cap`, "a" received, then the dialog's start on `rec`.
+    #[test]
+    fn text_capture_to_the_named_file() {
+        let dir = crate::capture::tests::temp_dir("text_named");
+        let mut app = app();
+        app.settings.capture.timestamp = false;
+        app.start_text_capture(&dir.join("boot.cap"), false);
+        assert_eq!(app.recording(), Some(Stream::Text));
+        app.feed_rx(b"a\r\n");
+        app.recorder.stop();
+        let text = std::fs::read_to_string(dir.join("boot.cap")).unwrap();
+        assert_eq!(text.lines().collect::<Vec<_>>(), ["a"]);
+        assert!(!dir.join("boot.cap.log").exists());
+
+        app.start_capture(&dir.join("rec"), Stream::Text, false);
+        app.recorder.stop();
+        assert!(dir.join("rec.log").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

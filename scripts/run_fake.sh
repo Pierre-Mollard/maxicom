@@ -26,5 +26,5 @@ FAKE_PID=$!
 trap cleanup EXIT
 
 wait
-# cargo run --bin maxicom -- --port /tmp/maxicom --baud 115200
+# cargo run --bin maxicom -- --device /tmp/maxicom --baudrate 115200
 # or another terminal open /dev/maxicom to interact with fake (like minicom)

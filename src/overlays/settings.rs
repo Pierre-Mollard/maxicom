@@ -56,6 +56,8 @@ impl SettingsDialog {
                 }
                 KeyCode::Char('s' | 'S') => toggle(SettingKey::DimensionMode),
                 KeyCode::Char('a' | 'A') => toggle(SettingKey::AnswerQueries),
+                KeyCode::Char('r' | 'R') => toggle(SettingKey::AddCr),
+                KeyCode::Char('f' | 'F') => toggle(SettingKey::AddLf),
                 _ => OverlayResponse::Handled,
             },
             _ => OverlayResponse::Handled,

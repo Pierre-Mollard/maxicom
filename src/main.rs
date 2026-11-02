@@ -16,9 +16,10 @@ use ratatui::DefaultTerminal;
 
 use crate::{
     app::{App, UpdateEffect, selection::copy_via_osc52, triggers::Trigger},
-    args::{ParseOutcome, parse_args, print_help},
+    args::{ParseError, ParseOutcome, parse_args, print_help, print_version},
     configs::{
-        AppConfig, ConfigsError, KeyResolver, KeywordHighlight, SettingsConfig, ThemeConfig,
+        AppConfig, ConfigsError, KeyResolver, KeywordHighlight, RawSideView, SettingsConfig,
+        ThemeConfig,
     },
     link::{Address, ByteSource, LinkError},
     overlays::{ErrorDialog, Overlay},
@@ -116,7 +117,7 @@ fn load_runtime_config(config_path: &Path) -> Result<RuntimeConfig, ConfigsError
 fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let config_path = AppConfig::default_config_path();
     let RuntimeConfig {
-        settings,
+        mut settings,
         mut theme,
         key_resolver,
         mut highlight_rules,
@@ -130,14 +131,30 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
     };
 
-    let (link_config, replay_delay, restore) = match parse_args() {
+    let (link_config, replay_delay, restore, capture_file) = match parse_args(&settings.link) {
         Ok(ParseOutcome::Run {
             link_config,
             replay_delay,
             restore,
-        }) => (link_config, replay_delay, restore),
+            capture_file,
+            display_hex,
+            encoding,
+        }) => {
+            // minicom's `-H` and `-R`, over the settings until a reload (MAX-181)
+            if display_hex {
+                settings.raw_side.view = RawSideView::Hex;
+            }
+            if let Some(encoding) = encoding {
+                settings.encoding = encoding;
+            }
+            (link_config, replay_delay, restore, capture_file)
+        }
         Ok(ParseOutcome::Help) => {
             print_help();
+            return Ok(ExitCode::SUCCESS);
+        }
+        Ok(ParseOutcome::Version) => {
+            print_version();
             return Ok(ExitCode::SUCCESS);
         }
         // the folder to look into the backups out of the app: `cd $(maxicom --cache-dir)`
@@ -151,6 +168,15 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Ok(ExitCode::FAILURE);
             }
         },
+        // no device named on Windows or macOS: the ports seen, to pick one (MAX-181)
+        Err(error @ ParseError::NoDevice) => {
+            eprintln!("maxicom: {error}");
+            match link::serial::port_names().as_slice() {
+                [] => eprintln!("No serial port found."),
+                ports => eprintln!("Serial ports found: {}", ports.join(", ")),
+            }
+            return Ok(ExitCode::from(EXIT_USAGE));
+        }
         Err(error) => {
             eprintln!("Argument error: {error}");
             return Ok(ExitCode::from(EXIT_USAGE));
@@ -202,6 +228,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
     } else {
         app.start_link(device);
+    }
+    if let Some(file) = capture_file {
+        app.start_text_capture(&file, false);
     }
 
     let mut guard = TerminalGuard::init()?;

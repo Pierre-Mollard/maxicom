@@ -34,4 +34,4 @@ fi
 echo "listening on tcp://127.0.0.1:$PORT"
 exec socat -d -d "tcp-listen:$PORT,bind=127.0.0.1,reuseaddr,fork" "$TARGET"
 
-# cargo run --bin maxicom -- --port tcp://127.0.0.1:4000
+# cargo run --bin maxicom -- --device tcp://127.0.0.1:4000

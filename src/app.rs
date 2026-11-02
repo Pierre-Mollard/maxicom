@@ -965,12 +965,8 @@ impl App {
             .capture
             .timestamp
             .then_some(settings.timestamp_format.as_str());
-        self.recorder.record_rx(
-            settings.line_mode.rx_eol,
-            settings.encoding,
-            timestamp_format,
-            chunk,
-        );
+        self.recorder
+            .record_rx(settings.add_lf, settings.encoding, timestamp_format, chunk);
 
         let feed_line = settings.dual_mode_buffering == DualBufferMode::AlwaysBoth
             || settings.mode == Mode::Line;
@@ -979,10 +975,15 @@ impl App {
 
         if feed_line {
             self.line_mode
-                .feed_rx(settings.line_mode.rx_eol, settings.encoding, chunk);
+                .feed_rx(settings.add_lf, settings.encoding, chunk);
         }
         if feed_terminal {
-            self.terminal_mode.process_rx(settings.encoding, chunk);
+            (self.terminal_mode).process_device_rx(
+                settings.encoding,
+                chunk,
+                settings.add_cr,
+                settings.add_lf,
+            );
             let answers = self.terminal_mode.take_answers();
             if live && self.settings.mode == Mode::Terminal {
                 let bytes = answer_bytes(answers, &self.settings.terminal_mode);
@@ -1030,6 +1031,8 @@ impl App {
             SettingKey::DisplayTimestamp => Some(self.settings.show_timestamps),
             SettingKey::Mouse => Some(self.settings.ui.mouse),
             SettingKey::AnswerQueries => Some(self.settings.terminal_mode.answer_queries),
+            SettingKey::AddCr => Some(self.settings.add_cr),
+            SettingKey::AddLf => Some(self.settings.add_lf),
             _ => None,
         }
     }
@@ -1537,6 +1540,9 @@ impl App {
                 self.settings.local_echo = !self.settings.local_echo;
             }
             SettingKey::LineWrap => {
+                if self.settings().mode == Mode::Terminal {
+                    self.notify_warn("Line wrap: line mode only");
+                }
                 self.settings.line_mode.wrap_mode = match self.settings.line_mode.wrap_mode {
                     WrapMode::Word => WrapMode::Char,
                     WrapMode::Char => WrapMode::Truncate,
@@ -1600,6 +1606,17 @@ impl App {
                 terminal.answer_queries = !terminal.answer_queries;
                 let state = if terminal.answer_queries { "ON" } else { "OFF" };
                 self.notify_info(format!("Query answers {state}"));
+            }
+            // the bytes received from now on, what's shown stays as it came (MAX-181)
+            SettingKey::AddCr => {
+                self.settings.add_cr = !self.settings.add_cr;
+                let state = if self.settings.add_cr { "ON" } else { "OFF" };
+                self.notify_info(format!("Add CR {state}"));
+            }
+            SettingKey::AddLf => {
+                self.settings.add_lf = !self.settings.add_lf;
+                let state = if self.settings.add_lf { "ON" } else { "OFF" };
+                self.notify_info(format!("Add LF {state}"));
             }
             SettingKey::DisplayRaw => {
                 self.settings.raw_side.view.toggle();
@@ -2969,6 +2986,63 @@ pub mod tests {
               sessions.enabled"
             ]
         );
+    }
+
+    /// MAX-181: minicom's add CR / add LF: prefix + `u` makes a lone LF a new line at the
+    /// start of the screen, prefix + `a` a lone CR a new line, each said in a toast; `set`
+    /// turns them on and off. With add LF a CR-only device has its lines in line mode and in
+    /// the text recording too.
+    /// How: "a\nb" and "c\rd" received with each off then on, read on the screen; "a\rb\r"
+    /// in line mode with a text recording.
+    #[test]
+    fn add_cr_and_add_lf_on_the_screen() {
+        let screen = |add: Option<SettingKey>, bytes: &[u8]| {
+            let mut app = app();
+            if let Some(key) = add {
+                app.update(Action::App(AppAction::SetPrefix(true)));
+                let letter = if key == SettingKey::AddCr { 'u' } else { 'a' };
+                let event = crossterm::event::Event::Key(crossterm::event::KeyEvent::from(
+                    crossterm::event::KeyCode::Char(letter),
+                ));
+                let action = crate::inputs::handle_event(event, &app);
+                app.update(action);
+            }
+            app.feed_rx(bytes);
+            (app.terminal_mode.vt100_screen().contents(), toasts(&app))
+        };
+        assert_eq!(screen(None, b"a\nb").0, "a\n b");
+        let on = screen(Some(SettingKey::AddCr), b"a\nb");
+        assert_eq!(on, ("a\nb".to_string(), vec!["Add CR ON".to_string()]));
+        assert_eq!(screen(None, b"c\rd").0, "d");
+        let on = screen(Some(SettingKey::AddLf), b"c\rd");
+        assert_eq!(on, ("c\nd".to_string(), vec!["Add LF ON".to_string()]));
+
+        let mut app = app();
+        for (line, on) in [("set add-cr on", true), ("set add-cr off", false)] {
+            app.update(KeyBindingAction::CommandLine.to_action(&app));
+            app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
+            app.update(Action::Overlay(DialogAction::Confirm));
+            while let Some(action) = app.next_command_action(Instant::now()) {
+                app.update(action);
+            }
+            assert_eq!(app.setting_is_on(SettingKey::AddCr), Some(on), "{line}");
+        }
+
+        let dir = crate::capture::tests::temp_dir("add_lf_text");
+        app.settings.mode = Mode::Line;
+        app.settings.capture.timestamp = false;
+        app.settings.add_lf = true;
+        app.start_text_capture(&dir.join("rx.txt"), false);
+        app.feed_rx(b"a\rb\r");
+        app.feed_rx(b"c");
+        app.recorder.stop();
+        let lines: Vec<&str> = (app.line_mode.history().iter())
+            .map(|entry| entry.text.as_str())
+            .collect();
+        assert_eq!(lines, ["a\r", "b\r"]);
+        let text = std::fs::read_to_string(dir.join("rx.txt")).unwrap();
+        assert_eq!(text.lines().collect::<Vec<_>>(), ["a", "b"]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The mouse toggle flips the capture setting and says so (MAX-113).

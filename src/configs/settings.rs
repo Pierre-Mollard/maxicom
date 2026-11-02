@@ -9,7 +9,10 @@ use std::{
 use chrono::format::strftime::StrftimeItems;
 use serde::{Deserialize, Serialize};
 
-use crate::capture::SessionLimits;
+use crate::{
+    capture::SessionLimits,
+    link::serial::{FlowControl, Framing, LineSettings, Parity},
+};
 
 pub const DEFAULT_INACTIVITY_DETACH: Duration = Duration::from_secs(4 * 3600);
 pub const MIN_RX_BUF_SIZE: usize = 512;
@@ -232,6 +235,22 @@ impl Display for TextEncoding {
     }
 }
 
+impl std::str::FromStr for TextEncoding {
+    type Err = String;
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        match name.to_ascii_lowercase().as_str() {
+            "utf8" | "utf-8" => Ok(Self::Utf8),
+            "ascii" | "us-ascii" => Ok(Self::Ascii),
+            "cp437" | "ibm437" => Ok(Self::Cp437),
+            "latin1" | "iso-8859-1" | "iso8859-1" => Ok(Self::Latin1),
+            _ => Err(format!(
+                "invalid encoding '{name}': expected utf8, ascii, cp437 or latin1"
+            )),
+        }
+    }
+}
+
 const CP437_HIGH_TABLE: [char; 128] = [
     'Ç', 'ü', 'é', 'â', 'ä', 'à', 'å', 'ç', 'ê', 'ë', 'è', 'ï', 'î', 'ì', 'Ä', 'Å', 'É', 'æ', 'Æ',
     'ô', 'ö', 'ò', 'û', 'ù', 'ÿ', 'Ö', 'Ü', '¢', '£', '¥', '₧', 'ƒ', 'á', 'í', 'ó', 'ú', 'ñ', 'Ñ',
@@ -271,15 +290,6 @@ impl TxNewlineSymbol {
             TxNewlineSymbol::Lf => b"\n",
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum RxNewlineMode {
-    #[default]
-    Auto,
-    CrLf,
-    LfOnly,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -593,7 +603,6 @@ impl ScreenshotConfig {
 #[serde(default)]
 pub struct LineModeConfig {
     pub tx_eol: TxNewlineSymbol,
-    pub rx_eol: RxNewlineMode,
     pub display_mode: LineDisplayMode,
     pub wrap_mode: WrapMode,
     pub wrap_indent: PrefixWrapBehavior,
@@ -614,7 +623,6 @@ impl Default for LineModeConfig {
     fn default() -> Self {
         Self {
             tx_eol: TxNewlineSymbol::default(),
-            rx_eol: RxNewlineMode::default(),
             display_mode: LineDisplayMode::default(),
             wrap_mode: WrapMode::default(),
             wrap_indent: PrefixWrapBehavior::default(),
@@ -712,6 +720,8 @@ impl Default for StatusBarConfig {
                 "[⟳ mash ](mashing?(fg=secondary bold):hide click=cancel)",
                 "[⇡ {send_file} {send_percent:>3}% ](sending?(fg=secondary bold):hide)",
                 "[▷ {replay_state} {replay_percent:>3}% ](replaying?(fg=secondary bold):hide prio=5)",
+                "[+CR ](add_cr?(fg=warn bold):hide click=toggle-add-cr)",
+                "[+LF ](add_lf?(fg=warn bold):hide click=toggle-add-lf)",
                 "[● REC ](rec?(fg=warn bold):hide click=record)",
                 "[◀ ](wide?(pan_left?secondary:muted):hide click=pan-left)",
                 "[{pan_offset:>3}/{pan_max:<3}](wide?muted:hide)",
@@ -754,6 +764,72 @@ impl StatusBarConfig {
             });
         }
 
+        Ok(())
+    }
+}
+
+/// The link opened when the command line names none, as minicom's `minirc.dfl` (MAX-181).
+/// No device by default, on any system: a port's name depends on the adapter, and a guessed
+/// one that isn't there would be retried forever. Read at startup, the command line over it
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LinkDefaults {
+    pub device: String,
+    pub baud: u32,
+    pub bits: u8,
+    pub parity: Parity,
+    pub stop_bits: u8,
+    pub flow: FlowControl,
+}
+
+/// No device, 115200 8N1, no flow control
+impl Default for LinkDefaults {
+    fn default() -> Self {
+        Self {
+            device: String::new(),
+            baud: 115_200,
+            bits: 8,
+            parity: Parity::None,
+            stop_bits: 1,
+            flow: FlowControl::None,
+        }
+    }
+}
+
+impl LinkDefaults {
+    /// `device`, none when empty
+    pub fn device(&self) -> Option<&str> {
+        Some(self.device.as_str()).filter(|device| !device.is_empty())
+    }
+
+    /// The line settings, `validate` having checked `bits` and `stop_bits`
+    pub fn line(&self) -> LineSettings {
+        let framing = Framing {
+            char_size: self.bits.to_string().parse().unwrap_or_default(),
+            parity: self.parity,
+            stop_bits: self.stop_bits.to_string().parse().unwrap_or_default(),
+        };
+        LineSettings {
+            baud: self.baud,
+            framing,
+            flow_control: self.flow,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
+        for (name, value, min, max) in [
+            ("link.baud", self.baud as usize, 1, u32::MAX as usize),
+            ("link.bits", self.bits.into(), 5, 8),
+            ("link.stop_bits", self.stop_bits.into(), 1, 2),
+        ] {
+            if !(min..=max).contains(&value) {
+                return Err(ConfigValidationError::InvalidGenericField {
+                    name: name.to_owned(),
+                    min,
+                    max,
+                });
+            }
+        }
         Ok(())
     }
 }
@@ -807,6 +883,8 @@ impl UiConfig {
 #[serde(default)]
 pub struct SettingsConfig {
     pub local_echo: bool,
+    pub add_cr: bool,
+    pub add_lf: bool,
     pub encoding: TextEncoding,
     pub mode: Mode,
     pub dual_mode_buffering: DualBufferMode,
@@ -824,6 +902,7 @@ pub struct SettingsConfig {
     pub keybindings_path: Option<PathBuf>,
     pub highlights_path: Option<PathBuf>,
     pub triggers_path: Option<PathBuf>,
+    pub link: LinkDefaults,
     pub ui: UiConfig,
     pub raw_side: RawSideConfig,
     pub command_line: CommandLineConfig,
@@ -837,6 +916,8 @@ impl Default for SettingsConfig {
     fn default() -> Self {
         let mut settings = Self {
             local_echo: false,
+            add_cr: false,
+            add_lf: false,
             encoding: TextEncoding::default(),
             rx_buffer_size: 4096,
             mode: Mode::default(),
@@ -853,6 +934,7 @@ impl Default for SettingsConfig {
             keybindings_path: None,
             highlights_path: None,
             triggers_path: None,
+            link: LinkDefaults::default(),
             ui: UiConfig::default(),
             raw_side: RawSideConfig::default(),
             command_line: CommandLineConfig::default(),
@@ -957,6 +1039,7 @@ impl SettingsConfig {
         }
 
         self.ui.validate()?;
+        self.link.validate()?;
 
         Ok(())
     }
@@ -1143,6 +1226,41 @@ mod tests {
     //! Settings derived at load time.
 
     use super::*;
+
+    /// MAX-181: `[link]` reads minicom-like numbers and names, an empty or missing `device`
+    /// is none, and out-of-range bits, stop bits or baud fail the check.
+    /// How: a full section, an empty one, then three bad values through `SettingsConfig`.
+    #[test]
+    fn link_defaults_from_toml() {
+        let parse = |toml: &str| toml::from_str::<LinkDefaults>(toml).unwrap();
+        let link = parse(
+            "device = \"COM7\"\nbaud = 9600\nbits = 7\nparity = \"even\"\n\
+             stop_bits = 2\nflow = \"rtscts\"",
+        );
+        assert_eq!(link.device(), Some("COM7"));
+        let line = link.line();
+        assert_eq!(
+            (line.baud, line.framing.to_string(), line.flow_control),
+            (9600, "7E2".to_string(), FlowControl::RtsCts)
+        );
+        let empty = parse("");
+        assert_eq!(empty, LinkDefaults::default());
+        assert_eq!(empty.device(), None);
+        assert_eq!(empty.line(), LineSettings::default());
+
+        for (toml, name) in [
+            ("bits = 9", "link.bits"),
+            ("stop_bits = 0", "link.stop_bits"),
+            ("baud = 0", "link.baud"),
+        ] {
+            let settings = SettingsConfig {
+                link: parse(toml),
+                ..SettingsConfig::default()
+            };
+            let err = settings.validate().unwrap_err().to_string();
+            assert!(err.starts_with(name), "{toml}: {err}");
+        }
+    }
 
     /// MAX-151: the answer settings are on by default, groups by name; `colors` is no group
     #[test]

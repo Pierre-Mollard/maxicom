@@ -217,6 +217,8 @@ pub enum SettingKey {
     Mouse,
     DimensionMode,
     AnswerQueries,
+    AddCr,
+    AddLf,
 }
 
 /// The path of `what` to the clipboard, for a look at the files out of the app (MAX-154)
