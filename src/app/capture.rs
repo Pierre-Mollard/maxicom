@@ -8,7 +8,8 @@ use crate::{
     app::types::LogEntry,
     capture::{
         CaptureDevice, CaptureFormat, CaptureSource, RESTORE_RAW_TAIL, RecordingWriter, Session,
-        Stream, find_last_session, read_tail_bytes, read_times, restore_separator, timed_chunks,
+        Stream, TerminalSize, find_last_session, read_tail_bytes, read_times, restore_separator,
+        timed_chunks,
     },
     configs::{Mode, settings::RestoreMode},
     overlays::{ErrorDialog, FilePathDialog, Overlay, SessionBrowser},
@@ -62,8 +63,8 @@ impl App {
     /// when the line settings or the encoding changed since it started; when the recording's
     /// source changed (another address too), a full recording stops, a text recording gets a
     /// marker line. The session's address is `opened`'s: a new port gets its session once it
-    /// is open. Run before the received bytes are recorded, and on each tick for a change with
-    /// nothing received after it
+    /// is open. Their metas say the terminal grid's size (MAX-178). Run before the received
+    /// bytes are recorded, and on each tick for a change with nothing received after it
     pub fn follow_device(&mut self) {
         let changed =
             (self.recorder.source()).is_some_and(|source| !self.is_current_source(source));
@@ -89,6 +90,9 @@ impl App {
             drop(self.recorder.take_session());
             self.restart_session();
         }
+
+        let (rows, cols) = self.terminal_mode.get_vt100_size();
+        self.recorder.set_terminal_size(TerminalSize { rows, cols });
     }
 
     /// What a recording started now records: the link's address and device, a replay's device
@@ -201,12 +205,13 @@ impl App {
 
     /// Puts a past session in the history of both modes, before any live data (MAX-148): the
     /// end of its raw bytes, cut into lines in line mode as they were live (MAX-175) and
-    /// through the terminal, then a separator where the live data starts. A session is its raw
-    /// bytes and its meta; its text is for people to read, never read back (MAX-172). Not
-    /// recorded nor counted: the new session starts empty
+    /// through the terminal at the grid size the session ended on, when its meta says it
+    /// (MAX-178), then a separator where the live data starts. A session is its raw bytes and
+    /// its meta; its text is for people to read, never read back (MAX-172). Not recorded nor
+    /// counted: the new session starts empty
     pub fn restore_session(&mut self, session: &Session) -> std::io::Result<()> {
         // a session from `find_last_session` has both
-        let (Some(raw_path), Some(_)) = (session.raw_path(), &session.meta) else {
+        let (Some(raw_path), Some(meta)) = (session.raw_path(), &session.meta) else {
             return Err(std::io::Error::other("not a complete session"));
         };
         let (start, raw) = read_tail_bytes(raw_path, RESTORE_RAW_TAIL)?;
@@ -223,6 +228,10 @@ impl App {
         self.line_mode.clear_view();
         let separator_line = LogEntry::restored(separator.clone(), None);
         self.line_mode.restore_entries([separator_line]);
+        // the view's size applies once the UI is up, by the dimension mode
+        if let Some(size) = meta.terminal {
+            self.terminal_mode.set_vt100_size(size.rows, size.cols);
+        }
         self.terminal_mode.restore(encoding, &chunks, &separator);
         Ok(())
     }
@@ -527,6 +536,42 @@ pub mod tests {
         let mut restored_texts = texts(&restored);
         assert_eq!(restored_texts.pop().as_deref(), Some("── restored"));
         assert_eq!(restored_texts, texts(&live));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// MAX-178: the session meta says the terminal grid's size, rewritten when it changes, and
+    /// a restore replays the raw bytes at that size: a line wider than the app's grid comes
+    /// back whole, not cut at its width.
+    /// How: an app on an 80-column grid records a session, its grid widened to 120 columns
+    /// before a 100-column line comes in; another app on 80 columns restores it.
+    #[test]
+    fn restore_replays_at_the_recorded_terminal_size() {
+        let dir = crate::capture::tests::temp_dir("restore_size");
+        let wide = "x".repeat(100);
+        let mut live = app();
+        live.terminal_mode.set_vt100_size(24, 80);
+        live.start_session(Some(dir.clone()));
+        live.tick();
+        live.terminal_mode.set_vt100_size(10, 120);
+        live.feed_rx(format!("{wide}\r\n").as_bytes());
+        let device = live.session_device();
+        drop(live);
+        let session = find_last_session(&dir, &device, None).unwrap();
+        let size = session.meta.as_ref().and_then(|meta| meta.terminal);
+        assert_eq!(
+            size,
+            Some(TerminalSize {
+                rows: 10,
+                cols: 120
+            })
+        );
+
+        let mut restored = app();
+        restored.terminal_mode.set_vt100_size(24, 80);
+        restored.restore_session(&session).unwrap();
+        assert_eq!(restored.terminal_mode.get_vt100_size(), (10, 120));
+        let lines = restored.terminal_mode.all_text_lines();
+        assert!(lines.contains(&wide), "{lines:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

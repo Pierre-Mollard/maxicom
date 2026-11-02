@@ -47,6 +47,7 @@ pub enum Action {
     CopyMode(CopyModeAction),
     Search(SearchModeAction),
     Overlay(DialogAction),
+    Redraw,
     Ignore,
 }
 
@@ -235,6 +236,7 @@ pub fn handle_event(event: Event, app: &App) -> Action {
         }
         Event::Paste(text) => return handle_paste(text, app),
         Event::Mouse(mouse_event) => return handle_mouse(mouse_event, app),
+        Event::Resize(..) => return Action::Redraw,
         _ => {}
     }
 
@@ -835,6 +837,8 @@ mod tests {
                 "Alt-r => LineInput(AutoResizeRemoteToWidth)",
                 "Ctrl-a => App(SetPrefix(true))",
                 "Ctrl-c => LineInput(Interrupt)",
+                "Ctrl-n => LineInput(HistoryDown)",
+                "Ctrl-p => LineInput(HistoryUp)",
                 "Ctrl-q => App(Quit)",
                 "Ctrl-u => LineInput(ClearLine)",
                 "Down => LineInput(HistoryDown)",
@@ -884,5 +888,14 @@ mod tests {
             };
             assert_eq!(KeyPattern::from_event(&sent), pattern, "{key}");
         }
+    }
+
+    /// MAX-180: a resize asks for a redraw: the old frame stayed up to the next frame due
+    /// (a second), so a slow resize lagged.
+    /// How: a resize event through `handle_event`.
+    #[test]
+    fn resize_redraws() {
+        let action = handle_event(Event::Resize(150, 35), &app());
+        assert!(matches!(action, Action::Redraw), "{action:?}");
     }
 }

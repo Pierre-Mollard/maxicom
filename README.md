@@ -385,8 +385,8 @@ where its lines wrap, which `dimension_mode` decides.
                  everything the session backup holds, then keeps recording
 - Session backup: every session is recorded, raw and text, to a folder
   `~/.cache/maxicom/sessions/<date>_<time>_<port>/` (`.log`, `.raw`, `.times`
-  and a small `.meta` with the device and the text format, all named like the
-  folder), the time to the millisecond.
+  and a small `.meta` with the device, the text format and the terminal grid's
+  size, all named like the folder), the time to the millisecond.
   Flushed every 250 ms, so a crash or a `kill` loses almost nothing. It never
   lights `● REC`. Not in replay mode.
   - Its text is written with `timestamp`, `timestamp_format`, `record_tx` and
@@ -410,6 +410,8 @@ where its lines wrap, which `dimension_mode` decides.
   the history, the lines in line mode and the screen and scrollback in
   terminal mode, then a separator line
   `── restored: ttyUSB0, 2026-10-28 14:15 → 16:40 ──` before the live data.
+  The terminal replays the session at the grid size it ended on, so its wide
+  lines come back whole; then `dimension_mode` sizes it to the view.
   - `restore` in `[sessions]`: `always` (default) restores, `ask` asks at
     startup, `never` doesn't. `--restore` (restore without asking) and
     `--no-restore` decide for one launch. Never in replay mode.

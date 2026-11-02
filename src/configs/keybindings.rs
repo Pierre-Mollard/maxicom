@@ -989,6 +989,8 @@ impl Default for KeyBindingsConfig {
             "enter"  => KeyBindingLineAction::Submit,
             "up"     => KeyBindingLineAction::HistoryPrev,
             "down"   => KeyBindingLineAction::HistoryNext,
+            "ctrl-p" => KeyBindingLineAction::HistoryPrev,
+            "ctrl-n" => KeyBindingLineAction::HistoryNext,
             "ctrl-c" => KeyBindingLineAction::Interrupt,
             "ctrl-u" => KeyBindingLineAction::ClearLine,
             "alt-r"  => KeyBindingLineAction::AutoResizeRemoteLine,

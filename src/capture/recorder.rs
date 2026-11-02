@@ -1,7 +1,7 @@
 use super::restore::times_line;
 use super::session::{
-    CaptureDevice, CaptureFormat, CaptureSource, RecordingMeta, SessionLimits, folder_file,
-    prune_sessions, session_tag,
+    CaptureDevice, CaptureFormat, CaptureSource, RecordingMeta, SessionLimits, TerminalSize,
+    folder_file, prune_sessions, session_tag,
 };
 use crate::app::types::RxLineSplitter;
 use crate::configs::{RxNewlineMode, TextEncoding};
@@ -87,7 +87,8 @@ impl Stream {
 
 /// The files of a session (MAX-147) or of a full recording (MAX-175), `<stem>.log`, `.raw`,
 /// `.times` and `.meta` in one folder: the text, the bytes received, when each chunk of them
-/// was received (`times`, at `raw_len`), and the device. The session backup runs apart from the
+/// was received (`times`, at `raw_len`), and the device and terminal size (`meta`, none when
+/// the device is unknown). The session backup runs apart from the
 /// user's recordings, which can start with its content; it is taken out of the recorder while
 /// a replay sets the live link aside (MAX-171)
 pub struct RecordingWriter {
@@ -100,7 +101,7 @@ pub struct RecordingWriter {
     timestamp: Option<TimestampFormat>,
     tx_mark: Option<String>,
     started: DateTime<Local>,
-    device: Option<CaptureDevice>,
+    meta: Option<RecordingMeta>,
 }
 
 /// The user's recording (MAX-175), one at a time, and what it records (MAX-173)
@@ -252,7 +253,20 @@ impl Recorder {
     pub fn session_device(&self) -> Option<&CaptureDevice> {
         self.session
             .as_ref()
-            .and_then(|session| session.device.as_ref())
+            .and_then(|session| session.meta.as_ref())
+            .map(|meta| &meta.device)
+    }
+
+    /// The terminal grid is now `size`: the metas of the session backup and of a full
+    /// recording say it (MAX-178)
+    pub fn set_terminal_size(&mut self, size: TerminalSize) {
+        let full = match self.recording.as_mut().map(|recording| &mut recording.kind) {
+            Some(RecordingKind::Full(full)) => Some(&mut **full),
+            _ => None,
+        };
+        for writer in self.session.iter_mut().chain(full) {
+            writer.set_terminal_size(size);
+        }
     }
 
     pub fn has_session(&self) -> bool {
@@ -449,9 +463,9 @@ impl RecordingWriter {
         let path = |extension: &str| folder_file(folder, extension);
         let (text_path, raw_path) = (path("log"), path("raw"));
         create_parent_dirs(&raw_path)?;
-        if let Some(device) = device {
-            RecordingMeta::new(started, device.clone(), text.clone())
-                .write(&RecordingMeta::path_of(&raw_path))?;
+        let meta = device.map(|device| RecordingMeta::new(started, device.clone(), text.clone()));
+        if let Some(meta) = &meta {
+            meta.write(&RecordingMeta::path_of(&raw_path))?;
         }
         Ok(Self {
             text: LogFile::open(&text_path)?,
@@ -463,8 +477,21 @@ impl RecordingWriter {
             timestamp: text.timestamp.as_deref().map(TimestampFormat::new),
             tx_mark: text.tx_mark.clone(),
             started,
-            device: device.cloned(),
+            meta,
         })
+    }
+
+    /// The meta written again when the terminal grid is now `size` (MAX-178)
+    fn set_terminal_size(&mut self, size: TerminalSize) {
+        let Some(meta) = self
+            .meta
+            .as_mut()
+            .filter(|meta| meta.terminal != Some(size))
+        else {
+            return;
+        };
+        meta.terminal = Some(size);
+        let _ = meta.write(&RecordingMeta::path_of(&self.raw_path));
     }
 
     /// The bytes received at `time`: the time first, so a crash between the writes leaves

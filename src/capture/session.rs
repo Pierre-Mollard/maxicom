@@ -109,14 +109,25 @@ impl CaptureDevice {
     }
 }
 
-/// The `.meta` file of a session or a full recording, written when it starts. A file of
-/// another `version` is read as none, and never restores
+/// The terminal mode's grid size, rows and columns (MAX-178)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalSize {
+    pub rows: u16,
+    pub cols: u16,
+}
+
+/// The `.meta` file of a session or a full recording, written when it starts, and again when
+/// the terminal grid changes size: a restore replays the bytes at the size they ended on
+/// (MAX-178), none in a meta written before. A file of another `version` is read as none, and
+/// never restores
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordingMeta {
     pub version: u32,
     pub started: i64,
     pub device: CaptureDevice,
     pub text: CaptureFormat,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<TerminalSize>,
 }
 
 impl RecordingMeta {
@@ -126,6 +137,7 @@ impl RecordingMeta {
             started: started.timestamp(),
             device,
             text,
+            terminal: None,
         }
     }
 
@@ -778,6 +790,7 @@ mod tests {
             started: 1_700_000_000,
             device: device.clone(),
             text: CaptureFormat::default(),
+            terminal: None,
         };
         put(
             dir,

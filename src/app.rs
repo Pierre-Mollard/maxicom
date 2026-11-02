@@ -840,7 +840,7 @@ impl App {
                     UpdateEffect::None
                 }
             }
-            Action::Ignore => UpdateEffect::None,
+            Action::Redraw | Action::Ignore => UpdateEffect::None,
         }
     }
 

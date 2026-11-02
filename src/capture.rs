@@ -16,8 +16,8 @@ pub use restore::{
 pub use screenshot::{Screenshot, ScreenshotFormat};
 pub use session::{
     CaptureDevice, CaptureFormat, CaptureLine, CaptureSource, RecordingMeta, Session,
-    SessionLimits, SessionOrder, delete_session, delete_sessions, find_last_session, list_sessions,
-    recording_raw, sort_sessions,
+    SessionLimits, SessionOrder, TerminalSize, delete_session, delete_sessions, find_last_session,
+    list_sessions, recording_raw, sort_sessions,
 };
 
 #[cfg(test)]
