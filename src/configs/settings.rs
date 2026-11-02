@@ -842,8 +842,11 @@ pub struct UiConfig {
     pub show_scrollbar: bool,
     pub show_status_bar: bool,
     pub mouse: bool,
-    pub compact_cols: u16,
-    pub compact_rows: u16,
+    /// Each part hides on a screen narrower or shorter than its `[cols, rows]`, a `0` side
+    /// never (MAX-181): the borders first, the status bar last, as minicom always shows its own
+    pub hide_borders_below: [u16; 2],
+    pub hide_scrollbar_below: [u16; 2],
+    pub hide_status_bar_below: [u16; 2],
     pub status_bar: StatusBarConfig,
 }
 
@@ -855,8 +858,9 @@ impl Default for UiConfig {
             show_scrollbar: true,
             show_status_bar: true,
             mouse: true,
-            compact_cols: 50,
-            compact_rows: 14,
+            hide_borders_below: [60, 16],
+            hide_scrollbar_below: [40, 10],
+            hide_status_bar_below: [35, 6],
             status_bar: StatusBarConfig::default(),
         }
     }

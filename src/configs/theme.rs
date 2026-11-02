@@ -148,11 +148,7 @@ impl Default for UiStyles {
                     .bg(Color::Rgb(0x4a, 0x4a, 0x5a))
                     .fg(Color::White),
             ),
-            selection: ConfigStyle::new(
-                Style::default()
-                    .bg(Color::Rgb(0x28, 0x50, 0x96))
-                    .fg(Color::White),
-            ),
+            selection: ConfigStyle::new(Style::default().bg(Color::Magenta).fg(Color::Black)),
             hover: ConfigStyle::new(Style::new().add_modifier(Modifier::REVERSED)),
             status_bar: ConfigStyle::new(
                 Style::default()

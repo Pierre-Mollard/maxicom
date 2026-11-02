@@ -335,8 +335,9 @@ mod tests {
                 wrap: String::from("│ "),
                 partial: String::from("│…"),
             };
-            settings.ui.compact_cols = 0;
-            settings.ui.compact_rows = 0;
+            settings.ui.hide_borders_below = [0, 0];
+            settings.ui.hide_scrollbar_below = [0, 0];
+            settings.ui.hide_status_bar_below = [0, 0];
             settings.line_mode.display_mode = display_mode;
             tweak(&mut settings);
             let theme = ThemeConfig::default();
@@ -4781,65 +4782,68 @@ mod tests {
         assert_eq!(title_at(20), "");
     }
 
-    /// MAX-136: a screen narrower than `compact_cols` or shorter than `compact_rows` is drawn
-    /// without borders, status bar and scrollbar, the history and TX input taking their room;
-    /// the settings are left as they are, so a bigger screen brings everything back. A `0`
-    /// turns its side off. The border buttons aren't clickable while hidden.
-    /// How: line mode with borders at 80x24, then 40x24, 80x12 and back; the thresholds at
-    /// `0`; terminal mode at 40x24.
+    /// MAX-136, MAX-181: the borders, the scrollbar and the status bar each hide on a screen
+    /// narrower or shorter than their `hide_*_below` size, the others staying; the settings are
+    /// left as they are, so a bigger screen brings them back. A `0` side never hides. The
+    /// border buttons aren't clickable while hidden.
+    /// How: line mode, borders below 50x14, scrollbar below 40x10, status bar below 30x6: each
+    /// size past one more of them, in width then in height; a `0` side; terminal mode below
+    /// them all.
     #[test]
     fn compact_screen() {
         use ratatui::layout::Rect;
         let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 24, |s| {
             s.ui.show_borders = true;
+            s.ui.hide_borders_below = [50, 14];
+            s.ui.hide_scrollbar_below = [40, 10];
+            s.ui.hide_status_bar_below = [30, 6];
         });
-        h.app.settings_mut().ui.compact_cols = 50;
-        h.app.settings_mut().ui.compact_rows = 14;
-        let at = |h: &mut Harness, w, rows| {
+        // borders, scrollbar, status bar
+        let parts = |h: &mut Harness, w, rows| {
             h.terminal.backend_mut().resize(w, rows);
             let drawn = h.draw();
-            drawn[0].starts_with('┌')
-        };
-        let content = |h: &Harness| h.app.frame_areas().content;
-
-        assert!(at(&mut h, 80, 24));
-        for (w, rows) in [(40, 24), (80, 12)] {
-            assert!(!at(&mut h, w, rows), "{w}x{rows}");
             let layout = ScreenLayout::compute(Rect::new(0, 0, w, rows), &h.app);
-            assert_eq!(layout.status_bar_area, None, "{w}x{rows}");
-            assert_eq!(layout.scrollbar_area, None, "{w}x{rows}");
-            assert_eq!(layout.prompt_area.map(|p| p.height), Some(1));
-            assert_eq!(content(&h), Rect::new(0, 0, w, rows - 1), "{w}x{rows}");
+            (
+                drawn[0].starts_with('┌'),
+                layout.scrollbar_area.is_some(),
+                layout.status_bar_area.is_some(),
+            )
+        };
+
+        assert_eq!(parts(&mut h, 80, 24), (true, true, true));
+        for (w, rows, shown) in [
+            (45, 24, (false, true, true)),
+            (35, 24, (false, false, true)),
+            (25, 24, (false, false, false)),
+            (80, 12, (false, true, true)),
+            (80, 8, (false, false, true)),
+            (80, 5, (false, false, false)),
+        ] {
+            assert_eq!(parts(&mut h, w, rows), shown, "{w}x{rows}");
         }
         let ui = &h.app.settings().ui;
         assert!(ui.show_borders && ui.show_status_bar && ui.show_scrollbar);
 
         // where `[≡]` is at 40 columns with borders
-        at(&mut h, 40, 24);
+        parts(&mut h, 40, 24);
         click(&mut h, (33, 0));
         assert!(h.app.overlay().is_none());
 
-        assert!(at(&mut h, 80, 24));
-        h.app.settings_mut().ui.compact_cols = 0;
-        assert!(at(&mut h, 40, 24));
-        assert!(!at(&mut h, 80, 12));
-        h.app.settings_mut().ui.compact_rows = 0;
-        assert!(at(&mut h, 40, 12));
+        h.app.settings_mut().ui.hide_borders_below = [0, 14];
+        assert_eq!(parts(&mut h, 45, 24), (true, true, true));
+        assert_eq!(parts(&mut h, 80, 12), (false, true, true));
 
-        let ui = &mut h.app.settings_mut().ui;
-        ui.compact_cols = 50;
-        ui.compact_rows = 14;
         h.app.settings_mut().mode = Mode::Terminal;
-        assert!(!at(&mut h, 40, 24));
-        assert_eq!(content(&h), Rect::new(0, 0, 40, 24));
+        parts(&mut h, 25, 5);
+        assert_eq!(h.app.frame_areas().content, Rect::new(0, 0, 25, 5));
     }
 
-    /// MAX-181 step 0: with the default `[ui]`, terminal mode keeps its borders down to
-    /// `compact_cols` x `compact_rows` (50x14): an 80x24 screen leaves a 78x22 view, the status
-    /// bar in the bottom border. Below it the borders and the status bar go all at once, the
-    /// prefix included.
-    /// How: 80x24, 60x16 and 59x24 with borders, then 49x24 compact, with and without the
-    /// prefix.
+    /// MAX-181: with the default `[ui]`, terminal mode keeps its borders on 80x24 (a 78x22
+    /// view, the status bar in the bottom border) down to 60x16; below, the status bar is a
+    /// row of its own and the scrollbar a column, down to 30x6 and 40x10. A hidden status bar
+    /// shows over the view's last row while the prefix is on, the view keeping its size.
+    /// How: 80x24 and 60x16 with borders, then 59x24 and 80x15, 39x24, 29x24 with and without
+    /// the prefix.
     #[test]
     fn default_compact_thresholds() {
         use ratatui::layout::Rect;
@@ -4854,25 +4858,73 @@ mod tests {
             (
                 drawn[0].starts_with('┌'),
                 h.app.frame_areas().content,
-                layout,
+                layout.status_bar_area,
             )
         };
 
-        for (w, rows) in [(80, 24), (60, 16), (59, 24)] {
-            let (borders, content, layout) = at(&mut h, w, rows);
-            assert!(borders, "{w}x{rows}");
-            assert_eq!(content, Rect::new(1, 1, w - 2, rows - 2), "{w}x{rows}");
+        for (w, rows) in [(80, 24), (60, 16)] {
             let bar = Rect::new(2, rows - 1, w - 4, 1);
-            assert_eq!(layout.status_bar_area, Some(bar), "{w}x{rows}");
+            let with_borders = (true, Rect::new(1, 1, w - 2, rows - 2), Some(bar));
+            assert_eq!(at(&mut h, w, rows), with_borders, "{w}x{rows}");
         }
+        for (w, rows) in [(59, 24), (80, 15)] {
+            let bar = Rect::new(0, rows - 1, w, 1);
+            let line_bar = (false, Rect::new(0, 0, w - 1, rows - 1), Some(bar));
+            assert_eq!(at(&mut h, w, rows), line_bar, "{w}x{rows}");
+        }
+        let no_scrollbar = (
+            false,
+            Rect::new(0, 0, 39, 23),
+            Some(Rect::new(0, 23, 39, 1)),
+        );
+        assert_eq!(at(&mut h, 39, 24), no_scrollbar);
 
-        for prefix in [false, true] {
-            h.app.update(Action::App(AppAction::SetPrefix(prefix)));
-            let (borders, content, layout) = at(&mut h, 49, 24);
-            assert!(!borders, "prefix {prefix}");
-            assert_eq!(content, Rect::new(0, 0, 49, 24), "prefix {prefix}");
-            assert_eq!(layout.status_bar_area, None, "prefix {prefix}");
-        }
+        let view = Rect::new(0, 0, 29, 24);
+        assert_eq!(at(&mut h, 29, 24), (false, view, None));
+        h.app.update(Action::App(AppAction::SetPrefix(true)));
+        let over = Some(Rect::new(0, 23, 29, 1));
+        assert_eq!(at(&mut h, 29, 24), (false, view, over));
+    }
+
+    /// MAX-181 5b: while the prefix is on, a status bar the screen's size hides is drawn over
+    /// the view's last row, in the line layout, and it's clickable; the emulator keeps its
+    /// size, and the row comes back when the prefix ends. A status bar turned off in the
+    /// settings stays off.
+    /// How: terminal mode on 29x24, "last" on the bottom row; the prefix on, a click on `≡`,
+    /// the prefix off; then `show_status_bar = false` with the prefix.
+    #[test]
+    fn hidden_status_bar_over_the_view_with_the_prefix() {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 29, 24, |s| {
+            s.mode = Mode::Terminal;
+            s.ui = crate::configs::settings::UiConfig::default();
+        });
+        h.draw();
+        let size = h.app.terminal_mode.get_vt100_size();
+        h.app
+            .terminal_mode
+            .process_rx(TextEncoding::Utf8, b"\x1b[24;1Hlast");
+        assert!(h.draw()[23].starts_with("last"));
+
+        h.app.update(Action::App(AppAction::SetPrefix(true)));
+        let rows = h.draw();
+        assert!(!rows[23].contains("last"), "{:?}", rows[23]);
+        assert!(rows[23].contains('≡'), "{:?}", rows[23]);
+        assert_eq!(h.app.terminal_mode.get_vt100_size(), size);
+        assert_eq!(
+            h.app.status_bar_layout(),
+            crate::configs::StatusBarLayout::Line
+        );
+        let gear = rows[23].chars().position(|c| c == '≡').unwrap() as u16;
+        click(&mut h, (gear, 23));
+        assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
+        h.app.close_overlay();
+
+        h.app.update(Action::App(AppAction::SetPrefix(false)));
+        assert!(h.draw()[23].starts_with("last"));
+
+        h.app.settings_mut().ui.show_status_bar = false;
+        h.app.update(Action::App(AppAction::SetPrefix(true)));
+        assert!(h.draw()[23].starts_with("last"));
     }
 
     /// MAX-140: a `grow_only` grid taller than the view (the window shrank) shows its rows down

@@ -147,8 +147,8 @@ pub struct App {
     pointer: Option<(u16, u16)>,
     /// The last text copied, which a right-click pastes (MAX-144)
     paste_buffer: Option<String>,
-    /// The last frame was smaller than `compact_cols` x `compact_rows` (MAX-136)
-    compact: bool,
+    /// The last frame's size, for the parts a small screen hides (MAX-136, MAX-181)
+    screen_size: Option<(u16, u16)>,
     pub stats: Stats,
     /// The file `send-file` sends, a chunk per loop turn (MAX-12)
     transfer: Option<FileTransfer>,
@@ -252,7 +252,7 @@ impl App {
             is_window_focused: true,
             pointer: None,
             paste_buffer: None,
-            compact: false,
+            screen_size: None,
             stats: Stats {
                 received_bytes: 0,
                 sent_bytes: 0,
@@ -581,27 +581,48 @@ impl App {
         }
     }
 
-    /// Draws the next frames compact while the screen is smaller than `compact_cols` x
-    /// `compact_rows` (a `0` never is): no borders, status bar or scrollbar, the settings left
-    /// as they are (MAX-136). Set by `render`, so the mouse sees what the last frame drew
+    /// The next frames hide the borders, the scrollbar and the status bar each while the
+    /// screen is smaller than its `hide_*_below` size, the settings left as they are (MAX-136,
+    /// MAX-181). Set by `render`, so the mouse sees what the last frame drew
     pub fn set_screen_size(&mut self, cols: u16, rows: u16) {
-        let ui = &self.settings.ui;
-        self.compact = cols < ui.compact_cols || rows < ui.compact_rows;
+        self.screen_size = Some((cols, rows));
+    }
+
+    /// The last frame was at least `[cols, rows]`, a `0` side always; true before the first
+    fn screen_fits(&self, [min_cols, min_rows]: [u16; 2]) -> bool {
+        self.screen_size
+            .is_none_or(|(cols, rows)| cols >= min_cols && rows >= min_rows)
     }
 
     pub fn show_borders(&self) -> bool {
-        self.settings.ui.show_borders && !self.compact
-    }
-
-    pub fn show_status_bar(&self) -> bool {
-        self.settings.ui.show_status_bar && !self.compact
+        let ui = &self.settings.ui;
+        ui.show_borders && self.screen_fits(ui.hide_borders_below)
     }
 
     pub fn show_scrollbar(&self) -> bool {
-        self.settings.ui.show_scrollbar && !self.compact
+        let ui = &self.settings.ui;
+        ui.show_scrollbar && self.screen_fits(ui.hide_scrollbar_below)
     }
 
+    pub fn show_status_bar(&self) -> bool {
+        let ui = &self.settings.ui;
+        ui.show_status_bar && self.screen_fits(ui.hide_status_bar_below)
+    }
+
+    /// The status bar the screen's size hides, shown while the prefix is on over the view's
+    /// bottom row, so the prefix and the link can be seen: nothing moves and the remote isn't
+    /// resized (MAX-181). Not when `show_status_bar` turns it off
+    pub fn status_bar_over_view(&self) -> bool {
+        let ui = &self.settings.ui;
+        self.prefix_active && ui.show_status_bar && !self.screen_fits(ui.hide_status_bar_below)
+    }
+
+    /// The layout in use: a line over the view, as the bar on a row of its own, else
+    /// `[ui.status_bar] layout` if the borders it needs are drawn
     pub fn status_bar_layout(&self) -> StatusBarLayout {
+        if self.status_bar_over_view() {
+            return StatusBarLayout::Line;
+        }
         self.settings.ui.status_bar_layout(self.show_borders())
     }
 

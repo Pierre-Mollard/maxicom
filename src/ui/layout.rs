@@ -109,6 +109,13 @@ impl ScreenLayout {
             })
         } else if show_status_bar {
             Some(v_chunks[2])
+        } else if app.status_bar_over_view() && monitor_outer.height > 0 {
+            Some(Rect::new(
+                monitor_outer.x,
+                monitor_outer.bottom() - 1,
+                monitor_outer.width,
+                1,
+            ))
         } else {
             None
         };

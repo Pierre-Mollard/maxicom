@@ -181,7 +181,7 @@ use ratatui::{
     layout::{Alignment, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph},
 };
 
 use crate::{
@@ -1292,8 +1292,13 @@ pub fn render_status_bar<'a>(
     status_bar: &'a CompiledStatusBar,
 ) -> Vec<ClickTarget> {
     let mut targets = Vec::new();
-    if !app.show_status_bar() {
+    let over_view = app.status_bar_over_view();
+    if !app.show_status_bar() && !over_view {
         return targets;
+    }
+    // the view's row it covers, cleared so no text shows through (MAX-181)
+    if over_view {
+        frame.render_widget(Clear, area);
     }
 
     // only the band layout fills the row with its colour; the others put the text on the UI

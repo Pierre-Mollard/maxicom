@@ -154,10 +154,22 @@ What changes from a serial port:
   alerts (`!`, `● REC`), the VT and view sizes, the scroll, the pan and the
   prefix. What doesn't fit in the border is left out whole, never cut. A click
   on `SCROLL +n` goes back to the live tail, on `PAN +n` to the left edge.
-- `compact_cols` and `compact_rows` in `[ui]` (default `50` and `14`): while
-  the screen is narrower or shorter than that, it is drawn without borders,
-  status bar and scrollbar, to leave the room to the content. The settings
-  stay as they are: a bigger window brings them back. `0` turns a side off.
+- `hide_borders_below`, `hide_scrollbar_below` and `hide_status_bar_below` in
+  `[ui]`, each a `[cols, rows]` size: while the screen is narrower or shorter
+  than it, that part isn't drawn, to leave the room to the content. The
+  defaults hide the borders first, the status bar last, as minicom always
+  shows its own:
+
+  ```toml
+  hide_borders_below = [60, 16]     # 80x24 keeps them
+  hide_scrollbar_below = [40, 10]
+  hide_status_bar_below = [30, 6]   # a row of its own once the borders go
+  ```
+
+  The settings stay as they are: a bigger window brings the parts back. `0`
+  turns a side off. While the prefix is on, a status bar hidden this way shows
+  over the view's last row, as a line, so the prefix and the link can be seen;
+  the view keeps its size (`show_status_bar = false` keeps it off).
 
 ### COMMAND LINE
 
@@ -514,6 +526,14 @@ name = "screen_%Y%m%d_%H%M%S"            # the format adds .txt or .ans
 ```
 
 ### THEME
+
+- `theme.toml` styles the UI: an entry is a color (its `fg`), or a table of
+  `fg`, `bg`, `underline_color` (a name like `White`, `DarkGray`, `Reset`, or
+  `#RRGGBB`) and `bold`, `dim`, `italic`, `underlined`, `reversed`, `crossed`.
+  The copy mode selection, in the text and the raw side panel, is
+  `[ui.selection]` (default black on `Magenta`, as the `COPY` badge);
+  the cursor's ghost in the other panel is `[ui.cursor_ghost]`,
+  the part under the mouse `[ui.hover]`.
 
 #### STATUS BAR FORMAT
 
