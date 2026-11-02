@@ -58,6 +58,60 @@ samply record ./target/profiling/maxicom --baudrate 115200 --device /tmp/maxicom
 cargo deny check
 ```
 
+## COMING FROM MINICOM
+
+Start it as minicom: `maxicom -D /dev/ttyUSB0 -b 115200`, the prefix is
+`Ctrl-A` and its keys are minicom's where maxicom has the feature. Every key
+can be changed in `keymap.toml` (delete the file to get these defaults).
+
+| `Ctrl-A` + | minicom           | maxicom                          |
+|------------|-------------------|----------------------------------|
+| `z`        | help              | help (also `?`)                  |
+| `x`, `q`   | quit              | quit                             |
+| `o`        | configure         | settings (also `s`)              |
+| `p`        | comm parameters   | line settings                    |
+| `d`        | dialing directory | the serial ports, `t` tests them |
+| `e`        | local echo        | local echo                       |
+| `w`        | line wrap         | line mode's wrap (see below)     |
+| `u`        | add carriage ret. | add CR: a lone LF read as CR LF  |
+| `a`        | add linefeed      | add LF: a lone CR read as CR LF  |
+| `l`        | capture on/off    | record: text or full             |
+| `c`        | clear screen      | clear, the history a scroll up   |
+| `f`        | send break        | send break                       |
+| `h`        | hangup            | DTR pulse, resets most boards    |
+| `b`        | scrollback        | copy mode (also `[`)             |
+| `Ctrl-A`   | send Ctrl-A       | send Ctrl-A                      |
+| `t`        | terminal settings | timestamps                       |
+
+maxicom's own: `m` line / terminal mode, `j` session backups, `D` detach /
+attach, `O` text encoding, `/` search, `:` command line, `T` triggers, `U`
+the u-boot trigger, `W` terminal size, `E` emulator to the view, `k`
+screenshot, `B` raw side panel, `M` mouse, `C` clear the history, `r` reload
+the config. `Ctrl-A ?` lists them all.
+
+| minicom               | maxicom                              |
+|-----------------------|--------------------------------------|
+| `-D, --device`        | the same, or alone: `maxicom COM3`   |
+| `-b, --baudrate`      | the same, with `--bits`, `--parity`… |
+| `-C, --capturefile`   | the received text to that file       |
+| `-H, --displayhex`    | the raw side panel in hex            |
+| `-R, --remotecharset` | utf8, ascii, cp437 or latin1         |
+| `-v, --version`       | the same                             |
+| `minirc.dfl`          | `[link]` in `config.toml`            |
+
+What differs:
+
+- Flow control is off by default (minicom: RTS/CTS on), as most USB-UART
+  boards don't wire those lines.
+- No default device: with none given maxicom opens on the directory of the
+  serial ports, or says how to give one when there's none.
+- The terminal always wraps long lines: no `-w`, and `Ctrl-A w` changes line
+  mode's wrap only.
+- No file transfers (X/Y/ZMODEM, kermit), shell, scripts or modem dialing:
+  maxicom never starts another program, and sends only what you type, bind
+  or arm. Triggers and bound command lines (`dtr`, `send`, `break`, …) cover
+  the boot prompts.
+
 ## DEVICES
 
 `maxicom [OPTIONS] [DEVICE]`, all the options with `maxicom --help`.
@@ -69,6 +123,32 @@ cargo deny check
   be glued to it (`--baudrate=9600`, `-b9600`).
 - A device over TCP: `maxicom tcp://192.168.1.50:4000`, or
   `--tcp 192.168.1.50:4000`.
+- The directory, `Ctrl-A d` (`directory`, also in the right-click menu), as
+  minicom's dialing directory: the serial ports the system lists, `●` on the
+  one in use. `↑` `↓` `j` `k` or a click select, Enter (or a click on the
+  selected one) switches to it as `open` does, its line settings kept; `r`
+  lists the ports again (USB ones come and go). Saved links will come in a
+  tab of their own (MAX-185).
+  - Enter keeps the directory open (`opening…` on the row) until the port is
+    open; one that fails says why on its row.
+  - `t` tests the ports, the one in use left out: `free`, `busy` (with the
+    program holding it when known, `busy: minicom (1234)`), `no access` (on
+    Linux, the user isn't in `dialout` or `uucp`) or its error; one that
+    doesn't answer in 2 s says so. Opening a port raises DTR and RTS, which
+    resets a board with an auto-reset (ESP32, Arduino), so on Linux the test
+    doesn't open them. It reads, in order: the UUCP lock files (minicom) and
+    `/proc/locks` (`flock`: picocom, tio, pyserial), which show any user's
+    program; the open files of the processes in `/proc`, the user's own only;
+    then the permissions. A port another user holds without a lock (screen,
+    cu, another maxicom) can't be seen without root and shows `free`. macOS
+    has no `/proc`: a port held without a lock file shows `free`. On Windows
+    only an open tells, with the port's settings kept; a board may reset
+    there.
+- The port's popups when it's detached or lost have `d` for the directory,
+  to switch to another one. While the link waits (detached, lost, or no
+  device picked yet), its popup comes back when the popup on top of it
+  closes. A reattach that fails (another program took the port) leaves it
+  detached, its popup up, instead of retrying quietly.
 - Without a device or line options, the `[link]` section of `config.toml` gives
   them (read at startup, the options over it):
 
@@ -83,8 +163,11 @@ cargo deny check
   ```
 
   A port's name depends on the adapter (`/dev/ttyUSB0`, `COM3`,
-  `/dev/cu.usbserial-XXXX`), so there's no default one: with no device
-  anywhere maxicom stops and lists the serial ports it sees.
+  `/dev/cu.usbserial-XXXX`), so there's no default one. With no device
+  anywhere maxicom starts on the directory, with nothing open until a port is
+  picked (no session restored; the backup starts on the port picked); closed
+  before that, a "No device" popup asks to pick one (Enter) or quit (Esc).
+  With no serial port listed either, it stops and says how to give one.
   Flow control is off by default, where
   minicom has RTS/CTS on: most USB-UART boards don't wire those lines.
 

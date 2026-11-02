@@ -75,6 +75,11 @@ impl LinkState {
         self.device.is_some()
     }
 
+    /// Closed until an attach: by hand, idle, or a reattach that failed
+    pub fn is_detached(&self) -> bool {
+        self.detached
+    }
+
     /// The whole config, a replay's live link put back (MAX-166)
     pub fn set_config(&mut self, config: LinkConfig) {
         self.config = config;

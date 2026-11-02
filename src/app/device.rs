@@ -5,6 +5,8 @@
 use std::{
     io,
     path::PathBuf,
+    sync::mpsc,
+    thread,
     time::{Duration, Instant},
 };
 
@@ -15,10 +17,20 @@ use crate::{
     link::{
         Address, ByteSource, CONNECT_TIMEOUT, LinkError, LinkKind, OpenFor, Reconfigured,
         replay::{Replay, ReplayControl},
-        serial::{LineControl, LineSettings},
+        serial::{self, LineControl, LineSettings, PortState},
     },
-    overlays::{ErrorDialog, Overlay},
+    overlays::{Directory, ErrorDialog, Overlay},
 };
+
+/// How long a port's test may take before it's marked unanswered (MAX-181)
+const PORT_TEST_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// The directory's ports being tested, one thread each: their results, and when the ones left
+/// stop being waited for (MAX-181)
+pub struct PortTest {
+    results: mpsc::Receiver<(String, PortState)>,
+    until: Instant,
+}
 
 /// Max time spent reading in one turn before handling input and drawing
 const RX_DRAIN_BUDGET: Duration = Duration::from_millis(5);
@@ -46,6 +58,76 @@ impl App {
         } else {
             self.show_disconnected();
         }
+    }
+
+    /// Started without a device while the system lists `ports` (MAX-181): the directory open
+    /// to pick one, the link waiting detached on the first (nothing opens on its own: an open
+    /// can reset a board). No session restored; the backup starts on the port picked, once open
+    pub fn start_in_directory(&mut self, ports: Vec<String>, sessions_dir: Option<PathBuf>) {
+        self.sessions_dir = sessions_dir;
+        self.device_unpicked = true;
+        self.link.start(None);
+        self.link.detach();
+        self.open_directory(ports);
+    }
+
+    pub fn is_device_unpicked(&self) -> bool {
+        self.device_unpicked
+    }
+
+    /// The directory's ports tested, each on its own thread so one that hangs holds none of
+    /// the others; the device in use left out (MAX-181)
+    pub fn test_ports(&mut self) {
+        // the port is maxicom's only while open: detached, lost or not picked, it's tested
+        let current = self
+            .link
+            .is_open()
+            .then(|| self.link.config().address.to_string());
+        let Some(Overlay::Directory(directory)) = &mut self.overlay else {
+            return;
+        };
+        let (sender, results) = mpsc::channel();
+        for port in (directory.ports.iter()).filter(|port| current.as_ref() != Some(*port)) {
+            directory.tests.insert(port.clone(), None);
+            let (sender, port) = (sender.clone(), port.clone());
+            thread::spawn(move || {
+                let state = serial::probe_port(&port);
+                let _ = sender.send((port, state));
+            });
+        }
+        let until = Instant::now() + PORT_TEST_TIMEOUT;
+        self.port_test = Some(PortTest { results, until });
+    }
+
+    /// The test's results into the directory, the ones left past the timeout said unanswered;
+    /// done once none is left, or the directory closed. True when a mark changed
+    pub fn poll_port_test(&mut self) -> bool {
+        let Some(test) = &self.port_test else {
+            return false;
+        };
+        let results: Vec<_> = test.results.try_iter().collect();
+        let timed_out = Instant::now() >= test.until;
+        let Some(Overlay::Directory(directory)) = &mut self.overlay else {
+            self.port_test = None;
+            return false;
+        };
+        let changed = !results.is_empty() || timed_out;
+        for (port, state) in results {
+            directory.tests.insert(port, Some(state));
+        }
+        let waiting = directory.tests.values_mut().filter(|state| state.is_none());
+        if timed_out {
+            waiting.for_each(|state| *state = Some(PortState::Error("no answer".into())));
+            self.port_test = None;
+        } else if waiting.count() == 0 {
+            self.port_test = None;
+        }
+        changed
+    }
+
+    fn open_directory(&mut self, ports: Vec<String>) {
+        let directory = Directory::new(ports, &self.link.config().address);
+        self.open_overlay(Overlay::Directory(directory));
     }
 
     /// One turn of the link: what is waiting is read (bounded), the end of a replay said, the
@@ -109,7 +191,9 @@ impl App {
     /// clipboard, reload) is the loop's
     pub fn dispatch(&mut self, action: Action) -> UpdateEffect {
         let effect = self.update(action);
-        self.apply_link_effect(effect)
+        let effect = self.apply_link_effect(effect);
+        self.restore_link_popup();
+        effect
     }
 
     fn apply_link_effect(&mut self, effect: UpdateEffect) -> UpdateEffect {
@@ -233,6 +317,7 @@ impl App {
     }
 
     fn opened(&mut self, why: OpenFor) {
+        self.link_lost = false;
         let address = &self.link.config().address;
         match why {
             OpenFor::Start => self.notify_success(format!("Connected to {address}")),
@@ -249,7 +334,13 @@ impl App {
             OpenFor::Open { previous } => {
                 let switched = previous != *address;
                 self.notify_success(format!("Opened {address}"));
-                if switched {
+                if let Some(Overlay::Directory(_)) = self.overlay() {
+                    self.close_overlay();
+                }
+                // the first port picked from the start's directory gets its backup too; taken
+                // before the test, or a switched pick left it set (MAX-181)
+                let first_pick = std::mem::take(&mut self.device_unpicked);
+                if switched || first_pick {
                     self.restart_session();
                 }
                 self.resume_commands();
@@ -258,6 +349,17 @@ impl App {
     }
 
     fn open_failed(&mut self, why: OpenFor, e: LinkError) {
+        // the directory that asked shows why, on the port's row (MAX-181)
+        if let (OpenFor::Open { .. }, Some(Overlay::Directory(directory))) =
+            (&why, &mut self.overlay)
+            && let Some(port) = directory.opening.take()
+        {
+            let state = match &e {
+                LinkError::OpenFailed { source, .. } => serial::port_state_of(source),
+                e => PortState::Error(e.to_string()),
+            };
+            directory.tests.insert(port, Some(state));
+        }
         match why {
             // what a missing port does at start, after the restore question
             OpenFor::Start => {
@@ -268,8 +370,20 @@ impl App {
                     self.show_disconnected();
                 }
             }
-            OpenFor::Attach => self.notify_error(format!("Failed to reattach: {e}")),
+            // still detached, its popup back: no quiet retries of a port held elsewhere
+            OpenFor::Attach => {
+                self.notify_error(format!("Failed to reattach: {e}"));
+                self.link.detach();
+                if self.overlay.is_none() {
+                    self.show_detached();
+                }
+            }
             OpenFor::Retry => {}
+            // nothing was open before the first pick: the link waits again (MAX-181)
+            OpenFor::Open { .. } if self.device_unpicked => {
+                self.link.detach();
+                self.fail_commands(format!("open: {e}"));
+            }
             // the retries reopen the port that was open, which the link is back on
             OpenFor::Open { .. } => {
                 let back = &self.link.config().address;
@@ -349,6 +463,11 @@ impl App {
         if !self.link_kind().reopens() {
             return;
         }
+        // no device to attach yet: the directory to pick one (MAX-181)
+        if self.device_unpicked {
+            self.open_directory(crate::link::serial::port_names());
+            return;
+        }
         if self.link.is_open() {
             self.link.detach();
             self.show_detached();
@@ -421,7 +540,26 @@ impl App {
     }
 
     fn show_disconnected(&mut self) {
+        self.link_lost = true;
         self.open_overlay(Overlay::DeviceDisconnected);
+    }
+
+    /// While the link waits (no device picked yet, detached, lost), its popup is up again
+    /// once nothing else is open: no app without its device behind a closed popup (MAX-181)
+    fn restore_link_popup(&mut self) {
+        if self.overlay.is_some() || self.link.is_open() {
+            return;
+        }
+        let popup = if self.device_unpicked {
+            Overlay::NoDevice
+        } else if self.link.is_detached() {
+            Overlay::DeviceDetached
+        } else if self.link_lost {
+            Overlay::DeviceDisconnected
+        } else {
+            return;
+        };
+        self.open_overlay(popup);
     }
 
     fn show_detached(&mut self) {
@@ -851,5 +989,238 @@ mod tests {
         app.dispatch(Action::App(AppAction::LineControl(LineControl::Dtr(true))));
         let refused = toasts(&app);
         assert!(refused.iter().any(|t| t.starts_with("DTR")), "{refused:?}");
+    }
+
+    /// MAX-181: started on the directory, the link waits on the first port without opening
+    /// it, past the reopen delay too; the directory is open, no session backup runs, and the
+    /// attach key opens the directory. The port picked opens, and gets its backup even when
+    /// it's the one the link waited on.
+    /// How: a TCP listener as the port; polls past `REOPEN_EVERY`, the attach key, then Enter
+    /// in the directory.
+    #[test]
+    fn start_in_directory_opens_nothing_until_picked() {
+        let (listener, address) = listener();
+        listener.set_nonblocking(true).unwrap();
+        let mut app = app_on(&address);
+        app.start_in_directory(vec![address.clone()], None);
+        assert!(app.is_device_unpicked());
+        assert!(matches!(app.overlay(), Some(Overlay::Directory(_))));
+        let mut buffer = [0; 256];
+        let start = Instant::now();
+        while start.elapsed() < REOPEN_EVERY * 2 {
+            app.poll_link(&mut buffer).unwrap();
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!app.link.is_open());
+        assert!(listener.accept().is_err(), "a connection came in");
+        assert!(!app.recorder.has_session());
+
+        // the system's ports in the directory the attach key opens
+        app.close_overlay();
+        app.dispatch(Action::App(AppAction::ToggleAttach));
+        assert!(matches!(app.overlay(), Some(Overlay::Directory(_))));
+        assert!(!app.link.is_open());
+        app.open_directory(vec![address.clone()]);
+        app.dispatch(Action::Overlay(crate::inputs::DialogAction::Confirm));
+        listener.set_nonblocking(false).unwrap();
+        let _peer = listener.accept().unwrap();
+        poll_until(&mut app, "opened", |app| app.link.is_open());
+        assert!(!app.is_device_unpicked());
+        assert!(app.overlay().is_none(), "the directory closes once open");
+        // no cache folder in the test: the backup tried to start
+        let tried = toasts(&app)
+            .iter()
+            .any(|t| t.starts_with("Session backup off"));
+        assert!(tried, "{:?}", toasts(&app));
+    }
+
+    /// MAX-181: a reattach that fails (the port taken by another program meanwhile) leaves the
+    /// link detached, not retrying, its popup back; `d` there opens the directory, where the
+    /// port isn't "in use" and is tested, and closing the directory brings the popup back.
+    /// Regression: the popup was gone and the link retried quietly.
+    /// How: a TCP link detached, its listener closed, Enter (reattach) in the popup; then `d`,
+    /// the directory's rows, Esc.
+    #[test]
+    fn failed_reattach_keeps_the_detached_popup() {
+        use crate::inputs::DialogAction;
+        use crossterm::event::{KeyCode, KeyEvent};
+        let (listener, address) = listener();
+        let (mut app, peer) = connected(&listener, &address);
+        app.dispatch(Action::App(AppAction::ToggleAttach));
+        assert!(matches!(app.overlay(), Some(Overlay::DeviceDetached)));
+        drop((listener, peer));
+
+        app.dispatch(Action::Overlay(DialogAction::Confirm));
+        poll_until(&mut app, "reattach failed", |app| {
+            toasts(app)
+                .iter()
+                .any(|t| t.starts_with("Failed to reattach"))
+        });
+        assert!(matches!(app.overlay(), Some(Overlay::DeviceDetached)));
+        assert!(app.link.is_detached() && !app.link.is_open());
+
+        let d = KeyEvent::from(KeyCode::Char('d'));
+        app.dispatch(Action::Overlay(DialogAction::HandleKey(d)));
+        assert!(matches!(app.overlay(), Some(Overlay::Directory(_))));
+        app.open_directory(vec![address.clone()]);
+        app.test_ports();
+        let Some(Overlay::Directory(directory)) = app.overlay() else {
+            panic!("no directory");
+        };
+        assert!(
+            directory.tests.contains_key(&address),
+            "the port isn't maxicom's"
+        );
+        app.port_test = None;
+        app.dispatch(Action::Overlay(DialogAction::Close));
+        assert!(matches!(app.overlay(), Some(Overlay::DeviceDetached)));
+    }
+
+    /// MAX-181: from the start's directory, picking another port than the one the link waited
+    /// on ends the waiting too: the next action brings no "no device" popup, the attach key
+    /// detaches it. Before the pick, the test checks the first port too, nothing being in use.
+    /// Regression: `switched || take(..)` didn't take when switched.
+    /// How: two TCP listeners, the test started then Down and Enter, an action, the attach key.
+    #[test]
+    fn start_in_directory_pick_another_port() {
+        use crate::inputs::DialogAction;
+        let (first, first_address) = listener();
+        let (second, second_address) = listener();
+        let mut app = app_on(&first_address);
+        let ports = vec![first_address.clone(), second_address.clone()];
+        app.start_in_directory(ports, None);
+        app.test_ports();
+        let Some(Overlay::Directory(directory)) = app.overlay() else {
+            panic!("no directory");
+        };
+        assert!(directory.tests.contains_key(&first_address));
+        app.port_test = None;
+
+        app.dispatch(Action::Overlay(DialogAction::Down));
+        app.dispatch(Action::Overlay(DialogAction::Confirm));
+        let _peer = second.accept().unwrap();
+        poll_until(&mut app, "opened", |app| app.link.is_open());
+        assert_eq!(app.link_config().address.to_string(), second_address);
+        assert!(!app.is_device_unpicked());
+        app.dispatch(Action::App(AppAction::SetPrefix(false)));
+        assert!(
+            app.overlay().is_none(),
+            "{:?}",
+            app.overlay().map(|_| "a popup")
+        );
+        app.dispatch(Action::App(AppAction::ToggleAttach));
+        assert!(matches!(app.overlay(), Some(Overlay::DeviceDetached)));
+        drop(first);
+    }
+
+    /// MAX-181: from the start's directory, a port that fails to open leaves the link waiting
+    /// again, not retrying it, and the directory open with the reason on its row.
+    /// How: a TCP address nothing listens on, picked with Enter, then polled past
+    /// `REOPEN_EVERY`.
+    #[test]
+    fn start_in_directory_failed_pick_waits_again() {
+        let (listener, address) = listener();
+        drop(listener);
+        let mut app = app_on(&address);
+        app.start_in_directory(vec![address.clone()], None);
+        app.dispatch(Action::Overlay(crate::inputs::DialogAction::Confirm));
+        poll_until(&mut app, "failed", |app| {
+            toasts(app).iter().any(|t| t.starts_with("open: "))
+        });
+        assert!(app.is_device_unpicked());
+        let mut buffer = [0; 256];
+        let start = Instant::now();
+        while start.elapsed() < REOPEN_EVERY * 2 {
+            app.poll_link(&mut buffer).unwrap();
+            thread::sleep(Duration::from_millis(20));
+        }
+        let opens = toasts(&app)
+            .iter()
+            .filter(|t| t.starts_with("open: "))
+            .count();
+        assert_eq!(opens, 1, "{:?}", toasts(&app));
+        let Some(Overlay::Directory(directory)) = app.overlay() else {
+            panic!("the directory closed");
+        };
+        assert!(directory.opening.is_none());
+        assert!(matches!(
+            directory.tests[&address],
+            Some(PortState::Error(_))
+        ));
+    }
+
+    /// MAX-181: started on the directory, closing it before a pick shows the no device
+    /// popup, which a click outside doesn't close: Enter opens the directory again, Esc quits.
+    /// How: Esc in the directory, then Enter and Esc in the popup.
+    #[test]
+    fn no_device_popup_until_picked() {
+        use crate::inputs::DialogAction;
+        let mut app = app_on("/dev/ttyUSB0");
+        app.start_in_directory(vec!["/dev/ttyUSB0".into()], None);
+        app.dispatch(Action::Overlay(DialogAction::Close));
+        assert!(matches!(app.overlay(), Some(Overlay::NoDevice)));
+        assert!(!Overlay::NoDevice.closes_on_click_outside());
+        app.dispatch(Action::Overlay(DialogAction::Confirm));
+        assert!(matches!(app.overlay(), Some(Overlay::Directory(_))));
+        app.dispatch(Action::Overlay(DialogAction::Close));
+        let quit = app.dispatch(Action::Overlay(DialogAction::Close));
+        assert!(matches!(quit, UpdateEffect::Quit));
+    }
+
+    /// MAX-181: the directory's test runs a thread per port, the device in use left out: each
+    /// mark is "testing" until its result comes; past the timeout the ones left say no
+    /// answer, and a closed directory drops the test.
+    /// How: two ports that don't exist and the device in use; then a test whose results never
+    /// come, its time up; then the directory closed.
+    #[test]
+    fn directory_port_test() {
+        let (listener, address) = listener();
+        let (mut app, _peer) = connected(&listener, &address);
+        let ports = vec![
+            address.clone(),
+            "/nonexistent/a".into(),
+            "/nonexistent/b".into(),
+        ];
+        let current = app.link_config().address.clone();
+        app.open_overlay(Overlay::Directory(Directory::new(ports, &current)));
+        app.test_ports();
+        let tests = |app: &App| match app.overlay() {
+            Some(Overlay::Directory(directory)) => directory.tests.clone(),
+            _ => panic!("no directory"),
+        };
+        assert!(!tests(&app).contains_key(&address));
+        let start = Instant::now();
+        while app.port_test.is_some() {
+            app.poll_port_test();
+            assert!(start.elapsed() < Duration::from_secs(5));
+            thread::sleep(Duration::from_millis(5));
+        }
+        let done = tests(&app);
+        assert_eq!(done.len(), 2);
+        assert!(
+            done.values()
+                .all(|state| matches!(state, Some(PortState::Error(_))))
+        );
+
+        let (_sender, results) = mpsc::channel();
+        let past = Instant::now() - Duration::from_millis(1);
+        app.port_test = Some(PortTest {
+            results,
+            until: past,
+        });
+        if let Some(Overlay::Directory(directory)) = &mut app.overlay {
+            directory.tests.insert("/nonexistent/a".into(), None);
+        }
+        assert!(app.poll_port_test());
+        let no_answer = Some(PortState::Error("no answer".into()));
+        assert_eq!(tests(&app)["/nonexistent/a"], no_answer);
+        assert!(app.port_test.is_none());
+
+        let (_sender, results) = mpsc::channel();
+        let until = Instant::now() + PORT_TEST_TIMEOUT;
+        app.port_test = Some(PortTest { results, until });
+        app.close_overlay();
+        assert!(!app.poll_port_test());
+        assert!(app.port_test.is_none());
     }
 }

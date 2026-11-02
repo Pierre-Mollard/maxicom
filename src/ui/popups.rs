@@ -14,6 +14,7 @@ use crate::{
 
 pub mod alert;
 pub mod command_line;
+pub mod directory;
 pub mod filepath;
 pub mod help;
 pub mod menu;
@@ -93,7 +94,7 @@ pub fn section<'a>(title: &'a str, theme: &ThemeConfig) -> Line<'a> {
 #[derive(Default)]
 pub struct Hints<'a> {
     pub line: Line<'a>,
-    spots: Vec<(u16, u16, KeyBindingDialogAction)>,
+    spots: Vec<(u16, u16, PopupTarget)>,
 }
 
 impl Hints<'_> {
@@ -104,10 +105,10 @@ impl Hints<'_> {
         clip: Rect,
         targets: &mut Vec<(Rect, PopupTarget)>,
     ) {
-        for &(start, width, action) in &self.spots {
+        for &(start, width, target) in &self.spots {
             let area = Rect::new(x.saturating_add(start), y, width, 1).intersection(clip);
             if !area.is_empty() {
-                targets.push((area, PopupTarget::Hint(action)));
+                targets.push((area, target));
             }
         }
     }
@@ -137,7 +138,7 @@ pub fn key_hints<'a>(
                 .dialog_keys(action)
                 .into_iter()
                 .find(|key| !is_text_input || key.is_modal())?;
-            Some((key, action))
+            Some((key, PopupTarget::Hint(action)))
         });
         (keys.collect(), label)
     });
@@ -237,8 +238,11 @@ mod tests {
         hints
             .spots
             .iter()
-            .map(|&(start, width, action)| {
+            .map(|&(start, width, target)| {
                 let (start, width) = (start as usize, width as usize);
+                let PopupTarget::Hint(action) = target else {
+                    panic!("a key hint's spot is its action: {target:?}");
+                };
                 (chars[start..start + width].iter().collect(), action)
             })
             .collect()

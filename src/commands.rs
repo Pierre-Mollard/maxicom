@@ -266,6 +266,11 @@ pub static COMMANDS: &[CommandSpec] = {
         CommandSpec::action("clear", A::Clear, "Clear the view, the history a scroll up"),
         CommandSpec::action("clear-history", A::ClearHistory, "Clear the history"),
         CommandSpec::action("sessions", A::Sessions, "Open the session backups"),
+        CommandSpec::action(
+            "directory",
+            A::Directory,
+            "Open the directory: the serial ports to switch to",
+        ),
         CommandSpec::action("exit-prefix", A::ExitPrefix, "Leave the prefix"),
         CommandSpec::action("toggle-attach", A::ToggleAttach, "Detach / attach the link"),
         CommandSpec::action("reload-config", A::ReloadConfig, "Reload the config files"),
@@ -982,6 +987,7 @@ mod tests {
             A::Clear => 42,
             A::SKAddCr => 43,
             A::SKAddLf => 44,
+            A::Directory => 45,
         }
     }
 
@@ -1001,7 +1007,7 @@ mod tests {
             })
             .collect();
         indexes.sort_unstable();
-        assert_eq!(indexes, (0..45).collect::<Vec<_>>());
+        assert_eq!(indexes, (0..46).collect::<Vec<_>>());
     }
 
     /// The help writes a required argument in angle brackets, an optional one in square ones

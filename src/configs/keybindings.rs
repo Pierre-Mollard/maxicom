@@ -67,6 +67,7 @@ pub enum KeyBindingAction {
     Clear,
     SKAddCr,
     SKAddLf,
+    Directory,
 }
 
 impl FromStr for KeyBindingAction {
@@ -971,6 +972,7 @@ impl Default for KeyBindingsConfig {
             "W"     => KeyBindingAction::ResizeDialog,
             "E"     => KeyBindingAction::AutoResizeEmulator,
             "p"     => KeyBindingAction::LinkSettings,
+            "d"     => KeyBindingAction::Directory,
             "k"     => KeyBindingAction::ScreenshotBytes,
             "up"    => KeyBindingAction::ScrollUp,
             "down"  => KeyBindingAction::ScrollDown,
@@ -1353,7 +1355,7 @@ mod tests {
     /// between words: the old `_` names are refused
     #[test]
     fn action_names() {
-        const NAMES: [(&str, KeyBindingAction); 45] = [
+        const NAMES: [(&str, KeyBindingAction); 46] = [
             ("quit", KeyBindingAction::Quit),
             ("toggle-input-mode", KeyBindingAction::SKInputMode),
             ("toggle-local-echo", KeyBindingAction::SKLocalEcho),
@@ -1405,6 +1407,7 @@ mod tests {
             ("clear", KeyBindingAction::Clear),
             ("toggle-add-cr", KeyBindingAction::SKAddCr),
             ("toggle-add-lf", KeyBindingAction::SKAddLf),
+            ("directory", KeyBindingAction::Directory),
         ];
         for (name, action) in NAMES {
             assert_eq!(name.parse::<KeyBindingAction>().unwrap(), action, "{name}");

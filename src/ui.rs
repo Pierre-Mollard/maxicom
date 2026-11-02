@@ -33,9 +33,10 @@ use crate::{
         popups::{
             alert::{
                 render_confirm_quit_popup, render_detached_popup, render_disconnected_popup,
-                render_error_popup, render_restore_popup,
+                render_error_popup, render_no_device_popup, render_restore_popup,
             },
             command_line::render_command_line,
+            directory::render_directory_popup,
             filepath::{render_filepath_popup, render_screenshot_popup},
             help::render_help_popup,
             menu::render_action_menu,
@@ -246,6 +247,7 @@ fn render_active_overlay(
             let address = &app.link_config().address;
             render_detached_popup(address, resolver, frame, theme, &mut targets)
         }
+        Some(Overlay::NoDevice) => render_no_device_popup(resolver, frame, theme, &mut targets),
         Some(Overlay::Error(err)) => render_error_popup(err, resolver, frame, theme, &mut targets),
         Some(Overlay::ConfirmQuit) => {
             render_confirm_quit_popup(resolver, frame, theme, &mut targets)
@@ -258,6 +260,9 @@ fn render_active_overlay(
         }
         Some(Overlay::Triggers(browser)) => {
             render_triggers_popup(app, browser, frame, theme, &mut targets)
+        }
+        Some(Overlay::Directory(directory)) => {
+            render_directory_popup(app, directory, frame, theme, &mut targets)
         }
         Some(Overlay::ActionMenu(menu)) => {
             render_action_menu(menu, resolver, frame, theme, &mut targets)
@@ -1840,7 +1845,7 @@ mod tests {
     #[test]
     fn alert_hints_follow_the_keymap() {
         let rows = popup_rows(Overlay::DeviceDisconnected, &[]);
-        assert!(has(&rows, "Esc/Enter Quit"), "{rows:#?}");
+        assert!(has(&rows, "d Directory · Esc/Enter Quit"), "{rows:#?}");
         assert!(!has(&rows, "Ctrl"), "{rows:#?}");
 
         // a long port path wraps instead of being cut; the popup shows the link's address
@@ -1857,7 +1862,10 @@ mod tests {
         assert!(has(&rows, "Esc/Enter Quit"), "{rows:#?}");
 
         let rows = popup_rows(Overlay::DeviceDetached, &[]);
-        assert!(has(&rows, "Enter Reattach · Esc Quit"), "{rows:#?}");
+        assert!(
+            has(&rows, "Enter Reattach · d Directory · Esc Quit"),
+            "{rows:#?}"
+        );
 
         let error = ErrorDialog::new("Oops", "it broke");
         let rows = popup_rows(Overlay::Error(error), &[("x", "close")]);
@@ -2490,6 +2498,106 @@ mod tests {
         let rows = h.draw();
         click(&mut h, cell_of(&rows, "◎ 1"));
         assert!(matches!(h.app.overlay(), Some(Overlay::Triggers(_))));
+    }
+
+    /// MAX-181: the directory lists the serial ports under their title, `●` and "in use" on
+    /// the device in use, which starts selected; Enter on another switches to it, as `open`
+    /// does, the popup staying with "opening…" on it until it's open. With no port it says
+    /// how to list them again.
+    /// How: the default device and `/dev/ttyACM0` listed, Down and Enter; then an empty list.
+    #[test]
+    fn directory_lists_and_opens_the_ports() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        let current = h.app.link_config().address.clone();
+        let ports = vec![current.to_string(), "/dev/ttyACM0".to_string()];
+        let directory = crate::overlays::Directory::new(ports, &current);
+        let open = Overlay::Directory(directory);
+        h.app.update(Action::App(AppAction::OpenOverlay(open)));
+        // not open: like the other ports
+        let rows = h.draw();
+        assert!(has(&rows, &format!("  {current}")), "{rows:#?}");
+        assert!(!has(&rows, "in use"), "{rows:#?}");
+        // open (a file stands for the device): in use
+        let path = std::env::temp_dir().join(format!("maxicom_dir_{}.raw", std::process::id()));
+        std::fs::write(&path, b"").unwrap();
+        let replay = crate::link::replay::Replay::open(&path, std::time::Duration::ZERO).unwrap();
+        h.app.link_mut().set_replay(replay);
+        let rows = h.draw();
+        let _ = std::fs::remove_file(&path);
+        assert!(has(&rows, "Serial ports"), "{rows:#?}");
+        assert!(has(&rows, &format!("● {current}  in use")), "{rows:#?}");
+        assert!(has(&rows, "  /dev/ttyACM0"), "{rows:#?}");
+
+        h.app.update(Action::Overlay(DialogAction::Down));
+        let effect = h.app.update(Action::Overlay(DialogAction::Confirm));
+        assert!(matches!(
+            effect,
+            UpdateEffect::Open(address) if address.to_string() == "/dev/ttyACM0"
+        ));
+        assert!(has(&h.draw(), "/dev/ttyACM0  opening…"));
+
+        let empty = crate::overlays::Directory::new(Vec::new(), &current);
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::Directory(
+                empty,
+            ))));
+        let rows = h.draw();
+        assert!(
+            has(&rows, "No serial port found: plug one in, then r"),
+            "{rows:#?}"
+        );
+    }
+
+    /// MAX-181: the directory warns what its test does, and shows each tested port's result
+    /// after its name; more ports than rows, a scrollbar in its right padding.
+    /// How: four ports with a test result each but the device in use; then 40 ports.
+    #[test]
+    fn directory_test_marks_and_scrollbar() {
+        use crate::link::serial::PortState;
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        let current = h.app.link_config().address.clone();
+        let ports = [
+            "/dev/ttyACM0",
+            "/dev/ttyACM1",
+            "/dev/ttyACM2",
+            "/dev/ttyACM3",
+        ];
+        let mut all = vec![current.to_string()];
+        all.extend(ports.iter().map(|port| port.to_string()));
+        let mut directory = crate::overlays::Directory::new(all, &current);
+        let states = [
+            None,
+            Some(PortState::Free),
+            Some(PortState::Busy(Some("minicom (1234)".into()))),
+            Some(PortState::NoAccess),
+        ];
+        for (port, state) in ports.iter().zip(states) {
+            directory.tests.insert(port.to_string(), state);
+        }
+        let open = Overlay::Directory(directory);
+        h.app.update(Action::App(AppAction::OpenOverlay(open)));
+        let rows = h.draw();
+        let note = crate::ui::popups::directory::TEST_NOTE;
+        assert!(has(&rows, note), "{rows:#?}");
+        for (port, mark) in
+            ports
+                .iter()
+                .zip(["testing…", "free", "busy: minicom (1234)", "no access"])
+        {
+            assert!(has(&rows, &format!("{port}  {mark}")), "{port}: {rows:#?}");
+        }
+        assert!(has(&rows, "t Test"), "{rows:#?}");
+        assert!(!rows.iter().any(|row| row.contains('▲')), "{rows:#?}");
+
+        let many = (0..40).map(|i| format!("/dev/ttyS{i}")).collect();
+        let directory = crate::overlays::Directory::new(many, &current);
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::Directory(
+                directory,
+            ))));
+        let rows = h.draw();
+        assert!(rows.iter().any(|row| row.contains('▲')), "{rows:#?}");
+        assert!(rows.iter().any(|row| row.contains('▼')), "{rows:#?}");
     }
 
     /// MAX-163: in the trigger browser, j/k and Up/Down move; l/Right arm the selected one and

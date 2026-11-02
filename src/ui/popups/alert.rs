@@ -1,3 +1,4 @@
+use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -8,12 +9,12 @@ use ratatui::{
 
 use crate::{
     capture::Session,
-    configs::{KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
+    configs::{KeyPattern, KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
     link::{Address, LinkKind},
     overlays::{ErrorDialog, PopupTarget},
     ui::{
         common::popup_area,
-        popups::{FORM_WIDTH, Hints, key_hints},
+        popups::{FORM_WIDTH, Hints, hint_spans, key_hints},
         status_bar::write_human,
     },
 };
@@ -107,18 +108,7 @@ pub fn render_disconnected_popup(
     targets: &mut Vec<(Rect, PopupTarget)>,
 ) -> Rect {
     let text = LinkAlert::disconnected(address.kind()).lines(address, theme);
-    let hints = key_hints(
-        resolver,
-        false,
-        &[(
-            &[
-                KeyBindingDialogAction::Close,
-                KeyBindingDialogAction::Confirm,
-            ],
-            "Quit",
-        )],
-        theme,
-    );
+    let hints = link_hints(resolver, None, theme);
 
     let tone = theme.palette.text_warn;
     render_alert("Connection Lost", tone, text, hints, frame, theme, targets)
@@ -132,18 +122,76 @@ pub fn render_detached_popup(
     targets: &mut Vec<(Rect, PopupTarget)>,
 ) -> Rect {
     let text = LinkAlert::detached(address.kind()).lines(address, theme);
+    let hints = link_hints(resolver, Some("Reattach"), theme);
+
+    let tone = theme.palette.text_warn;
+    render_alert("Detached", tone, text, hints, frame, theme, targets)
+}
+
+/// The link popups' keys: Enter for `confirm` (Quit when none), `d` the directory to pick
+/// another device (MAX-181), Esc to quit
+fn link_hints<'a>(
+    resolver: &KeyResolver,
+    confirm: Option<&'a str>,
+    theme: &ThemeConfig,
+) -> Hints<'a> {
+    let key = |action| {
+        let key = resolver.dialog_keys(action).into_iter().next();
+        key.map(|key| (key, PopupTarget::Hint(action)))
+            .into_iter()
+            .collect::<Vec<_>>()
+    };
+    let directory = KeyPattern {
+        code: KeyCode::Char('d'),
+        modifiers: KeyModifiers::NONE,
+    };
+    let directory = vec![(directory, PopupTarget::OpenDirectory)];
+    let hints = match confirm {
+        Some(label) => vec![
+            (key(KeyBindingDialogAction::Confirm), label),
+            (directory, "Directory"),
+            (key(KeyBindingDialogAction::Close), "Quit"),
+        ],
+        None => {
+            let mut quit = key(KeyBindingDialogAction::Close);
+            quit.extend(key(KeyBindingDialogAction::Confirm));
+            vec![(directory, "Directory"), (quit, "Quit")]
+        }
+    };
+    let (line, spots) = hint_spans(hints, theme);
+    Hints { line, spots }
+}
+
+/// Started without a device, the directory closed before one was picked (MAX-181)
+pub fn render_no_device_popup(
+    resolver: &KeyResolver,
+    frame: &mut Frame,
+    theme: &ThemeConfig,
+    targets: &mut Vec<(Rect, PopupTarget)>,
+) -> Rect {
+    let text = vec![
+        Line::from(Span::styled(
+            "⚠ NO DEVICE ⚠",
+            Style::default()
+                .fg(theme.palette.text_warn)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from("No device is open."),
+        Line::from("Pick one in the directory."),
+        Line::from(""),
+    ];
     let hints = key_hints(
         resolver,
         false,
         &[
-            (&[KeyBindingDialogAction::Confirm], "Reattach"),
+            (&[KeyBindingDialogAction::Confirm], "Directory"),
             (&[KeyBindingDialogAction::Close], "Quit"),
         ],
         theme,
     );
-
     let tone = theme.palette.text_warn;
-    render_alert("Detached", tone, text, hints, frame, theme, targets)
+    render_alert("No Device", tone, text, hints, frame, theme, targets)
 }
 
 pub fn render_error_popup(

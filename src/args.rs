@@ -3,19 +3,22 @@ use std::{env, path::PathBuf, time::Duration};
 use crate::{
     configs::{LinkDefaults, TextEncoding},
     link::{
-        Address, LinkConfig, LinkKind,
-        serial::{CharSize, FlowControl, Parity, StopBits},
+        Address, LinkKind,
+        serial::{CharSize, FlowControl, LineSettings, Parity, StopBits},
     },
 };
 
-/// `link_config` is the link to open, a replay for `--replay` (MAX-168); `replay_delay` is
+/// `address` is the device to open, a replay for `--replay` (MAX-168), the settings' when
+/// none is given and none when they have none (MAX-181); `line` its line settings, the options
+/// over the settings'. `replay_delay` is
 /// `--delay`, for a replay only. `restore` is `--restore` / `--no-restore`, the last one given,
 /// over `sessions.restore`. `capture_file`, `display_hex` and `encoding` are minicom's `-C`,
 /// `-H` and `-R`, over the settings (MAX-181)
 #[derive(Debug)]
 pub enum ParseOutcome {
     Run {
-        link_config: LinkConfig,
+        address: Option<Address>,
+        line: LineSettings,
         replay_delay: Duration,
         restore: Option<bool>,
         capture_file: Option<PathBuf>,
@@ -32,7 +35,6 @@ pub enum ParseError {
     MissingValue(&'static str),
     BadFormat(String),
     UnknownArgument(String),
-    NoDevice,
 }
 
 impl std::fmt::Display for ParseError {
@@ -49,11 +51,6 @@ impl std::fmt::Display for ParseError {
             ParseError::BadFormat(msg) => {
                 write!(formatter, "{msg}")
             }
-
-            ParseError::NoDevice => write!(
-                formatter,
-                "No device: give one (maxicom -D <device>), or set `device` in [link] of config.toml."
-            ),
         }
     }
 }
@@ -208,18 +205,19 @@ fn parse_args_from(
         }
     }
 
-    // the device given, else the settings' one
-    let address = match address {
-        Some(address) => address,
-        None => match defaults.device() {
-            Some(device) => device
+    // the device given, else the settings' one, if any
+    let address = match (address, defaults.device()) {
+        (Some(address), _) => Some(address),
+        (None, Some(device)) => Some(
+            device
                 .parse()
                 .map_err(|err| ParseError::BadFormat(format!("link.device: {err}")))?,
-            None => return Err(ParseError::NoDevice),
-        },
+        ),
+        (None, None) => None,
     };
-    let link_config = LinkConfig { address, line };
-    if link_config.address.kind() == LinkKind::Tcp
+    if address
+        .as_ref()
+        .is_some_and(|address| address.kind() == LinkKind::Tcp)
         && let Some(option) = line_options.first()
     {
         return Err(ParseError::BadFormat(format!(
@@ -227,7 +225,8 @@ fn parse_args_from(
         )));
     }
     Ok(ParseOutcome::Run {
-        link_config,
+        address,
+        line,
         replay_delay,
         restore,
         capture_file,
@@ -253,7 +252,8 @@ Usage:
                            (file://boot.raw), same as --device
 
 Options:
-  -D, --device <DEVICE>    Device to open [default: [link] device in config.toml]
+  -D, --device <DEVICE>    Device to open [default: [link] device in config.toml,
+                           else the directory of the serial ports]
       --tcp <HOST:PORT>    A device over TCP, same as tcp://HOST:PORT
 
   Line settings, for a serial port (a TCP link's bridge sets them), the defaults
@@ -335,7 +335,7 @@ mod tests {
 
     fn address_of(args: &[&str]) -> Result<String, String> {
         match parse(args) {
-            Ok(ParseOutcome::Run { link_config, .. }) => Ok(link_config.address.to_string()),
+            Ok(ParseOutcome::Run { address, .. }) => Ok(address.expect("a device").to_string()),
             Ok(_) => panic!("not a run"),
             Err(err) => Err(err.to_string()),
         }
@@ -349,10 +349,10 @@ mod tests {
     #[test]
     fn line_options() {
         let run = |args: &[&str]| match parse(args) {
-            Ok(ParseOutcome::Run { link_config, .. }) => link_config,
+            Ok(ParseOutcome::Run { line, .. }) => line,
             other => panic!("not a run: {other:?}"),
         };
-        let line = run(&[]).line;
+        let line = run(&[]);
         assert_eq!(
             (line.baud, line.framing.to_string(), line.flow_control),
             (115_200, "8N1".to_string(), FlowControl::None)
@@ -369,13 +369,12 @@ mod tests {
             "2",
             "--flow",
             "hw",
-        ])
-        .line;
+        ]);
         assert_eq!(
             (line.baud, line.framing.to_string(), line.flow_control),
             (9600, "7E2".to_string(), FlowControl::RtsCts)
         );
-        assert_eq!(run(&["--baudrate", "57600"]).line.baud, 57600);
+        assert_eq!(run(&["--baudrate", "57600"]).baud, 57600);
         assert_eq!(address_of(&["--device", "COM3"]).unwrap(), "COM3");
         assert_eq!(address_of(&["-D", "COM3"]).unwrap(), "COM3");
 
@@ -405,16 +404,17 @@ mod tests {
             args.iter().map(|a| a.to_string()),
             defaults,
         ) {
-            Ok(ParseOutcome::Run { link_config, .. }) => Ok((
-                link_config.address.to_string(),
-                link_config.line.baud,
-                link_config.line.framing.to_string(),
+            Ok(ParseOutcome::Run { address, line, .. }) => Ok((
+                address.map(|address| address.to_string()),
+                line.baud,
+                line.framing.to_string(),
             )),
             Ok(other) => panic!("not a run: {other:?}"),
             Err(err) => Err(err.to_string()),
         };
-        let run =
-            |device: &str, baud, framing: &str| Ok((device.to_string(), baud, framing.to_string()));
+        let run = |device: &str, baud, framing: &str| {
+            Ok((Some(device.to_string()), baud, framing.to_string()))
+        };
         let saved = LinkDefaults {
             device: "COM7".to_string(),
             baud: 9600,
@@ -430,7 +430,7 @@ mod tests {
         );
 
         let empty = LinkDefaults::default();
-        let no_device = Err(ParseError::NoDevice.to_string());
+        let no_device = Ok((None, 115_200, "8N1".to_string()));
         assert_eq!(parse_over(&empty, &[]), no_device);
         assert_eq!(parse_over(&empty, &["COM3"]), run("COM3", 115_200, "8N1"));
 
@@ -528,10 +528,10 @@ mod tests {
     fn replay_forms() {
         let run = |args: &[&str]| match parse(args) {
             Ok(ParseOutcome::Run {
-                link_config,
+                address,
                 replay_delay,
                 ..
-            }) => (link_config.address, replay_delay),
+            }) => (address.expect("a device"), replay_delay),
             _ => panic!("not a run"),
         };
         let replay = Address::Replay(PathBuf::from("/tmp/boot.raw"));

@@ -710,6 +710,7 @@ mod tests {
                 "a => App(ToggleSetting(AddLf))",
                 "b => CopyMode(Enter)",
                 "c => History(ClearView)",
+                "d => open Directory",
                 "e => App(ToggleSetting(LocalEcho))",
                 "f => run break",
                 "h => run dtr; sleep; dtr",

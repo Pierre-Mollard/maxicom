@@ -8,11 +8,12 @@ use crate::{
     commands::Invocation,
     configs::{AppConfig, KeyBindingAction, SettingsConfig, keybindings::KeyBindingDialogAction},
     inputs::DialogAction,
-    link::serial::LineSettings,
+    link::{Address, serial::LineSettings},
 };
 
 // Re-exports
 pub use command_line::CommandLine;
+pub use directory::Directory;
 pub use help::{HelpCategory, HelpDialog};
 pub use menu::ActionMenu;
 pub use misc::{ErrorDialog, FilePathDialog, ScreenshotDialog};
@@ -23,6 +24,7 @@ pub use settings::SettingsDialog;
 pub use triggers::TriggerBrowser;
 
 pub mod command_line;
+pub mod directory;
 pub mod help;
 pub mod menu;
 pub mod misc;
@@ -42,6 +44,7 @@ pub enum Overlay {
     Screenshot(ScreenshotDialog),
     DeviceDisconnected,
     DeviceDetached,
+    NoDevice,
     Error(ErrorDialog),
     ConfirmQuit,
     ActionMenu(ActionMenu),
@@ -49,6 +52,7 @@ pub enum Overlay {
     Sessions(Box<SessionBrowser>),
     CommandLine(Box<CommandLine>),
     Triggers(TriggerBrowser),
+    Directory(Directory),
 }
 
 /// A part of a popup the mouse picks (MAX-113)
@@ -82,6 +86,11 @@ pub enum PopupTarget {
     TriggerToggleAll,
     TriggerCopyPath,
     ConfigPath(usize),
+    DirectoryRow(usize),
+    DirectoryOpen,
+    DirectoryRefresh,
+    DirectoryTest,
+    OpenDirectory,
 }
 
 pub enum OverlayResponse {
@@ -114,7 +123,6 @@ pub enum OverlayResponse {
         path: PathBuf,
         device: Option<CaptureDevice>,
     },
-    /// Back to the live link a replay set aside, from the browser (MAX-166)
     StopReplay,
     HandledNotify {
         message: String,
@@ -125,6 +133,8 @@ pub enum OverlayResponse {
         what: String,
     },
     ToggleTrigger(Option<String>),
+    Open(Address),
+    TestPorts,
     ArmTrigger {
         name: String,
         on: bool,
@@ -145,7 +155,10 @@ impl Overlay {
     pub fn closes_on_click_outside(&self) -> bool {
         !matches!(
             self,
-            Overlay::DeviceDisconnected | Overlay::DeviceDetached | Overlay::RestoreSession(_)
+            Overlay::DeviceDisconnected
+                | Overlay::DeviceDetached
+                | Overlay::NoDevice
+                | Overlay::RestoreSession(_)
         )
     }
 
@@ -164,6 +177,7 @@ impl Overlay {
             Overlay::Sessions(browser) => browser.handle_action(action),
             Overlay::CommandLine(command_line) => command_line.handle_action(action),
             Overlay::Triggers(browser) => browser.handle_action(action),
+            Overlay::Directory(directory) => directory.handle_action(action),
             Overlay::Error(_) => match action {
                 DialogAction::Close | DialogAction::Confirm => OverlayResponse::Close,
                 _ => OverlayResponse::Handled,
@@ -188,8 +202,17 @@ impl Overlay {
                 },
                 _ => OverlayResponse::Handled,
             },
+            // the directory from the link's popups, to pick another device (MAX-181)
+            Overlay::DeviceDisconnected | Overlay::DeviceDetached if opens_directory(&action) => {
+                OverlayResponse::Run(KeyBindingAction::Directory)
+            }
             Overlay::DeviceDisconnected => match action {
                 DialogAction::Close | DialogAction::Confirm => OverlayResponse::Quit,
+                _ => OverlayResponse::Handled,
+            },
+            Overlay::NoDevice => match action {
+                DialogAction::Confirm => OverlayResponse::Run(KeyBindingAction::Directory),
+                DialogAction::Close => OverlayResponse::Quit,
                 _ => OverlayResponse::Handled,
             },
             Overlay::DeviceDetached => match action {
@@ -219,6 +242,15 @@ pub enum SettingKey {
     AnswerQueries,
     AddCr,
     AddLf,
+}
+
+/// `d`, or a click on its hint, in the link's popups (MAX-181)
+fn opens_directory(action: &DialogAction) -> bool {
+    match action {
+        DialogAction::Pick(PopupTarget::OpenDirectory) => true,
+        DialogAction::HandleKey(key) => key.code == KeyCode::Char('d'),
+        _ => false,
+    }
 }
 
 /// The path of `what` to the clipboard, for a look at the files out of the app (MAX-154)

@@ -106,6 +106,12 @@ pub struct App {
     link: LinkState,
     /// The missing device's popup waits for the restore question's answer (MAX-148)
     disconnected_after_restore: bool,
+    /// Started on the directory, no device picked yet: the link waits detached (MAX-181)
+    device_unpicked: bool,
+    /// The disconnected popup was shown and the link hasn't opened since (MAX-181)
+    link_lost: bool,
+    /// The directory's port test running (MAX-181)
+    port_test: Option<device::PortTest>,
     prefix_active: bool,
     overlay: Option<Overlay>,
     pub notifications: NotificationManager,
@@ -226,6 +232,9 @@ impl App {
             key_resolver,
             link: LinkState::new(link_config),
             disconnected_after_restore: false,
+            device_unpicked: false,
+            link_lost: false,
+            port_test: None,
             overlay: None,
             notifications: NotificationManager::new(),
             viewport: ViewportSize::default(),
@@ -825,6 +834,11 @@ impl App {
                             self.toggle_triggers(name.as_deref());
                             UpdateEffect::None
                         }
+                        OverlayResponse::TestPorts => {
+                            self.overlay = Some(overlay);
+                            self.test_ports();
+                            UpdateEffect::None
+                        }
                         OverlayResponse::ArmTrigger { name, on } => {
                             self.overlay = Some(overlay);
                             let armed = (self.triggers.iter())
@@ -846,6 +860,11 @@ impl App {
                             session: device,
                         },
                         OverlayResponse::StopReplay => UpdateEffect::StopReplay,
+                        // the directory stays until the port opens, or says why it doesn't
+                        OverlayResponse::Open(address) => {
+                            self.overlay = Some(overlay);
+                            UpdateEffect::Open(address)
+                        }
                         OverlayResponse::RestoreSession(yes) => {
                             if let Overlay::RestoreSession(session) = overlay {
                                 self.answer_restore(&session, yes);
@@ -1078,7 +1097,8 @@ impl App {
         let now = Instant::now();
         let drag_scrolled =
             self.drag_scroll(now) || self.scrollbar_repeat(now) || self.click_repeat(now);
-        toasts_expired || self.terminal_mode.has_pending_flash() || drag_scrolled
+        let tested = self.poll_port_test();
+        toasts_expired || self.terminal_mode.has_pending_flash() || drag_scrolled || tested
     }
 
     /// The left button is on the scrollbar, from its press to its release (MAX-142)

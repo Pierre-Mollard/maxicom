@@ -16,12 +16,12 @@ use ratatui::DefaultTerminal;
 
 use crate::{
     app::{App, UpdateEffect, selection::copy_via_osc52, triggers::Trigger},
-    args::{ParseError, ParseOutcome, parse_args, print_help, print_version},
+    args::{ParseOutcome, parse_args, print_help, print_version},
     configs::{
         AppConfig, ConfigsError, KeyResolver, KeywordHighlight, RawSideView, SettingsConfig,
         ThemeConfig,
     },
-    link::{Address, ByteSource, LinkError},
+    link::{Address, ByteSource, LinkConfig, LinkError},
     overlays::{ErrorDialog, Overlay},
     ui::{PostRenderEffect, layout::LayoutWarning, render, status_bar::CompiledStatusBar},
 };
@@ -131,9 +131,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
     };
 
-    let (link_config, replay_delay, restore, capture_file) = match parse_args(&settings.link) {
+    let (address, line, replay_delay, restore, capture_file) = match parse_args(&settings.link) {
         Ok(ParseOutcome::Run {
-            link_config,
+            address,
+            line,
             replay_delay,
             restore,
             capture_file,
@@ -147,7 +148,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             if let Some(encoding) = encoding {
                 settings.encoding = encoding;
             }
-            (link_config, replay_delay, restore, capture_file)
+            (address, line, replay_delay, restore, capture_file)
         }
         Ok(ParseOutcome::Help) => {
             print_help();
@@ -168,22 +169,32 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Ok(ExitCode::FAILURE);
             }
         },
-        // no device named on Windows or macOS: the ports seen, to pick one (MAX-181)
-        Err(error @ ParseError::NoDevice) => {
-            eprintln!("maxicom: {error}");
-            match link::serial::port_names().as_slice() {
-                [] => eprintln!("No serial port found."),
-                ports => eprintln!("Serial ports found: {}", ports.join(", ")),
-            }
-            return Ok(ExitCode::from(EXIT_USAGE));
-        }
         Err(error) => {
             eprintln!("Argument error: {error}");
             return Ok(ExitCode::from(EXIT_USAGE));
         }
     };
 
+    // no device named: the directory on the ports the system lists, the link waiting on the
+    // first until one is picked; with none listed, how to give one (MAX-181)
+    let (link_config, pick_from) = match address {
+        Some(address) => (LinkConfig { address, line }, None),
+        None => {
+            let ports = link::serial::port_names();
+            let Some(Ok(address)) = ports.first().map(|port| port.parse()) else {
+                eprintln!(
+                    "maxicom: No device: give one (maxicom -D <device>), or set `device` in \
+                     [link] of config.toml.\nNo serial port found."
+                );
+                return Ok(ExitCode::from(EXIT_USAGE));
+            };
+            (LinkConfig { address, line }, Some(ports))
+        }
+    };
+
     let device: Option<ByteSource> = match &link_config.address {
+        // nothing opens before the user picks a port (MAX-181)
+        _ if pick_from.is_some() => None,
         // connected in the loop, like a reconnect, so the UI is up and says it's connecting.
         // The arguments refused a malformed address
         Address::Tcp(_) => None,
@@ -209,7 +220,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
     let mut app = App::new(settings, key_resolver, link_config);
     app.set_triggers(triggers);
-    if app.link_kind().keeps_sessions() {
+    if let Some(ports) = pick_from {
+        app.start_in_directory(ports, AppConfig::default_sessions_dir());
+    } else if app.link_kind().keeps_sessions() {
         // before the new session backup, whose pruning could remove the last session (MAX-148)
         let sessions_dir = AppConfig::default_sessions_dir();
         app.restore_last_session(sessions_dir.as_deref(), restore);
@@ -217,7 +230,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     }
 
     // before the UI, so a file that doesn't open is said on the shell
-    if let Address::Replay(path) = &app.link_config().address {
+    let picking = app.is_device_unpicked();
+    if let (false, Address::Replay(path)) = (picking, &app.link_config().address) {
         let path = path.clone();
         if let Err(err) = app.open_replay(path.clone(), replay_delay, None) {
             eprintln!(
@@ -226,7 +240,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             );
             return Ok(ExitCode::FAILURE);
         }
-    } else {
+    } else if !picking {
         app.start_link(device);
     }
     if let Some(file) = capture_file {

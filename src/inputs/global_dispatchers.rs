@@ -12,7 +12,7 @@ use crate::{
     },
     link::serial,
     overlays::{
-        CommandLine, HelpDialog, LineSettingsDialog, Overlay, ResizeDialog, SettingKey,
+        CommandLine, Directory, HelpDialog, LineSettingsDialog, Overlay, ResizeDialog, SettingKey,
         SettingsDialog, TriggerBrowser,
     },
 };
@@ -108,6 +108,11 @@ impl KeyBindingAction {
             }
             KeyBindingAction::CancelCommands => Action::App(AppAction::CancelCommands),
             KeyBindingAction::ToggleTriggers => Action::App(AppAction::ToggleTriggers),
+            KeyBindingAction::Directory => {
+                let current = &app.link_config().address;
+                let directory = Directory::new(serial::port_names(), current);
+                Action::App(AppAction::OpenOverlay(Overlay::Directory(directory)))
+            }
             KeyBindingAction::Triggers => {
                 let names = app.triggers().iter().map(|t| t.name.clone()).collect();
                 let path = AppConfig::active_triggers_path(app.settings());

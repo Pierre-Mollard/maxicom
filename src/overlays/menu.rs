@@ -38,6 +38,7 @@ impl ActionMenu {
             ("Help", KeyBindingAction::Help),
             ("Settings", KeyBindingAction::Settings),
             (link.name(), KeyBindingAction::LinkSettings),
+            ("Directory…", KeyBindingAction::Directory),
             (switch_mode, KeyBindingAction::SKInputMode),
             (record, KeyBindingAction::Record),
             ("Copy mode", KeyBindingAction::EnterCopyMode),
