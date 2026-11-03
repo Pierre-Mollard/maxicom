@@ -68,6 +68,10 @@ pub enum KeyBindingAction {
     SKAddCr,
     SKAddLf,
     Directory,
+    SideGrow,
+    SideShrink,
+    SideGrow5,
+    SideShrink5,
 }
 
 impl FromStr for KeyBindingAction {
@@ -990,6 +994,8 @@ impl Default for KeyBindingsConfig {
             "a"     => KeyBindingAction::SKAddLf,
             "D"     => KeyBindingAction::ToggleAttach,
             "T"     => KeyBindingAction::Triggers,
+            ">"     => KeyBindingAction::SideGrow5,
+            "<"     => KeyBindingAction::SideShrink5,
             "f"     => "break", // a break like minicom's
             "h"     => "dtr off; sleep 100; dtr on", // DTR pulse which resets most boards
             "U"     => "trigger toggle u-boot", // the default triggers.toml's
@@ -1355,7 +1361,7 @@ mod tests {
     /// between words: the old `_` names are refused
     #[test]
     fn action_names() {
-        const NAMES: [(&str, KeyBindingAction); 46] = [
+        const NAMES: [(&str, KeyBindingAction); 50] = [
             ("quit", KeyBindingAction::Quit),
             ("toggle-input-mode", KeyBindingAction::SKInputMode),
             ("toggle-local-echo", KeyBindingAction::SKLocalEcho),
@@ -1408,6 +1414,10 @@ mod tests {
             ("toggle-add-cr", KeyBindingAction::SKAddCr),
             ("toggle-add-lf", KeyBindingAction::SKAddLf),
             ("directory", KeyBindingAction::Directory),
+            ("side-grow", KeyBindingAction::SideGrow),
+            ("side-shrink", KeyBindingAction::SideShrink),
+            ("side-grow-5", KeyBindingAction::SideGrow5),
+            ("side-shrink-5", KeyBindingAction::SideShrink5),
         ];
         for (name, action) in NAMES {
             assert_eq!(name.parse::<KeyBindingAction>().unwrap(), action, "{name}");

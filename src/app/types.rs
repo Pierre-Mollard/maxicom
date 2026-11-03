@@ -3,7 +3,7 @@ use ratatui::{layout::Rect, style::Style};
 
 use crate::{
     app::selection::{CopySide, LogicalPosition},
-    configs::{KeyBindingAction, KeyBindingSearchAction},
+    configs::{KeyBindingAction, KeyBindingSearchAction, settings::RawSideOrientation},
     overlays::PopupTarget,
 };
 
@@ -203,9 +203,54 @@ pub struct FrameMap {
     pub command_line: Option<PromptMap>,
     /// The history's scrollbar, as drawn
     pub scrollbar: Option<ScrollbarMap>,
+    pub side_handle: Option<SideHandle>,
     /// The status bar blocks, border buttons and search bar hints a click runs, in drawing
     /// order (MAX-125, MAX-128)
     pub click_targets: Vec<ClickTarget>,
+}
+
+/// The raw side panel's border, as drawn (MAX-189): a drag on it resizes the panel, its share
+/// of `split` taken from the pointer
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SideHandle {
+    pub area: Rect,
+    pub split: Rect,
+    pub orientation: RawSideOrientation,
+}
+
+impl SideHandle {
+    pub fn new(panel: Rect, split: Rect, orientation: RawSideOrientation) -> Self {
+        let area = match orientation {
+            RawSideOrientation::Right => Rect::new(panel.x, panel.y, 1, panel.height),
+            RawSideOrientation::Bottom => Rect::new(panel.x, panel.y, panel.width, 1),
+        };
+        Self {
+            area: area.intersection(panel),
+            split,
+            orientation,
+        }
+    }
+
+    /// Its cells when `(x, y)` is on it
+    pub fn at(&self, x: u16, y: u16) -> Option<Rect> {
+        self.area
+            .contains(ratatui::layout::Position::new(x, y))
+            .then_some(self.area)
+    }
+
+    /// The panel's share of the split, in percent, with its border under the pointer
+    pub fn percent_at(&self, x: u16, y: u16) -> u16 {
+        let (panel, whole) = match self.orientation {
+            RawSideOrientation::Right => (self.split.right().saturating_sub(x), self.split.width),
+            RawSideOrientation::Bottom => {
+                (self.split.bottom().saturating_sub(y), self.split.height)
+            }
+        };
+        if whole == 0 {
+            return 0;
+        }
+        ((u32::from(panel) * 100 + u32::from(whole) / 2) / u32::from(whole)) as u16
+    }
 }
 
 /// A part a click runs, outside the popups, drawn in `hover` under the pointer (MAX-131)
@@ -345,6 +390,7 @@ impl FrameMap {
         self.search_query = None;
         self.command_line = None;
         self.scrollbar = None;
+        self.side_handle = None;
         self.click_targets.clear();
     }
 
@@ -387,6 +433,7 @@ impl FrameMap {
         self.click_target_at(x, y)
             .map(|target| target.area)
             .or_else(|| self.scrollbar?.part_at(x, y))
+            .or_else(|| self.side_handle?.at(x, y))
     }
 
     /// The TX input column (counted from the text's start, scroll included) under a cell

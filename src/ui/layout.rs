@@ -10,7 +10,7 @@ use crate::{
     app::{App, types::FocusTarget},
     configs::{
         Mode, RawSideView, SettingsConfig, StatusBarLayout, ThemeConfig, WrapMode,
-        settings::{PrefixWrapBehavior, RawSideOrientation},
+        settings::{PrefixWrapBehavior, RawSideOrientation, SPLIT_PERCENT_MAX, SPLIT_PERCENT_MIN},
     },
 };
 
@@ -34,6 +34,7 @@ pub struct ScreenLayout {
     pub content_area: Rect,
     pub scrollbar_area: Option<Rect>,
     pub raw_side_area: Option<Rect>,
+    pub raw_split_area: Option<Rect>,
     pub timestamp_gutter: Option<Rect>,
     pub prompt_area: Option<Rect>,
     pub status_bar_area: Option<Rect>,
@@ -152,8 +153,12 @@ impl ScreenLayout {
 
         let (main_stream_area, raw_side_area) = if app.settings().raw_side.view != RawSideView::Off
         {
-            let inspector_percent = app.settings().raw_side.split_percent.clamp(10, 85);
-            let main_percent = 100 - app.settings().raw_side.split_percent;
+            let inspector_percent = app
+                .settings()
+                .raw_side
+                .split_percent
+                .clamp(SPLIT_PERCENT_MIN, SPLIT_PERCENT_MAX);
+            let main_percent = 100 - inspector_percent;
             let orientation = match app.settings().raw_side.orientation {
                 RawSideOrientation::Right => Direction::Horizontal,
                 RawSideOrientation::Bottom => Direction::Vertical,
@@ -232,6 +237,7 @@ impl ScreenLayout {
             content_area,
             scrollbar_area,
             raw_side_area,
+            raw_split_area: raw_side_area.map(|_| remaining_after_gutter),
             timestamp_gutter: gutter_area,
             prompt_area,
             status_bar_area,

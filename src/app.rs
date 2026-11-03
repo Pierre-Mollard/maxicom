@@ -17,13 +17,13 @@ use crate::{
     capture::{CaptureDevice, CaptureLine, Recorder, RecordingWriter, ScreenshotFormat, Stream},
     commands::{CommandError, Invocation, Target},
     configs::{
-        DualBufferMode, KeyBindingAction, KeyResolver, LinksConfig, Mode, SettingsConfig,
-        StatusBarLayout, TextEncoding, WrapMode,
-        settings::{PrefixPlace, PrefixWrapBehavior},
+        DualBufferMode, KeyBindingAction, KeyResolver, LinksConfig, Mode, RawSideView,
+        SettingsConfig, StatusBarLayout, TextEncoding, WrapMode,
+        settings::{PrefixPlace, PrefixWrapBehavior, SPLIT_PERCENT_MAX, SPLIT_PERCENT_MIN},
     },
     inputs::{
         Action, AppAction, ClickHoldAction, CopyModeAction, HistoryAction, LineInputAction,
-        ScrollbarAction, SearchModeAction, SideViewAction, TerminalAction,
+        ScrollbarAction, SearchModeAction, SideHandleAction, SideViewAction, TerminalAction,
     },
     link::{
         Address, LinkConfig, LinkKind, LinkState,
@@ -124,6 +124,7 @@ pub struct App {
     drag_hold: Option<(u16, u16)>,
     last_drag_scroll: Option<Instant>,
     scrollbar_hold: Option<ScrollbarHold>,
+    side_handle_held: bool,
     /// When a held scrollbar arrow scrolls again
     scrollbar_repeat_at: Option<Instant>,
     /// The action and cells of the click target the left button holds (MAX-143), and when it
@@ -251,6 +252,7 @@ impl App {
             drag_hold: None,
             last_drag_scroll: None,
             scrollbar_hold: None,
+            side_handle_held: false,
             scrollbar_repeat_at: None,
             click_hold: None,
             click_repeat_at: None,
@@ -1201,6 +1203,28 @@ impl App {
         }
     }
 
+    /// The left button is on the raw side panel's border, from its press to its release
+    /// (MAX-189)
+    pub fn is_side_handle_held(&self) -> bool {
+        self.side_handle_held
+    }
+
+    /// The left button on the raw side panel's border, as the last frame drew it (MAX-189): a
+    /// drag puts the border under the pointer, in the config's range
+    fn side_handle(&mut self, action: SideHandleAction) {
+        match action {
+            SideHandleAction::Press => self.side_handle_held = self.frame_map.side_handle.is_some(),
+            SideHandleAction::Drag(x, y) => {
+                if let Some(handle) = self.frame_map.side_handle {
+                    self.settings.raw_side.split_percent = handle
+                        .percent_at(x, y)
+                        .clamp(SPLIT_PERCENT_MIN, SPLIT_PERCENT_MAX);
+                }
+            }
+            SideHandleAction::Release => self.side_handle_held = false,
+        }
+    }
+
     /// The left button is on a click target that repeats, from its press to its release or
     /// until the pointer leaves it (MAX-143)
     pub fn is_click_held(&self) -> bool {
@@ -1422,10 +1446,18 @@ impl App {
             AppAction::ToggleAttach => UpdateEffect::ToggleAttach,
             AppAction::ReloadConfig => UpdateEffect::ReloadConfig,
             AppAction::SideView(action) => self.update_side_view(action),
+            AppAction::ResizeSidePanel(by) => {
+                self.resize_side_panel(by);
+                UpdateEffect::None
+            }
             // the menu's selection follows the pointer, the other parts are only drawn
             // highlighted (`ui::render`)
             AppAction::Scrollbar(action) => {
                 self.scrollbar(action, Instant::now());
+                UpdateEffect::None
+            }
+            AppAction::SideHandle(action) => {
+                self.side_handle(action);
                 UpdateEffect::None
             }
             AppAction::ClickHold(action) => {
@@ -1443,6 +1475,17 @@ impl App {
                 UpdateEffect::None
             }
         }
+    }
+
+    /// The raw side panel's share of the split, by `by` percent, kept in the config's range
+    /// (MAX-189)
+    fn resize_side_panel(&mut self, by: i16) {
+        if self.settings.raw_side.view == RawSideView::Off {
+            self.notify_warn("Raw SideView is Off");
+        }
+        let percent = self.settings.raw_side.split_percent as i16 + by;
+        self.settings.raw_side.split_percent =
+            (percent.max(0) as u16).clamp(SPLIT_PERCENT_MIN, SPLIT_PERCENT_MAX);
     }
 
     fn update_side_view(&mut self, action: SideViewAction) -> UpdateEffect {
@@ -1797,6 +1840,15 @@ impl App {
             Mode::Line => self.line_mode.copy_state().active,
             Mode::Terminal => self.terminal_mode.copy_state().active,
         }
+    }
+
+    /// The left button pressed in the history or the raw panel, not released yet (MAX-191)
+    pub fn is_mouse_selecting(&self) -> bool {
+        let copy_state = match self.settings.mode {
+            Mode::Line => self.line_mode.copy_state(),
+            Mode::Terminal => self.terminal_mode.copy_state(),
+        };
+        copy_state.active && copy_state.mouse_drag.is_some()
     }
 
     pub fn copy_side(&self) -> Option<CopySide> {

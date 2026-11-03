@@ -86,8 +86,8 @@ can be changed in `keymap.toml` (delete the file to get these defaults).
 maxicom's own: `m` line / terminal mode, `j` session backups, `D` detach /
 attach, `O` text encoding, `/` search, `:` command line, `T` triggers, `U`
 the u-boot trigger, `W` terminal size, `E` emulator to the view, `k`
-screenshot, `B` raw side panel, `M` mouse, `C` clear the history, `r` reload
-the config. `Ctrl-A ?` lists them all.
+screenshot, `B` raw side panel, `<` / `>` its size, `M` mouse, `C` clear the
+history, `r` reload the config. `Ctrl-A ?` lists them all.
 
 | minicom               | maxicom                              |
 |-----------------------|--------------------------------------|
@@ -334,6 +334,12 @@ What changes from a serial port:
   alerts (`!`, `● REC`), the VT and view sizes, the scroll, the pan and the
   prefix. What doesn't fit in the border is left out whole, never cut. A click
   on `SCROLL +n` goes back to the live tail, on `PAN +n` to the left edge.
+- The raw side panel (`Ctrl-A B`) takes `split_percent` of the room in
+  `[raw_side]` (10 to 85, default 40), on the right or at the bottom
+  (`orientation`). Drag its border with the mouse to resize it, or use the
+  actions `side-grow` / `side-shrink` (1 %) and `side-grow-5` /
+  `side-shrink-5` (5 %, `Ctrl-A >` and `Ctrl-A <`). The new size lasts until
+  you quit, `config.toml` keeps its value.
 - `hide_borders_below`, `hide_scrollbar_below` and `hide_status_bar_below` in
   `[ui]`, each a `[cols, rows]` size: while the screen is narrower or shorter
   than it, that part isn't drawn, to leave the room to the content. The

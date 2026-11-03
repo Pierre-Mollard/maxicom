@@ -115,6 +115,10 @@ pub fn raw_view_to_display_mode(view: RawSideView) -> LineDisplayMode {
     }
 }
 
+/// The raw side panel's share of the split, in percent
+pub const SPLIT_PERCENT_MIN: u16 = 10;
+pub const SPLIT_PERCENT_MAX: u16 = 85;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RawSideConfig {
@@ -1037,11 +1041,11 @@ impl SettingsConfig {
             });
         }
 
-        if self.raw_side.split_percent < 10 || self.raw_side.split_percent > 85 {
+        if !(SPLIT_PERCENT_MIN..=SPLIT_PERCENT_MAX).contains(&self.raw_side.split_percent) {
             return Err(ConfigValidationError::InvalidGenericField {
                 name: "raw_side.split_percent".to_owned(),
-                min: 10,
-                max: 85,
+                min: SPLIT_PERCENT_MIN as _,
+                max: SPLIT_PERCENT_MAX as _,
             });
         }
 

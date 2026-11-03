@@ -19,7 +19,7 @@ use ratatui::{
 use crate::{
     app::{
         App,
-        types::{ClickAction, ClickTarget, FrameAreas, ViewportSize},
+        types::{ClickAction, ClickTarget, FrameAreas, SideHandle, ViewportSize},
     },
     configs::{KeyBindingAction, KeywordHighlight, Mode, ThemeConfig},
     overlays::{Overlay, PopupTarget},
@@ -86,6 +86,10 @@ pub fn render(
         raw_side: layout.raw_side_area,
     });
     app.frame_map_mut().clear();
+    if let (Some(panel), Some(split)) = (layout.raw_side_area, layout.raw_split_area) {
+        let orientation = app.settings().raw_side.orientation;
+        app.frame_map_mut().side_handle = Some(SideHandle::new(panel, split, orientation));
+    }
     app.update_viewport(ViewportSize::new(
         layout.content_area.width,
         layout.content_area.height,
@@ -197,6 +201,7 @@ pub fn render(
             map.click_target_at(x, y)
                 .and_then(|target| Some((target.area, target.hover?)))
                 .or_else(|| Some((map.scrollbar?.part_at(x, y)?, *theme.ui.hover)))
+                .or_else(|| Some((map.side_handle?.at(x, y)?, *theme.ui.hover)))
         };
         if let Some((area, style)) = hovered {
             frame.buffer_mut().set_style(area, style);
@@ -3729,6 +3734,182 @@ mod tests {
         // the selection is a tick behind: on the row the last scroll brought in
         assert!(text.starts_with(&format!("row {:02}", first - 2)), "{text}");
         assert!(text.ends_with("row 38\nr"), "{text}");
+    }
+
+    /// MAX-191: a button released outside the window never comes as a release, the next
+    /// event is a move with no button. That move ends what the press started: the drag
+    /// selection yanks and stops scrolling, the scrollbar and a held click target let go.
+    /// In line and terminal mode.
+    /// How: a press and a drag to the top row (it scrolls), then a `Moved` and no `Up`.
+    #[test]
+    fn move_without_button_ends_a_lost_release() {
+        let moved = |h: &mut Harness, at| mouse_do(h, MouseEventKind::Moved, at);
+        let lines = wrapped_lines();
+        let mut terminal = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+            s.mode = Mode::Terminal;
+        });
+        let bytes: String = (0..40).map(|i| format!("\r\nrow {i:02}")).collect();
+        terminal
+            .app
+            .terminal_mode
+            .process_rx(TextEncoding::Utf8, bytes.as_bytes());
+
+        for (mut h, mode) in [(lines, "line"), (terminal, "terminal")] {
+            h.draw();
+            let area = h.app.frame_map().text_area;
+            let (from, top) = ((area.x + 2, area.y + area.height / 2), (area.x + 2, area.y));
+            mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), from);
+            mouse_do(&mut h, MouseEventKind::Drag(MouseButton::Left), top);
+            assert!(h.app.drag_scroll(std::time::Instant::now()), "{mode}");
+            h.draw();
+            match moved(&mut h, (from.0, 0)) {
+                UpdateEffect::CopyToClipboard(text) => {
+                    assert!(text.lines().count() > 2, "{mode}: {text:?}")
+                }
+                _ => panic!("{mode}: expected a yank"),
+            }
+            let later = std::time::Instant::now() + std::time::Duration::from_secs(1);
+            assert!(!h.app.drag_scroll(later), "{mode}");
+            // the next moves are hovers again
+            assert!(matches!(moved(&mut h, from), UpdateEffect::None), "{mode}");
+            assert!(matches!(moved(&mut h, top), UpdateEffect::None), "{mode}");
+        }
+
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |_| {});
+        for i in 0..60 {
+            h.app.feed_rx(format!("line {i:02}\r\n").as_bytes());
+        }
+        h.draw();
+        let bar = h.app.frame_map().scrollbar.expect("a scrollbar");
+        mouse_do(
+            &mut h,
+            MouseEventKind::Down(MouseButton::Left),
+            (bar.area.x, bar.area.y),
+        );
+        assert!(h.app.is_scrollbar_held());
+        moved(&mut h, (5, 5));
+        assert!(!h.app.is_scrollbar_held());
+
+        let mut h = wide_terminal(None);
+        let right = status_cell(&h.draw(), "▶");
+        mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), right);
+        assert!(h.app.is_click_held());
+        moved(&mut h, right);
+        assert!(!h.app.is_click_held());
+    }
+
+    /// MAX-189: `side-grow` / `side-shrink` change the raw panel's share by 1 %, the `-5`
+    /// ones by 5 %, kept in 10..=85; the drawn panel follows. With the panel off they still
+    /// change it, and warn.
+    /// How: a 100-column history with the Hex panel at 40 %, the actions as keys run them.
+    #[test]
+    fn side_actions_resize_the_raw_panel() {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 100, 12, |s| {
+            s.raw_side.view = RawSideView::Hex;
+        });
+        let run = |h: &mut Harness, action: KeyBindingAction| {
+            let action = action.to_action(&h.app);
+            h.app.update(action);
+            h.draw();
+            let width = h.app.frame_areas().raw_side.map(|area| area.width);
+            (h.app.settings().raw_side.split_percent, width)
+        };
+        h.draw();
+        let width = |h: &Harness| h.app.frame_areas().raw_side.unwrap().width;
+        let start = width(&h);
+        assert_eq!(
+            run(&mut h, KeyBindingAction::SideGrow5),
+            (45, Some(start + 5))
+        );
+        assert_eq!(
+            run(&mut h, KeyBindingAction::SideShrink),
+            (44, Some(start + 4))
+        );
+        assert_eq!(run(&mut h, KeyBindingAction::SideGrow).0, 45);
+        assert_eq!(run(&mut h, KeyBindingAction::SideShrink5).0, 40);
+        assert_eq!(width(&h), start);
+        for _ in 0..20 {
+            run(&mut h, KeyBindingAction::SideGrow5);
+        }
+        assert_eq!(h.app.settings().raw_side.split_percent, 85);
+        for _ in 0..20 {
+            run(&mut h, KeyBindingAction::SideShrink5);
+        }
+        assert_eq!(run(&mut h, KeyBindingAction::SideShrink).0, 10);
+        assert!(crate::app::tests::toasts(&h.app).is_empty());
+
+        h.app.settings_mut().raw_side.view = RawSideView::Off;
+        assert_eq!(run(&mut h, KeyBindingAction::SideGrow), (11, None));
+        assert_eq!(crate::app::tests::toasts(&h.app), ["Raw SideView is Off"]);
+    }
+
+    /// MAX-189: the raw panel's border is a handle: a drag from it puts it under the pointer,
+    /// on the right (a column) and at the bottom (a row), in 10..=85 % of the split; the
+    /// release, or a move with no button (MAX-191), lets go. The pointer over it shows it.
+    /// In line and terminal mode.
+    /// How: press on the border, drags, then the border drawn where the pointer is.
+    #[test]
+    fn side_handle_drag_resizes_the_raw_panel() {
+        use crate::configs::settings::RawSideOrientation;
+        use ratatui::style::Modifier;
+        let press = |h: &mut Harness, at| mouse_do(h, MouseEventKind::Down(MouseButton::Left), at);
+        let drag = |h: &mut Harness, at| {
+            mouse_do(h, MouseEventKind::Drag(MouseButton::Left), at);
+            h.draw();
+            h.app.frame_map().side_handle.unwrap().area
+        };
+
+        for mode in [Mode::Line, Mode::Terminal] {
+            let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 100, 30, |s| {
+                s.mode = mode;
+                s.raw_side.view = RawSideView::Hex;
+            });
+            h.draw();
+            let handle = h.app.frame_map().side_handle.expect("a handle");
+            let (x, y) = (handle.area.x, handle.area.y + 3);
+            assert_eq!(handle.area.width, 1, "{mode:?}");
+            press(&mut h, (x, y));
+            assert!(h.app.is_side_handle_held(), "{mode:?}");
+            for to in [x - 10, x + 7] {
+                let area = drag(&mut h, (to, y));
+                assert!(area.x.abs_diff(to) <= 1, "{mode:?} {to}: {area:?}");
+            }
+            // past the range's ends
+            drag(&mut h, (0, y));
+            assert_eq!(h.app.settings().raw_side.split_percent, 85, "{mode:?}");
+            drag(&mut h, (99, y));
+            assert_eq!(h.app.settings().raw_side.split_percent, 10, "{mode:?}");
+            mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), (99, y));
+            assert!(!h.app.is_side_handle_held(), "{mode:?}");
+            // after the release a drag doesn't move it
+            drag(&mut h, (50, y));
+            assert_eq!(h.app.settings().raw_side.split_percent, 10, "{mode:?}");
+        }
+
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 100, 30, |s| {
+            s.raw_side.view = RawSideView::Hex;
+            s.raw_side.orientation = RawSideOrientation::Bottom;
+        });
+        h.draw();
+        let handle = h.app.frame_map().side_handle.unwrap().area;
+        assert_eq!(handle.height, 1);
+        let (x, y) = (handle.x + 5, handle.y);
+        press(&mut h, (x, y));
+        let area = drag(&mut h, (x, y - 4));
+        assert!(area.y.abs_diff(y - 4) <= 1, "{area:?}");
+        mouse_do(&mut h, MouseEventKind::Moved, (x, 0));
+        assert!(!h.app.is_side_handle_held());
+
+        // the hover
+        let area = h.app.frame_map().side_handle.unwrap().area;
+        mouse_do(&mut h, MouseEventKind::Moved, (area.x + 2, area.y));
+        h.draw();
+        let buffer = h.terminal.backend().buffer();
+        assert!(
+            buffer[(area.x + 9, area.y)]
+                .modifier
+                .contains(Modifier::REVERSED)
+        );
     }
 
     /// MAX-126: in terminal mode with a grid taller than the view (24 rows shown in 11), the

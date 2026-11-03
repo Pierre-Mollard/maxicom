@@ -264,6 +264,14 @@ pub static COMMANDS: &[CommandSpec] = {
         CommandSpec::action("pan-home", A::PanHome, "Pan to the line start"),
         CommandSpec::action("pan-side-right", A::PanSideRight, "Pan the side view right"),
         CommandSpec::action("pan-side-left", A::PanSideLeft, "Pan the side view left"),
+        CommandSpec::action("side-grow", A::SideGrow, "Grow the side view by 1 %"),
+        CommandSpec::action("side-shrink", A::SideShrink, "Shrink the side view by 1 %"),
+        CommandSpec::action("side-grow-5", A::SideGrow5, "Grow the side view by 5 %"),
+        CommandSpec::action(
+            "side-shrink-5",
+            A::SideShrink5,
+            "Shrink the side view by 5 %",
+        ),
         CommandSpec::action("clear", A::Clear, "Clear the view, the history a scroll up"),
         CommandSpec::action("clear-history", A::ClearHistory, "Clear the history"),
         CommandSpec::action("sessions", A::Sessions, "Open the session backups"),
@@ -1021,6 +1029,10 @@ mod tests {
             A::SKAddCr => 43,
             A::SKAddLf => 44,
             A::Directory => 45,
+            A::SideGrow => 46,
+            A::SideShrink => 47,
+            A::SideGrow5 => 48,
+            A::SideShrink5 => 49,
         }
     }
 
@@ -1040,7 +1052,7 @@ mod tests {
             })
             .collect();
         indexes.sort_unstable();
-        assert_eq!(indexes, (0..46).collect::<Vec<_>>());
+        assert_eq!(indexes, (0..50).collect::<Vec<_>>());
     }
 
     /// The help writes a required argument in angle brackets, an optional one in square ones

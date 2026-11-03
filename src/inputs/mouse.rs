@@ -14,7 +14,8 @@ use crate::{
     configs::{KeyBindingAction, Mode},
     inputs::{
         Action, AppAction, ClickHoldAction, CopyModeAction, DialogAction, HistoryAction,
-        LineInputAction, ScrollbarAction, SearchModeAction, SideViewAction, TerminalAction,
+        LineInputAction, ScrollbarAction, SearchModeAction, SideHandleAction, SideViewAction,
+        TerminalAction,
     },
     overlays::{ActionMenu, Overlay, PopupTarget},
 };
@@ -47,7 +48,7 @@ pub fn handle_mouse(event: MouseEvent, app: &App) -> Action {
         | MouseEventKind::Drag(MouseButton::Left)
         | MouseEventKind::Up(MouseButton::Left) => return handle_left_button(event, app),
         MouseEventKind::Down(MouseButton::Right) => return open_menu(event, app),
-        MouseEventKind::Moved => return hover(event, app),
+        MouseEventKind::Moved => return lost_release(app).unwrap_or_else(|| hover(event, app)),
         _ => return Action::Ignore,
     };
     // Shift turns the vertical wheel sideways, and so does a pan indicator under it: a status
@@ -92,6 +93,25 @@ pub fn handle_mouse(event: MouseEvent, app: &App) -> Action {
                 Wheel::Right => Action::History(HistoryAction::PanRight(WHEEL_COLS)),
             }
         }
+    }
+}
+
+/// A move with no button while the left one is still held for maxicom: the release was lost,
+/// let go outside the window (MAX-191). It ends the hold as the release would, so a drag
+/// selection yanks
+fn lost_release(app: &App) -> Option<Action> {
+    if app.is_click_held() {
+        Some(Action::App(AppAction::ClickHold(ClickHoldAction::Release)))
+    } else if app.is_scrollbar_held() {
+        Some(Action::App(AppAction::Scrollbar(ScrollbarAction::Release)))
+    } else if app.is_side_handle_held() {
+        Some(Action::App(AppAction::SideHandle(
+            SideHandleAction::Release,
+        )))
+    } else if app.is_mouse_selecting() {
+        Some(Action::CopyMode(CopyModeAction::MouseRelease))
+    } else {
+        None
     }
 }
 
@@ -219,6 +239,23 @@ fn handle_left_button(event: MouseEvent, app: &App) -> Action {
         && bar.area.contains(Position::new(x, y))
     {
         return scrollbar(ScrollbarAction::Press(y - bar.area.y));
+    }
+
+    // the raw side panel's border, from a press on it to the release (MAX-189)
+    let side_handle = |action| Action::App(AppAction::SideHandle(action));
+    if app.is_side_handle_held() {
+        match event.kind {
+            MouseEventKind::Drag(_) => return side_handle(SideHandleAction::Drag(x, y)),
+            MouseEventKind::Up(_) => return side_handle(SideHandleAction::Release),
+            _ => {}
+        }
+    }
+    if is_press
+        && map
+            .side_handle
+            .is_some_and(|handle| handle.at(x, y).is_some())
+    {
+        return side_handle(SideHandleAction::Press);
     }
 
     match event.kind {

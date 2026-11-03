@@ -95,6 +95,10 @@ impl KeyBindingAction {
             KeyBindingAction::PanSideLeft => {
                 Action::App(AppAction::SideView(SideViewAction::PanLeft(2)))
             }
+            KeyBindingAction::SideGrow => Action::App(AppAction::ResizeSidePanel(1)),
+            KeyBindingAction::SideShrink => Action::App(AppAction::ResizeSidePanel(-1)),
+            KeyBindingAction::SideGrow5 => Action::App(AppAction::ResizeSidePanel(5)),
+            KeyBindingAction::SideShrink5 => Action::App(AppAction::ResizeSidePanel(-5)),
             KeyBindingAction::Clear => Action::History(HistoryAction::ClearView),
             KeyBindingAction::SKAddCr => Action::App(AppAction::ToggleSetting(SettingKey::AddCr)),
             KeyBindingAction::SKAddLf => Action::App(AppAction::ToggleSetting(SettingKey::AddLf)),

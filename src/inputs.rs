@@ -61,6 +61,8 @@ pub enum AppAction {
     ReloadConfig,
     OpenOverlay(Overlay),
     SideView(SideViewAction),
+    ResizeSidePanel(i16),
+    SideHandle(SideHandleAction),
     Hover(u16, u16),
     Scrollbar(ScrollbarAction),
     ClickHold(ClickHoldAction),
@@ -93,6 +95,15 @@ pub enum AppAction {
 pub enum ScrollbarAction {
     Press(u16),
     Drag(i32),
+    Release,
+}
+
+/// The left button on the raw side panel's border (MAX-189): the press, a drag held from it
+/// to a cell, the release
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SideHandleAction {
+    Press,
+    Drag(u16, u16),
     Release,
 }
 
@@ -690,6 +701,8 @@ mod tests {
             [
                 "/ => Search(Start)",
                 ": => open CommandLine",
+                "< => App(ResizeSidePanel(-5))",
+                "> => App(ResizeSidePanel(5))",
                 "? => open Help",
                 "Ctrl-a => TransmitRaw([1])",
                 "Down => History(ScrollDown(1))",
