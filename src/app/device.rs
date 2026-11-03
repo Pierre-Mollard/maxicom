@@ -13,13 +13,18 @@ use std::{
 use super::{App, UpdateEffect};
 use crate::{
     capture::{CaptureDevice, RecordingMeta, recording_raw},
+    configs::{
+        AppConfig, LinksConfig,
+        links::{SavedLink, default_name},
+    },
     inputs::Action,
     link::{
-        Address, ByteSource, CONNECT_TIMEOUT, LinkError, LinkKind, OpenFor, Reconfigured,
+        Address, ByteSource, CONNECT_TIMEOUT, LinkConfig, LinkError, LinkKind, OpenFor,
+        Reconfigured,
         replay::{Replay, ReplayControl},
         serial::{self, LineControl, LineSettings, PortState},
     },
-    overlays::{Directory, ErrorDialog, Overlay},
+    overlays::{Directory, DirectoryTab, ErrorDialog, LinkNameDialog, Overlay},
 };
 
 /// How long a port's test may take before it's marked unanswered (MAX-181)
@@ -60,9 +65,9 @@ impl App {
         }
     }
 
-    /// Started without a device while the system lists `ports` (MAX-181): the directory open
-    /// to pick one, the link waiting detached on the first (nothing opens on its own: an open
-    /// can reset a board). No session restored; the backup starts on the port picked, once open
+    /// Started without a device while the system lists `ports` or a link is saved (MAX-181,
+    /// MAX-185): the directory open to pick one, the link waiting detached on the first
+    /// (nothing opens on its own: an open can reset a board). No session restored; the backup starts on the port picked, once open
     pub fn start_in_directory(&mut self, ports: Vec<String>, sessions_dir: Option<PathBuf>) {
         self.sessions_dir = sessions_dir;
         self.device_unpicked = true;
@@ -126,8 +131,81 @@ impl App {
     }
 
     fn open_directory(&mut self, ports: Vec<String>) {
-        let directory = Directory::new(ports, &self.link.config().address);
+        let directory = self.directory(ports);
         self.open_overlay(Overlay::Directory(directory));
+    }
+
+    /// The name asked for a link to save (MAX-185): the link in use (`None`) with its line
+    /// settings, or a port with `[link]`'s. Refused, the directory staying: no link picked yet,
+    /// a replay, an address saved already
+    pub fn name_link(&mut self, address: Option<Address>) {
+        let config = match address {
+            None if self.device_unpicked => {
+                return self.notify_warn("No link in use: pick one first");
+            }
+            None => self.link.config().clone(),
+            Some(address) => LinkConfig {
+                address,
+                line: self.settings().link.line(),
+            },
+        };
+        if config.address.kind() == LinkKind::Replay {
+            return self.notify_warn("A replay isn't a link to save");
+        }
+        let saved = (self.links.as_ref().ok())
+            .and_then(|links| {
+                (links.links.iter())
+                    .filter(|link| link.is_for(self.host.as_deref()))
+                    .find(|link| {
+                        link.address.parse::<Address>().ok().as_ref() == Some(&config.address)
+                    })
+            })
+            .map(|link| link.name.clone());
+        if let Some(name) = saved {
+            return self.notify_warn(format!("{} is saved already, as '{name}'", config.address));
+        }
+        let name = default_name(&config.address);
+        let link = SavedLink::from_config(name, &config, self.host.as_deref());
+        self.open_overlay(Overlay::LinkName(LinkNameDialog::new(link)));
+    }
+
+    /// `link` added to `links.toml`, then the directory on it; the name popup stays when it
+    /// isn't saved, saying why (MAX-185)
+    pub fn save_link(&mut self, link: SavedLink) {
+        let path = AppConfig::active_links_path(self.settings());
+        match LinksConfig::add(&path, link.clone()) {
+            Ok(links) => {
+                self.links = Ok(links);
+                self.notify_success(format!("Saved link '{}'", link.name));
+                self.open_directory(serial::port_names());
+                if let Some(Overlay::Directory(directory)) = &mut self.overlay
+                    && let Ok(links) = &directory.links
+                    && let Some(idx) = links.iter().position(|(name, _)| *name == link.name)
+                {
+                    directory.tab = DirectoryTab::Saved;
+                    directory.link_selected = idx;
+                }
+            }
+            Err(err) => self.notify_warn(format!("{}: {err}", link.name)),
+        }
+    }
+
+    /// The directory on `ports` and this machine's saved links, each with its line settings
+    /// over `[link]`'s (MAX-185)
+    pub fn directory(&self, ports: Vec<String>) -> Directory {
+        let current = &self.link.config().address;
+        let defaults = &self.settings().link;
+        let links = self.links.as_ref().map_err(Clone::clone).map(|config| {
+            (config.links.iter())
+                .filter(|link| link.is_for(self.host.as_deref()))
+                .filter_map(|link| {
+                    let address = link.address.parse().ok()?;
+                    let line = link.over(defaults).line();
+                    Some((link.name.clone(), LinkConfig { address, line }))
+                })
+                .collect()
+        });
+        Directory::new(ports, current).with_links(links, current)
     }
 
     /// One turn of the link: what is waiting is read (bounded), the end of a replay said, the
@@ -198,7 +276,11 @@ impl App {
 
     fn apply_link_effect(&mut self, effect: UpdateEffect) -> UpdateEffect {
         match effect {
-            UpdateEffect::Open(address) => self.open_link(address),
+            UpdateEffect::Open(address) => {
+                let line = self.link.config().line;
+                self.open_link(LinkConfig { address, line });
+            }
+            UpdateEffect::OpenLink(config) => self.open_link(config),
             UpdateEffect::Replay {
                 path,
                 delay,
@@ -332,7 +414,7 @@ impl App {
                 }
             }
             OpenFor::Open { previous } => {
-                let switched = previous != *address;
+                let switched = previous.address != *address;
                 self.notify_success(format!("Opened {address}"));
                 if let Some(Overlay::Directory(_)) = self.overlay() {
                     self.close_overlay();
@@ -404,11 +486,11 @@ impl App {
     /// of the command line waits for its result (MAX-12). A replay that set the live link aside
     /// ends first, so the switch starts from the live link, its session backup and its encoding
     /// (MAX-171)
-    fn open_link(&mut self, address: Address) {
+    fn open_link(&mut self, config: LinkConfig) {
         if self.replaced_link().is_some() {
             self.stop_replay();
         }
-        self.link.switch_to(address);
+        self.link.switch_to(config);
         self.pause_commands(Instant::now() + CONNECT_TIMEOUT * 2);
         self.notify_info(format!("Opening {}", self.link.config().address));
         self.close_link_popups();
@@ -588,7 +670,7 @@ mod tests {
         capture::CaptureFormat,
         configs::{KeyBindingsConfig, KeyResolver, SettingsConfig, TextEncoding},
         inputs::AppAction,
-        link::{LinkConfig, state::REOPEN_EVERY},
+        link::{Address, LinkConfig, state::REOPEN_EVERY},
     };
 
     fn app_on(address: &str) -> App {
@@ -1111,6 +1193,193 @@ mod tests {
         app.dispatch(Action::App(AppAction::ToggleAttach));
         assert!(matches!(app.overlay(), Some(Overlay::DeviceDetached)));
         drop(first);
+    }
+
+    /// MAX-185 step 0: with a link open, a port picked in the directory opens with the line
+    /// settings the link had, and closes the directory; one that fails puts the link back on
+    /// the address that was open, the line unchanged, the directory staying with the reason
+    /// on the port's row.
+    /// How: a TCP link at 9600, the directory on a second listener then on a closed one,
+    /// Enter in each.
+    #[test]
+    fn directory_switch_keeps_the_line_and_goes_back() {
+        use crate::inputs::DialogAction;
+        let (first, first_address) = listener();
+        let mut config = LinkConfig {
+            address: first_address.parse().unwrap(),
+            ..LinkConfig::default()
+        };
+        config.line.baud = 9600;
+        let line = config.line;
+        let mut app = App::new(
+            SettingsConfig::default(),
+            KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap(),
+            config,
+        );
+        app.start_link(None);
+        let _peer = first.accept().unwrap();
+        poll_until(&mut app, "connected", |app| app.link.is_open());
+
+        let (second, second_address) = listener();
+        app.open_directory(vec![second_address.clone()]);
+        app.dispatch(Action::Overlay(DialogAction::Confirm));
+        let _second_peer = second.accept().unwrap();
+        poll_until(&mut app, "opened", |app| app.link.is_open());
+        assert_eq!(app.link_config().address.to_string(), second_address);
+        assert_eq!(app.link_config().line, line);
+        assert!(app.overlay().is_none(), "the directory closes once open");
+
+        let (closed, closed_address) = listener();
+        drop(closed);
+        app.open_directory(vec![closed_address.clone()]);
+        app.dispatch(Action::Overlay(DialogAction::Confirm));
+        poll_until(&mut app, "failed", |app| {
+            toasts(app).iter().any(|t| t.starts_with("open: "))
+        });
+        assert_eq!(app.link_config().address.to_string(), second_address);
+        assert_eq!(app.link_config().line, line);
+        let Some(Overlay::Directory(directory)) = app.overlay() else {
+            panic!("the directory closed");
+        };
+        assert!(directory.opening.is_none());
+        assert!(matches!(
+            directory.tests[&closed_address],
+            Some(PortState::Error(_))
+        ));
+    }
+
+    /// MAX-185: the directory opens on the saved links, on the one in use; a saved link that
+    /// fails to open puts back the address and the line that were open, the reason on its
+    /// row; one that opens has its own line settings, and closes the directory.
+    /// How: a TCP link open and saved; a saved missing device at 57600, then a pty at 9600,
+    /// each picked with Up and Enter.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn directory_opens_a_saved_link_with_its_line() {
+        use crate::{app::tests::Pty, inputs::DialogAction, overlays::DirectoryTab};
+        let pty = Pty::open();
+        let (listener, address) = listener();
+        let (mut app, _peer) = connected(&listener, &address);
+        let before = app.link_config().clone();
+        let links = format!(
+            "[[link]]\nname = 'board'\naddress = '{}'\nbaud = 9600\n\
+             [[link]]\nname = 'gone'\naddress = '/nonexistent/tty'\nbaud = 57600\n\
+             [[link]]\nname = 'bridge'\naddress = '{address}'\n",
+            pty.path
+        );
+        app.set_links(Ok(toml::from_str(&links).unwrap()));
+        app.open_directory(Vec::new());
+        let Some(Overlay::Directory(directory)) = app.overlay() else {
+            panic!("no directory");
+        };
+        assert_eq!(directory.tab, DirectoryTab::Saved);
+        assert_eq!(directory.link_selected, 2);
+
+        app.dispatch(Action::Overlay(DialogAction::Up));
+        app.dispatch(Action::Overlay(DialogAction::Confirm));
+        poll_until(&mut app, "failed", |app| {
+            toasts(app).iter().any(|t| t.starts_with("open: "))
+        });
+        assert_eq!(*app.link_config(), before);
+        let Some(Overlay::Directory(directory)) = app.overlay() else {
+            panic!("the directory closed");
+        };
+        assert!(directory.opening.is_none());
+        assert!(matches!(
+            directory.tests.get("/nonexistent/tty"),
+            Some(Some(_))
+        ));
+
+        app.dispatch(Action::Overlay(DialogAction::Up));
+        app.dispatch(Action::Overlay(DialogAction::Confirm));
+        poll_until(&mut app, "opened", |app| {
+            app.link.is_open() && app.link_config().address.to_string() == pty.path
+        });
+        assert_eq!(app.link_config().line.baud, 9600);
+        assert!(app.overlay().is_none(), "the directory closes once open");
+    }
+
+    /// MAX-185: `s` in the saved links asks a name for the link in use, its address's to start
+    /// with; Enter saves it to `links.toml` and brings the directory back on it. Saved
+    /// already, `s` says so. `s` in the ports asks one for the selected port, for this machine
+    /// with `[link]`'s line; Esc there goes back to the directory; a name taken or empty
+    /// keeps the popup, saying why. Before a pick there's no link in use to save.
+    /// How: a TCP link open, `links_path` in a temp folder; each key through `dispatch`.
+    #[test]
+    fn save_links_from_the_directory() {
+        use crate::inputs::DialogAction;
+        use crossterm::event::{KeyCode, KeyEvent};
+        let dir = std::env::temp_dir().join(format!("maxicom_save_{}", std::process::id()));
+        let path = dir.join("links.toml");
+        let (listener, address) = listener();
+        let (mut app, _peer) = connected(&listener, &address);
+        app.settings_mut().links_path = Some(path.clone());
+        let s = || Action::Overlay(DialogAction::HandleKey(KeyEvent::from(KeyCode::Char('s'))));
+        let name_dialog = |app: &App| match app.overlay() {
+            Some(Overlay::LinkName(dialog)) => Some(dialog.clone()),
+            _ => None,
+        };
+        let set_name = |app: &mut App, name: &str| {
+            if let Some(Overlay::LinkName(dialog)) = &mut app.overlay {
+                dialog.input = name.to_string().into();
+            }
+        };
+
+        app.open_directory(vec!["/dev/ttyS9".into()]);
+        app.dispatch(Action::Overlay(DialogAction::CycleNext));
+        app.dispatch(s());
+        let dialog = name_dialog(&app).expect("no name asked");
+        let host_port = address.trim_start_matches("tcp://");
+        assert_eq!(dialog.input.value(), host_port);
+        assert!(dialog.link.hosts.is_empty() && dialog.link.baud.is_none());
+        set_name(&mut app, "bridge");
+        app.dispatch(Action::Overlay(DialogAction::Confirm));
+        assert!(toasts(&app).contains(&"Saved link 'bridge'".to_string()));
+        let Some(Overlay::Directory(directory)) = app.overlay() else {
+            panic!("no directory");
+        };
+        assert_eq!(directory.tab, DirectoryTab::Saved);
+        assert_eq!(directory.link_selected, 0);
+        let saved = LinksConfig::load(&path).unwrap();
+        assert_eq!(saved.links[0].name, "bridge");
+        assert_eq!(saved.links[0].address, address);
+
+        app.dispatch(s());
+        assert!(matches!(app.overlay(), Some(Overlay::Directory(_))));
+        let already = format!("{address} is saved already, as 'bridge'");
+        assert!(toasts(&app).contains(&already), "{:?}", toasts(&app));
+
+        // the save listed the system's ports: the test's again
+        app.open_directory(vec!["/dev/ttyS9".into()]);
+        app.dispatch(Action::Overlay(DialogAction::CycleNext));
+        app.dispatch(s());
+        let dialog = name_dialog(&app).expect("no name asked");
+        assert_eq!(dialog.input.value(), "ttyS9");
+        assert_eq!(dialog.link.hosts, Vec::from_iter(app.host.clone()));
+        assert_eq!(dialog.link.baud, Some(115_200));
+        app.dispatch(Action::Overlay(DialogAction::Close));
+        assert!(matches!(app.overlay(), Some(Overlay::Directory(_))));
+
+        app.open_directory(vec!["/dev/ttyS9".into()]);
+        app.dispatch(Action::Overlay(DialogAction::CycleNext));
+        app.dispatch(s());
+        set_name(&mut app, "bridge");
+        app.dispatch(Action::Overlay(DialogAction::Confirm));
+        assert!(name_dialog(&app).is_some(), "the name popup closed");
+        let taken = "bridge: link #1 has this name on the same machine".to_string();
+        assert!(toasts(&app).contains(&taken), "{:?}", toasts(&app));
+        set_name(&mut app, " ");
+        app.dispatch(Action::Overlay(DialogAction::Confirm));
+        assert!(name_dialog(&app).is_some(), "the name popup closed");
+        assert_eq!(LinksConfig::load(&path).unwrap().links.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut app = app_on("/dev/ttyS9");
+        app.start_in_directory(vec!["/dev/ttyS9".into()], None);
+        app.dispatch(Action::Overlay(DialogAction::CycleNext));
+        app.dispatch(s());
+        assert!(matches!(app.overlay(), Some(Overlay::Directory(_))));
+        assert!(toasts(&app).contains(&"No link in use: pick one first".to_string()));
     }
 
     /// MAX-181: from the start's directory, a port that fails to open leaves the link waiting

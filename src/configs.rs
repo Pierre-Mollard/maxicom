@@ -4,6 +4,7 @@ use crate::paths::expand_home;
 
 pub mod highlights;
 pub mod keybindings;
+pub mod links;
 pub mod settings;
 pub mod style;
 pub mod theme;
@@ -15,6 +16,7 @@ pub use keybindings::{
     KeyBindingAction, KeyBindingCopyAction, KeyBindingLineAction, KeyBindingSearchAction,
     KeyBindingTerminalAction, KeyBindingsConfig, KeyPattern, KeyResolver, KeymapFileError,
 };
+pub use links::LinksConfig;
 pub use settings::{
     CommandLineLayout, DualBufferMode, LineDisplayMode, LinkDefaults, Mode, PrefixWrapBehavior,
     QueryGroup, RawSideView, SettingsConfig, SettingsError, StatusBarConfig, StatusBarLayout,
@@ -30,6 +32,7 @@ const THEME_FILE: &str = "theme.toml";
 const KEYMAP_FILE: &str = "keymap.toml";
 const HIGHLIGHT_FILE: &str = "highlights.toml";
 const TRIGGERS_FILE: &str = "triggers.toml";
+const LINKS_FILE: &str = "links.toml";
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -38,6 +41,8 @@ pub struct AppConfig {
     pub keybindings: KeyBindingsConfig,
     pub highlights: HighlightConfig,
     pub triggers: TriggersConfig,
+    /// A `links.toml` that doesn't load doesn't stop the app: its error, said in the app
+    pub links: Result<LinksConfig, String>,
 }
 
 impl AppConfig {
@@ -64,12 +69,16 @@ impl AppConfig {
         let triggers = TriggersConfig::load_or_create_default(&triggers_path)
             .map_err(ConfigsError::Triggers)?;
 
+        let links =
+            LinksConfig::load(&Self::active_links_path(&settings)).map_err(|err| err.to_string());
+
         Ok(AppConfig {
             settings,
             theme,
             keybindings,
             highlights,
             triggers,
+            links,
         })
     }
 
@@ -107,6 +116,12 @@ impl AppConfig {
             .unwrap_or_else(|| PathBuf::from(TRIGGERS_FILE))
     }
 
+    pub fn default_links_path() -> PathBuf {
+        dirs::config_dir()
+            .map(|p| p.join(APP_DIR).join(LINKS_FILE))
+            .unwrap_or_else(|| PathBuf::from(LINKS_FILE))
+    }
+
     /// The folder of the config files
     pub fn config_dir() -> PathBuf {
         let path = Self::default_config_path();
@@ -122,6 +137,7 @@ impl AppConfig {
             ("keymap file", Self::active_keybindings_path(settings)),
             ("highlights file", Self::active_highlight_path(settings)),
             ("triggers file", Self::active_triggers_path(settings)),
+            ("links file", Self::active_links_path(settings)),
         ];
         let moved = (files.into_iter()).filter(|(_, path)| path.parent() != Some(dir.as_path()));
         std::iter::once(("config folder", dir.clone()))
@@ -146,6 +162,10 @@ impl AppConfig {
 
     pub fn active_triggers_path(settings: &SettingsConfig) -> PathBuf {
         (settings.triggers_path.as_deref()).map_or_else(Self::default_triggers_path, expand_home)
+    }
+
+    pub fn active_links_path(settings: &SettingsConfig) -> PathBuf {
+        (settings.links_path.as_deref()).map_or_else(Self::default_links_path, expand_home)
     }
 }
 
@@ -187,9 +207,9 @@ mod tests {
     use super::*;
 
     /// MAX-163: the config folder comes first, then only the files a `*_path` setting puts
-    /// out of it, in the theme, keymap, highlights, triggers order.
-    /// How: the default settings, then a theme elsewhere, a keymap set inside the folder and
-    /// triggers elsewhere.
+    /// out of it, in the theme, keymap, highlights, triggers, links order.
+    /// How: the default settings, then a theme elsewhere, a keymap set inside the folder,
+    /// triggers and links elsewhere.
     #[test]
     fn config_paths_list_the_folder_and_the_files_out_of_it() {
         let dir = AppConfig::config_dir();
@@ -203,12 +223,14 @@ mod tests {
         settings.theme_path = Some(PathBuf::from("/themes/dark.toml"));
         settings.keybindings_path = Some(dir.join("other_keymap.toml"));
         settings.triggers_path = Some(PathBuf::from("/boards/triggers.toml"));
+        settings.links_path = Some(PathBuf::from("/share/links.toml"));
         assert_eq!(
             AppConfig::config_paths(&settings),
             [
                 ("config folder", dir),
                 ("theme file", PathBuf::from("/themes/dark.toml")),
                 ("triggers file", PathBuf::from("/boards/triggers.toml")),
+                ("links file", PathBuf::from("/share/links.toml")),
             ]
         );
     }
@@ -223,6 +245,7 @@ mod tests {
         settings.keybindings_path = Some(PathBuf::from("~/maxicom_test/keybindings"));
         settings.highlights_path = Some(PathBuf::from("~/maxicom_test/highlights"));
         settings.triggers_path = Some(PathBuf::from("~/maxicom_test/triggers"));
+        settings.links_path = Some(PathBuf::from("~/maxicom_test/links"));
         let dir = home.join("maxicom_test");
         assert_eq!(AppConfig::active_theme_path(&settings), dir.join("themes"));
         assert_eq!(
@@ -237,6 +260,7 @@ mod tests {
             AppConfig::active_triggers_path(&settings),
             dir.join("triggers")
         );
+        assert_eq!(AppConfig::active_links_path(&settings), dir.join("links"));
         assert_eq!(
             AppConfig::config_paths(&settings)[1],
             ("theme file", dir.join("themes"))

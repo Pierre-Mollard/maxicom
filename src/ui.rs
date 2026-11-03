@@ -36,7 +36,7 @@ use crate::{
                 render_error_popup, render_no_device_popup, render_restore_popup,
             },
             command_line::render_command_line,
-            directory::render_directory_popup,
+            directory::{render_directory_popup, render_link_name_popup},
             filepath::{render_filepath_popup, render_screenshot_popup},
             help::render_help_popup,
             menu::render_action_menu,
@@ -263,6 +263,9 @@ fn render_active_overlay(
         }
         Some(Overlay::Directory(directory)) => {
             render_directory_popup(app, directory, frame, theme, &mut targets)
+        }
+        Some(Overlay::LinkName(dialog)) => {
+            render_link_name_popup(dialog, resolver, frame, theme, &mut targets)
         }
         Some(Overlay::ActionMenu(menu)) => {
             render_action_menu(menu, resolver, frame, theme, &mut targets)
@@ -2546,6 +2549,168 @@ mod tests {
             has(&rows, "No serial port found: plug one in, then r"),
             "{rows:#?}"
         );
+    }
+
+    /// MAX-185 step 0: the directory's title and buttons; a click on a row selects it, a click
+    /// on the selected one or on Open opens it, Close closes the directory.
+    /// How: three ports, the bottom border read, clicks on the third row (twice), on the
+    /// first row then Open, then on Close.
+    #[test]
+    fn directory_buttons_and_clicks() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        let current = h.app.link_config().address.clone();
+        let ports = vec![
+            current.to_string(),
+            "/dev/ttyACM0".to_string(),
+            "/dev/ttyACM1".to_string(),
+        ];
+        let directory = crate::overlays::Directory::new(ports, &current);
+        h.app
+            .update(Action::App(AppAction::OpenOverlay(Overlay::Directory(
+                directory,
+            ))));
+        let rows = h.draw();
+        assert!(has(&rows, "Directory"), "{rows:#?}");
+        assert!(
+            has(
+                &rows,
+                "Enter Open · s Save · t Test · r Refresh · Esc Close"
+            ),
+            "{rows:#?}"
+        );
+        let opens = |effect: UpdateEffect| match effect {
+            UpdateEffect::Open(address) => Some(address.to_string()),
+            _ => None,
+        };
+        let selected = |h: &Harness| match h.app.overlay() {
+            Some(Overlay::Directory(directory)) => directory.selected,
+            _ => panic!("no directory"),
+        };
+
+        let at = cell_of(&rows, "/dev/ttyACM1");
+        click(&mut h, at);
+        assert_eq!(selected(&h), 2);
+        h.draw();
+        // a popup click acts on the press
+        let effect = mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), at);
+        mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), at);
+        assert_eq!(opens(effect).as_deref(), Some("/dev/ttyACM1"));
+
+        let rows = h.draw();
+        click(&mut h, cell_of(&rows, &current.to_string()));
+        assert_eq!(selected(&h), 0);
+        let rows = h.draw();
+        let (x, y) = cell_of(&rows, "Enter Open");
+        let effect = mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), (x + 6, y));
+        mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), (x + 6, y));
+        assert_eq!(opens(effect), Some(current.to_string()));
+
+        let rows = h.draw();
+        let (x, y) = cell_of(&rows, "Esc Close");
+        click(&mut h, (x + 4, y));
+        assert!(h.app.overlay().is_none());
+    }
+
+    /// MAX-185: the saved links of this machine in columns, name, address and line (`raw TCP`
+    /// for TCP), the ones for another machine left out; the Saved tab's buttons; a click on
+    /// the ports' tab shows them with theirs. A `links.toml` that didn't load shows why; no
+    /// link says so.
+    /// How: three links, one for another machine; the tabs clicked; then an error, then none.
+    #[test]
+    fn directory_saved_tab() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        let links = "[[link]]\nname = 'esp32'\naddress = '/dev/ttyUSB9'\nbaud = 9600\n\
+                     [[link]]\nname = 'lab'\nhosts = ['not-this-machine-0']\naddress = 'COM3'\n\
+                     [[link]]\nname = 'router'\naddress = 'tcp://10.0.0.1:4000'\n";
+        h.app.set_links(Ok(toml::from_str(links).unwrap()));
+        let open = |h: &mut Harness| {
+            let directory = h.app.directory(vec!["/dev/ttyACM0".to_string()]);
+            h.app
+                .update(Action::App(AppAction::OpenOverlay(Overlay::Directory(
+                    directory,
+                ))));
+            h.draw()
+        };
+        let rows = open(&mut h);
+        assert!(has(&rows, "Saved links │ Serial ports"), "{rows:#?}");
+        assert!(
+            has(&rows, "  esp32   /dev/ttyUSB9         9600 8N1"),
+            "{rows:#?}"
+        );
+        assert!(
+            has(&rows, "  router  tcp://10.0.0.1:4000  raw TCP"),
+            "{rows:#?}"
+        );
+        assert!(!has(&rows, "COM3"), "{rows:#?}");
+        assert!(has(&rows, "Enter Open · s Save · Esc Close"), "{rows:#?}");
+
+        click(&mut h, cell_of(&rows, "Serial ports"));
+        let rows = h.draw();
+        assert!(has(&rows, "  /dev/ttyACM0"), "{rows:#?}");
+        assert!(
+            has(
+                &rows,
+                "Enter Open · s Save · t Test · r Refresh · Esc Close"
+            ),
+            "{rows:#?}"
+        );
+        click(&mut h, cell_of(&rows, "Saved links"));
+        assert!(has(&h.draw(), "esp32"));
+
+        h.app
+            .set_links(Err("invalid syntax in 'links.toml':\nline 2".into()));
+        let rows = open(&mut h);
+        assert!(has(&rows, "invalid syntax in 'links.toml':"), "{rows:#?}");
+        assert!(has(&rows, "line 2"), "{rows:#?}");
+
+        h.app.set_links(Ok(crate::configs::LinksConfig::default()));
+        open(&mut h);
+        h.app.update(Action::Overlay(DialogAction::CycleNext));
+        assert!(has(&h.draw(), "No saved link for this machine"));
+    }
+
+    /// MAX-185: the name popup shows the name typed, cursor after it, then what's saved under
+    /// it and for which machines.
+    /// How: a serial port for one machine at 9600 7E1, then a TCP link.
+    #[test]
+    fn link_name_popup() {
+        use crate::{configs::links::SavedLink, overlays::LinkNameDialog};
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        let mut config = LinkConfig {
+            address: "/dev/ttyS9".parse().unwrap(),
+            ..LinkConfig::default()
+        };
+        config.line.baud = 9600;
+        config.line.framing = "7E1".parse().unwrap();
+        let link = SavedLink::from_config("ttyS9".into(), &config, Some("laptop"));
+        let open = |h: &mut Harness, link| {
+            let dialog = Overlay::LinkName(LinkNameDialog::new(link));
+            h.app.update(Action::App(AppAction::OpenOverlay(dialog)));
+            h.draw()
+        };
+        let rows = open(&mut h, link);
+        for row in [
+            "▶ Name    : ttyS9",
+            "  Address : /dev/ttyS9",
+            "  Line    : 9600 7E1",
+            "  For     : laptop",
+            "Enter Save · Esc Cancel",
+        ] {
+            assert!(has(&rows, row), "{row}: {rows:#?}");
+        }
+        let (x, y) = cell_of(&rows, "▶ Name    : ttyS9");
+        assert_eq!(cursor_cell(&mut h), (x + 17, y));
+
+        let tcp = LinkConfig {
+            address: "tcp://10.0.0.1:4000".parse().unwrap(),
+            ..config
+        };
+        let rows = open(
+            &mut h,
+            SavedLink::from_config("r".into(), &tcp, Some("laptop")),
+        );
+        assert!(has(&rows, "  Line    : raw TCP"), "{rows:#?}");
+        assert!(has(&rows, "  For     : every machine"), "{rows:#?}");
     }
 
     /// MAX-181: the directory warns what its test does, and shows each tested port's result

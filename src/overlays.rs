@@ -6,14 +6,15 @@ use crossterm::event::KeyCode;
 use crate::{
     capture::{CaptureDevice, Session, Stream},
     commands::Invocation,
+    configs::links::SavedLink,
     configs::{AppConfig, KeyBindingAction, SettingsConfig, keybindings::KeyBindingDialogAction},
     inputs::DialogAction,
-    link::{Address, serial::LineSettings},
+    link::{Address, LinkConfig, serial::LineSettings},
 };
 
 // Re-exports
 pub use command_line::CommandLine;
-pub use directory::Directory;
+pub use directory::{Directory, DirectoryTab, LinkNameDialog};
 pub use help::{HelpCategory, HelpDialog};
 pub use menu::ActionMenu;
 pub use misc::{ErrorDialog, FilePathDialog, ScreenshotDialog};
@@ -53,6 +54,7 @@ pub enum Overlay {
     CommandLine(Box<CommandLine>),
     Triggers(TriggerBrowser),
     Directory(Directory),
+    LinkName(LinkNameDialog),
 }
 
 /// A part of a popup the mouse picks (MAX-113)
@@ -86,10 +88,12 @@ pub enum PopupTarget {
     TriggerToggleAll,
     TriggerCopyPath,
     ConfigPath(usize),
+    DirectoryTab(DirectoryTab),
     DirectoryRow(usize),
     DirectoryOpen,
     DirectoryRefresh,
     DirectoryTest,
+    DirectorySave,
     OpenDirectory,
 }
 
@@ -134,6 +138,9 @@ pub enum OverlayResponse {
     },
     ToggleTrigger(Option<String>),
     Open(Address),
+    OpenLink(LinkConfig),
+    NameLink(Option<Address>),
+    SaveLink(SavedLink),
     TestPorts,
     ArmTrigger {
         name: String,
@@ -149,6 +156,7 @@ impl Overlay {
                 | Overlay::Screenshot(_)
                 | Overlay::TerminalSize(_)
                 | Overlay::CommandLine(_)
+                | Overlay::LinkName(_)
         )
     }
 
@@ -178,6 +186,7 @@ impl Overlay {
             Overlay::CommandLine(command_line) => command_line.handle_action(action),
             Overlay::Triggers(browser) => browser.handle_action(action),
             Overlay::Directory(directory) => directory.handle_action(action),
+            Overlay::LinkName(dialog) => dialog.handle_action(action),
             Overlay::Error(_) => match action {
                 DialogAction::Close | DialogAction::Confirm => OverlayResponse::Close,
                 _ => OverlayResponse::Handled,

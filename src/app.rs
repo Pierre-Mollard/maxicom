@@ -17,8 +17,8 @@ use crate::{
     capture::{CaptureDevice, CaptureLine, Recorder, RecordingWriter, ScreenshotFormat, Stream},
     commands::{CommandError, Invocation, Target},
     configs::{
-        DualBufferMode, KeyBindingAction, KeyResolver, Mode, SettingsConfig, StatusBarLayout,
-        TextEncoding, WrapMode,
+        DualBufferMode, KeyBindingAction, KeyResolver, LinksConfig, Mode, SettingsConfig,
+        StatusBarLayout, TextEncoding, WrapMode,
         settings::{PrefixPlace, PrefixWrapBehavior},
     },
     inputs::{
@@ -145,6 +145,10 @@ pub struct App {
     query_answers: Vec<u8>,
     /// The rules of `triggers.toml` (MAX-6)
     triggers: Vec<Trigger>,
+    /// The links of `links.toml`, or why it didn't load, and this machine's name, which picks
+    /// the ones for it (MAX-185)
+    links: Result<LinksConfig, String>,
+    host: Option<String>,
     /// The text `mash` sends until another comes in (MAX-6)
     mash: Option<Mash>,
     /// Where the session backups are, for the session browser (MAX-148)
@@ -192,6 +196,7 @@ pub enum UpdateEffect {
     Reconfigure(LineSettings),
     LineControl(LineControl),
     Open(Address),
+    OpenLink(LinkConfig),
     /// `session` is what a session backup was recorded on, from its meta file: the replay
     /// decodes with its encoding and shows its line settings (MAX-166)
     Replay {
@@ -256,6 +261,8 @@ impl App {
             held_rx: None,
             query_answers: Vec::new(),
             triggers: Vec::new(),
+            links: Ok(LinksConfig::default()),
+            host: crate::configs::links::this_host(),
             mash: None,
             sessions_dir: None,
             is_window_focused: true,
@@ -865,6 +872,21 @@ impl App {
                             self.overlay = Some(overlay);
                             UpdateEffect::Open(address)
                         }
+                        OverlayResponse::OpenLink(config) => {
+                            self.overlay = Some(overlay);
+                            UpdateEffect::OpenLink(config)
+                        }
+                        // the popup stays when it can't go on, saying why
+                        OverlayResponse::NameLink(address) => {
+                            self.overlay = Some(overlay);
+                            self.name_link(address);
+                            UpdateEffect::None
+                        }
+                        OverlayResponse::SaveLink(link) => {
+                            self.overlay = Some(overlay);
+                            self.save_link(link);
+                            UpdateEffect::None
+                        }
                         OverlayResponse::RestoreSession(yes) => {
                             if let Overlay::RestoreSession(session) = overlay {
                                 self.answer_restore(&session, yes);
@@ -937,6 +959,15 @@ impl App {
     /// The rules of `triggers.toml`, at startup and on a reload (MAX-6)
     pub fn set_triggers(&mut self, triggers: Vec<Trigger>) {
         self.triggers = triggers;
+    }
+
+    /// The saved links, at start and on a reload: a file that doesn't load is said, the app
+    /// running without them (MAX-185)
+    pub fn set_links(&mut self, links: Result<LinksConfig, String>) {
+        if let Err(err) = &links {
+            self.notify_warn(err.clone());
+        }
+        self.links = links;
     }
 
     pub fn triggers(&self) -> &[Trigger] {
@@ -1893,6 +1924,24 @@ pub mod tests {
         assert_eq!(toast.message, "unknown command 'nope'");
     }
 
+    /// MAX-185: a `links.toml` that doesn't load is said, the app running without its links;
+    /// one that loads says nothing.
+    /// How: an error then links set.
+    #[test]
+    fn bad_links_file_warns() {
+        let mut app = app();
+        app.set_links(Err(
+            "invalid link in 'links.toml': link #1 'a': the name is empty".into(),
+        ));
+        let toast = app.notifications.active_toasts().last().unwrap();
+        assert!(toast.message.starts_with("invalid link in 'links.toml'"));
+        assert!(app.links.is_err());
+        let count = app.notifications.active_toasts().len();
+        app.set_links(Ok(LinksConfig::default()));
+        assert_eq!(app.notifications.active_toasts().len(), count);
+        assert!(app.links.is_ok());
+    }
+
     /// MAX-12: `send` and `send-hex` transmit their bytes, in the chain's order. A command that
     /// refuses (nothing to send, a replay) stops the chain with the error.
     /// How: chains run on a live port, then on a replay (`file://`).
@@ -2166,14 +2215,14 @@ pub mod tests {
     /// A pty pair: maxicom opens the `path` side as its port, the test reads and writes the
     /// `device` side, as `src/bin/fake_device.rs` does through socat
     #[cfg(target_os = "linux")]
-    struct Pty {
+    pub struct Pty {
         device: std::fs::File,
-        path: String,
+        pub path: String,
     }
 
     #[cfg(target_os = "linux")]
     impl Pty {
-        fn open() -> Self {
+        pub fn open() -> Self {
             use std::os::fd::FromRawFd;
             unsafe {
                 let fd = libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY | libc::O_NONBLOCK);

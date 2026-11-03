@@ -31,12 +31,12 @@ pub struct LinkState {
 
 /// Who started the open that runs, which decides what its result shows: a retry stays quiet
 /// until it connects, the user's attach reports a failure, the start shows the popup. `open`
-/// (MAX-12) went back to the `previous` port when it failed
+/// (MAX-12) and a saved link (MAX-185) went back to the `previous` port and line when it failed
 pub enum OpenFor {
     Start,
     Attach,
     Retry,
-    Open { previous: Address },
+    Open { previous: LinkConfig },
 }
 
 /// What new line settings did: set on the open port, kept for a detached one, refused by the
@@ -190,10 +190,10 @@ impl LinkState {
         }
     }
 
-    /// The link closes and `address` opens in its place, as a reconnect does; a failure goes
-    /// back to the address that was open (MAX-12)
-    pub fn switch_to(&mut self, address: Address) {
-        let previous = mem::replace(&mut self.config.address, address);
+    /// The link closes and `config` opens in its place, as a reconnect does; a failure goes
+    /// back to the address and line that were open (MAX-12, MAX-185)
+    pub fn switch_to(&mut self, config: LinkConfig) {
+        let previous = mem::replace(&mut self.config, config);
         self.device = None;
         self.break_until = None;
         self.begin_open(OpenFor::Open { previous });
@@ -230,7 +230,7 @@ impl LinkState {
 
     /// A closed link opens again every `REOPEN_EVERY` unless detached, then the result of the
     /// open running, with why it was started: an open device is in place, a failed `open` is
-    /// back on its previous address. None while it runs, or when the link is open
+    /// back on its previous address and line. None while it runs, or when the link is open
     pub fn poll_open(&mut self) -> Option<(OpenFor, Result<(), LinkError>)> {
         if self.is_open() {
             return None;
@@ -252,7 +252,7 @@ impl LinkState {
             }
             Err(e) => {
                 if let OpenFor::Open { previous } = &why {
-                    self.config.address = previous.clone();
+                    self.config = previous.clone();
                 }
                 (why, Err(e))
             }
@@ -312,21 +312,28 @@ mod tests {
         assert!(link.is_open());
     }
 
-    /// A failed `open` puts the address that was open back, and says which it was.
-    /// How: an open TCP link switched to a port freed by dropping its listener.
+    /// A failed `open` puts the address and line that were open back, and says which they
+    /// were (MAX-185: the line too).
+    /// How: an open TCP link switched, at another baud rate, to a port freed by dropping its
+    /// listener.
     #[test]
     fn failed_switch_goes_back() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let mut link = link_on(tcp(&listener));
+        let before = link.config().clone();
         let closed = TcpListener::bind("127.0.0.1:0").unwrap();
-        let closed_address = tcp(&closed);
+        let mut config = LinkConfig {
+            address: tcp(&closed),
+            ..before.clone()
+        };
+        config.line.baud = 9600;
         drop(closed);
-        link.switch_to(closed_address.clone());
-        assert_eq!(link.config().address, closed_address);
+        link.switch_to(config.clone());
+        assert_eq!(*link.config(), config);
         match result(&mut link) {
-            (OpenFor::Open { previous }, Err(_)) => assert_eq!(previous, tcp(&listener)),
+            (OpenFor::Open { previous }, Err(_)) => assert_eq!(previous, before),
             _ => panic!("no failure"),
         }
-        assert_eq!(link.config().address, tcp(&listener));
+        assert_eq!(*link.config(), before);
     }
 }

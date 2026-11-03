@@ -18,8 +18,8 @@ use crate::{
     app::{App, UpdateEffect, selection::copy_via_osc52, triggers::Trigger},
     args::{ParseOutcome, parse_args, print_help, print_version},
     configs::{
-        AppConfig, ConfigsError, KeyResolver, KeywordHighlight, RawSideView, SettingsConfig,
-        ThemeConfig,
+        AppConfig, ConfigsError, KeyResolver, KeywordHighlight, LinksConfig, RawSideView,
+        SettingsConfig, ThemeConfig,
     },
     link::{Address, ByteSource, LinkConfig, LinkError},
     overlays::{ErrorDialog, Overlay},
@@ -94,6 +94,7 @@ struct RuntimeConfig {
     key_resolver: KeyResolver,
     highlight_rules: Vec<KeywordHighlight>,
     triggers: Vec<Trigger>,
+    links: Result<LinksConfig, String>,
     status_bar: CompiledStatusBar,
 }
 
@@ -107,6 +108,7 @@ fn load_runtime_config(config_path: &Path) -> Result<RuntimeConfig, ConfigsError
     Ok(RuntimeConfig {
         highlight_rules: configs.highlights.compile_rules(),
         triggers,
+        links: configs.links,
         settings: configs.settings,
         theme: configs.theme,
         key_resolver,
@@ -122,6 +124,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         key_resolver,
         mut highlight_rules,
         triggers,
+        links,
         mut status_bar,
     } = match load_runtime_config(&config_path) {
         Ok(config) => config,
@@ -175,13 +178,19 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
     };
 
-    // no device named: the directory on the ports the system lists, the link waiting on the
-    // first until one is picked; with none listed, how to give one (MAX-181)
+    // no device named: the directory on the ports the system lists and the saved links, the
+    // link waiting on the first port, else the first link, until one is picked; with none,
+    // how to give one (MAX-181, MAX-185)
     let (link_config, pick_from) = match address {
         Some(address) => (LinkConfig { address, line }, None),
         None => {
             let ports = link::serial::port_names();
-            let Some(Ok(address)) = ports.first().map(|port| port.parse()) else {
+            let host = configs::links::this_host();
+            let first_link = (links.as_ref().ok())
+                .and_then(|config| config.links.iter().find(|l| l.is_for(host.as_deref())))
+                .map(|link| link.address.as_str());
+            let first = ports.first().map(String::as_str).or(first_link);
+            let Some(Ok(address)) = first.map(str::parse) else {
                 eprintln!(
                     "maxicom: No device: give one (maxicom -D <device>), or set `device` in \
                      [link] of config.toml.\nNo serial port found."
@@ -220,6 +229,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
     let mut app = App::new(settings, key_resolver, link_config);
     app.set_triggers(triggers);
+    app.set_links(links);
     if let Some(ports) = pick_from {
         app.start_in_directory(ports, AppConfig::default_sessions_dir());
     } else if app.link_kind().keeps_sessions() {
@@ -315,6 +325,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                             theme = config.theme;
                             highlight_rules = config.highlight_rules;
                             app.set_triggers(config.triggers);
+                            app.set_links(config.links);
                             status_bar = config.status_bar;
                             app.apply_reload(config.settings, config.key_resolver);
                         }
