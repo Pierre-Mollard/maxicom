@@ -134,49 +134,60 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
     };
 
-    let (address, line, replay_delay, restore, capture_file) = match parse_args(&settings.link) {
-        Ok(ParseOutcome::Run {
-            address,
-            line,
-            replay_delay,
-            restore,
-            capture_file,
-            display_hex,
-            encoding,
-        }) => {
-            // minicom's `-H` and `-R`, over the settings until a reload (MAX-181)
-            if display_hex {
-                settings.raw_side.view = RawSideView::Hex;
+    // this machine's saved links, which a name given or `[link] device` may be (MAX-185)
+    let host = configs::links::this_host();
+    let saved: Vec<_> = (links.as_ref().ok())
+        .map(|config| {
+            (config.links.iter())
+                .filter(|link| link.is_for(host.as_deref()))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    let (address, line, replay_delay, restore, capture_file) =
+        match parse_args(&settings.link, &saved) {
+            Ok(ParseOutcome::Run {
+                address,
+                line,
+                replay_delay,
+                restore,
+                capture_file,
+                display_hex,
+                encoding,
+            }) => {
+                // minicom's `-H` and `-R`, over the settings until a reload (MAX-181)
+                if display_hex {
+                    settings.raw_side.view = RawSideView::Hex;
+                }
+                if let Some(encoding) = encoding {
+                    settings.encoding = encoding;
+                }
+                (address, line, replay_delay, restore, capture_file)
             }
-            if let Some(encoding) = encoding {
-                settings.encoding = encoding;
-            }
-            (address, line, replay_delay, restore, capture_file)
-        }
-        Ok(ParseOutcome::Help) => {
-            print_help();
-            return Ok(ExitCode::SUCCESS);
-        }
-        Ok(ParseOutcome::Version) => {
-            print_version();
-            return Ok(ExitCode::SUCCESS);
-        }
-        // the folder to look into the backups out of the app: `cd $(maxicom --cache-dir)`
-        Ok(ParseOutcome::CacheDir) => match AppConfig::default_sessions_dir() {
-            Some(dir) => {
-                println!("{}", dir.display());
+            Ok(ParseOutcome::Help) => {
+                print_help();
                 return Ok(ExitCode::SUCCESS);
             }
-            None => {
-                eprintln!("maxicom: no cache folder on this system");
-                return Ok(ExitCode::FAILURE);
+            Ok(ParseOutcome::Version) => {
+                print_version();
+                return Ok(ExitCode::SUCCESS);
             }
-        },
-        Err(error) => {
-            eprintln!("Argument error: {error}");
-            return Ok(ExitCode::from(EXIT_USAGE));
-        }
-    };
+            // the folder to look into the backups out of the app: `cd $(maxicom --cache-dir)`
+            Ok(ParseOutcome::CacheDir) => match AppConfig::default_sessions_dir() {
+                Some(dir) => {
+                    println!("{}", dir.display());
+                    return Ok(ExitCode::SUCCESS);
+                }
+                None => {
+                    eprintln!("maxicom: no cache folder on this system");
+                    return Ok(ExitCode::FAILURE);
+                }
+            },
+            Err(error) => {
+                eprintln!("Argument error: {error}");
+                return Ok(ExitCode::from(EXIT_USAGE));
+            }
+        };
 
     // no device named: the directory on the ports the system lists and the saved links, the
     // link waiting on the first port, else the first link, until one is picked; with none,
@@ -185,10 +196,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         Some(address) => (LinkConfig { address, line }, None),
         None => {
             let ports = link::serial::port_names();
-            let host = configs::links::this_host();
-            let first_link = (links.as_ref().ok())
-                .and_then(|config| config.links.iter().find(|l| l.is_for(host.as_deref())))
-                .map(|link| link.address.as_str());
+            let first_link = saved.first().map(|link| link.address.as_str());
             let first = ports.first().map(String::as_str).or(first_link);
             let Some(Ok(address)) = first.map(str::parse) else {
                 eprintln!(

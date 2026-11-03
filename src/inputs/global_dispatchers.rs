@@ -122,8 +122,10 @@ impl KeyBindingAction {
             KeyBindingAction::CommandLine => {
                 let history = app.command_history().iter().cloned().collect();
                 let triggers = app.triggers().iter().map(|t| t.name.clone()).collect();
+                let command_line = CommandLine::new(history, triggers, serial::port_names())
+                    .with_link_names(app.saved_names());
                 Action::App(AppAction::OpenOverlay(Overlay::CommandLine(Box::new(
-                    CommandLine::new(history, triggers, serial::port_names()),
+                    command_line,
                 ))))
             }
         }

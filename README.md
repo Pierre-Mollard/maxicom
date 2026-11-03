@@ -70,7 +70,7 @@ can be changed in `keymap.toml` (delete the file to get these defaults).
 | `x`, `q`   | quit              | quit                             |
 | `o`        | configure         | settings (also `s`)              |
 | `p`        | comm parameters   | line settings                    |
-| `d`        | dialing directory | the serial ports, `t` tests them |
+| `d`        | dialing directory | saved links and the serial ports |
 | `e`        | local echo        | local echo                       |
 | `w`        | line wrap         | line mode's wrap (see below)     |
 | `u`        | add carriage ret. | add CR: a lone LF read as CR LF  |
@@ -97,14 +97,19 @@ the config. `Ctrl-A ?` lists them all.
 | `-H, --displayhex`    | the raw side panel in hex            |
 | `-R, --remotecharset` | utf8, ascii, cp437 or latin1         |
 | `-v, --version`       | the same                             |
+| `minicom esp32`       | `maxicom esp32`, a saved link        |
 | `minirc.dfl`          | `[link]` in `config.toml`            |
+| `~/.dialdir`          | `links.toml` in the config folder    |
 
 What differs:
 
 - Flow control is off by default (minicom: RTS/CTS on), as most USB-UART
   boards don't wire those lines.
-- No default device: with none given maxicom opens on the directory of the
-  serial ports, or says how to give one when there's none.
+- No default device: with none given maxicom opens on the directory, or
+  says how to give one when there's no saved link nor serial port.
+- The dialing directory's entries are saved links (a port or a TCP link with
+  its line settings), edited in the app; `links.toml` is rewritten whole on
+  a save, its comments lost. One file can serve several machines.
 - The terminal always wraps long lines: no `-w`, and `Ctrl-A w` changes line
   mode's wrap only.
 - No file transfers (X/Y/ZMODEM, kermit), shell, scripts or modem dialing:
@@ -114,7 +119,7 @@ What differs:
 
 ## DEVICES
 
-`maxicom [OPTIONS] [DEVICE]`, all the options with `maxicom --help`.
+`maxicom [OPTIONS] [LINK | DEVICE]`, all the options with `maxicom --help`.
 
 - A serial port: `maxicom /dev/ttyUSB0 -b 921600`, `maxicom COM3`, or with
   `-D, --device` as minicom (`maxicom -D /dev/ttyUSB0 -b 115200`). minicom's
@@ -123,14 +128,24 @@ What differs:
   be glued to it (`--baudrate=9600`, `-b9600`).
 - A device over TCP: `maxicom tcp://192.168.1.50:4000`, or
   `--tcp 192.168.1.50:4000`.
+- A saved link by its name: `maxicom esp32` (see SAVED LINKS below), with its
+  line settings; the options given win over them (`maxicom esp32 -b 9600`).
+  A name is looked for before a device; `-D` is always a device, the way to a
+  path that is also a saved name.
 - The directory, `Ctrl-A d` (`directory`, also in the right-click menu), as
-  minicom's dialing directory: the serial ports the system lists, `●` on the
-  one in use. `↑` `↓` `j` `k` or a click select, Enter (or a click on the
-  selected one) switches to it as `open` does, its line settings kept; `r`
-  lists the ports again (USB ones come and go). Saved links will come in a
-  tab of their own (MAX-185).
-  - Enter keeps the directory open (`opening…` on the row) until the port is
-    open; one that fails says why on its row.
+  minicom's dialing directory, in two tabs: Saved links and Serial ports
+  (Tab, Shift-Tab, `←` `→` or a click switch). It opens on the saved links
+  when there's one, the one in use selected. `●` marks the link in use.
+  `↑` `↓` `j` `k` or a click select, Enter (or a click on the selected one)
+  opens it: a saved link with its line settings, a port as `open` does, its
+  line settings kept.
+  - Saved links: `n` a new one, `e` edits the selected one, `s` saves the
+    link in use, `x` or Del deletes the selected one (asked first).
+  - Serial ports: `s` saves the selected port as a link, `r` lists the ports
+    again (USB ones come and go), `t` tests them (below).
+  - Enter keeps the directory open (`opening…` on the row) until the link is
+    open; one that fails says why on its row, and the link in use comes back
+    with its line settings.
   - `t` tests the ports, the one in use left out: `free`, `busy` (with the
     program holding it when known, `busy: minicom (1234)`), `no access` (on
     Linux, the user isn't in `dialout` or `uucp`) or its error; one that
@@ -164,12 +179,59 @@ What differs:
 
   A port's name depends on the adapter (`/dev/ttyUSB0`, `COM3`,
   `/dev/cu.usbserial-XXXX`), so there's no default one. With no device
-  anywhere maxicom starts on the directory, with nothing open until a port is
-  picked (no session restored; the backup starts on the port picked); closed
+  anywhere maxicom starts on the directory, with nothing open until a link is
+  picked (no session restored; the backup starts on the link picked); closed
   before that, a "No device" popup asks to pick one (Enter) or quit (Esc).
-  With no serial port listed either, it stops and says how to give one.
-  Flow control is off by default, where
-  minicom has RTS/CTS on: most USB-UART boards don't wire those lines.
+  With no saved link nor serial port either, it stops and says how to give
+  one. `[link] device` can be a saved link's name too. Flow control is off by
+  default, where minicom has RTS/CTS on: most USB-UART boards don't wire
+  those lines.
+
+### SAVED LINKS
+
+- The directory's Saved links, minicom's dialing directory entries: a
+  name, an address (a port, `tcp://host:port`), its line settings and the
+  machines it's for. They are in `links.toml` in the config folder
+  (`links_path` in `config.toml` puts it elsewhere), created on the first
+  save:
+
+  ```toml
+  [[link]]
+  name = "esp32"
+  hosts = ["laptop"]           # the machines it's for; none: every one
+  address = "/dev/ttyUSB0"
+  baud = 115200                # the line fields left out are [link]'s
+  bits = 8
+  parity = "none"
+  stop_bits = 1
+  flow = "none"
+
+  [[link]]
+  name = "router console"
+  address = "tcp://192.168.1.50:4000"  # no line: the bridge sets it
+  ```
+
+- The app edits it: `s` in the directory saves the link in use (Saved
+  links) or the selected port (Serial ports) in the link form, filled from
+  it; `n` opens the form empty, `e` on the selected link. In the form, Tab
+  or `↓` goes to the next field, `←` `→` or Space change the bits, parity,
+  stop bits and flow, Enter saves, Esc goes back to the directory. A TCP
+  address greys the line out. A save reads the file again first (another
+  maxicom may have changed it) and writes it whole, so its comments are
+  lost; an edit or a delete of a link changed in the file meanwhile is
+  refused. A reload (`Ctrl-A r`) reads it again.
+- `hosts`: one `links.toml` on a network share can serve several machines,
+  each seeing the links for it (by its name, any case) and those without
+  `hosts`. A port saved from the app is for this machine (a path belongs to
+  one), a TCP link for every one. Two links can have the same name when no
+  machine sees both: `maxicom esp32` opens `/dev/ttyUSB0` on one machine and
+  `COM3` on another.
+- A link saved shows by its name: in the status bar (`{port}`), and with its
+  address after it in the notices and the link's popups
+  (`esp32 (/dev/ttyUSB0)`).
+- A file that doesn't load (a bad address, a name twice on one machine, a
+  field misspelt) says why in the Saved links tab; the rest of the app runs.
+  A file maxicom can't read isn't written over.
 
 ### TCP LINKS
 
@@ -210,12 +272,13 @@ What changes from a serial port:
 ## CONFIG
 
 - The config files are in `~/.config/maxicom/` (`config.toml`, `theme.toml`,
-  `keymap.toml`, `highlights.toml`, `triggers.toml`). The settings popup
-  shows that folder, and any file `theme_path`, `keybindings_path`,
-  `highlights_path` or `triggers_path` puts elsewhere (`~` is the home
-  folder); `C` or a click on the folder copies its path, the file's number
-  (`1`, `2`, ...) or a click on it copies the file's. The popup scrolls when
-  the screen is too short for it. In the help, `c` copies the folder's path.
+  `keymap.toml`, `highlights.toml`, `triggers.toml`, and `links.toml` once a
+  link is saved). The settings popup shows that folder, and any file
+  `theme_path`, `keybindings_path`, `highlights_path`, `triggers_path` or
+  `links_path` puts elsewhere (`~` is the home folder); `C` or a click on the
+  folder copies its path, the file's number (`1`, `2`, ...) or a click on it
+  copies the file's. The popup scrolls when the screen is too short for it. In
+  the help, `c` copies the folder's path.
 - `add_cr` and `add_lf` (default `false`), minicom's add CR / add LF, for a
   device that ends its lines with LF only (staircase text in terminal mode)
   or CR only (lines written over each other in both modes): `add_cr` reads a
@@ -284,14 +347,20 @@ What changes from a serial port:
 
   These six need a serial port: a TCP link (its bridge owns the lines and the
   settings) and a replay refuse them.
-  - `open <address>`: switches to another serial port, `tcp://host:port` or a
-    replay of `file://path`, the settings kept (`open /dev/ttyUSB1`,
-    `open tcp://192.168.1.50:4000`). A bad address is refused before the line
-    runs. It completes the schemes and the serial ports the system lists, then
-    paths after `file://` or a `/`. The rest of the line waits until it is
+  - `open <name | address>`: switches to a saved link, with its line
+    settings (`open esp32`), or to another serial port, `tcp://host:port` or
+    a replay of `file://path`, the settings kept (`open /dev/ttyUSB1`,
+    `open tcp://192.168.1.50:4000`). A name is looked for before a device. A
+    bad address is refused before the line runs. It completes the saved
+    links, the schemes and the serial ports the system lists, then paths
+    after `file://` or a `/`. The rest of the line waits until it is
     open: `open COM4; send AT\r`. A port that fails to open brings the last
     one back. Another port starts a new session backup, as they go by port.
     `toggle-attach` detaches and attaches the link, as `Ctrl-A D` does.
+  - `link-save [name]`: saves the link in use to `links.toml`, under its
+    address's name when none is given (`ttyUSB0`); `link-delete <name>`
+    deletes a saved link (the names complete). Both refuse what the
+    directory refuses, and stop the rest of the line.
   - `set <setting> on|off`: `local-echo`, `timestamps`, `mouse` or
     `answer-queries`; nothing when it is so already (the settings with more
     values cycle with their keys).
@@ -647,6 +716,7 @@ right = '''
 - Variables:
   - {mode}           "TERM" or "LINE"
   - {port}           Device address (e.g. /dev/ttyUSB0, tcp://192.168.1.50:4000)
+                     or a saved link's name
   - {baud}           Baud rate (e.g. 115200), raw for a raw TCP link
   - {framing}        Serial framing (e.g. 8N1), TCP for a TCP link
   - {rx_bytes}       Received bytes count
@@ -724,12 +794,12 @@ right = '''
     `hover=(bg=main fg=black)`, or `hover=none`; blocks without it take
     `hover` in `[ui.status_bar]` (default "reversed", "none" for no hover)
 
-- When it doesn't fit: `prio=N` on a block (`1` most important). The bar
-  tries the compact forms (`{port}` as `ttyUSB0`, byte counts as `1.2K`, the
-  pan as `◀3`), then without the blocks of the highest `prio`, the next one,
-  and so on (the same `prio` goes together: give a separator its block's),
-  then without the center, then the right part cut from its left. Blocks
-  without `prio=` and plain text always stay.
+- When it doesn't fit: `prio=N` on a block (`1` most important). The bar tries
+  the compact forms (`{port}` as `ttyUSB0`, a saved link's name kept, byte
+  counts as `1.2K`, the pan as `◀3`), then without the blocks of the highest
+  `prio`, the next one, and so on (the same `prio` goes together: give a
+  separator its block's), then without the center, then the right part cut
+  from its left. Blocks without `prio=` and plain text always stay.
 
 - Clicks: a block without `click=` runs what its first variable implies:
   - {mode}                       Switch between LINE and TERM

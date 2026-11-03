@@ -24,7 +24,7 @@ use crate::{
         replay::{Replay, ReplayControl},
         serial::{self, LineControl, LineSettings, PortState},
     },
-    overlays::{Directory, DirectoryTab, ErrorDialog, LinkNameDialog, Overlay},
+    overlays::{Directory, DirectoryTab, ErrorDialog, LinkForm, Overlay},
 };
 
 /// How long a port's test may take before it's marked unanswered (MAX-181)
@@ -135,13 +135,24 @@ impl App {
         self.open_overlay(Overlay::Directory(directory));
     }
 
-    /// The name asked for a link to save (MAX-185): the link in use (`None`) with its line
-    /// settings, or a port with `[link]`'s. Refused, the directory staying: no link picked yet,
-    /// a replay, an address saved already
+    /// The link form on a link to save (MAX-185), the directory staying when it can't be
     pub fn name_link(&mut self, address: Option<Address>) {
+        match self.link_to_save(address) {
+            Ok(link) => {
+                let form = LinkForm::new(link, &self.settings().link);
+                self.open_overlay(Overlay::LinkForm(Box::new(form)));
+            }
+            Err(err) => self.notify_warn(err),
+        }
+    }
+
+    /// The link in use (`None`) with its line settings, or a port with `[link]`'s, as it's
+    /// saved, under its address's name (MAX-185). Refused: no link picked yet, a replay, an
+    /// address saved already
+    pub fn link_to_save(&self, address: Option<Address>) -> Result<SavedLink, String> {
         let config = match address {
             None if self.device_unpicked => {
-                return self.notify_warn("No link in use: pick one first");
+                return Err("No link in use: pick one first".to_string());
             }
             None => self.link.config().clone(),
             Some(address) => LinkConfig {
@@ -150,37 +161,111 @@ impl App {
             },
         };
         if config.address.kind() == LinkKind::Replay {
-            return self.notify_warn("A replay isn't a link to save");
+            return Err("A replay isn't a link to save".to_string());
         }
-        let saved = (self.links.as_ref().ok())
-            .and_then(|links| {
-                (links.links.iter())
-                    .filter(|link| link.is_for(self.host.as_deref()))
-                    .find(|link| {
-                        link.address.parse::<Address>().ok().as_ref() == Some(&config.address)
-                    })
-            })
-            .map(|link| link.name.clone());
-        if let Some(name) = saved {
-            return self.notify_warn(format!("{} is saved already, as '{name}'", config.address));
+        if let Some(name) = self.saved_name(&config.address) {
+            return Err(format!("{} is saved already, as '{name}'", config.address));
         }
         let name = default_name(&config.address);
-        let link = SavedLink::from_config(name, &config, self.host.as_deref());
-        self.open_overlay(Overlay::LinkName(LinkNameDialog::new(link)));
+        Ok(SavedLink::from_config(name, &config, self.host.as_deref()))
     }
 
-    /// `link` added to `links.toml`, then the directory on it; the name popup stays when it
-    /// isn't saved, saying why (MAX-185)
-    pub fn save_link(&mut self, link: SavedLink) {
+    /// The saved link of this machine named `name` (MAX-185)
+    pub fn saved_link(&self, name: &str) -> Option<&SavedLink> {
+        let links = self.links.as_ref().ok()?;
+        (links.links.iter()).find(|link| link.is_for(self.host.as_deref()) && link.name == name)
+    }
+
+    /// This machine's saved links' names, in the file's order, for the command line
+    pub fn saved_names(&self) -> Vec<String> {
+        let links = self.links.as_ref().map(|links| links.links.as_slice());
+        (links.unwrap_or_default().iter())
+            .filter(|link| link.is_for(self.host.as_deref()))
+            .map(|link| link.name.clone())
+            .collect()
+    }
+
+    /// What a saved link opens: its address, its line over `[link]`'s; none for an address
+    /// that doesn't parse
+    pub fn resolve(&self, link: &SavedLink) -> Option<LinkConfig> {
+        let address = link.address.parse().ok()?;
+        let line = link.over(&self.settings().link).line();
+        Some(LinkConfig { address, line })
+    }
+
+    /// `link` written to `links.toml`, or in place of `replaces`, and said; why not else
+    pub fn store_link(
+        &mut self,
+        link: &SavedLink,
+        replaces: Option<&SavedLink>,
+    ) -> Result<(), String> {
         let path = AppConfig::active_links_path(self.settings());
-        match LinksConfig::add(&path, link.clone()) {
-            Ok(links) => {
-                self.links = Ok(links);
-                self.notify_success(format!("Saved link '{}'", link.name));
+        self.links = Ok(LinksConfig::put(&path, link.clone(), replaces)?);
+        self.notify_success(format!("Saved link '{}'", link.name));
+        Ok(())
+    }
+
+    /// `link` taken out of `links.toml`, and said; why not else
+    pub fn remove_link(&mut self, link: &SavedLink) -> Result<(), String> {
+        let path = AppConfig::active_links_path(self.settings());
+        self.links = Ok(LinksConfig::remove(&path, link)?);
+        self.notify_success(format!("Deleted link '{}'", link.name));
+        Ok(())
+    }
+
+    /// The name `address` is saved under for this machine, when it is (MAX-185)
+    pub fn saved_name(&self, address: &Address) -> Option<&str> {
+        let links = self.links.as_ref().ok()?;
+        (links.links.iter())
+            .filter(|link| link.is_for(self.host.as_deref()))
+            .find(|link| link.address.parse::<Address>().ok().as_ref() == Some(address))
+            .map(|link| link.name.as_str())
+    }
+
+    /// The name of the link in use, when it's saved: what the status bar shows for it
+    pub fn link_name(&self) -> Option<&str> {
+        self.saved_name(&self.link.config().address)
+    }
+
+    /// The link in use as the notices and the link's popups name it: a saved one by its name,
+    /// its address after it so the device stays findable (`esp32 (/dev/ttyUSB0)`)
+    pub fn link_label(&self) -> String {
+        let address = &self.link.config().address;
+        match self.link_name() {
+            Some(name) => format!("{name} ({address})"),
+            None => address.to_string(),
+        }
+    }
+
+    /// The form for a new link, for this machine with `[link]`'s line, or for `link` to edit
+    /// (MAX-185)
+    pub fn open_link_form(&mut self, link: Option<SavedLink>) {
+        let defaults = &self.settings().link;
+        let form = match link {
+            Some(link) => LinkForm::edit(link, defaults),
+            None => {
+                let hosts = self.host.clone().into_iter().collect();
+                LinkForm::new(
+                    SavedLink {
+                        hosts,
+                        ..SavedLink::default()
+                    },
+                    defaults,
+                )
+            }
+        };
+        self.open_overlay(Overlay::LinkForm(Box::new(form)));
+    }
+
+    /// `link` added to `links.toml`, or in place of `replaces`, then the directory on it; the
+    /// popup stays when it isn't saved, saying why (MAX-185)
+    pub fn save_link(&mut self, link: SavedLink, replaces: Option<SavedLink>) {
+        match self.store_link(&link, replaces.as_ref()) {
+            Ok(()) => {
                 self.open_directory(serial::port_names());
                 if let Some(Overlay::Directory(directory)) = &mut self.overlay
                     && let Ok(links) = &directory.links
-                    && let Some(idx) = links.iter().position(|(name, _)| *name == link.name)
+                    && let Some(idx) = links.iter().position(|(saved, _)| *saved == link)
                 {
                     directory.tab = DirectoryTab::Saved;
                     directory.link_selected = idx;
@@ -190,19 +275,26 @@ impl App {
         }
     }
 
+    /// `link` taken out of `links.toml`, said, then the directory back on the saved links,
+    /// the error said there when it wasn't (MAX-185)
+    pub fn delete_link(&mut self, link: &SavedLink) {
+        if let Err(err) = self.remove_link(link) {
+            self.notify_warn(format!("{}: {err}", link.name));
+        }
+        self.open_directory(serial::port_names());
+        if let Some(Overlay::Directory(directory)) = &mut self.overlay {
+            directory.tab = DirectoryTab::Saved;
+        }
+    }
+
     /// The directory on `ports` and this machine's saved links, each with its line settings
     /// over `[link]`'s (MAX-185)
     pub fn directory(&self, ports: Vec<String>) -> Directory {
         let current = &self.link.config().address;
-        let defaults = &self.settings().link;
         let links = self.links.as_ref().map_err(Clone::clone).map(|config| {
             (config.links.iter())
                 .filter(|link| link.is_for(self.host.as_deref()))
-                .filter_map(|link| {
-                    let address = link.address.parse().ok()?;
-                    let line = link.over(defaults).line();
-                    Some((link.name.clone(), LinkConfig { address, line }))
-                })
+                .filter_map(|link| Some((link.clone(), self.resolve(link)?)))
                 .collect()
         });
         Directory::new(ports, current).with_links(links, current)
@@ -400,22 +492,22 @@ impl App {
 
     fn opened(&mut self, why: OpenFor) {
         self.link_lost = false;
-        let address = &self.link.config().address;
+        let label = self.link_label();
         match why {
-            OpenFor::Start => self.notify_success(format!("Connected to {address}")),
+            OpenFor::Start => self.notify_success(format!("Connected to {label}")),
             OpenFor::Attach => {
-                self.notify_success(format!("Reconnected to {address}"));
+                self.notify_success(format!("Reconnected to {label}"));
                 self.close_overlay();
             }
             OpenFor::Retry => {
-                self.notify_success(format!("Device Reconnected: {address}"));
+                self.notify_success(format!("Device Reconnected: {label}"));
                 if let Some(Overlay::DeviceDisconnected) = self.overlay() {
                     self.close_overlay();
                 }
             }
             OpenFor::Open { previous } => {
-                let switched = previous.address != *address;
-                self.notify_success(format!("Opened {address}"));
+                let switched = previous.address != self.link.config().address;
+                self.notify_success(format!("Opened {label}"));
                 if let Some(Overlay::Directory(_)) = self.overlay() {
                     self.close_overlay();
                 }
@@ -468,7 +560,7 @@ impl App {
             }
             // the retries reopen the port that was open, which the link is back on
             OpenFor::Open { .. } => {
-                let back = &self.link.config().address;
+                let back = self.link_label();
                 self.fail_commands(format!("open: {e}, back to {back}"));
             }
         }
@@ -478,7 +570,7 @@ impl App {
     fn begin_open(&mut self, why: OpenFor) {
         self.link.begin_open(why);
         if self.link_kind() == LinkKind::Tcp {
-            self.notify_info(format!("Connecting to {}", self.link.config().address));
+            self.notify_info(format!("Connecting to {}", self.link_label()));
         }
     }
 
@@ -492,7 +584,7 @@ impl App {
         }
         self.link.switch_to(config);
         self.pause_commands(Instant::now() + CONNECT_TIMEOUT * 2);
-        self.notify_info(format!("Opening {}", self.link.config().address));
+        self.notify_info(format!("Opening {}", self.link_label()));
         self.close_link_popups();
     }
 
@@ -1299,11 +1391,11 @@ mod tests {
         assert!(app.overlay().is_none(), "the directory closes once open");
     }
 
-    /// MAX-185: `s` in the saved links asks a name for the link in use, its address's to start
-    /// with; Enter saves it to `links.toml` and brings the directory back on it. Saved
-    /// already, `s` says so. `s` in the ports asks one for the selected port, for this machine
-    /// with `[link]`'s line; Esc there goes back to the directory; a name taken or empty
-    /// keeps the popup, saying why. Before a pick there's no link in use to save.
+    /// MAX-185: `s` in the saved links opens the link form on the link in use, the name its
+    /// address's to start with; Enter saves it to `links.toml` and brings the directory back
+    /// on it. Saved already, `s` says so. `s` in the ports opens it on the selected port, for
+    /// this machine with `[link]`'s line; Esc there goes back to the directory; a name taken
+    /// or empty keeps the form, saying why. Before a pick there's no link in use to save.
     /// How: a TCP link open, `links_path` in a temp folder; each key through `dispatch`.
     #[test]
     fn save_links_from_the_directory() {
@@ -1316,12 +1408,12 @@ mod tests {
         app.settings_mut().links_path = Some(path.clone());
         let s = || Action::Overlay(DialogAction::HandleKey(KeyEvent::from(KeyCode::Char('s'))));
         let name_dialog = |app: &App| match app.overlay() {
-            Some(Overlay::LinkName(dialog)) => Some(dialog.clone()),
+            Some(Overlay::LinkForm(form)) => Some(form.clone()),
             _ => None,
         };
         let set_name = |app: &mut App, name: &str| {
-            if let Some(Overlay::LinkName(dialog)) = &mut app.overlay {
-                dialog.input = name.to_string().into();
+            if let Some(Overlay::LinkForm(form)) = &mut app.overlay {
+                form.name = name.to_string().into();
             }
         };
 
@@ -1330,8 +1422,8 @@ mod tests {
         app.dispatch(s());
         let dialog = name_dialog(&app).expect("no name asked");
         let host_port = address.trim_start_matches("tcp://");
-        assert_eq!(dialog.input.value(), host_port);
-        assert!(dialog.link.hosts.is_empty() && dialog.link.baud.is_none());
+        assert_eq!(dialog.name.value(), host_port);
+        assert!(dialog.hosts.value().is_empty() && !dialog.has_line());
         set_name(&mut app, "bridge");
         app.dispatch(Action::Overlay(DialogAction::Confirm));
         assert!(toasts(&app).contains(&"Saved link 'bridge'".to_string()));
@@ -1354,9 +1446,9 @@ mod tests {
         app.dispatch(Action::Overlay(DialogAction::CycleNext));
         app.dispatch(s());
         let dialog = name_dialog(&app).expect("no name asked");
-        assert_eq!(dialog.input.value(), "ttyS9");
-        assert_eq!(dialog.link.hosts, Vec::from_iter(app.host.clone()));
-        assert_eq!(dialog.link.baud, Some(115_200));
+        assert_eq!(dialog.name.value(), "ttyS9");
+        assert_eq!(dialog.hosts.value(), app.host.clone().unwrap_or_default());
+        assert_eq!(dialog.baud.value(), "115200");
         app.dispatch(Action::Overlay(DialogAction::Close));
         assert!(matches!(app.overlay(), Some(Overlay::Directory(_))));
 
@@ -1365,12 +1457,12 @@ mod tests {
         app.dispatch(s());
         set_name(&mut app, "bridge");
         app.dispatch(Action::Overlay(DialogAction::Confirm));
-        assert!(name_dialog(&app).is_some(), "the name popup closed");
+        assert!(name_dialog(&app).is_some(), "the form closed");
         let taken = "bridge: link #1 has this name on the same machine".to_string();
         assert!(toasts(&app).contains(&taken), "{:?}", toasts(&app));
         set_name(&mut app, " ");
         app.dispatch(Action::Overlay(DialogAction::Confirm));
-        assert!(name_dialog(&app).is_some(), "the name popup closed");
+        assert!(name_dialog(&app).is_some(), "the form closed");
         assert_eq!(LinksConfig::load(&path).unwrap().links.len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
 
@@ -1380,6 +1472,145 @@ mod tests {
         app.dispatch(s());
         assert!(matches!(app.overlay(), Some(Overlay::Directory(_))));
         assert!(toasts(&app).contains(&"No link in use: pick one first".to_string()));
+    }
+
+    /// MAX-185: `n` in the saved links opens the form, Enter adds the link and brings the
+    /// directory back on it; `e` edits the selected one in place; a form refused keeps it,
+    /// saying why; `n` and `e` do nothing in the ports.
+    /// How: `links_path` in a temp folder, a link added then renamed through the form, a
+    /// name left empty; then the ports.
+    #[test]
+    fn new_and_edit_links() {
+        use crate::inputs::DialogAction;
+        use crossterm::event::{KeyCode, KeyEvent};
+        let dir = std::env::temp_dir().join(format!("maxicom_form_{}", std::process::id()));
+        let path = dir.join("links.toml");
+        let mut app = app_on("/dev/ttyS9");
+        app.settings_mut().links_path = Some(path.clone());
+        let press = |c| Action::Overlay(DialogAction::HandleKey(KeyEvent::from(KeyCode::Char(c))));
+        let form = |app: &mut App| match &mut app.overlay {
+            Some(Overlay::LinkForm(form)) => Some(form.clone()),
+            _ => None,
+        };
+        let set = |app: &mut App, name: &str, address: &str| {
+            if let Some(Overlay::LinkForm(form)) = &mut app.overlay {
+                form.name = name.to_string().into();
+                form.address = address.to_string().into();
+            }
+        };
+
+        app.open_directory(Vec::new());
+        app.dispatch(Action::Overlay(DialogAction::CycleNext));
+        assert!(matches!(app.overlay(), Some(Overlay::Directory(_))));
+        app.dispatch(press('n'));
+        let new = form(&mut app).expect("no form");
+        assert!(new.editing.is_none());
+        assert_eq!(new.hosts.value(), app.host.clone().unwrap_or_default());
+        set(&mut app, "board", "/dev/ttyS9");
+        app.dispatch(Action::Overlay(DialogAction::Confirm));
+        assert!(toasts(&app).contains(&"Saved link 'board'".to_string()));
+        let Some(Overlay::Directory(directory)) = app.overlay() else {
+            panic!("no directory");
+        };
+        assert_eq!(directory.tab, DirectoryTab::Saved);
+
+        app.dispatch(press('e'));
+        assert!(form(&mut app).expect("no form").editing.is_some());
+        set(&mut app, "", "/dev/ttyS9");
+        app.dispatch(Action::Overlay(DialogAction::Confirm));
+        assert!(form(&mut app).is_some(), "the form closed");
+        set(&mut app, "esp32", "/dev/ttyS8");
+        app.dispatch(Action::Overlay(DialogAction::Confirm));
+        let saved = LinksConfig::load(&path).unwrap();
+        let links: Vec<_> = (saved.links.iter())
+            .map(|link| (link.name.as_str(), link.address.as_str()))
+            .collect();
+        assert_eq!(links, [("esp32", "/dev/ttyS8")]);
+
+        app.open_directory(Vec::new());
+        app.dispatch(Action::Overlay(DialogAction::CycleNext));
+        app.dispatch(press('n'));
+        app.dispatch(press('e'));
+        assert!(matches!(app.overlay(), Some(Overlay::Directory(_))));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// MAX-185: `x` in the saved links asks before deleting the selected one: `n` goes back
+    /// to the directory, nothing deleted; `y` or Enter deletes it from `links.toml`, says so
+    /// and brings the directory back on the saved links, even with none left. A link gone
+    /// from the file meanwhile says so.
+    /// How: two links in a temp `links.toml`; `x` then `n`, `x` then `y` on the second, the
+    /// first deleted by hand then `x` and Enter on it.
+    #[test]
+    fn delete_a_link() {
+        use crate::inputs::DialogAction;
+        use crossterm::event::{KeyCode, KeyEvent};
+        let dir = std::env::temp_dir().join(format!("maxicom_delete_{}", std::process::id()));
+        let path = dir.join("links.toml");
+        std::fs::create_dir_all(&dir).unwrap();
+        let two =
+            "[[link]]\nname = 'a'\naddress = 'COM1'\n[[link]]\nname = 'b'\naddress = 'COM2'\n";
+        std::fs::write(&path, two).unwrap();
+        let mut app = app_on("/dev/ttyS9");
+        app.settings_mut().links_path = Some(path.clone());
+        app.set_links(Ok(LinksConfig::load(&path).unwrap()));
+        let press = |c| Action::Overlay(DialogAction::HandleKey(KeyEvent::from(KeyCode::Char(c))));
+        let names = || -> Vec<String> {
+            (LinksConfig::load(&path).unwrap().links.into_iter())
+                .map(|link| link.name)
+                .collect()
+        };
+
+        app.open_directory(Vec::new());
+        app.dispatch(Action::Overlay(DialogAction::Down));
+        app.dispatch(press('x'));
+        assert!(matches!(app.overlay(), Some(Overlay::DeleteLink(link)) if link.name == "b"));
+        app.dispatch(press('n'));
+        assert!(matches!(app.overlay(), Some(Overlay::Directory(_))));
+        assert_eq!(names(), ["a", "b"]);
+
+        app.open_directory(Vec::new());
+        app.dispatch(Action::Overlay(DialogAction::Down));
+        app.dispatch(press('x'));
+        app.dispatch(press('y'));
+        assert_eq!(names(), ["a"]);
+        assert!(toasts(&app).contains(&"Deleted link 'b'".to_string()));
+        let Some(Overlay::Directory(directory)) = app.overlay() else {
+            panic!("no directory");
+        };
+        assert_eq!(directory.tab, DirectoryTab::Saved);
+
+        std::fs::write(&path, "").unwrap();
+        app.open_directory(Vec::new());
+        app.dispatch(press('x'));
+        app.dispatch(Action::Overlay(DialogAction::Confirm));
+        let gone = "a: changed in the file meanwhile: not deleted".to_string();
+        assert!(toasts(&app).contains(&gone), "{:?}", toasts(&app));
+        let Some(Overlay::Directory(directory)) = app.overlay() else {
+            panic!("no directory");
+        };
+        assert_eq!(directory.tab, DirectoryTab::Saved);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// MAX-185: the notices name a saved link by its name, its address after it; the detach
+    /// notice by the kind of link, as before.
+    /// How: a TCP listener saved as `bridge`, the link started, connected, then detached.
+    #[test]
+    fn notices_name_a_saved_link() {
+        let (listener, address) = listener();
+        let mut app = app_on(&address);
+        let text = format!("[[link]]\nname = 'bridge'\naddress = '{address}'\n");
+        app.set_links(Ok(toml::from_str(&text).unwrap()));
+        app.start_link(None);
+        let label = format!("bridge ({address})");
+        assert!(toasts(&app).contains(&format!("Connecting to {label}")));
+        let _peer = listener.accept().unwrap();
+        poll_until(&mut app, "connected", |app| app.link.is_open());
+        assert!(toasts(&app).contains(&format!("Connected to {label}")));
+        assert_eq!(app.link_name(), Some("bridge"));
+        app.dispatch(Action::App(AppAction::ToggleAttach));
+        assert!(toasts(&app).contains(&"TCP connection detached".to_string()));
     }
 
     /// MAX-181: from the start's directory, a port that fails to open leaves the link waiting

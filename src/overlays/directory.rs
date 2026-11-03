@@ -1,11 +1,10 @@
 use std::collections::HashMap;
 
 use crossterm::event::KeyCode;
-use tui_input::Input;
 
 use crate::{
-    configs::{KeyBindingAction, links::SavedLink},
-    inputs::{DialogAction, dispatch_input_key, paste_into_input},
+    configs::links::SavedLink,
+    inputs::DialogAction,
     link::{
         Address, LinkConfig, LinkKind,
         serial::{self, PortState},
@@ -23,12 +22,14 @@ const PAGE: usize = 10;
 /// one: a port as `open` does (its line settings kept), a link with its own (a TCP link has
 /// none). `opening` holds the address until it's open, which closes the directory, or its
 /// error in `tests`. `s` saves the link in use from the saved links, the selected port from
-/// the ports, a name asked first. On the ports, `r` lists them again, the selection kept on
+/// the ports, in the link form filled from it; on the saved links `n` adds one and `e` edits
+/// the selected one in the same form, `x` or Del deletes it, asked first. Tab, Shift-Tab, Left and Right switch
+/// tabs. On the ports, `r` lists them again, the selection kept on
 /// its name; `t` tests them, each port's last result in `tests` by name (`None` while it runs)
 #[derive(Debug, Clone)]
 pub struct Directory {
     pub tab: DirectoryTab,
-    pub links: Result<Vec<(String, LinkConfig)>, String>,
+    pub links: Result<Vec<(SavedLink, LinkConfig)>, String>,
     pub link_selected: usize,
     pub ports: Vec<String>,
     pub selected: usize,
@@ -60,7 +61,7 @@ impl Directory {
     /// The saved links, the tab on them when there's one or an error to show
     pub fn with_links(
         mut self,
-        links: Result<Vec<(String, LinkConfig)>, String>,
+        links: Result<Vec<(SavedLink, LinkConfig)>, String>,
         current: &Address,
     ) -> Self {
         if links.as_ref().map_or(true, |links| !links.is_empty()) {
@@ -123,7 +124,10 @@ impl Directory {
             DialogAction::PageDown => self.select(selected + PAGE),
             DialogAction::Home => self.select(0),
             DialogAction::End => self.select(usize::MAX),
-            DialogAction::CycleNext | DialogAction::CyclePrev => self.other_tab(),
+            DialogAction::CycleNext
+            | DialogAction::CyclePrev
+            | DialogAction::Left
+            | DialogAction::Right => self.other_tab(),
             DialogAction::Pick(PopupTarget::DirectoryTab(tab)) => self.tab = tab,
             DialogAction::Confirm | DialogAction::Pick(PopupTarget::DirectoryOpen) => {
                 return self.open_selected();
@@ -134,12 +138,24 @@ impl Directory {
             }
             DialogAction::Pick(PopupTarget::DirectoryRow(idx)) => self.select(idx),
             DialogAction::Pick(PopupTarget::DirectorySave) => return self.save_selected(),
+            DialogAction::Pick(PopupTarget::DirectoryNew) if !ports => {
+                return OverlayResponse::NewLink;
+            }
+            DialogAction::Pick(PopupTarget::DirectoryEdit) if !ports => {
+                return self.edit_selected();
+            }
+            DialogAction::Pick(PopupTarget::DirectoryDelete) if !ports => {
+                return self.delete_selected();
+            }
             DialogAction::Pick(PopupTarget::DirectoryRefresh) if ports => self.refresh(),
             DialogAction::Pick(PopupTarget::DirectoryTest) if ports => {
                 return OverlayResponse::TestPorts;
             }
             DialogAction::HandleKey(key) => match key.code {
                 KeyCode::Char('s') => return self.save_selected(),
+                KeyCode::Char('n') if !ports => return OverlayResponse::NewLink,
+                KeyCode::Char('e') if !ports => return self.edit_selected(),
+                KeyCode::Char('x') | KeyCode::Delete if !ports => return self.delete_selected(),
                 KeyCode::Char('r') if ports => self.refresh(),
                 KeyCode::Char('t') if ports => return OverlayResponse::TestPorts,
                 _ => {}
@@ -160,6 +176,30 @@ impl Directory {
                 message,
                 warn: true,
             },
+            None => OverlayResponse::Handled,
+        }
+    }
+
+    fn edit_selected(&self) -> OverlayResponse {
+        match self
+            .links
+            .as_ref()
+            .ok()
+            .and_then(|l| l.get(self.link_selected))
+        {
+            Some((link, _)) => OverlayResponse::EditLink(link.clone()),
+            None => OverlayResponse::Handled,
+        }
+    }
+
+    fn delete_selected(&self) -> OverlayResponse {
+        match self
+            .links
+            .as_ref()
+            .ok()
+            .and_then(|l| l.get(self.link_selected))
+        {
+            Some((link, _)) => OverlayResponse::AskDeleteLink(link.clone()),
             None => OverlayResponse::Handled,
         }
     }
@@ -195,48 +235,6 @@ impl Directory {
                 warn: true,
             },
             None => OverlayResponse::Handled,
-        }
-    }
-}
-
-/// The name a link is saved under (MAX-185), its address's file name to start with: Enter
-/// saves it, Esc goes back to the directory
-#[derive(Debug, Clone)]
-pub struct LinkNameDialog {
-    pub input: Input,
-    pub link: SavedLink,
-}
-
-impl LinkNameDialog {
-    pub fn new(link: SavedLink) -> Self {
-        Self {
-            input: Input::new(link.name.clone()),
-            link,
-        }
-    }
-
-    pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
-        match action {
-            DialogAction::Close => OverlayResponse::Run(KeyBindingAction::Directory),
-            DialogAction::Confirm => match self.input.value().trim() {
-                "" => OverlayResponse::HandledNotify {
-                    message: "the name is empty".to_string(),
-                    warn: true,
-                },
-                name => OverlayResponse::SaveLink(SavedLink {
-                    name: name.to_string(),
-                    ..self.link.clone()
-                }),
-            },
-            DialogAction::HandleKey(key) => {
-                dispatch_input_key(&mut self.input, key);
-                OverlayResponse::Handled
-            }
-            DialogAction::Paste(text) => {
-                paste_into_input(&mut self.input, &text);
-                OverlayResponse::Handled
-            }
-            _ => OverlayResponse::Handled,
         }
     }
 }
@@ -337,7 +335,8 @@ mod tests {
     }
 
     /// MAX-185: with saved links, the directory opens on them, the link in use selected;
-    /// Tab, Shift-Tab and a click on a tab switch, each tab keeping its selection. Enter opens
+    /// Tab, Shift-Tab, Left, Right and a click on a tab switch, each tab keeping its
+    /// selection. Enter opens
     /// a saved serial link with its line settings, a TCP one as `open` does; `t` and `r` are
     /// the ports' only. No link opens on the ports; an error opens on the saved links.
     /// How: a serial and a TCP link with the TCP one in use, two ports; each key; then no
@@ -355,16 +354,21 @@ mod tests {
         };
         let board = config("/dev/ttyUSB0", 9600);
         let bridge = config("tcp://h:1", 115_200);
-        let links = vec![
-            ("board".to_string(), board.clone()),
-            ("bridge".into(), bridge),
-        ];
+        let saved = |name: &str| SavedLink {
+            name: name.into(),
+            ..SavedLink::default()
+        };
+        let links = vec![(saved("board"), board.clone()), (saved("bridge"), bridge)];
         let current: Address = "tcp://h:1".parse().unwrap();
         let ports = vec!["COM1".to_string(), "COM2".into()];
         let mut directory = Directory::new(ports.clone(), &current).with_links(Ok(links), &current);
         assert_eq!(directory.tab, DirectoryTab::Saved);
         assert_eq!(directory.selection(), 1);
 
+        directory.handle_action(DialogAction::Right);
+        assert_eq!(directory.tab, DirectoryTab::Ports);
+        directory.handle_action(DialogAction::Left);
+        assert_eq!(directory.tab, DirectoryTab::Saved);
         directory.handle_action(DialogAction::CycleNext);
         assert_eq!(directory.tab, DirectoryTab::Ports);
         directory.handle_action(DialogAction::End);
@@ -387,6 +391,16 @@ mod tests {
             directory.handle_action(key('t')),
             OverlayResponse::Handled
         ));
+        // asked first: nothing is deleted yet
+        for delete in [
+            key('x'),
+            DialogAction::HandleKey(KeyEvent::from(KeyCode::Delete)),
+        ] {
+            assert!(matches!(
+                directory.handle_action(delete),
+                OverlayResponse::AskDeleteLink(link) if link.name == "board"
+            ));
+        }
         assert!(matches!(
             directory.handle_action(DialogAction::Confirm),
             OverlayResponse::OpenLink(config) if config == board

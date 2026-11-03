@@ -30,9 +30,11 @@ pub struct CommandLine {
     history: Vec<String>,
     history_index: Option<usize>,
     draft: String,
-    /// The names of the triggers, to complete `trigger`'s (MAX-6), and the serial ports
-    /// listed when it opened, to complete an address (MAX-168)
+    /// The names of the triggers, to complete `trigger`'s (MAX-6), this machine's saved links,
+    /// to complete `link-delete`'s and an address (MAX-185), and the serial ports listed when it
+    /// opened, to complete an address (MAX-168)
     trigger_names: Vec<String>,
+    link_names: Vec<String>,
     ports: Vec<String>,
 }
 
@@ -46,6 +48,11 @@ impl CommandLine {
         };
         command_line.refresh();
         command_line
+    }
+
+    pub fn with_link_names(mut self, link_names: Vec<String>) -> Self {
+        self.link_names = link_names;
+        self
     }
 
     /// An older line (`up`) or a newer one from the history in place of the line, among the
@@ -81,7 +88,12 @@ impl CommandLine {
     fn refresh(&mut self) {
         let before_cursor = &self.input.value()[..self.cursor_byte()];
         self.completion = if self.listed {
-            commands::complete(before_cursor, &self.trigger_names, &self.ports)
+            commands::complete(
+                before_cursor,
+                &self.trigger_names,
+                &self.link_names,
+                &self.ports,
+            )
         } else {
             Completion::default()
         };

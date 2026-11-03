@@ -162,7 +162,7 @@
 //! ```toml
 //! [ui.status_bar]
 //! # Solid pill mode indicator that lights up with background when prefix is pressed:
-//! left = "[ {mode} ](prefix?(bg=main fg=black bold):copy?(bg=magenta fg=white bold):search?(bg=good fg=black bold):(fg=main bold)) {port} | [{baud}](secondary) {framing}"
+//! left = "[ {mode} ](prefix?(bg=main fg=black bold):copy?(bg=magenta fg=white bold):search?(bg=good fg=black bold):(fg=main bold)){port} | [{baud}](secondary) {framing}"
 //!
 //! # Center scroll indicator and pan arrows with warning states:
 //! center = "[{pan_left} ](pan_left?warn:hide)[{scroll_pos}](has_scroll?muted:hide)[ {pan_right}](pan_right_alert?(bg=warn fg=black bold):(pan_right?warn:hide))"
@@ -556,9 +556,11 @@ impl Var {
             Some(value) => {
                 let _ = write!(out, "{value}");
             }
-            None if compact && self == Self::Port => {
-                out.push_str(&app.link_config().address.tag());
-            }
+            // a saved link by its name, short already (MAX-185)
+            None if compact && self == Self::Port => match app.link_name() {
+                Some(name) => out.push_str(name),
+                None => out.push_str(&app.link_config().address.tag()),
+            },
             // the first name, then how many more
             None if compact && self == Self::TriggerNames => {
                 let armed = app.armed_triggers();
@@ -590,7 +592,10 @@ impl Var {
                     Mode::Line => "LINE",
                 }
             ),
-            Self::Port => write!(out, "{}", app.link_config().address.label()),
+            Self::Port => match app.link_name() {
+                Some(name) => write!(out, "{name}"),
+                None => write!(out, "{}", app.link_config().address.label()),
+            },
             // a port's, or a replayed session's from its meta (MAX-166)
             Self::Framing if let Some(line) = app.line_settings() => {
                 write!(out, "{}", line.framing)
@@ -1481,7 +1486,7 @@ mod tests {
             render(&d.left, &a),
             [
                 span(" TERM ", "Some(Cyan)", BG, "BOLD"),
-                plain(" /dev/ttyUSB0"),
+                plain("/dev/ttyUSB0"),
                 span(" |", MUTED, BG, "NONE"),
                 plain(" "),
                 span("115200", "Some(Cyan)", BG, "NONE"),
@@ -1504,7 +1509,7 @@ mod tests {
             render(&d.left, &a),
             [
                 span(" TERM ", "Some(Cyan)", BG, "BOLD"),
-                plain(" tcp://192.168.1.50:4000"),
+                plain("tcp://192.168.1.50:4000"),
                 span(" |", MUTED, BG, "NONE"),
                 plain(" "),
                 span("raw", "Some(Cyan)", BG, "NONE"),
@@ -1530,7 +1535,7 @@ mod tests {
             render(&d.left, &a),
             [
                 span(" TERM ", "Some(Cyan)", BG, "BOLD"),
-                plain(" file://boot.raw"),
+                plain("file://boot.raw"),
                 span(" |", MUTED, BG, "NONE"),
                 plain(" "),
                 span("replay", "Some(Cyan)", BG, "NONE"),
@@ -1598,7 +1603,7 @@ mod tests {
             render(&d.left, &a),
             [
                 span(" TERM ", "Some(Cyan)", BG, "BOLD"),
-                plain(" file://boot.raw"),
+                plain("file://boot.raw"),
                 span(" |", MUTED, BG, "NONE"),
                 plain(" "),
                 span("9600", "Some(Cyan)", BG, "NONE"),
@@ -1652,7 +1657,7 @@ mod tests {
         );
         assert_eq!(
             render(&d.left, &l)[1],
-            span(" TXT", "Some(Magenta)", BG, "BOLD")
+            span("TXT ", "Some(Magenta)", BG, "BOLD")
         );
 
         l.update(Action::CopyMode(CopyModeAction::ToggleSide));
@@ -1661,7 +1666,7 @@ mod tests {
             render(&d.left, &l)[..2],
             [
                 span(" LINE ", "Some(Black)", "Some(Red)", "BOLD"),
-                span(" RAW", "Some(Red)", BG, "BOLD"),
+                span("RAW ", "Some(Red)", BG, "BOLD"),
             ]
         );
     }
@@ -2112,6 +2117,27 @@ mod tests {
         assert_eq!(text_with("{pan_left}", &a, Fit::default()), "◀ (3)");
         assert_eq!(text_with("{pan_left}", &a, compact), "◀3");
         assert_eq!(text_with("{pan_right}", &a, compact), "117▶");
+    }
+
+    /// MAX-185: a link saved for this machine shows by its name, full or squeezed; one saved
+    /// for another machine by its address.
+    /// How: the app's `/dev/ttyUSB0` saved as `esp32`, then saved for another machine only.
+    #[test]
+    fn saved_link_by_name() {
+        let compact = Fit {
+            compact: true,
+            drop_from: None,
+        };
+        let mut a = app(Mode::Terminal);
+        let saved = |hosts: &str| {
+            let text = format!("[[link]]\nname = 'esp32'\naddress = '/dev/ttyUSB0'\n{hosts}");
+            Ok(toml::from_str(&text).unwrap())
+        };
+        a.set_links(saved(""));
+        assert_eq!(text_with("{port}", &a, Fit::default()), "esp32");
+        assert_eq!(text_with("{port}", &a, compact), "esp32");
+        a.set_links(saved("hosts = ['not-this-machine-0']"));
+        assert_eq!(text_with("{port}", &a, Fit::default()), "/dev/ttyUSB0");
     }
 
     /// MAX-181: `add_cr` / `add_lf` hold while their setting is on, in both modes.

@@ -14,8 +14,9 @@ use crate::{
 
 // Re-exports
 pub use command_line::CommandLine;
-pub use directory::{Directory, DirectoryTab, LinkNameDialog};
+pub use directory::{Directory, DirectoryTab};
 pub use help::{HelpCategory, HelpDialog};
+pub use link_form::{LinkForm, LinkFormField};
 pub use menu::ActionMenu;
 pub use misc::{ErrorDialog, FilePathDialog, ScreenshotDialog};
 pub use reconfigure::{LineSettingField, LineSettingsDialog};
@@ -27,6 +28,7 @@ pub use triggers::TriggerBrowser;
 pub mod command_line;
 pub mod directory;
 pub mod help;
+pub mod link_form;
 pub mod menu;
 pub mod misc;
 pub mod reconfigure;
@@ -54,7 +56,8 @@ pub enum Overlay {
     CommandLine(Box<CommandLine>),
     Triggers(TriggerBrowser),
     Directory(Directory),
-    LinkName(LinkNameDialog),
+    LinkForm(Box<LinkForm>),
+    DeleteLink(SavedLink),
 }
 
 /// A part of a popup the mouse picks (MAX-113)
@@ -94,6 +97,10 @@ pub enum PopupTarget {
     DirectoryRefresh,
     DirectoryTest,
     DirectorySave,
+    DirectoryNew,
+    DirectoryEdit,
+    DirectoryDelete,
+    LinkFormField(LinkFormField),
     OpenDirectory,
 }
 
@@ -140,7 +147,14 @@ pub enum OverlayResponse {
     Open(Address),
     OpenLink(LinkConfig),
     NameLink(Option<Address>),
-    SaveLink(SavedLink),
+    NewLink,
+    EditLink(SavedLink),
+    AskDeleteLink(SavedLink),
+    DeleteLink(SavedLink),
+    SaveLink {
+        link: SavedLink,
+        replaces: Option<SavedLink>,
+    },
     TestPorts,
     ArmTrigger {
         name: String,
@@ -156,7 +170,7 @@ impl Overlay {
                 | Overlay::Screenshot(_)
                 | Overlay::TerminalSize(_)
                 | Overlay::CommandLine(_)
-                | Overlay::LinkName(_)
+                | Overlay::LinkForm(_)
         )
     }
 
@@ -186,7 +200,7 @@ impl Overlay {
             Overlay::CommandLine(command_line) => command_line.handle_action(action),
             Overlay::Triggers(browser) => browser.handle_action(action),
             Overlay::Directory(directory) => directory.handle_action(action),
-            Overlay::LinkName(dialog) => dialog.handle_action(action),
+            Overlay::LinkForm(form) => form.handle_action(action),
             Overlay::Error(_) => match action {
                 DialogAction::Close | DialogAction::Confirm => OverlayResponse::Close,
                 _ => OverlayResponse::Handled,
@@ -197,6 +211,17 @@ impl Overlay {
                 DialogAction::HandleKey(key) => match key.code {
                     KeyCode::Char('y' | 'Y') => OverlayResponse::RestoreSession(true),
                     KeyCode::Char('n' | 'N') => OverlayResponse::RestoreSession(false),
+                    _ => OverlayResponse::Handled,
+                },
+                _ => OverlayResponse::Handled,
+            },
+            // a saved link deleted, asked first; no goes back to the directory (MAX-185)
+            Overlay::DeleteLink(link) => match action {
+                DialogAction::Confirm => OverlayResponse::DeleteLink(link.clone()),
+                DialogAction::Close => OverlayResponse::Run(KeyBindingAction::Directory),
+                DialogAction::HandleKey(key) => match key.code {
+                    KeyCode::Char('y' | 'Y') => OverlayResponse::DeleteLink(link.clone()),
+                    KeyCode::Char('n' | 'N') => OverlayResponse::Run(KeyBindingAction::Directory),
                     _ => OverlayResponse::Handled,
                 },
                 _ => OverlayResponse::Handled,

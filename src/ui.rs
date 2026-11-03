@@ -32,11 +32,12 @@ use crate::{
         lines::{render_input_prompt, render_monitor},
         popups::{
             alert::{
-                render_confirm_quit_popup, render_detached_popup, render_disconnected_popup,
-                render_error_popup, render_no_device_popup, render_restore_popup,
+                render_confirm_quit_popup, render_delete_link_popup, render_detached_popup,
+                render_disconnected_popup, render_error_popup, render_no_device_popup,
+                render_restore_popup,
             },
             command_line::render_command_line,
-            directory::{render_directory_popup, render_link_name_popup},
+            directory::{render_directory_popup, render_link_form_popup},
             filepath::{render_filepath_popup, render_screenshot_popup},
             help::render_help_popup,
             menu::render_action_menu,
@@ -240,12 +241,12 @@ fn render_active_overlay(
             render_screenshot_popup(dialog, resolver, frame, theme, &mut targets)
         }
         Some(Overlay::DeviceDisconnected) => {
-            let address = &app.link_config().address;
-            render_disconnected_popup(address, resolver, frame, theme, &mut targets)
+            let (kind, label) = (app.link_kind(), app.link_label());
+            render_disconnected_popup(kind, label, resolver, frame, theme, &mut targets)
         }
         Some(Overlay::DeviceDetached) => {
-            let address = &app.link_config().address;
-            render_detached_popup(address, resolver, frame, theme, &mut targets)
+            let (kind, label) = (app.link_kind(), app.link_label());
+            render_detached_popup(kind, label, resolver, frame, theme, &mut targets)
         }
         Some(Overlay::NoDevice) => render_no_device_popup(resolver, frame, theme, &mut targets),
         Some(Overlay::Error(err)) => render_error_popup(err, resolver, frame, theme, &mut targets),
@@ -264,8 +265,11 @@ fn render_active_overlay(
         Some(Overlay::Directory(directory)) => {
             render_directory_popup(app, directory, frame, theme, &mut targets)
         }
-        Some(Overlay::LinkName(dialog)) => {
-            render_link_name_popup(dialog, resolver, frame, theme, &mut targets)
+        Some(Overlay::LinkForm(form)) => {
+            render_link_form_popup(form, resolver, frame, theme, &mut targets)
+        }
+        Some(Overlay::DeleteLink(link)) => {
+            render_delete_link_popup(link, resolver, frame, theme, &mut targets)
         }
         Some(Overlay::ActionMenu(menu)) => {
             render_action_menu(menu, resolver, frame, theme, &mut targets)
@@ -2613,7 +2617,8 @@ mod tests {
 
     /// MAX-185: the saved links of this machine in columns, name, address and line (`raw TCP`
     /// for TCP), the ones for another machine left out; the Saved tab's buttons; a click on
-    /// the ports' tab shows them with theirs. A `links.toml` that didn't load shows why; no
+    /// the ports' tab shows them with theirs. The tabs touch the top border, and both tabs
+    /// have the same size. A `links.toml` that didn't load shows why; no
     /// link says so.
     /// How: three links, one for another machine; the tabs clicked; then an error, then none.
     #[test]
@@ -2642,7 +2647,13 @@ mod tests {
             "{rows:#?}"
         );
         assert!(!has(&rows, "COM3"), "{rows:#?}");
-        assert!(has(&rows, "Enter Open · s Save · Esc Close"), "{rows:#?}");
+        assert!(
+            has(
+                &rows,
+                "Enter Open · n New · e Edit · s Save · x Delete · Esc Close"
+            ),
+            "{rows:#?}"
+        );
 
         click(&mut h, cell_of(&rows, "Serial ports"));
         let rows = h.draw();
@@ -2657,6 +2668,22 @@ mod tests {
         click(&mut h, cell_of(&rows, "Saved links"));
         assert!(has(&h.draw(), "esp32"));
 
+        // the tabs on the row under the top border; both tabs the same size
+        let frame = |h: &mut Harness| {
+            let rows = h.draw();
+            let top = rows.iter().position(|r| r.contains("┌ Directory")).unwrap();
+            let bottom = rows.iter().position(|r| r.contains("└ Enter")).unwrap();
+            let width = rows[top].trim().chars().count();
+            assert!(
+                rows[top + 1].contains("Saved links │ Serial ports"),
+                "{rows:#?}"
+            );
+            (top, bottom, width)
+        };
+        let saved = frame(&mut h);
+        h.app.update(Action::Overlay(DialogAction::CycleNext));
+        assert_eq!(frame(&mut h), saved);
+
         h.app
             .set_links(Err("invalid syntax in 'links.toml':\nline 2".into()));
         let rows = open(&mut h);
@@ -2669,48 +2696,84 @@ mod tests {
         assert!(has(&h.draw(), "No saved link for this machine"));
     }
 
-    /// MAX-185: the name popup shows the name typed, cursor after it, then what's saved under
-    /// it and for which machines.
-    /// How: a serial port for one machine at 9600 7E1, then a TCP link.
+    /// MAX-185: the form shows a row per field, the picked one marked with the cursor in it,
+    /// the line values between arrows; no hosts says every machine; a TCP address mutes the
+    /// line and says why; a click picks a field.
+    /// How: a new serial link, then a TCP address, then a click on the address row.
     #[test]
-    fn link_name_popup() {
-        use crate::{configs::links::SavedLink, overlays::LinkNameDialog};
-        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
-        let mut config = LinkConfig {
-            address: "/dev/ttyS9".parse().unwrap(),
-            ..LinkConfig::default()
-        };
-        config.line.baud = 9600;
-        config.line.framing = "7E1".parse().unwrap();
-        let link = SavedLink::from_config("ttyS9".into(), &config, Some("laptop"));
-        let open = |h: &mut Harness, link| {
-            let dialog = Overlay::LinkName(LinkNameDialog::new(link));
-            h.app.update(Action::App(AppAction::OpenOverlay(dialog)));
+    fn link_form_popup() {
+        use crate::overlays::LinkForm;
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 30);
+        let link = crate::configs::links::SavedLink::default();
+        let mut form = LinkForm::new(link, &crate::configs::LinkDefaults::default());
+        form.name = "esp32".to_string().into();
+        let open = |h: &mut Harness, form: &LinkForm| {
+            let overlay = Overlay::LinkForm(Box::new(form.clone()));
+            h.app.update(Action::App(AppAction::OpenOverlay(overlay)));
             h.draw()
         };
-        let rows = open(&mut h, link);
+        let rows = open(&mut h, &form);
         for row in [
-            "▶ Name    : ttyS9",
-            "  Address : /dev/ttyS9",
-            "  Line    : 9600 7E1",
-            "  For     : laptop",
-            "Enter Save · Esc Cancel",
+            "New link",
+            "▶ Name      : esp32",
+            "  For       : every machine",
+            "  Baud rate : 115200",
+            "  Data bits : < 8 >",
+            "  Parity    : < None >",
+            "  Flow ctrl : < None >",
+            "Tab Next · Enter Save · Esc Cancel",
         ] {
             assert!(has(&rows, row), "{row}: {rows:#?}");
         }
-        let (x, y) = cell_of(&rows, "▶ Name    : ttyS9");
-        assert_eq!(cursor_cell(&mut h), (x + 17, y));
+        let (x, y) = cell_of(&rows, "▶ Name      : esp32");
+        assert_eq!(cursor_cell(&mut h), (x + 19, y));
+        assert!(!has(&rows, "bridge"), "{rows:#?}");
 
-        let tcp = LinkConfig {
-            address: "tcp://10.0.0.1:4000".parse().unwrap(),
-            ..config
-        };
-        let rows = open(
-            &mut h,
-            SavedLink::from_config("r".into(), &tcp, Some("laptop")),
+        form.address = "tcp://10.0.0.1:4000".to_string().into();
+        let rows = open(&mut h, &form);
+        assert!(
+            has(&rows, "  A TCP link's bridge sets its line"),
+            "{rows:#?}"
         );
-        assert!(has(&rows, "  Line    : raw TCP"), "{rows:#?}");
-        assert!(has(&rows, "  For     : every machine"), "{rows:#?}");
+        click(&mut h, cell_of(&rows, "  Address   :"));
+        let Some(Overlay::LinkForm(form)) = h.app.overlay() else {
+            panic!("no form");
+        };
+        assert_eq!(form.field, crate::overlays::LinkFormField::Address);
+    }
+
+    /// MAX-185: the link's popups name a saved link by its name, its address after it.
+    /// How: the app's `/dev/ttyUSB0` saved as `esp32`, the detached then the lost popup.
+    #[test]
+    fn link_popups_name_a_saved_link() {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        let text = "[[link]]\nname = 'esp32'\naddress = '/dev/ttyUSB0'\n";
+        h.app.set_links(Ok(toml::from_str(text).unwrap()));
+        for overlay in [Overlay::DeviceDetached, Overlay::DeviceDisconnected] {
+            h.app.update(Action::App(AppAction::OpenOverlay(overlay)));
+            let rows = h.draw();
+            assert!(has(&rows, "Port esp32 (/dev/ttyUSB0)"), "{rows:#?}");
+            assert!(has(&rows, " LINE esp32 |"), "{rows:#?}");
+        }
+    }
+
+    /// MAX-185: the delete question names the link and its address, with its keys.
+    #[test]
+    fn delete_link_popup() {
+        let link = crate::configs::links::SavedLink {
+            name: "esp32".into(),
+            address: "/dev/ttyUSB0".into(),
+            ..Default::default()
+        };
+        let rows = popup_rows(Overlay::DeleteLink(link), &[]);
+        for row in [
+            "Delete link",
+            "Delete the link 'esp32'?",
+            "/dev/ttyUSB0",
+            "Enter Delete · Esc Cancel",
+        ] {
+            assert!(has(&rows, row), "{row}: {rows:#?}");
+        }
     }
 
     /// MAX-181: the directory warns what its test does, and shows each tested port's result
@@ -3351,11 +3414,11 @@ mod tests {
             let rows = h.draw();
             (h, rows[9].clone())
         };
-        let (_, full) = bar_at(68);
+        let (_, full) = bar_at(67);
         for text in ["/dev/ttyUSB0", "8N1", "RX:    0 | TX:    0 | "] {
             assert!(full.contains(text), "{full:?}");
         }
-        let (_, compact) = bar_at(67);
+        let (_, compact) = bar_at(66);
         assert!(compact.contains(" ttyUSB0 |") && !compact.contains("/dev/"));
         assert!(compact.contains("8N1"), "{compact:?}");
         let (_, without_4) = bar_at(50);

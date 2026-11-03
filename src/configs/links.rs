@@ -9,7 +9,7 @@ use crate::{
     configs::LinkDefaults,
     link::{
         Address, LinkConfig, LinkKind,
-        serial::{FlowControl, Parity},
+        serial::{FlowControl, LineSettings, Parity},
     },
     paths::create_parent_dirs,
 };
@@ -60,18 +60,26 @@ impl SavedLink {
                 ..Self::default()
             };
         }
-        let line = &config.line;
-        let [bits, _, stop_bits] = line.framing.compact_notation();
-        let digit = |c: char| c.to_digit(10).map(|d| d as u8);
-        Self {
+        let link = Self {
             name,
             hosts: host.map(str::to_string).into_iter().collect(),
             address,
+            ..Self::default()
+        };
+        link.with_line(&config.line)
+    }
+
+    /// All of `line`'s settings written on the link
+    pub fn with_line(self, line: &LineSettings) -> Self {
+        let [bits, _, stop_bits] = line.framing.compact_notation();
+        let digit = |c: char| c.to_digit(10).map(|d| d as u8);
+        Self {
             baud: Some(line.baud),
             bits: digit(bits),
             parity: Some(line.framing.parity),
             stop_bits: digit(stop_bits),
             flow: Some(line.flow_control),
+            ..self
         }
     }
 
@@ -151,12 +159,33 @@ impl LinksConfig {
         Ok(())
     }
 
-    /// `link` added to the file as it is now (another maxicom may have changed it), checked,
-    /// and the file written again: the links it holds then, or why nothing was saved
-    pub fn add(path: &Path, link: SavedLink) -> Result<Self, String> {
+    /// `link` added to the file as it is now (another maxicom may have changed it), or in
+    /// place of `replaces` (an edit), checked, and the file written again: the links it holds
+    /// then, or why nothing was saved
+    pub fn put(path: &Path, link: SavedLink, replaces: Option<&SavedLink>) -> Result<Self, String> {
         let mut config = Self::load(path).map_err(|err| format!("not saved: {err}"))?;
-        config.links.push(link);
+        match replaces {
+            None => config.links.push(link),
+            Some(old) => match config.links.iter().position(|saved| saved == old) {
+                Some(idx) => config.links[idx] = link,
+                None => return Err("changed in the file meanwhile: not saved".to_string()),
+            },
+        }
         config.check().map_err(|err| err.problem)?;
+        config
+            .save(path)
+            .map_err(|err| format!("could not write '{}': {err}", path.display()))?;
+        Ok(config)
+    }
+
+    /// `link` taken out of the file as it is now, the file written again: the links left, or
+    /// why nothing was deleted
+    pub fn remove(path: &Path, link: &SavedLink) -> Result<Self, String> {
+        let mut config = Self::load(path).map_err(|err| format!("not deleted: {err}"))?;
+        let Some(idx) = config.links.iter().position(|saved| saved == link) else {
+            return Err("changed in the file meanwhile: not deleted".to_string());
+        };
+        config.links.remove(idx);
         config
             .save(path)
             .map_err(|err| format!("could not write '{}': {err}", path.display()))?;
@@ -492,7 +521,8 @@ mod tests {
 
     /// MAX-185: a save reads the file again first, so a link written meanwhile stays; the
     /// file is written whole with its header, no temp file left; a name taken on this machine
-    /// saves nothing; a file that doesn't load isn't written over.
+    /// saves nothing; an edit replaces its link in place, unless it changed meanwhile; a
+    /// delete takes it out, unless it's gone; a file that doesn't load isn't written over.
     /// How: a temp folder, a link added to no file, another written in by hand, a second link
     /// added, the same name again, then a broken file.
     #[test]
@@ -504,7 +534,7 @@ mod tests {
             address: address.into(),
             ..SavedLink::default()
         };
-        let added = LinksConfig::add(&path, link("a", "COM1")).unwrap();
+        let added = LinksConfig::put(&path, link("a", "COM1"), None).unwrap();
         assert_eq!(added.links.len(), 1);
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.starts_with(HEADER), "{text}");
@@ -514,7 +544,7 @@ mod tests {
             format!("{text}\n[[link]]\nname = 'by hand'\naddress = 'COM2'\n"),
         )
         .unwrap();
-        let added = LinksConfig::add(&path, link("b", "COM3")).unwrap();
+        let added = LinksConfig::put(&path, link("b", "COM3"), None).unwrap();
         let names: Vec<_> = added.links.iter().map(|l| l.name.as_str()).collect();
         assert_eq!(names, ["a", "by hand", "b"]);
         assert_eq!(LinksConfig::load(&path).unwrap(), added);
@@ -523,12 +553,32 @@ mod tests {
             .collect();
         assert_eq!(left, ["links.toml"]);
 
-        let taken = LinksConfig::add(&path, link("a", "COM4")).unwrap_err();
+        let taken = LinksConfig::put(&path, link("a", "COM4"), None).unwrap_err();
         assert_eq!(taken, "link #1 has this name on the same machine");
         assert_eq!(LinksConfig::load(&path).unwrap(), added);
 
+        // an edit replaces the link in its place; one changed meanwhile saves nothing
+        let edited = LinksConfig::put(&path, link("by hand 2", "COM6"), Some(&added.links[1]));
+        let names: Vec<_> = (edited.unwrap().links.iter())
+            .map(|l| (l.name.clone(), l.address.clone()))
+            .collect();
+        assert_eq!(names[1], ("by hand 2".into(), "COM6".into()));
+        let gone = LinksConfig::put(&path, link("z", "COM7"), Some(&added.links[1]));
+        assert_eq!(
+            gone.unwrap_err(),
+            "changed in the file meanwhile: not saved"
+        );
+
+        // a delete takes the link out, the others kept in order; one gone already says so
+        let left = LinksConfig::remove(&path, &added.links[0]).unwrap();
+        let names: Vec<_> = left.links.iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(names, ["by hand 2", "b"]);
+        assert_eq!(LinksConfig::load(&path).unwrap(), left);
+        let again = LinksConfig::remove(&path, &added.links[0]).unwrap_err();
+        assert_eq!(again, "changed in the file meanwhile: not deleted");
+
         fs::write(&path, "[[link]]\nname = 'x'\n").unwrap();
-        let broken = LinksConfig::add(&path, link("c", "COM5")).unwrap_err();
+        let broken = LinksConfig::put(&path, link("c", "COM5"), None).unwrap_err();
         assert!(
             broken.starts_with("not saved: invalid syntax in"),
             "{broken}"

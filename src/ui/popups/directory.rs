@@ -5,20 +5,21 @@ use ratatui::{
     style::{Color, Modifier, Style},
     symbols,
     text::{Line, Span},
-    widgets::{Clear, Paragraph, Tabs},
+    widgets::{Clear, Padding, Paragraph, Tabs},
 };
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::App,
-    configs::{
-        KeyPattern, KeyResolver, LinkDefaults, ThemeConfig, keybindings::KeyBindingDialogAction,
-    },
-    link::{Address, LinkConfig, LinkKind, serial::PortState},
-    overlays::{Directory, DirectoryTab, LinkNameDialog, PopupTarget},
+    configs::{KeyPattern, KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
+    link::{LinkConfig, LinkKind, serial::PortState},
+    overlays::{Directory, DirectoryTab, LinkForm, LinkFormField, PopupTarget},
     ui::{
         common::popup_area,
-        popups::{Hints, form_area, hint_spans, key_hints, popup_block, render_scrollbar, section},
+        popups::{
+            Hints, form_area, hint_spans, key_hints, popup_block, render_scrollbar, row_area,
+            section,
+        },
     },
 };
 
@@ -58,69 +59,91 @@ pub fn render_directory_popup(
             modifiers: KeyModifiers::NONE,
         })
     };
-    let mut buttons = vec![
-        (
+    let buttons = |tab| {
+        let mut buttons = vec![(
             dialog_key(KeyBindingDialogAction::Confirm),
             PopupTarget::DirectoryOpen,
             "Open",
-        ),
-        (key('s'), PopupTarget::DirectorySave, "Save"),
-    ];
-    if on_ports {
-        buttons.push((key('t'), PopupTarget::DirectoryTest, "Test"));
-        buttons.push((key('r'), PopupTarget::DirectoryRefresh, "Refresh"));
-    }
-    buttons.push((
-        dialog_key(KeyBindingDialogAction::Close),
-        PopupTarget::Hint(KeyBindingDialogAction::Close),
-        "Close",
-    ));
-    let buttons = buttons
-        .into_iter()
-        .map(|(key, target, label)| (key.map(|key| (key, target)).into_iter().collect(), label));
-    let (line, spots) = hint_spans(buttons, theme);
+        )];
+        if tab == DirectoryTab::Saved {
+            buttons.push((key('n'), PopupTarget::DirectoryNew, "New"));
+            buttons.push((key('e'), PopupTarget::DirectoryEdit, "Edit"));
+        }
+        buttons.push((key('s'), PopupTarget::DirectorySave, "Save"));
+        if tab == DirectoryTab::Saved {
+            buttons.push((key('x'), PopupTarget::DirectoryDelete, "Delete"));
+        }
+        if tab == DirectoryTab::Ports {
+            buttons.push((key('t'), PopupTarget::DirectoryTest, "Test"));
+            buttons.push((key('r'), PopupTarget::DirectoryRefresh, "Refresh"));
+        }
+        buttons.push((
+            dialog_key(KeyBindingDialogAction::Close),
+            PopupTarget::Hint(KeyBindingDialogAction::Close),
+            "Close",
+        ));
+        let buttons = buttons.into_iter().map(|(key, target, label)| {
+            (key.map(|key| (key, target)).into_iter().collect(), label)
+        });
+        hint_spans(buttons, theme)
+    };
+    let (line, spots) = buttons(directory.tab);
     let hints = Hints {
         line,
         spots: Vec::new(),
     };
 
-    let rows = rows(app, directory, theme);
-    // nothing to list: why, one row per line
+    // the rows of each tab, or why there's none, one row per line
     let muted = Style::default().fg(theme.palette.text_muted);
-    let empty: Vec<Line> = match (&directory.links, on_ports) {
-        (_, true) => vec![Line::styled(EMPTY, muted)],
-        (Err(err), false) => (err.lines())
-            .map(|line| Line::styled(line, Style::default().fg(theme.palette.text_warn)))
-            .collect(),
-        (Ok(_), false) => vec![Line::styled(NO_LINK, muted)],
+    let list = |tab| {
+        let rows = rows(app, directory, tab, theme);
+        let empty: Vec<Line> = match (&directory.links, tab) {
+            (_, DirectoryTab::Ports) => vec![Line::styled(EMPTY, muted)],
+            (Err(err), DirectoryTab::Saved) => (err.lines())
+                .map(|line| Line::styled(line, Style::default().fg(theme.palette.text_warn)))
+                .collect(),
+            (Ok(_), DirectoryTab::Saved) => vec![Line::styled(NO_LINK, muted)],
+        };
+        (rows, empty)
     };
-    let list_width = if rows.is_empty() {
-        empty.iter().map(Line::width).max().unwrap_or(0)
-    } else {
-        (rows.iter())
-            .map(|(text, _, note)| {
-                2 + text.width() + note.as_ref().map_or(0, |(n, _)| 2 + n.width())
-            })
-            .max()
-            .unwrap_or(0)
+    // the columns and rows a tab takes: its list under its header, its note, its buttons
+    let size = |tab| {
+        let (rows, empty) = list(tab);
+        let list_width = if rows.is_empty() {
+            empty.iter().map(Line::width).max().unwrap_or(0)
+        } else {
+            (rows.iter())
+                .map(|(text, _, note)| {
+                    2 + text.width() + note.as_ref().map_or(0, |(n, _)| 2 + n.width())
+                })
+                .max()
+                .unwrap_or(0)
+        };
+        let note_width = if tab == DirectoryTab::Ports {
+            TEST_NOTE.width()
+        } else {
+            0
+        };
+        let width = list_width.max(note_width).max(buttons(tab).0.width());
+        let listed = if rows.is_empty() {
+            empty.len()
+        } else {
+            rows.len()
+        };
+        (width as u16, listed.max(1) as u16 + header(tab))
     };
     let tab_widths: Vec<u16> = TABS.iter().map(|(_, t)| t.width() as u16 + 2).collect();
     let tabs_width = tab_widths.iter().sum::<u16>() + tab_widths.len() as u16 - 1;
-    let note_width = if on_ports { TEST_NOTE.width() } else { 0 };
-    let width = (list_width.max(note_width) as u16)
-        .max(tabs_width)
-        .max(hints.line.width() as u16);
-    // the tabs and a blank row on top, the ports' note between; the borders and the padding
-    let header = if on_ports { 3 } else { 2 };
-    let listed = if rows.is_empty() {
-        empty.len()
-    } else {
-        rows.len()
-    };
-    let height = listed.max(1) as u16 + header + 4;
+    // the larger of both tabs, so switching keeps the size
+    let (saved, ports) = (size(DirectoryTab::Saved), size(DirectoryTab::Ports));
+    let width = saved.0.max(ports.0).max(tabs_width);
+    // the borders and the padding, none on top: the tabs touch the top border
+    let height = saved.1.max(ports.1) + 3;
     let area = popup_area(frame.area(), width + 4, height);
+    let (rows, empty) = list(directory.tab);
+    let header = header(directory.tab);
 
-    let block = popup_block("Directory", &hints, theme);
+    let block = popup_block("Directory", &hints, theme).padding(Padding::new(1, 1, 0, 1));
     frame.render_widget(Clear, area);
     let mut inner = block.inner(area);
     frame.render_widget(block, area);
@@ -192,21 +215,30 @@ pub fn render_directory_popup(
 /// The text after a row and its color
 type Note = (String, Color);
 
-/// The tab's rows: the text, whether it's the link in use, the note after it. A saved link's
+/// The rows above a tab's list: the tabs and a blank row, the ports' note between
+fn header(tab: DirectoryTab) -> u16 {
+    match tab {
+        DirectoryTab::Saved => 2,
+        DirectoryTab::Ports => 3,
+    }
+}
+
+/// A tab's rows: the text, whether it's the link in use, the note after it. A saved link's
 /// columns are padded to the widest of each
 fn rows(
     app: &App,
     directory: &Directory,
+    tab: DirectoryTab,
     theme: &ThemeConfig,
 ) -> Vec<(String, bool, Option<Note>)> {
-    let entries: Vec<(String, String)> = match directory.tab {
+    let entries: Vec<(String, String)> = match tab {
         DirectoryTab::Ports => (directory.ports.iter())
             .map(|port| (port.clone(), port.clone()))
             .collect(),
         DirectoryTab::Saved => {
             let links = directory.links.as_deref().unwrap_or_default();
             let columns: Vec<[String; 3]> = (links.iter())
-                .map(|(name, config)| [name.clone(), config.address.to_string(), line(config)])
+                .map(|(link, config)| [link.name.clone(), config.address.to_string(), line(config)])
                 .collect();
             let width = |i: usize| columns.iter().map(|c| c[i].width()).max().unwrap_or(0);
             let (name_width, address_width) = (width(0), width(1));
@@ -248,62 +280,102 @@ fn line(config: &LinkConfig) -> String {
     }
 }
 
-/// The name a link is saved under (MAX-185): the name typed, what's saved under it, for which
-/// machines
-pub fn render_link_name_popup(
-    dialog: &LinkNameDialog,
+/// The form of a saved link (MAX-185): a row per field, the picked one marked, the cursor in
+/// it when it's typed; the line's muted for an address that has none, saying why. A click on a
+/// row picks its field
+pub fn render_link_form_popup(
+    form: &LinkForm,
     resolver: &KeyResolver,
     frame: &mut Frame,
     theme: &ThemeConfig,
     targets: &mut Vec<(Rect, PopupTarget)>,
 ) -> Rect {
-    let style = Style::default()
+    let picked = Style::default()
         .fg(theme.palette.secondary)
         .add_modifier(Modifier::BOLD);
-    let link = &dialog.link;
-    // a serial link's fields are all set, from the link it saves
-    let line_text = (link.address.parse::<Address>()).map_or_else(
-        |_| String::new(),
-        |address| {
-            let line = link.over(&LinkDefaults::default()).line();
-            self::line(&LinkConfig { address, line })
-        },
-    );
-    let hosts = if link.hosts.is_empty() {
-        "every machine".to_string()
-    } else {
-        link.hosts.join(", ")
+    let muted = Style::default().fg(theme.palette.text_muted);
+    let line = &form.line.line;
+    let [bits, _, stop_bits] = line.framing.compact_notation();
+    let has_line = form.has_line();
+    let value = |field| match field {
+        LinkFormField::Name => form.name.value().to_string(),
+        LinkFormField::Address => form.address.value().to_string(),
+        LinkFormField::Hosts => form.hosts.value().to_string(),
+        LinkFormField::Baud => form.baud.value().to_string(),
+        LinkFormField::Bits => format!("< {bits} >"),
+        LinkFormField::Parity => format!("< {:?} >", line.framing.parity),
+        LinkFormField::StopBits => format!("< {stop_bits} >"),
+        LinkFormField::Flow => format!("< {:?} >", line.flow_control),
     };
-    let text = vec![
-        section("Save link", theme),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("▶ ", style),
-            Span::raw("Name    : "),
-            Span::styled(dialog.input.value(), style),
-        ]),
-        Line::from(format!("  Address : {}", link.address)),
-        Line::from(format!("  Line    : {line_text}")),
-        Line::from(format!("  For     : {hosts}")),
-    ];
+    let label = |field| match field {
+        LinkFormField::Name => "Name",
+        LinkFormField::Address => "Address",
+        LinkFormField::Hosts => "For",
+        LinkFormField::Baud => "Baud rate",
+        LinkFormField::Bits => "Data bits",
+        LinkFormField::Parity => "Parity",
+        LinkFormField::StopBits => "Stop bits",
+        LinkFormField::Flow => "Flow ctrl",
+    };
+    let title = if form.editing.is_some() {
+        "Edit link"
+    } else {
+        "New link"
+    };
+    let mut text = vec![section(title, theme), Line::from("")];
+    for field in LinkFormField::ALL {
+        let is_picked = form.field == field;
+        let style = match () {
+            _ if field.is_line() && !has_line => muted,
+            _ if is_picked => picked,
+            _ => Style::default().fg(theme.palette.text),
+        };
+        let pointer = if is_picked { "▶ " } else { "  " };
+        let mut spans = vec![
+            Span::styled(pointer, picked),
+            Span::styled(
+                format!("{:<10}: ", label(field)),
+                Style::default().fg(theme.palette.ternary),
+            ),
+            Span::styled(value(field), style),
+        ];
+        if field == LinkFormField::Hosts && form.hosts.value().trim().is_empty() {
+            spans.push(Span::styled("every machine", muted));
+        }
+        text.push(Line::from(spans));
+    }
+    if !has_line {
+        text.push(Line::from(""));
+        text.push(Line::styled("  A TCP link's bridge sets its line", muted));
+    }
     let hints = key_hints(
         resolver,
         true,
         &[
+            (&[KeyBindingDialogAction::CycleNext], "Next"),
             (&[KeyBindingDialogAction::Confirm], "Save"),
             (&[KeyBindingDialogAction::Close], "Cancel"),
         ],
         theme,
     );
-    let block = popup_block("Save Link", &hints, theme);
+    let block = popup_block("Saved Link", &hints, theme);
     let area = form_area(frame.area(), 64, text.len());
     frame.render_widget(Clear, area);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     frame.render_widget(Paragraph::new(text), inner);
     hints.push_block_targets(area, targets);
-    let cursor_x = inner.x + 2 + 10 + dialog.input.visual_cursor() as u16;
-    frame.set_cursor_position((cursor_x, inner.y + 2));
+    for (y, field) in LinkFormField::ALL.into_iter().enumerate() {
+        targets.push((row_area(inner, 2 + y), PopupTarget::LinkFormField(field)));
+    }
+    if let Some(input) = form.input() {
+        let y = LinkFormField::ALL
+            .iter()
+            .position(|f| *f == form.field)
+            .unwrap_or(0);
+        let x = inner.x + 2 + 12 + input.visual_cursor() as u16;
+        frame.set_cursor_position((x, inner.y + 2 + y as u16));
+    }
     area
 }
 

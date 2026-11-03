@@ -1,7 +1,7 @@
 use std::{env, path::PathBuf, time::Duration};
 
 use crate::{
-    configs::{LinkDefaults, TextEncoding},
+    configs::{LinkDefaults, TextEncoding, links::SavedLink},
     link::{
         Address, LinkKind,
         serial::{CharSize, FlowControl, LineSettings, Parity, StopBits},
@@ -10,7 +10,7 @@ use crate::{
 
 /// `address` is the device to open, a replay for `--replay` (MAX-168), the settings' when
 /// none is given and none when they have none (MAX-181); `line` its line settings, the options
-/// over the settings'. `replay_delay` is
+/// over the settings' or a saved link's (MAX-185). `replay_delay` is
 /// `--delay`, for a replay only. `restore` is `--restore` / `--no-restore`, the last one given,
 /// over `sessions.restore`. `capture_file`, `display_hex` and `encoding` are minicom's `-C`,
 /// `-H` and `-R`, over the settings (MAX-181)
@@ -55,9 +55,38 @@ impl std::fmt::Display for ParseError {
     }
 }
 
-/// The options over `defaults`, the `[link]` settings (MAX-181)
-pub fn parse_args(defaults: &LinkDefaults) -> Result<ParseOutcome, ParseError> {
-    parse_args_from(env::args().skip(1), defaults) // skip program name
+/// The options over `defaults`, the `[link]` settings (MAX-181); `links` this machine's saved
+/// links, which a device name given or `[link]`'s may be (MAX-185)
+pub fn parse_args(
+    defaults: &LinkDefaults,
+    links: &[SavedLink],
+) -> Result<ParseOutcome, ParseError> {
+    parse_args_from(env::args().skip(1), defaults, links) // skip program name
+}
+
+/// The link given: an address (`--device`, `--tcp`, `--replay`), or a word that is a saved
+/// link's name first, else a device (MAX-185)
+enum Given {
+    Address(Address),
+    Word(String),
+}
+
+/// `word` as a saved link's name, its address and line over `[link]`'s, else as a device with
+/// `[link]`'s line; `what` before a device that doesn't parse
+fn by_name(
+    word: &str,
+    what: &str,
+    defaults: &LinkDefaults,
+    links: &[SavedLink],
+) -> Result<(Address, LineSettings), ParseError> {
+    let bad = |err| ParseError::BadFormat(format!("{what}{err}"));
+    match links.iter().find(|link| link.name == word) {
+        Some(link) => {
+            let address = link.address.parse().map_err(bad)?;
+            Ok((address, link.over(defaults).line()))
+        }
+        None => Ok((word.parse().map_err(bad)?, defaults.line())),
+    }
 }
 
 /// The options that take a value, short then long
@@ -102,10 +131,16 @@ fn split_values(args: impl IntoIterator<Item = String>) -> Vec<String> {
 fn parse_args_from(
     args: impl IntoIterator<Item = String>,
     defaults: &LinkDefaults,
+    links: &[SavedLink],
 ) -> Result<ParseOutcome, ParseError> {
     let mut args = split_values(args).into_iter();
-    let mut address: Option<Address> = None;
-    let mut line = defaults.line();
+    let mut given: Option<Given> = None;
+    // the line options, over the line of the link given once it's known
+    let mut baud = None;
+    let mut char_size = None;
+    let mut stop_bits = None;
+    let mut parity = None;
+    let mut flow = None;
     let mut replay_delay = Duration::ZERO;
     let mut restore: Option<bool> = None;
     let mut capture_file: Option<PathBuf> = None;
@@ -120,11 +155,11 @@ fn parse_args_from(
                 let path = args
                     .next()
                     .ok_or(ParseError::MissingValue("Missing file path for --replay"))?;
-                address = Some(
+                given = Some(Given::Address(
                     format!("file://{path}")
                         .parse()
                         .map_err(ParseError::BadFormat)?,
-                );
+                ));
             }
             "--delay" => {
                 let val = args.next().ok_or(ParseError::MissingValue(
@@ -136,43 +171,47 @@ fn parse_args_from(
                     .map_err(|_| ParseError::BadFormat(format!("Invalid delay '{val}'")))?;
             }
             "--device" | "-D" => {
+                // a device, never a saved name: the way to a path that is also one
                 let device = args.next().ok_or(ParseError::MissingValue("--device"))?;
-                address = Some(device.parse().map_err(ParseError::BadFormat)?);
+                given = Some(Given::Address(
+                    device.parse().map_err(ParseError::BadFormat)?,
+                ));
             }
             "--tcp" => {
                 let addr = args.next().ok_or(ParseError::MissingValue("--tcp"))?;
-                address = Some(
+                given = Some(Given::Address(
                     format!("tcp://{addr}")
                         .parse()
                         .map_err(ParseError::BadFormat)?,
-                );
+                ));
             }
             "--baudrate" | "-b" => {
                 line_options.push("--baudrate");
                 let val = args.next().ok_or(ParseError::MissingValue("--baudrate"))?;
-                line.baud = val
-                    .parse::<u32>()
-                    .map_err(|_| ParseError::BadFormat(format!("Invalid baud rate '{val}'")))?;
+                baud =
+                    Some(val.parse::<u32>().map_err(|_| {
+                        ParseError::BadFormat(format!("Invalid baud rate '{val}'"))
+                    })?);
             }
             "--bits" => {
                 line_options.push("--bits");
                 let val = args.next().ok_or(ParseError::MissingValue("--bits"))?;
-                line.framing.char_size = val.parse::<CharSize>().map_err(ParseError::BadFormat)?;
+                char_size = Some(val.parse::<CharSize>().map_err(ParseError::BadFormat)?);
             }
             "--stop-bits" => {
                 line_options.push("--stop-bits");
                 let val = args.next().ok_or(ParseError::MissingValue("--stop-bits"))?;
-                line.framing.stop_bits = val.parse::<StopBits>().map_err(ParseError::BadFormat)?;
+                stop_bits = Some(val.parse::<StopBits>().map_err(ParseError::BadFormat)?);
             }
             "--parity" => {
                 line_options.push("--parity");
                 let val = args.next().ok_or(ParseError::MissingValue("--parity"))?;
-                line.framing.parity = val.parse::<Parity>().map_err(ParseError::BadFormat)?;
+                parity = Some(val.parse::<Parity>().map_err(ParseError::BadFormat)?);
             }
             "--flow" => {
                 line_options.push("--flow");
                 let val = args.next().ok_or(ParseError::MissingValue("--flow"))?;
-                line.flow_control = val.parse::<FlowControl>().map_err(ParseError::BadFormat)?;
+                flow = Some(val.parse::<FlowControl>().map_err(ParseError::BadFormat)?);
             }
             "--capturefile" | "-C" => {
                 let path = args
@@ -194,10 +233,9 @@ fn parse_args_from(
             }
             "--version" | "-v" => return Ok(ParseOutcome::Version),
             "--cache-dir" => return Ok(ParseOutcome::CacheDir),
-            // the device without `--device`: `maxicom /dev/ttyUSB0`, `maxicom tcp://host:port`
-            device if !device.starts_with('-') => {
-                address = Some(device.parse().map_err(ParseError::BadFormat)?);
-            }
+            // a saved link's name, or the device without `--device`: `maxicom esp32`,
+            // `maxicom /dev/ttyUSB0`, `maxicom tcp://host:port`
+            word if !word.starts_with('-') => given = Some(Given::Word(word.to_string())),
 
             unknown => {
                 return Err(ParseError::UnknownArgument(unknown.to_string()));
@@ -205,16 +243,24 @@ fn parse_args_from(
         }
     }
 
-    // the device given, else the settings' one, if any
-    let address = match (address, defaults.device()) {
-        (Some(address), _) => Some(address),
-        (None, Some(device)) => Some(
-            device
-                .parse()
-                .map_err(|err| ParseError::BadFormat(format!("link.device: {err}")))?,
-        ),
-        (None, None) => None,
+    // the link given, else the settings' one, if any; a name a saved link's first
+    let (address, mut line) = match (given, defaults.device()) {
+        (Some(Given::Address(address)), _) => (Some(address), defaults.line()),
+        (Some(Given::Word(word)), _) => {
+            let (address, line) = by_name(&word, "", defaults, links)?;
+            (Some(address), line)
+        }
+        (None, Some(device)) => {
+            let (address, line) = by_name(device, "link.device: ", defaults, links)?;
+            (Some(address), line)
+        }
+        (None, None) => (None, defaults.line()),
     };
+    line.baud = baud.unwrap_or(line.baud);
+    line.framing.char_size = char_size.unwrap_or(line.framing.char_size);
+    line.framing.stop_bits = stop_bits.unwrap_or(line.framing.stop_bits);
+    line.framing.parity = parity.unwrap_or(line.framing.parity);
+    line.flow_control = flow.unwrap_or(line.flow_control);
     if address
         .as_ref()
         .is_some_and(|address| address.kind() == LinkKind::Tcp)
@@ -245,15 +291,17 @@ pub fn print_help() {
 maxicom — serial terminal
 
 Usage:
-  maxicom [OPTIONS] [DEVICE]
+  maxicom [OPTIONS] [LINK | DEVICE]
 
+  LINK                     A saved link's name (links.toml), opened with its line
+                           settings, the options over them
   DEVICE                   A serial port (/dev/ttyUSB0, COM3), a TCP link
                            (tcp://192.168.1.50:4000) or a file to replay
                            (file://boot.raw), same as --device
 
 Options:
-  -D, --device <DEVICE>    Device to open [default: [link] device in config.toml,
-                           else the directory of the serial ports]
+  -D, --device <DEVICE>    Device to open, never a saved name [default: [link]
+                           device in config.toml, else the directory]
       --tcp <HOST:PORT>    A device over TCP, same as tcp://HOST:PORT
 
   Line settings, for a serial port (a TCP link's bridge sets them), the defaults
@@ -301,7 +349,7 @@ mod tests {
             device: "/dev/ttyUSB0".to_string(),
             ..LinkDefaults::default()
         };
-        parse_args_from(args.iter().map(|a| a.to_string()), &defaults)
+        parse_args_from(args.iter().map(|a| a.to_string()), &defaults, &[])
     }
 
     fn restore_of(args: &[&str]) -> Option<bool> {
@@ -403,6 +451,7 @@ mod tests {
         let parse_over = |defaults: &LinkDefaults, args: &[&str]| match parse_args_from(
             args.iter().map(|a| a.to_string()),
             defaults,
+            &[],
         ) {
             Ok(ParseOutcome::Run { address, line, .. }) => Ok((
                 address.map(|address| address.to_string()),
@@ -446,6 +495,52 @@ mod tests {
         };
         let err = parse_over(&bad, &[]).unwrap_err();
         assert!(err.starts_with("link.device: "), "{err}");
+    }
+
+    /// MAX-185: a word given, or `[link]`'s device, is a saved link's name first: its address
+    /// with its line settings, the line options over them, put before or after it; anything
+    /// else is a device. `-D` is always a device. A saved TCP link refuses the line options.
+    /// How: a serial link at 9600 7E1 and a TCP one, given by name with and without options,
+    /// through `-D`, then as `[link]`'s device.
+    #[test]
+    fn saved_links_by_name() {
+        let links: Vec<SavedLink> = toml::from_str::<crate::configs::LinksConfig>(
+            "[[link]]\nname = 'esp32'\naddress = '/dev/ttyUSB1'\nbaud = 9600\nbits = 7\nparity = 'even'\n\
+             [[link]]\nname = 'router'\naddress = 'tcp://10.0.0.1:4000'\n",
+        )
+        .unwrap()
+        .links;
+        let run = |defaults: &LinkDefaults, args: &[&str]| match parse_args_from(
+            args.iter().map(|a| a.to_string()),
+            defaults,
+            &links,
+        ) {
+            Ok(ParseOutcome::Run { address, line, .. }) => Ok((
+                address.map(|address| address.to_string()),
+                line.baud,
+                line.framing.to_string(),
+            )),
+            Ok(other) => panic!("not a run: {other:?}"),
+            Err(err) => Err(err.to_string()),
+        };
+        let link = |device: &str, baud, framing: &str| {
+            Ok((Some(device.to_string()), baud, framing.to_string()))
+        };
+        let none = LinkDefaults::default();
+        assert_eq!(run(&none, &["esp32"]), link("/dev/ttyUSB1", 9600, "7E1"));
+        assert_eq!(
+            run(&none, &["-b", "57600", "esp32", "--bits", "8"]),
+            link("/dev/ttyUSB1", 57600, "8E1")
+        );
+        assert_eq!(run(&none, &["-D", "esp32"]), link("esp32", 115_200, "8N1"));
+        assert_eq!(run(&none, &["COM3"]), link("COM3", 115_200, "8N1"));
+        assert!(run(&none, &["router"]).is_ok());
+        assert!(run(&none, &["router", "-b", "9600"]).is_err());
+        let by_device = LinkDefaults {
+            device: "esp32".to_string(),
+            ..LinkDefaults::default()
+        };
+        assert_eq!(run(&by_device, &[]), link("/dev/ttyUSB1", 9600, "7E1"));
     }
 
     /// MAX-181: minicom's getopt forms, the value glued to its option (`--baudrate=9600`,

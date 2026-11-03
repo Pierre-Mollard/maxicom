@@ -9,8 +9,10 @@ use ratatui::{
 
 use crate::{
     capture::Session,
-    configs::{KeyPattern, KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
-    link::{Address, LinkKind},
+    configs::{
+        KeyPattern, KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction, links::SavedLink,
+    },
+    link::LinkKind,
     overlays::{ErrorDialog, PopupTarget},
     ui::{
         common::popup_area,
@@ -77,7 +79,7 @@ impl LinkAlert {
         }
     }
 
-    fn lines(self, address: &Address, theme: &ThemeConfig) -> Vec<Line<'static>> {
+    fn lines(self, label: String, theme: &ThemeConfig) -> Vec<Line<'static>> {
         vec![
             Line::from(Span::styled(
                 self.headline,
@@ -88,10 +90,7 @@ impl LinkAlert {
             Line::from(""),
             Line::from(vec![
                 Span::raw(self.before),
-                Span::styled(
-                    address.to_string(),
-                    Style::default().fg(theme.palette.secondary),
-                ),
+                Span::styled(label, Style::default().fg(theme.palette.secondary)),
                 Span::raw(self.after),
             ]),
             Line::from(self.next),
@@ -100,14 +99,16 @@ impl LinkAlert {
     }
 }
 
+/// The link's popups name it as the notices do: `label`, a saved one by its name (MAX-185)
 pub fn render_disconnected_popup(
-    address: &Address,
+    kind: LinkKind,
+    label: String,
     resolver: &KeyResolver,
     frame: &mut Frame,
     theme: &ThemeConfig,
     targets: &mut Vec<(Rect, PopupTarget)>,
 ) -> Rect {
-    let text = LinkAlert::disconnected(address.kind()).lines(address, theme);
+    let text = LinkAlert::disconnected(kind).lines(label, theme);
     let hints = link_hints(resolver, None, theme);
 
     let tone = theme.palette.text_warn;
@@ -115,13 +116,14 @@ pub fn render_disconnected_popup(
 }
 
 pub fn render_detached_popup(
-    address: &Address,
+    kind: LinkKind,
+    label: String,
     resolver: &KeyResolver,
     frame: &mut Frame,
     theme: &ThemeConfig,
     targets: &mut Vec<(Rect, PopupTarget)>,
 ) -> Rect {
-    let text = LinkAlert::detached(address.kind()).lines(address, theme);
+    let text = LinkAlert::detached(kind).lines(label, theme);
     let hints = link_hints(resolver, Some("Reattach"), theme);
 
     let tone = theme.palette.text_warn;
@@ -268,6 +270,40 @@ pub fn render_confirm_quit_popup(
 
     let tone = theme.palette.main;
     render_alert("Quit", tone, text, hints, frame, theme, targets)
+}
+
+/// Whether to delete a saved link (MAX-185): its name and address, yes or no
+pub fn render_delete_link_popup(
+    link: &SavedLink,
+    resolver: &KeyResolver,
+    frame: &mut Frame,
+    theme: &ThemeConfig,
+    targets: &mut Vec<(Rect, PopupTarget)>,
+) -> Rect {
+    let text = vec![
+        Line::from(Span::styled(
+            format!("Delete the link '{}'?", link.name),
+            Style::default()
+                .fg(theme.palette.text)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            link.address.clone(),
+            Style::default().fg(theme.palette.text_muted),
+        )),
+        Line::from(""),
+    ];
+    let hints = key_hints(
+        resolver,
+        false,
+        &[
+            (&[KeyBindingDialogAction::Confirm], "Delete"),
+            (&[KeyBindingDialogAction::Close], "Cancel"),
+        ],
+        theme,
+    );
+    let tone = theme.palette.text_warn;
+    render_alert("Delete link", tone, text, hints, frame, theme, targets)
 }
 
 /// The startup question when a past session on this device can be restored (MAX-148)

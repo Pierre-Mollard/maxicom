@@ -9,10 +9,10 @@ use std::{
 use crate::{
     app::{App, mash::Mash, transfer::FileTransfer},
     commands::ArgValue,
-    configs::{Mode, TextEncoding},
+    configs::{Mode, TextEncoding, links::SavedLink},
     inputs::{Action, AppAction, SearchModeAction},
     link::{
-        Address, LinkKind,
+        Address, LinkConfig, LinkKind,
         replay::ReplayControl,
         serial::{FlowControl, Framing, LineControl, LineSettings},
     },
@@ -174,22 +174,65 @@ fn link_open(app: &App) -> Result<(), String> {
     }
 }
 
-/// `open <port | tcp://host:port | file://path>`: the link switches to it, its settings kept;
-/// the rest of the line waits for it to be open. A `file://` is a replay, without delay
+/// `open <name | port | tcp://host:port | file://path>`: the link switches to it; the rest of
+/// the line waits for it to be open. A saved link's name first (MAX-185), which opens with its
+/// line settings; a port keeps the ones in use. A `file://` is a replay, without delay
 pub fn open(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     let [ArgValue::Address(address)] = args else {
         unreachable!("open takes an address");
     };
+    let saved = match address {
+        Address::Serial(name) => app.saved_link(name).and_then(|link| app.resolve(link)),
+        _ => None,
+    };
+    let (address, line) = match saved {
+        Some(config) => (config.address, Some(config.line)),
+        None => (address.clone(), None),
+    };
     match address {
         Address::Replay(path) => Ok(Action::App(AppAction::Replay {
-            path: expand_home(path),
+            path: expand_home(&path),
             delay: Duration::ZERO,
         })),
         _ if app.link_kind() == LinkKind::Replay => {
             Err("a replay can't open a link (replay-stop ends it)".to_string())
         }
-        address => Ok(Action::App(AppAction::Open(address.clone()))),
+        // a TCP link has no line: its bridge sets it
+        address
+            if let Some(line) = line
+                && address.kind() != LinkKind::Tcp =>
+        {
+            Ok(Action::App(AppAction::OpenLink(LinkConfig {
+                address,
+                line,
+            })))
+        }
+        address => Ok(Action::App(AppAction::Open(address))),
     }
+}
+
+/// `link-save [name]` (MAX-185): the link in use saved to `links.toml`, under `name` or its
+/// address's; refused as the directory's `s` is
+pub fn link_save(app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let link = app.link_to_save(None)?;
+    let link = match args {
+        [ArgValue::String(name)] => SavedLink {
+            name: name.clone(),
+            ..link
+        },
+        _ => link,
+    };
+    Ok(Action::App(AppAction::SaveLink(link)))
+}
+
+/// `link-delete <name>` (MAX-185): this machine's saved link of that name taken out of
+/// `links.toml`
+pub fn link_delete(app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let [ArgValue::String(name)] = args else {
+        unreachable!("link-delete takes a name");
+    };
+    let link = (app.saved_link(name)).ok_or_else(|| format!("no saved link '{name}'"))?;
+    Ok(Action::App(AppAction::DeleteLink(link.clone())))
 }
 
 /// `replay <path> [delay-ms]`: the file's bytes in place of the link's, a buffer every delay

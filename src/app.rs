@@ -882,9 +882,25 @@ impl App {
                             self.name_link(address);
                             UpdateEffect::None
                         }
-                        OverlayResponse::SaveLink(link) => {
+                        OverlayResponse::SaveLink { link, replaces } => {
                             self.overlay = Some(overlay);
-                            self.save_link(link);
+                            self.save_link(link, replaces);
+                            UpdateEffect::None
+                        }
+                        OverlayResponse::NewLink => {
+                            self.open_link_form(None);
+                            UpdateEffect::None
+                        }
+                        OverlayResponse::EditLink(link) => {
+                            self.open_link_form(Some(link));
+                            UpdateEffect::None
+                        }
+                        OverlayResponse::AskDeleteLink(link) => {
+                            self.open_overlay(Overlay::DeleteLink(link));
+                            UpdateEffect::None
+                        }
+                        OverlayResponse::DeleteLink(link) => {
+                            self.delete_link(&link);
                             UpdateEffect::None
                         }
                         OverlayResponse::RestoreSession(yes) => {
@@ -1335,6 +1351,20 @@ impl App {
             }
             AppAction::LineControl(control) => UpdateEffect::LineControl(control),
             AppAction::Open(port) => UpdateEffect::Open(port),
+            AppAction::OpenLink(config) => UpdateEffect::OpenLink(config),
+            // `link-save` and `link-delete` (MAX-185): a refusal stops the command line
+            AppAction::SaveLink(link) => {
+                if let Err(err) = self.store_link(&link, None) {
+                    self.fail_commands(format!("link-save: {err}"));
+                }
+                UpdateEffect::None
+            }
+            AppAction::DeleteLink(link) => {
+                if let Err(err) = self.remove_link(&link) {
+                    self.fail_commands(format!("link-delete: {err}"));
+                }
+                UpdateEffect::None
+            }
             AppAction::Replay { path, delay } => UpdateEffect::Replay {
                 path,
                 delay,
@@ -1940,6 +1970,79 @@ pub mod tests {
         app.set_links(Ok(LinksConfig::default()));
         assert_eq!(app.notifications.active_toasts().len(), count);
         assert!(app.links.is_ok());
+    }
+
+    /// MAX-185: `open` takes a saved link's name first, a serial one opening with its line
+    /// settings, a TCP one as an address; a word that isn't one is a device. `link-save` saves
+    /// the link in use, under the name given, refused once its address is saved; `link-delete`
+    /// deletes a saved link by name, refused for a name that isn't one.
+    /// How: two links in a temp `links.toml`, each command through the command line, the
+    /// effects and the notices read.
+    #[test]
+    fn saved_links_on_the_command_line() {
+        let dir = std::env::temp_dir().join(format!("maxicom_link_cmds_{}", std::process::id()));
+        let path = dir.join("links.toml");
+        std::fs::create_dir_all(&dir).unwrap();
+        let text = "[[link]]\nname = 'esp32'\naddress = '/dev/ttyUSB9'\nbaud = 9600\n\
+                    [[link]]\nname = 'router console'\naddress = 'tcp://10.0.0.1:4000'\n";
+        std::fs::write(&path, text).unwrap();
+        let mut app = app();
+        app.settings.links_path = Some(path.clone());
+        app.set_links(Ok(LinksConfig::load(&path).unwrap()));
+        let run_line = |app: &mut App, line: &str| {
+            app.update(KeyBindingAction::CommandLine.to_action(app));
+            app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
+            app.update(Action::Overlay(DialogAction::Confirm));
+            let mut effects = Vec::new();
+            while let Some(action) = app.next_command_action(Instant::now()) {
+                effects.push(app.update(action));
+            }
+            effects
+        };
+        let last_toast = |app: &App| {
+            let toasts = app.notifications.active_toasts();
+            toasts.last().map(|toast| toast.message.clone()).unwrap()
+        };
+        let names = |path: &std::path::Path| -> Vec<String> {
+            (LinksConfig::load(path).unwrap().links.into_iter())
+                .map(|link| link.name)
+                .collect()
+        };
+
+        match &run_line(&mut app, "open esp32")[..] {
+            [UpdateEffect::OpenLink(config)] => {
+                assert_eq!(config.address.to_string(), "/dev/ttyUSB9");
+                assert_eq!(config.line.baud, 9600);
+            }
+            _ => panic!("esp32 not opened with its line"),
+        }
+        app.drop_pending_commands();
+        let tcp = "tcp://10.0.0.1:4000".parse::<Address>().unwrap();
+        assert!(matches!(
+            &run_line(&mut app, "open router\\ console")[..],
+            [UpdateEffect::Open(address)] if *address == tcp
+        ));
+        app.drop_pending_commands();
+        assert!(matches!(
+            &run_line(&mut app, "open COM3")[..],
+            [UpdateEffect::Open(address)] if address.to_string() == "COM3"
+        ));
+        app.drop_pending_commands();
+
+        run_line(&mut app, "link-save board");
+        assert_eq!(last_toast(&app), "Saved link 'board'");
+        assert_eq!(names(&path), ["esp32", "router console", "board"]);
+        run_line(&mut app, "link-save");
+        assert_eq!(
+            last_toast(&app),
+            "link-save: /dev/ttyUSB0 is saved already, as 'board'"
+        );
+        run_line(&mut app, "link-delete esp32");
+        assert_eq!(last_toast(&app), "Deleted link 'esp32'");
+        assert_eq!(names(&path), ["router console", "board"]);
+        run_line(&mut app, "link-delete nope");
+        assert_eq!(last_toast(&app), "link-delete: no saved link 'nope'");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// MAX-12: `send` and `send-hex` transmit their bytes, in the chain's order. A command that

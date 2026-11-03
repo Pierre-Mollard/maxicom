@@ -29,6 +29,7 @@ pub enum ArgKind {
     Hex,
     Bytes,
     Trigger,
+    Link,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -320,7 +321,23 @@ pub static COMMANDS: &[CommandSpec] = {
             "open",
             &[arg("address", ArgKind::Address)],
             build::open,
-            "Switch to a port, tcp://host:port or a replay of file://path, its settings kept",
+            "Switch to a saved link, a port (its settings kept), tcp://host:port or file://path",
+        ),
+        CommandSpec::build(
+            "link-save",
+            &[ArgSpec {
+                name: "name",
+                kind: ArgKind::String,
+                optional: true,
+            }],
+            build::link_save,
+            "Save the link in use to links.toml, named after its address when no name is given",
+        ),
+        CommandSpec::build(
+            "link-delete",
+            &[arg("name", ArgKind::Link)],
+            build::link_delete,
+            "Delete a saved link from links.toml",
         ),
         CommandSpec::build(
             "replay",
@@ -538,16 +555,23 @@ pub struct Completion {
 
 /// The completion of the last word of `before_cursor`, the line up to the cursor: the command
 /// names (sorted) for a command's first word, else the values of the argument it is. None for
-/// a word already whole, nor for one with a quote or an escape. `ports` are the serial ports
-/// the system lists, for an address
-pub fn complete(before_cursor: &str, trigger_names: &[String], ports: &[String]) -> Completion {
-    complete_in(COMMANDS, before_cursor, trigger_names, ports)
+/// a word already whole, nor for one with a quote or an escape. `link_names` are this
+/// machine's saved links (MAX-185), first for an address; `ports` the serial ports the system
+/// lists, for an address
+pub fn complete(
+    before_cursor: &str,
+    trigger_names: &[String],
+    link_names: &[String],
+    ports: &[String],
+) -> Completion {
+    complete_in(COMMANDS, before_cursor, trigger_names, link_names, ports)
 }
 
 fn complete_in(
     commands: &'static [CommandSpec],
     line: &str,
     trigger_names: &[String],
+    link_names: &[String],
     ports: &[String],
 ) -> Completion {
     let Some(word) = last_word(line) else {
@@ -575,8 +599,12 @@ fn complete_in(
             .and_then(|spec| spec.args.get(word.index - 1))
             .map(|arg| match arg.kind {
                 ArgKind::Path => path_candidates(prefix),
-                ArgKind::Address => address_candidates(prefix, ports),
+                ArgKind::Address => address_candidates(prefix, link_names, ports),
                 ArgKind::Trigger => (trigger_names.iter())
+                    .map(|name| escape_word(name))
+                    .filter(|name| name.starts_with(prefix))
+                    .collect(),
+                ArgKind::Link => (link_names.iter())
                     .map(|name| escape_word(name))
                     .filter(|name| name.starts_with(prefix))
                     .collect(),
@@ -633,10 +661,10 @@ fn path_candidates(prefix: &str) -> Vec<String> {
     candidates
 }
 
-/// An address's completion (MAX-168): the `tcp://` and `file://` schemes and the serial ports
-/// starting like it, then the disk's entries for a path being typed. After `file://`, the
-/// paths only; after `tcp://`, nothing (no host is known)
-fn address_candidates(prefix: &str, ports: &[String]) -> Vec<String> {
+/// An address's completion (MAX-168): the saved links' names (MAX-185), the `tcp://` and
+/// `file://` schemes and the serial ports starting like it, then the disk's entries for a path
+/// being typed. After `file://`, the paths only; after `tcp://`, nothing (no host is known)
+fn address_candidates(prefix: &str, link_names: &[String], ports: &[String]) -> Vec<String> {
     if let Some(path) = prefix.strip_prefix("file://") {
         return (path_candidates(path).into_iter())
             .map(|path| format!("file://{path}"))
@@ -646,7 +674,8 @@ fn address_candidates(prefix: &str, ports: &[String]) -> Vec<String> {
         return Vec::new();
     }
     let schemes = ["tcp://", "file://"].into_iter().map(String::from);
-    let mut candidates: Vec<String> = schemes
+    let mut candidates: Vec<String> = (link_names.iter().map(|name| escape_word(name)))
+        .chain(schemes)
         .chain(ports.iter().map(|port| escape_word(port)))
         .filter(|candidate| candidate.starts_with(prefix))
         .collect();
@@ -824,7 +853,7 @@ impl ArgKind {
                 .find(|value| **value == text)
                 .map(|value| ArgValue::Enum(value))
                 .ok_or_else(|| format!("'{text}' is not one of {}", values.join(", "))),
-            Self::String | Self::Trigger => Ok(ArgValue::String(text.to_string())),
+            Self::String | Self::Trigger | Self::Link => Ok(ArgValue::String(text.to_string())),
             Self::Path => Ok(ArgValue::Path(PathBuf::from(text))),
             Self::Address => text.parse().map(ArgValue::Address),
             Self::Hex => parse_hex(text).map(ArgValue::Bytes),
@@ -839,10 +868,14 @@ impl ArgKind {
             Self::Bool => &["on", "off"],
             Self::Enum(values) => values,
             // paths and addresses complete from the disk, in `path_candidates` and
-            // `address_candidates`, triggers from their names
-            Self::String | Self::Path | Self::Address | Self::Hex | Self::Bytes | Self::Trigger => {
-                &[]
-            }
+            // `address_candidates`, triggers and saved links from their names
+            Self::String
+            | Self::Path
+            | Self::Address
+            | Self::Hex
+            | Self::Bytes
+            | Self::Trigger
+            | Self::Link => &[],
         };
         values
             .iter()
@@ -1068,9 +1101,15 @@ mod tests {
         ] {
             assert!(parse(line).is_err(), "{line}");
         }
-        assert_eq!(values(&complete("baud 1", &[], &[])), ["19200", "115200"]);
-        assert_eq!(values(&complete("flow ", &[], &[])), ["none", "hw", "sw"]);
-        assert_eq!(values(&complete("dtr o", &[], &[])), ["on", "off"]);
+        assert_eq!(
+            values(&complete("baud 1", &[], &[], &[])),
+            ["19200", "115200"]
+        );
+        assert_eq!(
+            values(&complete("flow ", &[], &[], &[])),
+            ["none", "hw", "sw"]
+        );
+        assert_eq!(values(&complete("dtr o", &[], &[], &[])), ["on", "off"]);
     }
 
     /// MAX-6: `trigger` takes on, off or toggle, then a trigger's name, completed from the
@@ -1082,13 +1121,13 @@ mod tests {
             "uart menu".to_string(),
             "login".to_string(),
         ];
-        assert_eq!(values(&complete("trigger t", &names, &[])), ["toggle"]);
+        assert_eq!(values(&complete("trigger t", &names, &[], &[])), ["toggle"]);
         assert_eq!(
-            values(&complete("trigger on u", &names, &[])),
+            values(&complete("trigger on u", &names, &[], &[])),
             ["u-boot", "uart\\ menu"]
         );
-        assert_eq!(values(&complete("trigger off ", &names, &[])).len(), 3);
-        assert!(complete("trigger on ", &[], &[]).candidates.is_empty());
+        assert_eq!(values(&complete("trigger off ", &names, &[], &[])).len(), 3);
+        assert!(complete("trigger on ", &[], &[], &[]).candidates.is_empty());
         assert!(parse("trigger toggle u-boot").is_ok());
         assert!(parse("trigger flip").is_err());
     }
@@ -1229,7 +1268,7 @@ mod tests {
 
     #[test]
     fn complete_command_names() {
-        let complete = |line| complete(line, &[], &[]);
+        let complete = |line| complete(line, &[], &[], &[]);
         let all = complete("");
         assert_eq!(all.start, 0);
         assert_eq!(all.candidates.len(), COMMANDS.len());
@@ -1260,7 +1299,7 @@ mod tests {
 
     #[test]
     fn complete_argument_values() {
-        let complete = |line| complete_in(&TEST_COMMANDS, line, &[], &[]);
+        let complete = |line| complete_in(&TEST_COMMANDS, line, &[], &[], &[]);
         assert_eq!(values(&complete("test 1 ")), ["on", "off"]);
         assert_eq!(values(&complete("test  1   o")), ["on", "off"]);
         let flow = complete("quit; test 1 on h");
@@ -1291,7 +1330,7 @@ mod tests {
         let folder = format!("{}/", dir.display()).replace('\\', "/");
         let complete = |typed: &str| {
             let line = format!("test 1 on none x {folder}{typed}");
-            let completion = complete_in(&TEST_COMMANDS, &line, &[], &[]);
+            let completion = complete_in(&TEST_COMMANDS, &line, &[], &[], &[]);
             assert_eq!(completion.start, 17);
             completion
                 .candidates
@@ -1308,7 +1347,7 @@ mod tests {
         let line = format!("test 1 on none x {folder}my\\ file.bin");
         // the escaped name is whole, and the argument is the name
         assert!(
-            complete_in(&TEST_COMMANDS, &line, &[], &[])
+            complete_in(&TEST_COMMANDS, &line, &[], &[], &[])
                 .candidates
                 .is_empty()
         );
@@ -1339,7 +1378,7 @@ mod tests {
         }
 
         let ports = ["/dev/ttyUSB0".to_string(), "COM3".to_string()];
-        let complete = |line: &str| complete(line, &[], &ports);
+        let complete = |line: &str| complete(line, &[], &[], &ports);
         assert_eq!(
             values(&complete("open ")),
             ["tcp://", "file://", "/dev/ttyUSB0", "COM3"]
@@ -1347,6 +1386,22 @@ mod tests {
         assert_eq!(values(&complete("open t")), ["tcp://"]);
         assert_eq!(values(&complete("open C")), ["COM3"]);
         assert!(complete("open tcp://192.").candidates.is_empty());
+        // MAX-185: this machine's saved links first, escaped; `link-delete` takes them only
+        let names = ["esp32".to_string(), "router console".to_string()];
+        let saved = |line: &str| super::complete(line, &[], &names, &ports);
+        assert_eq!(
+            values(&saved("open ")),
+            [
+                "esp32",
+                "router\\ console",
+                "tcp://",
+                "file://",
+                "/dev/ttyUSB0",
+                "COM3"
+            ]
+        );
+        assert_eq!(values(&saved("link-delete r")), ["router\\ console"]);
+        assert_eq!(values(&saved("link-delete ")).len(), 2);
 
         let dir = std::env::temp_dir().join(format!("maxicom_test_{}_address", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

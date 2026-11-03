@@ -707,8 +707,8 @@ impl Default for StatusBarConfig {
         Self {
             left: block_lines(&[
                 "[ {mode} ](prefix?(bg=secondary fg=black bold):copy_raw?(bg=red fg=black bold):copy?(bg=magenta fg=black bold):search?(bg=blue fg=white bold):(fg=primary bold))",
-                "[ {copy_side}](copy_raw?(fg=red bold):copy?(fg=magenta bold):hide)",
-                "[ {port}](prio=3)",
+                "[{copy_side} ](copy_raw?(fg=red bold):copy?(fg=magenta bold):hide)",
+                "[{port}](prio=3)",
                 "[ |](muted prio=3)",
                 "[ ](prio=2)",
                 "[{baud}](primary prio=2)",
@@ -1339,7 +1339,7 @@ mod tests {
             "{written}"
         );
         assert!(
-            written.contains("\\\n    [ {copy_side}](copy_raw?"),
+            written.contains("\\\n    [{copy_side} ](copy_raw?"),
             "{written}"
         );
         assert!(written.contains("[{framing}](prio=4)'''"), "{written}");
