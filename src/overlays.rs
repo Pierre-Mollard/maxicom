@@ -155,7 +155,7 @@ pub enum OverlayResponse {
         link: SavedLink,
         replaces: Option<SavedLink>,
     },
-    TestPorts,
+    TestLinks,
     ArmTrigger {
         name: String,
         on: bool,

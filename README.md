@@ -142,23 +142,49 @@ What differs:
   - Saved links: `n` a new one, `e` edits the selected one, `s` saves the
     link in use, `x` or Del deletes the selected one (asked first).
   - Serial ports: `s` saves the selected port as a link, `r` lists the ports
-    again (USB ones come and go), `t` tests them (below).
+    again (USB ones come and go).
   - Enter keeps the directory open (`opening…` on the row) until the link is
     open; one that fails says why on its row, and the link in use comes back
     with its line settings.
-  - `t` tests the ports, the one in use left out: `free`, `busy` (with the
-    program holding it when known, `busy: minicom (1234)`), `no access` (on
-    Linux, the user isn't in `dialout` or `uucp`) or its error; one that
-    doesn't answer in 2 s says so. Opening a port raises DTR and RTS, which
-    resets a board with an auto-reset (ESP32, Arduino), so on Linux the test
-    doesn't open them. It reads, in order: the UUCP lock files (minicom) and
-    `/proc/locks` (`flock`: picocom, tio, pyserial), which show any user's
-    program; the open files of the processes in `/proc`, the user's own only;
-    then the permissions. A port another user holds without a lock (screen,
-    cu, another maxicom) can't be seen without root and shows `free`. macOS
-    has no `/proc`: a port held without a lock file shows `free`. On Windows
-    only an open tells, with the port's settings kept; a board may reset
-    there.
+  - `t` (either tab) tests the saved links and the serial ports, each address
+    once (a saved link on a listed port shares its result), the one in use
+    left out. A port: `free`, `busy` with who holds it when known
+    (`busy: minicom (1234)`, `busy: maxicom 4242 (pierre)`), `in use` (this
+    maxicom, by another name of the device), `no access: join dialout` (the
+    group that owns it) or `not found` (unplugged). A TCP link: `reachable`,
+    `refused`, `unreachable` or `unknown host`, after one connect closed at
+    once (a bridge taking one client may drop the one it has, and the device
+    sees a connection). One that doesn't answer in 2 s says `no answer`.
+  - Opening a port raises DTR and RTS, which resets a board with an
+    auto-reset (ESP32, Arduino), so the test doesn't open ports on Linux and
+    macOS. It reads, in order: maxicom's locks (below), the UUCP lock files
+    (minicom, lockdev; under minicom's names too, `LCK..pts_3`) and
+    `/proc/locks` (`flock`: picocom, tio, pyserial, maxicom), which show any
+    user's program; the open files of the processes in `/proc`, the user's
+    own only; then the permissions. A port another user holds without a lock
+    (screen, cu, `minicom -o`) can't be seen without root and shows `free`.
+    macOS has no `/proc`: a port no lock holds shows `no lock`. On
+    Windows only an open tells, with the port's settings kept (a board may
+    reset there), except for a port a maxicom holds, found by its lock.
+- Locks: while a link is open, maxicom holds locks every user's programs see,
+  so two programs never share a port by mistake:
+  - on a serial port, a `flock` on the device (Linux, macOS; picocom, tio and
+    pyserial take the same), and a UUCP lock file `LCK..ttyUSB0` holding its
+    PID, as the programs using lock files do, where the system lets users
+    write one (Debian, Ubuntu: `/run/lock`; skipped on Fedora);
+  - on any link, a lock in a folder all users share: `/run/lock/maxicom` (or
+    `/tmp/maxicom-locks`), `%ProgramData%\maxicom\locks` on Windows, with a
+    `.info` beside it: PID, user, machine, address, since.
+  - A port another program holds is refused before it's opened (no DTR
+    pulse), the holder named: `held by maxicom 4242 (pierre)`, `held by
+    minicom (1234)`: one with a lock, any user's, or one of the user's own
+    with the port open (Linux), lock or not; a pty only by a lock, as the
+    program that made it (socat) holds it too. A TCP link another maxicom has
+    open opens anyway (some servers take several clients), with a warning
+    naming it.
+  - A crash leaves nothing in the way: the system drops a `flock` and the
+    folder's lock with the process, and a UUCP lock file whose process is
+    gone is stale, replaced by the next program. They're removed on close.
 - The port's popups when it's detached or lost have `d` for the directory,
   to switch to another one. While the link waits (detached, lost, or no
   device picked yet), its popup comes back when the popup on top of it
@@ -180,8 +206,9 @@ What differs:
   A port's name depends on the adapter (`/dev/ttyUSB0`, `COM3`,
   `/dev/cu.usbserial-XXXX`), so there's no default one. With no device
   anywhere maxicom starts on the directory, with nothing open until a link is
-  picked (no session restored; the backup starts on the link picked); closed
-  before that, a "No device" popup asks to pick one (Enter) or quit (Esc).
+  picked (then its last session restored and its backup, as at startup);
+  closed before that, a "No device" popup asks to pick one (Enter) or quit
+  (Esc).
   With no saved link nor serial port either, it stops and says how to give
   one. `[link] device` can be a saved link's name too. Flow control is off by
   default, where minicom has RTS/CTS on: most USB-UART boards don't wire
@@ -355,7 +382,9 @@ What changes from a serial port:
     links, the schemes and the serial ports the system lists, then paths
     after `file://` or a `/`. The rest of the line waits until it is
     open: `open COM4; send AT\r`. A port that fails to open brings the last
-    one back. Another port starts a new session backup, as they go by port.
+    one back, its screen as it was. Another device starts on a clean screen,
+    its last session restored and a backup of its own (see Restore in
+    CAPTURE); with `ask`, the rest of the line waits for the answer.
     `toggle-attach` detaches and attaches the link, as `Ctrl-A D` does.
   - `link-save [name]`: saves the link in use to `links.toml`, under its
     address's name when none is given (`ttyUSB0`); `link-delete <name>`
@@ -604,15 +633,22 @@ where its lines wrap, which `dimension_mode` decides.
   received.
   - A layout can show it with the `session` condition, e.g.
     `[◆](session?muted:hide)` (not in the default layout).
-- Restore: at startup, the last session of the same device can come back in
+- Restore: at startup and on each switch to another device (the directory,
+  `open`, a saved link), the last session of that device can come back in
   the history, the lines in line mode and the screen and scrollback in
   terminal mode, then a separator line
   `── restored: ttyUSB0, 2026-10-28 14:15 → 16:40 ──` before the live data.
   The terminal replays the session at the grid size it ended on, so its wide
   lines come back whole; then `dimension_mode` sizes it to the view.
-  - `restore` in `[sessions]`: `always` (default) restores, `ask` asks at
-    startup, `never` doesn't. `--restore` (restore without asking) and
-    `--no-restore` decide for one launch. Never in replay mode.
+  - A switch clears both modes and the RX/TX counts once the new device is
+    open, then restores as at startup; back on the first device, its own
+    session comes back. A device that fails to open leaves the screen as it
+    was, and new line settings or encoding on the same port keep the
+    history (a new backup only).
+  - `restore` in `[sessions]`: `always` (default) restores, `ask` asks each
+    time, `never` doesn't. `--restore` (restore without asking) and
+    `--no-restore` decide for the whole run, switches included. Never in
+    replay mode.
   - The same device: the same machine (hostname), port, baud, data bits,
     parity, stop bits and encoding. The session must have received something,
     not be running, and have ended within `restore_max_age` (`"0s"`: no

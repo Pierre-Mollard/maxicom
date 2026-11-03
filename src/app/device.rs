@@ -21,19 +21,20 @@ use crate::{
     link::{
         Address, ByteSource, CONNECT_TIMEOUT, LinkConfig, LinkError, LinkKind, OpenFor,
         Reconfigured,
+        probe::{self, ProbeState},
         replay::{Replay, ReplayControl},
-        serial::{self, LineControl, LineSettings, PortState},
+        serial::{self, LineControl, LineSettings},
     },
     overlays::{Directory, DirectoryTab, ErrorDialog, LinkForm, Overlay},
 };
 
-/// How long a port's test may take before it's marked unanswered (MAX-181)
-const PORT_TEST_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long a link's test may take before it's marked unanswered (MAX-181)
+const LINK_TEST_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// The directory's ports being tested, one thread each: their results, and when the ones left
-/// stop being waited for (MAX-181)
-pub struct PortTest {
-    results: mpsc::Receiver<(String, PortState)>,
+/// The directory's links being tested, one thread each: their results by address, and when
+/// the ones left stop being waited for (MAX-181, MAX-186)
+pub struct LinkTest {
+    results: mpsc::Receiver<(String, ProbeState)>,
     until: Instant,
 }
 
@@ -67,7 +68,8 @@ impl App {
 
     /// Started without a device while the system lists `ports` or a link is saved (MAX-181,
     /// MAX-185): the directory open to pick one, the link waiting detached on the first
-    /// (nothing opens on its own: an open can reset a board). No session restored; the backup starts on the port picked, once open
+    /// (nothing opens on its own: an open can reset a board). The port picked starts as a switch
+    /// does, once open: its last session restored, then its backup (MAX-187)
     pub fn start_in_directory(&mut self, ports: Vec<String>, sessions_dir: Option<PathBuf>) {
         self.sessions_dir = sessions_dir;
         self.device_unpicked = true;
@@ -80,52 +82,60 @@ impl App {
         self.device_unpicked
     }
 
-    /// The directory's ports tested, each on its own thread so one that hangs holds none of
-    /// the others; the device in use left out (MAX-181)
-    pub fn test_ports(&mut self) {
-        // the port is maxicom's only while open: detached, lost or not picked, it's tested
+    /// The directory's serial ports and saved links tested, both tabs at once, each address
+    /// once and on its own thread, so one that hangs holds none of the others; the link in use
+    /// left out (MAX-181, MAX-186). The results go by address, shown on both tabs
+    pub fn test_links(&mut self) {
+        // the link is maxicom's only while open: detached, lost or not picked, it's tested
         let current = self
             .link
             .is_open()
-            .then(|| self.link.config().address.to_string());
+            .then(|| self.link.config().address.clone());
         let Some(Overlay::Directory(directory)) = &mut self.overlay else {
             return;
         };
+        let ports = (directory.ports.iter()).filter_map(|port| port.parse::<Address>().ok());
+        let links = (directory.links.iter().flatten()).map(|(_, config)| config.address.clone());
+        let mut seen = std::collections::HashSet::new();
+        let addresses = (ports.chain(links)).filter(|address| {
+            current.as_ref() != Some(address) && seen.insert(address.to_string())
+        });
         let (sender, results) = mpsc::channel();
-        for port in (directory.ports.iter()).filter(|port| current.as_ref() != Some(*port)) {
-            directory.tests.insert(port.clone(), None);
-            let (sender, port) = (sender.clone(), port.clone());
+        for address in addresses {
+            let key = address.to_string();
+            directory.tests.insert(key.clone(), None);
+            let sender = sender.clone();
             thread::spawn(move || {
-                let state = serial::probe_port(&port);
-                let _ = sender.send((port, state));
+                let state = probe::probe(&address);
+                let _ = sender.send((key, state));
             });
         }
-        let until = Instant::now() + PORT_TEST_TIMEOUT;
-        self.port_test = Some(PortTest { results, until });
+        let until = Instant::now() + LINK_TEST_TIMEOUT;
+        self.link_test = Some(LinkTest { results, until });
     }
 
     /// The test's results into the directory, the ones left past the timeout said unanswered;
     /// done once none is left, or the directory closed. True when a mark changed
-    pub fn poll_port_test(&mut self) -> bool {
-        let Some(test) = &self.port_test else {
+    pub fn poll_link_test(&mut self) -> bool {
+        let Some(test) = &self.link_test else {
             return false;
         };
         let results: Vec<_> = test.results.try_iter().collect();
         let timed_out = Instant::now() >= test.until;
         let Some(Overlay::Directory(directory)) = &mut self.overlay else {
-            self.port_test = None;
+            self.link_test = None;
             return false;
         };
         let changed = !results.is_empty() || timed_out;
-        for (port, state) in results {
-            directory.tests.insert(port, Some(state));
+        for (address, state) in results {
+            directory.tests.insert(address, Some(state));
         }
         let waiting = directory.tests.values_mut().filter(|state| state.is_none());
         if timed_out {
-            waiting.for_each(|state| *state = Some(PortState::Error("no answer".into())));
-            self.port_test = None;
+            waiting.for_each(|state| *state = Some(ProbeState::NoAnswer));
+            self.link_test = None;
         } else if waiting.count() == 0 {
-            self.port_test = None;
+            self.link_test = None;
         }
         changed
     }
@@ -493,6 +503,10 @@ impl App {
     fn opened(&mut self, why: OpenFor) {
         self.link_lost = false;
         let label = self.link_label();
+        // some servers take several clients: said, not refused (MAX-186)
+        if let Some(holder) = self.link.shared_with() {
+            self.notify_warn(format!("{label} is open in {holder} too"));
+        }
         match why {
             OpenFor::Start => self.notify_success(format!("Connected to {label}")),
             OpenFor::Attach => {
@@ -515,7 +529,7 @@ impl App {
                 // before the test, or a switched pick left it set (MAX-181)
                 let first_pick = std::mem::take(&mut self.device_unpicked);
                 if switched || first_pick {
-                    self.restart_session();
+                    self.switch_session();
                 }
                 self.resume_commands();
             }
@@ -529,8 +543,8 @@ impl App {
             && let Some(port) = directory.opening.take()
         {
             let state = match &e {
-                LinkError::OpenFailed { source, .. } => serial::port_state_of(source),
-                e => PortState::Error(e.to_string()),
+                LinkError::OpenFailed { source, .. } => probe::port_state_of(source),
+                e => ProbeState::Error(e.to_string()),
             };
             directory.tests.insert(port, Some(state));
         }
@@ -760,7 +774,9 @@ mod tests {
     use super::*;
     use crate::{
         capture::CaptureFormat,
-        configs::{KeyBindingsConfig, KeyResolver, SettingsConfig, TextEncoding},
+        configs::{
+            KeyBindingsConfig, KeyResolver, SettingsConfig, TextEncoding, settings::RestoreMode,
+        },
         inputs::AppAction,
         link::{Address, LinkConfig, state::REOPEN_EVERY},
     };
@@ -863,6 +879,220 @@ mod tests {
                 && toast.ends_with(&format!("back to {second_address}"))),
             "{failed:?}"
         );
+    }
+
+    /// MAX-187: each device switched to gets a session backup of its own, A -> B -> A three of
+    /// them; a failed open goes back to the link that was open with its views, and its backup
+    /// records on.
+    /// How: "one" on A, `open` B, "two"; `open` of a closed port, B back, "three"; `open` A,
+    /// "again"; the session files read back.
+    #[test]
+    fn switch_backups_and_failed_open_keep_the_history() {
+        let sessions = std::env::temp_dir().join(format!(
+            "maxicom_test_{}_switch_backups",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&sessions);
+        let (first, first_address) = listener();
+        let (second, second_address) = listener();
+        let (mut app, mut peer) = connected(&first, &first_address);
+        app.start_session(Some(sessions.clone()));
+        let open = |app: &mut App, address: &str| {
+            app.dispatch(Action::App(AppAction::Open(
+                address.parse::<Address>().unwrap(),
+            )));
+        };
+        let receive = |app: &mut App, peer: &mut TcpStream, text: &str| {
+            peer.write_all(format!("{text}\r\n").as_bytes()).unwrap();
+            poll_until(app, text, |app| {
+                app.terminal_mode.vt100_screen().contents().contains(text)
+            });
+        };
+        receive(&mut app, &mut peer, "one");
+
+        open(&mut app, &second_address);
+        let (mut peer, _) = second.accept().unwrap();
+        poll_until(&mut app, "opened", |app| app.link.is_open());
+        receive(&mut app, &mut peer, "two");
+
+        let (closed, closed_address) = listener();
+        drop(closed);
+        open(&mut app, &closed_address);
+        // the link goes back to B in the polls: accepted between them
+        second.set_nonblocking(true).unwrap();
+        let start = Instant::now();
+        let mut peer = loop {
+            app.poll_link(&mut [0; 256]).unwrap();
+            if let Ok((peer, _)) = second.accept() {
+                break peer;
+            }
+            assert!(start.elapsed() < Duration::from_secs(5), "back");
+            thread::sleep(Duration::from_millis(5));
+        };
+        peer.set_nonblocking(false).unwrap();
+        poll_until(&mut app, "back", |app| app.link.is_open());
+        assert_eq!(app.link_config().address.to_string(), second_address);
+        assert!(app.terminal_mode.vt100_screen().contents().contains("two"));
+        receive(&mut app, &mut peer, "three");
+
+        open(&mut app, &first_address);
+        let (mut peer, _) = first.accept().unwrap();
+        poll_until(&mut app, "opened", |app| app.link.is_open());
+        receive(&mut app, &mut peer, "again");
+        drop(app);
+
+        // the session files' raw bytes, the oldest first
+        let raws: Vec<Vec<u8>> = crate::capture::tests::session_paths(&sessions)
+            .iter()
+            .filter(|path| path.extension().is_some_and(|ext| ext == "raw"))
+            .map(|path| std::fs::read(path).unwrap())
+            .collect();
+        let expected: [&[u8]; 3] = [b"one\r\n", b"two\r\nthree\r\n", b"again\r\n"];
+        assert_eq!(raws, expected);
+        let _ = std::fs::remove_dir_all(&sessions);
+    }
+
+    /// MAX-187: a device switched to starts as at start on it: a clean screen and fresh counts,
+    /// its last session restored as `sessions.restore` says, then its own backup. Back on A,
+    /// A's session comes back; `--no-restore` holds for the switches; with `ask`, the dialog
+    /// asks on the switch and what comes in waits for the answer.
+    /// How: a session of B with "old b"; A with "one", `open` B, "two"; `open` A; `open` B
+    /// with the flag off; `open` A with `ask`, "live" while asking, then Enter.
+    #[test]
+    fn switch_clears_and_restores_the_device() {
+        let sessions = crate::capture::tests::temp_dir("switch_restores");
+        let (first, first_address) = listener();
+        let (second, second_address) = listener();
+        crate::capture::tests::write_test_session(
+            &sessions,
+            &second_address,
+            &CaptureFormat::default(),
+            b"old b\r\n",
+            b"",
+        );
+        let (mut app, mut peer) = connected(&first, &first_address);
+        app.settings.sessions.restore = RestoreMode::Always;
+        app.start_session(Some(sessions.clone()));
+        let open = |app: &mut App, address: &str, listener: &TcpListener| {
+            app.dispatch(Action::App(AppAction::Open(
+                address.parse::<Address>().unwrap(),
+            )));
+            let (peer, _) = listener.accept().unwrap();
+            poll_until(app, "opened", |app| app.link.is_open());
+            peer
+        };
+        let receive = |app: &mut App, peer: &mut TcpStream, text: &str| {
+            peer.write_all(format!("{text}\r\n").as_bytes()).unwrap();
+            poll_until(app, text, |app| {
+                app.terminal_mode.vt100_screen().contents().contains(text)
+            });
+        };
+        // in line mode's history: the terminal's restore goes to its scrollback
+        let shows = |app: &App, text: &str| {
+            (app.line_mode.history().iter()).any(|entry| entry.text.contains(text))
+        };
+        let on_screen =
+            |app: &App, text: &str| app.terminal_mode.vt100_screen().contents().contains(text);
+        receive(&mut app, &mut peer, "one");
+
+        let mut peer = open(&mut app, &second_address, &second);
+        assert!(!shows(&app, "one") && !on_screen(&app, "one"));
+        assert!(shows(&app, "old b"));
+        assert_eq!(app.stats.rx(), 0);
+        receive(&mut app, &mut peer, "two");
+
+        let _peer = open(&mut app, &first_address, &first);
+        assert!(shows(&app, "one"));
+        assert!(!shows(&app, "two") && !on_screen(&app, "two") && !shows(&app, "old b"));
+
+        app.set_restore_flag(Some(false));
+        let _peer = open(&mut app, &second_address, &second);
+        assert!(!shows(&app, "one") && !shows(&app, "two"));
+
+        app.set_restore_flag(None);
+        app.settings.sessions.restore = RestoreMode::Ask;
+        let mut peer = open(&mut app, &first_address, &first);
+        assert!(matches!(app.overlay(), Some(Overlay::RestoreSession(_))));
+        peer.write_all(b"live\r\n").unwrap();
+        poll_until(&mut app, "held", |app| {
+            app.held_rx.as_ref().is_some_and(|held| !held.is_empty())
+        });
+        assert!(!shows(&app, "live"));
+        app.dispatch(Action::Overlay(crate::inputs::DialogAction::Confirm));
+        assert!(shows(&app, "one") && shows(&app, "live") && on_screen(&app, "live"));
+        let _ = std::fs::remove_dir_all(&sessions);
+    }
+
+    /// MAX-187: the rest of a command line waits while the restore dialog asks on the device
+    /// its `open` switched to, and goes on after the answer.
+    /// How: a session of B; `open B; send x` typed on A with `ask`; the peer reads nothing
+    /// while asking, then "x" after Enter.
+    #[test]
+    fn switch_commands_wait_for_the_restore_answer() {
+        let sessions = crate::capture::tests::temp_dir("switch_commands_wait");
+        let (first, first_address) = listener();
+        let (second, second_address) = listener();
+        crate::capture::tests::write_test_session(
+            &sessions,
+            &second_address,
+            &CaptureFormat::default(),
+            b"old b\r\n",
+            b"",
+        );
+        let (mut app, _peer) = connected(&first, &first_address);
+        app.settings.sessions.restore = RestoreMode::Ask;
+        app.start_session(Some(sessions.clone()));
+        let run = |app: &mut App| {
+            while let Some(action) = app.next_command_action(Instant::now()) {
+                app.dispatch(action);
+            }
+        };
+        let command_line = crate::configs::KeyBindingAction::CommandLine.to_action(&app);
+        app.dispatch(command_line);
+        let line = format!("open {second_address}; send x");
+        app.dispatch(Action::Overlay(crate::inputs::DialogAction::Paste(line)));
+        app.dispatch(Action::Overlay(crate::inputs::DialogAction::Confirm));
+        run(&mut app);
+        let (mut peer, _) = second.accept().unwrap();
+        poll_until(&mut app, "opened", |app| app.link.is_open());
+        assert!(matches!(app.overlay(), Some(Overlay::RestoreSession(_))));
+        run(&mut app);
+        peer.set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let mut byte = [0; 1];
+        assert!(peer.read_exact(&mut byte).is_err(), "sent while asking");
+
+        app.dispatch(Action::Overlay(crate::inputs::DialogAction::Confirm));
+        run(&mut app);
+        peer.set_read_timeout(None).unwrap();
+        peer.read_exact(&mut byte).unwrap();
+        assert_eq!(&byte, b"x");
+        let _ = std::fs::remove_dir_all(&sessions);
+    }
+
+    /// MAX-187: the first port picked from the start's directory gets its last session
+    /// restored before its backup starts, as a port given on the command line does.
+    /// How: a session of the port with "old", the app started on the directory, then a pick.
+    #[test]
+    fn first_pick_restores_its_session() {
+        let sessions = crate::capture::tests::temp_dir("first_pick_restores");
+        let (listener, address) = listener();
+        crate::capture::tests::write_test_session(
+            &sessions,
+            &address,
+            &CaptureFormat::default(),
+            b"old\r\n",
+            b"",
+        );
+        let mut app = app_on(&address);
+        app.settings.sessions.restore = RestoreMode::Always;
+        app.start_in_directory(vec![address.clone()], Some(sessions.clone()));
+        app.dispatch(Action::Overlay(crate::inputs::DialogAction::Confirm));
+        let _peer = listener.accept().unwrap();
+        poll_until(&mut app, "opened", |app| app.link.is_open());
+        assert!(app.line_mode.history().iter().any(|e| e.text == "old\r\n"));
+        assert!(app.recorder.has_session());
+        let _ = std::fs::remove_dir_all(&sessions);
     }
 
     /// MAX-168: the detach key closes the link with its popup, and the link isn't reopened
@@ -1237,7 +1467,7 @@ mod tests {
         app.dispatch(Action::Overlay(DialogAction::HandleKey(d)));
         assert!(matches!(app.overlay(), Some(Overlay::Directory(_))));
         app.open_directory(vec![address.clone()]);
-        app.test_ports();
+        app.test_links();
         let Some(Overlay::Directory(directory)) = app.overlay() else {
             panic!("no directory");
         };
@@ -1245,7 +1475,7 @@ mod tests {
             directory.tests.contains_key(&address),
             "the port isn't maxicom's"
         );
-        app.port_test = None;
+        app.link_test = None;
         app.dispatch(Action::Overlay(DialogAction::Close));
         assert!(matches!(app.overlay(), Some(Overlay::DeviceDetached)));
     }
@@ -1263,12 +1493,12 @@ mod tests {
         let mut app = app_on(&first_address);
         let ports = vec![first_address.clone(), second_address.clone()];
         app.start_in_directory(ports, None);
-        app.test_ports();
+        app.test_links();
         let Some(Overlay::Directory(directory)) = app.overlay() else {
             panic!("no directory");
         };
         assert!(directory.tests.contains_key(&first_address));
-        app.port_test = None;
+        app.link_test = None;
 
         app.dispatch(Action::Overlay(DialogAction::Down));
         app.dispatch(Action::Overlay(DialogAction::Confirm));
@@ -1336,7 +1566,7 @@ mod tests {
         assert!(directory.opening.is_none());
         assert!(matches!(
             directory.tests[&closed_address],
-            Some(PortState::Error(_))
+            Some(ProbeState::Error(_))
         ));
     }
 
@@ -1645,7 +1875,7 @@ mod tests {
         assert!(directory.opening.is_none());
         assert!(matches!(
             directory.tests[&address],
-            Some(PortState::Error(_))
+            Some(ProbeState::Error(_))
         ));
     }
 
@@ -1669,7 +1899,7 @@ mod tests {
 
     /// MAX-181: the directory's test runs a thread per port, the device in use left out: each
     /// mark is "testing" until its result comes; past the timeout the ones left say no
-    /// answer, and a closed directory drops the test.
+    /// answer, and a closed directory drops the test. MAX-186: a port not there is missing.
     /// How: two ports that don't exist and the device in use; then a test whose results never
     /// come, its time up; then the directory closed.
     #[test]
@@ -1683,15 +1913,15 @@ mod tests {
         ];
         let current = app.link_config().address.clone();
         app.open_overlay(Overlay::Directory(Directory::new(ports, &current)));
-        app.test_ports();
+        app.test_links();
         let tests = |app: &App| match app.overlay() {
             Some(Overlay::Directory(directory)) => directory.tests.clone(),
             _ => panic!("no directory"),
         };
         assert!(!tests(&app).contains_key(&address));
         let start = Instant::now();
-        while app.port_test.is_some() {
-            app.poll_port_test();
+        while app.link_test.is_some() {
+            app.poll_link_test();
             assert!(start.elapsed() < Duration::from_secs(5));
             thread::sleep(Duration::from_millis(5));
         }
@@ -1699,28 +1929,89 @@ mod tests {
         assert_eq!(done.len(), 2);
         assert!(
             done.values()
-                .all(|state| matches!(state, Some(PortState::Error(_))))
+                .all(|state| state == &Some(ProbeState::Missing))
         );
 
         let (_sender, results) = mpsc::channel();
         let past = Instant::now() - Duration::from_millis(1);
-        app.port_test = Some(PortTest {
+        app.link_test = Some(LinkTest {
             results,
             until: past,
         });
         if let Some(Overlay::Directory(directory)) = &mut app.overlay {
             directory.tests.insert("/nonexistent/a".into(), None);
         }
-        assert!(app.poll_port_test());
-        let no_answer = Some(PortState::Error("no answer".into()));
-        assert_eq!(tests(&app)["/nonexistent/a"], no_answer);
-        assert!(app.port_test.is_none());
+        assert!(app.poll_link_test());
+        assert_eq!(tests(&app)["/nonexistent/a"], Some(ProbeState::NoAnswer));
+        assert!(app.link_test.is_none());
 
         let (_sender, results) = mpsc::channel();
-        let until = Instant::now() + PORT_TEST_TIMEOUT;
-        app.port_test = Some(PortTest { results, until });
+        let until = Instant::now() + LINK_TEST_TIMEOUT;
+        app.link_test = Some(LinkTest { results, until });
         app.close_overlay();
-        assert!(!app.poll_port_test());
-        assert!(app.port_test.is_none());
+        assert!(!app.poll_link_test());
+        assert!(app.link_test.is_none());
+    }
+
+    /// MAX-186: the test covers the saved links too, by address: a TCP link that takes the
+    /// connect is reachable, one nothing listens on refused, a saved serial link that is also
+    /// a listed port tested once, the link in use left out.
+    /// How: links to a listener, to a closed port, to a missing port also listed, and to the
+    /// link in use; the test run until done.
+    #[test]
+    fn directory_tests_saved_links() {
+        use std::collections::HashMap;
+        let (link, address) = listener();
+        let (mut app, _peer) = connected(&link, &address);
+        let (up, up_address) = listener();
+        let (closed, closed_address) = listener();
+        drop(closed);
+        let links = format!(
+            "[[link]]\nname = 'up'\naddress = '{up_address}'\n\
+             [[link]]\nname = 'down'\naddress = '{closed_address}'\n\
+             [[link]]\nname = 'gone'\naddress = '/nonexistent/a'\n\
+             [[link]]\nname = 'here'\naddress = '{address}'\n"
+        );
+        app.set_links(Ok(toml::from_str(&links).unwrap()));
+        let directory = app.directory(vec!["/nonexistent/a".to_string()]);
+        app.open_overlay(Overlay::Directory(directory));
+        app.test_links();
+        let start = Instant::now();
+        while app.link_test.is_some() {
+            app.poll_link_test();
+            assert!(start.elapsed() < Duration::from_secs(5));
+            thread::sleep(Duration::from_millis(5));
+        }
+        let Some(Overlay::Directory(directory)) = app.overlay() else {
+            panic!("no directory");
+        };
+        let expected: HashMap<String, Option<ProbeState>> = HashMap::from([
+            (up_address, Some(ProbeState::Reachable)),
+            (closed_address, Some(ProbeState::Refused)),
+            ("/nonexistent/a".to_string(), Some(ProbeState::Missing)),
+        ]);
+        assert_eq!(directory.tests, expected);
+        drop(up);
+    }
+
+    /// MAX-186: a TCP link another maxicom has open is opened anyway (some servers take
+    /// several clients), with a warning naming it.
+    /// How: maxicom's lock on the address taken with another PID in its info, then the app
+    /// connected to it. Skipped without a lock folder.
+    #[test]
+    fn shared_tcp_link_warns() {
+        use crate::link::lock::{LinkLock, lock_dir};
+        let Some(dir) = lock_dir() else {
+            return;
+        };
+        let (listener, address) = listener();
+        let parsed = address.parse::<Address>().unwrap();
+        let lock = LinkLock::take(&parsed).unwrap();
+        let info = dir.join(format!("{}.info", parsed.file_tag()));
+        std::fs::write(&info, "pid=4242\nuser=other\n").unwrap();
+        let (app, _peer) = connected(&listener, &address);
+        let warning = format!("{address} is open in maxicom 4242 (other) too");
+        assert!(toasts(&app).contains(&warning), "{:?}", toasts(&app));
+        drop(lock);
     }
 }

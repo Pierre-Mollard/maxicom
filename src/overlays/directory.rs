@@ -5,10 +5,7 @@ use crossterm::event::KeyCode;
 use crate::{
     configs::links::SavedLink,
     inputs::DialogAction,
-    link::{
-        Address, LinkConfig, LinkKind,
-        serial::{self, PortState},
-    },
+    link::{Address, LinkConfig, LinkKind, probe::ProbeState, serial},
     overlays::{OverlayResponse, PopupTarget},
 };
 
@@ -23,9 +20,10 @@ const PAGE: usize = 10;
 /// none). `opening` holds the address until it's open, which closes the directory, or its
 /// error in `tests`. `s` saves the link in use from the saved links, the selected port from
 /// the ports, in the link form filled from it; on the saved links `n` adds one and `e` edits
-/// the selected one in the same form, `x` or Del deletes it, asked first. Tab, Shift-Tab, Left and Right switch
-/// tabs. On the ports, `r` lists them again, the selection kept on
-/// its name; `t` tests them, each port's last result in `tests` by name (`None` while it runs)
+/// the selected one in the same form, `x` or Del deletes it, asked first. Tab, Shift-Tab, Left
+/// and Right switch tabs. On the ports, `r` lists them again, the selection kept on its name.
+/// `t` tests the links of both tabs, each one's last result in `tests` by address (`None`
+/// while it runs, MAX-186)
 #[derive(Debug, Clone)]
 pub struct Directory {
     pub tab: DirectoryTab,
@@ -33,7 +31,7 @@ pub struct Directory {
     pub link_selected: usize,
     pub ports: Vec<String>,
     pub selected: usize,
-    pub tests: HashMap<String, Option<PortState>>,
+    pub tests: HashMap<String, Option<ProbeState>>,
     pub opening: Option<String>,
 }
 
@@ -148,16 +146,14 @@ impl Directory {
                 return self.delete_selected();
             }
             DialogAction::Pick(PopupTarget::DirectoryRefresh) if ports => self.refresh(),
-            DialogAction::Pick(PopupTarget::DirectoryTest) if ports => {
-                return OverlayResponse::TestPorts;
-            }
+            DialogAction::Pick(PopupTarget::DirectoryTest) => return OverlayResponse::TestLinks,
             DialogAction::HandleKey(key) => match key.code {
                 KeyCode::Char('s') => return self.save_selected(),
                 KeyCode::Char('n') if !ports => return OverlayResponse::NewLink,
                 KeyCode::Char('e') if !ports => return self.edit_selected(),
                 KeyCode::Char('x') | KeyCode::Delete if !ports => return self.delete_selected(),
                 KeyCode::Char('r') if ports => self.refresh(),
-                KeyCode::Char('t') if ports => return OverlayResponse::TestPorts,
+                KeyCode::Char('t') => return OverlayResponse::TestLinks,
                 _ => {}
             },
             _ => {}
@@ -314,11 +310,11 @@ mod tests {
         let key = |c| DialogAction::HandleKey(KeyEvent::from(KeyCode::Char(c)));
         assert!(matches!(
             directory.handle_action(key('t')),
-            OverlayResponse::TestPorts
+            OverlayResponse::TestLinks
         ));
         assert!(matches!(
             directory.handle_action(DialogAction::Pick(PopupTarget::DirectoryTest)),
-            OverlayResponse::TestPorts
+            OverlayResponse::TestLinks
         ));
         assert!(matches!(
             directory.handle_action(key('s')),
@@ -387,9 +383,10 @@ mod tests {
         directory.handle_action(DialogAction::CycleNext);
 
         let key = |c| DialogAction::HandleKey(KeyEvent::from(KeyCode::Char(c)));
+        // MAX-186: the test runs from either tab
         assert!(matches!(
             directory.handle_action(key('t')),
-            OverlayResponse::Handled
+            OverlayResponse::TestLinks
         ));
         // asked first: nothing is deleted yet
         for delete in [

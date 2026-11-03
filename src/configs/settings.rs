@@ -408,8 +408,9 @@ pub enum DualBufferMode {
     ActiveOnly,
 }
 
-/// When the last session on the same device is restored at startup (MAX-148): `ask` asks
-/// first; `always` by default, the separator line marking where the live data starts (MAX-163)
+/// When the last session on the same device is restored, at startup and on a device switch
+/// (MAX-148, MAX-187): `ask` asks first; `always` by default, the separator line marking where
+/// the live data starts (MAX-163)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum RestoreMode {
@@ -466,7 +467,8 @@ impl CaptureConfig {
 /// The session backup (MAX-172): with `enabled`, every session is recorded in the cache
 /// folder, the last `keep` sessions kept, all together up to `max_size` (`0`: no limit,
 /// MAX-163). `restore` puts the last session on the same device back in the history at
-/// startup, when it ended within `restore_max_age` (0: no limit, MAX-148)
+/// startup and on a device switch (MAX-187), when it ended within `restore_max_age` (0: no
+/// limit, MAX-148)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SessionsConfig {

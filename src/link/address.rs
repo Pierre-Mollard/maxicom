@@ -76,6 +76,21 @@ impl Address {
             },
         }
     }
+
+    /// The tag kept to the characters safe in a file name: `/dev/ttyUSB0` gives `ttyUSB0`,
+    /// `tcp://192.168.1.50:4000` gives `192.168.1.50_4000` (no `:` on Windows). For the
+    /// session names (MAX-156) and the lock files (MAX-186)
+    pub fn file_tag(&self) -> String {
+        (self.tag().chars())
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect()
+    }
 }
 
 /// After the last `/` or `\`: a Windows path splits on `\` on any platform

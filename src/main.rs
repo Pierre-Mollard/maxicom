@@ -238,6 +238,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut app = App::new(settings, key_resolver, link_config);
     app.set_triggers(triggers);
     app.set_links(links);
+    app.set_restore_flag(restore);
     if let Some(ports) = pick_from {
         app.start_in_directory(ports, AppConfig::default_sessions_dir());
     } else if app.link_kind().keeps_sessions() {

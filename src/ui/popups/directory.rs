@@ -12,7 +12,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::{
     app::App,
     configs::{KeyPattern, KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
-    link::{LinkConfig, LinkKind, serial::PortState},
+    link::{LinkConfig, LinkKind, probe::ProbeState},
     overlays::{Directory, DirectoryTab, LinkForm, LinkFormField, PopupTarget},
     ui::{
         common::popup_area,
@@ -31,16 +31,17 @@ const TABS: [(DirectoryTab, &str); 2] = [
 /// What an empty list shows
 const EMPTY: &str = "No serial port found: plug one in, then r";
 const NO_LINK: &str = "No saved link for this machine";
-/// Under the tabs on the ports: what the test does, an open on Windows, which may reset a board
+/// Under the tabs: what the test does, a port opened on Windows, which may reset a board, and a
+/// TCP link connected to (MAX-186)
 #[cfg(windows)]
-pub const TEST_NOTE: &str = "t opens each port briefly: a board may reset";
+pub const TEST_NOTE: &str = "t opens each port briefly (a board may reset), connects TCP";
 #[cfg(not(windows))]
-pub const TEST_NOTE: &str = "t finds who holds each port, without opening it";
+pub const TEST_NOTE: &str = "t finds who holds each port without opening it, connects TCP";
 
 /// The directory (MAX-181): its tabs on top (MAX-185), then the tab's rows, `●` and "in use"
 /// on the link in use, "opening…" or the last test's result after a row. The saved links in
 /// columns, name, address and line (`raw TCP` for TCP), or the lines of why `links.toml`
-/// didn't load; the serial ports under the test's warning. The tab's buttons in the bottom
+/// didn't load; the serial ports. Both under the test's warning. The tab's buttons in the bottom
 /// border. As wide as its longest row, as tall as the list, the screen's size at most; more
 /// rows than room, a scrollbar in the right padding
 pub fn render_directory_popup(
@@ -50,7 +51,6 @@ pub fn render_directory_popup(
     theme: &ThemeConfig,
     targets: &mut Vec<(Rect, PopupTarget)>,
 ) -> Rect {
-    let on_ports = directory.tab == DirectoryTab::Ports;
     let resolver = &app.key_resolver;
     let dialog_key = |action| resolver.dialog_keys(action).into_iter().next();
     let key = |c| {
@@ -73,8 +73,8 @@ pub fn render_directory_popup(
         if tab == DirectoryTab::Saved {
             buttons.push((key('x'), PopupTarget::DirectoryDelete, "Delete"));
         }
+        buttons.push((key('t'), PopupTarget::DirectoryTest, "Test"));
         if tab == DirectoryTab::Ports {
-            buttons.push((key('t'), PopupTarget::DirectoryTest, "Test"));
             buttons.push((key('r'), PopupTarget::DirectoryRefresh, "Refresh"));
         }
         buttons.push((
@@ -119,18 +119,15 @@ pub fn render_directory_popup(
                 .max()
                 .unwrap_or(0)
         };
-        let note_width = if tab == DirectoryTab::Ports {
-            TEST_NOTE.width()
-        } else {
-            0
-        };
-        let width = list_width.max(note_width).max(buttons(tab).0.width());
+        let width = list_width
+            .max(TEST_NOTE.width())
+            .max(buttons(tab).0.width());
         let listed = if rows.is_empty() {
             empty.len()
         } else {
             rows.len()
         };
-        (width as u16, listed.max(1) as u16 + header(tab))
+        (width as u16, listed.max(1) as u16 + HEADER)
     };
     let tab_widths: Vec<u16> = TABS.iter().map(|(_, t)| t.width() as u16 + 2).collect();
     let tabs_width = tab_widths.iter().sum::<u16>() + tab_widths.len() as u16 - 1;
@@ -141,7 +138,6 @@ pub fn render_directory_popup(
     let height = saved.1.max(ports.1) + 3;
     let area = popup_area(frame.area(), width + 4, height);
     let (rows, empty) = list(directory.tab);
-    let header = header(directory.tab);
 
     let block = popup_block("Directory", &hints, theme).padding(Padding::new(1, 1, 0, 1));
     frame.render_widget(Clear, area);
@@ -156,17 +152,15 @@ pub fn render_directory_popup(
     }
 
     render_tabs(directory.tab, &tab_widths, frame, inner, theme, targets);
-    if on_ports {
-        let note = Rect {
-            y: inner.y + 1,
-            height: 1,
-            ..inner
-        }
-        .intersection(inner);
-        frame.render_widget(Paragraph::new(Span::styled(TEST_NOTE, muted)), note);
+    let note = Rect {
+        y: inner.y + 1,
+        height: 1,
+        ..inner
     }
-    inner.y += header;
-    inner.height = inner.height.saturating_sub(header);
+    .intersection(inner);
+    frame.render_widget(Paragraph::new(Span::styled(TEST_NOTE, muted)), note);
+    inner.y += HEADER;
+    inner.height = inner.height.saturating_sub(HEADER);
 
     if rows.is_empty() {
         frame.render_widget(Paragraph::new(empty), inner);
@@ -215,13 +209,8 @@ pub fn render_directory_popup(
 /// The text after a row and its color
 type Note = (String, Color);
 
-/// The rows above a tab's list: the tabs and a blank row, the ports' note between
-fn header(tab: DirectoryTab) -> u16 {
-    match tab {
-        DirectoryTab::Saved => 2,
-        DirectoryTab::Ports => 3,
-    }
-}
+/// The rows above a tab's list: the tabs, the test's note, a blank row
+const HEADER: u16 = 3;
 
 /// A tab's rows: the text, whether it's the link in use, the note after it. A saved link's
 /// columns are padded to the widest of each
@@ -420,15 +409,28 @@ fn render_tabs(
     }
 }
 
-/// A tested port's result after its name: running, free, held, refused or the error
-fn note(state: Option<&PortState>, theme: &ThemeConfig) -> Note {
+/// A tested link's result after its name: running, free, held and by whom, refused, missing,
+/// a TCP link's answer, or the error (MAX-186)
+fn note(state: Option<&ProbeState>, theme: &ThemeConfig) -> Note {
     let palette = &theme.palette;
+    let (good, warn, muted) = (palette.text_good, palette.text_warn, palette.text_muted);
+    let Some(state) = state else {
+        return ("testing…".to_string(), muted);
+    };
     match state {
-        None => ("testing…".to_string(), palette.text_muted),
-        Some(PortState::Free) => ("free".to_string(), palette.text_good),
-        Some(PortState::Busy(None)) => ("busy".to_string(), palette.text_warn),
-        Some(PortState::Busy(Some(holder))) => (format!("busy: {holder}"), palette.text_warn),
-        Some(PortState::NoAccess) => ("no access".to_string(), palette.text_warn),
-        Some(PortState::Error(err)) => (err.clone(), palette.text_muted),
+        ProbeState::Free => ("free".to_string(), good),
+        ProbeState::InUse => ("in use".to_string(), muted),
+        ProbeState::Busy(None) => ("busy".to_string(), warn),
+        ProbeState::Busy(Some(holder)) => (format!("busy: {holder}"), warn),
+        ProbeState::NoAccess(None) => ("no access".to_string(), warn),
+        ProbeState::NoAccess(Some(group)) => (format!("no access: join {group}"), warn),
+        ProbeState::Missing => ("not found".to_string(), muted),
+        ProbeState::NoLock => ("no lock".to_string(), good),
+        ProbeState::Reachable => ("reachable".to_string(), good),
+        ProbeState::Refused => ("refused".to_string(), warn),
+        ProbeState::Unreachable => ("unreachable".to_string(), warn),
+        ProbeState::UnknownHost => ("unknown host".to_string(), warn),
+        ProbeState::NoAnswer => ("no answer".to_string(), muted),
+        ProbeState::Error(err) => (err.clone(), muted),
     }
 }

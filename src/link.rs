@@ -15,6 +15,8 @@
 pub mod address;
 pub mod config;
 pub mod error;
+pub mod lock;
+pub mod probe;
 pub mod replay;
 pub mod serial;
 pub mod state;
@@ -66,6 +68,15 @@ impl ByteSource {
         match self {
             ByteSource::Serial(dev) => dev.control(control),
             ByteSource::Tcp(_) | ByteSource::Replay(_) => Err(LinkError::NoControlLines),
+        }
+    }
+
+    /// Another maxicom on the same TCP address when it connected (MAX-186): a serial port
+    /// another maxicom holds is refused
+    pub fn shared_with(&self) -> Option<&str> {
+        match self {
+            ByteSource::Tcp(dev) => dev.shared_with(),
+            ByteSource::Serial(_) | ByteSource::Replay(_) => None,
         }
     }
 

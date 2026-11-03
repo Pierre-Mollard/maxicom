@@ -75,6 +75,11 @@ impl LinkState {
         self.device.is_some()
     }
 
+    /// Another maxicom on the same TCP address when the link connected (MAX-186)
+    pub fn shared_with(&self) -> Option<&str> {
+        self.device.as_ref().and_then(ByteSource::shared_with)
+    }
+
     /// Closed until an attach: by hand, idle, or a reattach that failed
     pub fn is_detached(&self) -> bool {
         self.detached

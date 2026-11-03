@@ -2647,10 +2647,13 @@ mod tests {
             "{rows:#?}"
         );
         assert!(!has(&rows, "COM3"), "{rows:#?}");
+        // MAX-186: the test from this tab too
+        let note = crate::ui::popups::directory::TEST_NOTE;
+        assert!(has(&rows, note), "{rows:#?}");
         assert!(
             has(
                 &rows,
-                "Enter Open · n New · e Edit · s Save · x Delete · Esc Close"
+                "Enter Open · n New · e Edit · s Save · x Delete · t Test · Esc Close"
             ),
             "{rows:#?}"
         );
@@ -2778,10 +2781,10 @@ mod tests {
 
     /// MAX-181: the directory warns what its test does, and shows each tested port's result
     /// after its name; more ports than rows, a scrollbar in its right padding.
-    /// How: four ports with a test result each but the device in use; then 40 ports.
+    /// How: six ports with a test result each but the device in use; then 40 ports.
     #[test]
     fn directory_test_marks_and_scrollbar() {
-        use crate::link::serial::PortState;
+        use crate::link::probe::ProbeState;
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
         let current = h.app.link_config().address.clone();
         let ports = [
@@ -2789,15 +2792,19 @@ mod tests {
             "/dev/ttyACM1",
             "/dev/ttyACM2",
             "/dev/ttyACM3",
+            "/dev/ttyACM4",
+            "/dev/ttyACM5",
         ];
         let mut all = vec![current.to_string()];
         all.extend(ports.iter().map(|port| port.to_string()));
         let mut directory = crate::overlays::Directory::new(all, &current);
         let states = [
             None,
-            Some(PortState::Free),
-            Some(PortState::Busy(Some("minicom (1234)".into()))),
-            Some(PortState::NoAccess),
+            Some(ProbeState::Free),
+            Some(ProbeState::Busy(Some("minicom (1234)".into()))),
+            Some(ProbeState::NoAccess(Some("dialout".into()))),
+            Some(ProbeState::Busy(None)),
+            Some(ProbeState::NoAnswer),
         ];
         for (port, state) in ports.iter().zip(states) {
             directory.tests.insert(port.to_string(), state);
@@ -2807,11 +2814,14 @@ mod tests {
         let rows = h.draw();
         let note = crate::ui::popups::directory::TEST_NOTE;
         assert!(has(&rows, note), "{rows:#?}");
-        for (port, mark) in
-            ports
-                .iter()
-                .zip(["testing…", "free", "busy: minicom (1234)", "no access"])
-        {
+        for (port, mark) in ports.iter().zip([
+            "testing…",
+            "free",
+            "busy: minicom (1234)",
+            "no access: join dialout",
+            "busy",
+            "no answer",
+        ]) {
             assert!(has(&rows, &format!("{port}  {mark}")), "{port}: {rows:#?}");
         }
         assert!(has(&rows, "t Test"), "{rows:#?}");

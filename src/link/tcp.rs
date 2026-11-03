@@ -10,7 +10,11 @@ use std::{
 
 use socket2::{SockRef, TcpKeepalive};
 
-use super::LinkError;
+use super::{
+    Address, LinkError,
+    lock::{LinkLock, LockState, lock_state},
+    probe::maxicom_label,
+};
 
 /// A read waits at most this, like the serial port's: the loop idles in the input poll
 const READ_TIMEOUT: Duration = Duration::from_millis(1);
@@ -24,6 +28,10 @@ const KEEPALIVE_RETRIES: u32 = 3;
 
 pub struct TcpDevice {
     stream: TcpStream,
+    // maxicom's lock on the address while connected, when it could be taken (MAX-186)
+    _lock: Option<LinkLock>,
+    // the maxicom that held the address when this one connected, which some servers allow
+    shared_with: Option<String>,
 }
 
 impl TcpDevice {
@@ -31,9 +39,24 @@ impl TcpDevice {
     /// `timeout`. The name lookup itself has no timeout
     pub fn connect(addr: &str, timeout: Duration) -> io::Result<Self> {
         let mut last_error = None;
-        for addr in addr.to_socket_addrs()? {
-            match Self::connect_to(addr, timeout) {
-                Ok(device) => return Ok(device),
+        for socket in addr.to_socket_addrs()? {
+            match Self::connect_to(socket, timeout) {
+                Ok(stream) => {
+                    let address = Address::Tcp(addr.to_string());
+                    let shared_with = match lock_state(&address) {
+                        LockState::Held(info)
+                            if info.as_ref().is_none_or(|i| i.pid != std::process::id()) =>
+                        {
+                            Some(maxicom_label(info.as_ref()))
+                        }
+                        _ => None,
+                    };
+                    return Ok(Self {
+                        stream,
+                        _lock: LinkLock::take(&address),
+                        shared_with,
+                    });
+                }
                 Err(err) => last_error = Some(err),
             }
         }
@@ -45,7 +68,7 @@ impl TcpDevice {
         }))
     }
 
-    fn connect_to(addr: SocketAddr, timeout: Duration) -> io::Result<Self> {
+    fn connect_to(addr: SocketAddr, timeout: Duration) -> io::Result<TcpStream> {
         let stream = TcpStream::connect_timeout(&addr, timeout)?;
         // typed keys leave at once instead of waiting to fill a packet (Nagle)
         stream.set_nodelay(true)?;
@@ -58,7 +81,12 @@ impl TcpDevice {
             .with_interval(KEEPALIVE_INTERVAL)
             .with_retries(KEEPALIVE_RETRIES);
         SockRef::from(&stream).set_tcp_keepalive(&keepalive)?;
-        Ok(Self { stream })
+        Ok(stream)
+    }
+
+    /// Another maxicom on the same address when this one connected (MAX-186)
+    pub fn shared_with(&self) -> Option<&str> {
+        self.shared_with.as_deref()
     }
 
     pub fn read(&mut self, buffer: &mut [u8]) -> Result<usize, LinkError> {

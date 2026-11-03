@@ -7,7 +7,18 @@ use std::{
     time::Duration,
 };
 
-use super::LinkError;
+#[cfg(target_os = "linux")]
+use super::probe::open_holder;
+use super::{
+    Address, LinkError,
+    lock::{LinkLock, LockState, held_by, lock_state},
+    probe::maxicom_label,
+};
+#[cfg(unix)]
+use super::{
+    lock::{LOCK_DIRS, UucpLock, locked_by},
+    probe::process_label,
+};
 use serde::{Deserialize, Serialize};
 use serial2::{
     CharSize as S2CharSize, FlowControl as S2FlowControl, Parity as S2Parity, SerialPort,
@@ -276,151 +287,33 @@ impl Display for LineControl {
 
 pub struct SerialDevice {
     port: SerialPort,
-}
-
-/// What the directory's test found for a port (MAX-181)
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PortState {
-    Free,
-    /// Held by another program, named when it's known: `minicom (1234)`
-    Busy(Option<String>),
-    NoAccess,
-    Error(String),
-}
-
-// TODO: redo the whole lock system by adding maxicom's (new module probably)
-
-/// The lock folders of minicom, picocom and the other UUCP-style programs
-#[cfg(unix)]
-const LOCK_DIRS: &[&str] = &["/var/lock", "/run/lock", "/var/spool/lock"];
-
-/// Whether `port` can be used (MAX-181), without opening it where the system tells otherwise:
-/// an open raises DTR and RTS, which resets a board with an auto-reset (ESP32, Arduino). On
-/// Linux a live UUCP lock file (minicom's), then a `flock` / `fcntl` lock in `/proc/locks`
-/// (picocom's, tio's, pyserial's): both seen whoever the user; then a process of the user's
-/// own holding it (its open files in `/proc`), then the permissions; on macOS the lock file and the permissions, a port held without a lock
-/// passing as free. On Windows only an open tells: one with the port's settings kept, closed
-/// at once
-pub fn probe_port(port: &str) -> PortState {
+    // maxicom's locks on the port while open, when they could be taken (MAX-186)
+    _lock: Option<LinkLock>,
     #[cfg(unix)]
-    {
-        if let Some(pid) = locked_by(port, LOCK_DIRS) {
-            return PortState::Busy(Some(process_label(pid)));
-        }
-        #[cfg(target_os = "linux")]
-        if let Some(pid) = lock_holder(port, "/proc/locks") {
-            return PortState::Busy(Some(process_label(pid)));
-        }
-        #[cfg(target_os = "linux")]
-        if let Some(holder) = holder_of(port, "/proc", std::process::id()) {
-            return PortState::Busy(Some(holder));
-        }
-        let Ok(path) = std::ffi::CString::new(port) else {
-            return PortState::Error("not a path".to_string());
-        };
-        if unsafe { libc::access(path.as_ptr(), libc::R_OK | libc::W_OK) } == 0 {
-            PortState::Free
-        } else {
-            port_state_of(&std::io::Error::last_os_error())
-        }
-    }
-    #[cfg(not(unix))]
-    match SerialPort::open(port, serial2::KeepSettings) {
-        Ok(_) => PortState::Free,
-        Err(err) => port_state_of(&err),
-    }
+    _uucp: Option<UucpLock>,
 }
 
-/// An open's or an access check's error: Windows refuses a port in use with access denied, a
-/// Unix port held with `TIOCEXCL` answers busy
-pub fn port_state_of(err: &std::io::Error) -> PortState {
+/// Who holds `device`, this process aside: another maxicom's lock in the shared folder, a UUCP
+/// lock file on Unix (minicom's), and on Linux a process of the user's own with a real port
+/// open, with no lock (screen, cu, `minicom -o`), a pty's maker aside (MAX-186). A `flock` holder is found by the open. Another user's
+/// program holding it without a lock can't be seen
+fn lock_holder(device: &str) -> Option<String> {
+    let me = std::process::id();
+    match lock_state(&Address::Serial(device.to_string())) {
+        LockState::Held(info) if info.as_ref().is_none_or(|info| info.pid != me) => {
+            return Some(maxicom_label(info.as_ref()));
+        }
+        _ => {}
+    }
     #[cfg(unix)]
-    if err.raw_os_error() == Some(libc::EBUSY) {
-        return PortState::Busy(None);
+    if let Some(pid) = locked_by(device, LOCK_DIRS).filter(|&pid| pid as u32 != me) {
+        return Some(process_label(pid));
     }
-    match err.kind() {
-        ErrorKind::PermissionDenied if cfg!(windows) => PortState::Busy(None),
-        ErrorKind::PermissionDenied => PortState::NoAccess,
-        _ => PortState::Error(err.to_string()),
-    }
-}
-
-/// The running process of a UUCP lock file for `port`: `LCK..ttyUSB0` in one of the lock
-/// folders `dirs`, the PID in it written as text
-#[cfg(unix)]
-fn locked_by(port: &str, dirs: &[&str]) -> Option<libc::pid_t> {
-    let name = std::path::Path::new(port).file_name()?;
-    let lock = format!("LCK..{}", name.to_string_lossy());
-    let pid_in = |dir: &&str| {
-        let text = std::fs::read_to_string(std::path::Path::new(dir).join(&lock)).ok()?;
-        text.trim()
-            .parse::<libc::pid_t>()
-            .ok()
-            .filter(|&pid| pid > 0)
-    };
-    dirs.iter().filter_map(pid_in).find(|&pid| {
-        // signal 0 only asks whether the process exists; EPERM: it does, someone else's
-        let alive = unsafe { libc::kill(pid, 0) } == 0;
-        alive || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-    })
-}
-
-/// The process with a `flock` or `fcntl` lock on `port` in `locks` (`/proc/locks`, which every
-/// user can read): its lines name the file by its filesystem's `major:minor` (hex) and inode
-#[cfg(target_os = "linux")]
-fn lock_holder(port: &str, locks: &str) -> Option<libc::pid_t> {
-    use std::os::unix::fs::MetadataExt;
-    let meta = std::fs::metadata(port).ok()?;
-    let dev = meta.dev();
-    let file = format!(
-        "{:02x}:{:02x}:{}",
-        libc::major(dev),
-        libc::minor(dev),
-        meta.ino()
-    );
-    let text = std::fs::read_to_string(locks).ok()?;
-    text.lines().find_map(|line| {
-        // `1: FLOCK  ADVISORY  WRITE 1234 00:05:567 0 EOF`; a waiter's line has `->` second
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        match fields.as_slice() {
-            [_, kind, _, _, pid, id, ..] if *kind != "->" && *id == file => pid.parse().ok(),
-            _ => None,
-        }
-    })
-}
-
-/// The first process but `skip` with `port` open, read from `proc`'s `<pid>/fd` links: the
-/// ones of the user's processes, the others' can't be read
-#[cfg(target_os = "linux")]
-fn holder_of(port: &str, proc: &str, skip: u32) -> Option<String> {
-    let target = std::fs::canonicalize(port).ok()?;
-    let pids = std::fs::read_dir(proc).ok()?.flatten().filter_map(|entry| {
-        let pid = entry.file_name().to_str()?.parse::<u32>().ok()?;
-        (pid != skip).then_some((pid, entry.path()))
-    });
-    for (pid, dir) in pids {
-        let Ok(fds) = std::fs::read_dir(dir.join("fd")) else {
-            continue;
-        };
-        let holds = fds
-            .flatten()
-            .any(|fd| std::fs::read_link(fd.path()).is_ok_and(|link| link == target));
-        if holds {
-            return Some(process_label(pid as libc::pid_t));
-        }
+    #[cfg(target_os = "linux")]
+    if let Some(holder) = open_holder(device, me) {
+        return Some(holder);
     }
     None
-}
-
-/// A process as the directory names it: `minicom (1234)`, the PID alone where its name can't
-/// be read
-#[cfg(unix)]
-fn process_label(pid: libc::pid_t) -> String {
-    let name = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok();
-    match name.as_deref().map(str::trim) {
-        Some(name) if !name.is_empty() => format!("{name} ({pid})"),
-        _ => format!("pid {pid}"),
-    }
 }
 
 /// The serial ports the system lists, sorted, to complete `open`'s address (MAX-168); none
@@ -437,12 +330,17 @@ pub fn port_names() -> Vec<String> {
 impl SerialDevice {
     /// Opens `device` with the line settings `line`
     pub fn open(device: &str, line: &LineSettings) -> Result<Self, LinkError> {
-        let mut port =
-            SerialPort::open(device, line.baud).map_err(|err| LinkError::OpenFailed {
-                port: device.to_string(),
-                baudrate: line.baud,
-                source: err,
-            })?;
+        let failed = |source| LinkError::OpenFailed {
+            port: device.to_string(),
+            baudrate: line.baud,
+            source,
+        };
+        // a port another program holds by a lock is refused before the open, which would
+        // raise its lines and may reset the board (MAX-186)
+        if let Some(holder) = lock_holder(device) {
+            return Err(failed(held_by(holder)));
+        }
+        let mut port = SerialPort::open(device, line.baud).map_err(failed)?;
 
         // Platform-specific exclusivity lock
         #[cfg(unix)]
@@ -450,15 +348,20 @@ impl SerialDevice {
             use std::os::unix::io::AsRawFd;
             let fd = port.as_raw_fd();
 
+            // a `flock` too, the one picocom, tio and pyserial take (MAX-186): every user sees
+            // it in `/proc/locks`, those programs keep off the port, and it goes with the fd,
+            // a crash included. Taken first: a port refused here is left without TIOCEXCL. A
+            // file system without locks only loses that guard
+            if unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } < 0
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::EWOULDBLOCK)
+            {
+                return Err(failed(std::io::Error::from_raw_os_error(libc::EBUSY)));
+            }
+
             // TIOCEXCL tells the kernel to return EBUSY for any following open()
             let res = unsafe { libc::ioctl(fd, libc::TIOCEXCL) };
             if res < 0 {
-                let err = std::io::Error::last_os_error();
-                return Err(LinkError::OpenFailed {
-                    port: device.to_string(),
-                    baudrate: line.baud,
-                    source: err,
-                });
+                return Err(failed(std::io::Error::last_os_error()));
             }
         }
 
@@ -466,7 +369,12 @@ impl SerialDevice {
         port.set_read_timeout(Duration::from_millis(1))
             .map_err(LinkError::ConfigFailed)?;
 
-        let mut dev = Self { port };
+        let mut dev = Self {
+            port,
+            _lock: LinkLock::take(&Address::Serial(device.to_string())),
+            #[cfg(unix)]
+            _uucp: UucpLock::take(device),
+        };
         dev.reconfigure(line)?;
         Ok(dev)
     }
@@ -642,105 +550,85 @@ mod tests {
         }
     }
 
-    /// MAX-181: an open's or an access check's error says how the port is held: EBUSY (a
-    /// `TIOCEXCL` holder) is busy, access denied is busy on Windows and no access elsewhere,
-    /// anything else its text; a port that doesn't exist is an error.
-    #[test]
-    fn port_states_of_open_errors() {
-        use std::io::Error;
-        #[cfg(unix)]
-        assert_eq!(
-            port_state_of(&Error::from_raw_os_error(libc::EBUSY)),
-            PortState::Busy(None)
-        );
-        let denied = port_state_of(&Error::from(ErrorKind::PermissionDenied));
-        let expected = if cfg!(windows) {
-            PortState::Busy(None)
-        } else {
-            PortState::NoAccess
-        };
-        assert_eq!(denied, expected);
-        let missing = port_state_of(&Error::new(ErrorKind::NotFound, "no such device"));
-        assert_eq!(missing, PortState::Error("no such device".to_string()));
-        assert!(matches!(
-            probe_port("/nonexistent/ttyX"),
-            PortState::Error(_)
-        ));
-    }
-
-    /// MAX-181: a lock file names the port by its file name and holds a PID: the test's own
-    /// process locks it, a PID of no process or text that isn't one doesn't, nor a lock for
-    /// another port.
-    /// How: a temp lock folder, `LCK..ttyUSB7` written three ways.
-    #[cfg(unix)]
-    #[test]
-    fn lock_files() {
-        let dir = std::env::temp_dir().join(format!("maxicom_locks_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let dirs = [dir.to_str().unwrap()];
-        let lock = dir.join("LCK..ttyUSB7");
-        assert_eq!(locked_by("/dev/ttyUSB7", &dirs), None);
-        std::fs::write(&lock, format!("{:>10}\n", std::process::id())).unwrap();
-        let me = Some(std::process::id() as libc::pid_t);
-        assert_eq!(locked_by("/dev/ttyUSB7", &dirs), me);
-        assert_eq!(locked_by("/dev/ttyUSB8", &dirs), None);
-        // past the largest PID Linux and macOS give
-        std::fs::write(&lock, "  99999999\n").unwrap();
-        assert_eq!(locked_by("/dev/ttyUSB7", &dirs), None);
-        std::fs::write(&lock, "garbage").unwrap();
-        assert_eq!(locked_by("/dev/ttyUSB7", &dirs), None);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// MAX-181: on Linux, a file some process holds open is found in `/proc` with that
-    /// process's name and PID, through a symlink too; the skipped process (maxicom itself)
-    /// isn't, nor a file nobody holds; a readable port nobody holds is free.
-    /// How: a temp file this test holds open, a symlink to it, a second file closed.
+    /// MAX-186: an open port holds a `flock`, seen in `/proc/locks` under maxicom's PID and
+    /// gone once closed; a port another program holds a `flock` on is refused as busy, and
+    /// left without TIOCEXCL, so that program can still open it again.
+    /// How: a pty opened as the port then closed; then its other end locked by the test
+    /// first, maxicom's open refused, a plain open after it.
     #[cfg(target_os = "linux")]
     #[test]
-    fn holders_in_proc() {
-        let dir = std::env::temp_dir().join(format!("maxicom_holder_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let held = dir.join("ttyFAKE0");
-        let _open = std::fs::File::create(&held).unwrap();
-        let link = dir.join("by-id");
-        let _ = std::os::unix::fs::symlink(&held, &link);
-        let free = dir.join("ttyFAKE1");
-        std::fs::write(&free, "").unwrap();
-
-        let me = std::process::id();
-        let holder = holder_of(held.to_str().unwrap(), "/proc", 0).expect("held");
-        assert!(holder.ends_with(&format!("({me})")), "{holder}");
-        assert_eq!(holder_of(link.to_str().unwrap(), "/proc", 0), Some(holder));
-        assert_eq!(holder_of(held.to_str().unwrap(), "/proc", me), None);
-        assert_eq!(holder_of(free.to_str().unwrap(), "/proc", 0), None);
-        assert_eq!(probe_port(free.to_str().unwrap()), PortState::Free);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// MAX-181: a `flock` on a file shows in `/proc/locks` under the locking process, for
-    /// every user; a file nobody locks isn't there.
-    /// How: a temp file locked by the test, another not.
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn flock_holders() {
-        use std::os::fd::AsRawFd;
-        let dir = std::env::temp_dir().join(format!("maxicom_flock_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let locked = dir.join("ttyFAKE0");
-        let file = std::fs::File::create(&locked).unwrap();
-        assert_eq!(unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) }, 0);
-        let free = dir.join("ttyFAKE1");
-        std::fs::write(&free, "").unwrap();
-
+    fn open_takes_a_flock() {
+        use crate::link::{lock::lock_holder, probe::port_state_of};
+        use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
+        let pty = crate::app::tests::Pty::open();
         let me = std::process::id() as libc::pid_t;
+        let line = LineSettings::default();
+        let port = SerialDevice::open(&pty.path, &line).unwrap();
+        assert_eq!(lock_holder(&pty.path, "/proc/locks"), Some(me));
+        drop(port);
+        assert_eq!(lock_holder(&pty.path, "/proc/locks"), None);
+
+        let open = || {
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .custom_flags(libc::O_NOCTTY)
+                .open(&pty.path)
+        };
+        let other = open().unwrap();
+        assert_eq!(unsafe { libc::flock(other.as_raw_fd(), libc::LOCK_EX) }, 0);
+        let Err(LinkError::OpenFailed { source, .. }) = SerialDevice::open(&pty.path, &line) else {
+            panic!("opened a locked port");
+        };
         assert_eq!(
-            lock_holder(locked.to_str().unwrap(), "/proc/locks"),
-            Some(me)
+            port_state_of(&source),
+            crate::link::probe::ProbeState::Busy(None)
         );
-        assert_eq!(lock_holder(free.to_str().unwrap(), "/proc/locks"), None);
-        drop(file);
-        assert_eq!(lock_holder(locked.to_str().unwrap(), "/proc/locks"), None);
+        open().expect("TIOCEXCL left on the port");
+    }
+
+    /// MAX-186: a port another process of the user's has open without any lock (`minicom -o`,
+    /// screen, cu) is refused before it's opened, that process named in the error; a pty is
+    /// opened though its maker holds it too (socat, as the test scripts make one).
+    /// How: a `sleep` started with a plain file as its input (refused before any open); then
+    /// with a pty's port end.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn open_refuses_a_port_held_without_a_lock() {
+        let held_by_sleep = |path: &str| {
+            let input = std::fs::File::options()
+                .read(true)
+                .write(true)
+                .open(path)
+                .unwrap();
+            std::process::Command::new("sleep")
+                .arg("10")
+                .stdin(input)
+                .spawn()
+                .unwrap()
+        };
+        let line = LineSettings::default();
+        let dir = std::env::temp_dir().join(format!("maxicom_held_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let port = dir.join("ttyHELD");
+        std::fs::write(&port, "").unwrap();
+        let port = port.to_str().unwrap();
+        let mut holder = held_by_sleep(port);
+        let refused = SerialDevice::open(port, &line);
+        let _ = holder.kill();
+        let _ = holder.wait();
+        let Err(err) = refused else {
+            panic!("opened a port another process holds");
+        };
+        let held = format!("is held by sleep ({})", holder.id());
+        assert!(err.to_string().ends_with(&held), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
+
+        let pty = crate::app::tests::Pty::open();
+        let mut maker = held_by_sleep(&pty.path);
+        let opened = SerialDevice::open(&pty.path, &line);
+        let _ = maker.kill();
+        let _ = maker.wait();
+        assert!(opened.is_ok(), "a pty refused for its maker");
     }
 }

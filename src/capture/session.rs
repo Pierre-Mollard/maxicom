@@ -307,17 +307,7 @@ pub struct Session {
 /// characters safe in a file name. "/dev/ttyUSB0" gives "ttyUSB0"; `Session::port_tag` reads
 /// it back
 pub fn session_tag(address: &Address) -> String {
-    address
-        .tag()
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
+    address.file_tag()
 }
 
 impl Session {

@@ -111,7 +111,7 @@ pub struct App {
     /// The disconnected popup was shown and the link hasn't opened since (MAX-181)
     link_lost: bool,
     /// The directory's port test running (MAX-181)
-    port_test: Option<device::PortTest>,
+    link_test: Option<device::LinkTest>,
     prefix_active: bool,
     overlay: Option<Overlay>,
     pub notifications: NotificationManager,
@@ -141,6 +141,8 @@ pub struct App {
     recorder: Recorder,
     /// What is received while the restore dialog asks, fed after the answer (MAX-148)
     held_rx: Option<Vec<u8>>,
+    /// `--restore` / `--no-restore`, for the start and each device switched to (MAX-187)
+    restore_flag: Option<bool>,
     /// The replies to the remote's queries, for the loop to send (MAX-151)
     query_answers: Vec<u8>,
     /// The rules of `triggers.toml` (MAX-6)
@@ -239,7 +241,7 @@ impl App {
             disconnected_after_restore: false,
             device_unpicked: false,
             link_lost: false,
-            port_test: None,
+            link_test: None,
             overlay: None,
             notifications: NotificationManager::new(),
             viewport: ViewportSize::default(),
@@ -259,6 +261,7 @@ impl App {
             terminal_mode: terminal_view,
             recorder: Recorder::default(),
             held_rx: None,
+            restore_flag: None,
             query_answers: Vec::new(),
             triggers: Vec::new(),
             links: Ok(LinksConfig::default()),
@@ -341,8 +344,12 @@ impl App {
     /// The next action of a command line chain (MAX-12). Each is built when its turn comes, on
     /// the state the previous ones left, and the loop applies its effect before the next
     /// A command that refuses (the link can't do it) stops the chain, with the error. None
-    /// either while the chain is paused (before `now`)
+    /// either while the chain is paused (before `now`) or the restore dialog asks, as the
+    /// device an `open` switched to may (MAX-187)
     pub fn next_command_action(&mut self, now: Instant) -> Option<Action> {
+        if matches!(self.overlay, Some(Overlay::RestoreSession(_))) {
+            return None;
+        }
         if let Some(resume_at) = self.commands_resume_at {
             if now < resume_at {
                 return None;
@@ -489,7 +496,7 @@ impl App {
     pub fn start_replay(&mut self, path: PathBuf, session: Option<&CaptureDevice>) {
         self.stop_transfer("a replay took the link's place");
         self.stop_mash("a replay took the link's place");
-        let (line_mode, terminal_mode, stats) = self.clear_screen_for_replay();
+        let (line_mode, terminal_mode, stats) = self.clear_screen();
         // a replay replacing a replay keeps the live link the first one set aside
         let replaced = match self.replay.take().and_then(|run| run.replaced) {
             Some(replaced) => Some(replaced),
@@ -525,9 +532,9 @@ impl App {
         }
     }
 
-    /// Fresh histories of both modes and fresh counts for a replay to play on, the ones they
-    /// replace given back (MAX-166)
-    fn clear_screen_for_replay(&mut self) -> (LineMode, TerminalMode, Stats) {
+    /// Fresh histories of both modes and fresh counts, the ones they replace given back: for a
+    /// replay to play on (MAX-166) and for a device switched to (MAX-187)
+    fn clear_screen(&mut self) -> (LineMode, TerminalMode, Stats) {
         let line_mode = LineMode::new(
             self.settings.line_mode.history_size,
             self.settings.line_mode.send_history_size,
@@ -546,7 +553,7 @@ impl App {
 
     /// The replay reads again from the start, on a clean screen, not ended (MAX-166)
     fn restart_replay_screen(&mut self) {
-        self.clear_screen_for_replay();
+        self.clear_screen();
         self.set_replay_ended(false);
     }
 
@@ -841,9 +848,9 @@ impl App {
                             self.toggle_triggers(name.as_deref());
                             UpdateEffect::None
                         }
-                        OverlayResponse::TestPorts => {
+                        OverlayResponse::TestLinks => {
                             self.overlay = Some(overlay);
-                            self.test_ports();
+                            self.test_links();
                             UpdateEffect::None
                         }
                         OverlayResponse::ArmTrigger { name, on } => {
@@ -1144,7 +1151,7 @@ impl App {
         let now = Instant::now();
         let drag_scrolled =
             self.drag_scroll(now) || self.scrollbar_repeat(now) || self.click_repeat(now);
-        let tested = self.poll_port_test();
+        let tested = self.poll_link_test();
         toasts_expired || self.terminal_mode.has_pending_flash() || drag_scrolled || tested
     }
 

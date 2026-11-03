@@ -42,9 +42,24 @@ impl App {
         }
     }
 
-    /// A new session backup, for the port `open` switched to: the backups go by port (MAX-12)
+    /// A new session backup: for the device switched to, after its restore (MAX-12, MAX-187),
+    /// and for new line settings on the same port (MAX-173)
     pub fn restart_session(&mut self) {
         self.start_session(self.sessions_dir.clone());
+    }
+
+    /// `--restore` / `--no-restore`, kept for the devices switched to (MAX-187)
+    pub fn set_restore_flag(&mut self, restore: Option<bool>) {
+        self.restore_flag = restore;
+    }
+
+    /// The device switched to starts as at start on it (MAX-187): a clean screen, its last
+    /// session restored, then its own session backup
+    pub fn switch_session(&mut self) {
+        self.clear_screen();
+        let dir = self.sessions_dir.clone();
+        self.restore_last_session(dir.as_deref(), self.restore_flag);
+        self.restart_session();
     }
 
     /// The session backup set aside while a replay replaces the live link (MAX-166): out of the

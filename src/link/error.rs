@@ -49,12 +49,16 @@ impl fmt::Display for LinkError {
                 ErrorKind::PermissionDenied => {
                     write!(f, "permission denied opening serial port '{port}'")
                 }
-                ErrorKind::ResourceBusy => {
-                    write!(
+                // a holder maxicom found names it (MAX-186)
+                ErrorKind::ResourceBusy => match source.get_ref() {
+                    Some(held) if held.is::<crate::link::lock::HeldBy>() => {
+                        write!(f, "serial port '{port}' is {held}")
+                    }
+                    _ => write!(
                         f,
                         "serial port '{port}' is busy (already in use by another application)"
-                    )
-                }
+                    ),
+                },
                 _ => {
                     write!(
                         f,
