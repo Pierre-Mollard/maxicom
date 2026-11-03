@@ -4,7 +4,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Clear, Paragraph},
+    widgets::{Clear, Padding, Paragraph},
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -12,9 +12,10 @@ use crate::{
     app::{App, triggers::Trigger},
     configs::{KeyPattern, ThemeConfig, keybindings::KeyBindingDialogAction},
     overlays::{PopupTarget, TriggerBrowser},
+    paths::shorten_home,
     ui::{
         common::popup_area,
-        popups::{Hints, hint_spans, popup_block},
+        popups::{Hints, cut, hint_spans, popup_block, section},
     },
 };
 
@@ -22,11 +23,16 @@ use crate::{
 const GAP: u16 = 2;
 /// What an empty file shows in place of the list
 const EMPTY: &str = "No trigger: add a table per rule to the file, then reload the config";
+/// Over the list
+const LIST_TITLE: &str = "Rules";
+/// Before the path, as wide as the config's field names
+const FILE_LABEL: &str = "File   ";
 
 /// The trigger browser (MAX-167): the file on top, the triggers on the left with their state,
-/// the selected one's config on the right, the buttons in the bottom border. As big as its
-/// text with every trigger's config in it, so it doesn't change size with the selection; the
-/// screen's size at most
+/// the selected one's config on the right under its name, the buttons in the bottom border.
+/// As big as its text with every trigger's config in it, so it doesn't change size with the
+/// selection; the screen's size at most. The list and the config centered under the file
+/// when it's wider (MAX-183)
 pub fn render_triggers_popup(
     app: &App,
     browser: &TriggerBrowser,
@@ -67,11 +73,16 @@ pub fn render_triggers_popup(
     };
 
     let triggers = app.triggers();
-    let file = format!("File  {}", browser.path.display());
-    let list_width = (triggers.iter()).map(list_width).max().unwrap_or(0);
+    let file = shorten_home(&browser.path);
+    let list_width = (triggers.iter())
+        .map(list_width)
+        .max()
+        .unwrap_or(0)
+        .max(LIST_TITLE.width() as u16);
     let config_width = (triggers.iter())
         .flat_map(|trigger| config(trigger, theme))
         .map(|(name, value, _)| name.len() + value.width())
+        .chain(triggers.iter().map(|trigger| trigger.name.width()))
         .max()
         .unwrap_or(0) as u16;
     let body = if triggers.is_empty() {
@@ -81,15 +92,17 @@ pub fn render_triggers_popup(
     };
     // the buttons in the bottom border take as much as the text: a corner and a space on
     // each side, as the border and the padding
-    let width = (file.width() as u16)
+    let width = ((FILE_LABEL.len() + file.width()) as u16)
         .max(body)
         .max(hints.line.width() as u16);
-    let rows = triggers.len().max(FIELDS) as u16;
-    // the borders and the padding around, the file and a blank row on top
+    // under their titles
+    let rows = triggers.len().max(FIELDS) as u16 + 1;
+    // the borders and the padding around, none on top (MAX-183), the file and a blank row on
+    // top
     let parent = frame.area();
-    let area = popup_area(parent, width + 4, rows + 2 + 4);
+    let area = popup_area(parent, width + 4, rows + 2 + 3);
 
-    let block = popup_block("Triggers", &hints, theme);
+    let block = popup_block("Triggers", &hints, theme).padding(Padding::new(1, 1, 0, 1));
     frame.render_widget(Clear, area);
     let mut inner = block.inner(area);
     frame.render_widget(block, area);
@@ -102,10 +115,17 @@ pub fn render_triggers_popup(
     }
 
     let muted = Style::default().fg(theme.palette.text_muted);
-    let file = Span::styled(file, muted);
+    let file = Line::from(vec![
+        Span::styled(FILE_LABEL, muted),
+        Span::styled(file, Style::default().fg(theme.palette.main)),
+    ]);
     frame.render_widget(Paragraph::new(file), Rect { height: 1, ..inner });
     inner.y += 2;
     inner.height = inner.height.saturating_sub(2);
+    // a body narrower than the popup centered in it
+    let offset = inner.width.saturating_sub(body) / 2;
+    inner.x += offset;
+    inner.width -= offset;
 
     if triggers.is_empty() {
         frame.render_widget(Paragraph::new(Span::styled(EMPTY, muted)), inner);
@@ -126,20 +146,25 @@ pub fn render_triggers_popup(
     area
 }
 
-/// A row of the list: the mark, a space and the name
+/// A row of the list: the mark, a space and the name, `NAME_WIDTH` at most
 fn list_width(trigger: &Trigger) -> u16 {
-    (2 + trigger.name.width()) as u16
+    (2 + trigger.name.width().min(NAME_WIDTH)) as u16
 }
+
+/// A name in the list at most: a longer one is cut, in full over the selected one's config
+const NAME_WIDTH: usize = 20;
 
 /// The rows of the config
 const FIELDS: usize = 4;
 
-/// A trigger's config: each field's name padded, its value and style
+/// A trigger's config: each field's name padded, its value and style. Armed in the status
+/// bar's color, the text matched and the line run in the settings' colors
 fn config(trigger: &Trigger, theme: &ThemeConfig) -> [(&'static str, String, Style); FIELDS] {
     let muted = Style::default().fg(theme.palette.text_muted);
-    let plain = Style::default();
+    let plain = Style::default().fg(theme.palette.text);
     let (state, state_style) = if trigger.is_armed() {
-        ("armed", Style::default().fg(theme.palette.text_warn))
+        let warn = Style::default().fg(theme.palette.text_warn);
+        ("armed", warn.add_modifier(Modifier::BOLD))
     } else {
         ("disarmed", muted)
     };
@@ -150,14 +175,23 @@ fn config(trigger: &Trigger, theme: &ThemeConfig) -> [(&'static str, String, Sty
     };
     [
         ("State  ", state.to_string(), state_style),
-        ("Match  ", format!("{:?}", trigger.text), plain),
-        ("Run    ", trigger.run.clone(), plain),
+        (
+            "Match  ",
+            format!("{:?}", trigger.text),
+            Style::default().fg(theme.palette.secondary),
+        ),
+        (
+            "Run    ",
+            trigger.run.clone(),
+            Style::default().fg(theme.palette.main),
+        ),
         ("Fires  ", fires.to_string(), plain),
     ]
 }
 
-/// One row per trigger from the one that keeps the selection in view: `◎` armed, `○` not.
-/// Each row is a click target
+/// The list's title, then one row per trigger from the one that keeps the selection in view:
+/// `◎` armed, `○` not, a long name cut, the selected one's bar as wide as the list. Each row
+/// is a click target
 fn render_list(
     app: &App,
     browser: &TriggerBrowser,
@@ -166,6 +200,12 @@ fn render_list(
     theme: &ThemeConfig,
     targets: &mut Vec<(Rect, PopupTarget)>,
 ) {
+    frame.render_widget(Paragraph::new(section(LIST_TITLE, theme)), area);
+    let area = Rect {
+        y: area.y + 1,
+        height: area.height.saturating_sub(1),
+        ..area
+    };
     let height = area.height as usize;
     let first = (browser.selected + 1).saturating_sub(height);
     let rows = app.triggers().iter().enumerate().skip(first).take(height);
@@ -182,17 +222,21 @@ fn render_list(
             };
             let row_area = Rect::new(area.x, area.y + (idx - first) as u16, area.width, 1);
             targets.push((row_area, PopupTarget::TriggerRow(idx)));
+            // cut to the list's width, narrower than `NAME_WIDTH` on a narrow screen
+            let name = cut(&trigger.name, (area.width as usize).saturating_sub(2));
+            let pad = (area.width as usize).saturating_sub(2 + name.width());
             Line::from(vec![
                 Span::styled(mark, style.fg(color)),
                 Span::styled(" ", style),
-                Span::styled(trigger.name.as_str(), style),
+                Span::styled(name, style),
+                Span::styled(" ".repeat(pad), style),
             ])
         })
         .collect();
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-/// The selected trigger's rule as written, and its state
+/// The selected trigger's name, its rule as written and its state
 fn render_config(
     app: &App,
     browser: &TriggerBrowser,
@@ -204,11 +248,13 @@ fn render_config(
         return;
     };
     let muted = Style::default().fg(theme.palette.text_muted);
-    let lines: Vec<Line> = config(trigger, theme)
-        .into_iter()
-        .map(|(name, value, style)| {
-            Line::from(vec![Span::styled(name, muted), Span::styled(value, style)])
-        })
-        .collect();
+    let mut lines = vec![section(trigger.name.as_str(), theme)];
+    lines.extend(
+        config(trigger, theme)
+            .into_iter()
+            .map(|(name, value, style)| {
+                Line::from(vec![Span::styled(name, muted), Span::styled(value, style)])
+            }),
+    );
     frame.render_widget(Paragraph::new(lines), area);
 }

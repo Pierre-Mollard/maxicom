@@ -17,7 +17,7 @@ use crate::{
     ui::{
         common::popup_area,
         popups::{
-            Hints, form_area, hint_spans, key_hints, popup_block, render_scrollbar, row_area,
+            Hints, cut, form_area, hint_spans, key_hints, popup_block, render_scrollbar, row_area,
             section,
         },
     },
@@ -123,13 +123,17 @@ pub fn render_directory_popup(
         let width = list_width
             .max(TEST_NOTE.width())
             .max(buttons(tab).0.width());
-        (width as u16, listed as u16 + HEADER)
+        // a blank row and the selected row's long cell in full under a table cut
+        let full = if table.is_cut() { 2 } else { 0 };
+        (width as u16, (listed + full) as u16 + HEADER)
     };
     let tab_widths: Vec<u16> = TABS.iter().map(|(_, t)| t.width() as u16 + 2).collect();
     let tabs_width = tab_widths.iter().sum::<u16>() + tab_widths.len() as u16 - 1;
     // the larger of both tabs, so switching keeps the size
     let (saved, ports) = (size(DirectoryTab::Saved), size(DirectoryTab::Ports));
-    let width = saved.0.max(ports.0).max(tabs_width);
+    // never narrower than it was: a state gets shorter as a test ends
+    let width = (saved.0.max(ports.0).max(tabs_width)).max(directory.width.get());
+    directory.width.set(width);
     // the borders and the padding, none on top: the tabs touch the top border
     let height = saved.1.max(ports.1) + 3;
     let area = popup_area(frame.area(), width + 4, height);
@@ -163,20 +167,46 @@ pub fn render_directory_popup(
         return area;
     }
     // a table narrower than the popup (the other tab's wider) centered, its State column
-    // as wide as its widest state now
+    // as wide as its widest state now, its longest fixed one at least
     let offset = (inner.width as usize).saturating_sub(table.width()) as u16 / 2;
     let centered = |area: Rect| Rect {
         x: area.x + offset,
         width: area.width - offset,
         ..area
     };
+    // the selected row's long cell in full on the last row, under a blank one, at the
+    // table's first column, when the table cuts it (the rows kept when another row's is cut)
+    let selected = directory.selection();
+    if table.is_cut() {
+        inner.height = inner.height.saturating_sub(2);
+        let full = centered(Rect {
+            y: inner.bottom() + 1,
+            height: 1,
+            ..inner
+        })
+        .intersection(area);
+        let header = Style::default()
+            .fg(theme.palette.text_muted)
+            .add_modifier(Modifier::BOLD);
+        let long = (table.rows.get(selected))
+            .map(|row| &row.cells[1])
+            .filter(|cell| cell.width() > table.widths[1]);
+        if let Some(text) = long {
+            let label = format!("  {}  ", table.headers[1]);
+            let width = usize::from(full.width).saturating_sub(label.width());
+            let line = Line::from(vec![
+                Span::styled(label, header),
+                Span::styled(cut(text, width), Style::default().fg(theme.palette.text)),
+            ]);
+            frame.render_widget(Paragraph::new(line), full);
+        }
+    }
     let header = Rect { height: 1, ..inner }.intersection(inner);
     frame.render_widget(Paragraph::new(table.header(theme)), centered(header));
     inner.y += 1;
     inner.height = inner.height.saturating_sub(1);
 
     // from the row that keeps the selection in view; each row is a click target
-    let selected = directory.selection();
     let visible = inner.height as usize;
     let first = (selected + 1).saturating_sub(visible);
     let lines: Vec<Line> = (table.rows.iter().enumerate().skip(first).take(visible))
@@ -212,6 +242,11 @@ const HEADER: u16 = 3;
 
 /// Between two columns
 const GAP: usize = 2;
+/// The State column at least: its longest state but the ones naming who holds the port
+const STATE_WIDTH: usize = 12;
+/// The second column (address, device) at most: a longer cell is cut, in full under the table
+/// when its row is selected
+const LONG_WIDTH: usize = 30;
 
 /// A tab's row: a cell per column but the state, whether it's the link in use, its state
 struct Row {
@@ -222,7 +257,8 @@ struct Row {
 
 /// A tab's rows in columns under their headers (MAX-188): a saved link's name, address and
 /// line, a port's name, device and `vid:pid`, then the state of both. Each column as wide as
-/// its widest cell or header, none for a column empty on every row but the first
+/// its widest cell or header, none for a column empty on every row but the first and the
+/// state's; the state's as wide as `STATE_WIDTH` at least, the second `LONG_WIDTH` at most
 struct Table {
     headers: [&'static str; 4],
     rows: Vec<Row>,
@@ -243,9 +279,13 @@ impl Table {
                 _ => row.cells[i].width(),
             };
             let widest = rows.iter().map(cell).max().unwrap_or(0);
-            if i == 0 || widest > 0 {
-                *width = widest.max(headers[i].width());
-            }
+            *width = match i {
+                0 => widest.max(headers[i].width()),
+                1 if widest > 0 => widest.min(LONG_WIDTH).max(headers[i].width()),
+                2 if widest > 0 => widest.max(headers[i].width()),
+                3 => widest.max(STATE_WIDTH),
+                _ => 0,
+            };
         }
         Self {
             headers,
@@ -258,6 +298,11 @@ impl Table {
     fn width(&self) -> usize {
         let shown = self.widths.iter().filter(|w| **w > 0);
         2 + shown.clone().sum::<usize>() + GAP * shown.count().saturating_sub(1)
+    }
+
+    /// Whether a row's second cell is cut
+    fn is_cut(&self) -> bool {
+        (self.rows.iter()).any(|row| row.cells[1].width() > self.widths[1])
     }
 
     /// The second column (address, device) narrowed to fit in `max`, to its header at least
@@ -320,23 +365,6 @@ impl Table {
         spans.extend(self.spans(cells, style));
         Line::from(spans)
     }
-}
-
-/// `text` cut to `width` columns, `…` in its last one when it's cut
-fn cut(text: &str, width: usize) -> String {
-    if text.width() <= width {
-        return text.to_string();
-    }
-    let mut cut = String::new();
-    for c in text.chars() {
-        let next = cut.width() + c.to_string().width();
-        if next + 1 > width {
-            break;
-        }
-        cut.push(c);
-    }
-    cut.push('…');
-    cut
 }
 
 /// A tab's rows, the link in use marked, the state after: "opening…", "in use" or the last

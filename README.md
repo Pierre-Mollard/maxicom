@@ -448,9 +448,10 @@ What changes from a serial port:
   tab lists the keys bound to a line and every command.
 - Typed text has the completions of the word before the cursor listed
   (command names with their help, then the values of the argument it is).
-  A help too long for the list is cut, but the selected one's, which wraps.
-  Tab, Shift-Tab, Up and Down put them in its place in turn; a lone one, or
-  a click, is taken with a space after it. An empty line, or a line recalled
+  A help too long for the list is cut with `…`; the selected command's usage
+  and whole help are under the list. Tab, Shift-Tab, Up and Down put them in
+  its place in turn, the wheel scrolls the list; a lone one, or a click, is
+  taken with a space after it. An empty line, or a line recalled
   from the history, lists nothing until Tab (which lists without picking)
   or typing.
 - Without a list, Up and Down walk the lines that ran, as in the TX input:

@@ -1770,81 +1770,73 @@ mod tests {
         assert!(rows[22].starts_with("│:toggle-d"), "{:?}", rows[22]);
     }
 
-    /// MAX-163: only the selected candidate's help wraps, its next rows under the help column;
-    /// the other helps are cut on their row. A click on a wrapped row takes its candidate. A
-    /// scrolled list keeps all the selected one's rows in view, in its 8 rows.
+    /// MAX-190: every candidate is one row, its help cut with `…`; under a rule, the selected
+    /// command's usage and its whole help wrapped. A click on a row takes its candidate. A
+    /// list longer than 8 rows keeps the selected one in view, and the wheel scrolls it.
     /// How: `replay-` typed on a 60-column screen, `replay-restart` (the longest help) selected,
-    /// a click on its second row; then every command listed, cycled to `replay-restart`.
+    /// a click on `replay-stop`; then every command listed, cycled to `replay-restart`, the
+    /// wheel down and up.
     #[test]
-    fn command_line_selected_help_wraps() {
+    fn command_line_selected_help_below_the_list() {
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 60, 24);
-        let mut command_line = CommandLine::new(Vec::new(), Vec::new(), Vec::new());
-        command_line.handle_action(DialogAction::Paste("replay-".into()));
-        let restart = (command_line.completion.candidates.iter())
-            .position(|c| c.value == "replay-restart")
-            .unwrap();
-        for _ in 0..=restart {
-            command_line.handle_action(DialogAction::CycleNext);
-        }
-        h.app
-            .update(Action::App(AppAction::OpenOverlay(Overlay::CommandLine(
-                Box::new(command_line),
-            ))));
-        let rows = h.draw();
-
-        let (help_x, y) = cell_of(&rows, "Play the replay again from the start,");
-        assert!(
-            rows[usize::from(y)].contains("replay-restart  Play"),
-            "{rows:#?}"
-        );
-        assert_eq!(
-            cell_of(&rows, "on a clean screen"),
-            (help_x, y + 1),
-            "{rows:#?}"
-        );
-
-        // `replay-stop`'s help is longer than its column: cut, on its row alone
-        let (_, stop_y) = cell_of(&rows, "replay-stop ");
-        assert!(
-            rows[usize::from(stop_y)].contains("Stop the replay"),
-            "{rows:#?}"
-        );
-        assert!(!has(&rows, "it replaced"), "{rows:#?}");
-
-        click(&mut h, (help_x + 2, y + 1));
-        let rows = h.draw();
-        assert!(has(&rows, ":replay-restart "), "{rows:#?}");
-
-        // every command listed, scrolled: the selected one at the bottom, all its rows shown,
-        // in 8 rows all together
-        h.app.close_overlay();
-        let mut command_line = CommandLine::new(Vec::new(), Vec::new(), Vec::new());
-        command_line.handle_action(DialogAction::CycleNext);
-        while command_line.input.value() != "replay-restart" {
-            command_line.handle_action(DialogAction::CycleNext);
-        }
-        h.app
-            .update(Action::App(AppAction::OpenOverlay(Overlay::CommandLine(
-                Box::new(command_line),
-            ))));
-        let rows = h.draw();
-        // the list's corners in its second column
-        let corner = |c: char| (rows.iter()).position(|row| row.chars().nth(1) == Some(c));
-        let (top, bottom) = (corner('┌').unwrap(), corner('└').unwrap());
-        assert_eq!(bottom - top - 1, 8, "{rows:#?}");
-        let at = (rows.iter())
-            .position(|row| row.contains("│ replay-restart "))
-            .unwrap();
-        let help_x = rows[at].find("Play").unwrap();
-        let help: Vec<&str> = rows[at..bottom]
+        let open = |h: &mut Harness, typed: &str, until: &str| {
+            let mut command_line = CommandLine::new(Vec::new(), Vec::new(), Vec::new());
+            if typed.is_empty() {
+                command_line.handle_action(DialogAction::CycleNext);
+            } else {
+                command_line.handle_action(DialogAction::Paste(typed.into()));
+            }
+            while command_line.input.value() != until {
+                command_line.handle_action(DialogAction::CycleNext);
+            }
+            h.app
+                .update(Action::App(AppAction::OpenOverlay(Overlay::CommandLine(
+                    Box::new(command_line),
+                ))));
+            h.draw()
+        };
+        let rows = open(&mut h, "replay-", "replay-restart");
+        let (_, y) = cell_of(&rows, "replay-restart  Play the replay again");
+        assert!(rows[usize::from(y)].contains("…"), "{rows:#?}");
+        let (_, rule) = cell_of(&rows, "├");
+        assert!(rows[usize::from(rule)].contains('┤'), "{rows:#?}");
+        let usage = crate::commands::find_by_name("replay-restart")
+            .unwrap()
+            .usage();
+        let under = rows[usize::from(rule) + 1].trim_matches([' ', '│']);
+        assert_eq!(under, usage, "{rows:#?}");
+        let help: Vec<&str> = rows[usize::from(rule) + 2..]
             .iter()
-            .map(|row| row[help_x..].trim_end_matches([' ', '│']))
+            .take_while(|row| !row.contains('└'))
+            // the TX prompt in the column left of the list
+            .map(|row| row.trim_matches([' ', '│', '>']))
             .collect();
-        assert!(help.len() > 1, "{rows:#?}");
         assert_eq!(
             help.join(" "),
             "Play the replay again from the start, on a clean screen"
         );
+
+        click(&mut h, cell_of(&rows, "replay-stop "));
+        assert!(has(&h.draw(), ":replay-stop "));
+
+        // every command listed: 8 rows, the selected one the last shown
+        h.app.close_overlay();
+        let rows = open(&mut h, "", "replay-restart");
+        let corner =
+            |rows: &[String], c: char| (rows.iter()).position(|row| row.chars().nth(1) == Some(c));
+        let top = corner(&rows, '┌').unwrap();
+        let (_, rule) = cell_of(&rows, "├");
+        assert_eq!(usize::from(rule) - top - 1, 8, "{rows:#?}");
+        assert!(rows[usize::from(rule) - 1].contains("replay-restart "));
+        // the wheel: a row down, the selection kept; back up
+        let first = |rows: &[String]| rows[top + 1].clone();
+        let before = first(&rows);
+        h.app.update(Action::Overlay(DialogAction::Down));
+        let rows = h.draw();
+        assert_ne!(first(&rows), before, "{rows:#?}");
+        assert!(has(&rows, ":replay-restart"), "{rows:#?}");
+        h.app.update(Action::Overlay(DialogAction::Up));
+        assert_eq!(first(&h.draw()), before);
     }
 
     /// MAX-12: the default status bar shows the file `send-file` sends and its progress, only
@@ -2505,7 +2497,8 @@ mod tests {
     /// MAX-167: the trigger browser lists the triggers with their state (`◎` armed, `○` not) and
     /// the selected one's rule on the side; a click selects a row, a click on the selected one or
     /// the Toggle button toggles it, Toggle all toggles them all, and it stays open. The status
-    /// bar's count opens it.
+    /// bar's count opens it. The list and the rule under their titles, the rule's the selected
+    /// name, the file's path from `~` (MAX-183).
     /// How: the default triggers, the popup opened by its action, then by the status bar.
     #[test]
     fn trigger_browser_lists_and_toggles() {
@@ -2522,6 +2515,7 @@ mod tests {
         shows(
             &rows,
             &[
+                "Rules     login",
                 "○ login",
                 "○ u-boot",
                 "State  disarmed",
@@ -2533,9 +2527,17 @@ mod tests {
 
         click(&mut h, cell_of(&rows, "u-boot"));
         let rows = h.draw();
-        shows(&rows, &["Run    send ' '", "Fires  once, then disarms"]);
+        shows(
+            &rows,
+            &[
+                "Rules     u-boot",
+                "Run    send ' '",
+                "Fires  once, then disarms",
+            ],
+        );
         assert!(h.app.armed_triggers().is_empty());
-        click(&mut h, cell_of(&rows, "u-boot"));
+        // the row, not the rule's title
+        click(&mut h, cell_of(&rows, "○ u-boot"));
         assert_eq!(h.app.armed_triggers(), ["u-boot"]);
         let rows = h.draw();
         shows(&rows, &["○ login", "◎ u-boot", "State  armed"]);
@@ -2698,7 +2700,9 @@ mod tests {
         let row = rows.iter().find(|row| row.contains("esp32")).unwrap();
         let inside = row.trim().trim_matches('│');
         let left = inside.len() - inside.trim_start().len();
-        let right = inside.len() - inside.trim_end().len();
+        // the State column, empty before a test, as blank
+        let state = "unknown host".len() + 2;
+        let right = inside.len() - inside.trim_end().len() - state;
         assert!(
             left > 2 && left.abs_diff(right) <= 1,
             "{left} {right}: {rows:#?}"
@@ -2895,10 +2899,12 @@ mod tests {
     }
 
     /// MAX-188: each tab is a table under its headers, the state in its own column lined up;
-    /// a column empty on every row isn't shown (no device or ID, no state before a test);
-    /// on a narrow screen the device is cut, `…` at its end.
-    /// How: two ports, one with its USB details, one tested; then no details nor test; then
-    /// the first at 50 columns.
+    /// a column empty on every row isn't shown (no device or ID), the state's always is, as
+    /// wide as its longest fixed state, so a test ending doesn't narrow the popup. A device
+    /// longer than 30 columns is cut, `…` at its end, and in full under the table while its
+    /// row is selected; a narrow screen cuts it more.
+    /// How: two ports, one with its USB details, one tested; the second selected; then no
+    /// details nor test; then the first at 50 columns.
     #[test]
     fn directory_columns() {
         use crate::link::{probe::ProbeState, serial::PortDetails};
@@ -2907,7 +2913,7 @@ mod tests {
         let ports = vec!["/dev/ttyACM0".to_string(), "/dev/ttyUSB1".to_string()];
         let mut directory = crate::overlays::Directory::new(ports.clone(), &current);
         let details = PortDetails {
-            device: Some("Silicon Labs CP2102 USB to UART".into()),
+            device: Some("Silicon Labs CP2102 USB to UART Bridge Controller".into()),
             id: Some("10c4:ea60".into()),
         };
         directory.details.insert("/dev/ttyUSB1".into(), details);
@@ -2919,26 +2925,28 @@ mod tests {
         };
         let rows = open(&mut h, directory.clone());
         for row in [
-            "  Port          Device                           ID         State",
-            "  /dev/ttyACM0                                              free",
-            "  /dev/ttyUSB1  Silicon Labs CP2102 USB to UART  10c4:ea60",
+            "  Port          Device                          ID         State",
+            "  /dev/ttyACM0                                             free",
+            "  /dev/ttyUSB1  Silicon Labs CP2102 USB to UA…  10c4:ea60",
         ] {
             assert!(has(&rows, row), "{row}: {rows:#?}");
         }
+        let full = "Device  Silicon Labs CP2102 USB to UART Bridge Controller";
+        assert!(!has(&rows, full), "{rows:#?}");
+        h.app.update(Action::Overlay(DialogAction::Down));
+        let rows = h.draw();
+        assert!(has(&rows, full), "{rows:#?}");
 
         let plain = crate::overlays::Directory::new(ports, &current);
         let rows = open(&mut h, plain);
-        assert!(has(&rows, "  Port        "), "{rows:#?}");
-        for gone in ["Device", "ID", "State"] {
+        assert!(has(&rows, "  Port          State"), "{rows:#?}");
+        for gone in ["Device", "ID"] {
             assert!(!has(&rows, gone), "{gone}: {rows:#?}");
         }
 
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 50, 24);
         let rows = open(&mut h, directory);
-        assert!(
-            has(&rows, "/dev/ttyUSB1  Silicon Lab…  10c4:ea60"),
-            "{rows:#?}"
-        );
+        assert!(has(&rows, "/dev/ttyUSB1  Silic…  10c4:ea60"), "{rows:#?}");
     }
 
     /// MAX-163: in the trigger browser, j/k and Up/Down move; l/Right arm the selected one and
@@ -2987,7 +2995,7 @@ mod tests {
 
     /// MAX-167: the trigger browser is as big as its text and buttons, every trigger's config
     /// in it: it doesn't change with the selection, and a longer rule widens it; the screen's
-    /// size at most.
+    /// size at most. MAX-183: a name longer than 20 columns is cut in the list.
     /// How: the default triggers, the popup's top border measured, a second row selected,
     /// then a long `run` and a narrow screen.
     #[test]
@@ -3025,13 +3033,26 @@ mod tests {
                 .position(|row| row.contains('└'))
                 .unwrap();
         let height = bottom - top + 1;
-        assert_eq!(height, 4 + 2 + 4);
+        // the config and its title, no padding on top (MAX-183)
+        assert_eq!(height, 4 + 1 + 2 + 3);
         h.app.update(Action::Overlay(DialogAction::Down));
         assert_eq!(popup_width(&mut h), width);
 
         let long = "x".repeat(80);
         open(&mut h, &format!("[r]\nmatch = 'x'\nrun = 'send {long}'\n"));
-        assert_eq!(popup_width(&mut h), 3 + 2 + 7 + 5 + 80 + 4);
+        // the list as wide as its title (MAX-183)
+        assert_eq!(popup_width(&mut h), 5 + 2 + 7 + 5 + 80 + 4);
+
+        // a long name cut in the list at 20 columns, in full over its rule (MAX-183)
+        let name = "a-very-long-trigger-name-for-the-board-x";
+        open(&mut h, &format!("[{name}]\nmatch = 'x'\nrun = 'send y'\n"));
+        let rows = h.draw();
+        assert!(has(&rows, "○ a-very-long-trigger…  State"), "{rows:#?}");
+        assert!(
+            has(&rows, &format!("Rules{}{name}", " ".repeat(2 + 20 + 2 - 5))),
+            "{rows:#?}"
+        );
+        assert_eq!(popup_width(&mut h), 2 + 20 + 2 + name.len() + 4);
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, 60, 20);
         open(&mut h, &format!("[r]\nmatch = 'x'\nrun = 'send {long}'\n"));
         assert_eq!(popup_width(&mut h), 60);

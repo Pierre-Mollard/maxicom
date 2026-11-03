@@ -10,6 +10,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::{App, types::PromptMap},
+    commands::find_by_name,
     configs::{
         CommandLineLayout, KeyResolver, StatusBarLayout, ThemeConfig,
         keybindings::KeyBindingDialogAction,
@@ -18,7 +19,7 @@ use crate::{
     ui::{
         common::{popup_area, prompt_view},
         layout::wrap_line_by_words,
-        popups::{key_hints, popup_block, row_area},
+        popups::{cut, key_hints, popup_block, render_scrollbar, row_area},
     },
 };
 
@@ -27,9 +28,6 @@ pub const COMMAND_LINE_WIDTH: u16 = 64;
 
 /// Rows of the completion list at most: it scrolls to keep the selection in view
 pub const COMPLETION_ROWS: usize = 8;
-
-/// The narrowest help column the selected candidate's help wraps in; narrower, it is cut
-const MIN_HELP_WRAP: usize = 12;
 
 /// The command line and its completion list (MAX-12): over the status bar with `layout =
 /// "status_bar"` when the bar is drawn (`status_bar` its area), else in its popup. Returns the
@@ -188,10 +186,11 @@ fn render_input_row(
 }
 
 /// The completion of the word before the cursor: a list under `anchor` (the popup), or above it
-/// (the status bar), one column inside it on each side. Each candidate is a row, cut at the
-/// list's width, but the selected one, whose help wraps under the help column (MAX-163). The
-/// list shows `COMPLETION_ROWS` rows at most, scrolled to keep the selected one whole in view.
-/// Each row is a click target on its candidate
+/// (the status bar), one column inside it on each side. Each candidate is a row, cut with `…`
+/// at the list's width; under a rule, the selected command's usage and its help wrapped
+/// (MAX-190). The list shows `COMPLETION_ROWS` rows at most, from the one the overlay scrolled
+/// to, a scrollbar in the right padding when there are more. Each row is a click target on its
+/// candidate
 fn render_completion_list(
     command_line: &CommandLine,
     anchor: Rect,
@@ -211,67 +210,46 @@ fn render_completion_list(
         .unwrap_or(0);
     let help_style = Style::default().fg(theme.palette.text_muted);
     let selected = command_line.selected;
-
-    // the selected help's rows, in the room left of the list's borders and padding
-    let help_width = usize::from(anchor.width.saturating_sub(6)).saturating_sub(value_width + 2);
-    let selected_help: Vec<Line> = match selected.map(|i| candidates[i].help) {
-        Some(help) if !help.is_empty() && help_width >= MIN_HELP_WRAP => {
-            let help = Line::from(Span::styled(help, help_style));
-            (wrap_line_by_words(help, help_width, 0, 0).into_iter())
-                .map(|row| Line::from(row.spans))
-                .collect()
-        }
-        _ => Vec::new(),
-    };
-    let height_of = |i: usize| match selected {
-        Some(s) if s == i => selected_help.len().clamp(1, COMPLETION_ROWS),
-        _ => 1,
-    };
-    // the first shown: the selected one at the bottom once the list scrolls
-    let first = selected.map_or(0, |s| {
-        let (mut first, mut used) = (s, height_of(s));
-        while first > 0 && used < COMPLETION_ROWS {
-            first -= 1;
-            used += 1;
-        }
-        first
-    });
+    // inside the list's borders and padding
+    let width = usize::from(anchor.width.saturating_sub(6));
+    let max_scroll = candidates.len().saturating_sub(COMPLETION_ROWS);
+    let first = command_line.list_scroll.min(max_scroll);
 
     let mut lines: Vec<Line> = Vec::new();
-    // each candidate shown: its index, first row and row count
-    let mut shown: Vec<(usize, usize, usize)> = Vec::new();
-    for (i, candidate) in candidates.iter().enumerate().skip(first) {
-        let room = COMPLETION_ROWS - lines.len();
-        if room == 0 {
-            break;
-        }
+    let shown = candidates
+        .iter()
+        .enumerate()
+        .skip(first)
+        .take(COMPLETION_ROWS);
+    for (i, candidate) in shown {
         let style = if selected == Some(i) {
             *theme.command_line.selected
         } else {
             *theme.command_line.text
         };
-        let value = Span::styled(format!("{:<value_width$}", candidate.value), style);
-        let start = lines.len();
-        if selected == Some(i) && !selected_help.is_empty() {
-            // the next rows under the help column
-            let indent = " ".repeat(value_width + 2);
-            for (row, help) in selected_help.iter().take(room).enumerate() {
-                let lead = if row == 0 {
-                    vec![value.clone(), Span::raw("  ")]
-                } else {
-                    vec![Span::raw(indent.clone())]
-                };
-                lines.push(Line::from([lead, help.spans.clone()].concat()));
-            }
-        } else {
-            let mut spans = vec![value];
-            if !candidate.help.is_empty() {
-                spans.push(Span::raw("  "));
-                spans.push(Span::styled(candidate.help, help_style));
-            }
-            lines.push(Line::from(spans));
+        let value = cut(&format!("{:<value_width$}", candidate.value), width);
+        let room = width.saturating_sub(value_width + 2);
+        let mut spans = vec![Span::styled(value, style)];
+        if !candidate.help.is_empty() && room > 0 {
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(cut(candidate.help, room), help_style));
         }
-        shown.push((i, start, lines.len() - start));
+        lines.push(Line::from(spans));
+    }
+    let listed = lines.len();
+
+    // the selected command's usage and help, wrapped; none for a value
+    let detail = selected
+        .map(|i| &candidates[i])
+        .filter(|candidate| !candidate.help.is_empty())
+        .and_then(|candidate| find_by_name(&candidate.value).map(|spec| (spec, candidate.help)));
+    if let Some((spec, help)) = detail {
+        lines.push(Line::from(""));
+        let usage = Style::default().fg(theme.palette.main);
+        lines.push(Line::styled(cut(&spec.usage(), width), usage));
+        let help = Line::styled(help, Style::default().fg(theme.palette.text));
+        let rows = wrap_line_by_words(help, width.max(1), 0, 0).into_iter();
+        lines.extend(rows.map(|row| Line::from(row.spans)));
     }
 
     let height = lines.len() as u16 + 2;
@@ -294,11 +272,28 @@ fn render_completion_list(
     let inner = block.inner(area);
     frame.render_widget(block, area);
     frame.render_widget(Paragraph::new(lines), inner);
-    for (i, start, rows) in shown {
-        for row in start..start + rows {
-            if row < inner.height as usize {
-                targets.push((row_area(inner, row), PopupTarget::Completion(i)));
-            }
+    // the rule between the list and the detail, joined to the borders
+    let rule_y = inner.y + listed as u16;
+    if detail.is_some() && rule_y < inner.bottom() {
+        let rule = Rect::new(area.x, rule_y, area.width, 1);
+        let middle = "─".repeat(usize::from(rule.width.saturating_sub(2)));
+        let style = *theme.command_line.border;
+        let text = Span::styled(format!("├{middle}┤"), style);
+        frame.render_widget(Paragraph::new(text), rule);
+    }
+    for row in 0..listed {
+        if row < inner.height as usize {
+            targets.push((row_area(inner, row), PopupTarget::Completion(first + row)));
         }
+    }
+    if max_scroll > 0 {
+        let bar = Rect {
+            x: inner.right(),
+            width: 1,
+            height: (listed as u16).min(inner.height),
+            ..inner
+        }
+        .intersection(area);
+        render_scrollbar(frame, bar, (first, max_scroll, COMPLETION_ROWS), theme);
     }
 }

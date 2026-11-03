@@ -6,6 +6,8 @@ use ratatui::{
     widgets::{Block, Padding, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 
+use unicode_width::UnicodeWidthStr;
+
 use crate::{
     configs::{KeyPattern, KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
     overlays::PopupTarget,
@@ -77,6 +79,23 @@ pub fn render_scrollbar(
         .begin_style(*theme.ui.scrollbar_thumb)
         .end_style(*theme.ui.scrollbar_thumb);
     frame.render_stateful_widget(scrollbar, bar, &mut state);
+}
+
+/// `text` cut to `width` columns, `…` in its last one when it's cut
+pub fn cut(text: &str, width: usize) -> String {
+    if text.width() <= width {
+        return text.to_string();
+    }
+    let mut cut = String::new();
+    for c in text.chars() {
+        let next = cut.width() + c.to_string().width();
+        if next + 1 > width {
+            break;
+        }
+        cut.push(c);
+    }
+    cut.push('…');
+    cut
 }
 
 /// A section header inside a popup

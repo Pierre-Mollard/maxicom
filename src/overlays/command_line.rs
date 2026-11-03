@@ -7,6 +7,7 @@ use crate::{
     commands::{self, Completion},
     inputs::{DialogAction, click_input_at, dispatch_input_key, paste_into_input},
     overlays::{OverlayResponse, PopupTarget},
+    ui::popups::command_line::COMPLETION_ROWS,
 };
 
 /// The command line (MAX-12): a `:` prompt whose line runs as commands on Enter. A line that
@@ -14,7 +15,7 @@ use crate::{
 /// word before the cursor listed: Tab, Shift-Tab, Up and Down put a candidate in its place; a
 /// lone one or a click takes it and moves on to the next word. An empty line, or one recalled
 /// from the history, lists nothing until Tab or typing (MAX-163); without a list, Up and Down
-/// walk the lines that ran starting with the text typed
+/// walk the lines that ran starting with the text typed. The wheel scrolls the list (MAX-190)
 #[derive(Debug, Clone, Default)]
 pub struct CommandLine {
     pub input: Input,
@@ -23,6 +24,8 @@ pub struct CommandLine {
     /// The completion of the word as typed, kept while its candidates are cycled
     pub completion: Completion,
     pub selected: Option<usize>,
+    /// The first candidate shown: the wheel scrolls it, a selection out of view brings it back
+    pub list_scroll: usize,
     /// Whether the completion is listed: it is empty while not
     listed: bool,
     /// The app's command history when it opened, the oldest first, the line shown from it, and
@@ -98,6 +101,7 @@ impl CommandLine {
             Completion::default()
         };
         self.selected = None;
+        self.list_scroll = 0;
     }
 
     /// After an edit: the completion listed while there is text, the history walk over
@@ -144,6 +148,22 @@ impl CommandLine {
         let value = self.completion.candidates[selected].value.clone();
         self.put_word(&value);
         self.selected = Some(selected);
+        let last_shown = self.list_scroll + COMPLETION_ROWS - 1;
+        if selected < self.list_scroll {
+            self.list_scroll = selected;
+        } else if selected > last_shown {
+            self.list_scroll = selected + 1 - COMPLETION_ROWS;
+        }
+    }
+
+    /// The list one row down (`down`) or up, the last rows shown at most
+    fn scroll(&mut self, down: bool) {
+        let max = (self.completion.candidates.len()).saturating_sub(COMPLETION_ROWS);
+        self.list_scroll = if down {
+            (self.list_scroll + 1).min(max)
+        } else {
+            self.list_scroll.saturating_sub(1)
+        };
     }
 
     /// The candidate in the word's place and a space after it, but for a folder (`/`): its
@@ -224,6 +244,11 @@ impl CommandLine {
             }
             DialogAction::Pick(PopupTarget::Completion(index)) => {
                 self.take(index);
+                OverlayResponse::Handled
+            }
+            // the wheel (MAX-190): the arrows come as keys
+            DialogAction::Down | DialogAction::Up => {
+                self.scroll(action == DialogAction::Down);
                 OverlayResponse::Handled
             }
             _ => OverlayResponse::Handled,

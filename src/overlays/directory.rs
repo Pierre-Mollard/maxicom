@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{cell::Cell, collections::HashMap};
 
 use crossterm::event::KeyCode;
 
@@ -27,7 +27,8 @@ const PAGE: usize = 10;
 /// the selected one in the same form, `x` or Del deletes it, asked first. Tab, Shift-Tab, Left
 /// and Right switch tabs. On the ports, `r` lists them again, the selection kept on its name.
 /// `t` tests the links of both tabs, each one's last result in `tests` by address (`None`
-/// while it runs, MAX-186). The ports' `details` are read with the list (MAX-188)
+/// while it runs, MAX-186). The ports' `details` are read with the list (MAX-188). `width` is
+/// the widest the popup was drawn: it doesn't shrink while open, as a state gets shorter
 #[derive(Debug, Clone)]
 pub struct Directory {
     pub tab: DirectoryTab,
@@ -38,6 +39,7 @@ pub struct Directory {
     pub selected: usize,
     pub tests: HashMap<String, Option<ProbeState>>,
     pub opening: Option<String>,
+    pub width: Cell<u16>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +59,7 @@ impl Directory {
             selected: 0,
             tests: HashMap::new(),
             opening: None,
+            width: Cell::new(0),
         };
         directory.set_ports(ports, Some(&current.to_string()));
         directory
