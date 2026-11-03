@@ -19,6 +19,8 @@ use crate::{
     },
 };
 
+/// The settings in their groups, each row a click target, the config files under them; in
+/// two columns when the screen has room (MAX-184), scrolled when it's too short
 pub fn render_settings_popup(
     app: &App,
     dialog: &SettingsDialog,
@@ -66,7 +68,7 @@ pub fn render_settings_popup(
                 format!("[{key}] "),
                 Style::default().fg(theme.palette.secondary),
             ),
-            Span::raw(format!("{label:<13}: ")),
+            Span::raw(format!("{label:<14}: ")),
             Span::styled(value, Style::default().fg(theme.palette.main)),
         ])
     };
@@ -80,61 +82,72 @@ pub fn render_settings_popup(
     let on_off = |on: bool| if on { "ON" } else { "OFF" };
     let add_cr_str = on_off(app.settings().add_cr);
     let add_lf_str = on_off(app.settings().add_lf);
-    // each row with the setting a click on it toggles (MAX-113)
-    let rows = vec![
-        (None, section("General", theme)),
-        (Some(SettingKey::Mode), row("M", "Input Mode", mode_str)),
-        (
-            Some(SettingKey::LocalEcho),
-            row("E", "Local Echo", echo_str),
-        ),
-        (
-            Some(SettingKey::DisplayTimestamp),
-            row("T", "Timestamps", timestamp_str),
-        ),
-        (
-            Some(SettingKey::TextEncoding),
-            row("X", "Rx Encoding", encoding_str),
-        ),
-        (
-            Some(SettingKey::DisplayRaw),
-            row("B", "Byte Inspect", raw_display_str),
-        ),
-        (Some(SettingKey::Mouse), row("U", "Mouse", mouse_str)),
-        (Some(SettingKey::AddCr), row("R", "Add CR", add_cr_str)),
-        (Some(SettingKey::AddLf), row("F", "Add LF", add_lf_str)),
-        (None, Line::from("")),
-        (None, section("Line Mode", theme)),
-        (Some(SettingKey::LineWrap), row("W", "Line Wrap", wrap_str)),
-        (
-            Some(SettingKey::IdentWrap),
-            row("I", "Indent Wrap", indent_str),
-        ),
-        (
-            Some(SettingKey::PrefixPlace),
-            row("P", "Prefix Place", prefix_place_str),
-        ),
-        (
-            Some(SettingKey::DisplayMode),
-            row("D", "Display Mode", display_mode_str),
-        ),
-        (None, Line::from("")),
-        (None, section("Terminal Mode", theme)),
-        (
-            Some(SettingKey::DimensionMode),
-            row("S", "Size Mode", dimension_str),
-        ),
-        (
-            Some(SettingKey::AnswerQueries),
-            row("A", "Query Answers", answers_str),
-        ),
-    ];
-    let mut rows: Vec<(Option<PopupTarget>, Line)> = (rows.into_iter())
-        .map(|(key, line)| (key.map(PopupTarget::Setting), line))
-        .collect();
+    let tx_eol_str = app.settings().line_mode.tx_eol.as_str();
+    // each row with the setting a click on it toggles (MAX-113), in groups
+    let group = |title, rows: Vec<(SettingKey, Line<'static>)>| {
+        let mut group = vec![(None, section(title, theme))];
+        group.extend((rows.into_iter()).map(|(key, line)| (Some(PopupTarget::Setting(key)), line)));
+        group
+    };
+    let general = group(
+        "General",
+        vec![
+            (SettingKey::Mode, row("M", "Input Mode", mode_str)),
+            (SettingKey::LocalEcho, row("E", "Local Echo", echo_str)),
+            (
+                SettingKey::DisplayTimestamp,
+                row("T", "Timestamps", timestamp_str),
+            ),
+            (
+                SettingKey::TextEncoding,
+                row("X", "Rx Encoding", encoding_str),
+            ),
+            (
+                SettingKey::DisplayRaw,
+                row("B", "Byte Inspect", raw_display_str),
+            ),
+            (SettingKey::Mouse, row("U", "Mouse", mouse_str)),
+        ],
+    );
+    // what's received (both modes) and what Enter sends (line mode, MAX-184)
+    let newlines = group(
+        "Newlines",
+        vec![
+            (SettingKey::AddCr, row("R", "Add CR", add_cr_str)),
+            (SettingKey::AddLf, row("F", "Add LF", add_lf_str)),
+            (SettingKey::TxEol, row("N", "Line Enter", tx_eol_str)),
+        ],
+    );
+    let line_mode = group(
+        "Line Mode",
+        vec![
+            (SettingKey::LineWrap, row("W", "Line Wrap", wrap_str)),
+            (SettingKey::IdentWrap, row("I", "Indent Wrap", indent_str)),
+            (
+                SettingKey::PrefixPlace,
+                row("P", "Prefix Place", prefix_place_str),
+            ),
+            (
+                SettingKey::DisplayMode,
+                row("D", "Display Mode", display_mode_str),
+            ),
+        ],
+    );
+    let terminal_mode = group(
+        "Terminal Mode",
+        vec![
+            (
+                SettingKey::DimensionMode,
+                row("S", "Size Mode", dimension_str),
+            ),
+            (
+                SettingKey::AnswerQueries,
+                row("A", "Query Answers", answers_str),
+            ),
+        ],
+    );
     // the config folder, then the files out of it; a click copies one (MAX-163)
-    rows.push((None, Line::from("")));
-    rows.push((None, section("Files", theme)));
+    let mut files = vec![(None, section("Files", theme))];
     for (index, (what, path)) in AppConfig::config_paths(app.settings())
         .into_iter()
         .enumerate()
@@ -156,10 +169,54 @@ pub fn render_settings_popup(
         };
         let line = Line::from(vec![
             Span::styled(key, Style::default().fg(theme.palette.secondary)),
-            Span::raw(format!("{label:<13}: ")),
+            Span::raw(format!("{label:<14}: ")),
             Span::styled(shorten_home(&path), Style::default().fg(theme.palette.main)),
         ]);
-        rows.push((Some(PopupTarget::ConfigPath(index)), line));
+        files.push((Some(PopupTarget::ConfigPath(index)), line));
+    }
+
+    // General and Newlines on the left, Line Mode and Terminal Mode on the right, when the
+    // screen has room (MAX-184); else one column, as before
+    let blank = || (None, Line::from(""));
+    let column = |top: Vec<Row>, bottom: Vec<Row>| {
+        let mut column = top;
+        column.push(blank());
+        column.extend(bottom);
+        column
+    };
+    let (left, right) = (column(general, newlines), column(line_mode, terminal_mode));
+    let widest = |rows: &[Row]| rows.iter().map(|(_, line)| line.width()).max().unwrap_or(0);
+    let left_width = widest(&left);
+    let two_width = (left_width + GAP + widest(&right)) as u16 + 4;
+    let mut rows: Vec<(Vec<Spot>, Line)> = Vec::new();
+    let whole =
+        |target: Option<PopupTarget>| target.map(|t| (0, u16::MAX, t)).into_iter().collect();
+    let width = if frame.area().width >= two_width {
+        let start = (left_width + GAP) as u16;
+        let (mut left, mut right) = (left.into_iter(), right.into_iter());
+        loop {
+            let (left, right) = match (left.next(), right.next()) {
+                (None, None) => break,
+                (left, right) => (left.unwrap_or_else(blank), right.unwrap_or_else(blank)),
+            };
+            let ((left_target, mut line), (right_target, right_line)) = (left, right);
+            let pad = (left_width + GAP).saturating_sub(line.width());
+            line.spans.push(Span::raw(" ".repeat(pad)));
+            line.spans.extend(right_line.spans);
+            let mut spots: Vec<Spot> = left_target.map(|t| (0, start, t)).into_iter().collect();
+            spots.extend(right_target.map(|t| (start, u16::MAX, t)));
+            rows.push((spots, line));
+        }
+        two_width
+    } else {
+        for (target, line) in column(left, right) {
+            rows.push((whole(target), line));
+        }
+        FORM_WIDTH
+    };
+    rows.push((Vec::new(), Line::from("")));
+    for (target, line) in files {
+        rows.push((whole(target), line));
     }
 
     let hints = key_hints(
@@ -170,7 +227,7 @@ pub fn render_settings_popup(
     );
     let block = popup_block("Settings", &hints, theme);
 
-    let area = form_area(frame.area(), FORM_WIDTH, rows.len());
+    let area = form_area(frame.area(), width, rows.len());
     frame.render_widget(Clear, area);
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -180,9 +237,15 @@ pub fn render_settings_popup(
     let max_scroll = rows.len().saturating_sub(visible);
     dialog.max_scroll.set(max_scroll);
     let scroll = dialog.scroll.min(max_scroll);
-    for (y, (target, _)) in rows.iter().enumerate().skip(scroll).take(visible) {
-        if let Some(target) = target {
-            targets.push((row_area(inner, y - scroll), *target));
+    for (y, (spots, _)) in rows.iter().enumerate().skip(scroll).take(visible) {
+        let row = row_area(inner, y - scroll);
+        for (x, width, target) in spots {
+            let spot = Rect {
+                x: row.x.saturating_add(*x),
+                width: *width,
+                ..row
+            };
+            targets.push((spot.intersection(row), *target));
         }
     }
     hints.push_block_targets(area, targets);
@@ -199,3 +262,12 @@ pub fn render_settings_popup(
     }
     area
 }
+
+/// A row of the popup and the setting or file a click on it picks
+type Row = (Option<PopupTarget>, Line<'static>);
+
+/// Where a click picks a target on a row: its first column and its width
+type Spot = (u16, u16, PopupTarget);
+
+/// Between the two columns
+const GAP: usize = 4;

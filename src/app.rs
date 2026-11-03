@@ -1727,6 +1727,12 @@ impl App {
                 let state = if self.settings.add_lf { "ON" } else { "OFF" };
                 self.notify_info(format!("Add LF {state}"));
             }
+            // what Enter sends in line mode (MAX-184)
+            SettingKey::TxEol => {
+                self.settings.line_mode.tx_eol.toggle();
+                let eol = self.settings.line_mode.tx_eol.as_str();
+                self.notify_info(format!("Line Enter sends {eol}"));
+            }
             SettingKey::DisplayRaw => {
                 self.settings.raw_side.view.toggle();
                 self.notify_info(format!(

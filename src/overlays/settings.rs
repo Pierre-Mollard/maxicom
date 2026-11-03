@@ -58,6 +58,7 @@ impl SettingsDialog {
                 KeyCode::Char('a' | 'A') => toggle(SettingKey::AnswerQueries),
                 KeyCode::Char('r' | 'R') => toggle(SettingKey::AddCr),
                 KeyCode::Char('f' | 'F') => toggle(SettingKey::AddLf),
+                KeyCode::Char('n' | 'N') => toggle(SettingKey::TxEol),
                 _ => OverlayResponse::Handled,
             },
             _ => OverlayResponse::Handled,

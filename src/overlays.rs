@@ -276,6 +276,7 @@ pub enum SettingKey {
     AnswerQueries,
     AddCr,
     AddLf,
+    TxEol,
 }
 
 /// `d`, or a click on its hint, in the link's popups (MAX-181)

@@ -138,7 +138,11 @@ What differs:
   when there's one, the one in use selected. `●` marks the link in use.
   `↑` `↓` `j` `k` or a click select, Enter (or a click on the selected one)
   opens it: a saved link with its line settings, a port as `open` does, its
-  line settings kept.
+  line settings kept. Each tab is a table: a saved link's Name, Address and
+  Line, a port's name, Device and ID (its USB maker and product and
+  `vid:pid`, read in sysfs on Linux; none elsewhere), then the State
+  (`in use`, `opening…` or the test's result). A column empty on every row
+  isn't shown; on a narrow screen the address or the device is cut.
   - Saved links: `n` a new one, `e` edits the selected one, `s` saves the
     link in use, `x` or Del deletes the selected one (asked first).
   - Serial ports: `s` saves the selected port as a link, `r` lists the ports
@@ -304,8 +308,10 @@ What changes from a serial port:
   `theme_path`, `keybindings_path`, `highlights_path`, `triggers_path` or
   `links_path` puts elsewhere (`~` is the home folder); `C` or a click on the
   folder copies its path, the file's number (`1`, `2`, ...) or a click on it
-  copies the file's. The popup scrolls when the screen is too short for it. In
-  the help, `c` copies the folder's path.
+  copies the file's. The popup shows the settings in two columns when the
+  screen has room (General and Newlines, then Line Mode and Terminal Mode),
+  in one below that, and scrolls when the screen is too short for it. In the
+  help, `c` copies the folder's path.
 - `add_cr` and `add_lf` (default `false`), minicom's add CR / add LF, for a
   device that ends its lines with LF only (staircase text in terminal mode)
   or CR only (lines written over each other in both modes): `add_cr` reads a
@@ -317,8 +323,9 @@ What changes from a serial port:
   get the bytes as received. `Ctrl-A u` / `Ctrl-A a`, `set add-cr on|off`,
   `set add-lf on|off`, `R` / `F` in the settings popup; `+CR` / `+LF` in the
   status bar while on. What Enter sends in line mode is `tx_eol` in
-  `[line_mode]` (`lf` default, `cr`, `crlf`); in terminal mode Enter sends CR,
-  as a terminal does.
+  `[line_mode]` (`lf` default, `cr`, `crlf`), `N` (Line Enter) in the
+  settings popup cycles it; in terminal mode Enter sends CR, as a terminal
+  does.
 
 ### UI
 

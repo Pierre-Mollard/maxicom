@@ -327,6 +327,57 @@ pub fn port_names() -> Vec<String> {
     names
 }
 
+/// What the system tells of a port besides its name (MAX-188): its USB maker and product,
+/// its `vid:pid`
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PortDetails {
+    pub device: Option<String>,
+    pub id: Option<String>,
+}
+
+/// The details of each of `ports` that has some, by name: Linux reads them in sysfs, the other
+/// systems have none. Tests read none, so the boards plugged in don't change what they see
+pub fn port_details(ports: &[String]) -> std::collections::HashMap<String, PortDetails> {
+    #[cfg(target_os = "linux")]
+    if !cfg!(test) {
+        let root = std::path::Path::new("/sys/class/tty");
+        return (ports.iter())
+            .filter_map(|port| Some((port.clone(), sysfs_details(root, port)?)))
+            .collect();
+    }
+    let _ = ports;
+    std::collections::HashMap::new()
+}
+
+/// A port's details under `root` (`/sys/class/tty`): its `device` link resolved, then the
+/// first folder above with an `idVendor`, the USB device (two up for a ttyUSB, one for a
+/// ttyACM); none for a port with no USB device (ttyS, a pty)
+#[cfg(target_os = "linux")]
+fn sysfs_details(root: &std::path::Path, port: &str) -> Option<PortDetails> {
+    let name = std::path::Path::new(port).file_name()?;
+    let device = std::fs::canonicalize(root.join(name).join("device")).ok()?;
+    let usb = device
+        .ancestors()
+        .take(4)
+        .find(|dir| dir.join("idVendor").is_file())?;
+    let read = |file: &str| {
+        let text = std::fs::read_to_string(usb.join(file)).ok()?;
+        Some(text.trim().to_string()).filter(|text| !text.is_empty())
+    };
+    let product = read("product");
+    // the product often starts with its maker's name already
+    let device = match (read("manufacturer"), product) {
+        (Some(maker), Some(product)) if product.starts_with(&maker) => Some(product),
+        (Some(maker), Some(product)) => Some(format!("{maker} {product}")),
+        (maker, product) => maker.or(product),
+    };
+    let id = read("idVendor").map(|vid| match read("idProduct") {
+        Some(pid) => format!("{vid}:{pid}"),
+        None => vid,
+    });
+    Some(PortDetails { device, id })
+}
+
 impl SerialDevice {
     /// Opens `device` with the line settings `line`
     pub fn open(device: &str, line: &LineSettings) -> Result<Self, LinkError> {
@@ -630,5 +681,75 @@ mod tests {
         let _ = maker.kill();
         let _ = maker.wait();
         assert!(opened.is_ok(), "a pty refused for its maker");
+    }
+
+    /// MAX-188: a port's maker, product and `vid:pid` from the USB device above its sysfs
+    /// `device` link, two folders up for a ttyUSB, one for a ttyACM; the maker said once
+    /// when the product names it; none for a port with no USB device.
+    /// How: a fake sysfs tree of each kind, links as the kernel makes them.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sysfs_port_details() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!("maxicom_sysfs_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (root, devices) = (dir.join("class/tty"), dir.join("devices"));
+        let usb = |path: &str, files: &[(&str, &str)]| {
+            let usb = devices.join(path);
+            std::fs::create_dir_all(&usb).unwrap();
+            for (file, text) in files {
+                std::fs::write(usb.join(file), format!("{text}\n")).unwrap();
+            }
+            usb
+        };
+        let tty = |name: &str, device: &std::path::Path| {
+            std::fs::create_dir_all(root.join(name)).unwrap();
+            symlink(device, root.join(name).join("device")).unwrap();
+        };
+        let cp2102 = usb(
+            "usb1/1-1",
+            &[
+                ("manufacturer", "Silicon Labs"),
+                ("product", "CP2102 USB to UART Bridge Controller"),
+                ("idVendor", "10c4"),
+                ("idProduct", "ea60"),
+            ],
+        );
+        let port = cp2102.join("1-1:1.0/ttyUSB0");
+        std::fs::create_dir_all(&port).unwrap();
+        tty("ttyUSB0", &port);
+        let acm = usb(
+            "usb1/1-2",
+            &[
+                ("manufacturer", "Espressif"),
+                ("product", "Espressif USB JTAG/serial debug unit"),
+                ("idVendor", "303a"),
+                ("idProduct", "1001"),
+            ],
+        );
+        let interface = acm.join("1-2:1.0");
+        std::fs::create_dir_all(&interface).unwrap();
+        tty("ttyACM0", &interface);
+        let serial8250 = devices.join("platform/serial8250/tty/ttyS0");
+        std::fs::create_dir_all(&serial8250).unwrap();
+        tty("ttyS0", &serial8250);
+
+        assert_eq!(
+            sysfs_details(&root, "/dev/ttyUSB0"),
+            Some(PortDetails {
+                device: Some("Silicon Labs CP2102 USB to UART Bridge Controller".into()),
+                id: Some("10c4:ea60".into()),
+            })
+        );
+        assert_eq!(
+            sysfs_details(&root, "/dev/ttyACM0"),
+            Some(PortDetails {
+                device: Some("Espressif USB JTAG/serial debug unit".into()),
+                id: Some("303a:1001".into()),
+            })
+        );
+        assert_eq!(sysfs_details(&root, "/dev/ttyS0"), None);
+        assert_eq!(sysfs_details(&root, "/dev/ttyUSB7"), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

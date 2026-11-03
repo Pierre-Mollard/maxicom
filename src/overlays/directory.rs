@@ -5,7 +5,11 @@ use crossterm::event::KeyCode;
 use crate::{
     configs::links::SavedLink,
     inputs::DialogAction,
-    link::{Address, LinkConfig, LinkKind, probe::ProbeState, serial},
+    link::{
+        Address, LinkConfig, LinkKind,
+        probe::ProbeState,
+        serial::{self, PortDetails},
+    },
     overlays::{OverlayResponse, PopupTarget},
 };
 
@@ -23,13 +27,14 @@ const PAGE: usize = 10;
 /// the selected one in the same form, `x` or Del deletes it, asked first. Tab, Shift-Tab, Left
 /// and Right switch tabs. On the ports, `r` lists them again, the selection kept on its name.
 /// `t` tests the links of both tabs, each one's last result in `tests` by address (`None`
-/// while it runs, MAX-186)
+/// while it runs, MAX-186). The ports' `details` are read with the list (MAX-188)
 #[derive(Debug, Clone)]
 pub struct Directory {
     pub tab: DirectoryTab,
     pub links: Result<Vec<(SavedLink, LinkConfig)>, String>,
     pub link_selected: usize,
     pub ports: Vec<String>,
+    pub details: HashMap<String, PortDetails>,
     pub selected: usize,
     pub tests: HashMap<String, Option<ProbeState>>,
     pub opening: Option<String>,
@@ -48,6 +53,7 @@ impl Directory {
             links: Ok(Vec::new()),
             link_selected: 0,
             ports: Vec::new(),
+            details: HashMap::new(),
             selected: 0,
             tests: HashMap::new(),
             opening: None,
@@ -109,6 +115,7 @@ impl Directory {
     fn set_ports(&mut self, ports: Vec<String>, keep: Option<&str>) {
         let kept = keep.and_then(|name| ports.iter().position(|port| port == name));
         self.selected = kept.unwrap_or(self.selected.min(ports.len().saturating_sub(1)));
+        self.details = serial::port_details(&ports);
         self.ports = ports;
     }
 

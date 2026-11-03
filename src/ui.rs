@@ -1425,8 +1425,7 @@ mod tests {
     /// Rows of a frame drawn with `overlay` open and the `[dialog_actions]` of `keymap`
     /// (the default ones when empty)
     fn popup_rows(overlay: Overlay, keymap: &[(&str, &str)]) -> Vec<String> {
-        // the settings popup is 26 rows tall since MAX-181's add CR / add LF
-        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 30);
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
         if !keymap.is_empty() {
             let config = KeyBindingsConfig {
                 dialog_actions: keymap
@@ -1500,11 +1499,11 @@ mod tests {
             ))));
         let rows = h.draw();
         assert!(
-            has(&rows, &format!("[C] Config       : {folder_text}")),
+            has(&rows, &format!("[C] Config        : {folder_text}")),
             "{rows:#?}"
         );
         assert!(
-            has(&rows, "[1] Theme        : /themes/dark.toml"),
+            has(&rows, "[1] Theme         : /themes/dark.toml"),
             "{rows:#?}"
         );
         assert_eq!(
@@ -1581,6 +1580,54 @@ mod tests {
         mouse_do(&mut h, MouseEventKind::ScrollDown, (50, 6));
         let rows = h.draw();
         assert!(!has(&rows, "General"), "{rows:#?}");
+    }
+
+    /// MAX-184: on 80x24 the settings show in two columns with no scrollbar, General and
+    /// Newlines on the left, Line Mode and Terminal Mode on the right, Files under both; a
+    /// click on a right-column row toggles its setting, `N` cycles what Enter sends. A
+    /// narrower screen has one column, scrolled.
+    /// How: the popup at 80x24, a click on Query Answers, `N` three times; then at 60x24.
+    #[test]
+    fn settings_in_two_columns() {
+        use crate::configs::settings::TxNewlineSymbol;
+        use crossterm::event::KeyCode::Char;
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        let open = |h: &mut Harness| {
+            let overlay = Overlay::Settings(SettingsDialog::new());
+            h.app.update(Action::App(AppAction::OpenOverlay(overlay)));
+            h.draw()
+        };
+        let rows = open(&mut h);
+        for row in [
+            "General                          Line Mode",
+            "[M] Input Mode    : Line Mode    [W] Line Wrap     : Word-Wrap",
+            "[U] Mouse         : ON           Terminal Mode",
+            "Newlines                         [A] Query Answers : ON",
+            "[N] Line Enter    : LF",
+            "Files",
+            "[C] Config        :",
+        ] {
+            assert!(has(&rows, row), "{row}: {rows:#?}");
+        }
+        assert!(!has(&rows, "▼"), "{rows:#?}");
+
+        let answers = h.app.settings().terminal_mode.answer_queries;
+        click(&mut h, cell_of(&rows, "Query Answers"));
+        assert_eq!(h.app.settings().terminal_mode.answer_queries, !answers);
+        let mut eols = Vec::new();
+        for _ in 0..3 {
+            key_do(&mut h, Char('n'), KeyModifiers::NONE);
+            eols.push(h.app.settings().line_mode.tx_eol);
+        }
+        use TxNewlineSymbol::{Cr, CrLf, Lf};
+        assert_eq!(eols, [Cr, CrLf, Lf]);
+
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 60, 24);
+        let rows = open(&mut h);
+        assert!(has(&rows, "[N] Line Enter    : LF"), "{rows:#?}");
+        let side_by_side = |row: &String| row.contains("[M]") && row.contains("[W]");
+        assert!(!rows.iter().any(side_by_side), "{rows:#?}");
+        assert!(has(&rows, "▼"), "{rows:#?}");
     }
 
     /// MAX-12: the command line is a centered bordered popup of one row, or with `layout =
@@ -2616,7 +2663,7 @@ mod tests {
     }
 
     /// MAX-185: the saved links of this machine in columns, name, address and line (`raw TCP`
-    /// for TCP), the ones for another machine left out; the Saved tab's buttons; a click on
+    /// for TCP), centered (MAX-188), the ones for another machine left out; the Saved tab's buttons; a click on
     /// the ports' tab shows them with theirs. The tabs touch the top border, and both tabs
     /// have the same size. A `links.toml` that didn't load shows why; no
     /// link says so.
@@ -2647,6 +2694,15 @@ mod tests {
             "{rows:#?}"
         );
         assert!(!has(&rows, "COM3"), "{rows:#?}");
+        // MAX-188: narrower than the popup, the table is centered in it
+        let row = rows.iter().find(|row| row.contains("esp32")).unwrap();
+        let inside = row.trim().trim_matches('│');
+        let left = inside.len() - inside.trim_start().len();
+        let right = inside.len() - inside.trim_end().len();
+        assert!(
+            left > 2 && left.abs_diff(right) <= 1,
+            "{left} {right}: {rows:#?}"
+        );
         // MAX-186: the test from this tab too
         let note = crate::ui::popups::directory::TEST_NOTE;
         assert!(has(&rows, note), "{rows:#?}");
@@ -2836,6 +2892,53 @@ mod tests {
         let rows = h.draw();
         assert!(rows.iter().any(|row| row.contains('▲')), "{rows:#?}");
         assert!(rows.iter().any(|row| row.contains('▼')), "{rows:#?}");
+    }
+
+    /// MAX-188: each tab is a table under its headers, the state in its own column lined up;
+    /// a column empty on every row isn't shown (no device or ID, no state before a test);
+    /// on a narrow screen the device is cut, `…` at its end.
+    /// How: two ports, one with its USB details, one tested; then no details nor test; then
+    /// the first at 50 columns.
+    #[test]
+    fn directory_columns() {
+        use crate::link::{probe::ProbeState, serial::PortDetails};
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        let current = h.app.link_config().address.clone();
+        let ports = vec!["/dev/ttyACM0".to_string(), "/dev/ttyUSB1".to_string()];
+        let mut directory = crate::overlays::Directory::new(ports.clone(), &current);
+        let details = PortDetails {
+            device: Some("Silicon Labs CP2102 USB to UART".into()),
+            id: Some("10c4:ea60".into()),
+        };
+        directory.details.insert("/dev/ttyUSB1".into(), details);
+        (directory.tests).insert("/dev/ttyACM0".into(), Some(ProbeState::Free));
+        let open = |h: &mut Harness, directory: crate::overlays::Directory| {
+            let overlay = Overlay::Directory(directory);
+            h.app.update(Action::App(AppAction::OpenOverlay(overlay)));
+            h.draw()
+        };
+        let rows = open(&mut h, directory.clone());
+        for row in [
+            "  Port          Device                           ID         State",
+            "  /dev/ttyACM0                                              free",
+            "  /dev/ttyUSB1  Silicon Labs CP2102 USB to UART  10c4:ea60",
+        ] {
+            assert!(has(&rows, row), "{row}: {rows:#?}");
+        }
+
+        let plain = crate::overlays::Directory::new(ports, &current);
+        let rows = open(&mut h, plain);
+        assert!(has(&rows, "  Port        "), "{rows:#?}");
+        for gone in ["Device", "ID", "State"] {
+            assert!(!has(&rows, gone), "{gone}: {rows:#?}");
+        }
+
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 50, 24);
+        let rows = open(&mut h, directory);
+        assert!(
+            has(&rows, "/dev/ttyUSB1  Silicon Lab…  10c4:ea60"),
+            "{rows:#?}"
+        );
     }
 
     /// MAX-163: in the trigger browser, j/k and Up/Down move; l/Right arm the selected one and

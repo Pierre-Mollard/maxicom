@@ -290,6 +290,23 @@ impl TxNewlineSymbol {
             TxNewlineSymbol::Lf => b"\n",
         }
     }
+
+    /// The next one, as the settings popup cycles them (MAX-184)
+    pub fn toggle(&mut self) {
+        *self = match self {
+            TxNewlineSymbol::Lf => TxNewlineSymbol::Cr,
+            TxNewlineSymbol::Cr => TxNewlineSymbol::CrLf,
+            TxNewlineSymbol::CrLf => TxNewlineSymbol::Lf,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TxNewlineSymbol::CrLf => "CRLF",
+            TxNewlineSymbol::Cr => "CR",
+            TxNewlineSymbol::Lf => "LF",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

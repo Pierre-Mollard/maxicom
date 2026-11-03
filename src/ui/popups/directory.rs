@@ -39,9 +39,10 @@ pub const TEST_NOTE: &str = "t opens each port briefly (a board may reset), conn
 pub const TEST_NOTE: &str = "t finds who holds each port without opening it, connects TCP";
 
 /// The directory (MAX-181): its tabs on top (MAX-185), then the tab's rows, `●` and "in use"
-/// on the link in use, "opening…" or the last test's result after a row. The saved links in
-/// columns, name, address and line (`raw TCP` for TCP), or the lines of why `links.toml`
-/// didn't load; the serial ports. Both under the test's warning. The tab's buttons in the bottom
+/// on the link in use, "opening…" or the last test's result in its State column. Each tab a
+/// table under its headers (MAX-188): the saved links' name, address and line (`raw TCP` for
+/// TCP), or the lines of why `links.toml` didn't load; the serial ports' name, device and
+/// `vid:pid`. Both under the test's warning. The tab's buttons in the bottom
 /// border. As wide as its longest row, as tall as the list, the screen's size at most; more
 /// rows than room, a scrollbar in the right padding
 pub fn render_directory_popup(
@@ -93,10 +94,13 @@ pub fn render_directory_popup(
         spots: Vec::new(),
     };
 
-    // the rows of each tab, or why there's none, one row per line
+    // the table of each tab, or why there's none, one row per line; a table wider than the
+    // screen cut in its long column
     let muted = Style::default().fg(theme.palette.text_muted);
+    let max_width = frame.area().width.saturating_sub(4) as usize;
     let list = |tab| {
-        let rows = rows(app, directory, tab, theme);
+        let mut table = Table::new(app, directory, tab, theme);
+        table.fit(max_width);
         let empty: Vec<Line> = match (&directory.links, tab) {
             (_, DirectoryTab::Ports) => vec![Line::styled(EMPTY, muted)],
             (Err(err), DirectoryTab::Saved) => (err.lines())
@@ -104,30 +108,22 @@ pub fn render_directory_popup(
                 .collect(),
             (Ok(_), DirectoryTab::Saved) => vec![Line::styled(NO_LINK, muted)],
         };
-        (rows, empty)
+        (table, empty)
     };
-    // the columns and rows a tab takes: its list under its header, its note, its buttons
+    // the columns and rows a tab takes: its table (header and rows) under the tabs and its
+    // note, its buttons
     let size = |tab| {
-        let (rows, empty) = list(tab);
-        let list_width = if rows.is_empty() {
-            empty.iter().map(Line::width).max().unwrap_or(0)
+        let (table, empty) = list(tab);
+        let (list_width, listed) = if table.rows.is_empty() {
+            let width = empty.iter().map(Line::width).max().unwrap_or(0);
+            (width, empty.len().max(1))
         } else {
-            (rows.iter())
-                .map(|(text, _, note)| {
-                    2 + text.width() + note.as_ref().map_or(0, |(n, _)| 2 + n.width())
-                })
-                .max()
-                .unwrap_or(0)
+            (table.width(), table.rows.len() + 1)
         };
         let width = list_width
             .max(TEST_NOTE.width())
             .max(buttons(tab).0.width());
-        let listed = if rows.is_empty() {
-            empty.len()
-        } else {
-            rows.len()
-        };
-        (width as u16, listed.max(1) as u16 + HEADER)
+        (width as u16, listed as u16 + HEADER)
     };
     let tab_widths: Vec<u16> = TABS.iter().map(|(_, t)| t.width() as u16 + 2).collect();
     let tabs_width = tab_widths.iter().sum::<u16>() + tab_widths.len() as u16 - 1;
@@ -137,7 +133,7 @@ pub fn render_directory_popup(
     // the borders and the padding, none on top: the tabs touch the top border
     let height = saved.1.max(ports.1) + 3;
     let area = popup_area(frame.area(), width + 4, height);
-    let (rows, empty) = list(directory.tab);
+    let (table, empty) = list(directory.tab);
 
     let block = popup_block("Directory", &hints, theme).padding(Padding::new(1, 1, 0, 1));
     frame.render_widget(Clear, area);
@@ -162,38 +158,40 @@ pub fn render_directory_popup(
     inner.y += HEADER;
     inner.height = inner.height.saturating_sub(HEADER);
 
-    if rows.is_empty() {
+    if table.rows.is_empty() {
         frame.render_widget(Paragraph::new(empty), inner);
         return area;
     }
+    // a table narrower than the popup (the other tab's wider) centered, its State column
+    // as wide as its widest state now
+    let offset = (inner.width as usize).saturating_sub(table.width()) as u16 / 2;
+    let centered = |area: Rect| Rect {
+        x: area.x + offset,
+        width: area.width - offset,
+        ..area
+    };
+    let header = Rect { height: 1, ..inner }.intersection(inner);
+    frame.render_widget(Paragraph::new(table.header(theme)), centered(header));
+    inner.y += 1;
+    inner.height = inner.height.saturating_sub(1);
 
     // from the row that keeps the selection in view; each row is a click target
     let selected = directory.selection();
     let visible = inner.height as usize;
     let first = (selected + 1).saturating_sub(visible);
-    let lines: Vec<Line> = (rows.iter().enumerate().skip(first).take(visible))
-        .map(|(idx, (text, in_use, note))| {
+    let lines: Vec<Line> = (table.rows.iter().enumerate().skip(first).take(visible))
+        .map(|(idx, row)| {
             let mut style = Style::default().fg(theme.palette.text);
             if idx == selected {
                 style = style.add_modifier(Modifier::REVERSED);
             }
-            let row = Rect::new(inner.x, inner.y + (idx - first) as u16, inner.width, 1);
-            targets.push((row, PopupTarget::DirectoryRow(idx)));
-            let mark = if *in_use { "●" } else { " " };
-            let mut spans = vec![
-                Span::styled(mark, style.fg(theme.palette.text_good)),
-                Span::styled(" ", style),
-                Span::styled(text.as_str(), style),
-            ];
-            if let Some((text, color)) = note {
-                spans.push(Span::styled("  ", style));
-                spans.push(Span::styled(text.as_str(), style.fg(*color)));
-            }
-            Line::from(spans)
+            let row_area = Rect::new(inner.x, inner.y + (idx - first) as u16, inner.width, 1);
+            targets.push((row_area, PopupTarget::DirectoryRow(idx)));
+            table.line(row, style, theme)
         })
         .collect();
-    frame.render_widget(Paragraph::new(lines), inner);
-    let max_scroll = rows.len().saturating_sub(visible);
+    frame.render_widget(Paragraph::new(lines), centered(inner));
+    let max_scroll = table.rows.len().saturating_sub(visible);
     if max_scroll > 0 {
         let bar = Rect {
             x: inner.right(),
@@ -209,44 +207,168 @@ pub fn render_directory_popup(
 /// The text after a row and its color
 type Note = (String, Color);
 
-/// The rows above a tab's list: the tabs, the test's note, a blank row
+/// The rows above a tab's table: the tabs, the test's note, a blank row
 const HEADER: u16 = 3;
 
-/// A tab's rows: the text, whether it's the link in use, the note after it. A saved link's
-/// columns are padded to the widest of each
-fn rows(
-    app: &App,
-    directory: &Directory,
-    tab: DirectoryTab,
-    theme: &ThemeConfig,
-) -> Vec<(String, bool, Option<Note>)> {
-    let entries: Vec<(String, String)> = match tab {
-        DirectoryTab::Ports => (directory.ports.iter())
-            .map(|port| (port.clone(), port.clone()))
-            .collect(),
-        DirectoryTab::Saved => {
-            let links = directory.links.as_deref().unwrap_or_default();
-            let columns: Vec<[String; 3]> = (links.iter())
-                .map(|(link, config)| [link.name.clone(), config.address.to_string(), line(config)])
-                .collect();
-            let width = |i: usize| columns.iter().map(|c| c[i].width()).max().unwrap_or(0);
-            let (name_width, address_width) = (width(0), width(1));
-            (links.iter().zip(&columns))
-                .map(|((_, config), [name, address, line])| {
-                    let text = format!("{name:name_width$}  {address:address_width$}  {line}");
-                    (text, config.address.to_string())
-                })
-                .collect()
+/// Between two columns
+const GAP: usize = 2;
+
+/// A tab's row: a cell per column but the state, whether it's the link in use, its state
+struct Row {
+    cells: [String; 3],
+    in_use: bool,
+    state: Option<Note>,
+}
+
+/// A tab's rows in columns under their headers (MAX-188): a saved link's name, address and
+/// line, a port's name, device and `vid:pid`, then the state of both. Each column as wide as
+/// its widest cell or header, none for a column empty on every row but the first
+struct Table {
+    headers: [&'static str; 4],
+    rows: Vec<Row>,
+    widths: [usize; 4],
+}
+
+impl Table {
+    fn new(app: &App, directory: &Directory, tab: DirectoryTab, theme: &ThemeConfig) -> Self {
+        let headers = match tab {
+            DirectoryTab::Saved => ["Name", "Address", "Line", "State"],
+            DirectoryTab::Ports => ["Port", "Device", "ID", "State"],
+        };
+        let rows = rows(app, directory, tab, theme);
+        let mut widths = [0; 4];
+        for (i, width) in widths.iter_mut().enumerate() {
+            let cell = |row: &Row| match i {
+                3 => row.state.as_ref().map_or(0, |(text, _)| text.width()),
+                _ => row.cells[i].width(),
+            };
+            let widest = rows.iter().map(cell).max().unwrap_or(0);
+            if i == 0 || widest > 0 {
+                *width = widest.max(headers[i].width());
+            }
         }
+        Self {
+            headers,
+            rows,
+            widths,
+        }
+    }
+
+    /// The mark, then the columns shown and their gaps
+    fn width(&self) -> usize {
+        let shown = self.widths.iter().filter(|w| **w > 0);
+        2 + shown.clone().sum::<usize>() + GAP * shown.count().saturating_sub(1)
+    }
+
+    /// The second column (address, device) narrowed to fit in `max`, to its header at least
+    fn fit(&mut self, max: usize) {
+        let over = self.width().saturating_sub(max);
+        if over > 0 && self.widths[1] > 0 {
+            let least = self.headers[1].width();
+            self.widths[1] = self.widths[1].saturating_sub(over).max(least);
+        }
+    }
+
+    /// The cells of a row padded to their columns, the gaps between them, all in `style`
+    fn spans<'a>(&self, cells: [(&str, Style); 4], style: Style) -> Vec<Span<'a>> {
+        let mut spans = Vec::new();
+        let shown = (cells.into_iter().zip(self.widths)).filter(|(_, width)| *width > 0);
+        for (i, ((text, cell_style), width)) in shown.enumerate() {
+            if i > 0 {
+                spans.push(Span::styled(" ".repeat(GAP), style));
+            }
+            let text = cut(text, width);
+            let pad = width.saturating_sub(text.width());
+            spans.push(Span::styled(
+                format!("{text}{}", " ".repeat(pad)),
+                cell_style,
+            ));
+        }
+        spans
+    }
+
+    fn header<'a>(&self, theme: &ThemeConfig) -> Line<'a> {
+        let style = Style::default()
+            .fg(theme.palette.text_muted)
+            .add_modifier(Modifier::BOLD);
+        let cells = self.headers.map(|header| (header, style));
+        let mut spans = vec![Span::raw("  ")];
+        spans.extend(self.spans(cells, style));
+        Line::from(spans)
+    }
+
+    /// A row's line: `●` on the link in use, then its cells, the state in its color
+    fn line<'a>(&self, row: &Row, style: Style, theme: &ThemeConfig) -> Line<'a> {
+        let mark = if row.in_use { "●" } else { " " };
+        let (state, color) = row
+            .state
+            .as_ref()
+            .map_or(("", theme.palette.text), |(text, color)| {
+                (text.as_str(), *color)
+            });
+        let [a, b, c] = &row.cells;
+        let cells = [
+            (a.as_str(), style),
+            (b.as_str(), style),
+            (c.as_str(), style),
+            (state, style.fg(color)),
+        ];
+        let mut spans = vec![
+            Span::styled(mark, style.fg(theme.palette.text_good)),
+            Span::styled(" ", style),
+        ];
+        spans.extend(self.spans(cells, style));
+        Line::from(spans)
+    }
+}
+
+/// `text` cut to `width` columns, `…` in its last one when it's cut
+fn cut(text: &str, width: usize) -> String {
+    if text.width() <= width {
+        return text.to_string();
+    }
+    let mut cut = String::new();
+    for c in text.chars() {
+        let next = cut.width() + c.to_string().width();
+        if next + 1 > width {
+            break;
+        }
+        cut.push(c);
+    }
+    cut.push('…');
+    cut
+}
+
+/// A tab's rows, the link in use marked, the state after: "opening…", "in use" or the last
+/// test's result
+fn rows(app: &App, directory: &Directory, tab: DirectoryTab, theme: &ThemeConfig) -> Vec<Row> {
+    let entries: Vec<([String; 3], String)> = match tab {
+        DirectoryTab::Ports => (directory.ports.iter())
+            .map(|port| {
+                let details = directory.details.get(port).cloned().unwrap_or_default();
+                let cells = [
+                    port.clone(),
+                    details.device.unwrap_or_default(),
+                    details.id.unwrap_or_default(),
+                ];
+                (cells, port.clone())
+            })
+            .collect(),
+        DirectoryTab::Saved => (directory.links.as_deref().unwrap_or_default().iter())
+            .map(|(link, config)| {
+                let address = config.address.to_string();
+                ([link.name.clone(), address.clone(), line(config)], address)
+            })
+            .collect(),
     };
     // maxicom's link only while open: detached, lost or not picked, it's like the others
     let current = app
         .is_link_open()
         .then(|| app.link_config().address.to_string());
     (entries.into_iter())
-        .map(|(text, address)| {
+        .map(|(cells, address)| {
             let in_use = current.as_ref() == Some(&address);
-            let note = if directory.opening.as_ref() == Some(&address) {
+            let state = if directory.opening.as_ref() == Some(&address) {
                 Some(("opening…".to_string(), theme.palette.text_muted))
             } else if in_use {
                 Some(("in use".to_string(), theme.palette.text_muted))
@@ -256,7 +378,11 @@ fn rows(
                     .get(&address)
                     .map(|state| note(state.as_ref(), theme))
             };
-            (text, in_use, note)
+            Row {
+                cells,
+                in_use,
+                state,
+            }
         })
         .collect()
 }
