@@ -1,4 +1,3 @@
-
 //! Toast lifetime and the redraw signal returned by `tick`.
 
 use super::*;

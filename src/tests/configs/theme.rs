@@ -1,4 +1,3 @@
-
 //! The session browser's color steps, and its theme section read back.
 
 use super::*;

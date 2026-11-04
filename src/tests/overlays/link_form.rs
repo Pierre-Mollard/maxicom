@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::link::serial::{FlowControl, Parity};
 use crossterm::event::KeyEvent;

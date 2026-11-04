@@ -1,4 +1,3 @@
-
 use super::*;
 
 const UBOOT: &[u8] = b"Hit any key to stop autoboot";

@@ -1,4 +1,3 @@
-
 //! Pasting into single line input fields (#28).
 
 use super::*;

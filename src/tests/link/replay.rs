@@ -1,4 +1,3 @@
-
 //! Reading a replay: pause, delay, progress, restart.
 use super::*;
 

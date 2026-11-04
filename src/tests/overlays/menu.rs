@@ -1,4 +1,3 @@
-
 //! The right-click menu's rows and keys (MAX-130).
 
 use super::*;

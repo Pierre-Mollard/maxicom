@@ -1,4 +1,3 @@
-
 //! The TCP source against a local listener: connect, both directions, the close, refusal.
 use super::*;
 use std::net::TcpListener;

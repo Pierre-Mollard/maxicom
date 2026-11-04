@@ -1,4 +1,3 @@
-
 //! The forms an address is read from and written back as.
 use super::*;
 

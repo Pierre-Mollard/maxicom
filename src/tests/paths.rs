@@ -1,4 +1,3 @@
-
 use super::*;
 
 /// `~` is the home folder only as the first part of a path.

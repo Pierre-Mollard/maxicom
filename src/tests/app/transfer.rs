@@ -1,4 +1,3 @@
-
 use super::*;
 
 /// At `baudrate` in 8N1: 10 bits a byte

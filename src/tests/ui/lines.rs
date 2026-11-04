@@ -1,4 +1,3 @@
-
 //! One history entry's line: the time column before the prefix and the content.
 
 use super::*;

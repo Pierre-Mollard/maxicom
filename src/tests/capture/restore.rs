@@ -1,4 +1,3 @@
-
 //! Reading a session back: the file tails and the separator.
 
 use super::*;

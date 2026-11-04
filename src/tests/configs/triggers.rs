@@ -1,4 +1,3 @@
-
 use super::*;
 
 fn compile(toml: &str) -> Result<Vec<Trigger>, String> {

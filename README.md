@@ -52,12 +52,6 @@ cargo build --bin maxicom --profile profiling
 samply record ./target/profiling/maxicom --baudrate 115200 --device /tmp/maxicom-shell-test
 ```
 
-- Check license compat
-
-```bash
-cargo deny check
-```
-
 ## COMING FROM MINICOM
 
 Start it as minicom: `maxicom -D /dev/ttyUSB0 -b 115200`, the prefix is
@@ -886,3 +880,12 @@ right = '''
 ### Author
 
 Pierre Mollard
+
+### License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT) at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in maxicom by you, as defined in the Apache-2.0 license, shall be
+dual licensed as above, without any additional terms or conditions.

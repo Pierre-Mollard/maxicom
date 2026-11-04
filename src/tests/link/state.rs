@@ -1,4 +1,3 @@
-
 //! The link's own rules, without the app: a TCP listener stands for the device.
 use std::{net::TcpListener, thread};
 

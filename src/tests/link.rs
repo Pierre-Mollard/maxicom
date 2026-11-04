@@ -1,4 +1,3 @@
-
 //! Opening by address: the kind it picks, and the opener off the loop.
 use super::*;
 use std::net::TcpListener;

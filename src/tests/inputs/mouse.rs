@@ -1,4 +1,3 @@
-
 //! Mouse reports for a remote program (MAX-113).
 
 use super::*;

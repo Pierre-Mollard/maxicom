@@ -2,7 +2,7 @@
 name = "maxicom"
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 authors = ["Pierre Mollard <pierre.mollard@proton.me>"]
 description = "A fast, modern serial terminal (minicom alternative) built with Rust and Ratatui"
 readme = "README.md"
@@ -14,7 +14,8 @@ include = [
     "src/**/*",
     "Cargo.toml",
     "README.md",
-    "LICENSE",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
 ]
 
 [profile.profiling]

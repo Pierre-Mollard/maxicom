@@ -1,4 +1,3 @@
-
 use super::*;
 
 /// Tabs 10 wide in 32 columns: three fit (10 + 1 + 10 + 1 + 10). The window moves only

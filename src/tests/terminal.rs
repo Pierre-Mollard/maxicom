@@ -1,4 +1,3 @@
-
 //! Golden output of the terminal widget, locked before replacing tui-term (#29).
 
 use super::*;

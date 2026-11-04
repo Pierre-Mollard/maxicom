@@ -1,4 +1,3 @@
-
 //! Settings derived at load time.
 
 use super::*;

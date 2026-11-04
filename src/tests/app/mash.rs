@@ -1,4 +1,3 @@
-
 use super::*;
 
 /// A space every 50 ms, at once first, never two for a late turn, until 200 ms.

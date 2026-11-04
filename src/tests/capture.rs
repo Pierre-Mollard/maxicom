@@ -1,4 +1,3 @@
-
 //! The helpers the capture tests and the other modules' tests share.
 
 use super::*;

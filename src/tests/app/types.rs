@@ -1,4 +1,3 @@
-
 //! Wire bytes kept next to the decoded text, and how text offsets map back to them (#20).
 
 use super::*;

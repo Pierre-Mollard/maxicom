@@ -1,4 +1,3 @@
-
 //! Key hints and where their keys and labels are, for the mouse (MAX-125).
 
 use super::*;

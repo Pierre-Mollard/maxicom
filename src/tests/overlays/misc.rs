@@ -1,4 +1,3 @@
-
 //! The recording dialog's stream choice (MAX-147).
 
 use super::*;

@@ -1,4 +1,3 @@
-
 //! Raw side panel formatting and byte highlights.
 
 use super::*;
