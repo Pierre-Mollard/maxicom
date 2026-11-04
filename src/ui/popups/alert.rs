@@ -99,16 +99,25 @@ impl LinkAlert {
     }
 }
 
-/// The link's popups name it as the notices do: `label`, a saved one by its name (MAX-185)
+/// The link's popups name it as the notices do: `label`, a saved one by its name (MAX-185).
+/// The read error that closed it, if any, under the next line (MAX-199)
 pub fn render_disconnected_popup(
     kind: LinkKind,
     label: String,
+    reason: Option<&str>,
     resolver: &KeyResolver,
     frame: &mut Frame,
     theme: &ThemeConfig,
     targets: &mut Vec<(Rect, PopupTarget)>,
 ) -> Rect {
-    let text = LinkAlert::disconnected(kind).lines(label, theme);
+    let mut text = LinkAlert::disconnected(kind).lines(label, theme);
+    if let Some(reason) = reason {
+        let reason = Span::styled(
+            reason.to_string(),
+            Style::default().fg(theme.palette.text_muted),
+        );
+        text.insert(text.len() - 1, Line::from(reason));
+    }
     let hints = link_hints(resolver, None, theme);
 
     let tone = theme.palette.text_warn;

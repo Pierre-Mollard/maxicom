@@ -9,7 +9,7 @@ readme = "README.md"
 repository = "https://github.com/Pierre-Mollard/maxicom"
 homepage = "https://github.com/Pierre-Mollard/maxicom"
 keywords = ["serial", "terminal", "minicom", "tui", "vt100"]
-categories = ["command-line-utilities", "terminal", "hardware-support"]
+categories = ["command-line-utilities", "hardware-support", "development-tools::debugging"]
 include = [
     "src/**/*",
     "Cargo.toml",

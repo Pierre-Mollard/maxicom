@@ -502,6 +502,41 @@ fn sessions_in_one_second_stay_apart() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// MAX-199: a session started after the clock went back (WSL2 steps it when it syncs with
+/// Windows) is named 1 ms after the newest one, so it's still the last session; otherwise
+/// it's named after now. Names from before the milliseconds (MAX-148) don't count.
+/// Regression: the later session sorted first, and the restore took an older one.
+/// How: a session named an hour ahead, then one started now; then `session_start` with no
+/// folder, an older session only, and an old-style name far ahead.
+#[test]
+fn a_clock_gone_back_still_names_the_session_last() {
+    let dir = temp_dir("clock_back");
+    let ahead = (Local::now() + TimeDelta::hours(1))
+        .format(STEM_TIME)
+        .to_string();
+    put(&dir, &format!("{ahead}_x.raw"), "one\r\n");
+    let second = write_test_session(&dir, "/dev/x", &CaptureFormat::default(), b"two\r\n", b"");
+    let after =
+        NaiveDateTime::parse_from_str(&ahead, STEM_TIME).unwrap() + TimeDelta::milliseconds(1);
+    assert!(
+        second
+            .stem
+            .starts_with(&after.format(STEM_TIME).to_string()),
+        "{} after {ahead}",
+        second.stem
+    );
+    assert_eq!(list_sessions(&dir).unwrap()[0].stem, second.stem);
+    let _ = fs::remove_dir_all(&dir);
+
+    let now = Local::now();
+    assert_eq!(session_start(&dir, now), now);
+    put(&dir, "20200101_120000000_x.raw", "old");
+    assert_eq!(session_start(&dir, now), now);
+    put(&dir, "29990101_120000_old.raw", "old");
+    assert_eq!(session_start(&dir, now), now);
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// MAX-148: the session list has every session, the newest first, with its meta when it
 /// has one (else the start comes from its name), its size (`.log` and `.raw`), its last
 /// write and whether it runs; other files aren't sessions, and no folder is no session.

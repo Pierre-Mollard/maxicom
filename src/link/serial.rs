@@ -11,6 +11,7 @@ use std::{
 use super::probe::open_holder;
 use super::{
     Address, LinkError,
+    error::is_gone,
     lock::{LinkLock, LockState, held_by, lock_state},
     probe::maxicom_label,
 };
@@ -506,6 +507,8 @@ impl SerialDevice {
             // Recoverable conditions -> return 0 bytes read
             Err(e) => match e.kind() {
                 ErrorKind::TimedOut | ErrorKind::WouldBlock | ErrorKind::Interrupted => Ok(0),
+                // an unplugged port fails its reads on Windows and macOS (MAX-199)
+                _ if is_gone(&e) => Err(LinkError::InputClosed),
                 _ => Err(LinkError::ReadFailed(e)),
             },
         }
@@ -531,13 +534,15 @@ impl SerialDevice {
         self.port.get_configuration()
     }
 
+    /// An unplugged port's write error is a lost link, as its read's is (MAX-199)
     pub fn write(&mut self, buffer: &[u8]) -> Result<(), LinkError> {
-        self.port
-            .write_all(buffer)
-            .map_err(|err| LinkError::WriteFailed {
+        self.port.write_all(buffer).map_err(|err| match err {
+            err if is_gone(&err) => LinkError::InputClosed,
+            err => LinkError::WriteFailed {
                 bytes_attempted: buffer.len(),
                 source: err,
-            })
+            },
+        })
     }
 }
 

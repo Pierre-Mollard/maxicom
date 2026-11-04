@@ -49,18 +49,28 @@ fn framings() {
 /// left without TIOCEXCL, so that program can still open it again.
 /// How: a pty opened as the port then closed; then its other end locked by the test
 /// first, maxicom's open refused, a plain open after it.
+/// The close is waited for: a process another test starts (`sleep`) holds a copy of every
+/// fd until it execs, this port's and its lock with it (MAX-199, was flaky).
 #[cfg(target_os = "linux")]
 #[test]
 fn open_takes_a_flock() {
     use crate::link::{lock::lock_holder, probe::port_state_of};
     use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
+    use std::time::Instant;
     let pty = crate::app::tests::Pty::open();
     let me = std::process::id() as libc::pid_t;
     let line = LineSettings::default();
     let port = SerialDevice::open(&pty.path, &line).unwrap();
     assert_eq!(lock_holder(&pty.path, "/proc/locks"), Some(me));
     drop(port);
-    assert_eq!(lock_holder(&pty.path, "/proc/locks"), None);
+    let start = Instant::now();
+    while lock_holder(&pty.path, "/proc/locks").is_some() {
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "flock kept after the close"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
 
     let open = || {
         std::fs::OpenOptions::new()

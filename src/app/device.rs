@@ -252,6 +252,11 @@ impl App {
         }
     }
 
+    /// Why the link was lost, for its popup: the read error, none for a plain close (MAX-199)
+    pub fn lost_reason(&self) -> Option<&str> {
+        self.lost_reason.as_deref()
+    }
+
     /// The form for a new link, for this machine with `[link]`'s line, or for `link` to edit
     /// (MAX-185)
     pub fn open_link_form(&mut self, link: Option<SavedLink>) {
@@ -407,29 +412,45 @@ impl App {
         UpdateEffect::None
     }
 
-    /// Writes `bytes` to the link, counted and recorded (not in a replay), or opens the error
-    /// popup. True when written; false when the link is closed
+    /// Writes `bytes` to the link, counted and recorded (not in a replay). True when written;
+    /// false when the link is closed, lost by this write, or the write failed: said once, not
+    /// per key typed into it (MAX-199)
     pub fn transmit(&mut self, bytes: &[u8]) -> bool {
         match self.link.write(bytes) {
             None => false,
             Some(Ok(())) => {
+                self.write_failing = false;
                 if self.link_kind().writes() {
                     self.stats.update_tx(bytes.len());
                     self.record_tx(bytes);
                 }
                 true
             }
+            Some(Err(LinkError::InputClosed)) => {
+                self.lose_link(None);
+                false
+            }
             Some(Err(e)) => {
-                let summary = format!(
-                    "Could not send the bytes to the {}",
-                    self.link_kind().noun()
-                );
-                self.open_overlay(Overlay::Error(
-                    ErrorDialog::new("Write Failed", summary).with_details(e),
-                ));
+                self.write_failed(&e);
                 false
             }
         }
+    }
+
+    /// A write error that leaves the link open, said once: quiet until a write goes through
+    /// or the link opens again (MAX-199)
+    fn write_failed(&mut self, e: &LinkError) {
+        if !std::mem::replace(&mut self.write_failing, true) {
+            self.notify_error(format!("{}: {e}", self.link_kind().name()));
+        }
+    }
+
+    /// The link closed under a read or a write: its popup, with the error that closed it when
+    /// it isn't a plain close, and a notice (MAX-199)
+    fn lose_link(&mut self, reason: Option<String>) {
+        self.lost_reason = reason;
+        self.show_disconnected();
+        self.notify_warn(format!("{} lost", self.link_kind().name()));
     }
 
     /// Everything already waiting, instead of one buffer per frame, for `RX_DRAIN_BUDGET` at
@@ -447,17 +468,10 @@ impl App {
                         break;
                     }
                 }
-                Err(LinkError::InputClosed) => {
-                    self.show_disconnected();
-                    self.notify_warn(format!("{} lost", self.link_kind().name()));
-                    turn.redraw = true;
-                    break;
-                }
-                Err(LinkError::ReadFailed(e)) => {
-                    let summary = format!("Could not read from the {}", self.link_kind().noun());
-                    self.open_overlay(Overlay::Error(
-                        ErrorDialog::new("Read Failed", summary).with_details(e),
-                    ));
+                // closed either way: a read error is lost too, its reason in the popup, once
+                // (MAX-199)
+                Err(e @ (LinkError::InputClosed | LinkError::ReadFailed(_))) => {
+                    self.lose_link(matches!(e, LinkError::ReadFailed(_)).then(|| e.to_string()));
                     turn.redraw = true;
                     break;
                 }
@@ -507,6 +521,8 @@ impl App {
 
     fn opened(&mut self, why: OpenFor) {
         self.link_lost = false;
+        self.lost_reason = None;
+        self.write_failing = false;
         let label = self.link_label();
         // some servers take several clients: said, not refused (MAX-186)
         if let Some(holder) = self.link.shared_with() {

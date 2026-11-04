@@ -1,7 +1,7 @@
 use super::restore::times_line;
 use super::session::{
-    CaptureDevice, CaptureFormat, CaptureSource, RecordingMeta, SessionLimits, TerminalSize,
-    folder_file, prune_sessions, session_tag,
+    CaptureDevice, CaptureFormat, CaptureSource, RecordingMeta, STEM_TIME, SessionLimits,
+    TerminalSize, folder_file, prune_sessions, session_start, session_tag,
 };
 use crate::app::types::RxLineSplitter;
 use crate::configs::TextEncoding;
@@ -228,14 +228,10 @@ impl Recorder {
         text: &CaptureFormat,
         limits: SessionLimits,
     ) -> io::Result<()> {
-        let now = Local::now();
+        let now = session_start(dir, Local::now());
         // to the millisecond: a relaunch within the second must not append to the last
         // session and overwrite its meta (MAX-148)
-        let stem = format!(
-            "{}_{}",
-            now.format("%Y%m%d_%H%M%S%3f"),
-            session_tag(&device.address)
-        );
+        let stem = format!("{}_{}", now.format(STEM_TIME), session_tag(&device.address));
         let session = RecordingWriter::create(&dir.join(&stem), Some(device), text, now)?;
         // held while the session runs, so no pruning removes it, from this maxicom or another
         // one (MAX-148). The OS drops it with the process, even killed. A file system without

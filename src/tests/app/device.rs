@@ -82,6 +82,130 @@ fn tcp_link_reads_writes_and_is_lost() {
     assert!(toasts(&app).contains(&"TCP connection lost".to_string()));
 }
 
+/// MAX-199: a lost link keeps its popup, back when closed by hand, and reopens on its own
+/// once the device answers again, the popup closed. The path a read error is to take.
+/// How: the peer and the listener dropped, Esc in the popup, then a listener on the same
+/// port again.
+#[test]
+fn lost_link_reconnects() {
+    use crate::inputs::DialogAction;
+    let (listener, address) = listener();
+    let (mut app, peer) = connected(&listener, &address);
+    drop((peer, listener));
+    poll_until(&mut app, "lost", |app| !app.link.is_open());
+    assert!(matches!(app.overlay(), Some(Overlay::DeviceDisconnected)));
+
+    app.dispatch(Action::Overlay(DialogAction::Close));
+    assert!(matches!(app.overlay(), Some(Overlay::DeviceDisconnected)));
+
+    let listener = TcpListener::bind(address.trim_start_matches("tcp://")).unwrap();
+    poll_until(&mut app, "reconnected", |app| app.link.is_open());
+    let _peer = listener.accept().unwrap();
+    assert!(app.overlay().is_none());
+    assert!(toasts(&app).contains(&format!("Device Reconnected: {address}")));
+}
+
+/// MAX-199: a read error that isn't a gone device closes the link too, once: the lost popup
+/// with the error as its reason, no error dialog, back after Esc; the reconnect closes it
+/// and forgets the reason. Regression: the port stayed open, its dialog back every frame.
+/// How: a TCP link whose device is a replay of a folder, which fails its read (EISDIR, so
+/// Unix only: Windows doesn't open a folder as a file), then its listener accepting again.
+#[cfg(unix)]
+#[test]
+fn read_error_is_lost_with_its_reason() {
+    use crate::{
+        inputs::DialogAction,
+        link::{ByteSource, replay::Replay},
+    };
+    let (listener, address) = listener();
+    let mut app = app_on(&address);
+    let dir = crate::capture::tests::temp_dir("read_error_is_lost");
+    std::fs::create_dir_all(&dir).unwrap();
+    let replay = Replay::open(&dir, Duration::ZERO).unwrap();
+    app.start_link(Some(ByteSource::Replay(replay)));
+
+    let mut buffer = [0; 64];
+    app.poll_link(&mut buffer).unwrap();
+    assert!(!app.link.is_open());
+    assert!(matches!(app.overlay(), Some(Overlay::DeviceDisconnected)));
+    let reason = app.lost_reason().unwrap().to_string();
+    assert!(
+        reason.starts_with("failed to read from the link"),
+        "{reason}"
+    );
+    assert!(toasts(&app).contains(&"TCP connection lost".to_string()));
+
+    app.dispatch(Action::Overlay(DialogAction::Close));
+    assert!(matches!(app.overlay(), Some(Overlay::DeviceDisconnected)));
+    assert_eq!(app.lost_reason(), Some(reason.as_str()));
+
+    poll_until(&mut app, "reconnected", |app| app.link.is_open());
+    let _peer = listener.accept().unwrap();
+    assert!(app.overlay().is_none());
+    assert_eq!(app.lost_reason(), None);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-199: a write error that leaves the link open is one notice, not one per write; a
+/// write that goes through, or the link opening again, lets the next one be said.
+/// Regression: a "Write Failed" dialog per write, each key typed bringing it back.
+/// How: an open TCP link, its write errors made up (a real one on TCP is a gone link), a
+/// write to the peer between them.
+#[test]
+fn failed_writes_are_said_once() {
+    let (listener, address) = listener();
+    let (mut app, _peer) = connected(&listener, &address);
+    let failed = || LinkError::WriteFailed {
+        bytes_attempted: 1,
+        source: std::io::Error::other("bad frame"),
+    };
+    let said = |app: &App| {
+        toasts(app)
+            .iter()
+            .filter(|toast| toast.ends_with("bad frame"))
+            .count()
+    };
+    app.write_failed(&failed());
+    app.write_failed(&failed());
+    assert_eq!(said(&app), 1);
+    assert!(app.link.is_open() && app.overlay().is_none());
+
+    assert!(app.transmit(b"x"));
+    app.write_failed(&failed());
+    assert_eq!(said(&app), 2);
+}
+
+/// MAX-199: a write that finds the device gone closes the link as a read does: the lost
+/// popup, without a reason, and its notice, not a write error.
+/// How: the peer reset (dropped with a zero linger), then writes until one fails.
+#[test]
+fn gone_write_closes_the_link() {
+    let (listener, address) = listener();
+    let (mut app, peer) = connected(&listener, &address);
+    socket2::SockRef::from(&peer)
+        .set_linger(Some(Duration::ZERO))
+        .unwrap();
+    drop(peer);
+
+    let start = Instant::now();
+    while app.transmit(b"x") {
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "writes kept going"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!app.link.is_open());
+    assert!(matches!(app.overlay(), Some(Overlay::DeviceDisconnected)));
+    assert_eq!(app.lost_reason(), None);
+    assert!(toasts(&app).contains(&"TCP connection lost".to_string()));
+    assert!(
+        !toasts(&app)
+            .iter()
+            .any(|t| t.starts_with("TCP connection:"))
+    );
+}
+
 /// MAX-168: `open` switches the link and resumes the command line on success; a failed
 /// open goes back to the link that was open and says why.
 /// How: a link on one listener opened onto a second, then onto a closed port.

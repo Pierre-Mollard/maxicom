@@ -12,6 +12,7 @@ use socket2::{SockRef, TcpKeepalive};
 
 use super::{
     Address, LinkError,
+    error::is_gone,
     lock::{LinkLock, LockState, lock_state},
     probe::maxicom_label,
 };
@@ -97,18 +98,22 @@ impl TcpDevice {
             // the read timeout: WouldBlock on Unix, TimedOut on Windows
             Err(e) => match e.kind() {
                 ErrorKind::TimedOut | ErrorKind::WouldBlock | ErrorKind::Interrupted => Ok(0),
+                // a reset connection, the peer gone as on a close (MAX-199)
+                _ if is_gone(&e) => Err(LinkError::InputClosed),
                 _ => Err(LinkError::ReadFailed(e)),
             },
         }
     }
 
+    /// A reset or broken connection is a lost link, as on a read (MAX-199)
     pub fn write(&mut self, buffer: &[u8]) -> Result<(), LinkError> {
-        self.stream
-            .write_all(buffer)
-            .map_err(|err| LinkError::WriteFailed {
+        self.stream.write_all(buffer).map_err(|err| match err {
+            err if is_gone(&err) => LinkError::InputClosed,
+            err => LinkError::WriteFailed {
                 bytes_attempted: buffer.len(),
                 source: err,
-            })
+            },
+        })
     }
 }
 

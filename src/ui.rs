@@ -246,8 +246,8 @@ fn render_active_overlay(
             render_screenshot_popup(dialog, resolver, frame, theme, &mut targets)
         }
         Some(Overlay::DeviceDisconnected) => {
-            let (kind, label) = (app.link_kind(), app.link_label());
-            render_disconnected_popup(kind, label, resolver, frame, theme, &mut targets)
+            let (kind, label, reason) = (app.link_kind(), app.link_label(), app.lost_reason());
+            render_disconnected_popup(kind, label, reason, resolver, frame, theme, &mut targets)
         }
         Some(Overlay::DeviceDetached) => {
             let (kind, label) = (app.link_kind(), app.link_label());

@@ -103,20 +103,25 @@ impl LinkState {
         self.last_rx_activity = now;
     }
 
-    /// One read of what is waiting, none when closed. Bytes are activity; a lost link closes
+    /// One read of what is waiting, none when closed. Bytes are activity; a lost link closes,
+    /// and a failed read too: read again, it fails again (MAX-199). The reopens retry it
     pub fn read(&mut self, buffer: &mut [u8]) -> Option<Result<usize, LinkError>> {
         let result = self.device.as_mut()?.read(buffer);
         match result {
             Ok(n) if n > 0 => self.last_rx_activity = Instant::now(),
-            Err(LinkError::InputClosed) => self.device = None,
+            Err(LinkError::InputClosed | LinkError::ReadFailed(_)) => self.device = None,
             _ => {}
         }
         Some(result)
     }
 
-    /// Writes to the device, none when closed
+    /// Writes to the device, none when closed; a lost link closes, as on a read (MAX-199)
     pub fn write(&mut self, bytes: &[u8]) -> Option<Result<(), LinkError>> {
-        Some(self.device.as_mut()?.write(bytes))
+        let result = self.device.as_mut()?.write(bytes);
+        if let Err(LinkError::InputClosed) = result {
+            self.device = None;
+        }
+        Some(result)
     }
 
     /// What is sent counts as activity, as what is received, for the idle detach

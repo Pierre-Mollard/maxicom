@@ -23,7 +23,8 @@ pub enum LinkError {
         rejected_fields: Vec<String>,
         source: io::Error,
     },
-    /// The link was closed on the other side, or the USB unplugged (EOF on read)
+    /// The link was closed on the other side, or the USB unplugged: EOF on read, or a read or
+    /// write error that says the device is gone (MAX-199)
     InputClosed,
     /// Unexpected error while reading bytes
     ReadFailed(io::Error),
@@ -126,3 +127,33 @@ impl Error for LinkError {
         }
     }
 }
+
+/// A read or write error that means the device is gone, unplugged or its connection dropped
+/// (MAX-199): the link closes as for a read of 0, with the lost popup
+/// the codes come from the OS docs and drivers; only Windows' 22 was seen (MAX-194)
+pub fn is_gone(err: &io::Error) -> bool {
+    if matches!(
+        err.kind(),
+        ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted | ErrorKind::BrokenPipe
+    ) {
+        return true;
+    }
+    let Some(code) = err.raw_os_error() else {
+        return false;
+    };
+    // EIO: Linux, macOS; ENXIO: macOS's unplugged /dev/cu.*; ENODEV: Linux
+    #[cfg(unix)]
+    let gone = matches!(code, libc::EIO | libc::ENXIO | libc::ENODEV);
+    // ERROR_BAD_COMMAND, ERROR_GEN_FAILURE, ERROR_OPERATION_ABORTED,
+    // ERROR_DEVICE_NOT_CONNECTED, ERROR_DEVICE_REMOVED, ERROR_INVALID_HANDLE, and
+    // ERROR_ACCESS_DENIED, what some drivers give after a removal
+    #[cfg(windows)]
+    let gone = matches!(code, 22 | 31 | 995 | 1167 | 1617 | 6 | 5);
+    #[cfg(not(any(unix, windows)))]
+    let gone = false;
+    gone
+}
+
+#[cfg(test)]
+#[path = "../tests/link/error.rs"]
+mod tests;

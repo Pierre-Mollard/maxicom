@@ -110,6 +110,12 @@ pub struct App {
     device_unpicked: bool,
     /// The disconnected popup was shown and the link hasn't opened since (MAX-181)
     link_lost: bool,
+    /// The read error that closed the link, said in its popup; none for a plain close
+    /// (MAX-199)
+    lost_reason: Option<String>,
+    /// A failed write was said: quiet until a write goes through or the link opens again
+    /// (MAX-199)
+    write_failing: bool,
     /// The directory's port test running (MAX-181)
     link_test: Option<device::LinkTest>,
     prefix_active: bool,
@@ -242,6 +248,8 @@ impl App {
             disconnected_after_restore: false,
             device_unpicked: false,
             link_lost: false,
+            lost_reason: None,
+            write_failing: false,
             link_test: None,
             overlay: None,
             notifications: NotificationManager::new(),

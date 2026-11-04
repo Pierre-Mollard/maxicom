@@ -140,15 +140,6 @@ impl LinkKind {
             LinkKind::Replay => "Replay",
         }
     }
-
-    /// The same inside a sentence: "Could not read from the serial port"
-    pub fn noun(self) -> &'static str {
-        match self {
-            LinkKind::Serial => "serial port",
-            LinkKind::Tcp => "TCP connection",
-            LinkKind::Replay => "replay",
-        }
-    }
 }
 
 /// Opens the link `config.address` names, waiting for it: a serial port, or a TCP

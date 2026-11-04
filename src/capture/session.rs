@@ -4,7 +4,7 @@ use crate::link::{
     LinkConfig,
     serial::{Framing, LineSettings},
 };
-use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
+use chrono::{DateTime, Local, NaiveDateTime, SubsecRound, TimeDelta, TimeZone};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -283,6 +283,28 @@ fn session_files(dir: &Path) -> io::Result<BTreeMap<String, Vec<PathBuf>>> {
         }
     }
     Ok(sessions)
+}
+
+/// The time at the start of a session's name, to the millisecond: it sorts as it reads
+pub const STEM_TIME: &str = "%Y%m%d_%H%M%S%3f";
+
+/// When a new session in `dir` starts, for its name: `now`, or 1 ms after the newest session
+/// there when the clock went back past it, as WSL2's does when it syncs with Windows. A new
+/// session sorts last, for the date order, the pruning and the restore's last session
+/// (MAX-199)
+pub fn session_start(dir: &Path, now: DateTime<Local>) -> DateTime<Local> {
+    let newest = session_files(dir).ok().and_then(|sessions| {
+        (sessions.into_keys())
+            .filter_map(|stem| NaiveDateTime::parse_from_str(stem.get(..18)?, STEM_TIME).ok())
+            .max()
+    });
+    match newest {
+        Some(newest) if newest >= now.naive_local().trunc_subsecs(3) => Local
+            .from_local_datetime(&(newest + TimeDelta::milliseconds(1)))
+            .earliest()
+            .unwrap_or(now),
+        _ => now,
+    }
 }
 
 /// A session in the cache folder (MAX-148), what the restore and the session browser use: its

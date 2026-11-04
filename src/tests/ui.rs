@@ -1695,6 +1695,55 @@ fn link_popups_follow_the_kind() {
     }
 }
 
+/// MAX-199: the lost popup says the read error that closed the link, under its next line;
+/// a plain close shows none.
+/// How: the popup drawn alone with a reason, then without.
+#[test]
+fn lost_popup_says_its_reason() {
+    use crate::ui::popups::alert::render_disconnected_popup;
+    let theme = ThemeConfig::default();
+    let resolver = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
+    let draw = |reason: Option<&str>| {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                let label = "COM3".to_string();
+                let mut targets = Vec::new();
+                let kind = crate::link::LinkKind::Serial;
+                render_disconnected_popup(
+                    kind,
+                    label,
+                    reason,
+                    &resolver,
+                    frame,
+                    &theme,
+                    &mut targets,
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect()
+            })
+            .collect::<Vec<String>>()
+    };
+    let reason = "failed to read from the link: Bad command (os error 22)";
+    let rows = draw(Some(reason));
+    let next = rows
+        .iter()
+        .position(|row| row.contains("Waiting for it to come back"));
+    let said = rows.iter().position(|row| row.contains("(os error 22)"));
+    assert!(
+        matches!((next, said), (Some(n), Some(s)) if s > n),
+        "{rows:#?}"
+    );
+    let rows = draw(None);
+    assert!(!has(&rows, "failed to read"), "{rows:#?}");
+}
+
 /// MAX-12: the help's third tab lists the keys bound to a command line, the direct ones
 /// first, then every command: those with arguments with their help under them, then the
 /// others, one a row.

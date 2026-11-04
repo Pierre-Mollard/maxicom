@@ -63,6 +63,29 @@ fn peer_close_is_input_closed() {
     assert!(matches!(result, Err(LinkError::InputClosed)), "{result:?}");
 }
 
+/// The peer resetting the connection is a lost device as a close is (MAX-199), though the
+/// read fails instead of reading 0, as an unplugged port's on Windows.
+/// How: the accepted stream dropped with a zero linger, which sends a reset.
+#[test]
+fn peer_reset_is_input_closed() {
+    let (listener, addr) = listener();
+    let mut device = TcpDevice::connect(&addr, TIMEOUT).unwrap();
+    let (peer, _) = listener.accept().unwrap();
+    SockRef::from(&peer)
+        .set_linger(Some(Duration::ZERO))
+        .unwrap();
+    drop(peer);
+
+    let start = Instant::now();
+    let result = loop {
+        match device.read(&mut [0; 16]) {
+            Ok(0) if start.elapsed() < TIMEOUT => continue,
+            other => break other,
+        }
+    };
+    assert!(matches!(result, Err(LinkError::InputClosed)), "{result:?}");
+}
+
 /// Connecting where nothing listens fails at once, and a reconnect works once something
 /// listens again.
 /// How: a port freed by dropping its listener, then a new listener on it.
