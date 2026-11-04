@@ -65,6 +65,8 @@ pub struct TerminalMode {
     restored_separator: Option<usize>,
     /// The last byte from the device was a CR, for add CR / add LF across chunks (MAX-181)
     rx_after_cr: bool,
+    /// Copy mode held the live view when rows arrived: leaving it goes back live (MAX-193)
+    copy_held: bool,
 }
 
 impl TerminalMode {
@@ -92,6 +94,7 @@ impl TerminalMode {
             search_text: None,
             restored_separator: None,
             rx_after_cr: false,
+            copy_held: false,
         }
     }
 
@@ -161,8 +164,11 @@ impl TerminalMode {
         self.row_timestamps.resize(scrollback + rows, None);
 
         // a view scrolled up stays on the rows it shows: its offset, counted from the live
-        // view's last row, grows by the rows that came in below it (MAX-141)
-        if started_on_main && self.scroller.offset_y > 0 {
+        // view's last row, grows by the rows that came in below it (MAX-141). Copy mode holds
+        // the live view too, so the selection doesn't move (MAX-193)
+        let held = started_on_main && self.scroller.offset_y == 0 && self.copy_state.active;
+        self.copy_held |= held;
+        if started_on_main && (self.scroller.offset_y > 0 || held) {
             let added = (scrollback + self.live_rows() + evicted)
                 .saturating_sub(scrollback_before + live_rows_before);
             self.scroller.offset_y += added;
@@ -764,6 +770,7 @@ impl TerminalMode {
         }
 
         if action == CopyModeAction::Enter {
+            self.copy_held = false;
             let (c_row, c_col) = self.vt100_screen().cursor_position();
             let max_col = self.get_vt100_size().1.saturating_sub(1) as usize;
             // entering copy mode leaves the view where it is (MAX-143): on the remote cursor
@@ -790,6 +797,10 @@ impl TerminalMode {
         };
 
         let result = self.copy_state.apply_action(action, &mut source);
+        // out of copy mode (Esc, a yank), a view it held goes back live (MAX-193)
+        if !self.copy_state.active && std::mem::take(&mut self.copy_held) {
+            self.scroll_to_bottom();
+        }
         match result {
             CopyActionResult::Moved => {
                 self.reveal_copy_cursor(reveal);

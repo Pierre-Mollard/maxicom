@@ -729,9 +729,9 @@ impl Default for StatusBarConfig {
     fn default() -> Self {
         Self {
             left: block_lines(&[
-                "[ {mode} ](prefix?(bg=secondary fg=black bold):copy_raw?(bg=red fg=black bold):copy?(bg=magenta fg=black bold):search?(bg=blue fg=white bold):(fg=primary bold))",
-                "[{copy_side} ](copy_raw?(fg=red bold):copy?(fg=magenta bold):hide)",
-                "[{port}](prio=3)",
+                "[ {mode} ](prefix?(bg=secondary fg=black bold):copy_raw?(bg=selection_raw fg=black bold):copy?(bg=selection fg=black bold):search?(bg=lightblue fg=black bold):(fg=primary bold))",
+                "[|](muted prio=3)",
+                "[ {port}](prio=3)",
                 "[ |](muted prio=3)",
                 "[ ](prio=2)",
                 "[{baud}](primary prio=2)",

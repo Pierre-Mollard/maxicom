@@ -3,7 +3,7 @@
 use super::*;
 use crate::{
     configs::{KeyBindingsConfig, KeyResolver, SettingsConfig},
-    inputs::{Action, AppAction, CopyModeAction},
+    inputs::{Action, AppAction, CopyModeAction, SearchModeAction},
     link::{Address, LinkConfig},
 };
 
@@ -52,7 +52,8 @@ fn default_left_terminal() {
         render(&d.left, &a),
         [
             span(" TERM ", "Some(Cyan)", BG, "BOLD"),
-            plain("/dev/ttyUSB0"),
+            span("|", MUTED, BG, "NONE"),
+            plain(" /dev/ttyUSB0"),
             span(" |", MUTED, BG, "NONE"),
             plain(" "),
             span("115200", "Some(Cyan)", BG, "NONE"),
@@ -75,7 +76,8 @@ fn tcp_link_has_no_baud_nor_framing() {
         render(&d.left, &a),
         [
             span(" TERM ", "Some(Cyan)", BG, "BOLD"),
-            plain("tcp://192.168.1.50:4000"),
+            span("|", MUTED, BG, "NONE"),
+            plain(" tcp://192.168.1.50:4000"),
             span(" |", MUTED, BG, "NONE"),
             plain(" "),
             span("raw", "Some(Cyan)", BG, "NONE"),
@@ -101,7 +103,8 @@ fn replay_shows_its_file_and_state() {
         render(&d.left, &a),
         [
             span(" TERM ", "Some(Cyan)", BG, "BOLD"),
-            plain("file://boot.raw"),
+            span("|", MUTED, BG, "NONE"),
+            plain(" file://boot.raw"),
             span(" |", MUTED, BG, "NONE"),
             plain(" "),
             span("replay", "Some(Cyan)", BG, "NONE"),
@@ -169,7 +172,8 @@ fn session_replay_shows_its_recorded_line() {
         render(&d.left, &a),
         [
             span(" TERM ", "Some(Cyan)", BG, "BOLD"),
-            plain("file://boot.raw"),
+            span("|", MUTED, BG, "NONE"),
+            plain(" file://boot.raw"),
             span(" |", MUTED, BG, "NONE"),
             plain(" "),
             span("9600", "Some(Cyan)", BG, "NONE"),
@@ -184,8 +188,9 @@ fn session_replay_shows_its_recorded_line() {
     );
 }
 
-/// The mode pill follows the prefix and copy-mode conditions.
-/// How: same template with the prefix active, then in line copy mode.
+/// The mode pill follows the prefix, copy-mode and search conditions; the search's is black
+/// on light blue, as readable as the others' black (MAX-193).
+/// How: same template with the prefix active, then in line copy mode, then searching.
 #[test]
 fn default_left_conditions() {
     let d = StatusBarConfig::default();
@@ -202,19 +207,29 @@ fn default_left_conditions() {
         render(&d.left, &l)[0],
         span(" LINE ", "Some(Black)", "Some(Magenta)", "BOLD")
     );
+
+    let mut s = app(Mode::Line);
+    s.update(Action::Search(SearchModeAction::Start));
+    assert_eq!(
+        render(&d.left, &s)[0],
+        span(" LINE ", "Some(Black)", "Some(LightBlue)", "BOLD")
+    );
 }
 
-/// MAX-71: `{copy_side}` and `copy_raw` follow the copy cursor's panel; the default left
-/// template shows the side next to the mode pill in copy mode only.
+/// MAX-71: `{copy_side}` and `copy_raw` follow the copy cursor's panel. MAX-193: the default
+/// left template doesn't show the side (the badge's color does), so the bar doesn't move in
+/// and out of copy mode; the README's block for it takes the selection colors.
 /// How: line mode with a Hex raw panel and one line, copy mode, then the toggle.
 #[test]
 fn copy_side_variable_and_condition() {
     let d = StatusBarConfig::default();
     let template = "[{copy_side}](copy_raw?red:blue)";
+    let readme = "[ {copy_side} ](copy_raw?(fg=selection_raw bold):copy?(fg=selection bold):hide)";
     let mut l = app(Mode::Line);
     l.settings_mut().raw_side.view = crate::configs::RawSideView::Hex;
     l.feed_rx(b"abc\r\n");
-    assert_eq!(render(&d.left, &l).len(), 7);
+    let outside = render(&d.left, &l).len();
+    assert_eq!(render(readme, &l), Vec::<String>::new());
 
     l.update(Action::CopyMode(CopyModeAction::Enter));
     assert_eq!(
@@ -222,19 +237,47 @@ fn copy_side_variable_and_condition() {
         [span("TXT", "Some(Blue)", BG, "NONE")]
     );
     assert_eq!(
-        render(&d.left, &l)[1],
-        span("TXT ", "Some(Magenta)", BG, "BOLD")
+        render(readme, &l),
+        [span(" TXT ", "Some(Magenta)", BG, "BOLD")]
     );
+    assert_eq!(render(&d.left, &l).len(), outside);
 
     l.update(Action::CopyMode(CopyModeAction::ToggleSide));
     assert_eq!(render(template, &l), [span("RAW", "Some(Red)", BG, "NONE")]);
+    assert_eq!(render(readme, &l), [span(" RAW ", "Some(Red)", BG, "BOLD")]);
     assert_eq!(
         render(&d.left, &l)[..2],
         [
             span(" LINE ", "Some(Black)", "Some(Red)", "BOLD"),
-            span("RAW ", "Some(Red)", BG, "BOLD"),
+            span("|", MUTED, BG, "NONE"),
         ]
     );
+}
+
+/// MAX-193: the default mode badge takes the theme's selection colors in copy mode, so a
+/// theme changing `[ui.selection]` / `[ui.selection_raw]` changes it too.
+/// How: green and blue selections, line copy mode on the text side then on the raw side.
+#[test]
+fn copy_badge_follows_the_selection_colors() {
+    use ratatui::style::{Color, Style};
+    let mut theme = ThemeConfig::default();
+    theme.ui.selection = Style::default().bg(Color::Green).into();
+    theme.ui.selection_raw = Style::default().bg(Color::Blue).into();
+    let d = StatusBarConfig::default();
+    let template = CompiledTemplate::new(&d.left, &theme);
+    let badge = |app: &App| {
+        let time_format = &app.settings().ui.status_bar.time_format;
+        template.spans(app, *theme.ui.status_bar, time_format)[0]
+            .style
+            .bg
+    };
+    let mut l = app(Mode::Line);
+    l.settings_mut().raw_side.view = crate::configs::RawSideView::Hex;
+    l.feed_rx(b"abc\r\n");
+    l.update(Action::CopyMode(CopyModeAction::Enter));
+    assert_eq!(badge(&l), Some(Color::Green));
+    l.update(Action::CopyMode(CopyModeAction::ToggleSide));
+    assert_eq!(badge(&l), Some(Color::Blue));
 }
 
 /// `mouse` is true while the mouse capture setting is on (MAX-113).

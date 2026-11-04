@@ -74,6 +74,8 @@ pub struct LineMode {
     /// Where the live view starts while the lines after it don't fill it, like after a
     /// `clear` (MAX-176)
     view_floor: Option<ViewFloor>,
+    /// Copy mode held the live view when lines arrived: leaving it goes back live (MAX-193)
+    copy_held: bool,
 }
 
 /// The entry the live view starts on, and the rows scrolled above it while blank rows still
@@ -117,6 +119,7 @@ impl LineMode {
             copy_cursor_shown: false,
             bottom_row_start: None,
             view_floor: None,
+            copy_held: false,
         }
     }
 
@@ -200,7 +203,11 @@ impl LineMode {
         // by the new entry. Only the live view follows the new lines (MAX-124)
         let is_scrolled =
             self.scroller.offset_y > 0 || self.rows_below > 0 || self.pending_scroll_rows > 0;
-        if is_scrolled {
+        // copy mode holds the live view too, so the selection doesn't move (MAX-193)
+        if !is_scrolled && self.copy_state.active {
+            self.copy_held = true;
+        }
+        if is_scrolled || self.copy_state.active {
             self.scroller.offset_y = self.scroller.offset_y.saturating_add(1);
         }
         self.scroller.on_rx_received();
@@ -431,6 +438,7 @@ impl LineMode {
         // cursor on its bottom row. From the live view the cursor, on the first row of the last
         // entry, is shown: that entry can be taller than the view (MAX-123)
         if action == CopyModeAction::Enter {
+            self.copy_held = false;
             let max_line = self.local_history.len().saturating_sub(1);
             let live = self.scroller.offset_y == 0 && self.rows_below == 0;
             match self.bottom_row_start {
@@ -455,6 +463,10 @@ impl LineMode {
         };
 
         let result = self.copy_state.apply_action(action, &mut source);
+        // out of copy mode (Esc, a yank), a view it held goes back live (MAX-193)
+        if !self.copy_state.active && std::mem::take(&mut self.copy_held) {
+            self.scroll_to_bottom();
+        }
         match result {
             // the mouse moves the cursor to where it is shown
             CopyActionResult::Moved if is_mouse => None,

@@ -344,6 +344,10 @@ What changes from a serial port:
   seconds. A click anywhere on one closes it (over a popup too, which stays
   open); `dismiss-notification` (`Ctrl-a n`) closes the top one,
   `dismiss-notifications` (`Ctrl-a N`) all of them.
+- Copy mode (`Ctrl-a [` or `b`, or a mouse selection) holds the view while
+  data arrives, so the selection stays under the pointer; leaving it (Esc, a
+  yank) goes back to the live tail. A view you scrolled up yourself before
+  copy mode stays where it is.
 - `hide_borders_below`, `hide_scrollbar_below` and `hide_status_bar_below` in
   `[ui]`, each a `[cols, rows]` size: while the screen is narrower or shorter
   than it, that part isn't drawn, to leave the room to the content. The
@@ -739,7 +743,9 @@ name = "screen_%Y%m%d_%H%M%S"            # the format adds .txt or .ans
   `fg`, `bg`, `underline_color` (a name like `White`, `DarkGray`, `Reset`, or
   `#RRGGBB`) and `bold`, `dim`, `italic`, `underlined`, `reversed`, `crossed`.
   The copy mode selection, in the text and the raw side panel, is
-  `[ui.selection]` (default black on `Magenta`, as the `COPY` badge);
+  `[ui.selection]` (default black on `Magenta`, as the `COPY` badge), and
+  `[ui.selection_raw]` while the cursor is in the raw side panel (black on
+  `Red`, as the badge turns);
   the cursor's ghost in the other panel is `[ui.cursor_ghost]`,
   the part under the mouse `[ui.hover]`.
 
@@ -789,6 +795,11 @@ right = '''
   - {scroll_max}     Total scrollback depth
   - {send_file}      The file `send-file` sends, empty when none
   - {send_percent}   How much of it is sent: 0..100
+  - {copy_side}      The copy cursor's panel, "TXT" or "RAW", empty out of
+                     copy mode. The default bar doesn't show it (the mode
+                     badge's color does); after `{mode}`'s block, this one
+                     puts it back:
+                     `[ {copy_side} ](copy_raw?(fg=selection_raw bold):copy?(fg=selection bold):hide)`
 
 - Formats: `{name:spec}`, spec `[<>^][0][width][h]`
   - `{rx_bytes:8}`    Pad to 8 columns (numbers right, text left)
@@ -809,6 +820,7 @@ right = '''
     - line           Line input active (alias: linemode)
     - term           Terminal mode active (alias: terminal)
     - copy           Scrollback mode active (alias: copymode)
+    - copy_raw       The copy cursor is in the raw side panel (alias: raw_cursor)
     - search         Search mode is active
     - overlay        Dialog/popup is open (alias: popup)
     - focused        Window has OS desktop focus
@@ -835,7 +847,9 @@ right = '''
 - Styles:
   - Colors:
     black, red, green, yellow, blue, magenta, cyan, gray,
-    darkgray, white, or hex (#RRGGBB)
+    darkgray, white, or hex (#RRGGBB); `selection` and `selection_raw` are
+    the background of `[ui.selection]` / `[ui.selection_raw]`, which the
+    default mode badge takes in copy mode
   - Specifiers:
     `fg=<color>`, `bg=<color>`
   - Modifiers:

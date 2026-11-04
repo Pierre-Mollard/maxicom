@@ -109,7 +109,7 @@
 //! ## Style Keywords
 //! - **Modifiers**: `bold`, `dim`, `italic`, `underlined` (`underline`), `reversed` (`reverse`), `reset` (`default`), `crossed`, `slow_blink` (`sblink`), `rapid_blink` (`rblink`)
 //! - **Visibility**: `hide`, `hidden`, `none` (omits the span completely)
-//! - **Theme Palette Names**: `main` (or `primary`), `secondary`, `ternary`, `text`, `muted`, `warn` (`warning`), `good` (`ok`, `success`), `unselected`
+//! - **Theme Palette Names**: `main` (or `primary`), `secondary`, `ternary`, `text`, `muted`, `warn` (`warning`), `good` (`ok`, `success`), `unselected`; `selection` and `selection_raw` are the background of `[ui.selection]` / `[ui.selection_raw]`
 //! - **Standard Named Colors**: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `gray`, `darkgray`, `white`, or hex `#RRGGBB`
 //! - **Explicit Foregrounds**: `fg=<color>` or simply `<color>`
 //! - **Explicit Backgrounds**: `bg=<color>` (e.g. `bg=main`, `bg=red`, `bg=#1e1e2e`)
@@ -1218,6 +1218,8 @@ fn resolve_color(name: &str, theme: &ThemeConfig) -> Option<Color> {
         "warn" | "warning" => Some(theme.palette.text_warn),
         "good" | "ok" | "success" => Some(theme.palette.text_good),
         "unselected" => Some(theme.palette.unselected),
+        "selection" => theme.ui.selection.bg,
+        "selection_raw" => theme.ui.selection_raw.bg,
         _ => name.parse::<Color>().ok(),
     }
 }

@@ -107,10 +107,7 @@ fn status_bar_templates_written_one_block_per_line() {
         written.contains("left = '''\n[ {mode} ](prefix?"),
         "{written}"
     );
-    assert!(
-        written.contains("\\\n    [{copy_side} ](copy_raw?"),
-        "{written}"
-    );
+    assert!(written.contains("\\\n    [|](muted prio=3)"), "{written}");
     assert!(written.contains("[{framing}](prio=4)'''"), "{written}");
     assert_eq!(toml::from_str::<StatusBarConfig>(&written).unwrap(), config);
 }

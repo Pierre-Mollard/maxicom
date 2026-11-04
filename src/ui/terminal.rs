@@ -252,7 +252,8 @@ pub fn render_vt100_terminal(
                     let world_col = c + pan_x;
                     if copy_state.is_selected(world_row, world_col) && world_col < trimmed_len {
                         let cell = &mut buf[(content_area.x + c as u16, content_area.y + r as u16)];
-                        cell.set_style(theme.ui.selection);
+                        let raw = copy_state.side == CopySide::Raw;
+                        cell.set_style(theme.ui.selection_style(raw));
                     }
                 }
             }
@@ -571,7 +572,7 @@ pub fn render_vt100_raw_side_panel(
                 highlights.push(CharHighlight {
                     start_col: raw_from_b,
                     end_col: raw_to_b,
-                    style: *theme.ui.selection,
+                    style: theme.ui.selection_style(raw_side),
                 });
             }
         }

@@ -129,10 +129,23 @@ pub struct UiStyles {
     pub cursor_unfocused: ConfigStyle,
     pub cursor_ghost: ConfigStyle,
     pub selection: ConfigStyle,
+    pub selection_raw: ConfigStyle,
     pub hover: ConfigStyle,
     pub status_bar: ConfigStyle,
     pub scrollbar_thumb: ConfigStyle,
     pub scrollbar_track: ConfigStyle,
+}
+
+impl UiStyles {
+    /// The copy mode selection's style: `selection_raw` while the copy cursor is in the raw
+    /// side panel, as the status bar's `COPY` badge turns red (MAX-193)
+    pub fn selection_style(&self, raw: bool) -> Style {
+        if raw {
+            *self.selection_raw
+        } else {
+            *self.selection
+        }
+    }
 }
 
 impl Default for UiStyles {
@@ -149,6 +162,7 @@ impl Default for UiStyles {
                     .fg(Color::White),
             ),
             selection: ConfigStyle::new(Style::default().bg(Color::Magenta).fg(Color::Black)),
+            selection_raw: ConfigStyle::new(Style::default().bg(Color::Red).fg(Color::Black)),
             hover: ConfigStyle::new(Style::new().add_modifier(Modifier::REVERSED)),
             status_bar: ConfigStyle::new(
                 Style::default()

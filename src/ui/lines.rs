@@ -52,7 +52,7 @@ pub fn history_entry_to_line(
     settings: &SettingsConfig,
     line_matches: &[(usize, &SearchMatch)],
     active_match_idx: usize,
-    selection_range: Option<(usize, usize)>,
+    selection_range: Option<(usize, usize, Style)>,
     theme: &ThemeConfig,
     cached_prefix: &str,
 ) -> Line<'static> {
@@ -96,9 +96,8 @@ pub fn history_entry_to_line(
         }
     }
 
-    if let Some((sel_start, sel_end)) = selection_range {
-        content_spans =
-            apply_selection_to_spans(content_spans, sel_start, sel_end, *theme.ui.selection);
+    if let Some((sel_start, sel_end, style)) = selection_range {
+        content_spans = apply_selection_to_spans(content_spans, sel_start, sel_end, style);
     }
 
     spans.extend(content_spans);
@@ -134,6 +133,9 @@ pub fn render_monitor(
         app.line_mode.search().active && !app.line_mode.search().matches.is_empty();
     let active_match_idx = app.line_mode.search().current_match;
     let copy_range = app.line_mode.copy_state().normalized_selection();
+    let selection_style = theme
+        .ui
+        .selection_style(app.line_mode.copy_state().side == CopySide::Raw);
 
     let global_max_scroll = total_entries.saturating_sub(1);
 
@@ -271,7 +273,7 @@ pub fn render_monitor(
                 } else {
                     usize::MAX
                 };
-                Some((from, to))
+                Some((from, to, selection_style))
             }
         });
 
@@ -1415,7 +1417,7 @@ pub fn render_raw_side_panel(
                             highlights.push(CharHighlight {
                                 start_col: raw_from_byte.saturating_sub(raw_byte_start),
                                 end_col: raw_to_byte.saturating_sub(raw_byte_start),
-                                style: *theme.ui.selection,
+                                style: theme.ui.selection_style(raw_side),
                             });
                         }
                     }

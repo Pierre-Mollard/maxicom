@@ -810,6 +810,75 @@ fn scrolled_view_stays_put_when_lines_arrive() {
     assert!(rows.last().unwrap().contains("line 20"), "{rows:#?}");
 }
 
+/// MAX-193: copy mode holds the live view when lines arrive, in both modes: the rows drawn
+/// and the selection stay where they were. Leaving copy mode goes back to the live view; a
+/// view scrolled up by hand before copy mode stays scrolled after it, and without copy mode
+/// the live view follows.
+/// How: 20 numbered lines in a 12-row screen, copy mode with a line selected, 2 more lines,
+/// then Esc; again scrolled up 2 rows first. Line mode, then terminal mode.
+#[test]
+fn copy_mode_holds_the_live_view() {
+    for mode in [Mode::Line, Mode::Terminal] {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 60, 12, |s| s.mode = mode);
+        let line_rows = |rows: &[String]| -> Vec<String> {
+            rows.iter()
+                .filter(|row| row.contains("line "))
+                .map(|row| row.chars().take(59).collect())
+                .collect()
+        };
+        let selection = h_theme().ui.selection.bg;
+        for i in 0..20 {
+            h.app.feed_rx(format!("line {i:02}\r\n").as_bytes());
+        }
+        h.draw();
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        h.app.update(Action::CopyMode(CopyModeAction::MoveUp));
+        h.app.update(Action::CopyMode(CopyModeAction::SelectLine));
+        // the selected row: its text's first cell on the selection's background
+        let selected = |h: &Harness, rows: &[String]| -> Vec<String> {
+            let lines = rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row.contains("line "));
+            lines
+                .filter(|&(y, row)| {
+                    let x = cell_of(std::slice::from_ref(row), "line ").0;
+                    bg_at(h, (x, y as u16)) == selection
+                })
+                .map(|(_, row)| row.chars().take(59).collect())
+                .collect()
+        };
+        let rows = h.draw();
+        let before = line_rows(&rows);
+        let before_selected = selected(&h, &rows);
+        assert_eq!(before_selected.len(), 1, "{mode:?} {rows:#?}");
+
+        h.app.feed_rx(b"line 20\r\nline 21\r\n");
+        let rows = h.draw();
+        // the same rows, the blank one under them (the remote's cursor) may fill
+        assert_eq!(line_rows(&rows)[..before.len()], before[..], "{mode:?}");
+        assert!(!shows(&rows, "line 21"), "{mode:?} {rows:#?}");
+        assert_eq!(selected(&h, &rows), before_selected, "{mode:?} {rows:#?}");
+
+        h.app.update(Action::CopyMode(CopyModeAction::Exit));
+        let rows = h.draw();
+        assert!(shows(&rows, "line 21"), "{mode:?} {rows:#?}");
+        h.app.feed_rx(b"line 22\r\n");
+        assert!(shows(&h.draw(), "line 22"), "{mode:?}");
+
+        // scrolled up by hand first: still scrolled after copy mode
+        h.scroll(HistoryAction::ScrollUp(2));
+        h.draw();
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        let before = line_rows(&h.draw());
+        h.app.feed_rx(b"line 23\r\n");
+        h.app.update(Action::CopyMode(CopyModeAction::Exit));
+        let rows = h.draw();
+        assert_eq!(line_rows(&rows), before, "{mode:?}");
+        assert!(!shows(&rows, "line 23"), "{mode:?} {rows:#?}");
+    }
+}
+
 /// MAX-124, with rows: scrolled up one row inside the last tall entry (the entry offset is
 /// still 0, only rows are hidden below), a new tall line leaves the view where it was.
 #[test]
@@ -1013,13 +1082,15 @@ fn bg_at(h: &Harness, (x, y): (u16, u16)) -> Option<ratatui::style::Color> {
 }
 
 /// MAX-71: the panel the cursor is not in shows a ghost of it, and a selection made on the
-/// raw side covers its bytes, the ones the text does not show included.
+/// raw side covers its bytes, the ones the text does not show included. MAX-193: in the
+/// `selection_raw` style while the cursor is on the raw side, `selection` back on the text.
 /// How: green "ok" and "abc", Hex panel. Copy mode on "abc": ghost on 61. Raw side, up to
-/// 1B: ghost on the "o" of "ok". Select 1B to 6D (the 5 bytes of ESC[32m): selected, 6F not
+/// 1B: ghost on the "o" of "ok". Select 1B to 6D (the 5 bytes of ESC[32m): selected, 6F not;
+/// then the text side again
 #[test]
 fn copy_ghosts_and_raw_selection() {
     let ghost = h_theme().ui.cursor_ghost.bg;
-    let selection = h_theme().ui.selection.bg;
+    let selection = h_theme().ui.selection_raw.bg;
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
     h.app.settings_mut().raw_side.view = RawSideView::Hex;
     h.feed(b"\x1b[32mok\x1b[0m\r\nabc\r\n");
@@ -1043,6 +1114,12 @@ fn copy_ghosts_and_raw_selection() {
     assert_eq!(bg_at(&h, (x, y)), selection);
     assert_eq!(bg_at(&h, (x + 12, y)), selection);
     assert_ne!(bg_at(&h, (x + 15, y)), selection);
+    assert_ne!(selection, h_theme().ui.selection.bg);
+
+    h.app.update(Action::CopyMode(CopyModeAction::ToggleSide));
+    let rows = h.draw();
+    let (x, y) = cell_of(&rows, "1B 5B 33 32 6D 6F");
+    assert_eq!(bg_at(&h, (x, y)), h_theme().ui.selection.bg);
 }
 
 fn h_theme() -> ThemeConfig {
@@ -2610,7 +2687,7 @@ fn link_popups_name_a_saved_link() {
         h.app.update(Action::App(AppAction::OpenOverlay(overlay)));
         let rows = h.draw();
         assert!(has(&rows, "Port esp32 (/dev/ttyUSB0)"), "{rows:#?}");
-        assert!(has(&rows, " LINE esp32 |"), "{rows:#?}");
+        assert!(has(&rows, " LINE | esp32 |"), "{rows:#?}");
     }
 }
 
@@ -3338,11 +3415,11 @@ fn status_bar_fits_by_steps() {
         let rows = h.draw();
         (h, rows[9].clone())
     };
-    let (_, full) = bar_at(67);
+    let (_, full) = bar_at(69);
     for text in ["/dev/ttyUSB0", "8N1", "RX:    0 | TX:    0 | "] {
         assert!(full.contains(text), "{full:?}");
     }
-    let (_, compact) = bar_at(66);
+    let (_, compact) = bar_at(68);
     assert!(compact.contains(" ttyUSB0 |") && !compact.contains("/dev/"));
     assert!(compact.contains("8N1"), "{compact:?}");
     let (_, without_4) = bar_at(50);
@@ -4545,7 +4622,7 @@ fn status_bar_hover() {
     moved(&mut h, (x + 1, y));
     // the block is " LINE ", one column each side of the text
     assert!((x - 1..x + 5).all(|x| cell(&h, (x, y)).modifier.contains(Modifier::REVERSED)));
-    assert!(!cell(&h, (x + 6, y)).modifier.contains(Modifier::REVERSED));
+    assert!(!cell(&h, (x + 5, y)).modifier.contains(Modifier::REVERSED));
 
     // the default buttons: help on the primary color, settings on the secondary; the port
     // isn't clickable
