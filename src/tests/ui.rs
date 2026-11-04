@@ -1767,10 +1767,11 @@ fn help_lists_the_commands() {
     let row_of = |rows: &[String], text: &str| rows.iter().position(|row| row.contains(text));
     let f5 = row_of(&rows, "F5 ").expect("F5");
     assert!(rows[f5].contains("-> send-hex 03"), "{rows:#?}");
-    // the shifted keys sort first: `U`, the u-boot trigger
-    assert_eq!(row_of(&rows, "Ctrl-a + f "), Some(f5 + 2), "{rows:#?}");
-    let pulse = row_of(&rows, "Ctrl-a + h       -> dtr off; sleep 100; dtr on");
-    assert!(pulse.is_some(), "{rows:#?}");
+    // the letters in order, a shifted one after its plain one: `U`, the u-boot trigger, last
+    assert_eq!(row_of(&rows, "Ctrl-a + f "), Some(f5 + 1), "{rows:#?}");
+    let pulse = row_of(&rows, "Ctrl-a + h -> dtr off; sleep 100; dtr on");
+    assert_eq!(pulse, Some(f5 + 2), "{rows:#?}");
+    assert_eq!(row_of(&rows, "Ctrl-a + U "), Some(f5 + 3), "{rows:#?}");
     assert!(has(&rows, "on the command line (Ctrl-a :)"), "{rows:#?}");
 
     // scrolled down until `text` shows with the row under it
@@ -1838,19 +1839,18 @@ fn help_lists_the_popup_bindings() {
         let line = rows.iter().find(|row| row.contains(&format!(" {key} ")));
         line.is_some_and(|row| row.contains("-> close"))
     };
+    // the letters come first, the named keys and the Ctrl ones below the view
+    assert!(bound_to_close(&rows, "q"), "{rows:#?}");
+    h.app.update(Action::Overlay(DialogAction::End));
+    let rows = h.draw();
     assert!(bound_to_close(&rows, "Esc"), "{rows:#?}");
     assert!(bound_to_close(&rows, "Ctrl-x"), "{rows:#?}");
     assert!(has(&rows, "-> cycle-next"), "{rows:#?}");
-
-    // the letters come last, below the view
-    h.app.update(Action::Overlay(DialogAction::End));
-    let rows = h.draw();
-    assert!(bound_to_close(&rows, "q"), "{rows:#?}");
 }
 
 /// MAX-155: the prefix tab's actions start on one column, past the longest key
 /// (`Shift-Right`, one char wider than the old fixed column).
-/// How: the default keymap, a screen tall enough for the whole tab.
+/// How: the default keymap, every page of the tab, `Shift-Right` sorting in the middle.
 #[test]
 fn help_prefix_actions_align() {
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 60);
@@ -1858,9 +1858,14 @@ fn help_prefix_actions_align() {
         .update(Action::App(AppAction::OpenOverlay(Overlay::Help(
             HelpDialog::new(),
         ))));
-    let rows = h.draw();
+    let mut rows = h.draw();
+    for _ in 0..8 {
+        h.app.update(Action::Overlay(DialogAction::PageDown));
+        rows.extend(h.draw());
+    }
     assert!(has(&rows, "Shift-Right"), "{rows:#?}");
     let mut columns: Vec<usize> = rows.iter().filter_map(|row| row.find("-> ")).collect();
+    columns.sort_unstable();
     columns.dedup();
     assert_eq!(columns.len(), 1, "{rows:#?}");
 }
@@ -1890,10 +1895,15 @@ fn help_lists_the_copy_scroll_keys_apart() {
     let last = rows[bottom - 1].trim_matches(|c| " │▼".contains(c));
     assert!(last.is_empty(), "{rows:#?}");
     let header = row_of("Scrolling moves the view").expect("the scroll header");
-    assert!(row_of("-> down").unwrap() < header, "{rows:#?}");
+    assert!(
+        row_of("-> down").is_none_or(|row| row < header),
+        "{rows:#?}"
+    );
     for scroll in ["scroll-up", "scroll-down", "scroll-to-top", "page-up"] {
-        let row = row_of(&format!("-> {scroll}"));
-        assert!(row.is_some_and(|row| row > header), "{scroll}: {rows:#?}");
+        let below = rows[header..]
+            .iter()
+            .any(|row| row.contains(&format!("-> {scroll}")));
+        assert!(below, "{scroll}: {rows:#?}");
     }
     // `PageUp` moves the copy cursor, the direct `Shift-PageUp` scrolls (MAX-155)
     assert!(

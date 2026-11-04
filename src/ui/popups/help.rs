@@ -90,7 +90,7 @@ pub fn render_help_popup(
             lines.push(Line::from(""));
 
             let mut sorted_keys: Vec<_> = app.key_resolver.prefix_actions.iter().collect();
-            sorted_keys.sort_by_key(|(k, _)| format!("{k}"));
+            sorted_keys.sort_by_key(|(k, _)| k.help_order());
             // the longest key sets the column, so `Shift-Right` doesn't push its action (MAX-155)
             let key_width = sorted_keys
                 .iter()
@@ -111,7 +111,7 @@ pub fn render_help_popup(
         }
         HelpCategory::Direct => {
             let mut sorted_keys: Vec<_> = app.key_resolver.direct_actions.iter().collect();
-            sorted_keys.sort_by_key(|(k, _)| format!("{k}"));
+            sorted_keys.sort_by_key(|(k, _)| k.help_order());
 
             for (pattern, action) in sorted_keys {
                 lines.push(Line::from(vec![
@@ -133,9 +133,9 @@ pub fn render_help_popup(
 
             // the keys bound to a command line (MAX-12), the direct ones first
             let mut direct: Vec<_> = resolver.direct_commands.iter().collect();
-            direct.sort_by_key(|(k, _)| format!("{k}"));
+            direct.sort_by_key(|(k, _)| k.help_order());
             let mut prefixed: Vec<_> = resolver.prefix_commands.iter().collect();
-            prefixed.sort_by_key(|(k, _)| format!("{k}"));
+            prefixed.sort_by_key(|(k, _)| k.help_order());
             let bound: Vec<_> = (direct.into_iter())
                 .map(|(key, line)| (format!("{key}"), line))
                 .chain(
@@ -195,7 +195,7 @@ pub fn render_help_popup(
         HelpCategory::CopyMode => {
             let resolver = &app.key_resolver;
             let mut moves: Vec<_> = resolver.copy_actions.iter().collect();
-            moves.sort_by_key(|(k, _)| format!("{k}"));
+            moves.sort_by_key(|(k, _)| k.help_order());
             let (scrolls, moves): (Vec<_>, Vec<_>) = moves
                 .into_iter()
                 .partition(|(_, action)| action.is_scroll());
@@ -207,7 +207,7 @@ pub fn render_help_popup(
                     action.is_navigation() && !resolver.copy_actions.contains_key(k)
                 })
                 .collect();
-            direct.sort_by_key(|(k, _)| format!("{k}"));
+            direct.sort_by_key(|(k, _)| k.help_order());
 
             let key_line = |pattern: String, action: String| {
                 Line::from(vec![
@@ -237,7 +237,7 @@ pub fn render_help_popup(
         }
         HelpCategory::Search => {
             let mut sorted_keys: Vec<_> = app.key_resolver.search_actions.iter().collect();
-            sorted_keys.sort_by_key(|(k, _)| format!("{k}"));
+            sorted_keys.sort_by_key(|(k, _)| k.help_order());
 
             for (pattern, action) in sorted_keys {
                 lines.push(Line::from(vec![
@@ -251,7 +251,7 @@ pub fn render_help_popup(
         }
         HelpCategory::LineMode => {
             let mut sorted_keys: Vec<_> = app.key_resolver.line_actions.iter().collect();
-            sorted_keys.sort_by_key(|(k, _)| format!("{k}"));
+            sorted_keys.sort_by_key(|(k, _)| k.help_order());
 
             for (pattern, action) in sorted_keys {
                 lines.push(Line::from(vec![
@@ -265,7 +265,7 @@ pub fn render_help_popup(
         }
         HelpCategory::TerminalMode => {
             let mut sorted_keys: Vec<_> = app.key_resolver.terminal_actions.iter().collect();
-            sorted_keys.sort_by_key(|(k, _)| format!("{k}"));
+            sorted_keys.sort_by_key(|(k, _)| k.help_order());
 
             for (pattern, action) in sorted_keys {
                 lines.push(Line::from(vec![
@@ -279,7 +279,7 @@ pub fn render_help_popup(
         }
         HelpCategory::Dialog => {
             let mut sorted_keys: Vec<_> = app.key_resolver.dialog_actions.iter().collect();
-            sorted_keys.sort_by_key(|(k, _)| format!("{k}"));
+            sorted_keys.sort_by_key(|(k, _)| k.help_order());
 
             for (pattern, action) in sorted_keys {
                 lines.push(Line::from(vec![

@@ -291,3 +291,49 @@ fn modal_keys() {
         assert!(!key.parse::<KeyPattern>().unwrap().is_modal(), "{key}");
     }
 }
+
+/// The help's key order: letters with each shifted one after its plain one, symbols, named
+/// keys each followed by its Shift version, then the Ctrl keys in the same order.
+#[test]
+fn help_order_pairs_shifted_keys() {
+    let mut keys: Vec<KeyPattern> = [
+        "ctrl-a",
+        "Shift-Left",
+        "?",
+        "C",
+        "Left",
+        "k",
+        "/",
+        "pageup",
+        "K",
+        "c",
+        "ctrl-C",
+        "f5",
+        "enter",
+        "Shift-PageUp",
+    ]
+    .iter()
+    .map(|key| key.parse().unwrap())
+    .collect();
+    keys.sort_by_key(KeyPattern::help_order);
+    let labels: Vec<String> = keys.iter().map(|key| key.to_string()).collect();
+    assert_eq!(
+        labels,
+        [
+            "c",
+            "C",
+            "k",
+            "K",
+            "/",
+            "?",
+            "Left",
+            "Shift-Left",
+            "PageUp",
+            "Shift-PageUp",
+            "Enter",
+            "F5",
+            "Ctrl-a",
+            "Ctrl-C",
+        ]
+    );
+}

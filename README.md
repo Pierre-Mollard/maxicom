@@ -55,10 +55,15 @@ samply record ./target/profiling/maxicom --baudrate 115200 --device /tmp/maxicom
 ## COMING FROM MINICOM
 
 Start it as minicom: `maxicom -D /dev/ttyUSB0 -b 115200`, the prefix is
-`Ctrl-A` and its keys are minicom's where maxicom has the feature. Every key
+`Ctrl-a` and its keys are minicom's where maxicom has the feature. Every key
 can be changed in `keymap.toml` (delete the file to get these defaults).
 
-| `Ctrl-A` + | minicom           | maxicom                          |
+Keys are written as maxicom shows them: a letter as typed, so `c` and `C`
+(Shift-c) are two keys, `Ctrl-a` is the prefix and `Ctrl-C` would be
+Ctrl-Shift-c. `Shift-` is only written on keys without a case: `Shift-Tab`,
+`Shift-Right`, `Shift-PageUp`.
+
+| `Ctrl-a` + | minicom           | maxicom                          |
 |------------|-------------------|----------------------------------|
 | `z`        | help              | help (also `?`)                  |
 | `x`, `q`   | quit              | quit                             |
@@ -74,14 +79,14 @@ can be changed in `keymap.toml` (delete the file to get these defaults).
 | `f`        | send break        | send break                       |
 | `h`        | hangup            | DTR pulse, resets most boards    |
 | `b`        | scrollback        | copy mode (also `[`)             |
-| `Ctrl-A`   | send Ctrl-A       | send Ctrl-A                      |
+| `Ctrl-a`   | send Ctrl-a       | send Ctrl-a                      |
 | `t`        | terminal settings | timestamps                       |
 
 maxicom's own: `m` line / terminal mode, `j` session backups, `D` detach /
 attach, `O` text encoding, `/` search, `:` command line, `T` triggers, `U`
-the u-boot trigger, `W` terminal size, `E` emulator to the view, `k`
+the u-boot trigger, `W` terminal size, `E` emulator to the view, `k` / `K`
 screenshot, `B` raw side panel, `<` / `>` its size, `M` mouse, `C` clear the
-history, `r` reload the config. `Ctrl-A ?` lists them all.
+history, `r` reload the config. `Ctrl-a ?` lists them all.
 
 | minicom               | maxicom                              |
 |-----------------------|--------------------------------------|
@@ -104,7 +109,7 @@ What differs:
 - The dialing directory's entries are saved links (a port or a TCP link with
   its line settings), edited in the app; `links.toml` is rewritten whole on
   a save, its comments lost. One file can serve several machines.
-- The terminal always wraps long lines: no `-w`, and `Ctrl-A w` changes line
+- The terminal always wraps long lines: no `-w`, and `Ctrl-a w` changes line
   mode's wrap only.
 - No file transfers (X/Y/ZMODEM, kermit), shell, scripts or modem dialing:
   maxicom never starts another program, and sends only what you type, bind
@@ -126,7 +131,7 @@ What differs:
   line settings; the options given win over them (`maxicom esp32 -b 9600`).
   A name is looked for before a device; `-D` is always a device, the way to a
   path that is also a saved name.
-- The directory, `Ctrl-A d` (`directory`, also in the right-click menu), as
+- The directory, `Ctrl-a d` (`directory`, also in the right-click menu), as
   minicom's dialing directory, in two tabs: Saved links and Serial ports
   (Tab, Shift-Tab, `←` `→` or a click switch). It opens on the saved links
   when there's one, the one in use selected. `●` marks the link in use.
@@ -244,7 +249,7 @@ What differs:
   address greys the line out. A save reads the file again first (another
   maxicom may have changed it) and writes it whole, so its comments are
   lost; an edit or a delete of a link changed in the file meanwhile is
-  refused. A reload (`Ctrl-A r`) reads it again.
+  refused. A reload (`Ctrl-a r`) reads it again.
 - `hosts`: one `links.toml` on a network share can serve several machines,
   each seeing the links for it (by its name, any case) and those without
   `hosts`. A port saved from the app is for this machine (a path belongs to
@@ -314,7 +319,7 @@ What changes from a serial port:
   ends a line): a lone CR ends its line instead of starting it over. They apply
   to the next bytes, in both modes and the text recordings (a session's
   restored part too); the raw recordings, the raw side panel and the triggers
-  get the bytes as received. `Ctrl-A u` / `Ctrl-A a`, `set add-cr on|off`,
+  get the bytes as received. `Ctrl-a u` / `Ctrl-a a`, `set add-cr on|off`,
   `set add-lf on|off`, `R` / `F` in the settings popup; `+CR` / `+LF` in the
   status bar while on. What Enter sends in line mode is `tx_eol` in
   `[line_mode]` (`lf` default, `cr`, `crlf`), `N` (Line Enter) in the
@@ -328,11 +333,11 @@ What changes from a serial port:
   alerts (`!`, `● REC`), the VT and view sizes, the scroll, the pan and the
   prefix. What doesn't fit in the border is left out whole, never cut. A click
   on `SCROLL +n` goes back to the live tail, on `PAN +n` to the left edge.
-- The raw side panel (`Ctrl-A B`) takes `split_percent` of the room in
+- The raw side panel (`Ctrl-a B`) takes `split_percent` of the room in
   `[raw_side]` (10 to 85, default 40), on the right or at the bottom
   (`orientation`). Drag its border with the mouse to resize it, or use the
   actions `side-grow` / `side-shrink` (1 %) and `side-grow-5` /
-  `side-shrink-5` (5 %, `Ctrl-A >` and `Ctrl-A <`). The new size lasts until
+  `side-shrink-5` (5 %, `Ctrl-a >` and `Ctrl-a <`). The new size lasts until
   you quit, `config.toml` keeps its value.
 - `hide_borders_below`, `hide_scrollbar_below` and `hide_status_bar_below` in
   `[ui]`, each a `[cols, rows]` size: while the screen is narrower or shorter
@@ -353,7 +358,7 @@ What changes from a serial port:
 
 ### COMMAND LINE
 
-- `Ctrl-A :` (`command-line`) opens a `:` prompt that runs commands: the
+- `Ctrl-a :` (`command-line`) opens a `:` prompt that runs commands: the
   names of `keymap.toml` (`toggle-local-echo`, `record`, ...), chained
   with `;`. Enter runs the line, Esc closes it. A line with an unknown command
   or a bad argument runs nothing: the error shows and the prompt stays.
@@ -394,7 +399,7 @@ What changes from a serial port:
     one back, its screen as it was. Another device starts on a clean screen,
     its last session restored and a backup of its own (see Restore in
     CAPTURE); with `ask`, the rest of the line waits for the answer.
-    `toggle-attach` detaches and attaches the link, as `Ctrl-A D` does.
+    `toggle-attach` detaches and attaches the link, as `Ctrl-a D` does.
   - `link-save [name]`: saves the link in use to `links.toml`, under its
     address's name when none is given (`ttyUSB0`); `link-delete <name>`
     deletes a saved link (the names complete). Both refuse what the
@@ -430,7 +435,7 @@ What changes from a serial port:
   there, with the error.
 - In `keymap.toml`, a key of `[prefix_actions]` or `[direct_actions]` takes a
   command line where an action name goes, as tmux's `bind`. An ESP32 into its
-  bootloader on one key, as esptool does it, and Ctrl-C as a byte:
+  bootloader on one key, as esptool does it, and Ctrl-c as a byte:
 
   ```toml
   [prefix_actions]
@@ -444,9 +449,9 @@ What changes from a serial port:
   starts with `cancel`), and it doesn't go in the history. Like the other
   keys of these sections, it does nothing in copy mode and search. A line that
   doesn't parse stops the keymap from loading, naming its key (a reload keeps
-  the running one). The default keymap has three: `Ctrl-A f` sends a break,
-  `Ctrl-A h` pulses DTR (`dtr off; sleep 100; dtr on`), which resets most
-  boards, and `Ctrl-A U` toggles the `u-boot` trigger. The help's Commands
+  the running one). The default keymap has three: `Ctrl-a f` sends a break,
+  `Ctrl-a h` pulses DTR (`dtr off; sleep 100; dtr on`), which resets most
+  boards, and `Ctrl-a U` toggles the `u-boot` trigger. The help's Commands
   tab lists the keys bound to a line and every command.
 - Typed text has the completions of the word before the cursor listed
   (command names with their help, then the values of the argument it is).
@@ -494,13 +499,13 @@ rearm = true
 - A trigger only fires while armed, and once: it disarms then, so the next
   boot goes on normally. `rearm = true` keeps it armed. They start disarmed,
   `armed = true` starts one armed.
-- `Ctrl-A T` (`triggers`, also in the right-click menu) opens the trigger
+- `Ctrl-a T` (`triggers`, also in the right-click menu) opens the trigger
   browser: the triggers and their state (`◎` armed, `○` not), the selected
   one's rule on the side. `j`/`k` or Up/Down move. Enter, Tab, Space, a
   click on the selected one or its button toggle it; `l`/Right arms it and
   `h`/Left disarms it. `a` toggles them all (armed when none is, else
   disarmed), `c` copies the file's path.
-- `Ctrl-A U` toggles `u-boot`; `toggle-triggers` (no key by default) toggles
+- `Ctrl-a U` toggles `u-boot`; `toggle-triggers` (no key by default) toggles
   them all; `trigger on|off|toggle [name]` does it from a command line or a
   key, so one key can arm and reset:
   `trigger on u-boot; dtr off; rts on; rts off`.
@@ -611,7 +616,7 @@ where its lines wrap, which `dimension_mode` decides.
             the device changes (another port, baud, framing or encoding, a
             replay starting or ending)
   One recording at a time (a full one has the text too). `record`
-  (`Ctrl-A l`, a click on `● REC`, or `Record…` in the right-click menu)
+  (`Ctrl-a l`, a click on `● REC`, or `Record…` in the right-click menu)
   stops it, or opens the recording dialog on the mode's stream (text in line
   mode, full in terminal mode).
 - The recording dialog: the name is prefilled, without an extension: the
@@ -676,7 +681,7 @@ where its lines wrap, which `dimension_mode` decides.
   - The restored part isn't backed up again nor counted in RX, so the next
     launch restores this session's own data (or the same one again if this
     one received nothing).
-- Session browser: `sessions` (`Ctrl-A j`, or Session backups in the
+- Session browser: `sessions` (`Ctrl-a j`, or Session backups in the
   right-click menu) lists every backup on the left, whatever its device, and
   shows the selected one on the right (device, format, times, size, its last
   lines).
@@ -689,8 +694,8 @@ where its lines wrap, which `dimension_mode` decides.
   - `Esc`           Close
   A keymap file from before has the old prefix keys (MAX-181 moved them to
   minicom's): delete `keymap.toml` to get the new defaults.
-- Screenshots (terminal mode): `screenshot-bytes` (`Ctrl-A k`) and
-  `screenshot-text` (no default key, Screenshot in the right-click menu) take
+- Screenshots (terminal mode): `screenshot-bytes` (`Ctrl-a k`, Screenshot in
+  the right-click menu) and `screenshot-text` (`Ctrl-a K`) take
   the screen at once, in both formats, then a dialog asks where to save it.
   Enter saves to the prefilled path, Esc drops it. In line mode they only say
   so.
@@ -793,7 +798,7 @@ right = '''
 
 - Conditions:
   - Modes & Focus:
-    - prefix         Prefix key (Ctrl-A) is active
+    - prefix         Prefix key (Ctrl-a) is active
     - rec            File capture is active (alias: logging)
     - session        Session backup is running (alias: backup)
     - line           Line input active (alias: linemode)

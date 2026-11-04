@@ -75,7 +75,7 @@
 //! ## Conditional States (`?`)
 //! | State / Keyword                 | Aliases                                    | Matches When...                                          |
 //! |---------------------------------|--------------------------------------------|----------------------------------------------------------|
-//! | `prefix`                        | —                                          | Leader prefix key (`Ctrl-A`) is currently active         |
+//! | `prefix`                        | —                                          | Leader prefix key (`Ctrl-a`) is currently active         |
 //! | `rec`                           | `logging`                                  | File recording / capture session is active               |
 //! | `session`                       | `backup`                                   | The session backup runs (not in the default layout)      |
 //! | `line`                          | `linemode`                                 | Line Input mode is active                                |

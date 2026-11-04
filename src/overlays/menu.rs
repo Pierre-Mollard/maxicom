@@ -46,7 +46,7 @@ impl ActionMenu {
         ];
         if mode == Mode::Terminal {
             items.extend([
-                ("Screenshot", KeyBindingAction::ScreenshotTxt),
+                ("Screenshot", KeyBindingAction::ScreenshotBytes),
                 ("Terminal size", KeyBindingAction::ResizeDialog),
             ]);
         }

@@ -431,6 +431,40 @@ impl KeyPattern {
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
     }
 
+    /// Where the key sorts in the help: plain keys before Ctrl and Alt ones, then letters
+    /// (`c` then `C`), symbols, and named keys (arrows, pages, Enter...), each one followed by
+    /// its Shift version
+    pub fn help_order(&self) -> (u8, u8, u32, bool) {
+        let ctrl = self.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = self.modifiers.contains(KeyModifiers::ALT);
+        let modifiers = u8::from(ctrl) + 2 * u8::from(alt);
+        let (class, rank, upper) = match self.code {
+            KeyCode::Char(c) if c.is_ascii_alphabetic() => {
+                (0, c.to_ascii_lowercase() as u32, c.is_ascii_uppercase())
+            }
+            KeyCode::Char(' ') => (2, 8, false),
+            KeyCode::Char(c) => (1, c as u32, false),
+            KeyCode::Up => (2, 0, false),
+            KeyCode::Down => (2, 1, false),
+            KeyCode::Left => (2, 2, false),
+            KeyCode::Right => (2, 3, false),
+            KeyCode::PageUp => (2, 4, false),
+            KeyCode::PageDown => (2, 5, false),
+            KeyCode::Home => (2, 6, false),
+            KeyCode::End => (2, 7, false),
+            KeyCode::Enter => (2, 9, false),
+            KeyCode::Tab | KeyCode::BackTab => (2, 10, false),
+            KeyCode::Esc => (2, 11, false),
+            KeyCode::Backspace => (2, 12, false),
+            KeyCode::Delete => (2, 13, false),
+            KeyCode::Insert => (2, 14, false),
+            KeyCode::F(n) => (2, 100 + u32::from(n), false),
+            _ => (3, 0, false),
+        };
+        let shift = upper || self.modifiers.contains(KeyModifiers::SHIFT);
+        (modifiers, class, rank, shift)
+    }
+
     pub fn to_raw_bytes(self) -> Vec<u8> {
         if self.modifiers.contains(KeyModifiers::CONTROL) {
             match self.code {
@@ -597,12 +631,16 @@ impl std::fmt::Display for KeyPattern {
             parts.push("Alt");
         }
 
+        // a shifted letter shows as typed: `C`, not `Shift-c`
+        let shifted_letter = self.modifiers.contains(KeyModifiers::SHIFT)
+            && matches!(self.code, KeyCode::Char(c) if c.is_ascii_alphabetic());
         let is_uppercase_char = match self.code {
             KeyCode::Char(c) => c.is_ascii_uppercase(),
             _ => false,
         };
         if self.modifiers.contains(KeyModifiers::SHIFT)
             && !is_uppercase_char
+            && !shifted_letter
             && self.code != KeyCode::BackTab
         {
             parts.push("Shift");
@@ -626,6 +664,7 @@ impl std::fmt::Display for KeyPattern {
             KeyCode::End => "End".to_string(),
             KeyCode::F(n) => format!("F{n}"),
             KeyCode::Char(' ') => "Space".to_string(),
+            KeyCode::Char(c) if shifted_letter => c.to_ascii_uppercase().to_string(),
             KeyCode::Char(c) => c.to_string(),
             _ => "?".to_string(),
         };
@@ -978,6 +1017,7 @@ impl Default for KeyBindingsConfig {
             "p"     => KeyBindingAction::LinkSettings,
             "d"     => KeyBindingAction::Directory,
             "k"     => KeyBindingAction::ScreenshotBytes,
+            "K"     => KeyBindingAction::ScreenshotTxt,
             "up"    => KeyBindingAction::ScrollUp,
             "down"  => KeyBindingAction::ScrollDown,
             "left"  => KeyBindingAction::PanLeft,
