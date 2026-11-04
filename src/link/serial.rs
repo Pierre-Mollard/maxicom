@@ -410,7 +410,7 @@ impl SerialDevice {
             }
 
             // TIOCEXCL tells the kernel to return EBUSY for any following open()
-            let res = unsafe { libc::ioctl(fd, libc::TIOCEXCL) };
+            let res = unsafe { libc::ioctl(fd, libc::TIOCEXCL as _) };
             if res < 0 {
                 return Err(failed(std::io::Error::last_os_error()));
             }
@@ -526,7 +526,7 @@ impl SerialDevice {
     }
 
     /// The line's settings as the port has them, for the tests on a pty
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     pub fn settings(&self) -> std::io::Result<serial2::Settings> {
         self.port.get_configuration()
     }
@@ -548,7 +548,7 @@ impl Drop for SerialDevice {
         let fd = self.port.as_raw_fd();
         // Clear exclusive mode
         unsafe {
-            libc::ioctl(fd, libc::TIOCNXCL);
+            libc::ioctl(fd, libc::TIOCNXCL as _);
         }
     }
 }

@@ -28,8 +28,13 @@ use crate::{
     overlays::{Directory, DirectoryTab, ErrorDialog, LinkForm, Overlay},
 };
 
-/// How long a link's test may take before it's marked unanswered (MAX-181)
-const LINK_TEST_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long a link's test may take before it's marked unanswered (MAX-181): above the TCP
+/// probe's own timeout
+const LINK_TEST_TIMEOUT: Duration = if cfg!(windows) {
+    Duration::from_secs(3)
+} else {
+    Duration::from_secs(2)
+};
 
 /// The directory's links being tested, one thread each: their results by address, and when
 /// the ones left stop being waited for (MAX-181, MAX-186)

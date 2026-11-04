@@ -782,10 +782,22 @@ fn last_word(line: &str) -> Option<LastWord<'_>> {
 
 /// Parses a command line: commands chained with `;`, each checked against the registry
 pub fn parse(line: &str) -> Result<Vec<Invocation>, CommandError> {
-    tokenizer::split(line)?
+    tokenizer::split(line, is_path_word)?
         .iter()
         .map(|words| invocation(words))
         .collect()
+}
+
+/// The next word of a command, after `words`, is a path or an address: its `\` stays as is
+fn is_path_word(words: &[Word]) -> bool {
+    let Some((name, args)) = words.split_first() else {
+        return false;
+    };
+    std::str::from_utf8(name)
+        .ok()
+        .and_then(find_by_name)
+        .and_then(|spec| spec.args.get(args.len()))
+        .is_some_and(|arg| matches!(arg.kind, ArgKind::Path | ArgKind::Address))
 }
 
 fn invocation(words: &[Word]) -> Result<Invocation, CommandError> {

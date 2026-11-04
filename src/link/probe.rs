@@ -20,8 +20,13 @@ use super::lock::lock_holder;
 use super::lock::{LOCK_DIRS, locked_by};
 
 /// A TCP link's test gives up after this, its addresses all tried: within the directory's
-/// own timeout
-const TCP_PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
+/// own timeout. Longer on Windows: a refused port there is only told after about 2 s of
+/// retries
+const TCP_PROBE_TIMEOUT: Duration = if cfg!(windows) {
+    Duration::from_millis(2500)
+} else {
+    Duration::from_millis(1500)
+};
 
 /// What the directory's test found for a link (MAX-181, MAX-186): `InUse` is this maxicom,
 /// under another name of the device; `Busy` another program, named when it's known (`minicom

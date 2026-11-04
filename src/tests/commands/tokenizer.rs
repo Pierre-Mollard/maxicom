@@ -1,7 +1,11 @@
 use super::*;
 
+fn no_paths(_: &[Word]) -> bool {
+    false
+}
+
 fn words(line: &str) -> Vec<Vec<String>> {
-    split(line)
+    split(line, no_paths)
         .unwrap()
         .into_iter()
         .map(|command| {
@@ -31,8 +35,14 @@ fn quotes() {
     assert_eq!(words("send a\"b c\"d"), [["send", "ab cd"]]);
     assert_eq!(words("mark \"\" ''"), [["mark", "", ""]]);
     assert_eq!(words("mark é"), [["mark", "é"]]);
-    assert_eq!(split("send \"abc"), Err(CommandError::UnclosedQuote));
-    assert_eq!(split("send 'abc"), Err(CommandError::UnclosedQuote));
+    assert_eq!(
+        split("send \"abc", no_paths),
+        Err(CommandError::UnclosedQuote)
+    );
+    assert_eq!(
+        split("send 'abc", no_paths),
+        Err(CommandError::UnclosedQuote)
+    );
 }
 
 /// MAX-6: only the escapes are read, the rest is kept as is.
@@ -46,7 +56,7 @@ fn unescaped() {
 #[test]
 fn escapes() {
     assert_eq!(
-        split("send AT\\r\\n \"\\t\\x1B\\xff\"").unwrap(),
+        split("send AT\\r\\n \"\\t\\x1B\\xff\"", no_paths).unwrap(),
         [vec![
             b"send".to_vec(),
             b"AT\r\n".to_vec(),
@@ -63,7 +73,7 @@ fn escapes() {
         ("send \\", "\\"),
     ] {
         assert_eq!(
-            split(line),
+            split(line, no_paths),
             Err(CommandError::BadEscape(escape.into())),
             "{line}"
         );

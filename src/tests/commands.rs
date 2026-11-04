@@ -49,7 +49,7 @@ static TEST_COMMANDS: [CommandSpec; 2] = [
 ];
 
 fn args(line: &str) -> Result<Vec<ArgValue>, CommandError> {
-    let words = tokenizer::split(line).unwrap().remove(0);
+    let words = tokenizer::split(line, |_| false).unwrap().remove(0);
     parse_args(&TEST_COMMANDS[0], &words[1..])
 }
 
@@ -445,7 +445,10 @@ fn complete_paths() {
             .candidates
             .is_empty()
     );
-    let parsed = parse_args(&TEST_COMMANDS[0], &tokenizer::split(&line).unwrap()[0][1..]);
+    let parsed = parse_args(
+        &TEST_COMMANDS[0],
+        &tokenizer::split(&line, |_| false).unwrap()[0][1..],
+    );
     assert_eq!(
         parsed.unwrap()[4],
         ArgValue::Path(PathBuf::from(format!("{folder}my file.bin")))
@@ -520,4 +523,47 @@ fn argument_candidates() {
     assert!(TEST_ARGS[1].kind.candidates("t").is_empty());
     assert_eq!(TEST_ARGS[2].kind.candidates("h"), ["hw"]);
     assert!(TEST_ARGS[3].kind.candidates("").is_empty());
+}
+
+/// Windows paths: a path or an address argument keeps its `\`, bare or in double quotes; bare,
+/// `\ ` still escapes a space. The other words still take escapes, also in the same line
+#[test]
+fn windows_paths_keep_backslashes() {
+    let first_args = |line: &str| -> Vec<ArgValue> {
+        parse(line)
+            .unwrap()
+            .into_iter()
+            .map(|invocation| invocation.args[0].clone())
+            .collect()
+    };
+    assert_eq!(
+        first_args(r"replay C:\Users\me\boot.raw"),
+        [ArgValue::Path(r"C:\Users\me\boot.raw".into())]
+    );
+    assert_eq!(
+        first_args(r#"replay "C:\My Files\new.raw" 10"#),
+        [ArgValue::Path(r"C:\My Files\new.raw".into())]
+    );
+    assert_eq!(
+        first_args(r"replay C:\temp\x.raw; send a\x41"),
+        [
+            ArgValue::Path(r"C:\temp\x.raw".into()),
+            ArgValue::Bytes(b"aA".to_vec()),
+        ]
+    );
+    assert_eq!(
+        first_args(r"open \\.\COM10"),
+        [ArgValue::Address(r"\\.\COM10".parse().unwrap())]
+    );
+    assert_eq!(
+        first_args(r"replay C:\My\ Files\a.raw; replay \\server\share\b.raw"),
+        [
+            ArgValue::Path(r"C:\My Files\a.raw".into()),
+            ArgValue::Path(r"\\server\share\b.raw".into()),
+        ]
+    );
+    assert_eq!(
+        parse(r"send C:\Users").unwrap_err(),
+        CommandError::BadEscape(r"\U".into())
+    );
 }

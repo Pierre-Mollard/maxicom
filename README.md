@@ -358,7 +358,9 @@ What changes from a serial port:
   with `;`. Enter runs the line, Esc closes it. A line with an unknown command
   or a bad argument runs nothing: the error shows and the prompt stays.
 - Commands with arguments, quoted when they have spaces (`"..."` takes the
-  escapes `\r \n \t \xNN`, `'...'` is literal):
+  escapes `\r \n \t \xNN`, `'...'` is literal). A path or an address keeps
+  its `\` as typed, for Windows: `replay C:\Users\me\boot.raw`,
+  `open \\.\COM10`; `\` still escapes a space there:
   - `send <text>`: sends the text as is, its escapes as bytes:
     `send AT\r`, `send "hello world\r\n"`
   - `send-hex <bytes>`: sends bytes written in hex, no spaces: `send-hex 0d0a`

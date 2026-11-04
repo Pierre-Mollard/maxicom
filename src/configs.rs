@@ -59,7 +59,7 @@ impl AppConfig {
 
         let keybindings_path = Self::active_keybindings_path(&settings);
         let keybindings = KeyBindingsConfig::load_or_create_default(&keybindings_path)
-            .map_err(ConfigsError::Keymap)?;
+            .map_err(|err| ConfigsError::Keymap(Box::new(err)))?;
 
         let highlights_path = Self::active_highlight_path(&settings);
         let highlights = HighlightConfig::load_or_create_default(&highlights_path)
@@ -173,7 +173,7 @@ impl AppConfig {
 pub enum ConfigsError {
     Settings(SettingsError),
     Theme(ThemeError),
-    Keymap(KeymapFileError),
+    Keymap(Box<KeymapFileError>),
     Highlight(HighlightError),
     Triggers(TriggersFileError),
 }

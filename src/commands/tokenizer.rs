@@ -8,14 +8,23 @@ pub type Word = Vec<u8>;
 
 /// Splits on `;` between commands and on spaces between words. Bare words and double quotes take
 /// escapes (`\r \n \t \xNN`, and `\\ \" \' \; \ ` for the character itself), single quotes are
-/// literal. Empty commands are dropped
-pub fn split(line: &str) -> Result<Vec<Vec<Word>>, CommandError> {
+/// literal. Empty commands are dropped. A word `literal` says yes to, from its command's words
+/// before it, keeps its `\` as is: a Windows path (`C:\Users`, `\\.\COM10`); bare, only `\ `,
+/// `\;` and the quotes stay escapes
+pub fn split(
+    line: &str,
+    literal: impl Fn(&[Word]) -> bool,
+) -> Result<Vec<Vec<Word>>, CommandError> {
     let mut commands = Vec::new();
     let mut words = Vec::new();
     // `Some` once a word started, even empty: `""` is an empty word
     let mut word: Option<Word> = None;
+    let mut raw = false;
     let mut chars = line.chars();
     while let Some(c) = chars.next() {
+        if word.is_none() {
+            raw = literal(&words);
+        }
         match c {
             ';' => {
                 words.extend(word.take());
@@ -39,13 +48,23 @@ pub fn split(line: &str) -> Result<Vec<Vec<Word>>, CommandError> {
                 loop {
                     match chars.next() {
                         Some('"') => break,
-                        Some('\\') => escape(&mut chars, word)?,
+                        Some('\\') if !raw => escape(&mut chars, word)?,
                         Some(c) => push_char(word, c),
                         None => return Err(CommandError::UnclosedQuote),
                     }
                 }
             }
-            '\\' => escape(&mut chars, word.get_or_insert_default())?,
+            '\\' if !raw => escape(&mut chars, word.get_or_insert_default())?,
+            '\\' => {
+                let word = word.get_or_insert_default();
+                match chars.clone().next() {
+                    Some(c @ (' ' | ';' | '"' | '\'')) => {
+                        chars.next();
+                        push_char(word, c);
+                    }
+                    _ => word.push(b'\\'),
+                }
+            }
             c => push_char(word.get_or_insert_default(), c),
         }
     }
