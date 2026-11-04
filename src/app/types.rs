@@ -207,6 +207,8 @@ pub struct FrameMap {
     /// The status bar blocks, border buttons and search bar hints a click runs, in drawing
     /// order (MAX-125, MAX-128)
     pub click_targets: Vec<ClickTarget>,
+    /// The toasts as drawn, over everything, with their ids: a click dismisses one (MAX-197)
+    pub toasts: Vec<(Rect, u64)>,
 }
 
 /// The raw side panel's border, as drawn (MAX-189): a drag on it resizes the panel, its share
@@ -392,6 +394,14 @@ impl FrameMap {
         self.scrollbar = None;
         self.side_handle = None;
         self.click_targets.clear();
+        self.toasts.clear();
+    }
+
+    /// The toast drawn under a screen cell (MAX-197)
+    pub fn toast_at(&self, x: u16, y: u16) -> Option<u64> {
+        let at = ratatui::layout::Position::new(x, y);
+        let toast = self.toasts.iter().find(|(area, _)| area.contains(at));
+        toast.map(|&(_, id)| id)
     }
 
     /// The click action under a screen cell

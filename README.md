@@ -86,7 +86,8 @@ maxicom's own: `m` line / terminal mode, `j` session backups, `D` detach /
 attach, `O` text encoding, `/` search, `:` command line, `T` triggers, `U`
 the u-boot trigger, `W` terminal size, `E` emulator to the view, `k` / `K`
 screenshot, `B` raw side panel, `<` / `>` its size, `M` mouse, `C` clear the
-history, `r` reload the config. `Ctrl-a ?` lists them all.
+history, `n` / `N` close the top notification / all of them, `r` reload the
+config. `Ctrl-a ?` lists them all.
 
 | minicom               | maxicom                              |
 |-----------------------|--------------------------------------|
@@ -339,6 +340,10 @@ What changes from a serial port:
   actions `side-grow` / `side-shrink` (1 %) and `side-grow-5` /
   `side-shrink-5` (5 %, `Ctrl-a >` and `Ctrl-a <`). The new size lasts until
   you quit, `config.toml` keeps its value.
+- Notifications stack in the top right corner and go away after a few
+  seconds. A click anywhere on one closes it (over a popup too, which stays
+  open); `dismiss-notification` (`Ctrl-a n`) closes the top one,
+  `dismiss-notifications` (`Ctrl-a N`) all of them.
 - `hide_borders_below`, `hide_scrollbar_below` and `hide_status_bar_below` in
   `[ui]`, each a `[cols, rows]` size: while the screen is narrower or shorter
   than it, that part isn't drawn, to leave the room to the content. The

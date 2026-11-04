@@ -36,6 +36,13 @@ enum Wheel {
 }
 
 pub fn handle_mouse(event: MouseEvent, app: &App) -> Action {
+    // a toast is drawn over everything: a press on it dismisses it, whatever lies under
+    // (MAX-197)
+    if event.kind == MouseEventKind::Down(MouseButton::Left)
+        && let Some(id) = app.frame_map().toast_at(event.column, event.row)
+    {
+        return Action::App(AppAction::DismissToast(Some(id)));
+    }
     if let Some(action) = forward_to_remote(&event, app) {
         return action;
     }

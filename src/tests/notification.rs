@@ -29,3 +29,31 @@ fn push_keeps_the_four_newest() {
         .collect();
     assert_eq!(messages, ["t1", "t2", "t3", "t4"]);
 }
+
+/// MAX-197: a toast is dismissed by its id, wherever it stands; none takes the top one (the
+/// oldest); all of them go at once. An id already gone drops nothing.
+/// How: three toasts, the middle one by id, then the top one, then the rest.
+#[test]
+fn dismiss_by_id_top_or_all() {
+    let mut manager = NotificationManager::new();
+    for name in ["a", "b", "c"] {
+        manager.push(name, ToastLevel::Info, Duration::from_secs(60));
+    }
+    let messages = |manager: &NotificationManager| -> Vec<String> {
+        let toasts = manager.active_toasts();
+        toasts.iter().map(|t| t.message.clone()).collect()
+    };
+    let b = manager.active_toasts()[1].id;
+    assert!(manager.dismiss(Some(b)));
+    assert_eq!(messages(&manager), ["a", "c"]);
+    assert!(!manager.dismiss(Some(b)));
+
+    assert!(manager.dismiss(None));
+    assert_eq!(messages(&manager), ["c"]);
+
+    manager.push("d", ToastLevel::Info, Duration::from_secs(60));
+    assert!(manager.dismiss_all());
+    assert!(manager.active_toasts().is_empty());
+    assert!(!manager.dismiss_all());
+    assert!(!manager.dismiss(None));
+}

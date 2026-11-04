@@ -208,7 +208,8 @@ pub fn render(
         }
     }
 
-    render_notifications(&app.notifications, frame, theme);
+    let toasts = render_notifications(&app.notifications, frame, theme);
+    app.frame_map_mut().toasts = toasts;
 
     if !layout.warnings.is_empty() {
         PostRenderEffect::LayoutWarnings(layout.warnings)

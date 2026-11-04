@@ -1439,6 +1439,14 @@ impl App {
                 self.arm_triggers(on, name.as_deref());
                 UpdateEffect::None
             }
+            AppAction::DismissToast(id) => {
+                self.notifications.dismiss(id);
+                UpdateEffect::None
+            }
+            AppAction::DismissToasts => {
+                self.notifications.dismiss_all();
+                UpdateEffect::None
+            }
             AppAction::PasteBuffer => {
                 let Some(text) = self.paste_buffer.clone() else {
                     return UpdateEffect::None;

@@ -167,7 +167,7 @@ fn mouse_toggle_default_key() {
 /// between words: the old `_` names are refused
 #[test]
 fn action_names() {
-    const NAMES: [(&str, KeyBindingAction); 50] = [
+    const NAMES: [(&str, KeyBindingAction); 52] = [
         ("quit", KeyBindingAction::Quit),
         ("toggle-input-mode", KeyBindingAction::SKInputMode),
         ("toggle-local-echo", KeyBindingAction::SKLocalEcho),
@@ -224,6 +224,14 @@ fn action_names() {
         ("side-shrink", KeyBindingAction::SideShrink),
         ("side-grow-5", KeyBindingAction::SideGrow5),
         ("side-shrink-5", KeyBindingAction::SideShrink5),
+        (
+            "dismiss-notification",
+            KeyBindingAction::DismissNotification,
+        ),
+        (
+            "dismiss-notifications",
+            KeyBindingAction::DismissNotifications,
+        ),
     ];
     for (name, action) in NAMES {
         assert_eq!(name.parse::<KeyBindingAction>().unwrap(), action, "{name}");

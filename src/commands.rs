@@ -296,6 +296,16 @@ pub static COMMANDS: &[CommandSpec] = {
             "Arm / disarm the triggers",
         ),
         CommandSpec::action("triggers", A::Triggers, "Open the triggers"),
+        CommandSpec::action(
+            "dismiss-notification",
+            A::DismissNotification,
+            "Close the top notification",
+        ),
+        CommandSpec::action(
+            "dismiss-notifications",
+            A::DismissNotifications,
+            "Close all the notifications",
+        ),
         CommandSpec::build(
             "send",
             &[arg("text", ArgKind::Bytes)],

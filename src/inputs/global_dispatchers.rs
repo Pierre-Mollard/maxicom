@@ -112,6 +112,8 @@ impl KeyBindingAction {
             }
             KeyBindingAction::CancelCommands => Action::App(AppAction::CancelCommands),
             KeyBindingAction::ToggleTriggers => Action::App(AppAction::ToggleTriggers),
+            KeyBindingAction::DismissNotification => Action::App(AppAction::DismissToast(None)),
+            KeyBindingAction::DismissNotifications => Action::App(AppAction::DismissToasts),
             KeyBindingAction::Directory => {
                 let directory = app.directory(serial::port_names());
                 Action::App(AppAction::OpenOverlay(Overlay::Directory(directory)))

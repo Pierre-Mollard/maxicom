@@ -39,6 +39,9 @@ impl ToastLevel {
 }
 
 pub struct Toast {
+    /// Its own number, so a click dismisses the toast drawn there even if others expired
+    /// since (MAX-197)
+    pub id: u64,
     pub message: String,
     pub level: ToastLevel,
     pub expires_at: Instant,
@@ -47,18 +50,21 @@ pub struct Toast {
 #[derive(Default)]
 pub struct NotificationManager {
     toasts: Vec<Toast>,
+    next_id: u64,
 }
 
 impl NotificationManager {
     pub fn new() -> Self {
-        Self { toasts: Vec::new() }
+        Self::default()
     }
 
     pub fn push(&mut self, message: impl Into<String>, level: ToastLevel, duration: Duration) {
         if self.toasts.len() >= 4 {
             self.toasts.remove(0);
         }
+        self.next_id += 1;
         self.toasts.push(Toast {
+            id: self.next_id,
             message: message.into(),
             level,
             expires_at: Instant::now() + duration,
@@ -75,6 +81,23 @@ impl NotificationManager {
 
     pub fn active_toasts(&self) -> &[Toast] {
         &self.toasts
+    }
+
+    /// Drops the toast `id`, or the top one (the oldest) for none (MAX-197). True if one was
+    /// dropped
+    pub fn dismiss(&mut self, id: Option<u64>) -> bool {
+        let index = match id {
+            Some(id) => self.toasts.iter().position(|toast| toast.id == id),
+            None => (!self.toasts.is_empty()).then_some(0),
+        };
+        index.map(|index| self.toasts.remove(index)).is_some()
+    }
+
+    /// Drops every toast (MAX-197). True if there was one
+    pub fn dismiss_all(&mut self) -> bool {
+        let any = !self.toasts.is_empty();
+        self.toasts.clear();
+        any
     }
 }
 

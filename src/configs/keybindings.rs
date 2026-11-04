@@ -72,6 +72,8 @@ pub enum KeyBindingAction {
     SideShrink,
     SideGrow5,
     SideShrink5,
+    DismissNotification,
+    DismissNotifications,
 }
 
 impl FromStr for KeyBindingAction {
@@ -1018,6 +1020,8 @@ impl Default for KeyBindingsConfig {
             "d"     => KeyBindingAction::Directory,
             "k"     => KeyBindingAction::ScreenshotBytes,
             "K"     => KeyBindingAction::ScreenshotTxt,
+            "n"     => KeyBindingAction::DismissNotification,
+            "N"     => KeyBindingAction::DismissNotifications,
             "up"    => KeyBindingAction::ScrollUp,
             "down"  => KeyBindingAction::ScrollDown,
             "left"  => KeyBindingAction::PanLeft,

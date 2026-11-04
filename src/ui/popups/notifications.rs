@@ -22,14 +22,17 @@ const TOAST_RIGHT_MARGIN: u16 = 2;
 const TOAST_TOP_START_Y: u16 = 1;
 const TOAST_STACK_GAP_Y: u16 = 1;
 
-pub fn render_notifications(manager: &NotificationManager, frame: &mut Frame, theme: &ThemeConfig) {
+/// Draws the toasts, top right, and gives the area and id of each one drawn (MAX-197)
+pub fn render_notifications(
+    manager: &NotificationManager,
+    frame: &mut Frame,
+    theme: &ThemeConfig,
+) -> Vec<(Rect, u64)> {
+    let mut drawn = Vec::new();
     let active = manager.active_toasts();
-    if active.is_empty() {
-        return;
-    }
     let screen_area = frame.area();
     if screen_area.width < MIN_SCREEN_WIDTH || screen_area.height < MIN_SCREEN_HEIGHT {
-        return;
+        return drawn;
     }
 
     let max_allowed_width = (screen_area.width.saturating_sub(TOAST_RIGHT_MARGIN * 2))
@@ -113,9 +116,11 @@ pub fn render_notifications(manager: &NotificationManager, frame: &mut Frame, th
 
         let paragraph = Paragraph::new(lines).style(toast_style).block(block);
         frame.render_widget(paragraph, toast_area);
+        drawn.push((toast_area, toast.id));
 
         current_y += toast_height + TOAST_STACK_GAP_Y;
     }
+    drawn
 }
 
 fn wrap_text(text: &str, max_width: usize) -> Vec<String> {

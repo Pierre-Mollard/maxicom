@@ -44,5 +44,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-targets -- -D warnings
+      # a stuck test fails this step, its log kept, before the job's own limit
       - run: cargo test
+        timeout-minutes: 10
       - run: cargo build --release

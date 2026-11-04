@@ -2188,6 +2188,40 @@ fn mouse_wheel_scrolls_and_pans() {
     ));
 }
 
+/// MAX-197: a press anywhere on a toast dismisses that one, the others kept, and goes no
+/// further: the popup under it stays open. A press beside the toasts doesn't touch them.
+/// How: two toasts over the help popup, a press on the first one's text, then on the
+/// second one's border, then one far from both.
+#[test]
+fn click_dismisses_a_toast() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+    h.app.notify_info("first toast");
+    h.app.notify_warn("second toast");
+    h.app
+        .update(Action::App(AppAction::OpenOverlay(Overlay::Help(
+            HelpDialog::new(),
+        ))));
+    let rows = h.draw();
+    let first = cell_of(&rows, "first toast");
+    mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), first);
+    let rows = h.draw();
+    assert!(!has(&rows, "first toast"), "{rows:#?}");
+    assert!(has(&rows, "second toast"), "{rows:#?}");
+    assert!(matches!(h.app.overlay(), Some(Overlay::Help(_))));
+
+    let (x, y) = cell_of(&rows, "Warning");
+    mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), (x, y));
+    let rows = h.draw();
+    assert!(!has(&rows, "second toast"), "{rows:#?}");
+    assert!(matches!(h.app.overlay(), Some(Overlay::Help(_))));
+
+    h.app.notify_info("third toast");
+    h.draw();
+    click(&mut h, (0, 23));
+    let rows = h.draw();
+    assert!(has(&rows, "third toast"), "{rows:#?}");
+}
+
 /// A mouse event through the input path, applied
 fn mouse_do(h: &mut Harness, kind: MouseEventKind, at: (u16, u16)) -> UpdateEffect {
     let action = crate::inputs::handle_event(mouse(kind, at, KeyModifiers::NONE), &h.app);
