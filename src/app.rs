@@ -8,7 +8,7 @@ use crate::{
     app::{
         mash::{Mash, MashStep},
         scroller::ScrollStatus,
-        selection::{ClickCounter, CopySide},
+        selection::{ClickCounter, CopySide, LogicalPosition, MouseUnit},
         term_answers::answer_bytes,
         transfer::FileTransfer,
         triggers::Trigger,
@@ -34,6 +34,9 @@ use crate::{
     overlays::{Overlay, OverlayResponse, PopupTarget, ScreenshotDialog, SettingKey},
     paths::{create_parent_dirs, expand_home},
 };
+
+/// How soon after the window gains focus a press is the one that focused it
+const FOCUS_CLICK: Duration = Duration::from_millis(200);
 
 pub mod capture;
 pub mod data_processing;
@@ -125,6 +128,9 @@ pub struct App {
     frame_areas: FrameAreas,
     frame_map: FrameMap,
     clicks: ClickCounter,
+    /// A plain press on the terminal's text, out of copy mode: a drag from it enters copy mode
+    /// there, a release drops it, so a click only focuses
+    pending_press: Option<(LogicalPosition, CopySide)>,
     /// The screen cell of a drag in the history while the button is held, and when the drag
     /// scroll last ran (MAX-126)
     drag_hold: Option<(u16, u16)>,
@@ -163,6 +169,12 @@ pub struct App {
     /// Where the session backups are, for the session browser (MAX-148)
     sessions_dir: Option<PathBuf>,
     pub is_window_focused: bool,
+    /// When the window last gained focus, until the next press: one this soon after only
+    /// focused it
+    focused_at: Option<Instant>,
+    /// When a press came while the window was unfocused: a focus gained just after is that
+    /// press's, not a new one
+    unfocused_press_at: Option<Instant>,
     pointer: Option<(u16, u16)>,
     /// The last text copied, which a right-click pastes (MAX-144)
     paste_buffer: Option<String>,
@@ -257,6 +269,7 @@ impl App {
             frame_areas: FrameAreas::default(),
             frame_map: FrameMap::default(),
             clicks: ClickCounter::default(),
+            pending_press: None,
             drag_hold: None,
             last_drag_scroll: None,
             scrollbar_hold: None,
@@ -279,6 +292,8 @@ impl App {
             mash: None,
             sessions_dir: None,
             is_window_focused: true,
+            focused_at: None,
+            unfocused_press_at: None,
             pointer: None,
             paste_buffer: None,
             screen_size: None,
@@ -1349,6 +1364,10 @@ impl App {
                 UpdateEffect::None
             }
             AppAction::FocusGained(is_focused) => {
+                let press_came_first =
+                    (self.unfocused_press_at.take()).is_some_and(|at| at.elapsed() < FOCUS_CLICK);
+                self.focused_at =
+                    (is_focused && !self.is_window_focused && !press_came_first).then(Instant::now);
                 self.is_window_focused = is_focused;
                 UpdateEffect::None
             }
@@ -1523,10 +1542,31 @@ impl App {
         UpdateEffect::None
     }
 
+    /// The copy action applied by the mode's copy state: the text a yank gives
+    fn copy_action(&mut self, action: CopyModeAction) -> Option<String> {
+        match self.settings.mode {
+            Mode::Terminal => self
+                .terminal_mode
+                .handle_copy_action(action, &self.settings),
+            Mode::Line => self.line_mode.handle_copy_action(action, &self.settings),
+        }
+    }
+
+    /// A press that only gives the window focus: one while it's unfocused (the terminal sent
+    /// the click first), or the first one just after it gained focus (the focus first)
+    fn is_focus_click(&mut self) -> bool {
+        if !self.is_window_focused {
+            self.unfocused_press_at = Some(Instant::now());
+            return true;
+        }
+        (self.focused_at.take()).is_some_and(|at| at.elapsed() < FOCUS_CLICK)
+    }
+
     fn update_action_copy_mode(&mut self, action: CopyModeAction) -> UpdateEffect {
-        // a click in the history leaves the search for copy mode there (MAX-113)
-        if matches!(action, CopyModeAction::MousePress(..)) && self.is_search_active() {
-            self.update_action_search_mode(SearchModeAction::Cancel);
+        // the click that focuses the window doesn't select, nor does its drag
+        if matches!(action, CopyModeAction::MousePress(..)) && self.is_focus_click() {
+            self.pending_press = None;
+            return UpdateEffect::None;
         }
         // quick presses on the same cell select its word, then its line (MAX-126)
         let action = match action {
@@ -1537,26 +1577,42 @@ impl App {
                 };
                 let unit = self.clicks.press(Instant::now(), (pos.line_idx, col), side);
                 self.drag_hold = None;
+                // in terminal mode a plain click only focuses: copy mode waits for a drag
+                self.pending_press = (self.settings.mode == Mode::Terminal
+                    && unit == MouseUnit::Char
+                    && self.copy_side().is_none())
+                .then_some((pos, side));
+                if self.pending_press.is_some() {
+                    return UpdateEffect::None;
+                }
                 CopyModeAction::MousePress(pos, side, unit)
             }
             CopyModeAction::MouseDrag(_, at) => {
+                // the press waiting for a drag enters copy mode where it was
+                if let Some((pos, side)) = self.pending_press.take() {
+                    if self.is_search_active() {
+                        self.update_action_search_mode(SearchModeAction::Cancel);
+                    }
+                    self.copy_action(CopyModeAction::MousePress(pos, side, MouseUnit::Char));
+                }
                 self.clicks.reset();
                 self.drag_hold = Some(at);
                 action
             }
             CopyModeAction::MouseRelease => {
                 self.drag_hold = None;
+                if self.pending_press.take().is_some() {
+                    return UpdateEffect::None;
+                }
                 action
             }
             action => action,
         };
-        let copied = match self.settings.mode {
-            Mode::Terminal => self
-                .terminal_mode
-                .handle_copy_action(action, &self.settings),
-            Mode::Line => self.line_mode.handle_copy_action(action, &self.settings),
-        };
-        match copied {
+        // a click in the history leaves the search for copy mode there (MAX-113)
+        if matches!(action, CopyModeAction::MousePress(..)) && self.is_search_active() {
+            self.update_action_search_mode(SearchModeAction::Cancel);
+        }
+        match self.copy_action(action) {
             Some(text) => {
                 self.paste_buffer = Some(text.clone());
                 UpdateEffect::CopyToClipboard(text)
@@ -1870,6 +1926,11 @@ impl App {
             Mode::Terminal => self.terminal_mode.copy_state(),
         };
         copy_state.active && copy_state.mouse_drag.is_some()
+    }
+
+    /// The side of a terminal press waiting for a drag to enter copy mode
+    pub fn pending_press_side(&self) -> Option<CopySide> {
+        self.pending_press.map(|(_, side)| side)
     }
 
     pub fn copy_side(&self) -> Option<CopySide> {

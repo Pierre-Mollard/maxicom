@@ -2373,6 +2373,142 @@ fn click_dismisses_a_toast() {
     assert!(has(&rows, "third toast"), "{rows:#?}");
 }
 
+/// Terminal mode: a plain click only focuses, it doesn't enter copy mode, so the next keys
+/// still reach the device. A drag selects from the press and copies on the release, a double
+/// click its word, as before; in copy mode a click moves the cursor. Line mode
+/// keeps a click on the history entering copy mode.
+/// How: two lines on the grid; a click on "hello", a drag from it to "world", a double
+/// click on "second", a click while in copy mode; then a click in line mode.
+#[test]
+fn terminal_click_only_focuses() {
+    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+        s.mode = Mode::Terminal;
+    });
+    h.app.feed_rx(b"hello world\r\nsecond line");
+    let rows = h.draw();
+    let (hello, world) = (cell_of(&rows, "hello"), cell_of(&rows, "world"));
+    let down = MouseEventKind::Down(MouseButton::Left);
+    let up = MouseEventKind::Up(MouseButton::Left);
+
+    click(&mut h, hello);
+    assert_eq!(h.app.copy_side(), None);
+    assert_eq!(h.app.input_context(), crate::app::InputContext::Terminal);
+
+    mouse_do(&mut h, down, hello);
+    mouse_do(
+        &mut h,
+        MouseEventKind::Drag(MouseButton::Left),
+        (world.0 + 4, world.1),
+    );
+    assert_eq!(h.app.copy_side(), Some(CopySide::Text));
+    let effect = mouse_do(&mut h, up, (world.0 + 4, world.1));
+    let copied = match effect {
+        UpdateEffect::CopyToClipboard(text) => text,
+        _ => panic!("no copy on the release"),
+    };
+    assert_eq!(copied, "hello world");
+    assert_eq!(h.app.copy_side(), None);
+
+    let rows = h.draw();
+    let second = cell_of(&rows, "second");
+    click(&mut h, second);
+    assert_eq!(h.app.copy_side(), None);
+    mouse_do(&mut h, down, second);
+    assert_eq!(h.app.copy_side(), Some(CopySide::Text));
+    let copied = match mouse_do(&mut h, up, second) {
+        UpdateEffect::CopyToClipboard(text) => text,
+        _ => panic!("no copy on the double click's release"),
+    };
+    assert_eq!(copied, "second");
+
+    h.app.update(Action::CopyMode(CopyModeAction::Enter));
+    click(&mut h, hello);
+    assert_eq!(h.app.copy_side(), Some(CopySide::Text));
+    h.app.update(Action::CopyMode(CopyModeAction::Exit));
+
+    let mut l = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+    l.feed(b"hello\r\n");
+    let rows = l.draw();
+    click(&mut l, cell_of(&rows, "hello"));
+    assert_eq!(l.app.copy_side(), Some(CopySide::Text));
+}
+
+/// The click that focuses the window doesn't select, in either mode: a press while it's
+/// unfocused (a terminal that sends the click first), or right after it gained focus (one
+/// that sends the focus first). A later click selects again; a quick second click after a
+/// focus gained late (after the press) too.
+/// How: line mode history, the focus lost then each order; a click 250 ms after the focus.
+#[test]
+fn focusing_click_doesnt_select() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+    h.feed(b"hello\r\n");
+    let rows = h.draw();
+    let at = cell_of(&rows, "hello");
+    let focus = |h: &mut Harness, on: bool| h.app.update(Action::App(AppAction::FocusGained(on)));
+    // whether a click's press enters copy mode (quick clicks here make a double click,
+    // which copies on the release: read on the press)
+    let selects = |h: &mut Harness| {
+        mouse_do(h, MouseEventKind::Down(MouseButton::Left), at);
+        let on = h.app.copy_side().is_some();
+        mouse_do(h, MouseEventKind::Up(MouseButton::Left), at);
+        h.app.update(Action::CopyMode(CopyModeAction::Exit));
+        on
+    };
+
+    // the click before the focus
+    focus(&mut h, false);
+    assert!(!selects(&mut h));
+    focus(&mut h, true);
+    assert!(selects(&mut h));
+
+    // the focus before the click
+    focus(&mut h, false);
+    focus(&mut h, true);
+    assert!(!selects(&mut h));
+    assert!(selects(&mut h));
+
+    // back by the keyboard, then a click later on
+    focus(&mut h, false);
+    focus(&mut h, true);
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    assert!(selects(&mut h));
+}
+
+/// Terminal mode scrolled into the history: the real cursor isn't placed, a fake one is drawn
+/// where the remote's cursor still shows, in the unfocused cursor's style, so it doesn't
+/// vanish. Live, the real cursor is back.
+/// How: the grid sized to the view, 30 rows then the cursor 4 rows up from the bottom, the
+/// view scrolled up 2 rows.
+#[test]
+fn scrolled_terminal_keeps_a_fake_cursor() {
+    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+        s.mode = Mode::Terminal;
+    });
+    // the grid as tall as the view: scrolling up goes into the history, not a pan of it
+    h.draw();
+    h.app.update(Action::Terminal(
+        crate::inputs::TerminalAction::AutoResizeEmulatorToViewer,
+    ));
+    let bytes: String = (0..30).map(|i| format!("row {i:02}\r\n")).collect();
+    h.app.feed_rx(bytes.as_bytes());
+    h.app.feed_rx(b"\x1b[4A\x1b[2Kat");
+    let rows = h.draw();
+    let live = cursor_cell(&mut h);
+    assert_eq!(live, (cell_of(&rows, "at").0 + 2, cell_of(&rows, "at").1));
+
+    h.scroll(HistoryAction::ScrollUp(2));
+    let rows = h.draw();
+    let (x, y) = cell_of(&rows, "at");
+    // on the empty cell after "at": the unfocused glyph in the unfocused cursor's color
+    let fake = &h.terminal.backend().buffer()[(x + 2, y)];
+    assert_eq!(fake.symbol(), "█", "{rows:#?}");
+    assert_eq!(Some(fake.fg), h_theme().ui.cursor_unfocused.fg);
+
+    h.scroll(HistoryAction::ScrollToBottom);
+    let rows = h.draw();
+    assert_eq!(cursor_cell(&mut h), live, "{rows:#?}");
+}
+
 /// A mouse event through the input path, applied
 fn mouse_do(h: &mut Harness, kind: MouseEventKind, at: (u16, u16)) -> UpdateEffect {
     let action = crate::inputs::handle_event(mouse(kind, at, KeyModifiers::NONE), &h.app);
@@ -4008,7 +4144,8 @@ fn mouse_click_on_a_raw_byte() {
     assert_eq!(under_cursor(&mut h, &rows), "6F");
 }
 
-/// Terminal mode: a click puts the copy cursor on the grid cell, a drag yanks the text.
+/// Terminal mode: in copy mode a click puts the copy cursor on the grid cell; a drag yanks
+/// the text.
 #[test]
 fn mouse_in_terminal_mode() {
     let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
@@ -4020,10 +4157,12 @@ fn mouse_in_terminal_mode() {
     let rows = h.draw();
 
     let (x, y) = cell_of(&rows, "second");
+    h.app.update(Action::CopyMode(CopyModeAction::Enter));
     click(&mut h, (x + 3, y));
     h.draw();
     assert!(h.app.terminal_mode.copy_state().active);
     assert_eq!(cursor_cell(&mut h), (x + 3, y));
+    h.app.update(Action::CopyMode(CopyModeAction::Exit));
 
     let (x, y) = cell_of(&rows, "first");
     mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), (x, y));
@@ -6285,9 +6424,10 @@ fn mouse_forwarded_to_a_remote_program() {
         _ => None,
     };
 
+    // maxicom's, a plain press waiting for a drag to enter copy mode
     assert_eq!(sent(&mut h, press), None);
-    assert!(h.app.terminal_mode.copy_state().active);
-    h.app.update(Action::CopyMode(CopyModeAction::Exit));
+    assert!(h.app.pending_press_side().is_some());
+    mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), at);
 
     feed(&mut h, b"\x1b[?1000h\x1b[?1006h");
     assert_eq!(sent(&mut h, press).unwrap(), b"\x1b[<0;5;3M");

@@ -289,14 +289,15 @@ fn handle_left_button(event: MouseEvent, app: &App) -> Action {
         }
         // on the side the press chose, brought back into it when the pointer leaves it
         MouseEventKind::Drag(_) => {
-            let pos = app
-                .copy_side()
+            let pos = (app.copy_side().or(app.pending_press_side()))
                 .and_then(|side| map.copy_position(side, x, y, true));
             pos.map_or(Action::Ignore, |pos| {
                 Action::CopyMode(CopyModeAction::MouseDrag(pos, (x, y)))
             })
         }
-        _ if app.copy_side().is_some() => Action::CopyMode(CopyModeAction::MouseRelease),
+        _ if app.copy_side().or(app.pending_press_side()).is_some() => {
+            Action::CopyMode(CopyModeAction::MouseRelease)
+        }
         _ => Action::Ignore,
     }
 }

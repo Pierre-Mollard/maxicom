@@ -266,8 +266,9 @@ fn handle(term: &MaxicomTerminal, area: Rect, buf: &mut Buffer) {
         }
     }
 
-    // fake cursor when not focused
-    if !term.focused && !screen.hide_cursor() && term.cursor.show {
+    // fake cursor when not focused, or scrolled into the history where the real one isn't
+    // placed: it marks where the remote's cursor is
+    if (!term.focused || screen.scrollback() > 0) && !screen.hide_cursor() && term.cursor.show {
         let (c_row, c_col) = visible_cursor_position(screen);
 
         let Some(local_col) = c_col.checked_sub(term.x_offset) else {

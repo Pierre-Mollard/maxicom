@@ -344,6 +344,14 @@ What changes from a serial port:
   seconds. A click anywhere on one closes it (over a popup too, which stays
   open); `dismiss-notification` (`Ctrl-a n`) closes the top one,
   `dismiss-notifications` (`Ctrl-a N`) all of them.
+- The mouse selects text: a drag copies what it covers when released, a
+  double click the word, a triple click the line. A click in line mode's
+  history enters copy mode on that cell; in terminal mode it only focuses,
+  so typing still reaches the device (a click in copy mode moves its
+  cursor). The click that brings the window forward doesn't select, in
+  either mode, when the terminal reports focus changes (Windows Terminal,
+  most others). A remote program that asked for the mouse (vim, htop) gets
+  it instead, out of copy mode.
 - Copy mode (`Ctrl-a [` or `b`, or a mouse selection) holds the view while
   data arrives, so the selection stays under the pointer; leaving it (Esc, a
   yank) goes back to the live tail. A view you scrolled up yourself before
