@@ -1,3 +1,5 @@
+<!-- markdownlint-disable MD025 -- mdBook's part titles are top-level headings -->
+
 # Summary
 
 [Introduction](introduction.md)
@@ -22,10 +24,10 @@
 - [Copy mode and mouse](copy-mode-and-mouse.md)
 - [Search](search.md)
 - [Raw side panel](raw-side-panel.md)
-- [Command line](command-line.md)
 - [Triggers](triggers.md)
 - [Capture](capture.md)
 - [Notifications](notifications.md)
+- [Command line](command-line.md)
 
 # Configuration
 

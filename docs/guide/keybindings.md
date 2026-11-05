@@ -75,7 +75,7 @@ use stays.
 ## Sections
 
 | Section | When |
-|---|---|
+| --- | --- |
 | `[prefix_actions]` | After the prefix, in both modes |
 | `[direct_actions]` | Without the prefix, in both modes: these keys never reach the device |
 | `[line_mode]` | In line mode, while typing in the input box |
@@ -95,7 +95,7 @@ directory's `n`, `e` and `s`. Those are fixed, and each chapter lists them.
 ### `[prefix_actions]`
 
 | Key | Action | |
-|---|---|---|
+| --- | --- | --- |
 | `Ctrl-a /` | `enter-search` | Search the history |
 | `Ctrl-a :` | `command-line` | Open the command line |
 | `Ctrl-a <` | `side-shrink-5` | Shrink the side view by 5 % |
@@ -146,7 +146,7 @@ directory's `n`, `e` and `s`. Those are fixed, and each chapter lists them.
 ### `[direct_actions]`
 
 | Key | Action | |
-|---|---|---|
+| --- | --- | --- |
 | `Ctrl-q` | `quit` | Quit maxicom |
 | `Shift-End` | `scroll-to-bottom` | Scroll to the bottom |
 | `Shift-Home` | `scroll-to-top` | Scroll to the top |
@@ -156,7 +156,7 @@ directory's `n`, `e` and `s`. Those are fixed, and each chapter lists them.
 ### `[line_mode]`
 
 | Key | Action | |
-|---|---|---|
+| --- | --- | --- |
 | `Enter` | `submit` | Send the line |
 | `Up`, `Ctrl-p` / `Down`, `Ctrl-n` | `history-prev` / `history-next` | Walk the lines sent |
 | `Ctrl-u` | `clear-line` | Clear the input |
@@ -170,13 +170,13 @@ are built in: see [Line mode](line-mode.md#editing-the-line).
 ### `[terminal_mode]`
 
 | Key | Action | |
-|---|---|---|
+| --- | --- | --- |
 | `Alt-r` | `auto-resize-remote` | Send the emulator's size to the device |
 
 ### `[copy_mode]`
 
 | Key | Action | |
-|---|---|---|
+| --- | --- | --- |
 | `h` `j` `k` `l`, arrows | `left` `down` `up` `right` | Move the cursor |
 | `0` / `$` | `start-of-line` / `end-of-line` | Start / end of the line |
 | `v`, `Space` | `select` | Start a selection |
@@ -194,7 +194,7 @@ The vi motions (`w`, `b`, `gg`, `G`, `iw`...) are built in: see
 ### `[search_mode]`
 
 | Key | Action | |
-|---|---|---|
+| --- | --- | --- |
 | `Ctrl-n` / `Ctrl-p` | `next` / `previous` | Next / previous match |
 | `Enter` | `confirm` | Copy mode on the match |
 | `Esc` | `cancel` | Close |
@@ -203,7 +203,7 @@ The vi motions (`w`, `b`, `gg`, `G`, `iw`...) are built in: see
 ### `[dialog_actions]`
 
 | Key | Action | |
-|---|---|---|
+| --- | --- | --- |
 | `Up` `k` / `Down` `j` | `up` / `down` | Move |
 | `Left` `h` / `Right` `l` | `left` / `right` | Change a value, switch a tab |
 | `Home` `g` / `End` `G` | `home` / `end` | First / last |
@@ -222,7 +222,7 @@ one is also a command of the [command line](command-line.md), which adds
 commands with arguments (`send`, `open`, `baud`, `replay`...).
 
 | Action | | Default key |
-|---|---|---|
+| --- | --- | --- |
 | `quit` | Quit maxicom | `Ctrl-q`, `Ctrl-a q`, `Ctrl-a x` |
 | `toggle-input-mode` | Switch line / terminal mode | `Ctrl-a m` |
 | `toggle-local-echo` | Toggle local echo | `Ctrl-a e` |

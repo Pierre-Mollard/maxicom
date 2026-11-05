@@ -3,7 +3,7 @@
 A serial terminal for the console, in the spirit of minicom, written in Rust.
 It opens a serial port or a device over TCP, on Linux, macOS and Windows.
 
-<!-- screenshot: terminal mode on a board's shell -->
+![maxicom in terminal mode on a board's shell, the status bar in the bottom border](docs/guide/images/overview.png)
 
 - Two views of the same data: a terminal emulator for shells and full-screen
   programs, and a line mode for logs, with timestamps and an input box
@@ -42,8 +42,6 @@ most: [Quick start](docs/guide/quick-start.md).
 
 ## Documentation
 
-The user guide is in [docs/guide](docs/guide/SUMMARY.md):
-
 - [Introduction](docs/guide/introduction.md)
 - [Install](docs/guide/install.md)
 - [Quick start](docs/guide/quick-start.md)
@@ -60,10 +58,10 @@ The user guide is in [docs/guide](docs/guide/SUMMARY.md):
 - [Copy mode and mouse](docs/guide/copy-mode-and-mouse.md)
 - [Search](docs/guide/search.md)
 - [Raw side panel](docs/guide/raw-side-panel.md)
-- [Command line](docs/guide/command-line.md)
 - [Triggers](docs/guide/triggers.md)
 - [Capture](docs/guide/capture.md)
 - [Notifications](docs/guide/notifications.md)
+- [Command line](docs/guide/command-line.md)
 - [Settings](docs/guide/settings.md)
 - [Keybindings](docs/guide/keybindings.md)
 - [Theme](docs/guide/theme.md)

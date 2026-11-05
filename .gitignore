@@ -1,3 +1,4 @@
 /target
 *.log
 *.raw
+tools/screenshots/__pycache__/

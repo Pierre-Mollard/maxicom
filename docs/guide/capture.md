@@ -11,7 +11,7 @@ maxicom can keep what the device sends in several ways:
 ## What is what
 
 | Kind | Made | Holds | Replayable |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Session backup | On its own, every session | A folder of files: raw bytes, times, info, text | Yes |
 | Full recording | By you | The same files as a session, in a folder you choose | Yes |
 | Text recording | By you | A `.log` file of decoded lines, to read | No |
@@ -21,7 +21,7 @@ maxicom can keep what the device sends in several ways:
 A session, or a full recording, is a folder `<name>/` holding:
 
 | File | Holds |
-|---|---|
+| --- | --- |
 | `<name>.raw` | The bytes exactly as received |
 | `<name>.times` | When each chunk of bytes came |
 | `<name>.meta` | What they were received on: the device, the line settings, the encoding, the terminal's size |
@@ -50,7 +50,7 @@ shown after the name: `.log` for text, `/` for a full recording's folder.
 On top of the [popup keys](popups.md):
 
 | Key | Does |
-|---|---|
+| --- | --- |
 | Enter | Starts recording |
 | Tab | Switches between text and full |
 | Shift-Tab | Includes everything since the session started |
@@ -162,7 +162,7 @@ come back whole. Then `dimension_mode` sizes it to the view.
 `restore` in `[sessions]`:
 
 | Value | Does |
-|---|---|
+| --- | --- |
 | `always` (default) | Restores |
 | `ask` | Asks each time |
 | `never` | Doesn't restore |
@@ -229,7 +229,7 @@ format, times, size and last lines.
 ### Marks
 
 | Mark | Means |
-|---|---|
+| --- | --- |
 | `●` | Running; it can't be deleted |
 | `»` | What this device would restore |
 | `?` | No `.meta`: from before the restore feature |
@@ -239,7 +239,7 @@ format, times, size and last lines.
 On top of the [popup keys](popups.md):
 
 | Key | Does |
-|---|---|
+| --- | --- |
 | `d`, `Del` | Delete the selected session, after a question |
 | `D` | Delete all but the running ones, after a question |
 | `s` | Sort by date (newest first) or by device |
@@ -256,7 +256,7 @@ A `.log` is refused: its text isn't what was received.
 ### Starting one
 
 | From | Write |
-|---|---|
+| --- | --- |
 | The shell | `maxicom --replay <path>` |
 | The command line | `replay <path>` or `open file://<path>` |
 
@@ -267,7 +267,7 @@ buffers, to watch a boot scroll by.
 ### Controlling it
 
 | Command | Does |
-|---|---|
+| --- | --- |
 | `replay-pause` / `replay-resume` | Pauses / resumes |
 | `replay-speed <ms>` | Changes the delay |
 | `replay-restart` | Plays it again from the top, on a clean screen |
@@ -293,7 +293,7 @@ Screenshots save the terminal's screen, in terminal mode only. In line mode,
 the keys just say so.
 
 | Key | The dialog opens on |
-|---|---|
+| --- | --- |
 | `Ctrl-a k` (or Screenshot in the right-click menu) | `ansi`: `.ans`, with the colors |
 | `Ctrl-a K` | `text`: `.txt`, the characters only |
 

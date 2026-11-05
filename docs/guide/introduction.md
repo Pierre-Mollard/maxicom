@@ -42,7 +42,7 @@ work.
 ## The screen
 
 | Part | What it shows |
-|---|---|
+| --- | --- |
 | History box | The device's output, in the current mode. Its title says the mode: ` maxicom LINE ` or ` maxicom TERMINAL `. |
 | Input box | Line mode only: the line you are writing. |
 | Status bar | In the bottom border by default: the mode, the link and its settings, what's running (a recording, a file being sent, armed triggers), the scroll position, RX / TX counts, the time, and `?` / `≡` for the help and the settings. Most of its blocks react to a click. See [Status bar](status-bar.md). |
@@ -56,7 +56,7 @@ the box, is **panning**.
 ### Clearing the screen
 
 | Key | Does |
-|---|---|
+| --- | --- |
 | `Ctrl-a c` | Clears the view. What was on it moves up into the history, a scroll up away. |
 | `Ctrl-a C` | Clears the history too: everything received so far is gone from the view and the scrollback |
 
@@ -88,7 +88,7 @@ This guide writes keys the way maxicom shows them:
 ## Finding your way
 
 | To | Press |
-|---|---|
+| --- | --- |
 | See every key, by section, and the commands | `Ctrl-a ?` (or `Ctrl-a z`) |
 | Change the common settings, each with its key | `Ctrl-a o` (or `Ctrl-a s`) |
 | Reach the main actions with the mouse | A right click |

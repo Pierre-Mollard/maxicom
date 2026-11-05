@@ -1,0 +1,5 @@
+# markdownlint (markdownlint-cli2, as LazyVim's markdown extra runs it): the defaults, but
+# table rows and code lines may pass 80 columns, since neither can be wrapped
+MD013:
+  tables: false
+  code_blocks: false

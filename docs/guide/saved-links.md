@@ -34,7 +34,7 @@ Line settings you leave out take the values of `[link]` in `config.toml`.
 You rarely need to edit the file by hand. In the directory:
 
 | Key | Opens the form |
-|---|---|
+| --- | --- |
 | `s` on the Saved links tab | Filled from the link in use |
 | `s` on the Serial ports tab | Filled from the selected port |
 | `n` | Empty, for a new link |

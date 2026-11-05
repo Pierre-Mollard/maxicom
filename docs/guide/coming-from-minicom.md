@@ -11,7 +11,7 @@ defaults back. Note that `c` and `C` (Shift-c) are two different keys, see
 ## Keys
 
 | `Ctrl-a` + | minicom           | maxicom                          |
-|------------|-------------------|----------------------------------|
+| ---------- | ----------------- | -------------------------------- |
 | `z`        | help              | help (also `?`)                  |
 | `x`, `q`   | quit              | quit                             |
 | `o`        | configure         | settings (also `s`)              |
@@ -32,7 +32,7 @@ defaults back. Note that `c` and `C` (Shift-c) are two different keys, see
 ### Keys minicom doesn't have
 
 | `Ctrl-a` + | Does |
-|---|---|
+| --- | --- |
 | `m` | Switch between line and terminal mode |
 | `j` | Session backups |
 | `D` | Detach / attach the link |
@@ -57,7 +57,7 @@ defaults back. Note that `c` and `C` (Shift-c) are two different keys, see
 ## Options and files
 
 | minicom               | maxicom                              |
-|-----------------------|--------------------------------------|
+| --------------------- | ------------------------------------ |
 | `-D, --device`        | the same, or alone: `maxicom COM3`   |
 | `-b, --baudrate`      | the same, with `--bits`, `--parity`… |
 | `-C, --capturefile`   | the received text to that file       |

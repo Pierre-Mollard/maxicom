@@ -9,7 +9,7 @@ command, or Directory in the right-click menu.
 ## The two tabs
 
 | Tab | Columns |
-|---|---|
+| --- | --- |
 | Saved links | Name, Address, Line (the line settings), State |
 | Serial ports | Port (its path), Device, ID, State |
 
@@ -46,7 +46,7 @@ with its line settings.
 On top of the [popup keys](popups.md):
 
 | Tab | Key | Does |
-|---|---|---|
+| --- | --- | --- |
 | Saved links | `n` | Create a new saved link |
 | Saved links | `e` | Edit the selected link |
 | Saved links | `s` | Save the link in use |
@@ -69,7 +69,7 @@ A test that gets no answer within 2 seconds shows `no answer`.
 ### Serial ports
 
 | Result | Means |
-|---|---|
+| --- | --- |
 | `free` | Nothing holds the port |
 | `busy` | Another program holds it, named when known: `busy: picocom (1234)`, `busy: maxicom 4242 (pierre)` |
 | `in use` | This maxicom has it open, under another name of the same device |
@@ -80,7 +80,7 @@ A test that gets no answer within 2 seconds shows `no answer`.
 ### TCP links
 
 | Result | Means |
-|---|---|
+| --- | --- |
 | `reachable` | The connection was accepted |
 | `refused` | Nothing listens on that port |
 | `unreachable` | The host can't be reached |

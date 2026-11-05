@@ -22,7 +22,7 @@ options.
 ### Port names
 
 | Name | Used for |
-|---|---|
+| --- | --- |
 | `/dev/ttyUSB0` | USB-UART adapters: CP210x, CH340, FTDI |
 | `/dev/ttyACM0` | Boards with native USB: Arduino, STM32, ESP32-S3 |
 | `/dev/ttyS0` | On-board UARTs |
@@ -76,7 +76,7 @@ WSL2 doesn't see the PC's USB ports by itself. You have three options:
 ## Where its files are
 
 | | Linux | macOS | Windows |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Config | `~/.config/maxicom/` | `~/Library/Application Support/maxicom/` | `%APPDATA%\maxicom\` |
 | Session backups | `~/.cache/maxicom/sessions/` | `~/Library/Caches/maxicom/sessions/` | `%LOCALAPPDATA%\maxicom\sessions\` |
 

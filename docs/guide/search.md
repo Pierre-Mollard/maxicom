@@ -12,7 +12,7 @@ stands out. The bar shows the current match's number and the count. Up to
 1000 matches are found.
 
 | Key | Does |
-|---|---|
+| --- | --- |
 | Ctrl-n / Ctrl-p | Next / previous match |
 | Enter | Close the bar and enter [copy mode](copy-mode-and-mouse.md#copy-mode) on the current match |
 | Esc | Close the bar where you are |
@@ -32,7 +32,7 @@ A byte search looks for bytes in the received data. Write them the way the
 [raw side panel](raw-side-panel.md) shows them:
 
 | Panel view | Examples |
-|---|---|
+| --- | --- |
 | hex (default) | `0d0a`, `0d 0a`, `0x0d 0x0a`, `\x0d\x0a` |
 | octal | `015 012` |
 | binary | the bits of each byte |

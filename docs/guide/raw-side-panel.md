@@ -1,8 +1,9 @@
 # Raw side panel
 
-The raw side panel shows the received bytes as they came off the wire, next
-to the text. It reveals what the decoding, the colors and the terminal
-emulator hide: a stray `\r`, a `0x00`, a framing problem.
+The raw side panel shows the received bytes next to the text. In line mode
+they are the bytes as they came off the wire, so it reveals what the
+decoding and the colors hide: a stray `\r`, a `0x00`, a framing problem. In
+terminal mode it shows less, see [In terminal mode](#in-terminal-mode).
 
 ![Line mode with the raw side panel in hex: each line next to its bytes](images/raw-side-panel.png)
 
@@ -11,7 +12,7 @@ emulator hide: a stray `\r`, a `0x00`, a framing problem.
 `Ctrl-a B`, or `B` in the settings popup, cycles `view` in `[raw_side]`:
 
 | View | Shows each byte as |
-|---|---|
+| --- | --- |
 | `off` (default) | The panel is hidden |
 | `hex` | Hexadecimal |
 | `octal` | Octal |
@@ -24,10 +25,34 @@ emulator hide: a stray `\r`, a `0x00`, a framing problem.
 The panel follows the history: its rows are the same lines, so a line and
 its bytes stay side by side as you scroll.
 
+### In terminal mode
+
+In line mode, each row shows the line's bytes exactly as received. In
+terminal mode, the bytes go through the emulator first, and the panel shows
+each screen row rebuilt from what is left on it. So some bytes never show:
+
+| The device sent | The panel shows | Why |
+| --- | --- | --- |
+| `abc`, CR, `XY`, CR LF | `XYc` | CR and LF move the cursor; `XY` wrote over `ab` |
+| `ESC [ 1 ; 32 m ok` | `ESC [ 32 ; 1 m ok` | The colors are written again by the emulator, not copied |
+| `café`, `ESC [ 2 K`, `gone` | `ESC [ 5 C gone` | The erase removed `café`; the gap comes back as a cursor move |
+| `ESC ] 0 ; title`, BEL | Nothing | A window title isn't drawn on the screen |
+
+In terminal mode, the panel also shows:
+
+- the text after its decoding to UTF-8: with the `latin1` encoding, a
+  received `E9` (`é`) shows as `C3 A9`;
+- nothing of the queries, cursor moves and other control sequences, which act
+  on the screen instead of drawing on it.
+
+To see every byte the device sent, switch to line mode (`Ctrl-a m`). It has
+the same data, as long as `dual_mode_buffering` is `"always_both"`, the
+default (see [Two modes](introduction.md#two-modes)).
+
 Bytes are colored by kind, from `[raw_inspector]` in the theme:
 
 | Entry | Bytes |
-|---|---|
+| --- | --- |
 | `byte_ascii` | Printable ASCII |
 | `byte_whitespace` | `\n`, `\r`, `\t` |
 | `byte_null` | `0x00` |
@@ -49,7 +74,7 @@ When its rows are wider than the panel, `Ctrl-a Shift-Left` /
 ## Size and position
 
 | Setting in `[raw_side]` | Default | Does |
-|---|---|---|
+| --- | --- | --- |
 | `split_percent` | `40` | The share of the room it takes, 10 to 85 |
 | `orientation` | `"right"` | Where it sits: `right` or `bottom` |
 

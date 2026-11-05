@@ -7,7 +7,7 @@ folder: `~/.config/maxicom/` on Linux, see
 [Install](install.md#where-its-files-are) for the other systems.
 
 | File | Holds | Chapter |
-|---|---|---|
+| --- | --- | --- |
 | `config.toml` | The settings | This chapter |
 | `keymap.toml` | The keys | [Keybindings](keybindings.md) |
 | `theme.toml` | The colors | [Theme](theme.md) |
@@ -44,7 +44,7 @@ Each key changes its setting at once, for this session only: `config.toml`
 isn't written. A click on a setting does the same.
 
 | Key | Setting | Key | Setting |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `M` | Mode (line / terminal) | `E` | Local echo |
 | `X` | Text encoding | `T` | Timestamps |
 | `U` | Mouse | `B` | Raw side panel view |
@@ -53,6 +53,21 @@ isn't written. A click on a setting does the same.
 | `I` | Wrap indent | `P` | Row marks (`prefix_place`) |
 | `D` | Display mode | `S` | Dimension mode |
 | `A` | Answer queries | | |
+
+### Setting a value directly
+
+A key flips its setting, so you need to know where it stands. The `set`
+command gives the value you want instead, and does nothing when the setting
+is already so. That suits a [key bound to a command line](command-line.md#binding-a-command-line-to-a-key):
+
+```text
+set local-echo on
+set timestamps off
+```
+
+`set` takes `local-echo`, `timestamps`, `mouse`, `answer-queries`, `add-cr`
+and `add-lf`. For the encoding, use `encoding utf8|ascii|cp437|latin1`. The
+other settings, with more than two values, cycle with their keys.
 
 ### Config paths
 
@@ -72,7 +87,7 @@ screen it uses one column, and it scrolls when the screen is too short.
 `Ctrl-a ?` or `Ctrl-a z` (or `?` in the status bar) lists the keys, in tabs:
 
 | Tab | Lists |
-|---|---|
+| --- | --- |
 | Prefixed | The keys after `Ctrl-a` |
 | Directs | The keys without prefix |
 | Commands | The [command line](command-line.md)'s commands, and the keys bound to a line |
@@ -115,7 +130,7 @@ Durations are written `"500ms"`, `"30s"`, `"4h"` or `"1day"`.
 ### Top level
 
 | Setting | Default | |
-|---|---|---|
+| --- | --- | --- |
 | `mode` | `"terminal"` | The mode at startup, `line` or `terminal`: [Introduction](introduction.md#two-modes) |
 | `local_echo` | `false` | Show the lines sent: [Line mode](line-mode.md#local-echo) |
 | `add_cr`, `add_lf` | `false` | Read a lone LF / CR as CR LF: [Encoding and newlines](encoding-and-newlines.md#received-newlines) |
@@ -132,7 +147,7 @@ Durations are written `"500ms"`, `"30s"`, `"4h"` or `"1day"`.
 See [Line mode](line-mode.md).
 
 | Setting | Default | |
-|---|---|---|
+| --- | --- | --- |
 | `tx_eol` | `"lf"` | What Enter adds: `lf`, `cr`, `crlf` |
 | `display_mode` | `"pretty"` | `pretty`, `clean`, `raw`, `hex`, `octal`, `binary` |
 | `wrap_mode` | `"word"` | `word`, `char`, `truncate` |
@@ -152,7 +167,7 @@ See [Line mode](line-mode.md).
 See [Terminal mode](terminal-mode.md).
 
 | Setting | Default | |
-|---|---|---|
+| --- | --- | --- |
 | `dimension_mode` | `"grow_only"` | `grow_only`, `match_view`, `fixed_cols`, `fixed` |
 | `rows`, `cols` | `24`, `80` | The size of `fixed` (`cols` for `fixed_cols`) |
 | `history_size` | `2500` | Scrollback lines kept |
@@ -168,7 +183,7 @@ The device and line settings used when none are given. See
 [Links](links.md#default-link).
 
 | Setting | Default |
-|---|---|
+| --- | --- |
 | `device` | `""` |
 | `baud` | `115200` |
 | `bits` | `8` |
@@ -184,7 +199,7 @@ Recordings, session backups and their restore, and screenshots. See
 ### `[ui]`
 
 | Setting | Default | |
-|---|---|---|
+| --- | --- | --- |
 | `show_borders` | `true` | The boxes' borders |
 | `show_scrollbar` | `true` | The history's scrollbar |
 | `show_status_bar` | `true` | The status bar |
@@ -235,7 +250,7 @@ size. `show_status_bar = false` keeps it off for good.
 See [Raw side panel](raw-side-panel.md#size-and-position).
 
 | Setting | Default | |
-|---|---|---|
+| --- | --- | --- |
 | `view` | `"off"` | `off`, `hex`, `octal`, `binary` |
 | `orientation` | `"right"` | `right` or `bottom` |
 | `split_percent` | `40` | 10 to 85 |
@@ -245,6 +260,6 @@ See [Raw side panel](raw-side-panel.md#size-and-position).
 See [Command line](command-line.md#look).
 
 | Setting | Default | |
-|---|---|---|
+| --- | --- | --- |
 | `layout` | `"popup"` | `popup` or `status_bar` |
 | `history_size` | `100` | Lines kept |

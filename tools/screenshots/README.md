@@ -12,7 +12,7 @@ change, and they all look the same: same window size, same colors, same font.
 Linux or macOS (the fake serial ports are ptys), with:
 
 | Tool | For | Install |
-|---|---|---|
+| --- | --- | --- |
 | Rust and cargo | Building maxicom | [rustup.rs](https://rustup.rs) |
 | Python 3.8+ | The script; standard library only | Your system's package |
 | tmux | Running maxicom in a hidden window, and capturing it | `apt install tmux` |
@@ -83,7 +83,7 @@ image.
 ## The scenarios
 
 | Name | Shows | Used in |
-|---|---|---|
+| --- | --- | --- |
 | `overview` | Terminal mode on a board's shell | Introduction |
 | `help` | The help popup | Introduction |
 | `settings-popup` | The settings popup | Popups |

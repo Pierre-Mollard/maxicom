@@ -19,7 +19,7 @@ sends the line.
 Enter adds `tx_eol` (in `[line_mode]`) after the line:
 
 | Value | Sends |
-|---|---|
+| --- | --- |
 | `lf` (default) | LF |
 | `cr` | CR |
 | `crlf` | CR LF |
@@ -35,7 +35,7 @@ history lasts for the session only.
 ### Special keys
 
 | Key | Does |
-|---|---|
+| --- | --- |
 | `Ctrl-u` | Clears the line |
 | `Ctrl-c` | Sends a Ctrl-c byte (`0x03`) to the device at once |
 
@@ -48,7 +48,7 @@ lines you send are also shown in the history.
 ## Editing the line
 
 | Key | Does |
-|---|---|
+| --- | --- |
 | Left / Right | Move a character |
 | Home / End | Go to the start / end |
 | Ctrl-Left / Ctrl-Right, Alt-b / Alt-f | Move a word |
@@ -70,12 +70,12 @@ Enter, and the last part stays in the box.
 
 ### Vi keys
 
-Esc puts the input box in normal mode: the prompt changes from `> `
-(`prompt_prefix`) to `< ` (`prompt_vi_prefix`), and keys move the cursor
+Esc puts the input box in normal mode: the prompt changes from `>` (set by
+`prompt_prefix`) to `<` (`prompt_vi_prefix`), and keys move the cursor
 instead of typing. `i` goes back to typing.
 
 | Keys | Do |
-|---|---|
+| --- | --- |
 | `h` `l` | Move a character |
 | `w` `b` `e` | Move by word |
 | `W` `B` `E` | Move by word, punctuation included |
@@ -107,7 +107,7 @@ wheel and `Shift-PageUp` / `Shift-PageDown`. See
 settings popup cycles it.
 
 | Mode | Shows |
-|---|---|
+| --- | --- |
 | `pretty` (default) | The text with the device's colors, other escape sequences hidden |
 | `clean` | The text without colors |
 | `raw` | Control characters made visible: `^[` for ESC, `\r`, `\xNN` |
@@ -119,7 +119,7 @@ settings popup cycles it.
 cycles it.
 
 | Mode | Long lines |
-|---|---|
+| --- | --- |
 | `word` (default) | Wrap at a space |
 | `char` | Wrap at the edge |
 | `truncate` | Are cut; you pan sideways to read them |
@@ -131,7 +131,7 @@ To pan, use `Ctrl-a Left` / `Ctrl-a Right`, or the arrows in the status bar.
 cycles it.
 
 | Value | A wrapped row starts |
-|---|---|
+| --- | --- |
 | `timestamp` (default) | Under the text, past the timestamp |
 | `prefix` | Past the row mark only |
 | `none` | At the left edge |
@@ -156,7 +156,7 @@ in the settings popup cycles it.
 ### Other settings
 
 | Setting | Default | Does |
-|---|---|---|
+| --- | --- | --- |
 | `show_partial_rx` | `true` | Shows the line still coming in as it grows. Off, a line shows once it ends. |
 | `entry_spacing` | `0` | Blank rows between two lines |
 | `history_size` | `1000` | Lines kept; older ones are dropped. Read at startup. |

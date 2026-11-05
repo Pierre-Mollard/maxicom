@@ -1,0 +1,5 @@
+# marksman (LazyVim's Markdown language server): a document is known by its file, not by
+# its `#` headings. mdBook's SUMMARY.md has one `#` per part, which made marksman see that
+# file defined five times and the README's link to it ambiguous
+[core]
+title_from_heading = false

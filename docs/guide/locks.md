@@ -21,7 +21,7 @@ split the device's output between them.
 giving the PID, the user, the machine, the address and the start time:
 
 | System | Folder |
-|---|---|
+| --- | --- |
 | Linux, macOS | `/run/lock/maxicom` where the system lets users create it (Debian, Ubuntu), else `/tmp/maxicom-locks` |
 | Windows | `%ProgramData%\maxicom\locks` |
 

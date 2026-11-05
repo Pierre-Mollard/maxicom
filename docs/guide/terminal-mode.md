@@ -32,7 +32,7 @@ when it grows, and keeps its content when it shrinks.
 in the settings popup cycles it.
 
 | Mode | Size |
-|---|---|
+| --- | --- |
 | `grow_only` (default) | Grows with the view, never shrinks. When the window gets smaller, the view follows the cursor. |
 | `match_view` | The view's size, but never smaller than the content below the cursor or the widest row |
 | `fixed_cols` | The view's rows, but never fewer than the content below the cursor; `cols` columns |
@@ -83,20 +83,131 @@ While maxicom's window doesn't have the focus, the cursor is drawn as
 
 ## Answering the device's queries
 
-Programs on the device ask their terminal questions, as they would any
-terminal: where the cursor is (that's how `resize` learns the size), the
-screen size, the terminal's identity, the state of its modes. With
-`answer_queries` in `[terminal_mode]` (default `true`), maxicom answers
-them. `A` in the settings popup toggles it.
+A program on the device can't see its terminal. To learn something about it,
+it writes a query, an escape sequence, and reads the reply as if you had
+typed it. Without a reply, it waits for a timeout, then guesses. Over a
+serial line, that's how `resize` learns the size, and why vim or a shell can
+pause for a second when nothing answers.
 
-- Only live data in terminal mode gets an answer, never a restored session
-  or a replay.
-- Questions about colors, the title and the clipboard are never answered.
+maxicom answers the common queries for the terminal it emulates.
 
-| Setting | Default | Does |
-|---|---|---|
-| `answer_groups` | all | Which queries to answer: `status`, `identity`, `size`, `modes` |
-| `answerback` | empty | The text sent back on ENQ (`0x05`). Empty sends nothing, because `0x05` also shows up in binary data. |
+### Turning it on or off
+
+`answer_queries` in `[terminal_mode]` (default `true`) turns the answers on.
+`A` in the settings popup toggles it, and `set answer-queries on|off` sets
+it.
+
+Only live data gets an answer, and only while you're in terminal mode. A
+query inside a restored session or a replay is old: it wasn't sent to this
+run, so it isn't answered.
+
+### The groups
+
+The queries come in four groups, and `answer_groups` lists the ones to
+answer, all of them by default:
+
+```toml
+[terminal_mode]
+answer_groups = ["status", "identity", "size", "modes"]
+```
+
+The tables below write `ESC [` as you'd see it in a hex dump: the escape
+byte (`0x1b`) then `[`. Programs and specifications call it CSI, `ESC P` is
+DCS, and `ESC \` ends a DCS reply.
+
+#### `status`
+
+| Query | Asks | maxicom answers |
+| --- | --- | --- |
+| `ESC [ 5 n` | Are you working? | `ESC [ 0 n`: ready |
+| `ESC [ 6 n` | Where is the cursor? | `ESC [ row ; col R`, counted from 1 at the top left |
+| `ESC [ ? 6 n` | The same, with the page | `ESC [ ? row ; col ; 1 R` |
+| `ESC [ ? 15 n` | Is there a printer? | `ESC [ ? 13 n`: no printer |
+
+The cursor query is the one that matters most. `resize` moves the cursor to
+the bottom right corner and asks where it ended, which gives the size (see
+[Serial shells](#serial-shells)). Shells and readline ask it too, to know
+where the prompt ends.
+
+#### `identity`
+
+| Query | Asks | maxicom answers |
+| --- | --- | --- |
+| `ESC [ c` | What kind of terminal are you? | `ESC [ ? 62 ; 22 c`: VT220 class, with ANSI colors |
+| `ESC Z` | The same, in its VT100 form | The same |
+| `ESC [ > c` | Which model and version? | `ESC [ > 0 ; 0 ; 0 c`: no known model |
+| `ESC [ = c` | Your unit ID? | `ESC P ! \| 00000000 ESC \`: a zero ID |
+| `ESC [ > q` | Your name and version? | `ESC P > \| maxicom <version> ESC \` |
+| `ESC [ x` | Your line settings? | `ESC [ 2 ; 1 ; 1 ; 112 ; 112 ; 1 ; 0 x`: fixed values (8 bits, no parity, 9600 baud) |
+| ENQ, the byte `0x05` | Who are you? | The `answerback` text, nothing by default |
+
+Every terminal answers `ESC [ c`, so programs send it last, after a query
+that may go unanswered: when its reply comes first, they know the other
+query isn't supported.
+
+maxicom doesn't claim a model in `ESC [ > c`, because vim turns on xterm
+features when it reads an xterm version there.
+
+`answerback` in `[terminal_mode]` sets the text sent on ENQ. It's empty by
+default because `0x05` also shows up in binary data.
+
+#### `size`
+
+| Query | Asks | maxicom answers |
+| --- | --- | --- |
+| `ESC [ 18 t` | Text area, in cells? | `ESC [ 8 ; rows ; cols t` |
+| `ESC [ 19 t` | Screen, in cells? | `ESC [ 9 ; rows ; cols t`, the same size |
+| `ESC [ 14 t` | Text area, in pixels? | `ESC [ 4 ; height ; width t` |
+| `ESC [ 16 t` | One cell, in pixels? | `ESC [ 6 ; height ; width t` |
+| `ESC [ 11 t` | Is the window minimized? | `ESC [ 1 t`: no |
+
+The size is the emulated screen's, where its lines wrap (see
+[Screen size](#screen-size)), not your window's.
+
+The pixel sizes are only answered when your own terminal gives its size in
+pixels. Image tools use them to size their pictures.
+
+#### `modes`
+
+| Query | Asks | maxicom answers |
+| --- | --- | --- |
+| `ESC [ ? mode $ p` | Is this mode on? | `ESC [ ? mode ; state $ y`: `1` on, `2` off, `0` unknown |
+| `ESC [ mode $ p` | The same, for a standard mode | `ESC [ mode ; 0 $ y`: unknown |
+
+The modes maxicom knows:
+
+| Mode | Is |
+| --- | --- |
+| `1` | Cursor keys in application mode |
+| `25` | The cursor shown |
+| `47`, `1049` | The alternate screen, the one full-screen programs draw on |
+| `9`, `1000`, `1002`, `1003` | Mouse reports: on press, on press and release, while dragging, on any move |
+| `1005`, `1006` | Mouse reports in UTF-8, in SGR form |
+| `2004` | Bracketed paste |
+
+Programs like neovim and fzf ask before using a mode. For any other mode the
+answer is `0`, which they read as "not supported".
+
+### Never answered
+
+| Query | Why |
+| --- | --- |
+| The colors: `ESC ] 10 ; ?`, `ESC ] 11 ; ?`, `ESC ] 12 ; ?`, `ESC ] 4 ; n ; ?`, and `ESC [ ? 996 n` (dark or light?) | maxicom draws with your terminal's colors and doesn't know their values. vim and the like keep their own light or dark guess. |
+| The window title: `ESC [ 20 t`, `ESC [ 21 t` | Safety: the device could set a title holding a command, then have it typed back |
+| The clipboard: `ESC ] 52 ; c ; ?` | Safety: the device would read your clipboard |
+| Moving or resizing the window: `ESC [ 3 t`, `ESC [ 8 t`, `ESC [ 13 t` | Your window isn't the device's to move |
+| A setting's value, a terminfo entry: `ESC P $ q …`, `ESC P + q …` | Not supported |
+| Richer key reports: `ESC [ ? u` (kitty keyboard), `ESC [ ? 4 m` | Not supported |
+
+### When to turn answers off
+
+An answer is input to the device, as if you typed it. That's what a shell
+expects, but not every program on a serial line is a shell. Turn
+`answer_queries` off, or drop a group from `answer_groups`, when:
+
+- the device sends binary data, where a few bytes can read like a query;
+- the program reading the line takes any input as a command, like a
+  bootloader waiting for an upload.
 
 ## Serial shells
 

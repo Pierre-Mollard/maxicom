@@ -3,7 +3,7 @@
 ## Scrolling
 
 | Key | Scrolls |
-|---|---|
+| --- | --- |
 | `Shift-PageUp` / `Shift-PageDown` | A page up / down |
 | `Shift-Home` | To the top |
 | `Shift-End` | Back to the live output |
@@ -31,7 +31,7 @@ terminal mode.
 ### Keys
 
 | Key | Does |
-|---|---|
+| --- | --- |
 | `h` `j` `k` `l`, arrows | Move the cursor |
 | `w` `b` `e`, `W` `B` `E`, `ge` `gE` | Move by word, as in vi |
 | `0` `^` / `$` | Start / end of the line |
@@ -77,7 +77,7 @@ turns red. See [Theme](theme.md).
 ### Selecting text
 
 | Action | Copies |
-|---|---|
+| --- | --- |
 | Drag | What the drag covers, when you release |
 | Double click | The word |
 | Triple click | The line |

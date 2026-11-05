@@ -61,7 +61,7 @@ a device. See [Replay](capture.md#replay).
 ### Other startup options
 
 | Option | Does |
-|---|---|
+| --- | --- |
 | `-C, --capturefile <path>` | Records the received text to that file from the start |
 | `-H, --displayhex` | Opens the raw side panel in hex |
 | `-R, --remotecharset <enc>` | Reads the received bytes as `utf8`, `ascii`, `cp437` or `latin1` |
@@ -108,6 +108,20 @@ startup or the `baud` command.
 A TCP link has no line settings, since its bridge sets them: the popup only
 shows its address.
 
+### From the command line
+
+The same settings have commands, for the
+[command line](command-line.md) or a key:
+
+| Command | Sets |
+| --- | --- |
+| `baud <rate>` | The baud rate, from 50 to 4000000, if the adapter takes it: `baud 250000` |
+| `framing <8N1>` | The data bits (5 to 8), the parity (`N`, `E`, `O`) and the stop bits (1, 2): `framing 7E1` |
+| `flow none\|hw\|sw` | The flow control |
+
+On a detached port, they are kept for when it opens. A TCP link and a replay
+refuse them.
+
 ## Detach and attach
 
 `Ctrl-a D` detaches the link: maxicom closes the port but keeps the screen.
@@ -137,7 +151,7 @@ off.
 While a link is detached, lost, or not picked yet, a popup says so:
 
 | Popup | Enter | `d` | Esc |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Detached | Attaches the link again | Opens the directory | Quits maxicom |
 | Connection Lost | Quits maxicom | Opens the directory | Quits maxicom |
 | No device | Opens the directory | | Quits maxicom |

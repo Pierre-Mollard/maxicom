@@ -19,7 +19,7 @@ A toggle also says its new state in a notification, like `Add CR ON` or
 maxicom prints these and exits.
 
 | Message | Means | To do |
-|---|---|---|
+| --- | --- | --- |
 | `Argument error: Unknown argument '<arg>'.` | An option maxicom doesn't know | `maxicom --help` lists them |
 | `Argument error: Missing value for option '<option>'.` | An option that takes a value was last | Give its value: `-b 115200` |
 | `Argument error: Invalid baud rate '<value>'`, `Invalid delay '<value>'` | A value that isn't a number | |
@@ -39,7 +39,7 @@ These come back as a notification, in the [directory](directory.md)'s
 test column, or on the shell at startup.
 
 | Message | Means | To do |
-|---|---|---|
+| --- | --- | --- |
 | `permission denied opening serial port '<port>'` | Your user can't open the port | On Linux, join the `dialout` group (`uucp` on Arch). See [Troubleshooting](troubleshooting.md#permission-denied-linux). |
 | `serial port '<port>' is held by <holder>` | Another program has the port | Close it, or detach it there. See [Port locks](locks.md#when-a-port-is-already-held). |
 | `serial port '<port>' is busy (already in use by another application)` | The system refused the port as busy, without naming the holder | Find the program that has it open |
@@ -51,7 +51,7 @@ test column, or on the shell at startup.
 ## While a link runs
 
 | Message | Means | To do |
-|---|---|---|
+| --- | --- | --- |
 | `Serial port lost`, `TCP connection lost` | The device went away; the Connection Lost popup shows | Nothing: it reopens when the device comes back |
 | `Serial port detached` | `Ctrl-a D` closed it | `Ctrl-a D` opens it again |
 | `Device idle for <n>s: port detached` | Nothing came in for `inactivity_detach_timeout` | `Ctrl-a D`. See [Idle links](links.md#idle-links). |
@@ -67,7 +67,7 @@ of its line: `(<n> more not run)` says how many commands were dropped.
 See [Command line](command-line.md).
 
 | Message | Means |
-|---|---|
+| --- | --- |
 | `unknown command '<name>'` | No command has this name. Tab completes the names. |
 | `<command>: missing argument <name>` | An argument is missing |
 | `<command> takes no argument`, `takes <n> argument(s) at most` | Too many arguments |
@@ -90,7 +90,7 @@ See [Command line](command-line.md).
 ## Config files
 
 | Message | Means | To do |
-|---|---|---|
+| --- | --- | --- |
 | Popup "Config Reload Failed" | A file doesn't load; the running config stays. The details name the file and the line. | Fix it, then reload |
 | `Config reloaded; restart to apply: <settings>` | Those settings are only read at startup | Restart maxicom. See [Reload](settings.md#reload). |
 | `Keymap: unreachable <keys>` | Keys in `[line_mode]` or `[terminal_mode]` that the prefix or `[direct_actions]` take first | Bind them to other keys. See [Keybindings](keybindings.md#sections). |
@@ -100,7 +100,7 @@ See [Command line](command-line.md).
 ## Recordings and sessions
 
 | Message | Means | To do |
-|---|---|---|
+| --- | --- | --- |
 | Popup "Capture Failed" | The recording's file or folder can't be created | Check the path and its rights |
 | `Full recording stopped: the device changed` | Another port, line settings, encoding, or a replay | Start a new recording. See [Full recordings](capture.md#full-recordings). |
 | `Session backup off: <reason>` | This session isn't backed up, usually because the cache folder can't be written | Check the folder: `maxicom --cache-dir` |
@@ -114,7 +114,7 @@ See [Command line](command-line.md).
 ## The screen
 
 | Message | Means | To do |
-|---|---|---|
+| --- | --- | --- |
 | `Terminal window too small (<c>x<r>). Minimum is 30x8` | The window is under 30 columns or 8 rows | Make it bigger |
 | `Line wrap: line mode only` | `Ctrl-a w` in terminal mode, where the screen always wraps | See [Terminal mode](terminal-mode.md#screen-size) |
 | `Raw SideView is Off` | Resizing the side panel while it's hidden | `Ctrl-a B` shows it |

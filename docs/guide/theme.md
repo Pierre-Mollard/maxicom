@@ -25,7 +25,7 @@ bg = "#FFB86C"
 ```
 
 | Field | Takes |
-|---|---|
+| --- | --- |
 | `fg`, `bg`, `underline_color` | A color |
 | `bold`, `dim`, `italic`, `underlined`, `reversed`, `crossed` | `true` or `false` |
 
@@ -39,7 +39,7 @@ theme.
 ## Colors
 
 | Write | For |
-|---|---|
+| --- | --- |
 | `Black`, `Red`, `Green`, `Yellow`, `Blue`, `Magenta`, `Cyan`, `Gray`, `DarkGray`, `LightRed`, `LightGreen`, `LightYellow`, `LightBlue`, `LightMagenta`, `LightCyan`, `White` | The 16 terminal colors; your terminal's palette decides how they look |
 | `Reset` | The terminal's default color |
 | `"#RRGGBB"` | An exact color |
@@ -53,7 +53,7 @@ The base colors the rest builds on. The [status bar](status-bar.md) uses
 these names too (`main`, `secondary`...).
 
 | Entry | Default | |
-|---|---|---|
+| --- | --- | --- |
 | `main` | `Cyan` | The accent (`primary` in the status bar): the mode badge, the baud rate |
 | `secondary` | `Yellow` | The second accent: the time, running tasks (mash, file sent, replay) |
 | `ternary` | `Green` | A third one |
@@ -67,7 +67,7 @@ these names too (`main`, `secondary`...).
 ### `[ui]`
 
 | Entry | Default | |
-|---|---|---|
+| --- | --- | --- |
 | `background` | `Reset` on `Reset` | The app's background |
 | `border_panel` / `border_panel_focused` | `DarkGray` / `Cyan` | A box's border, the focused box's |
 | `border_app_unfocused` | `DarkGray` | The borders while the window isn't focused |
@@ -84,7 +84,7 @@ while the cursor is in the raw side panel.
 ### `[line_mode]`
 
 | Entry | Default | |
-|---|---|---|
+| --- | --- | --- |
 | `line_prefix`, `line_indent_prefix`, `line_partial_prefix` | `DarkGray` | The row marks: a line, a wrapped row, the line coming in |
 | `timestamp` | `Yellow` | The times |
 | `prompt` / `history` | `Reset` bg | The input box, the history |
@@ -92,7 +92,7 @@ while the cursor is in the raw side panel.
 ### `[terminal]`
 
 | Entry | Default | |
-|---|---|---|
+| --- | --- | --- |
 | `term_inside` / `term_outside` | `Reset` / `DarkGray` | The emulated screen, the view around it (`empty_fill_char`) |
 | `timestamp` | `Yellow` | The times column |
 | `timestamp_del`, `timestamp_del_empty` | `Yellow`, `DarkGray` | The `│` after a time, after an empty one |
@@ -103,7 +103,7 @@ while the cursor is in the raw side panel.
 See [Search](search.md).
 
 | Entry | Default | |
-|---|---|---|
+| --- | --- | --- |
 | `search_match` | black on `Yellow` | The matches |
 | `search_match_active` | black on `#FF8C00` | The current match |
 | `search_indicator` | black on `Green`, bold | The bar's label |
@@ -113,7 +113,7 @@ See [Search](search.md).
 The byte kinds of the [raw side panel](raw-side-panel.md#reading-it).
 
 | Entry | Default |
-|---|---|
+| --- | --- |
 | `byte_any` | `White` |
 | `byte_null` | `DarkGray` |
 | `byte_ascii` | `Cyan` |
@@ -125,7 +125,7 @@ The byte kinds of the [raw side panel](raw-side-panel.md#reading-it).
 ### `[popup]`
 
 | Entry | Default |
-|---|---|
+| --- | --- |
 | `border` | `Cyan` |
 | `background` | `White` on `Reset` |
 | `title` | `Cyan`, bold |
@@ -133,7 +133,7 @@ The byte kinds of the [raw side panel](raw-side-panel.md#reading-it).
 ### `[notification]`
 
 | Entry | Default | |
-|---|---|---|
+| --- | --- | --- |
 | `border` | `DarkGray` | The frame |
 | `info` | `White` | |
 | `success` | `Green` | |
@@ -143,7 +143,7 @@ The byte kinds of the [raw side panel](raw-side-panel.md#reading-it).
 ### `[command_line]`
 
 | Entry | |
-|---|---|
+| --- | --- |
 | `border` | The popup's and the completion list's frame (default `LightGreen`) |
 | `prompt` | The `:` |
 | `text` | The typed text |
@@ -155,7 +155,7 @@ The colors of the [session browser](capture.md#session-browser), in the
 spirit of `lsd -l`. The defaults are 256-color indexes.
 
 | Entries | Color |
-|---|---|
+| --- | --- |
 | `date_hour`, `date_day`, `date_week`, `date_month`, `date_older` | The date, fading with the age of the last write |
 | `size_empty`, `size_small`, `size_medium`, `size_large`, `size_huge`, `size_giant` | The size, warming as it grows: `size_empty` for an empty session, then steps at 100 KiB, 1 MiB, 100 MiB and 1 GiB |
 | `mark_running`, `mark_restorable`, `mark_no_meta` | The marks |

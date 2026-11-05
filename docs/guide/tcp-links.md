@@ -10,7 +10,7 @@ maxicom tcp://192.168.1.50:4000
 ## What can serve one
 
 | Bridge | Notes |
-|---|---|
+| --- | --- |
 | A TCP-UART bridge in the device's firmware | ESP32: ESP-Link, the ESPHome stream server, or your own. No cable, and no USB forwarding from WSL2. |
 | ser2net or socat | On the machine the board is plugged into, sharing its port on the network. |
 | A serial device server | Moxa, Lantronix, Digi, in their raw TCP mode. |

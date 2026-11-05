@@ -6,7 +6,7 @@ away after a few seconds.
 ## Closing them
 
 | To close | Do |
-|---|---|
+| --- | --- |
 | One notification | Click anywhere on it. Over a popup, the popup stays open. |
 | The top one | `Ctrl-a n` |
 | All of them | `Ctrl-a N` |
@@ -17,7 +17,7 @@ Each level has its color in `[notification]` of the theme, and `border` is
 their frame.
 
 | Level | For example |
-|---|---|
+| --- | --- |
 | `info` | A setting changed, a trigger fired |
 | `success` | Text copied, a file saved |
 | `warn` | The port detached, a recording stopped |

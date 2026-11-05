@@ -10,7 +10,7 @@ keys a popup adds.
 ## Moving around
 
 | Key | Does |
-|---|---|
+| --- | --- |
 | `Up` `k` / `Down` `j` | Move up / down |
 | `Left` `h` / `Right` `l` | Change a value, or switch tab |
 | `Home` `g` / `End` `G` | First / last item |
@@ -53,7 +53,7 @@ popup with the details. Esc or Enter closes it.
 ## The popups
 
 | Popup | Key | Chapter |
-|---|---|---|
+| --- | --- | --- |
 | Help | `Ctrl-a ?`, `Ctrl-a z` | [Settings](settings.md#help) |
 | Settings | `Ctrl-a o`, `Ctrl-a s` | [Settings](settings.md#the-settings-popup) |
 | Directory | `Ctrl-a d` | [The directory](directory.md) |

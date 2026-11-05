@@ -14,6 +14,11 @@ dtr off; sleep 100; dtr on
 If a line has an unknown command or a bad argument, nothing in it runs: the
 error shows and the prompt stays open so you can fix it.
 
+This page lists every command. Those that belong to a topic, like `baud` or
+`replay`, are explained in its chapter too, linked from each section here.
+The ones that exist only as commands, like `send`, `mash` or `dtr`, are
+explained here.
+
 ![The command line after typing re, with the matching commands and their help listed](images/command-line.png)
 
 ## Writing arguments
@@ -54,7 +59,7 @@ only.
 ### Sending data
 
 | Command | Does |
-|---|---|
+| --- | --- |
 | `send <text>` | Sends the text as is, its escapes as bytes: `send AT\r`, `send "hello world\r\n"` |
 | `send-hex <bytes>` | Sends bytes written in hex, without spaces: `send-hex 0d0a` |
 | `send-file <path> [line-delay-ms]` | Sends a file, see below |
@@ -77,7 +82,7 @@ While it runs, the status bar shows `⇡ name 42%`. A click on it, or
 ### Control lines and break
 
 | Command | Does |
-|---|---|
+| --- | --- |
 | `dtr on\|off` | Sets the DTR line |
 | `rts on\|off` | Sets the RTS line. Refused with hardware flow control, since the driver drives RTS then. |
 | `break [ms]` | Holds the line in break, 250 ms by default. The rest of the line waits for it to end. |
@@ -87,7 +92,7 @@ While it runs, the status bar shows `⇡ name 42%`. A click on it, or
 ### Port settings
 
 | Command | Does |
-|---|---|
+| --- | --- |
 | `baud <rate>` | Sets the baud rate |
 | `framing <8N1>` | Sets the data bits, parity and stop bits |
 | `flow none\|hw\|sw` | Sets the flow control |
@@ -106,7 +111,8 @@ opens.
 
 ### Switching links
 
-`open <name | address>` switches to another link:
+`open <name | address>` switches to another link, like picking it in the
+[directory](directory.md). See [Switching links](links.md#switching-links).
 
 ```text
 open esp32                      # a saved link, with its line settings
@@ -132,7 +138,7 @@ open file://boot.raw            # a replay
 ### Replay
 
 | Command | Does |
-|---|---|
+| --- | --- |
 | `replay <path> [delay-ms]` | Plays a recording in the link's place, waiting `delay-ms` (0 to 10000, none by default) between buffers. Same as `open file://path`. |
 | `replay-stop` | Goes back to the live link |
 | `replay-pause` / `replay-resume` | Pauses / resumes |
@@ -144,37 +150,39 @@ See [Replay](capture.md#replay).
 ### Saved links
 
 | Command | Does |
-|---|---|
+| --- | --- |
 | `link-save [name]` | Saves the link in use to `links.toml`, under its address's name when none is given (`ttyUSB0`) |
 | `link-delete <name>` | Deletes a saved link; the names complete |
 
 Both refuse what the [directory](directory.md) refuses, and stop the rest of
-the line.
+the line. See [Saved links](saved-links.md).
 
 ### Settings
 
 | Command | Does |
-|---|---|
+| --- | --- |
 | `set <setting> on\|off` | Sets `local-echo`, `timestamps`, `mouse`, `answer-queries`, `add-cr` or `add-lf`. Does nothing when it's already so. |
 | `encoding utf8\|ascii\|cp437\|latin1` | Sets how the received bytes are read |
 
-Settings with more than two values cycle with their keys.
+Settings with more than two values cycle with their keys. See
+[Setting a value directly](settings.md#setting-a-value-directly) and
+[Text encoding](encoding-and-newlines.md#text-encoding).
 
 ### Search and screenshots
 
 | Command | Does |
-|---|---|
+| --- | --- |
 | `search <text>` | Opens the search bar on the text, with its matches shown |
 | `screenshot <name>` | Saves the terminal at once, without the dialog. Terminal mode only. |
 
 A bare screenshot name is saved in `screenshot.dir`. A `.ans` name keeps
 the colors; anything else is text, and `.txt` is added to a name without an
-extension.
+extension. See [Search](search.md) and [Screenshots](capture.md#screenshots).
 
 ### Waiting and stopping
 
 | Command | Does |
-|---|---|
+| --- | --- |
 | `sleep <ms>` | The rest of the line waits that long, up to a minute. The screen stays live. |
 | `cancel` | Stops the file being sent and a `mash`, and drops the commands waiting |
 
@@ -247,7 +255,7 @@ reload keeps the keymap in use.
 ### The default bound lines
 
 | Key | Line | Does |
-|---|---|---|
+| --- | --- | --- |
 | `Ctrl-a f` | `break` | Sends a break |
 | `Ctrl-a h` | `dtr off; sleep 100; dtr on` | Pulses DTR, which resets most boards |
 | `Ctrl-a L` | `replay-stop` | Goes back to the live link from a replay |

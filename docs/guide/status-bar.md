@@ -21,8 +21,8 @@ baud rate in the accent color. Every part of the bar is built this way.
 ## Syntax
 
 | Write | For | Example |
-|---|---|---|
-| `plain text` | Text in the bar's base style (`status_bar` in the theme) | `RX: ` |
+| --- | --- | --- |
+| `plain text` | Text in the bar's base style (`status_bar` in the theme) | `RX:` |
 | `{variable}` | A value maxicom fills in, see [Variables](#variables) | `{baud}` |
 | `[content](style)` | Text and variables in a [style](#styles) | `[{baud}](primary)` |
 | `[content](cond?yes:no)` | A style picked by a [condition](#conditions) | `[REC](rec?warn:hide)` |
@@ -93,7 +93,7 @@ layout = "border"
 ## Variables
 
 | Variable | Value | Example |
-|---|---|---|
+| --- | --- | --- |
 | `{mode}` | `TERM` or `LINE` | `TERM` |
 | `{port}` | Device address, or a saved link's name | `/dev/ttyUSB0`, `tcp://192.168.1.50:4000`, `esp32` |
 | `{baud}` | Baud rate; `raw` for a raw TCP link | `115200` |
@@ -128,7 +128,7 @@ panel instead. To show it, add this block after `{mode}`'s:
 `{name:spec}`, spec `[<>^][0][width][h]`:
 
 | Write | For |
-|---|---|
+| --- | --- |
 | `{rx_bytes:8}` | Pad to 8 columns (numbers right, text left) |
 | `{port:<12}` | Align with `<`, `>` or `^` (center) |
 | `{rx_bytes:08}` | Pad a number with zeros |
@@ -152,7 +152,7 @@ otherwise. Conditions chain:
 `prefix?(...):copy?(...):(...)`.
 
 | Condition | Aliases | True when |
-|---|---|---|
+| --- | --- | --- |
 | `prefix` | | The prefix (`Ctrl-a`) is active |
 | `line` / `term` | `linemode` / `terminal` | Line / terminal mode |
 | `copy` | `copymode` | Copy mode |
@@ -193,7 +193,7 @@ A color alone sets the text color: `[{baud}](primary)`. With `fg=<color>`
 and `bg=<color>` you set either one; `fg=none` and `bg=none` clear them.
 
 | Colors | From |
-|---|---|
+| --- | --- |
 | `main` (or `primary`), `secondary`, `ternary`, `text`, `muted`, `warn` (`warning`), `good` (`ok`, `success`), `unselected` | The theme's [palette](theme.md#palette) |
 | `selection`, `selection_raw` | The background of `[ui.selection]` / `[ui.selection_raw]`, which the default mode badge takes in copy mode |
 | `search` | The background of `[search.search_indicator]`, which the badge takes while searching |
@@ -250,7 +250,7 @@ Blocks with the same `prio` go together, so give a separator the same
 A block without `click=` runs what its first variable implies:
 
 | Variable | A click |
-|---|---|
+| --- | --- |
 | `{mode}` | Switch between LINE and TERM |
 | `{baud}`, `{framing}` | Open the link settings (`{port}` does nothing) |
 | `{copy_side}` | Switch the copy cursor's panel |
@@ -292,7 +292,7 @@ They react to clicks too:
 `layout` in `[ui.status_bar]` sets where the bar is drawn:
 
 | Layout | Where |
-|---|---|
+| --- | --- |
 | `line` | A row of its own, plain text on the UI background |
 | `band` | A row filled with the `status_bar` background |
 | `border` (default) | In the bottom border of the last box: the input box in line mode, the history in terminal mode, or the search bar while it's open |

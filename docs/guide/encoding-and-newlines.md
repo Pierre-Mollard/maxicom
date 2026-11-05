@@ -11,7 +11,7 @@ and the triggers always get the bytes exactly as received.
 characters.
 
 | Encoding | For |
-|---|---|
+| --- | --- |
 | `utf8` (default) | Most devices today |
 | `ascii` | 7-bit text only |
 | `cp437` | The IBM PC character set: old BIOS, DOS and bootloader screens drawn with box characters |
@@ -52,7 +52,7 @@ line.
 ### Turning them on
 
 | | Add CR | Add LF |
-|---|---|---|
+| --- | --- | --- |
 | Key | `Ctrl-a u` | `Ctrl-a a` |
 | Settings popup | `R` | `F` |
 | Command line | `set add-cr on\|off` | `set add-lf on\|off` |

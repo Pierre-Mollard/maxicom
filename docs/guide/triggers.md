@@ -22,7 +22,7 @@ rearm = true
 ```
 
 | Field | Means |
-|---|---|
+| --- | --- |
 | `match` | The text to wait for. It takes the escapes of the command line: `'\x1b[7mBoot menu'`. |
 | `run` | The [command line](command-line.md) to run, as if typed, after any line still waiting |
 | `rearm` | `true` keeps the trigger armed after it fires |
@@ -59,7 +59,7 @@ on the side.
 On top of the [popup keys](popups.md):
 
 | Key | Does |
-|---|---|
+| --- | --- |
 | Enter, Tab, Space, a click | Toggle the selected trigger |
 | `l`, Right | Arm it |
 | `h`, Left | Disarm it |
@@ -69,7 +69,7 @@ On top of the [popup keys](popups.md):
 ## Other ways to arm them
 
 | Key or command | Does |
-|---|---|
+| --- | --- |
 | `Ctrl-a U` | Toggles `u-boot` |
 | `toggle-triggers` | Toggles them all (no key by default) |
 | `trigger on\|off\|toggle [name]` | Arms, disarms or toggles all, or the one named |
