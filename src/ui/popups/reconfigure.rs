@@ -12,8 +12,11 @@ use crate::{
     configs::{KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
     link::LinkKind,
     overlays::{LineSettingField, LineSettingsDialog, PopupTarget},
-    ui::popups::{FORM_WIDTH, form_area, key_hints, popup_block, row_area},
+    ui::popups::{FORM_WIDTH, centered, form_area, key_hints, popup_block, row_area},
 };
+
+/// The widest `< value >`: `< Hardware >`
+const VALUE_WIDTH: u16 = 12;
 
 pub fn render_reconfigure_popup(
     dialog: &LineSettingsDialog,
@@ -99,13 +102,15 @@ pub fn render_reconfigure_popup(
     frame.render_widget(Clear, area);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    frame.render_widget(Paragraph::new(lines), inner);
+    // centered, as wide as its widest value, so it stays put as the values change
+    let content = centered(inner, 2 + 14 + VALUE_WIDTH);
+    frame.render_widget(Paragraph::new(lines), content);
     hints.push_block_targets(area, targets);
     // one row per field, in order (MAX-113); before them, as the first target under the pointer
     // wins, the `< ` and ` >` around the value, after the pointer and the label (MAX-134)
     for (y, &(field, width)) in field_rows.iter().enumerate() {
         let row = row_area(inner, y);
-        let value_x = row.x + 2 + 14;
+        let value_x = content.x + 2 + 14;
         let arrow = |x| Rect::new(x, row.y, 2, 1).intersection(row);
         targets.push((arrow(value_x), PopupTarget::LinePrev(field)));
         targets.push((

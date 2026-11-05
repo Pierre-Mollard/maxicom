@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{cell::Cell, path::PathBuf};
 
 use tui_input::Input;
 
@@ -17,6 +17,9 @@ pub struct FilePathDialog {
     pub file_input: Input,
     pub stream: Stream,
     pub include_session: Option<bool>,
+    /// The content's width drawn so far: never narrower while open, so it stays put as the
+    /// name gets shorter
+    pub width: Cell<u16>,
 }
 
 impl FilePathDialog {
@@ -25,6 +28,7 @@ impl FilePathDialog {
             file_input: Input::new(path),
             stream,
             include_session: None,
+            width: Cell::new(0),
         }
     }
 
@@ -85,6 +89,8 @@ pub struct ScreenshotDialog {
     pub format: ScreenshotFormat,
     stem: String,
     shot: Screenshot,
+    /// The content's width drawn so far, as `FilePathDialog::width`
+    pub width: Cell<u16>,
 }
 
 impl ScreenshotDialog {
@@ -94,6 +100,7 @@ impl ScreenshotDialog {
             format,
             stem: stem.to_string(),
             shot,
+            width: Cell::new(0),
         };
         dialog.file_input = Input::new(dialog.default_path(format));
         dialog

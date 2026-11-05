@@ -47,6 +47,17 @@ pub fn popup_block<'a>(title: &str, hints: &Hints<'a>, theme: &ThemeConfig) -> B
     block
 }
 
+/// The part of a popup's inner area where content `width` wide sits centered: from its
+/// indent to the right edge, so a longer line is cut no sooner than without it
+pub fn centered(inner: Rect, width: u16) -> Rect {
+    let indent = inner.width.saturating_sub(width) / 2;
+    Rect {
+        x: inner.x + indent,
+        width: inner.width - indent,
+        ..inner
+    }
+}
+
 /// A centered popup as tall as `lines` inside `popup_block`
 pub fn form_area(parent: Rect, width: u16, lines: usize) -> Rect {
     popup_area(parent, width, lines as u16 + 4)
@@ -203,9 +214,10 @@ pub fn hint_spans<'a, T: Copy>(
             names.push(name);
         }
         spans.push(Span::styled(names.join("/"), key_style));
-        let label = format!(" {label}");
-        spot(&mut col, &label, first);
-        spans.push(Span::styled(label, muted));
+        // the label's spot leaves out the space before it, so its hover doesn't start there
+        col += 1;
+        spot(&mut col, label, first);
+        spans.push(Span::styled(format!(" {label}"), muted));
     }
 
     (Line::from(spans), spots)

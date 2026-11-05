@@ -25,9 +25,8 @@ impl ActionMenu {
         };
         // a replay started while running goes back to the live link (MAX-168)
         let attach = match link {
-            LinkKind::Serial => "Detach / attach port",
-            LinkKind::Tcp => "Detach / attach connection",
-            LinkKind::Replay => "Back to live link",
+            LinkKind::Serial | LinkKind::Tcp => "Detach / attach",
+            LinkKind::Replay => "Back to live",
         };
         let record = if recording {
             "Stop recording"
@@ -41,7 +40,6 @@ impl ActionMenu {
             ("Directory…", KeyBindingAction::Directory),
             (switch_mode, KeyBindingAction::SKInputMode),
             (record, KeyBindingAction::Record),
-            ("Copy mode", KeyBindingAction::EnterCopyMode),
             ("Search", KeyBindingAction::EnterSearch),
         ];
         if mode == Mode::Terminal {
@@ -51,7 +49,7 @@ impl ActionMenu {
             ]);
         }
         items.extend([
-            ("Session backups…", KeyBindingAction::Sessions),
+            ("Sessions…", KeyBindingAction::Sessions),
             ("Triggers…", KeyBindingAction::Triggers),
             ("Clear", KeyBindingAction::Clear),
             ("Clear history", KeyBindingAction::ClearHistory),

@@ -6,6 +6,11 @@ use crate::{
     overlays::{OverlayResponse, PopupTarget},
 };
 
+/// The digits a field takes: its value fits the popup's column, and no terminal is taller or
+/// wider than 9999
+const MAX_DIGITS: usize = 4;
+const MAX_VALUE: i32 = 9999;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResizeField {
     Rows,
@@ -38,7 +43,7 @@ impl ResizeDialog {
     fn step(&mut self, by: i32) {
         let input = self.active_input();
         let value = input.value().parse::<i32>().unwrap_or(0);
-        let value = (value + by).clamp(1, u16::MAX.into());
+        let value = (value + by).clamp(1, MAX_VALUE);
         *input = Input::new(value.to_string());
     }
 
@@ -84,13 +89,21 @@ impl ResizeDialog {
                 OverlayResponse::Handled
             }
             DialogAction::HandleKey(raw_key) => {
-                if !matches!(raw_key.code, KeyCode::Char(c) if !c.is_ascii_digit()) {
+                let full = self.active_input().value().len() >= MAX_DIGITS;
+                let ignored = match raw_key.code {
+                    KeyCode::Char(c) => !c.is_ascii_digit() || full,
+                    _ => false,
+                };
+                if !ignored {
                     dispatch_input_key(self.active_input(), raw_key);
                 }
                 OverlayResponse::Handled
             }
             DialogAction::Paste(text) => {
-                let digits: String = text.chars().filter(char::is_ascii_digit).collect();
+                let room = MAX_DIGITS.saturating_sub(self.active_input().value().len());
+                let digits: String = (text.chars().filter(char::is_ascii_digit))
+                    .take(room)
+                    .collect();
                 paste_into_input(self.active_input(), &digits);
                 OverlayResponse::Handled
             }
@@ -98,3 +111,7 @@ impl ResizeDialog {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/overlays/resize.rs"]
+mod tests;

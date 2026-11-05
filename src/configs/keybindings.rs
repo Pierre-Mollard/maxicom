@@ -1043,6 +1043,7 @@ impl Default for KeyBindingsConfig {
             "f"     => "break", // a break like minicom's
             "h"     => "dtr off; sleep 100; dtr on", // DTR pulse which resets most boards
             "U"     => "trigger toggle u-boot", // the default triggers.toml's
+            "L"     => "replay-stop", // back to the live link, as the session browser's L
         };
 
         let line_mode = default_bindings! {

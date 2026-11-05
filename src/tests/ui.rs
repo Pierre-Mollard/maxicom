@@ -1367,8 +1367,9 @@ fn settings_scroll_on_a_short_screen() {
 /// MAX-184: on 80x24 the settings show in two columns with no scrollbar, General and
 /// Newlines on the left, Line Mode and Terminal Mode on the right, Files under both; a
 /// click on a right-column row toggles its setting, `N` cycles what Enter sends. A
-/// narrower screen has one column, scrolled.
-/// How: the popup at 80x24, a click on Query Answers, `N` three times; then at 60x24.
+/// narrower screen has one column, scrolled. Each value is padded to the longest one, so
+/// the popup keeps its width as they change (the mode, `Line` or `Terminal`).
+/// How: the popup at 80x24, a click on Query Answers, `N` three times, `M`; then at 60x24.
 #[test]
 fn settings_in_two_columns() {
     use crate::configs::settings::TxNewlineSymbol;
@@ -1381,10 +1382,10 @@ fn settings_in_two_columns() {
     };
     let rows = open(&mut h);
     for row in [
-        "General                          Line Mode",
-        "[M] Input Mode    : Line Mode    [W] Line Wrap     : Word-Wrap",
-        "[U] Mouse         : ON           Terminal Mode",
-        "Newlines                         [A] Query Answers : ON",
+        "General                           Line Mode",
+        "[M] Input Mode    : Line          [W] Line Wrap     : Word-Wrap",
+        "[U] Mouse         : ON            Terminal Mode",
+        "Newlines                          [A] Query Answers : ON",
         "[N] Line Enter    : LF",
         "Files",
         "[C] Config        :",
@@ -1404,12 +1405,83 @@ fn settings_in_two_columns() {
     use TxNewlineSymbol::{Cr, CrLf, Lf};
     assert_eq!(eols, [Cr, CrLf, Lf]);
 
+    let before = h.app.frame_map().popup;
+    key_do(&mut h, Char('m'), KeyModifiers::NONE);
+    let rows = h.draw();
+    assert!(
+        has(&rows, "[M] Input Mode    : Terminal      [W]"),
+        "{rows:#?}"
+    );
+    assert_eq!(h.app.frame_map().popup, before);
+
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 60, 24);
     let rows = open(&mut h);
     assert!(has(&rows, "[N] Line Enter    : LF"), "{rows:#?}");
     let side_by_side = |row: &String| row.contains("[M]") && row.contains("[W]");
     assert!(!rows.iter().any(side_by_side), "{rows:#?}");
     assert!(has(&rows, "▼"), "{rows:#?}");
+}
+
+/// The resize and recording popups center their content. The recording's stays put as its
+/// name gets shorter, and moves once the name outgrows the widest it has been.
+/// How: the resize popup, then the recording popup with a 30-char name, 10 chars deleted,
+/// then 20 typed past the start; the column of each popup's labels.
+#[test]
+fn form_popups_center_their_content() {
+    use crossterm::event::KeyCode::{Backspace, Char};
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+    let column = |rows: &[String], text: &str| cell_of(rows, text).0;
+    let border = |rows: &[String]| column(rows, "┌");
+
+    let resize = Overlay::TerminalSize(ResizeDialog::new(24, 80));
+    h.app.update(Action::App(AppAction::OpenOverlay(resize)));
+    let rows = h.draw();
+    // the popup's 2 columns of border and padding, then at least 5 more
+    assert!(
+        column(&rows, "Rows    :") >= border(&rows) + 2 + 5,
+        "{rows:#?}"
+    );
+    h.app.update(Action::Overlay(DialogAction::Close));
+
+    let name = "a".repeat(30);
+    let record = Overlay::FilePath(FilePathDialog::new(Stream::Text, name));
+    h.app.update(Action::App(AppAction::OpenOverlay(record)));
+    let rows = h.draw();
+    let stream = column(&rows, "Stream  :");
+    assert!(stream > border(&rows) + 2 + 2, "{rows:#?}");
+    for _ in 0..10 {
+        key_do(&mut h, Backspace, KeyModifiers::NONE);
+    }
+    assert_eq!(column(&h.draw(), "Stream  :"), stream);
+    for _ in 0..20 {
+        key_do(&mut h, Char('b'), KeyModifiers::NONE);
+    }
+    assert!(column(&h.draw(), "Stream  :") < stream);
+}
+
+/// A name longer than the recording or screenshot popup scrolls in its field: the cursor
+/// at its end stays in the popup with the name's end before it, the recording's suffix
+/// after it; the screenshot's note goes while the name doesn't leave room for it.
+/// How: a 100-char name ending in "zzzz" in each popup, the cursor at its end.
+#[test]
+fn long_names_scroll_in_their_field() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+    let name = format!("{}zzzz", "a".repeat(96));
+    let check = |h: &mut Harness, overlay, tail: &str| {
+        h.app.update(Action::App(AppAction::OpenOverlay(overlay)));
+        let rows = h.draw();
+        let popup = h.app.frame_map().popup.unwrap();
+        let (x, y) = cursor_cell(h);
+        assert!(x < popup.right() - 2, "{x} {popup:?} {rows:#?}");
+        let row = &rows[y as usize];
+        assert!(row.contains(tail), "{row:?}");
+        assert!(!row.contains("[type filepath]"), "{row:?}");
+        h.app.update(Action::Overlay(DialogAction::Close));
+    };
+    let record = Overlay::FilePath(FilePathDialog::new(Stream::Full, name.clone()));
+    check(&mut h, record, "zzzz/");
+    let shot = ScreenshotDialog::new(ScreenshotFormat::Text, &name, Screenshot::default());
+    check(&mut h, Overlay::Screenshot(shot), "zzzz.txt");
 }
 
 /// MAX-12: the command line is a centered bordered popup of one row, or with `layout =
@@ -1844,11 +1916,13 @@ fn help_lists_the_commands() {
     let row_of = |rows: &[String], text: &str| rows.iter().position(|row| row.contains(text));
     let f5 = row_of(&rows, "F5 ").expect("F5");
     assert!(rows[f5].contains("-> send-hex 03"), "{rows:#?}");
-    // the letters in order, a shifted one after its plain one: `U`, the u-boot trigger, last
+    // the letters in order, a shifted one after its plain one: `L` back to live, then `U`,
+    // the u-boot trigger, last
     assert_eq!(row_of(&rows, "Ctrl-a + f "), Some(f5 + 1), "{rows:#?}");
     let pulse = row_of(&rows, "Ctrl-a + h -> dtr off; sleep 100; dtr on");
     assert_eq!(pulse, Some(f5 + 2), "{rows:#?}");
-    assert_eq!(row_of(&rows, "Ctrl-a + U "), Some(f5 + 3), "{rows:#?}");
+    assert_eq!(row_of(&rows, "Ctrl-a + L "), Some(f5 + 3), "{rows:#?}");
+    assert_eq!(row_of(&rows, "Ctrl-a + U "), Some(f5 + 4), "{rows:#?}");
     assert!(has(&rows, "on the command line (Ctrl-a :)"), "{rows:#?}");
 
     // scrolled down until `text` shows with the row under it
@@ -2997,7 +3071,34 @@ fn session_browser_scrollbar() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// MAX-148: the session browser lists the sessions with their marks (`●` running, `↺`
+/// The session browser's preview shows the last lines as Clean does, without their escape
+/// sequences; a port is one column after the size, its row a column short of the
+/// scrollbar's.
+/// How: a session whose text has a colored line, the browser at 120x30.
+#[test]
+fn session_preview_is_clean() {
+    let dir =
+        std::env::temp_dir().join(format!("maxicom_test_{}_clean_preview", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let text = crate::capture::CaptureFormat::default();
+    let rx = b"\x1b[32mgreen\x1b[0m line\r\n";
+    crate::capture::tests::write_test_session(&dir, "/dev/colored", &text, rx, b"");
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
+    h.app.start_session(Some(dir.clone()));
+    h.app.update(Action::App(AppAction::OpenSessions));
+    let mut rows = h.draw();
+    if !has(&rows, "green line") {
+        key_do(&mut h, crossterm::event::KeyCode::Down, KeyModifiers::NONE);
+        rows = h.draw();
+    }
+    assert!(has(&rows, "green line"), "{rows:#?}");
+    assert!(!has(&rows, "[32m"), "{rows:#?}");
+    assert!(has(&rows, "B colored"), "{rows:#?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-148: the session browser lists the sessions with their marks (`●` running, `»`
 /// what this device would restore) and previews the selected one; a click selects a row,
 /// and the buttons sort, delete one, and delete all once the question is answered.
 /// How: a session on this device, one on another port, and the app's own running
@@ -3026,11 +3127,11 @@ fn session_browser_lists_previews_and_deletes() {
             .any(|row| parts.iter().all(|part| row.contains(part)))
     };
     assert!(row_has(&rows, &["●", "ttyUSB0"]), "{rows:#?}");
-    assert!(row_has(&rows, &["↺", "ttyUSB0"]), "{rows:#?}");
-    let other = row_with(&rows, "  other ");
-    assert!(!other.contains(['●', '↺', '?']), "{rows:#?}");
+    assert!(row_has(&rows, &["»", "ttyUSB0"]), "{rows:#?}");
+    let other = row_with(&rows, " other ");
+    assert!(!other.contains(['●', '»', '?']), "{rows:#?}");
 
-    click(&mut h, cell_of(&rows, "  other "));
+    click(&mut h, cell_of(&rows, " other "));
     let rows = h.draw();
     assert!(has(&rows, "/dev/other"), "{rows:#?}");
     assert!(has(&rows, "theirs"), "{rows:#?}");
@@ -3041,7 +3142,7 @@ fn session_browser_lists_previews_and_deletes() {
 
     click(&mut h, cell_on_row(&rows, "Delete all", "Delete "));
     let rows = h.draw();
-    assert!(!has(&rows, "  other "), "{rows:#?}");
+    assert!(!has(&rows, " other "), "{rows:#?}");
     assert!(has(&rows, "Deleted the session of"), "{rows:#?}");
 
     click(&mut h, cell_of(&rows, "Delete all"));
@@ -3049,7 +3150,7 @@ fn session_browser_lists_previews_and_deletes() {
     assert!(has(&rows, "Delete 1 session ("), "{rows:#?}");
     click(&mut h, cell_on_row(&rows, "Cancel", "Delete"));
     let rows = h.draw();
-    assert!(!row_has(&rows, &["↺", "ttyUSB0"]), "{rows:#?}");
+    assert!(!row_has(&rows, &["»", "ttyUSB0"]), "{rows:#?}");
     assert!(row_has(&rows, &["●", "ttyUSB0"]), "{rows:#?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -3073,7 +3174,7 @@ fn session_browser_replays_the_selected_session() {
     h.app.update(Action::App(AppAction::OpenSessions));
     let rows = h.draw();
     assert!(!has(&rows, "Back to live"), "{rows:#?}");
-    click(&mut h, cell_of(&rows, "  other "));
+    click(&mut h, cell_of(&rows, " other "));
     let rows = h.draw();
     let at = cell_of(&rows, "Replay");
     let effects = [
@@ -3140,14 +3241,14 @@ fn session_browser_row_colors() {
     let rows = h.draw();
     let colors = h.theme.session_browser;
     let fg_at = |(x, y): (u16, u16)| h.terminal.backend().buffer()[(x, y)].fg;
-    let (x, y) = cell_of(&rows, "↺");
+    let (x, y) = cell_of(&rows, "»");
     assert_eq!(fg_at((x, y)), colors.mark_restorable, "{rows:#?}");
     assert_eq!(fg_at((x + 2, y)), colors.date_hour, "{rows:#?}");
     // the size is all its files', the meta and times too (MAX-175)
     let sessions = crate::capture::list_sessions(&dir).unwrap();
     let past = sessions.iter().find(|session| !session.running).unwrap();
     let size_text = crate::overlays::sessions::size(past.size);
-    let (size_x, _) = cell_on_row(&rows, "↺", &size_text);
+    let (size_x, _) = cell_on_row(&rows, "»", &size_text);
     assert_eq!(fg_at((size_x, y)), colors.size_small, "{rows:#?}");
     // the gaps and the size's padding aren't colored, so a reversed column ends with its
     // text
@@ -3155,8 +3256,12 @@ fn session_browser_row_colors() {
     assert_eq!(fg_at((x + 1, y)), text, "{rows:#?}");
     assert_eq!(fg_at((x + 2 + 16, y)), text, "{rows:#?}");
     assert_eq!(fg_at((size_x - 1, y)), text, "{rows:#?}");
-    let tag = cell_on_row(&rows, "↺", "ttyUSB0");
-    assert_eq!(fg_at(tag), colors.port_color("ttyUSB0"), "{rows:#?}");
+    let tag = cell_on_row(&rows, "»", "ttyUSB0");
+    assert_eq!(
+        fg_at(tag),
+        h.theme.palette.link_color("ttyUSB0"),
+        "{rows:#?}"
+    );
 
     // the preview's port, times and size take the same colors as the row
     click(&mut h, (x, y));
@@ -3167,7 +3272,11 @@ fn session_browser_row_colors() {
         (x + 8, y)
     };
     let port = after(&rows, "Port    ");
-    assert_eq!(fg_at(port), colors.port_color("ttyUSB0"), "{rows:#?}");
+    assert_eq!(
+        fg_at(port),
+        h.theme.palette.link_color("ttyUSB0"),
+        "{rows:#?}"
+    );
     let (times_x, times_y) = cell_on_row(&rows, " → ", "Session ");
     let times = (times_x + 8, times_y);
     assert_eq!(fg_at(times), colors.date_hour, "{rows:#?}");
@@ -3208,7 +3317,7 @@ fn session_browser_copies_paths() {
     assert!(matches!(h.app.overlay(), Some(Overlay::Sessions(_))));
     assert!(h.app.has_paste_buffer());
 
-    click(&mut h, cell_of(&rows, "  past"));
+    click(&mut h, cell_of(&rows, " past "));
     let rows = h.draw();
     let (text, what) = press(&mut h, cell_of(&rows, "Copy path"));
     let log = session.text_path().unwrap().display().to_string();
@@ -4321,7 +4430,8 @@ fn quit_asks_first() {
 
 /// MAX-130: a right-click opens the action menu at the pointer, moved back inside the
 /// screen at its corner; a click or Enter runs a row as its key would ("Quit…" asks
-/// first), and with another popup open a right-click does nothing.
+/// first), and with another popup open a right-click does nothing. Its rows start right
+/// after the left border, their keys short: `^A ?`, not `Ctrl-a ?`.
 /// How: right-clicks in the history and at the bottom-right corner.
 #[test]
 fn right_click_menu() {
@@ -4335,7 +4445,9 @@ fn right_click_menu() {
     assert!(matches!(h.app.overlay(), Some(Overlay::ActionMenu(_))));
     assert_eq!(cell_of(&rows, "┌ Menu"), (10, 3));
     // the first row is selected, and shows its key
-    assert!(rows[4].contains("▶ Help"), "{:?}", rows[4]);
+    assert!(rows[4].contains("│▶ Help"), "{:?}", rows[4]);
+    assert!(rows[4].contains("^A ?"), "{:?}", rows[4]);
+    assert!(!has(&rows, "Ctrl-a"), "{rows:#?}");
     click(&mut h, cell_of(&rows, "Settings"));
     assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
 
@@ -5764,7 +5876,7 @@ fn serial_popup_arrows() {
 }
 
 /// MAX-134: in the resize popup the sideways wheel (Shift + wheel too) steps the active
-/// number, kept from 1 up, and only digits can be typed or pasted.
+/// number, kept from 1 up, and only digits can be typed or pasted (4 at most).
 /// How: Shift + wheel down and up, the side wheel, on the rows field at 24; a letter and a
 /// digit typed, a mixed paste, then down to 1.
 #[test]
@@ -5798,8 +5910,8 @@ fn resize_popup_wheel_and_digits() {
     key_do(&mut h, Char('0'), KeyModifiers::NONE);
     assert_eq!(rows_value(&h), "240");
     h.app
-        .update(Action::Overlay(DialogAction::Paste("1a2".to_string())));
-    assert_eq!(rows_value(&h), "24012");
+        .update(Action::Overlay(DialogAction::Paste("a1".to_string())));
+    assert_eq!(rows_value(&h), "2401");
 
     h.app
         .update(Action::App(AppAction::OpenOverlay(Overlay::TerminalSize(

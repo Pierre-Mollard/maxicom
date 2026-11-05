@@ -9,7 +9,7 @@ use ratatui::{
 use crate::{
     configs::{KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
     overlays::{PopupTarget, ResizeDialog, ResizeField},
-    ui::popups::{FORM_WIDTH, form_area, key_hints, popup_block, row_area, section},
+    ui::popups::{FORM_WIDTH, centered, form_area, key_hints, popup_block, row_area, section},
 };
 
 pub fn render_resize_popup(
@@ -93,15 +93,17 @@ pub fn render_resize_popup(
     frame.render_widget(Clear, area);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    frame.render_widget(Paragraph::new(text), inner);
+    // centered, as wide as a field's row: pointer, label, 5 digits and the note
+    let content = centered(inner, 2 + 10 + 5 + 15);
+    frame.render_widget(Paragraph::new(text), content);
 
     let (cursor_input, line_y_offset) = match active {
         ResizeField::Rows => (&dialog.rows_input, 2),
         ResizeField::Cols => (&dialog.cols_input, 3),
     };
 
-    // inner.x + 2 ("▶ ") + 10 ("Rows    : ") + cursor_offset
-    let cursor_x = inner.x + 2 + 10 + cursor_input.visual_cursor() as u16;
+    // after "▶ " and "Rows    : "
+    let cursor_x = content.x + 2 + 10 + cursor_input.visual_cursor() as u16;
     let cursor_y = inner.y + line_y_offset;
 
     frame.set_cursor_position((cursor_x, cursor_y));

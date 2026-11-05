@@ -42,6 +42,12 @@ fn plain(text: &str) -> String {
     span(text, "Some(White)", BG, "NONE")
 }
 
+/// The default bar's `{port}`: in the link's color for its tag
+fn port(text: &str, tag: &str) -> String {
+    let color = ThemeConfig::default().palette.link_color(tag);
+    span(text, &format!("Some({color:?})"), BG, "NONE")
+}
+
 /// Default left template in terminal mode: mode pill, port, baud and framing styles.
 /// How: golden spans captured from the code before #10.
 #[test]
@@ -53,7 +59,7 @@ fn default_left_terminal() {
         [
             span(" TERM ", "Some(Cyan)", BG, "BOLD"),
             span("|", MUTED, BG, "NONE"),
-            plain(" /dev/ttyUSB0"),
+            port(" /dev/ttyUSB0", "ttyUSB0"),
             span(" |", MUTED, BG, "NONE"),
             plain(" "),
             span("115200", "Some(Cyan)", BG, "NONE"),
@@ -77,7 +83,7 @@ fn tcp_link_has_no_baud_nor_framing() {
         [
             span(" TERM ", "Some(Cyan)", BG, "BOLD"),
             span("|", MUTED, BG, "NONE"),
-            plain(" tcp://192.168.1.50:4000"),
+            port(" tcp://192.168.1.50:4000", "192.168.1.50_4000"),
             span(" |", MUTED, BG, "NONE"),
             plain(" "),
             span("raw", "Some(Cyan)", BG, "NONE"),
@@ -104,7 +110,7 @@ fn replay_shows_its_file_and_state() {
         [
             span(" TERM ", "Some(Cyan)", BG, "BOLD"),
             span("|", MUTED, BG, "NONE"),
-            plain(" file://boot.raw"),
+            port(" file://boot.raw", "boot.raw"),
             span(" |", MUTED, BG, "NONE"),
             plain(" "),
             span("replay", "Some(Cyan)", BG, "NONE"),
@@ -173,7 +179,7 @@ fn session_replay_shows_its_recorded_line() {
         [
             span(" TERM ", "Some(Cyan)", BG, "BOLD"),
             span("|", MUTED, BG, "NONE"),
-            plain(" file://boot.raw"),
+            port(" file://boot.raw", "boot.raw"),
             span(" |", MUTED, BG, "NONE"),
             plain(" "),
             span("9600", "Some(Cyan)", BG, "NONE"),
@@ -189,7 +195,7 @@ fn session_replay_shows_its_recorded_line() {
 }
 
 /// The mode pill follows the prefix, copy-mode and search conditions; the search's is black
-/// on light blue, as readable as the others' black (MAX-193).
+/// on green, the search bar label's (MAX-193).
 /// How: same template with the prefix active, then in line copy mode, then searching.
 #[test]
 fn default_left_conditions() {
@@ -212,7 +218,7 @@ fn default_left_conditions() {
     s.update(Action::Search(SearchModeAction::Start));
     assert_eq!(
         render(&d.left, &s)[0],
-        span(" LINE ", "Some(Black)", "Some(LightBlue)", "BOLD")
+        span(" LINE ", "Some(Black)", "Some(Green)", "BOLD")
     );
 }
 
@@ -254,9 +260,11 @@ fn copy_side_variable_and_condition() {
     );
 }
 
-/// MAX-193: the default mode badge takes the theme's selection colors in copy mode, so a
-/// theme changing `[ui.selection]` / `[ui.selection_raw]` changes it too.
-/// How: green and blue selections, line copy mode on the text side then on the raw side.
+/// MAX-193: the default mode badge takes the theme's selection colors in copy mode, and the
+/// search bar label's while searching, so a theme changing `[ui.selection]`,
+/// `[ui.selection_raw]` or `[search.search_indicator]` changes it too.
+/// How: green and blue selections, line copy mode on the text side then on the raw side;
+/// a yellow search label, searching.
 #[test]
 fn copy_badge_follows_the_selection_colors() {
     use ratatui::style::{Color, Style};
@@ -278,6 +286,15 @@ fn copy_badge_follows_the_selection_colors() {
     assert_eq!(badge(&l), Some(Color::Green));
     l.update(Action::CopyMode(CopyModeAction::ToggleSide));
     assert_eq!(badge(&l), Some(Color::Blue));
+
+    // and the search bar label's while searching
+    theme.search.search_indicator = Style::default().bg(Color::Yellow).into();
+    let template = CompiledTemplate::new(&d.left, &theme);
+    let mut s = app(Mode::Line);
+    s.update(Action::Search(SearchModeAction::Start));
+    let time_format = &s.settings().ui.status_bar.time_format;
+    let spans = template.spans(&s, *theme.ui.status_bar, time_format);
+    assert_eq!(spans[0].style.bg, Some(Color::Yellow));
 }
 
 /// `mouse` is true while the mouse capture setting is on (MAX-113).
@@ -504,6 +521,53 @@ fn malformed_markup() {
 }
 
 /// Where a template's clickable blocks are (start column, width) and what they run
+/// A replay over a live link has a `« live` button in the default center part, whose click
+/// goes back to that link (`toggle-attach`); none without a replay.
+/// How: the default center on the live link, then replaying a file over it.
+#[test]
+fn replay_has_a_back_to_live_button() {
+    let d = StatusBarConfig::default();
+    let mut a = app(Mode::Terminal);
+    let live = |a: &App| render(&d.center, a).iter().any(|s| s.starts_with("« live"));
+    let back = |a: &App| {
+        clicks(&d.center, a)
+            .iter()
+            .any(|(_, _, click)| *click == ClickAction::Run(KeyBindingAction::ToggleAttach))
+    };
+    assert!(!live(&a) && !back(&a));
+    a.start_replay(std::path::PathBuf::from("/tmp/logs/boot.raw"), None);
+    assert!(live(&a), "{:?}", render(&d.center, &a));
+    assert!(back(&a));
+}
+
+/// The theme's colors a template can name: the frame's, the bar's background, the search
+/// highlights', and the current link's port color in the session browser, as fg or bg.
+/// How: one block per name on the default theme and link (`/dev/ttyUSB0`).
+#[test]
+fn theme_color_names() {
+    use ratatui::style::Color;
+    let theme = ThemeConfig::default();
+    let a = app(Mode::Line);
+    let colors = |template: &str| -> (Option<Color>, Option<Color>) {
+        let compiled = CompiledTemplate::new(template, &theme);
+        let spans = compiled.spans(&a, *theme.ui.status_bar, "TIME");
+        (spans[0].style.fg, spans[0].style.bg)
+    };
+    assert_eq!(colors("[x](border)").0, theme.ui.border_panel.fg);
+    assert_eq!(colors("[x](fg=bar)").0, theme.ui.status_bar.bg);
+    assert_eq!(colors("[x](bg=match)").1, theme.search.search_match.bg);
+    assert_eq!(
+        colors("[x](bg=match_active)").1,
+        theme.search.search_match_active.bg
+    );
+    let port = theme.palette.link_color("ttyUSB0");
+    assert_eq!(colors("[{port}](link)").0, Some(port));
+    assert_eq!(
+        colors("[{port}](bg=link fg=black)"),
+        (Some(Color::Black), Some(port))
+    );
+}
+
 fn clicks(template: &str, app: &App) -> Vec<(u16, u16, ClickAction)> {
     spots(template, app)
         .into_iter()

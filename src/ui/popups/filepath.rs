@@ -5,12 +5,14 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Clear, Paragraph},
 };
+use tui_input::Input;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     capture::{ScreenshotFormat, Stream},
     configs::{KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
     overlays::{FilePathDialog, PopupTarget, ScreenshotDialog},
-    ui::popups::{form_area, key_hints, popup_block, row_area, section},
+    ui::popups::{centered, form_area, key_hints, popup_block, row_area, section},
 };
 
 pub fn render_filepath_popup(
@@ -79,7 +81,18 @@ pub fn render_filepath_popup(
     frame.render_widget(Clear, area);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    frame.render_widget(Paragraph::new(text), inner);
+    let content = centered(inner, grown_width(&dialog.width, &text));
+    // the name scrolled to keep the cursor in the popup, its suffix after it
+    let suffix = dialog.stream.suffix();
+    let room = usize::from(content.width).saturating_sub(LABEL + suffix.width());
+    let (shown, cursor) = field_view(&dialog.file_input, room);
+    text[2] = Line::from(vec![
+        Span::styled("▶ ", style),
+        Span::raw("Name    : "),
+        Span::styled(shown, style),
+        Span::styled(suffix, Style::default().fg(theme.palette.text_muted)),
+    ]);
+    frame.render_widget(Paragraph::new(text), content);
     hints.push_block_targets(area, targets);
     // the stream row, under the file row (MAX-147)
     targets.push((row_area(inner, 3), PopupTarget::CaptureStream));
@@ -87,13 +100,7 @@ pub fn render_filepath_popup(
         targets.push((row_area(inner, 4), PopupTarget::CaptureSession));
     }
 
-    let cursor_input = &dialog.file_input;
-    let line_y_offset = 2; // relative to inner area
-
-    let cursor_x = inner.x + 2 + 10 + cursor_input.visual_cursor() as u16;
-    let cursor_y = inner.y + line_y_offset;
-
-    frame.set_cursor_position((cursor_x, cursor_y));
+    frame.set_cursor_position((content.x + LABEL as u16 + cursor, inner.y + 2));
     area
 }
 
@@ -118,17 +125,14 @@ pub fn render_screenshot_popup(
         }
     };
 
-    let text = vec![
+    let mut text = vec![
         section("Screenshot", theme),
         Line::from(""),
         Line::from(vec![
             Span::styled("▶ ", style),
             Span::raw("File    : "),
             Span::styled(dialog.file_input.value(), style),
-            Span::styled(
-                " [type filepath]",
-                Style::default().fg(theme.palette.text_muted),
-            ),
+            Span::styled(FILE_NOTE, Style::default().fg(theme.palette.text_muted)),
         ]),
         Line::from(vec![
             Span::raw("  Format  : "),
@@ -150,12 +154,62 @@ pub fn render_screenshot_popup(
     frame.render_widget(Clear, area);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    frame.render_widget(Paragraph::new(text), inner);
+    let content = centered(inner, grown_width(&dialog.width, &text));
+    // the file scrolled to keep the cursor in the popup; its note only while it fits
+    let room = usize::from(content.width).saturating_sub(LABEL);
+    let path_width = dialog.file_input.value().width() + 1;
+    let note = if path_width + FILE_NOTE.width() <= room {
+        FILE_NOTE
+    } else {
+        ""
+    };
+    let (shown, cursor) = field_view(&dialog.file_input, room - note.width());
+    text[2] = Line::from(vec![
+        Span::styled("▶ ", style),
+        Span::raw("File    : "),
+        Span::styled(shown, style),
+        Span::styled(note, Style::default().fg(theme.palette.text_muted)),
+    ]);
+    frame.render_widget(Paragraph::new(text), content);
     hints.push_block_targets(area, targets);
     targets.push((row_area(inner, 3), PopupTarget::ScreenshotFormat));
 
     // the file row, as in the recording dialog
-    let cursor_x = inner.x + 2 + 10 + dialog.file_input.visual_cursor() as u16;
-    frame.set_cursor_position((cursor_x, inner.y + 2));
+    frame.set_cursor_position((content.x + LABEL as u16 + cursor, inner.y + 2));
     area
+}
+
+/// The widest line and the widest drawn before it, kept in `width`: a name typed longer
+/// moves the content once past it, a shorter one doesn't
+fn grown_width(width: &std::cell::Cell<u16>, text: &[Line]) -> u16 {
+    let widest = text.iter().map(Line::width).max().unwrap_or(0) as u16;
+    width.set(width.get().max(widest));
+    width.get()
+}
+
+/// The pointer and the label before a name's field: `▶ Name    : `
+const LABEL: usize = 12;
+
+/// After the screenshot's file while it fits
+const FILE_NOTE: &str = " [type filepath]";
+
+/// The part of a field's text that fits `width` columns with the cursor in view (one column
+/// kept for it at the end), and the cursor's column in that part
+fn field_view(input: &Input, width: usize) -> (String, u16) {
+    let scroll = input.visual_scroll(width.saturating_sub(1));
+    let (mut skipped, mut used) = (0, 0);
+    let mut shown = String::new();
+    for c in input.value().chars() {
+        let w = c.width().unwrap_or(0);
+        if skipped < scroll {
+            skipped += w;
+            continue;
+        }
+        if used + w > width {
+            break;
+        }
+        used += w;
+        shown.push(c);
+    }
+    (shown, input.visual_cursor().saturating_sub(skipped) as u16)
 }

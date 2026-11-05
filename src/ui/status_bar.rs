@@ -105,11 +105,12 @@
 //! | `armed`                         | `trigger`                                  | A trigger is armed, ready to fire (`triggers.toml`)      |
 //! | `mashing`                       | `mash`                                     | `mash` sends its text, waiting for the other one         |
 //! | `replaying`                     | `replay`                                   | A replay takes the link's place, ended or not            |
+//! | `replaced`                      | `live_behind`                              | That replay holds a live link's place: `toggle-attach` goes back to it |
 //!
 //! ## Style Keywords
 //! - **Modifiers**: `bold`, `dim`, `italic`, `underlined` (`underline`), `reversed` (`reverse`), `reset` (`default`), `crossed`, `slow_blink` (`sblink`), `rapid_blink` (`rblink`)
 //! - **Visibility**: `hide`, `hidden`, `none` (omits the span completely)
-//! - **Theme Palette Names**: `main` (or `primary`), `secondary`, `ternary`, `text`, `muted`, `warn` (`warning`), `good` (`ok`, `success`), `unselected`; `selection` and `selection_raw` are the background of `[ui.selection]` / `[ui.selection_raw]`
+//! - **Theme Palette Names**: `main` (or `primary`), `secondary`, `ternary`, `text`, `muted`, `warn` (`warning`), `good` (`ok`, `success`), `unselected`; `selection` and `selection_raw` are the background of `[ui.selection]` / `[ui.selection_raw]`, `search` the one of `[search.search_indicator]`; `border` the color of `[ui.border_panel]`, `bar` the bar's background, `match` / `match_active` the search highlights' backgrounds, `link` the current link's color from the palette's `links`, as in the session browser
 //! - **Standard Named Colors**: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `gray`, `darkgray`, `white`, or hex `#RRGGBB`
 //! - **Explicit Foregrounds**: `fg=<color>` or simply `<color>`
 //! - **Explicit Backgrounds**: `bg=<color>` (e.g. `bg=main`, `bg=red`, `bg=#1e1e2e`)
@@ -190,7 +191,9 @@ use crate::{
         selection::CopySide,
         types::{ClickAction, ClickTarget},
     },
-    configs::{KeyBindingAction, Mode, StatusBarConfig, StatusBarLayout, ThemeConfig},
+    configs::{
+        KeyBindingAction, Mode, StatusBarConfig, StatusBarLayout, ThemeConfig, theme::PaletteColors,
+    },
     link::LinkKind,
     ui::common::{pan_left_indicator, pan_right_indicator},
 };
@@ -284,6 +287,8 @@ fn compile_hover(words: &str, theme: &ThemeConfig) -> Option<Style> {
             StyleWord::Reset => Style::default(),
             StyleWord::Fg(color) => style.fg(color),
             StyleWord::Bg(color) => style.bg(color),
+            // a hover has no link to take the color of
+            StyleWord::LinkFg(_) | StyleWord::LinkBg(_) => style,
         };
     }
     Some(style)
@@ -676,6 +681,8 @@ enum StyleWord {
     Reset,
     Fg(Color),
     Bg(Color),
+    LinkFg(PaletteColors),
+    LinkBg(PaletteColors),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -708,6 +715,7 @@ enum Cond {
     Armed,
     Mashing,
     Replaying,
+    Replaced,
     AddCr,
     AddLf,
     /// Unknown condition name, always false
@@ -745,6 +753,7 @@ impl Cond {
             "armed" | "trigger" => Self::Armed,
             "mashing" | "mash" => Self::Mashing,
             "replaying" | "replay" => Self::Replaying,
+            "replaced" | "live_behind" => Self::Replaced,
             "add_cr" => Self::AddCr,
             "add_lf" => Self::AddLf,
             _ => Self::Unknown,
@@ -789,6 +798,7 @@ impl Cond {
             Self::Armed => app.triggers().iter().any(|trigger| trigger.is_armed()),
             Self::Mashing => app.mash().is_some(),
             Self::Replaying => app.link_kind() == LinkKind::Replay,
+            Self::Replaced => app.replays_over_live_link(),
             Self::AddCr => app.settings().add_cr,
             Self::AddLf => app.settings().add_lf,
             Self::Unknown => false,
@@ -1074,10 +1084,17 @@ fn resolve_style(exprs: &[StyleExpr], base_style: Style, app: &App) -> Option<St
                 StyleWord::Reset => base_style,
                 StyleWord::Fg(color) => style.fg(color),
                 StyleWord::Bg(color) => style.bg(color),
+                StyleWord::LinkFg(palette) => style.fg(link_color(&palette, app)),
+                StyleWord::LinkBg(palette) => style.bg(link_color(&palette, app)),
             };
         }
     }
     Some(style)
+}
+
+/// The current link's color in the session browser, by the name its sessions take
+fn link_color(palette: &PaletteColors, app: &App) -> Color {
+    palette.link_color(&app.link_config().address.file_tag())
 }
 
 impl StyleExpr {
@@ -1193,6 +1210,8 @@ fn compile_style_words(resolved: &str, theme: &ThemeConfig) -> Vec<StyleWord> {
             "reset" | "default" => Some(StyleWord::Reset),
             "bg=none" | "bg=reset" => Some(StyleWord::Bg(Color::Reset)),
             "fg=none" | "fg=reset" => Some(StyleWord::Fg(Color::Reset)),
+            "link" | "fg=link" => Some(StyleWord::LinkFg(theme.palette)),
+            "bg=link" => Some(StyleWord::LinkBg(theme.palette)),
             _ => {
                 if let Some(c) = part.strip_prefix("fg=") {
                     resolve_color(c, theme).map(StyleWord::Fg)
@@ -1220,6 +1239,11 @@ fn resolve_color(name: &str, theme: &ThemeConfig) -> Option<Color> {
         "unselected" => Some(theme.palette.unselected),
         "selection" => theme.ui.selection.bg,
         "selection_raw" => theme.ui.selection_raw.bg,
+        "search" => theme.search.search_indicator.bg,
+        "border" => theme.ui.border_panel.fg,
+        "bar" => theme.ui.status_bar.bg,
+        "match" => theme.search.search_match.bg,
+        "match_active" => theme.search.search_match_active.bg,
         _ => name.parse::<Color>().ok(),
     }
 }

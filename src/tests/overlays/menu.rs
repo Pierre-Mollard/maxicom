@@ -16,7 +16,7 @@ fn rows_follow_the_state() {
     assert!(!labels(&line).contains(&"Screenshot"));
     assert!(!labels(&line).contains(&"Terminal size"));
     assert!(labels(&line).contains(&"Serial port"));
-    assert!(labels(&line).contains(&"Detach / attach port"));
+    assert!(labels(&line).contains(&"Detach / attach"));
 
     let term = ActionMenu::new((0, 0), Mode::Terminal, LinkKind::Tcp, true);
     assert!(labels(&term).contains(&"Switch to LINE"));
@@ -25,10 +25,10 @@ fn rows_follow_the_state() {
     assert!(labels(&term).contains(&"Screenshot"));
     assert!(labels(&term).contains(&"Terminal size"));
     assert!(labels(&term).contains(&"TCP connection"));
-    assert!(labels(&term).contains(&"Detach / attach connection"));
+    assert!(labels(&term).contains(&"Detach / attach"));
     let replay = ActionMenu::new((0, 0), Mode::Terminal, LinkKind::Replay, false);
     assert!(labels(&replay).contains(&"Replay"));
-    assert!(labels(&replay).contains(&"Back to live link"));
+    assert!(labels(&replay).contains(&"Back to live"));
     assert!(
         !term
             .items

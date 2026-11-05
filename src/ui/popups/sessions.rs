@@ -9,8 +9,11 @@ use ratatui::{
 };
 
 use crate::{
+    app::data_processing::displayable_line_string,
     capture::{Session, SessionOrder},
-    configs::{KeyPattern, KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
+    configs::{
+        KeyPattern, KeyResolver, LineDisplayMode, ThemeConfig, keybindings::KeyBindingDialogAction,
+    },
     overlays::{
         PopupTarget, SessionBrowser,
         sessions::{sessions, size},
@@ -166,7 +169,7 @@ pub fn render_sessions_popup(
 }
 
 /// One row per session from the one that keeps the selection in view, its marks first:
-/// `●` running, `↺` what this device would restore, `?` no meta file. Its columns are
+/// `●` running, `»` what this device would restore, `?` no meta file. Its columns are
 /// colored as `lsd -l` does (MAX-153): the date by the age of the last write, the size by its
 /// magnitude, the port by its name. More sessions than rows: a scrollbar in the gap after the
 /// list (MAX-175)
@@ -187,7 +190,7 @@ fn render_list(
             let (mark, mark_color) = if session.running {
                 ('●', colors.mark_running)
             } else if browser.restorable.as_deref() == Some(session.stem.as_str()) {
-                ('↺', colors.mark_restorable)
+                ('»', colors.mark_restorable)
             } else if session.meta.is_none() {
                 ('?', colors.mark_no_meta)
             } else {
@@ -215,15 +218,20 @@ fn render_list(
                 cell(started, date_color),
                 gap(1 + 5usize.saturating_sub(size_text.chars().count())),
                 cell(size_text, colors.size_color(session.size)),
-                gap(2),
+                gap(1),
                 cell(
                     session.port_tag().to_string(),
-                    colors.port_color(session.port_tag()),
+                    theme.palette.link_color(session.port_tag()),
                 ),
             ])
         })
         .collect();
-    frame.render_widget(Paragraph::new(lines), area);
+    // a column left before the scrollbar, so a long port doesn't touch it
+    let text = Rect {
+        width: area.width.saturating_sub(1),
+        ..area
+    };
+    frame.render_widget(Paragraph::new(lines), text);
 
     let max_scroll = browser.sessions.len().saturating_sub(height);
     if max_scroll > 0 {
@@ -264,11 +272,10 @@ fn render_preview(browser: &SessionBrowser, area: Rect, frame: &mut Frame, theme
     lines.push(section("Last lines", theme));
     let room = (area.height as usize).saturating_sub(lines.len());
     let tail = browser.preview.len().saturating_sub(room);
-    lines.extend(
-        browser.preview[tail..]
-            .iter()
-            .map(|line| Line::from(line.as_str())),
-    );
+    // as Clean shows them: the escape sequences of a terminal session left out
+    lines.extend(browser.preview[tail..].iter().map(|line| {
+        Line::from(displayable_line_string(line, LineDisplayMode::Clean).into_owned())
+    }));
     frame.render_widget(Paragraph::new(lines), area);
 }
 
@@ -299,7 +306,7 @@ fn details<'a>(
                     None => device.encoding.as_str().to_string(),
                 },
             };
-            let port = Style::default().fg(colors.port_color(session.port_tag()));
+            let port = Style::default().fg(theme.palette.link_color(session.port_tag()));
             lines.push(field("Port", device.address.to_string(), port));
             lines.push(field("Line", line, plain));
             lines.push(field("Host", device.host.clone(), plain));

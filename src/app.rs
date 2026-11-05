@@ -498,6 +498,11 @@ impl App {
         self.replay.as_ref().and_then(|run| run.replaced.as_deref())
     }
 
+    /// A replay holds the place of a live link, which `toggle-attach` goes back to
+    pub fn replays_over_live_link(&self) -> bool {
+        self.replaced_link().is_some()
+    }
+
     /// The replay of the file at `path` takes the link's place, on a reset terminal in terminal
     /// mode (MAX-166). A live link is set aside with its encoding, histories and counts, its
     /// session backup paused; what it was sending stops. A replay replacing a replay keeps the live

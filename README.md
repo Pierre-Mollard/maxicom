@@ -84,7 +84,7 @@ Ctrl-Shift-c. `Shift-` is only written on keys without a case: `Shift-Tab`,
 
 maxicom's own: `m` line / terminal mode, `j` session backups, `D` detach /
 attach, `O` text encoding, `/` search, `:` command line, `T` triggers, `U`
-the u-boot trigger, `W` terminal size, `E` emulator to the view, `k` / `K`
+the u-boot trigger, `L` back to live from a replay, `W` terminal size, `E` emulator to the view, `k` / `K`
 screenshot, `B` raw side panel, `<` / `>` its size, `M` mouse, `C` clear the
 history, `n` / `N` close the top notification / all of them, `r` reload the
 config. `Ctrl-a ?` lists them all.
@@ -458,9 +458,10 @@ What changes from a serial port:
   starts with `cancel`), and it doesn't go in the history. Like the other
   keys of these sections, it does nothing in copy mode and search. A line that
   doesn't parse stops the keymap from loading, naming its key (a reload keeps
-  the running one). The default keymap has three: `Ctrl-a f` sends a break,
+  the running one). The default keymap has four: `Ctrl-a f` sends a break,
   `Ctrl-a h` pulses DTR (`dtr off; sleep 100; dtr on`), which resets most
-  boards, and `Ctrl-a U` toggles the `u-boot` trigger. The help's Commands
+  boards, `Ctrl-a L` goes back to the live link from a replay
+  (`replay-stop`), and `Ctrl-a U` toggles the `u-boot` trigger. The help's Commands
   tab lists the keys bound to a line and every command.
 - Typed text has the completions of the word before the cursor listed
   (command names with their help, then the values of the argument it is).
@@ -690,11 +691,11 @@ where its lines wrap, which `dimension_mode` decides.
   - The restored part isn't backed up again nor counted in RX, so the next
     launch restores this session's own data (or the same one again if this
     one received nothing).
-- Session browser: `sessions` (`Ctrl-a j`, or Session backups in the
-  right-click menu) lists every backup on the left, whatever its device, and
+- Session browser: `sessions` (`Ctrl-a j`, or Sessions… in the right-click
+  menu) lists every backup on the left, whatever its device, and
   shows the selected one on the right (device, format, times, size, its last
   lines).
-  - Marks: `●` running (can't be deleted), `↺` what this device would
+  - Marks: `●` running (can't be deleted), `»` what this device would
     restore, `?` no `.meta` (from before the restore)
   - `↑` `↓` `j` `k` `PageUp` `PageDown` `Home` `End`, or a click, select
   - `d` (or `Del`)  Delete the selected session
@@ -827,6 +828,10 @@ right = '''
     - line_settings  The link has line settings: a serial port, not a TCP
                      link whose bridge sets them (alias: serial)
     - sending        A file is being sent (alias: send_file)
+    - replaying      A replay takes the link's place, ended or not (alias: replay)
+    - replaced       That replay holds a live link's place, which a click on
+                     the default bar's `« live` (`toggle-attach`) goes back to
+                     (alias: live_behind)
 
   - Viewport & Scroll:
     - is_live        Following live tail (alias: live, bot, bottom)
@@ -849,7 +854,13 @@ right = '''
     black, red, green, yellow, blue, magenta, cyan, gray,
     darkgray, white, or hex (#RRGGBB); `selection` and `selection_raw` are
     the background of `[ui.selection]` / `[ui.selection_raw]`, which the
-    default mode badge takes in copy mode
+    default mode badge takes in copy mode, and `search` the one of
+    `[search.search_indicator]` (the search bar's label), which it takes
+    while searching. Also from the theme: `border` (the frame's color, for
+    separators that blend into it), `bar` (the bar's background), `match` /
+    `match_active` (the search highlights) and `link`, the current link's
+    color (one of `[palette] links`, as in the session browser):
+    `[{port}](link)`
   - Specifiers:
     `fg=<color>`, `bg=<color>`
   - Modifiers:

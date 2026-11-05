@@ -41,17 +41,17 @@ fn session_size_steps() {
     }
 }
 
-/// MAX-153: a port's color comes from its name only, so it is the same at every launch,
-/// and close names get apart.
+/// MAX-153: a link's color comes from its tag only, so it is the same at every launch, and
+/// close names get apart.
 /// How: the FNV-1a hash of "ttyUSB0" is fixed, so its color is pinned.
 #[test]
-fn session_port_color_is_stable() {
-    let colors = SessionBrowserColors::default();
-    assert_eq!(colors.port_color("ttyUSB0"), colors.port_color("ttyUSB0"));
-    assert_eq!(colors.port_color("ttyUSB0"), Color::Indexed(211));
+fn link_color_is_stable() {
+    let palette = PaletteColors::default();
+    assert_eq!(palette.link_color("ttyUSB0"), palette.link_color("ttyUSB0"));
+    assert_eq!(palette.link_color("ttyUSB0"), Color::Indexed(211));
     let ports = ["ttyUSB0", "ttyUSB1", "ttyACM0", "COM3"];
     let distinct: std::collections::HashSet<_> =
-        ports.iter().map(|port| colors.port_color(port)).collect();
+        ports.iter().map(|port| palette.link_color(port)).collect();
     assert!(distinct.len() > 1);
 }
 

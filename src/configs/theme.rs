@@ -32,6 +32,7 @@ pub struct PaletteColors {
     pub text_warn: Color,
     pub text_good: Color,
     pub unselected: Color,
+    pub links: [Color; 8],
 }
 
 impl Default for PaletteColors {
@@ -45,7 +46,20 @@ impl Default for PaletteColors {
             text_warn: Color::Red,
             text_good: Color::Green,
             unselected: Color::White,
+            links: [75, 141, 211, 117, 183, 110, 176, 152].map(Color::Indexed),
         }
+    }
+}
+
+impl PaletteColors {
+    /// A link's color, one of `links` by an FNV-1a hash of its tag (`ttyUSB0`), the same
+    /// from one launch to the next (std's hasher doesn't promise that): in the session
+    /// browser and the status bar's `link`
+    pub fn link_color(&self, tag: &str) -> Color {
+        let hash = tag.bytes().fold(0x811c_9dc5_u32, |hash, b| {
+            (hash ^ u32::from(b)).wrapping_mul(0x0100_0193)
+        });
+        self.links[hash as usize % self.links.len()]
     }
 }
 
@@ -218,8 +232,8 @@ impl Default for SearchStyles {
             ),
             search_indicator: ConfigStyle::new(
                 Style::default()
-                    .fg(Color::White)
-                    .bg(Color::Blue)
+                    .fg(Color::Black)
+                    .bg(Color::Green)
                     .add_modifier(Modifier::BOLD),
             ),
         }
@@ -280,8 +294,8 @@ impl Default for RawInspectorColors {
 
 /// The session browser's colors (MAX-153), as `lsd -l` draws a listing: the date fades from
 /// green to a grayish green with the age of the last write (1 hour, 1 day, 1 week, 30 days),
-/// the size warms from pale yellow to red (empty, 100 KiB, 1 MiB, 100 MiB, 1 GiB), and each
-/// port gets one of the `port` colors by its name. The defaults are 256-color indexed, lsd's
+/// the size warms from pale yellow to red (empty, 100 KiB, 1 MiB, 100 MiB, 1 GiB); each port
+/// takes its link color from the palette's `links`. The defaults are 256-color indexed, lsd's
 /// own where it has one
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -300,7 +314,6 @@ pub struct SessionBrowserColors {
     pub mark_running: Color,
     pub mark_restorable: Color,
     pub mark_no_meta: Color,
-    pub port: [Color; 8],
 }
 
 impl Default for SessionBrowserColors {
@@ -320,7 +333,6 @@ impl Default for SessionBrowserColors {
             mark_running: Color::Indexed(40),
             mark_restorable: Color::Cyan,
             mark_no_meta: Color::Indexed(245),
-            port: [75, 141, 211, 117, 183, 110, 176, 152].map(Color::Indexed),
         }
     }
 }
@@ -350,15 +362,6 @@ impl SessionBrowserColors {
             b if b < 1024 * MIB => self.size_huge,
             _ => self.size_giant,
         }
-    }
-
-    /// The port's color by an FNV-1a hash of its name, the same from one launch to the next
-    /// (std's hasher doesn't promise that)
-    pub fn port_color(&self, tag: &str) -> Color {
-        let hash = tag.bytes().fold(0x811c_9dc5_u32, |hash, b| {
-            (hash ^ u32::from(b)).wrapping_mul(0x0100_0193)
-        });
-        self.port[hash as usize % self.port.len()]
     }
 }
 

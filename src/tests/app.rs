@@ -1046,7 +1046,8 @@ fn command_line_open() {
 
 /// MAX-166: `replay` gives the file to replay, `~` expanded, with its delay (none by
 /// default); `replay-stop` stops a replay and refuses without one. The attach key stops a
-/// replay started while running, not one from the command line.
+/// replay started while running, not one from the command line; so does `Ctrl-a L`, bound
+/// to `replay-stop`.
 /// How: the commands run on a live port, then on a replay, with and without a live link
 /// set aside.
 #[test]
@@ -1077,6 +1078,17 @@ fn command_line_replay() {
     ));
     let detach = Action::App(AppAction::ToggleAttach);
     assert!(matches!(app.update(detach), UpdateEffect::StopReplay));
+
+    // the default `Ctrl-a L` queues `replay-stop`
+    app.update(Action::App(AppAction::SetPrefix(true)));
+    let event = crossterm::event::Event::Key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('L'),
+        crossterm::event::KeyModifiers::SHIFT,
+    ));
+    let action = crate::inputs::handle_event(event, &app);
+    app.update(action);
+    let action = app.next_command_action(now).expect("replay-stop queued");
+    assert!(matches!(app.update(action), UpdateEffect::StopReplay));
     app.stop_replay();
     app.link
         .set_address("file:///tmp/x.raw".parse::<Address>().unwrap());

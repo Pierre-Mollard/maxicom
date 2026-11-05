@@ -29,8 +29,8 @@ pub fn render_settings_popup(
     targets: &mut Vec<(Rect, PopupTarget)>,
 ) -> Rect {
     let mode_str = match app.settings().mode {
-        crate::configs::Mode::Line => "Line Mode",
-        crate::configs::Mode::Terminal => "Terminal Mode",
+        crate::configs::Mode::Line => "Line",
+        crate::configs::Mode::Terminal => "Terminal",
     };
     let wrap_str = match app.settings().line_mode.wrap_mode {
         crate::configs::WrapMode::Word => "Word-Wrap",
@@ -69,7 +69,11 @@ pub fn render_settings_popup(
                 Style::default().fg(theme.palette.secondary),
             ),
             Span::raw(format!("{label:<14}: ")),
-            Span::styled(value, Style::default().fg(theme.palette.main)),
+            // padded to the longest value, so a column keeps its width as values change
+            Span::styled(
+                format!("{value:<VALUE_WIDTH$}"),
+                Style::default().fg(theme.palette.main),
+            ),
         ])
     };
 
@@ -203,7 +207,9 @@ pub fn render_settings_popup(
             let pad = (left_width + GAP).saturating_sub(line.width());
             line.spans.push(Span::raw(" ".repeat(pad)));
             line.spans.extend(right_line.spans);
-            let mut spots: Vec<Spot> = left_target.map(|t| (0, start, t)).into_iter().collect();
+            // a left row's target stops a column before the right one
+            let left_spot = left_target.map(|t| (0, start - 1, t));
+            let mut spots: Vec<Spot> = left_spot.into_iter().collect();
             spots.extend(right_target.map(|t| (start, u16::MAX, t)));
             rows.push((spots, line));
         }
@@ -271,3 +277,6 @@ type Spot = (u16, u16, PopupTarget);
 
 /// Between the two columns
 const GAP: usize = 4;
+
+/// The longest setting value: `Match View`, `Fixed Cols`
+const VALUE_WIDTH: usize = 10;

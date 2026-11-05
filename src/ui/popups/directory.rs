@@ -34,9 +34,9 @@ const NO_LINK: &str = "No saved link for this machine";
 /// Under the tabs: what the test does, a port opened on Windows, which may reset a board, and a
 /// TCP link connected to (MAX-186)
 #[cfg(windows)]
-pub const TEST_NOTE: &str = "t opens each port briefly (a board may reset), connects TCP";
+pub const TEST_NOTE: &str = "  t opens each port briefly (a board may reset), connects TCP";
 #[cfg(not(windows))]
-pub const TEST_NOTE: &str = "t finds who holds each port without opening it, connects TCP";
+pub const TEST_NOTE: &str = "  t finds who holds each port without opening it, connects TCP";
 
 /// The directory (MAX-181): its tabs on top (MAX-185), then the tab's rows, `●` and "in use"
 /// on the link in use, "opening…" or the last test's result in its State column. Each tab a
@@ -153,12 +153,23 @@ pub fn render_directory_popup(
 
     render_tabs(directory.tab, &tab_widths, frame, inner, theme, targets);
     let note = Rect {
-        y: inner.y + 1,
+        y: inner.y + 2,
         height: 1,
         ..inner
     }
     .intersection(inner);
-    frame.render_widget(Paragraph::new(Span::styled(TEST_NOTE, muted)), note);
+    // its key as the hints show one
+    let key = Style::default()
+        .fg(theme.palette.secondary)
+        .add_modifier(Modifier::BOLD);
+    let (indent, rest) = TEST_NOTE.split_at(2);
+    let (t, rest) = rest.split_at(1);
+    let line = Line::from(vec![
+        Span::raw(indent),
+        Span::styled(t, key),
+        Span::styled(rest, muted),
+    ]);
+    frame.render_widget(Paragraph::new(line), note);
     inner.y += HEADER;
     inner.height = inner.height.saturating_sub(HEADER);
 
@@ -237,8 +248,8 @@ pub fn render_directory_popup(
 /// The text after a row and its color
 type Note = (String, Color);
 
-/// The rows above a tab's table: the tabs, the test's note, a blank row
-const HEADER: u16 = 3;
+/// The rows above a tab's table: the tabs, a blank row, the test's note, a blank row
+const HEADER: u16 = 4;
 
 /// Between two columns
 const GAP: usize = 2;

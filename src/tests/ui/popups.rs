@@ -53,7 +53,8 @@ fn spots(hints: &Hints) -> Vec<(String, KeyBindingDialogAction)> {
 }
 
 /// Every key of a hint is a spot running its own action and the label runs the first one;
-/// a hint with no key bound is neither drawn nor a spot, and the spots stay on their text.
+/// a hint with no key bound is neither drawn nor a spot, and the spots stay on their text,
+/// the label's without the space before it (its hover starts on the word).
 /// How: `h`/`l` Move, Enter unbound, `q` Cancel.
 #[test]
 fn key_hints_spots_follow_the_line() {
@@ -64,9 +65,9 @@ fn key_hints_spots_follow_the_line() {
         [
             ("h".to_string(), NavLeft),
             ("l".to_string(), NavRight),
-            (" Move".to_string(), NavLeft),
+            ("Move".to_string(), NavLeft),
             ("q".to_string(), Close),
-            (" Cancel".to_string(), Close),
+            ("Cancel".to_string(), Close),
         ]
     );
 

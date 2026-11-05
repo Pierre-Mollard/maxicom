@@ -291,6 +291,7 @@ fn default_keymap_per_context() {
             "Down => History(ScrollDown(1))",
             "E => Terminal(AutoResizeEmulatorToViewer)",
             "K => Terminal(Screenshot(Text))",
+            "L => run replay-stop",
             "Left => History(PanLeft(1))",
             "M => App(ToggleSetting(Mouse))",
             "N => App(DismissToasts)",

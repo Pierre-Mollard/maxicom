@@ -27,13 +27,13 @@ pub fn render_action_menu(
         .items
         .iter()
         .map(|&(_, action)| resolver.action_keys(action).into_iter().next())
-        .map(Option::unwrap_or_default)
+        .map(|key| key.map(|key| caret(&key)).unwrap_or_default())
         .collect();
     let label_width = menu.items.iter().map(|(l, _)| l.width()).max().unwrap_or(0);
     let key_width = keys.iter().map(|k| k.width()).max().unwrap_or(0);
 
-    // pointer, label, a gap, key; then the border and padding on each side
-    let width = (2 + label_width + 2 + key_width + 4) as u16;
+    // pointer, label, a gap, key; then the borders and the right padding
+    let width = (2 + label_width + 2 + key_width + 3) as u16;
     let height = menu.items.len() as u16 + 2;
     let screen = frame.area();
     let (width, height) = (width.min(screen.width), height.min(screen.height));
@@ -65,7 +65,7 @@ pub fn render_action_menu(
     let block = Block::bordered()
         .border_style(*theme.popup.border)
         .style(*theme.popup.background)
-        .padding(Padding::horizontal(1))
+        .padding(Padding::right(1))
         .title(Span::styled(" Menu ", *theme.popup.title));
     frame.render_widget(Clear, area);
     let inner = block.inner(area);
@@ -75,4 +75,19 @@ pub fn render_action_menu(
     }
     frame.render_widget(Paragraph::new(lines), inner);
     area
+}
+
+/// A key as the menu shows it, short: a plain Ctrl and letter in caret notation, `^A z` for
+/// `Ctrl-a z`. Ctrl and Shift (`Ctrl-A`) has no caret form and stays as it is
+fn caret(key: &str) -> String {
+    let Some(rest) = key.strip_prefix("Ctrl-") else {
+        return key.to_string();
+    };
+    let mut chars = rest.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None | Some(' ')) if c.is_ascii_lowercase() => {
+            format!("^{}{}", c.to_ascii_uppercase(), &rest[1..])
+        }
+        _ => key.to_string(),
+    }
 }
