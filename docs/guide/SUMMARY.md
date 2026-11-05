@@ -45,3 +45,4 @@
 - [Troubleshooting](troubleshooting.md)
 - [Messages](messages.md)
 - [What maxicom doesn't do](limits.md)
+- [Changelog](changelog.md)

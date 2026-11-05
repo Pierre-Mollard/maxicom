@@ -1,0 +1,187 @@
+/*
+ * tokyonight for mdBook (https://github.com/folke/tokyonight.nvim)
+ *
+ * mdBook's themes are classes on <html> that set color variables (see
+ * `mdbook init --theme`, css/variables.css). This file, loaded after them
+ * (`additional-css` in book.toml), gives two of them tokyonight's palettes:
+ * Light becomes tokyonight day, Navy becomes tokyonight night. The other
+ * themes stay mdBook's own. Then it colors the code blocks of both.
+ */
+
+/* ---- tokyonight day, on the Light theme ---- */
+
+.light,
+html:not(.js) {
+    --bg: #e1e2e7;
+    --fg: #3760bf;
+
+    --sidebar-bg: #d0d5e3;
+    --sidebar-fg: #6172b0;
+    --sidebar-non-existant: #848cb5;
+    --sidebar-active: #b15c00;
+    --sidebar-spacer: #c4c8da;
+
+    --scrollbar: #a8aecb;
+
+    --icons: #68709a;
+    --icons-hover: #3760bf;
+
+    --links: #387068;
+
+    --inline-code-color: #b15c00;
+
+    --theme-popup-bg: #d0d5e3;
+    --theme-popup-border: #b4b5b9;
+    --theme-hover: #c4c8da;
+
+    --quote-bg: #d0d5e3;
+    --quote-border: #c4c8da;
+
+    --warning-border: #b15c00;
+
+    --table-border-color: #c4c8da;
+    --table-header-bg: #b7c1e3;
+    --table-alternate-bg: #d8dce6;
+
+    --searchbar-border-color: #b4b5b9;
+    --searchbar-bg: #e9e9ed;
+    --searchbar-fg: #3760bf;
+    --searchbar-shadow-color: #c4c8da;
+    --searchresults-header-fg: #848cb5;
+    --searchresults-border-color: #b4b5b9;
+    --searchresults-li-bg: #d0d5e3;
+    --search-mark-bg: #b7c1e3;
+
+    --color-scheme: light;
+
+    --footnote-highlight: #2e7de9;
+
+    --blockquote-note-color: #2e7de9;
+    --blockquote-tip-color: #587539;
+    --blockquote-important-color: #9854f1;
+    --blockquote-warning-color: #8c6c3e;
+    --blockquote-caution-color: #f52a65;
+
+    --sidebar-header-border-color: #4094a3;
+}
+
+/* ---- tokyonight night, on the Navy theme ---- */
+
+.navy {
+    --bg: #1a1b26;
+    --fg: #c0caf5;
+
+    --sidebar-bg: #16161e;
+    --sidebar-fg: #a9b1d6;
+    --sidebar-non-existant: #565f89;
+    --sidebar-active: #ff9e64;
+    --sidebar-spacer: #292e42;
+
+    --scrollbar: #3b4261;
+
+    --icons: #737aa2;
+    --icons-hover: #c0caf5;
+
+    --links: #73daca;
+
+    --inline-code-color: #ff9e64;
+
+    --theme-popup-bg: #16161e;
+    --theme-popup-border: #3b4261;
+    --theme-hover: #292e42;
+
+    --quote-bg: #16161e;
+    --quote-border: #292e42;
+
+    --warning-border: #ff9e64;
+
+    --table-border-color: #292e42;
+    --table-header-bg: #394b70;
+    --table-alternate-bg: #1e202e;
+
+    --searchbar-border-color: #3b4261;
+    --searchbar-bg: #16161e;
+    --searchbar-fg: #c0caf5;
+    --searchbar-shadow-color: #0c0e14;
+    --searchresults-header-fg: #565f89;
+    --searchresults-border-color: #3b4261;
+    --searchresults-li-bg: #292e42;
+    --search-mark-bg: #3d59a1;
+
+    --color-scheme: dark;
+
+    --footnote-highlight: #7aa2f7;
+
+    --overlay-bg: rgba(12, 14, 20, 0.6);
+
+    --blockquote-note-color: #7aa2f7;
+    --blockquote-tip-color: #9ece6a;
+    --blockquote-important-color: #bb9af7;
+    --blockquote-warning-color: #e0af68;
+    --blockquote-caution-color: #f7768e;
+
+    --sidebar-header-border-color: #27a1b9;
+}
+
+/* ---- headings, bold and the sidebar ----
+ * the colors tokyonight gives Neovim's own UI: Title (blue, bold) for the big
+ * headings, Bold (the text color) below, FloatTitle / FloatBorder
+ * (border_highlight) for the parts and the section bar, NonText (dark3) for
+ * the chapter numbers, CursorLineNr (orange, bold) for the selected chapter */
+
+.light .content :is(h1, h2) a.header:link,
+.light .content :is(h1, h2) a.header:visited { color: #2e7de9; }
+.navy .content :is(h1, h2) a.header:link,
+.navy .content :is(h1, h2) a.header:visited { color: #7aa2f7; }
+
+/* the book's title, at the top */
+.light .menu-title { color: #b15c00; font-weight: bold; }
+.navy .menu-title { color: #ff9e64; font-weight: bold; }
+
+/* the parts (Getting started, Usage...), the chapter numbers (5.1.), the selected chapter */
+.light .chapter li.part-title { color: #4094a3; }
+.navy .chapter li.part-title { color: #27a1b9; }
+.light .chapter li a strong { color: #8990b3; }
+.navy .chapter li a strong { color: #545c7e; }
+.chapter li a.active { font-weight: bold; }
+.chapter li a.active strong { color: inherit; }
+
+/* ---- inline code: keys, `values`, names, in tokyonight's orange ---- */
+
+.light :not(pre) > .hljs { background: #d0d5e3; }
+.navy :not(pre) > .hljs { background: #292e42; }
+
+/* ---- code blocks, as tokyonight colors code in Neovim ---- */
+
+.light pre > .hljs { background: #d0d5e3; color: #3760bf; }
+.navy pre > .hljs { background: #16161e; color: #c0caf5; }
+
+.light .hljs-comment, .light .hljs-quote { color: #848cb5; font-style: italic; }
+.navy .hljs-comment, .navy .hljs-quote { color: #565f89; font-style: italic; }
+
+.light .hljs-keyword, .light .hljs-selector-tag { color: #7847bd; }
+.navy .hljs-keyword, .navy .hljs-selector-tag { color: #9d7cd8; }
+
+.light .hljs-string, .light .hljs-regexp, .light .hljs-addition { color: #587539; }
+.navy .hljs-string, .navy .hljs-regexp, .navy .hljs-addition { color: #9ece6a; }
+
+.light .hljs-number, .light .hljs-literal, .light .hljs-symbol, .light .hljs-bullet { color: #b15c00; }
+.navy .hljs-number, .navy .hljs-literal, .navy .hljs-symbol, .navy .hljs-bullet { color: #ff9e64; }
+
+.light .hljs-title, .light .hljs-section, .light .hljs-function { color: #2e7de9; }
+.navy .hljs-title, .navy .hljs-section, .navy .hljs-function { color: #7aa2f7; }
+
+.light .hljs-type, .light .hljs-built_in, .light .hljs-class .hljs-title { color: #188092; }
+.navy .hljs-type, .navy .hljs-built_in, .navy .hljs-class .hljs-title { color: #2ac3de; }
+
+.light .hljs-attr, .light .hljs-attribute, .light .hljs-property, .light .hljs-variable, .light .hljs-template-variable { color: #387068; }
+.navy .hljs-attr, .navy .hljs-attribute, .navy .hljs-property, .navy .hljs-variable, .navy .hljs-template-variable { color: #73daca; }
+
+.light .hljs-meta, .light .hljs-tag, .light .hljs-name { color: #007197; }
+.navy .hljs-meta, .navy .hljs-tag, .navy .hljs-name { color: #7dcfff; }
+
+.light .hljs-deletion { color: #f52a65; }
+.navy .hljs-deletion { color: #f7768e; }
+
+.light .hljs-emphasis, .navy .hljs-emphasis { font-style: italic; }
+.light .hljs-strong, .navy .hljs-strong { font-weight: bold; }

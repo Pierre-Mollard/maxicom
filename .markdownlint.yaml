@@ -3,3 +3,6 @@
 MD013:
   tables: false
   code_blocks: false
+# the README's centered logo and guide link: GitHub centers only with HTML
+MD033:
+  allowed_elements: [h1, p, img, a, b]

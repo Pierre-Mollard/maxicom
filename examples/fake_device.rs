@@ -1,3 +1,4 @@
+/// Used for testing, (very) dumb serial fake remote
 use serial2::SerialPort;
 use std::{
     io::ErrorKind,

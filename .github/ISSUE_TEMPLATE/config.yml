@@ -1,0 +1,10 @@
+# The "New issue" page: the two forms of this folder, and these links. Blank
+# issues are off, so a report comes with its version, OS and terminal
+blank_issues_enabled: false
+contact_links:
+  - name: User guide
+    url: https://pierre-mollard.github.io/maxicom/
+    about: How to do something, what a setting or a message means.
+  - name: Security issue
+    url: https://github.com/Pierre-Mollard/maxicom/security/advisories/new
+    about: Report a vulnerability privately, not in a public issue.

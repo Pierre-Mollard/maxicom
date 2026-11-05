@@ -2,3 +2,4 @@
 *.log
 *.raw
 tools/screenshots/__pycache__/
+/docs/book

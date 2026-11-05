@@ -1,0 +1,58 @@
+# The user guide as a website (docs/book.toml): built on each pull request that
+# changes docs/, so a broken book fails it; built and published to GitHub Pages
+# on main. The site is built on the runner and handed to Pages as an artifact:
+# nothing is committed.
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths: ["docs/**", ".github/workflows/docs.yml"]
+  pull_request:
+    paths: ["docs/**", ".github/workflows/docs.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# a pull request's newer push cancels its older build; a publish always finishes
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  MDBOOK_VERSION: "0.5.4"
+
+jobs:
+  build:
+    name: mdbook build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # the release binary, in seconds, instead of `cargo install mdbook`
+      - name: Install mdBook
+        run: |
+          url="https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          mkdir -p "$HOME/.local/bin"
+          curl -sSfL "$url" | tar -xz -C "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: mdbook build docs
+      - if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: docs/book
+
+  publish:
+    name: publish to Pages
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

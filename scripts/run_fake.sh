@@ -20,7 +20,7 @@ socat -d -d \
   pty,raw,echo=0,link=/tmp/fake-device &
 SOCAT_PID=$!
 
-cargo run --bin fake_device &
+cargo run --example fake_device &
 FAKE_PID=$!
 
 trap cleanup EXIT

@@ -1,4 +1,10 @@
-# maxicom
+<h1 align="center">
+  <img src="docs/images/icon.png" alt="maxicom" width="180">
+</h1>
+
+<p align="center">
+  <a href="https://pierre-mollard.github.io/maxicom/"><b>Read the user guide</b></a>
+</p>
 
 A serial terminal for the console, in the spirit of minicom, written in Rust.
 It opens a serial port or a device over TCP, on Linux, macOS and Windows.
@@ -42,6 +48,10 @@ most: [Quick start](docs/guide/quick-start.md).
 
 ## Documentation
 
+The user guide is online at
+[pierre-mollard.github.io/maxicom](https://pierre-mollard.github.io/maxicom/).
+Its pages, which GitHub also shows:
+
 - [Introduction](docs/guide/introduction.md)
 - [Install](docs/guide/install.md)
 - [Quick start](docs/guide/quick-start.md)
@@ -71,7 +81,10 @@ most: [Quick start](docs/guide/quick-start.md).
 - [Messages](docs/guide/messages.md)
 - [What maxicom doesn't do](docs/guide/limits.md)
 
+What changed in each version: [CHANGELOG.md](CHANGELOG.md).
+
 Building on maxicom: [CONTRIBUTING.md](CONTRIBUTING.md).
+Reporting a security issue: [SECURITY.md](SECURITY.md).
 
 ### Author
 

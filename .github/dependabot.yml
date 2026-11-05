@@ -1,0 +1,25 @@
+# Dependabot: a pull request each week for the dependencies that have a new
+# version, the Cargo crates and the GitHub Actions of the workflows. CI runs on
+# each one, cargo deny included. Minor and patch updates come grouped in one
+# pull request per ecosystem; a major update comes alone, since it may break.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cargo:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: conf
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: conf

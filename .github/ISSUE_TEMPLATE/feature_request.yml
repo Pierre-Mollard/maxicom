@@ -1,0 +1,31 @@
+name: Feature request
+description: Something maxicom could do, or do better
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before asking, have a look at
+        [What maxicom doesn't do](https://pierre-mollard.github.io/maxicom/limits.html):
+        some features are left out on purpose, with what to use instead.
+
+  - type: textarea
+    id: need
+    attributes:
+      label: What you're trying to do
+      description: The task, with your device or setup, rather than the feature itself.
+      placeholder: When my board boots, I want to stop U-Boot and run a command, without typing it each time.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: How maxicom could help
+      description: The feature you have in mind, if you have one.
+
+  - type: textarea
+    id: now
+    attributes:
+      label: What you do today
+      description: Another tool, a workaround, or nothing.

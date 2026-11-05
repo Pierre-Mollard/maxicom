@@ -457,7 +457,7 @@ fn mash_until_its_text() {
 }
 
 /// A pty pair: maxicom opens the `path` side as its port, the test reads and writes the
-/// `device` side, as `src/bin/fake_device.rs` does through socat
+/// `device` side, as `examples/fake_device.rs` does through socat
 #[cfg(target_os = "linux")]
 pub struct Pty {
     device: std::fs::File,

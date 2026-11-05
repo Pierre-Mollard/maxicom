@@ -1,0 +1,22 @@
+# The user guide as a website, built by mdBook: `mdbook serve docs` to read it
+# locally, `mdbook build docs` to write it to docs/book/
+
+[book]
+title = "maxicom"
+description = "A serial terminal for the console: the user guide"
+authors = ["Pierre Mollard"]
+language = "en"
+src = "guide"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+# tokyonight colors: day on the Light theme, night on the Navy theme, see theme/tokyonight.css
+default-theme = "light"
+preferred-dark-theme = "navy"
+additional-css = ["theme/tokyonight.css"]
+git-repository-url = "https://github.com/Pierre-Mollard/maxicom"
+edit-url-template = "https://github.com/Pierre-Mollard/maxicom/edit/main/docs/{path}"
+site-url = "/maxicom/"
