@@ -1,0 +1,118 @@
+# What maxicom doesn't do
+
+This page lists what maxicom leaves out on purpose, or doesn't support yet,
+with what to use instead. If a feature isn't in this guide, it's most likely
+not there; check here before looking for a hidden setting.
+
+## It never acts on its own
+
+### It never types into the device
+
+maxicom sends only what you type, what you bind to a key, and what you arm
+as a trigger. It never sends a command by itself, not even to fix the
+terminal size: the device runs `resize` and asks for it. See
+[Serial shells](terminal-mode.md#serial-shells).
+
+Answering a program's questions, like "where is the cursor?", is the one
+exception, and you can turn it off. See
+[Answering the device's queries](terminal-mode.md#answering-the-devices-queries).
+
+### It never starts another program
+
+There is no shell escape, no external editor, no helper for file transfers,
+and no command run on an event. To use another program on the port, detach
+the link first (`Ctrl-a D`), see [Detach and attach](links.md#detach-and-attach).
+
+### It doesn't retry a failed reattach
+
+When `Ctrl-a D` can't open the port again, the link stays detached until you
+try again. A port that was unplugged, or a TCP host that went down, is
+different: maxicom reopens those by itself.
+
+## Links
+
+### One link per window
+
+A maxicom shows one link at a time, with no tabs or split views. To watch
+two devices, run two maxicoms. They can't open the same port: see
+[Port locks](locks.md).
+
+### No telnet, RFC 2217 or SSH
+
+A TCP link carries raw bytes only. There is no telnet option negotiation,
+and no RFC 2217, so the baud rate of a remote port can't be set from
+maxicom. To reach a device behind SSH, forward a port with `ssh -L`. See
+[TCP links](tcp-links.md).
+
+### No modem dialing
+
+The directory opens ports and saved links. It doesn't dial phone numbers or
+send modem init strings. A command line bound to a key can send any string,
+see [Command line](command-line.md).
+
+## Sending
+
+### No file transfer protocols
+
+There is no XMODEM, YMODEM, ZMODEM or Kermit. `send-file` sends a file's
+bytes as they are, paced to the baud rate, with an optional delay after
+each line. That's enough to paste a script into a shell or a bootloader's
+console. See [Sending a file](command-line.md#sending-a-file).
+
+### No scripting language
+
+There are no scripts with loops or conditions. Instead:
+
+- [triggers](triggers.md) answer a prompt when its text arrives;
+- [command lines](command-line.md) chain commands, with `sleep` between
+  them, and can be bound to a key.
+
+## The screen
+
+### Terminal mode always wraps
+
+The emulated screen wraps at its own width, like any terminal. Turning
+wrapping off only exists in line mode (`Ctrl-a w`). For lines wider than the
+view, make the screen wider and pan, see
+[Screen size](terminal-mode.md#screen-size).
+
+### No images
+
+Sixel and kitty graphics aren't drawn. Their bytes still show in the
+[raw side panel](raw-side-panel.md).
+
+### Some queries stay unanswered
+
+A program on the device can ask its terminal questions. A few never get an
+answer:
+
+- **The colors.** maxicom draws with your terminal's own colors, so it
+  doesn't know their values. Programs like vim then guess a light or dark
+  background.
+- **The window title and the clipboard**, for safety. The device could
+  read your clipboard, or set a title holding a command and have it typed
+  back.
+- **The kitty keyboard protocol** and other richer key reports.
+
+See [Answering the device's queries](terminal-mode.md#answering-the-devices-queries).
+
+## Copying
+
+### The clipboard goes through your terminal
+
+maxicom copies with OSC 52, an escape sequence your terminal turns into a
+clipboard write. It doesn't talk to the system clipboard itself. When a copy
+doesn't arrive, see
+[A copy doesn't reach the clipboard](troubleshooting.md#a-copy-doesnt-reach-the-clipboard).
+
+## Recordings and replays
+
+### A text recording can't be replayed
+
+A `.log` holds decoded text, not the bytes received. Only a full recording
+or a session backup can be replayed. See [Capture](capture.md#what-is-what).
+
+### A replay sends nothing
+
+Commands that send are refused during a replay, and triggers don't fire.
+See [Replay](capture.md#replay).

@@ -282,7 +282,18 @@ fn parse_args_from(
 }
 
 pub fn print_version() {
-    println!("maxicom {}", env!("CARGO_PKG_VERSION"));
+    println!(
+        "\
+maxicom {}
+Copyright (c) 2026 Pierre Mollard.
+
+Licensed under either of
+  * Apache License, Version 2.0 (LICENSE-APACHE or https://www.apache.org/licenses/LICENSE-2.0)
+  * MIT license (LICENSE-MIT or https://opensource.org/licenses/MIT)
+at your option.
+",
+        env!("CARGO_PKG_VERSION")
+    );
 }
 
 pub fn print_help() {

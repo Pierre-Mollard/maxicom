@@ -45,6 +45,8 @@ mode.
 The name is filled in for you, without an extension. The stream adds it,
 shown after the name: `.log` for text, `/` for a full recording's folder.
 
+![The recording dialog, on a text recording](images/record-dialog.png)
+
 On top of the [popup keys](popups.md):
 
 | Key | Does |
@@ -150,6 +152,8 @@ A separator line follows, before the live data:
 ── restored: ttyUSB0, 2026-10-28 14:15 → 16:40 ──
 ```
 
+![A restored session in line mode: the old lines, the separator, then the live ones](images/restore.png)
+
 The terminal replays the session at the size it ended with, so wide lines
 come back whole. Then `dimension_mode` sizes it to the view.
 
@@ -220,7 +224,7 @@ starts.
 left, for any device. The right side shows the selected one: its device,
 format, times, size and last lines.
 
-<!-- screenshot: the session browser with a few sessions, one restorable -->
+![The session browser: past sessions on the left, the selected one's device, times and last lines on the right](images/session-browser.png)
 
 ### Marks
 

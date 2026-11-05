@@ -23,8 +23,10 @@ Data that arrives while you are scrolled up doesn't move the view.
 
 Copy mode puts a cursor in the history, so you can select text with the
 keyboard. Enter it with `Ctrl-a [` or `Ctrl-a b`. The mode badge in the
-status bar turns magenta and reads `COPY`. It works the same in line and
+status bar turns magenta. It works the same in line and
 terminal mode.
+
+![Copy mode in line mode: two lines selected, the mode badge in magenta](images/copy-mode.png)
 
 ### Keys
 

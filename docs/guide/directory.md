@@ -4,7 +4,7 @@ The directory lists everything you can open: your saved links, and the
 serial ports the system sees. Open it with `Ctrl-a d`, the `directory`
 command, or Directory in the right-click menu.
 
-<!-- screenshot: the directory on the Saved links tab, a test result in the State column -->
+![The directory on the Saved links tab, after a test: in use, free, reachable, refused, not found](images/directory.png)
 
 ## The two tabs
 

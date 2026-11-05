@@ -4,7 +4,7 @@ The raw side panel shows the received bytes as they came off the wire, next
 to the text. It reveals what the decoding, the colors and the terminal
 emulator hide: a stray `\r`, a `0x00`, a framing problem.
 
-<!-- screenshot: line mode with the raw panel in hex on the right -->
+![Line mode with the raw side panel in hex: each line next to its bytes](images/raw-side-panel.png)
 
 ## Showing it
 

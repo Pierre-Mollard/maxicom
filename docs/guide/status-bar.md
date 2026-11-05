@@ -6,6 +6,8 @@ in a small language of text, variables and styled blocks, so you can change
 what the bar shows, its colors, and what a click on it does. `Ctrl-a r`
 applies a change.
 
+![The default status bar with one trigger armed and a recording running](images/status-bar.png)
+
 ## A first example
 
 ```toml

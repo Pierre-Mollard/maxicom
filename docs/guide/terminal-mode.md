@@ -11,7 +11,7 @@ program asked for.
 Terminal mode is the default (`mode = "terminal"`). `Ctrl-a m` switches to
 line mode and back.
 
-<!-- screenshot: terminal mode running htop or menuconfig on a board -->
+![Terminal mode running a full-screen process viewer on a board](images/terminal-mode.png)
 
 ## Screen size
 

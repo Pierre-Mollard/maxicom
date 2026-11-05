@@ -5,6 +5,8 @@ settings, the directory, the dialogs that ask for a name or a path. They all
 share the same keys, described once here. The other chapters only list the
 keys a popup adds.
 
+![The settings popup: each setting with its key, in two columns](images/settings-popup.png)
+
 ## Moving around
 
 | Key | Does |

@@ -100,6 +100,8 @@ framing in the status bar opens it too. It sets:
 - the data bits, the parity and the stop bits;
 - the flow control.
 
+![The line settings popup](images/line-settings.png)
+
 Enter applies the changes. For a rate that isn't in the list, use `-b` at
 startup or the `baud` command.
 

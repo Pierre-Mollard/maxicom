@@ -70,6 +70,8 @@ The user guide is in [docs/guide](docs/guide/SUMMARY.md):
 - [Highlights](docs/guide/highlights.md)
 - [Status bar](docs/guide/status-bar.md)
 - [Troubleshooting](docs/guide/troubleshooting.md)
+- [Messages](docs/guide/messages.md)
+- [What maxicom doesn't do](docs/guide/limits.md)
 
 Building on maxicom: [CONTRIBUTING.md](CONTRIBUTING.md).
 

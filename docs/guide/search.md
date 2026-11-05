@@ -3,6 +3,8 @@
 `Ctrl-a /` (or Search in the right-click menu) opens the search bar over the
 bottom of the history. It works in both modes.
 
+![A search for temp in line mode, its matches lit, the count in the search bar](images/search.png)
+
 ## Searching
 
 Type the text: every match lights up as you type, and the current one

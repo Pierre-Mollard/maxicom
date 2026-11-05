@@ -1,5 +1,8 @@
 # Troubleshooting
 
+This page starts from what you see. To look up the exact words of a warning
+or an error, see [Messages](messages.md).
+
 ## The port doesn't open
 
 ### Permission denied (Linux)

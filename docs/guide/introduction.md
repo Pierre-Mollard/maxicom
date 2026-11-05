@@ -14,7 +14,7 @@ Beyond the basics, it gives you:
 - a command line, and triggers that answer boot prompts for you;
 - a status bar you can rewrite.
 
-<!-- screenshot: terminal mode on a board's shell, the status bar visible -->
+![maxicom in terminal mode on a board's shell, the status bar in the bottom border](images/overview.png)
 
 ## Two modes
 
@@ -93,6 +93,8 @@ This guide writes keys the way maxicom shows them:
 | Change the common settings, each with its key | `Ctrl-a o` (or `Ctrl-a s`) |
 | Reach the main actions with the mouse | A right click |
 | Run a command, with completion | `Ctrl-a :`, the [command line](command-line.md) |
+
+![The help popup on the prefixed keys, one tab per section](images/help.png)
 
 New to maxicom? Start with [Install](install.md), then the
 [Quick start](quick-start.md). Used to minicom? Read

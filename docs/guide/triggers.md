@@ -54,6 +54,8 @@ When one fires, a notice says so.
 their state, `◎` armed and `○` disarmed. The selected trigger's rule shows
 on the side.
 
+![The trigger browser: login armed, the selected u-boot rule on the side](images/triggers.png)
+
 On top of the [popup keys](popups.md):
 
 | Key | Does |

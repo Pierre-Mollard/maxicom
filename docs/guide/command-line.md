@@ -14,6 +14,8 @@ dtr off; sleep 100; dtr on
 If a line has an unknown command or a bad argument, nothing in it runs: the
 error shows and the prompt stays open so you can fix it.
 
+![The command line after typing re, with the matching commands and their help listed](images/command-line.png)
+
 ## Writing arguments
 
 - Quote an argument that has spaces.
