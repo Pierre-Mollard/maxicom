@@ -94,7 +94,7 @@ layout = "border"
 
 | Variable | Value | Example |
 | --- | --- | --- |
-| `{mode}` | `TERM` or `LINE` | `TERM` |
+| `{mode}` | `TERM` or `LINE`, `COPY` while copy mode is on | `TERM` |
 | `{port}` | Device address, or a saved link's name | `/dev/ttyUSB0`, `tcp://192.168.1.50:4000`, `esp32` |
 | `{baud}` | Baud rate; `raw` for a raw TCP link | `115200` |
 | `{framing}` | Serial framing; `TCP` for a TCP link | `8N1` |
@@ -116,8 +116,9 @@ layout = "border"
 | `{replay_percent}` | How much of the file it read, 0..100 | `42` |
 | `{replay_read}` / `{replay_size}` | Bytes read / the file's size | `4096` |
 
-The default bar doesn't show `{copy_side}`: the mode badge's color tells the
-panel instead. To show it, add this block after `{mode}`'s:
+The default bar doesn't show `{copy_side}`: in copy mode the mode badge reads
+`COPY`, and its color tells the panel instead. To show it, add this block
+after `{mode}`'s:
 
 ```text
 [ {copy_side} ](copy_raw?(fg=selection_raw bold):copy?(fg=selection bold):hide)

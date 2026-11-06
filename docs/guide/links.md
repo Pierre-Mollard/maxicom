@@ -66,6 +66,7 @@ a device. See [Replay](capture.md#replay).
 | `-H, --displayhex` | Opens the raw side panel in hex |
 | `-R, --remotecharset <enc>` | Reads the received bytes as `utf8`, `ascii`, `cp437` or `latin1` |
 | `--restore`, `--no-restore` | Restores the last session without asking, or never |
+| `--config <file>` | Reads the settings from that file instead of `config.toml`, see [Another settings file](settings.md#another-settings-file) |
 
 ### With no device given
 

@@ -64,6 +64,20 @@ pub fn parse_args(
     parse_args_from(env::args().skip(1), defaults, links) // skip program name
 }
 
+/// The `--config` file, read before the settings load since the other options need them
+/// (MAX-206)
+pub fn config_file() -> Option<PathBuf> {
+    config_file_from(env::args().skip(1))
+}
+
+/// The value of the last `--config`, as the last of any option wins
+fn config_file_from(args: impl IntoIterator<Item = String>) -> Option<PathBuf> {
+    let args = split_values(args);
+    (args.windows(2))
+        .rfind(|pair| pair[0] == "--config")
+        .map(|pair| PathBuf::from(&pair[1]))
+}
+
 /// The link given: an address (`--device`, `--tcp`, `--replay`), or a word that is a saved
 /// link's name first, else a device (MAX-185)
 enum Given {
@@ -102,6 +116,7 @@ const VALUE_OPTIONS: &[(&str, &str)] = &[
     ("", "--stop-bits"),
     ("", "--parity"),
     ("", "--flow"),
+    ("", "--config"),
 ];
 
 /// The value glued to its option split off, as getopt takes it for minicom (MAX-181):
@@ -226,6 +241,10 @@ fn parse_args_from(
                     .ok_or(ParseError::MissingValue("--remotecharset"))?;
                 encoding = Some(val.parse().map_err(ParseError::BadFormat)?);
             }
+            // already read by `config_file`, before the settings loaded (MAX-206)
+            "--config" => {
+                args.next().ok_or(ParseError::MissingValue("--config"))?;
+            }
             "--restore" => restore = Some(true),
             "--no-restore" => restore = Some(false),
             "--help" | "-h" => {
@@ -338,6 +357,9 @@ Options:
                            latin1 [default: the settings' encoding]
 
   An option's value can be glued to it: --baudrate=9600, -b9600.
+
+      --config <FILE>      Read the settings from FILE instead of config.toml,
+                           created with the defaults if it doesn't exist
 
   -h, --help               Print help
   -v, --version            Print the version

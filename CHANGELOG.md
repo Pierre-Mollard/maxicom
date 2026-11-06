@@ -13,6 +13,19 @@ What changes in each version of maxicom. The format follows
   terminal's size on each change, so neovim 0.12 fits the screen over a
   serial line with no `resize` to run. They're part of the `size` group of
   the query answers.
+- [Middle-click paste](https://pierre-mollard.github.io/maxicom/copy-mode-and-mouse.html#middle-click-paste)
+  of the last copy, anywhere in the window (`middle_click_paste` in `[ui]`
+  turns it off).
+- `--config <file>` reads the settings from
+  [another file](https://pierre-mollard.github.io/maxicom/settings.html#another-settings-file)
+  than `config.toml`, for a setup per board.
+- `focus_effects` in `[ui]`: off, the window keeps its focused look when it
+  loses the focus.
+
+### Changed
+
+- The status bar's mode badge reads `COPY` in copy mode, instead of `TERM`
+  or `LINE` in the copy colors.
 
 ## [0.1.0] - 2026-11-06
 

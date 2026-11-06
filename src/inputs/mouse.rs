@@ -55,6 +55,7 @@ pub fn handle_mouse(event: MouseEvent, app: &App) -> Action {
         | MouseEventKind::Drag(MouseButton::Left)
         | MouseEventKind::Up(MouseButton::Left) => return handle_left_button(event, app),
         MouseEventKind::Down(MouseButton::Right) => return open_menu(event, app),
+        MouseEventKind::Down(MouseButton::Middle) => return middle_paste(app),
         MouseEventKind::Moved => return lost_release(app).unwrap_or_else(|| hover(event, app)),
         _ => return Action::Ignore,
     };
@@ -150,6 +151,17 @@ fn open_menu(event: MouseEvent, app: &App) -> Action {
     let recording = app.recording().is_some();
     let menu = ActionMenu::new(at, app.settings().mode, app.link_kind(), recording);
     Action::App(AppAction::OpenOverlay(Overlay::ActionMenu(menu)))
+}
+
+/// The middle button pastes the last copy anywhere outside a popup, as X11 terminals paste
+/// their selection; nothing before a copy, or with `middle_click_paste` off (MAX-212)
+fn middle_paste(app: &App) -> Action {
+    let on = app.settings().ui.middle_click_paste;
+    if on && app.overlay().is_none() && app.has_paste_buffer() {
+        Action::App(AppAction::PasteBuffer)
+    } else {
+        Action::Ignore
+    }
 }
 
 /// Where typed text goes: in line mode the TX input (from the history's copy mode too), in

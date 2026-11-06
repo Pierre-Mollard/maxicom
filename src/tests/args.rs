@@ -205,6 +205,33 @@ fn saved_links_by_name() {
     assert_eq!(run(&by_device, &[]), link("/dev/ttyUSB1", 9600, "7E1"));
 }
 
+/// MAX-206: `--config` gives the settings file, spaced or glued, the last one winning; none
+/// gives none. The normal parse skips it with its value, and refuses it without one.
+/// How: the pre-read on each form, then the parse with a device after it, then alone.
+#[test]
+fn config_file_option() {
+    let file = |args: &[&str]| config_file_from(args.iter().map(|a| a.to_string()));
+    assert_eq!(file(&[]), None);
+    assert_eq!(file(&["-b", "9600"]), None);
+    assert_eq!(
+        file(&["--config", "esp.toml", "-b", "9600"]),
+        Some(PathBuf::from("esp.toml"))
+    );
+    assert_eq!(
+        file(&["--config=a.toml", "--config", "b.toml"]),
+        Some(PathBuf::from("b.toml"))
+    );
+
+    assert_eq!(
+        address_of(&["--config", "esp.toml", "COM3"]).unwrap(),
+        "COM3"
+    );
+    assert!(matches!(
+        parse(&["--config"]),
+        Err(ParseError::MissingValue("--config"))
+    ));
+}
+
 /// MAX-181: minicom's getopt forms, the value glued to its option (`--baudrate=9600`,
 /// `-b9600`), for the options that take one; a flag with `=` stays unknown.
 /// How: each glued form against its spaced one, then `--restore=x`.

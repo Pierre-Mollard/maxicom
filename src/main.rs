@@ -117,7 +117,11 @@ fn load_runtime_config(config_path: &Path) -> Result<RuntimeConfig, ConfigsError
 }
 
 fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
-    let config_path = AppConfig::default_config_path();
+    // `--config` first: the other options need the settings it gives (MAX-206)
+    if let Some(path) = args::config_file() {
+        AppConfig::use_config_file(path);
+    }
+    let config_path = AppConfig::config_path();
     let RuntimeConfig {
         mut settings,
         mut theme,

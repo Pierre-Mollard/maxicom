@@ -19,6 +19,23 @@ folder: `~/.config/maxicom/` on Linux, see
 `links_path` in `config.toml` put a file elsewhere. `~` is your home
 folder.
 
+### Another settings file
+
+`maxicom --config <file>` reads the settings from that file instead of
+`config.toml`, for this run. It's handy for a setup per board or per use:
+one file for an ESP32 at 115200 with the triggers armed, another for logs
+in line mode.
+
+```bash
+maxicom --config ~/maxicom/esp32.toml
+```
+
+The other files still come from the config folder, unless the file's own
+`*_path` settings point elsewhere, so a settings file can bring its own theme
+or keys. When the file doesn't exist yet, it's created with the defaults,
+ready to edit. `Ctrl-a r` reloads the same file, and the settings popup lists
+it next to the config folder.
+
 ### Defaults
 
 On the first start, maxicom writes each file with its defaults, except
@@ -205,6 +222,8 @@ Recordings, session backups and their restore, and screenshots. See
 | `show_status_bar` | `true` | The status bar |
 | `title_details` | `false` | More in the history's title, see below |
 | `mouse` | `true` | Mouse support: [Copy mode and mouse](copy-mode-and-mouse.md#mouse) |
+| `middle_click_paste` | `true` | A middle click pastes the last copy, see [Middle-click paste](copy-mode-and-mouse.md#middle-click-paste) |
+| `focus_effects` | `true` | The gray border and cursor while the window isn't focused, see [Cursor](terminal-mode.md#cursor) |
 | `hide_borders_below` | `[60, 16]` | See below |
 | `hide_scrollbar_below` | `[40, 10]` | See below |
 | `hide_status_bar_below` | `[35, 6]` | See below |

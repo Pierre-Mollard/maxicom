@@ -23,7 +23,7 @@ Data that arrives while you are scrolled up doesn't move the view.
 
 Copy mode puts a cursor in the history, so you can select text with the
 keyboard. Enter it with `Ctrl-a [` or `Ctrl-a b`. The mode badge in the
-status bar turns magenta. It works the same in line and
+status bar reads `COPY` and turns magenta. It works the same in line and
 terminal mode.
 
 ![Copy mode in line mode: two lines selected, the mode badge in magenta](images/copy-mode.png)
@@ -64,7 +64,7 @@ sequence. Your terminal must allow it:
 - in tmux, add `set -g set-clipboard on`.
 
 A notification says how many characters were copied. maxicom also keeps the
-last copy itself, for a right-click paste.
+last copy itself, for a right-click or middle-click paste.
 
 ### Colors
 
@@ -110,6 +110,22 @@ opening the menu:
 
 - in line mode, over the input box, into the input box;
 - in terminal mode, over the cursor's row on the live screen, to the device.
+
+### Middle-click paste
+
+A middle click pastes the last copy anywhere in the window, like the
+selection paste of Linux terminals: into the input box in line mode, to the
+device in terminal mode. It does nothing over a popup, or before your first
+copy.
+
+It pastes maxicom's last copy, not the system clipboard. When the device's
+program uses the mouse, like the right click, the middle click goes to it
+instead.
+
+In terminal mode the paste goes straight to the device. If a middle click
+happens by accident (pressing the scroll wheel, a touchpad tap), or the
+device takes any input as a command, set `middle_click_paste = false` in
+`[ui]` and the middle click does nothing.
 
 ### What else reacts to clicks
 

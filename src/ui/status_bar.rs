@@ -589,10 +589,12 @@ impl Var {
     fn write_text(self, out: &mut String, app: &App, time_format: &str) {
         let scroll = app.scroll_status();
         let _ = match self {
+            // copy mode takes the badge while it's on (MAX-208)
             Self::Mode => write!(
                 out,
                 "{}",
                 match app.settings().mode {
+                    _ if app.is_copy_mode_active() => "COPY",
                     Mode::Terminal => "TERM",
                     Mode::Line => "LINE",
                 }

@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 
 use crate::paths::expand_home;
 
@@ -33,6 +36,9 @@ const KEYMAP_FILE: &str = "keymap.toml";
 const HIGHLIGHT_FILE: &str = "highlights.toml";
 const TRIGGERS_FILE: &str = "triggers.toml";
 const LINKS_FILE: &str = "links.toml";
+
+/// The settings file given with `--config`, set once at startup (MAX-206)
+static CONFIG_FILE_GIVEN: OnceLock<PathBuf> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -88,6 +94,17 @@ impl AppConfig {
             .unwrap_or_else(|| PathBuf::from(CONFIG_FILE))
     }
 
+    /// Reads the settings from `path` instead of the default file, for the whole run: only
+    /// the first call counts (MAX-206)
+    pub fn use_config_file(path: PathBuf) {
+        let _ = CONFIG_FILE_GIVEN.set(path);
+    }
+
+    /// The settings file in use: `--config`'s, else the default one
+    pub fn config_path() -> PathBuf {
+        (CONFIG_FILE_GIVEN.get().cloned()).unwrap_or_else(Self::default_config_path)
+    }
+
     pub fn default_sessions_dir() -> Option<PathBuf> {
         dirs::cache_dir().map(|p| p.join(APP_DIR).join(SESSION_DIR))
     }
@@ -128,11 +145,12 @@ impl AppConfig {
         path.parent().map(Path::to_path_buf).unwrap_or_default()
     }
 
-    /// The config folder, then each config file a `*_path` setting puts out of it, with what
-    /// they are: what the help and the settings show and copy (MAX-163)
+    /// The config folder, then each config file put out of it (`--config`, a `*_path`
+    /// setting), with what they are: what the help and the settings show and copy (MAX-163)
     pub fn config_paths(settings: &SettingsConfig) -> Vec<(&'static str, PathBuf)> {
         let dir = Self::config_dir();
         let files = [
+            ("config file", Self::config_path()),
             ("theme file", Self::active_theme_path(settings)),
             ("keymap file", Self::active_keybindings_path(settings)),
             ("highlights file", Self::active_highlight_path(settings)),

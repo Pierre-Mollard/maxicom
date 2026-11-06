@@ -80,7 +80,13 @@ the view back to the live screen. See
 ## Cursor
 
 While maxicom's window doesn't have the focus, the cursor is drawn as
-`unfocused_cursor_glyph` (`█`).
+`unfocused_cursor_glyph` (`█`), and the focused box's border turns gray
+(`border_app_unfocused` in the theme).
+
+To keep the focused look all the time, set `focus_effects = false` in
+`[ui]`. That helps when your terminal reports focus changes it shouldn't,
+or when you watch maxicom from another window. The click that brings the
+window back still only gives it the focus: it doesn't select or paste.
 
 ## Answering the device's queries
 

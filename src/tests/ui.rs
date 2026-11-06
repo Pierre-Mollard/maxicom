@@ -2476,6 +2476,37 @@ fn focusing_click_doesnt_select() {
     assert!(selects(&mut h));
 }
 
+/// MAX-204: with `focus_effects` off the window keeps its focused look when it loses the
+/// focus (the focused panel's border here), while the focusing click is still only a focus.
+/// How: line mode with borders, the input box's corner color focused then unfocused, with
+/// the setting on then off; then a click while unfocused.
+#[test]
+fn focus_effects_off_keeps_the_focused_look() {
+    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+        s.ui.show_borders = true;
+    });
+    h.feed(b"hello\r\n");
+    let focus = |h: &mut Harness, on: bool| h.app.update(Action::App(AppAction::FocusGained(on)));
+    // the input box's corner: the focused panel's border, gray when the window isn't focused
+    let corner = |h: &mut Harness| {
+        let y = cell_of(&h.draw(), "Transmit").1;
+        h.terminal.backend().buffer()[(0, y)].fg
+    };
+    let focused = corner(&mut h);
+    focus(&mut h, false);
+    assert_ne!(corner(&mut h), focused);
+
+    h.app.settings_mut().ui.focus_effects = false;
+    assert_eq!(corner(&mut h), focused);
+    let rows = h.draw();
+    mouse_do(
+        &mut h,
+        MouseEventKind::Down(MouseButton::Left),
+        cell_of(&rows, "hello"),
+    );
+    assert_eq!(h.app.copy_side(), None);
+}
+
 /// Terminal mode scrolled into the history: the real cursor isn't placed, a fake one is drawn
 /// where the remote's cursor still shows, in the unfocused cursor's style, so it doesn't
 /// vanish. Live, the real cursor is back.
@@ -4777,6 +4808,64 @@ fn right_click_pastes_into_the_prompt() {
     assert!(matches!(h.app.overlay(), Some(Overlay::ActionMenu(_))));
 }
 
+/// MAX-212: a middle click pastes the last yank anywhere outside a popup: into the input in
+/// line mode (from the history too), to the remote in terminal mode. Before a yank, or over
+/// a popup, or with `middle_click_paste` off, it does nothing; a remote using the mouse gets
+/// the click instead.
+/// How: line mode, a middle click before and after yanking "alpha", one over the
+/// right-click menu, one with the setting off; terminal mode, one on a row that isn't the cursor's, then with mouse reports on.
+#[test]
+fn middle_click_pastes() {
+    let middle = MouseEventKind::Down(MouseButton::Middle);
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+    h.feed(b"alpha beta\r\n");
+    let rows = h.draw();
+    let beta = cell_of(&rows, "beta");
+    mouse_do(&mut h, middle, beta);
+    assert_eq!(h.app.line_mode.input().value(), "");
+
+    yank(&mut h, "alpha", 5);
+    h.draw();
+    mouse_do(&mut h, middle, beta);
+    assert_eq!(h.app.line_mode.input().value(), "alpha");
+    assert!(h.app.overlay().is_none());
+
+    mouse_do(&mut h, MouseEventKind::Down(MouseButton::Right), beta);
+    assert!(matches!(h.app.overlay(), Some(Overlay::ActionMenu(_))));
+    h.draw();
+    mouse_do(&mut h, middle, beta);
+    assert_eq!(h.app.line_mode.input().value(), "alpha");
+    h.app.close_overlay();
+
+    // the setting off: nothing
+    h.app.settings_mut().ui.middle_click_paste = false;
+    mouse_do(&mut h, middle, beta);
+    assert_eq!(h.app.line_mode.input().value(), "alpha");
+
+    let mut t = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 30, |s| {
+        s.mode = Mode::Terminal;
+    });
+    t.draw();
+    t.app
+        .terminal_mode
+        .process_rx(TextEncoding::Utf8, b"one\r\n$ ");
+    yank(&mut t, "one", 3);
+    let rows = t.draw();
+    match mouse_do(&mut t, middle, cell_of(&rows, "one")) {
+        UpdateEffect::Transmit(bytes) => assert_eq!(bytes, b"one"),
+        _ => panic!("expected a paste"),
+    }
+
+    t.app
+        .terminal_mode
+        .process_rx(TextEncoding::Utf8, b"\x1b[?1000h\x1b[?1006h");
+    let area = t.app.frame_areas().content;
+    match mouse_do(&mut t, middle, (area.x + 4, area.y + 2)) {
+        UpdateEffect::Transmit(bytes) => assert_eq!(bytes, b"\x1b[<1;5;3M"),
+        _ => panic!("expected a report to the remote"),
+    }
+}
+
 /// MAX-144: in terminal mode a right-click on the cursor's row sends the last yank to the
 /// remote, as a paste; on another row it opens the menu.
 /// How: a shell prompt under a line, "one" yanked; right-clicks on both rows.
@@ -4945,10 +5034,13 @@ fn status_bar_inset_and_background() {
     assert_eq!(status_cell(&rows, "LINE"), (2, 23));
     assert_eq!(bg_at(&h, status_cell(&rows, "/dev/")), Some(background));
 
+    // copy mode takes the badge, in its color (MAX-208)
     h.app.update(Action::CopyMode(CopyModeAction::Enter));
     let rows = h.draw();
+    assert_eq!(status_cell(&rows, "COPY"), (2, 23));
+    assert!(!rows[23].contains("LINE"), "{:?}", rows[23]);
     assert_eq!(
-        bg_at(&h, status_cell(&rows, "LINE")),
+        bg_at(&h, status_cell(&rows, "COPY")),
         Some(ratatui::style::Color::Magenta)
     );
     h.app.update(Action::CopyMode(CopyModeAction::Exit));

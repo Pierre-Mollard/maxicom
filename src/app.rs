@@ -1913,9 +1913,11 @@ impl App {
         }
     }
 
+    /// Whether to draw the window as focused: always, with `focus_effects` off (MAX-204). The
+    /// click that focuses the window is told by `is_window_focused`, whatever the setting
     #[inline]
     pub fn is_app_focused(&self) -> bool {
-        self.is_window_focused
+        self.is_window_focused || !self.settings.ui.focus_effects
     }
 
     #[inline]

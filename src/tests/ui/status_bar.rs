@@ -195,7 +195,7 @@ fn session_replay_shows_its_recorded_line() {
 }
 
 /// The mode pill follows the prefix, copy-mode and search conditions; the search's is black
-/// on green, the search bar label's (MAX-193).
+/// on green, the search bar label's (MAX-193). In copy mode it reads COPY (MAX-208).
 /// How: same template with the prefix active, then in line copy mode, then searching.
 #[test]
 fn default_left_conditions() {
@@ -211,7 +211,7 @@ fn default_left_conditions() {
     l.update(Action::CopyMode(CopyModeAction::Enter));
     assert_eq!(
         render(&d.left, &l)[0],
-        span(" LINE ", "Some(Black)", "Some(Magenta)", "BOLD")
+        span(" COPY ", "Some(Black)", "Some(Magenta)", "BOLD")
     );
 
     let mut s = app(Mode::Line);
@@ -254,7 +254,7 @@ fn copy_side_variable_and_condition() {
     assert_eq!(
         render(&d.left, &l)[..2],
         [
-            span(" LINE ", "Some(Black)", "Some(Red)", "BOLD"),
+            span(" COPY ", "Some(Black)", "Some(Red)", "BOLD"),
             span("|", MUTED, BG, "NONE"),
         ]
     );
