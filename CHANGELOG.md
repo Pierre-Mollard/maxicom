@@ -6,7 +6,7 @@ What changes in each version of maxicom. The format follows
 
 ## [Unreleased]
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-11-06
 
 The first release. Everything below is described in the
 [user guide](https://pierre-mollard.github.io/maxicom/).
