@@ -55,6 +55,8 @@ impl Harness {
         settings.ui.hide_borders_below = [0, 0];
         settings.ui.hide_scrollbar_below = [0, 0];
         settings.ui.hide_status_bar_below = [0, 0];
+        // a fixed clock: two frames compared whole can straddle a second (MAX-210)
+        settings.ui.status_bar.time_format = String::from("--:--:--");
         settings.line_mode.display_mode = display_mode;
         tweak(&mut settings);
         let theme = ThemeConfig::default();
