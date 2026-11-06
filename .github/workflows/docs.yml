@@ -1,15 +1,15 @@
 # The user guide as a website (docs/book.toml): built on each pull request that
-# changes docs/, so a broken book fails it; built and published to GitHub Pages
-# on main. The site is built on the runner and handed to Pages as an artifact:
-# nothing is committed.
+# changes docs/ or CHANGELOG.md (the book includes it), so a broken book fails
+# it; built and published to GitHub Pages on main. The site is built on the
+# runner and handed to Pages as an artifact: nothing is committed.
 name: Docs
 
 on:
   push:
     branches: [main]
-    paths: ["docs/**", ".github/workflows/docs.yml"]
+    paths: ["docs/**", "CHANGELOG.md", ".github/workflows/docs.yml"]
   pull_request:
-    paths: ["docs/**", ".github/workflows/docs.yml"]
+    paths: ["docs/**", "CHANGELOG.md", ".github/workflows/docs.yml"]
   workflow_dispatch:
 
 permissions:

@@ -27,6 +27,11 @@ It opens a serial port or a device over TCP, on Linux, macOS and Windows.
 
 ## Install
 
+Download a prebuilt binary for Linux, macOS or Windows from the
+[releases page](https://github.com/Pierre-Mollard/maxicom/releases). The
+Linux builds are static, so they run on any distribution, old ones like
+RHEL 8 included. Or build it with Cargo:
+
 ```bash
 cargo install maxicom
 ```

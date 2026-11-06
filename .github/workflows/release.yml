@@ -1,0 +1,166 @@
+# Release binaries: on a pushed v* tag (or by hand for a tag that already
+# exists), build maxicom for each target below, pack each binary with the
+# README and licenses, and attach the archives and their checksums to the
+# GitHub release of that tag. The release is created with the tag's CHANGELOG
+# section as notes; if it already exists, only the files are replaced.
+# Linux builds are static (musl): they need no glibc, so they run on old
+# distros (RHEL 8) as well as new ones.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build (e.g. v0.1.0)
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    strategy:
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm }
+          - { target: x86_64-apple-darwin, os: macos-latest }
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Check the tag matches Cargo.toml
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::tag $TAG but Cargo.toml says $version"
+            exit 1
+          fi
+      # CI already tests the glibc builds; musl is only tested here
+      - if: contains(matrix.target, 'linux')
+        run: cargo test --release --locked --target ${{ matrix.target }}
+        timeout-minutes: 10
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      # no version in the name: releases/latest/download/<name> stays valid
+      - name: Pack
+        shell: bash
+        run: |
+          name="maxicom-${{ matrix.target }}"
+          mkdir "$name"
+          cp README.md LICENSE-MIT LICENSE-APACHE "$name"/
+          if [ "$RUNNER_OS" = Windows ]; then
+            cp "target/${{ matrix.target }}/release/maxicom.exe" "$name"/
+            7z a "$name.zip" "$name"
+          else
+            cp "target/${{ matrix.target }}/release/maxicom" "$name"/
+            tar czf "$name.tar.gz" "$name"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            maxicom-*.tar.gz
+            maxicom-*.zip
+          if-no-files-found: error
+
+  # Dynamic glibc builds, pinned to old glibc versions with cargo-zigbuild, to
+  # test on real targets next to the musl ones. A build pinned to a version
+  # runs on that glibc and every newer one.
+  build-glibc:
+    name: ${{ matrix.arch }}-unknown-linux-gnu glibc ${{ matrix.glibc }}
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+        glibc: ["2.17", "2.28"]
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    env:
+      TARGET: ${{ matrix.arch }}-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+      - run: cargo zigbuild --release --locked --target "$TARGET.${{ matrix.glibc }}"
+      # the binary must not ask for a glibc symbol newer than the pinned one
+      - name: Check the glibc it needs
+        run: |
+          bin="target/$TARGET/release/maxicom"
+          newest=$(readelf -W --version-info "$bin" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
+          pinned="GLIBC_${{ matrix.glibc }}"
+          echo "newest symbol: $newest, pinned: $pinned"
+          top=$(printf '%s\n' "$newest" "$pinned" | sort -V | tail -1)
+          if [ "$top" != "$pinned" ]; then
+            echo "::error::needs $newest, newer than $pinned"
+            exit 1
+          fi
+          "$bin" --version
+      - name: Pack
+        run: |
+          name="maxicom-$TARGET-glibc${{ matrix.glibc }}"
+          mkdir "$name"
+          cp README.md LICENSE-MIT LICENSE-APACHE "target/$TARGET/release/maxicom" "$name"/
+          tar czf "$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.TARGET }}-glibc${{ matrix.glibc }}
+          path: maxicom-*.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: [build, build-glibc]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum maxicom-* > SHA256SUMS
+      - name: Notes from the CHANGELOG section of the tag
+        run: |
+          awk -v v="${TAG#v}" '
+            $0 ~ "^## \\[" v "\\]" { on = 1; next }
+            on && /^## \[/ { exit }
+            on && /^\[[^]]+\]: / { next }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          grep -q . notes.md || echo "See CHANGELOG.md." > notes.md
+      - name: Create the release, or replace its files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --verify-tag \
+              --title "maxicom $TAG" --notes-file notes.md
+          fi
