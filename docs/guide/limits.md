@@ -13,8 +13,20 @@ as a trigger. It never sends a command by itself, not even to fix the
 terminal size: the device runs `resize` and asks for it. See
 [Serial shells](terminal-mode.md#serial-shells).
 
-Answering a program's questions, like "where is the cursor?", is the one
-exception, and you can turn it off. See
+The one exception is answering the questions a program on the device asks
+its terminal, like "where is the cursor?" or "what size are you?". A program
+can't see its terminal, so it writes a query and waits for the reply: that's
+how `resize` learns the size. maxicom answers these queries by default
+(`answer_queries = true` in `[terminal_mode]`, with every group in
+`answer_groups`), only live and only in terminal mode.
+
+A program can also ask to be told the size each time it changes, and maxicom
+then sends it on every resize: see
+[Size reports from programs](terminal-mode.md#size-reports-from-programs).
+That's still an answer, to a program that asked, not a command typed into
+the device.
+
+You can turn the answers off, all of them or by group. See
 [Answering the device's queries](terminal-mode.md#answering-the-devices-queries).
 
 ### It never starts another program

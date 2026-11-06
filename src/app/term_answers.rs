@@ -40,11 +40,40 @@
 //!   kitty graphics) size pictures with them
 //! * `CSI 11 t`, "is the window iconified?": `CSI 1 t` = no
 //!
+//! Size reports, mode 2048 (group `size`, MAX-159)
+//! * The problem: over ssh or in a local terminal, the kernel tells a program its window
+//!   changed size with a signal (SIGWINCH), and the program redraws. A serial line only
+//!   carries bytes: the remote never hears of a resize, and a full-screen program keeps
+//!   drawing at the old size until someone runs `resize` there.
+//! * The fix, "in-band resize notifications" (from the contour terminal, also in kitty, foot,
+//!   ghostty, wezterm): the size travels in the byte stream itself. A program that wants it
+//!   turns private mode 2048 on with `CSI ? 2048 h`. The terminal answers at once with
+//!   `CSI 48 ; rows ; cols ; height ; width t` (the text area in cells, then in pixels, 0
+//!   when unknown), then sends that report again each time its size changes, until
+//!   `CSI ? 2048 l` turns it off. The program reads the report like the answer to a query.
+//! * Before turning it on, the program asks whether the terminal supports it, with DECRQM
+//!   `CSI ? 2048 $ p` (see Modes below): `1` / `2` = supported (on / off), `0` = unknown, and
+//!   it doesn't turn it on. neovim 0.12 asks at startup.
+//! * vt100 doesn't know the mode: it hands the `h` / `l` to `unhandled_csi`, where
+//!   `ParserEvents.size_reports` keeps the state, and the first report is queued. The size
+//!   is the emulator's, where lines wrap, like the `t` answers above. The report and the
+//!   DECRQM answer are both in group `size`: with the group off the program sees the mode as
+//!   unsupported, rather than turning on reports that would never come.
+//! * The next reports: `TerminalMode::set_vt100_size`, which every resize goes through, queues
+//!   one in the parser's answers while the mode is on. A resize comes with no RX, so
+//!   `App::take_query_answers`, called on each turn of the loop, takes them from the parser
+//!   (live terminal mode only, like the other answers). A restored session turns the mode
+//!   off after its bytes: the app that asked belongs to the past run.
+//! * A program that dies without `CSI ? 2048 l` leaves the mode on, and the next reports land
+//!   in the shell as typed text, as with any mode left on. RIS (`ESC c`, `reset`) doesn't
+//!   turn it off: vt100 handles RIS with no callback; `printf '\e[?2048l'` does
+//!
 //! Modes (group `modes`)
 //! * DECRQM `CSI ? mode $ p` (private modes) / `CSI mode $ p` (ANSI modes), "is this mode
 //!   on?": `CSI ? mode ; state $ y`, state 1 = set, 2 = reset, 0 = unknown mode. neovim and fzf
 //!   ask before using synchronized output (2026), bracketed paste (2004), mouse modes. Known:
-//!   the private modes vt100 tracks and shows (see `private_mode_state`); no ANSI mode
+//!   the private modes vt100 tracks and shows, and 2048 (size reports, answered in group
+//!   `size`, see above); see `private_mode_state`. No ANSI mode
 //!
 //! Left unanswered: the app falls back when DA1 comes first
 //! * Kitty keyboard `CSI ? u` and modifyOtherKeys `CSI ? 4 m`: richer key reports, not
@@ -71,6 +100,9 @@ use crate::{
 };
 
 const DA1: &str = "\x1b[?62;22c";
+
+/// Mode 2048, in-band resize reports (MAX-159)
+pub const SIZE_REPORTS: u16 = 2048;
 
 /// A reply the parser queued, sent or dropped by the settings when taken: `Answerback` is the
 /// user's string for ENQ, read then
@@ -101,13 +133,14 @@ pub fn answer_bytes(answers: Vec<Answer>, config: &TerminalModeConfig) -> Vec<u8
 }
 
 /// The reply to the CSI sequence that vt100 doesn't handle, if it is a query maxicom answers.
-/// `screen` is as the stream left it at the query
+/// `screen` is as the stream left it at the query, `size_reports` the state of mode 2048
 pub fn answer_csi(
     screen: &Screen,
     i1: Option<u8>,
     i2: Option<u8>,
     params: &[&[u16]],
     c: char,
+    size_reports: bool,
 ) -> Option<Answer> {
     use QueryGroup::{Identity, Modes, Size, Status};
 
@@ -171,10 +204,14 @@ pub fn answer_csi(
         // screen in cells: in xterm the whole monitor, the biggest the window could grow (an app
         // checks it before asking a resize). The remote can't get more than the emulator: the same
         (None, None, [19], 't') => (Size, format!("\x1b[9;{rows};{cols}t")),
-        // DECRQM private modes (`?`): is this mode set
+        // DECRQM private modes (`?`): is this mode set. Mode 2048 is in group `size`: with the
+        // group off it isn't answered, so the app never turns on reports that would be dropped
         (Some(b'?'), Some(b'$'), [mode], 'p') => (
-            Modes,
-            format!("\x1b[?{mode};{}$y", private_mode_state(screen, *mode)),
+            if *mode == SIZE_REPORTS { Size } else { Modes },
+            format!(
+                "\x1b[?{mode};{}$y",
+                private_mode_state(screen, *mode, size_reports)
+            ),
         ),
         // DECRQM ANSI modes (no `?`), the standard ones: 4 insert (IRM), 20 newline (LNM, LF also
         // does CR), 12 local echo (SRM), 2 keyboard lock (KAM). vt100 exposes none of them, so 0 =
@@ -183,6 +220,16 @@ pub fn answer_csi(
         _ => return None,
     };
     Some(Answer::Reply(group, reply.into_bytes()))
+}
+
+/// The in-band size report of mode 2048: `CSI 48 ; rows ; cols ; height ; width t`, the text
+/// area in pixels from the host terminal's cell, 0 when it doesn't give them (MAX-159)
+pub fn size_report(rows: u16, cols: u16) -> Answer {
+    let (height, width) = cell_pixels().map_or((0, 0), |(height, width)| {
+        (height * u32::from(rows), width * u32::from(cols))
+    });
+    let report = format!("\x1b[48;{rows};{cols};{height};{width}t");
+    Answer::Reply(QueryGroup::Size, report.into_bytes())
 }
 
 /// The reply to the escape sequence that vt100 doesn't handle, if it is a query maxicom answers
@@ -200,9 +247,11 @@ pub fn answer_control(b: u8) -> Option<Answer> {
 }
 
 /// The DECRQM state of a private mode: 1 set, 2 reset, 0 for a mode vt100 doesn't track (or
-/// keeps private, like origin mode 6). 47 and 1049 both tell the alternate screen
-fn private_mode_state(screen: &Screen, mode: u16) -> u8 {
+/// keeps private, like origin mode 6). 47 and 1049 both tell the alternate screen. 2048 is
+/// maxicom's own, `size_reports`, which vt100 doesn't know
+fn private_mode_state(screen: &Screen, mode: u16, size_reports: bool) -> u8 {
     let set = match mode {
+        SIZE_REPORTS => size_reports,
         1 => screen.application_cursor(),
         25 => !screen.hide_cursor(),
         47 | 1049 => screen.alternate_screen(),

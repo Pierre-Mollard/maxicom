@@ -8,17 +8,21 @@ use ratatui::{
     widgets::{Block, Clear, Widget},
 };
 
-use crate::app::term_answers::{Answer, answer_control, answer_csi, answer_escape};
+use crate::app::term_answers::{
+    Answer, SIZE_REPORTS, answer_control, answer_csi, answer_escape, size_report,
+};
 
 /// What the parser reports besides the screen. `evicted` counts the main screen rows vt100 drops
 /// from the top of scrollback (`on_scroll` is only called for those, not for rows entering it):
 /// with the change of `scrollback_len` it gives how many rows a chunk pushed into scrollback
 /// (#13). `answers` are the replies to the remote's queries, in order, for the settings to send
-/// or drop (MAX-151)
+/// or drop (MAX-151). `size_reports` is mode 2048, which vt100 doesn't know: the remote app
+/// asked for its size in the stream on each change (MAX-159)
 #[derive(Default)]
 pub struct ParserEvents {
     pub evicted: usize,
     pub answers: Vec<Answer>,
+    pub size_reports: bool,
 }
 
 impl vt100::Callbacks for ParserEvents {
@@ -36,7 +40,18 @@ impl vt100::Callbacks for ParserEvents {
         params: &[&[u16]],
         c: char,
     ) {
-        if let Some(answer) = answer_csi(screen, i1, i2, params, c) {
+        // a DECSET / DECRST comes here once per mode vt100 doesn't know, with all the modes of
+        // the sequence (`?1049;2048h`): the report goes out once, when the mode turns on
+        let decset = i1 == Some(b'?') && i2.is_none() && matches!(c, 'h' | 'l');
+        if decset && params.iter().any(|p| p.first() == Some(&SIZE_REPORTS)) {
+            let on = c == 'h';
+            if on && !self.size_reports {
+                let (rows, cols) = vt100_size(screen);
+                self.answers.push(size_report(rows, cols));
+            }
+            self.size_reports = on;
+        }
+        if let Some(answer) = answer_csi(screen, i1, i2, params, c, self.size_reports) {
             self.answers.push(answer);
         }
     }

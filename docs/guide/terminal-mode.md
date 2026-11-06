@@ -21,7 +21,8 @@ differ from the view: it's the size a program on the device draws for.
 The device doesn't learn this size by itself, because a serial line has no
 resize signal (see [Serial shells](#serial-shells) for how to tell it). So
 changing it only changes what maxicom can show, and an automatic resize
-never loses data.
+never loses data. The exception is a program that asks maxicom for
+[size reports](#size-reports-from-programs): it's told each new size.
 
 The default, `grow_only`, suits most uses: the screen follows the window
 when it grows, and keeps its content when it shrinks.
@@ -160,6 +161,7 @@ default because `0x05` also shows up in binary data.
 | `ESC [ 14 t` | Text area, in pixels? | `ESC [ 4 ; height ; width t` |
 | `ESC [ 16 t` | One cell, in pixels? | `ESC [ 6 ; height ; width t` |
 | `ESC [ 11 t` | Is the window minimized? | `ESC [ 1 t`: no |
+| `ESC [ ? 2048 h` | Tell me the size, now and on each change | `ESC [ 48 ; rows ; cols ; height ; width t`, see [Size reports from programs](#size-reports-from-programs) |
 
 The size is the emulated screen's, where its lines wrap (see
 [Screen size](#screen-size)), not your window's.
@@ -184,6 +186,7 @@ The modes maxicom knows:
 | `9`, `1000`, `1002`, `1003` | Mouse reports: on press, on press and release, while dragging, on any move |
 | `1005`, `1006` | Mouse reports in UTF-8, in SGR form |
 | `2004` | Bracketed paste |
+| `2048` | [Size reports](#size-reports-from-programs). Its answer belongs to the `size` group, not `modes`. |
 
 Programs like neovim and fzf ask before using a mode. For any other mode the
 answer is `0`, which they read as "not supported".
@@ -255,6 +258,71 @@ same kind of `tty` test.
 Each run costs a round trip on the line, a few bytes each way. On a very
 slow link, call `_serial_resize` once instead of the `precmd_functions`
 line, to fix the size at login only.
+
+### Size reports from programs
+
+`resize` fixes the size once, when it runs. A program that stays open, like
+an editor, would need it again after each resize of your window. Some
+programs avoid that by asking the terminal to send the size in the byte
+stream itself, each time it changes. This is called in-band size reports,
+or mode 2048, after the number of the terminal mode the program turns on.
+
+Here is how it goes with maxicom:
+
+1. When it starts, the program asks whether the terminal supports size
+   reports (`ESC [ ? 2048 $ p`). maxicom answers that it does.
+2. The program turns them on (`ESC [ ? 2048 h`).
+3. maxicom sends the emulated screen's size right away:
+   `ESC [ 48 ; rows ; cols ; height ; width t`. The height and width are in
+   pixels, `0` when your own terminal doesn't give its pixel size.
+4. Each time the emulated screen changes size, maxicom sends the new one.
+   That happens when you resize the window (depending on
+   [`dimension_mode`](#dimension-mode)), or set the size with `Ctrl-a W` or
+   `Ctrl-a E`. The program redraws to fit, and nothing is typed on the
+   device.
+5. When the program exits, it turns the reports off (`ESC [ ? 2048 l`).
+
+The program learns the size, but the device's tty doesn't: the reports go to
+the program, not to `stty`. Once you're back at the shell, it still has the
+size it had before, so `resize` is still useful there.
+
+#### Which programs use it
+
+neovim 0.12 asks for size reports when it starts. It always fits the
+emulated screen: resize the window and it redraws at the new size, with
+nothing to type.
+
+Most other programs don't ask. vim, tmux, the shells, and prompts like
+starship read the size of the device's tty instead, which over a serial line
+is only right after `resize` or Alt-r. Until then, they draw for the wrong
+size: long lines wrap at the wrong column, a right-aligned prompt lands in
+the middle of the line or past the edge, and a screen drawn wider than the
+view has to be panned with `Ctrl-a Left` / `Ctrl-a Right`.
+
+So with both kinds on the same device, run `resize` (or
+[run it automatically](#running-it-automatically)) for the shell and its
+prompt, and let neovim follow the size by itself.
+
+#### Turning it off
+
+Size reports are part of the `size` group of
+[the answers](#answering-the-devices-queries). They're only sent live, in
+terminal mode. Remove `size` from `answer_groups`, or turn `answer_queries`
+off, and maxicom no longer says it supports them, so programs don't turn
+them on.
+
+#### A program that didn't turn them off
+
+A program that crashes leaves the reports on, and so does a board that
+reboots while the program runs. The next time the size changes, the report
+lands at the shell prompt as if you'd typed it, and odd characters like
+`[48;30;100;0;0t` show up. To stop them, run this on the device:
+
+```sh
+printf '\033[?2048l'
+```
+
+`reset` doesn't stop them.
 
 ### Sending the size by hand
 

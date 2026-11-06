@@ -28,7 +28,7 @@ if [[ -n "$DEVICE" ]]; then
   fi
   TARGET="$DEVICE,raw,echo=0,b$BAUD"
 else
-  TARGET="exec:zsh -l,pty,stderr,setsid,sigint,sane"
+  TARGET="exec:zsh -l,pty,stderr,setsid,ctty,sigint,sane"
 fi
 
 echo "listening on tcp://127.0.0.1:$PORT"

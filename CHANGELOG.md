@@ -6,6 +6,14 @@ What changes in each version of maxicom. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- [Size reports](https://pierre-mollard.github.io/maxicom/terminal-mode.html#size-reports-from-programs)
+  for the programs that ask for them (mode 2048): maxicom sends the
+  terminal's size on each change, so neovim 0.12 fits the screen over a
+  serial line with no `resize` to run. They're part of the `size` group of
+  the query answers.
+
 ## [0.1.0] - 2026-11-06
 
 The first release. Everything below is described in the

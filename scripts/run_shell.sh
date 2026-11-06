@@ -13,7 +13,7 @@ cleanup() {
 rm -f /tmp/maxicom-shell-test 2>/dev/null || true
 exec socat -d -d \
   pty,raw,echo=0,link=/tmp/maxicom-shell-test \
-  exec:"zsh -l",pty,stderr,setsid,sane
+  exec:"zsh -l",pty,stderr,setsid,ctty,sane
 
 # cargo run --bin maxicom -- --device /tmp/maxicom-shell-test --baudrate 115200
 # or another terminal open /tmp/maxicom-shell-test to interact with interactive shell (like minicom)

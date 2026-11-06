@@ -138,6 +138,48 @@ fn mode_states() {
     assert_eq!(answer(b"\x1b[?u\x1b[?4m\x1b[c"), "\x1b[?62;22c");
 }
 
+/// Mode 2048 (MAX-159): `?2048h` turns the size reports on and sends the size at once, a
+/// single report even when the sequence holds other modes vt100 doesn't know (it hands the
+/// whole list over once per such mode) or turns it on again; `?2048l` turns them off. DECRQM
+/// 2048 follows the state, and a new parser starts with the mode off.
+/// How: a 30x100 parser, DECRQM, then `?1049;2048;9999h` (alternate screen, the mode, an
+/// unknown mode), `h` again, `l`.
+#[test]
+fn size_reports_mode() {
+    let mut parser = new_parser(30, 100, 0);
+    parser.process(b"\x1b[?2048$p");
+    assert_eq!(take(&mut parser), "\x1b[?2048;2$y");
+
+    parser.process(b"\x1b[?1049;2048;9999h");
+    assert!(parser.screen().alternate_screen());
+    assert!(parser.callbacks().size_reports);
+    let report = take(&mut parser);
+    // the pixels are the host terminal's, 0 when it doesn't give them
+    let pixels = report
+        .strip_prefix("\x1b[48;30;100;")
+        .and_then(|rest| rest.strip_suffix('t'))
+        .map(|pixels| pixels.split(';').map(str::parse::<u32>).collect::<Vec<_>>());
+    assert!(
+        matches!(pixels.as_deref(), Some([Ok(_), Ok(_)])),
+        "{report:?}"
+    );
+
+    parser.process(b"\x1b[?2048h\x1b[?2048$p");
+    assert_eq!(take(&mut parser), "\x1b[?2048;1$y");
+
+    parser.process(b"\x1b[?2048l\x1b[?2048$p");
+    assert_eq!(take(&mut parser), "\x1b[?2048;2$y");
+    assert!(!parser.callbacks().size_reports);
+}
+
+/// The report and the DECRQM answer of mode 2048 are in group `size`: with the group off the
+/// app reads the mode as unsupported (MAX-159).
+#[test]
+fn size_reports_group() {
+    use QueryGroup::Size;
+    assert_eq!(groups(b"\x1b[?2048$p\x1b[?2048h"), [Size, Size]);
+}
+
 /// The colors are the host terminal's, unknown to maxicom: their queries stay unanswered,
 /// DA1 after them tells the app.
 #[test]

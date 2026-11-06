@@ -1635,6 +1635,72 @@ fn query_answers_follow_the_settings() {
     assert_eq!(app.take_query_answers(), b"board-42");
 }
 
+/// One size report of mode 2048 for `rows` x `cols`, the pixels left out (the host
+/// terminal's, 0 when it doesn't give them)
+fn is_size_report(bytes: &[u8], rows: u16, cols: u16) -> bool {
+    let text = String::from_utf8_lossy(bytes);
+    text.starts_with(&format!("\x1b[48;{rows};{cols};"))
+        && text.ends_with('t')
+        && text.matches("\x1b[").count() == 1
+}
+
+/// MAX-159: once the remote app turns mode 2048 on, each change of the emulator's size sends
+/// one report of the new size, taken with no RX; the same size sends nothing; in line mode
+/// nothing is sent, now or on the way back; `?2048l` stops the reports.
+/// How: terminal mode, `?2048h` (the first report), resizes to 30x100, 30x100 again, 20x60
+/// in line mode, back to terminal mode, then `l` and 40x120.
+#[test]
+fn size_reports_on_each_resize() {
+    let mut app = app();
+    app.settings.mode = Mode::Terminal;
+    app.feed_rx(b"\x1b[?2048h");
+    let (rows, cols) = app.terminal_mode.get_vt100_size();
+    assert!(is_size_report(&app.take_query_answers(), rows, cols));
+
+    app.terminal_mode.set_vt100_size(30, 100);
+    let report = app.take_query_answers();
+    assert!(is_size_report(&report, 30, 100), "{report:?}");
+    app.terminal_mode.set_vt100_size(30, 100);
+    assert!(app.take_query_answers().is_empty());
+
+    app.settings.mode = Mode::Line;
+    app.terminal_mode.set_vt100_size(20, 60);
+    assert!(app.take_query_answers().is_empty());
+    app.settings.mode = Mode::Terminal;
+    assert!(app.take_query_answers().is_empty());
+
+    app.feed_rx(b"\x1b[?2048l");
+    app.terminal_mode.set_vt100_size(40, 120);
+    assert!(app.take_query_answers().is_empty());
+}
+
+/// MAX-159: a restored session that turned mode 2048 on doesn't leave it on: a resize sends
+/// nothing and DECRQM says off, until the live app turns it on again.
+/// How: a session holding `?2048h`, restored, resized to 30x100, DECRQM 2048; then `h` live.
+#[test]
+fn restored_size_reports_off() {
+    let base = std::env::temp_dir().join(format!("maxicom_test_{}_reports", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let session = crate::capture::tests::write_test_session(
+        &base,
+        "/dev/ttyUSB0",
+        &CaptureFormat::default(),
+        b"nvim\r\n\x1b[?2048h",
+        b"",
+    );
+    let mut app = app();
+    app.settings.mode = Mode::Terminal;
+    app.restore_session(&session).unwrap();
+    app.terminal_mode.set_vt100_size(30, 100);
+    assert!(app.take_query_answers().is_empty());
+    app.feed_rx(b"\x1b[?2048$p");
+    assert_eq!(app.take_query_answers(), b"\x1b[?2048;2$y");
+
+    app.feed_rx(b"\x1b[?2048h");
+    assert!(is_size_report(&app.take_query_answers(), 30, 100));
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// MAX-151: the queries of a restored session, and the ones held while the restore dialog
 /// asked, are not answered; what comes after the answer is.
 /// How: a session ending in a DSR, restored; then DSR held by the dialog, answered `n`.

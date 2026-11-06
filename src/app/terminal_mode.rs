@@ -17,7 +17,7 @@ use crate::{
         scroller::ViewportScroller,
         search::SearchState,
         selection::{CopyActionResult, CopyModeState, Reveal, TextSource},
-        term_answers::Answer,
+        term_answers::{Answer, size_report},
     },
     capture::{Screenshot, TimedChunk},
     configs::{SettingsConfig, TerminalDimensionMode, TextEncoding, settings::RawSideView},
@@ -566,7 +566,12 @@ impl TerminalMode {
         let cursor_row_before = self.vt100_parser.screen().cursor_position().0 as usize;
         // the parser's `set_size` (not the screen's) reports the rows it evicts
         self.vt100_parser.set_size(vt100_dim(rows), vt100_dim(cols));
-        let evicted = std::mem::take(&mut self.vt100_parser.callbacks_mut().evicted);
+        let events = self.vt100_parser.callbacks_mut();
+        let evicted = std::mem::take(&mut events.evicted);
+        // the remote app asked for each new size (mode 2048), sent with the answers (MAX-159)
+        if events.size_reports {
+            events.answers.push(size_report(rows, cols));
+        }
         self.update_live_bottom();
         self.content_cols = None;
         // in the alternate screen the main rows can't be measured: the next RX on the main
@@ -965,8 +970,10 @@ impl TerminalMode {
         self.process_rx_at(TextEncoding::Utf8, end.as_bytes(), None);
         // on the top row: its world row is the first after the scrollback
         self.restored_separator = Some(self.max_content_scrollback);
-        // the queries of a past session are not answered (MAX-151)
+        // the queries of a past session are not answered (MAX-151), and the size reports its
+        // app asked for are not this run's to send (MAX-159)
         self.take_answers();
+        self.vt100_parser.callbacks_mut().size_reports = false;
     }
 
     /// The replies to the queries received since the last call, to send or drop (MAX-151)

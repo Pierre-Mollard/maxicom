@@ -1116,8 +1116,15 @@ impl App {
         }
     }
 
-    /// The replies to send to the remote's queries, received since the last call (MAX-151)
+    /// The replies to send to the remote's queries, received since the last call (MAX-151),
+    /// with the size reports a resize queued, in terminal mode only (MAX-159)
     pub fn take_query_answers(&mut self) -> Vec<u8> {
+        // a resize comes with no RX: a report queued by it waits in the parser, not for `feed`
+        let answers = self.terminal_mode.take_answers();
+        if self.settings.mode == Mode::Terminal {
+            let bytes = answer_bytes(answers, &self.settings.terminal_mode);
+            self.query_answers.extend(bytes);
+        }
         std::mem::take(&mut self.query_answers)
     }
 
