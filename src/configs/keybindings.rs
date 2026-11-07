@@ -76,6 +76,7 @@ pub enum KeyBindingAction {
     DismissNotifications,
     PrevMark,
     NextMark,
+    Marks,
 }
 
 impl FromStr for KeyBindingAction {
@@ -268,6 +269,7 @@ pub enum KeyBindingCopyAction {
     ScrollDown,
     ScrollPageUp,
     ScrollPageDown,
+    Marks,
     PrevMark,
     NextMark,
 }
@@ -305,6 +307,7 @@ impl std::str::FromStr for KeyBindingCopyAction {
             "scroll-down" => Ok(Self::ScrollDown),
             "scroll-page-up" => Ok(Self::ScrollPageUp),
             "scroll-page-down" => Ok(Self::ScrollPageDown),
+            "marks" => Ok(Self::Marks),
             "prev-mark" => Ok(Self::PrevMark),
             "next-mark" => Ok(Self::NextMark),
             other => Err(UnknownActionError(other.to_string())),
@@ -333,6 +336,7 @@ impl std::fmt::Display for KeyBindingCopyAction {
             Self::ScrollDown => "scroll-down",
             Self::ScrollPageUp => "scroll-page-up",
             Self::ScrollPageDown => "scroll-page-down",
+            Self::Marks => "marks",
             Self::PrevMark => "prev-mark",
             Self::NextMark => "next-mark",
         };
@@ -1038,8 +1042,8 @@ impl Default for KeyBindingsConfig {
             "<"     => KeyBindingAction::SideShrink5,
             "("     => KeyBindingAction::PrevMark,
             ")"     => KeyBindingAction::NextMark,
+            "'"     => KeyBindingAction::Marks,
             ","     => "mark", // waits for the letter
-            "'"     => "jump-mark", // waits for the letter
             "f"     => "break", // a break like minicom's
             "h"     => "dtr off; sleep 100; dtr on", // DTR pulse which resets most boards
             "U"     => "trigger toggle u-boot", // the default triggers.toml's
@@ -1097,8 +1101,8 @@ impl Default for KeyBindingsConfig {
             "ctrl-e"    => KeyBindingCopyAction::ScrollDown,
             "("         => KeyBindingCopyAction::PrevMark,
             ")"         => KeyBindingCopyAction::NextMark,
+            "'"         => KeyBindingCopyAction::Marks,
             ","         => "mark", // waits for the letter
-            "'"         => "jump-mark", // waits for the letter
         };
 
         let dialog_actions = default_bindings! {

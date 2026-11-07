@@ -40,6 +40,7 @@ use crate::{
             directory::{render_directory_popup, render_link_form_popup},
             filepath::{render_filepath_popup, render_screenshot_popup},
             help::render_help_popup,
+            marks::render_marks_popup,
             menu::render_action_menu,
             notifications::render_notifications,
             reconfigure::render_reconfigure_popup,
@@ -267,6 +268,9 @@ fn render_active_overlay(
         }
         Some(Overlay::Triggers(browser)) => {
             render_triggers_popup(app, browser, frame, theme, &mut targets)
+        }
+        Some(Overlay::Marks(browser)) => {
+            render_marks_popup(app, browser, frame, theme, &mut targets)
         }
         Some(Overlay::Directory(directory)) => {
             render_directory_popup(app, directory, frame, theme, &mut targets)

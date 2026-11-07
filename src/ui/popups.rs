@@ -19,6 +19,7 @@ pub mod command_line;
 pub mod directory;
 pub mod filepath;
 pub mod help;
+pub mod marks;
 pub mod menu;
 pub mod notifications;
 pub mod reconfigure;

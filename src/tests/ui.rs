@@ -1930,12 +1930,9 @@ fn help_lists_the_commands() {
     );
     assert_eq!(row_of(&rows, "Ctrl-a + L "), Some(f5 + 3), "{rows:#?}");
     assert_eq!(row_of(&rows, "Ctrl-a + U "), Some(f5 + 4), "{rows:#?}");
-    assert_eq!(row_of(&rows, "Ctrl-a + ' "), Some(f5 + 5), "{rows:#?}");
-    assert!(rows[f5 + 5].contains("-> jump-mark"), "{rows:#?}");
-    assert_eq!(row_of(&rows, "Ctrl-a + , "), Some(f5 + 6), "{rows:#?}");
-    assert_eq!(row_of(&rows, "copy mode ' "), Some(f5 + 7), "{rows:#?}");
-    assert_eq!(row_of(&rows, "copy mode , "), Some(f5 + 8), "{rows:#?}");
-    assert!(rows[f5 + 8].contains("-> mark"), "{rows:#?}");
+    assert_eq!(row_of(&rows, "Ctrl-a + , "), Some(f5 + 5), "{rows:#?}");
+    assert!(rows[f5 + 5].contains("-> mark"), "{rows:#?}");
+    assert_eq!(row_of(&rows, "copy mode , "), Some(f5 + 6), "{rows:#?}");
     assert!(has(&rows, "on the command line (Ctrl-a :)"), "{rows:#?}");
 
     // scrolled down until `text` shows with the row under it
@@ -6755,4 +6752,88 @@ fn terminal_mark_from_a_scrolled_view_takes_its_middle_row() {
     h.app.terminal_mode.jump_to_mark('c');
     assert_eq!(terminal_middle_row(&mut h, height), middle);
     assert_ne!(middle, "line 59");
+}
+
+/// MAX-164: the marks popup lists the marks by line, each with its letter, its line's time
+/// and text, the buttons in its bottom border; a click on another row selects it, a second
+/// click jumps there: the popup closes, the line centered. Empty, it says how to add one.
+/// How: the marked lines (a on 19, b on 39, both received now), the popup opened by its
+/// action; then a fresh harness.
+#[test]
+fn marks_popup_lists_and_jumps() {
+    let (mut h, height) = marked_lines();
+    h.app.update(KeyBindingAction::Marks.to_action(&h.app));
+    let rows = h.draw();
+    let time = chrono::Local::now().format("%H:%M").to_string();
+    let row_a = rows.iter().find(|row| row.contains("a  ")).cloned();
+    let row_a = row_a.expect("a row for a");
+    assert!(
+        row_a.contains("line 19") && row_a.contains(&time),
+        "{rows:#?}"
+    );
+    assert!(has(&rows, "line 39"), "{rows:#?}");
+    assert!(has(&rows, "Enter Jump · Delete Remove"), "{rows:#?}");
+
+    click(&mut h, cell_of(&rows, "line 39"));
+    assert!(h.app.overlay().is_some());
+    click(&mut h, cell_of(&rows, "line 39"));
+    assert!(h.app.overlay().is_none());
+    assert_eq!(text_rows(&mut h, height)[height / 2], "│ line 39");
+
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+    h.app.update(KeyBindingAction::Marks.to_action(&h.app));
+    let rows = h.draw();
+    assert!(
+        has(&rows, "No mark yet: Ctrl-a , then a letter marks a line"),
+        "{rows:#?}"
+    );
+}
+
+/// MAX-164: the right-click menu has "Add mark" on a scrolled view or in copy mode only: it
+/// marks the line clicked with the first free letter; opened off the history, the line a mark
+/// takes anyway (in copy mode the cursor's). "Marks…" is there in any view while there are
+/// marks, and opens the popup.
+/// How: a right-click with no mark; the marked lines (a and b taken) on the live view, then
+/// scrolled up on a history row; then in copy mode on the status bar.
+#[test]
+fn right_click_menu_adds_a_mark() {
+    let right_click = |h: &mut Harness, at| {
+        mouse_do(h, MouseEventKind::Down(MouseButton::Right), at);
+        h.draw()
+    };
+    let mut none = Harness::line_mode(LineDisplayMode::Pretty, 40, 30);
+    let rows = right_click(&mut none, (10, 3));
+    assert!(
+        !has(&rows, "Marks…") && !has(&rows, "Add mark"),
+        "{rows:#?}"
+    );
+
+    let (mut h, height) = marked_lines();
+    let rows = right_click(&mut h, (10, 3));
+    assert!(!has(&rows, "Add mark"), "{rows:#?}");
+    click(&mut h, cell_of(&rows, "Marks…"));
+    assert!(matches!(h.app.overlay(), Some(Overlay::Marks(_))));
+    h.app.close_overlay();
+
+    h.scroll(HistoryAction::ScrollUp(20));
+    let rows = text_rows(&mut h, height);
+    let line: usize = rows[2]["│ line ".len()..].parse().unwrap();
+    let rows = right_click(&mut h, (10, 2));
+    assert!(has(&rows, "Marks…"), "{rows:#?}");
+    click(&mut h, cell_of(&rows, "Add mark"));
+    assert_eq!(h.app.line_mode.marks().get('c'), Some(line));
+    let toasts = h.app.notifications.active_toasts();
+    assert_eq!(toasts.last().unwrap().message, "mark c");
+
+    let rows = right_click(&mut h, (10, 2));
+    click(&mut h, cell_of(&rows, "Marks…"));
+    assert!(matches!(h.app.overlay(), Some(Overlay::Marks(_))));
+    h.app.close_overlay();
+
+    h.app.update(Action::CopyMode(CopyModeAction::Enter));
+    h.draw();
+    let cursor = h.app.line_mode.copy_state().cursor.line_idx;
+    let rows = right_click(&mut h, (5, 11));
+    click(&mut h, cell_of(&rows, "Add mark"));
+    assert_eq!(h.app.line_mode.marks().get('d'), Some(cursor));
 }

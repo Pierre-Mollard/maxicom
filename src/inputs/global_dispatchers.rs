@@ -114,6 +114,7 @@ impl KeyBindingAction {
             KeyBindingAction::ToggleTriggers => Action::App(AppAction::ToggleTriggers),
             KeyBindingAction::DismissNotification => Action::App(AppAction::DismissToast(None)),
             KeyBindingAction::DismissNotifications => Action::App(AppAction::DismissToasts),
+            KeyBindingAction::Marks => Action::App(AppAction::OpenMarks),
             KeyBindingAction::PrevMark => Action::App(AppAction::Mark(MarkAction::Adjacent(false))),
             KeyBindingAction::NextMark => Action::App(AppAction::Mark(MarkAction::Adjacent(true))),
             KeyBindingAction::Directory => {
@@ -203,6 +204,7 @@ impl KeyBindingCopyAction {
             Self::ScrollDown => Action::History(HistoryAction::ScrollDown(1)),
             Self::ScrollPageUp => Action::History(HistoryAction::ScrollUpPage),
             Self::ScrollPageDown => Action::History(HistoryAction::ScrollDownPage),
+            Self::Marks => Action::App(AppAction::OpenMarks),
             Self::PrevMark => Action::App(AppAction::Mark(MarkAction::Adjacent(false))),
             Self::NextMark => Action::App(AppAction::Mark(MarkAction::Adjacent(true))),
         }

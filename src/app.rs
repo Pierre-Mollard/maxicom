@@ -32,7 +32,7 @@ use crate::{
         serial::{LineControl, LineSettings},
     },
     notification::{NotificationManager, ToastLevel},
-    overlays::{Overlay, OverlayResponse, PopupTarget, ScreenshotDialog, SettingKey},
+    overlays::{MarkBrowser, Overlay, OverlayResponse, PopupTarget, ScreenshotDialog, SettingKey},
     paths::{create_parent_dirs, expand_home},
 };
 
@@ -878,6 +878,23 @@ impl App {
                             }
                             UpdateEffect::None
                         }
+                        OverlayResponse::JumpMark(letter) => {
+                            self.update_mark(MarkAction::Jump(letter));
+                            UpdateEffect::None
+                        }
+                        // the menu's "Add mark": on the line clicked, else where a mark goes
+                        OverlayResponse::AddMark(line) => {
+                            self.update_mark(match line {
+                                Some(line) => MarkAction::AddAt(line),
+                                None => MarkAction::Add(None),
+                            });
+                            UpdateEffect::None
+                        }
+                        OverlayResponse::DeleteMark(letter) => {
+                            self.overlay = Some(overlay);
+                            self.update_mark(MarkAction::Delete(letter));
+                            UpdateEffect::None
+                        }
                         OverlayResponse::ToggleTrigger(name) => {
                             self.overlay = Some(overlay);
                             self.toggle_triggers(name.as_deref());
@@ -1483,6 +1500,14 @@ impl App {
                 self.notifications.dismiss_all();
                 UpdateEffect::None
             }
+            AppAction::OpenMarks => {
+                let rows = match self.settings.mode {
+                    Mode::Line => self.line_mode.mark_rows(),
+                    Mode::Terminal => self.terminal_mode.mark_rows(),
+                };
+                self.overlay = Some(Overlay::Marks(MarkBrowser::new(rows)));
+                UpdateEffect::None
+            }
             AppAction::Mark(action) => {
                 self.update_mark(action);
                 UpdateEffect::None
@@ -1895,6 +1920,14 @@ impl App {
         self.prefix_active
     }
 
+    /// The marks of the current mode's view (MAX-164)
+    pub fn marks(&self) -> &marks::Marks {
+        match self.settings.mode {
+            Mode::Line => self.line_mode.marks(),
+            Mode::Terminal => self.terminal_mode.marks(),
+        }
+    }
+
     #[inline]
     pub fn pending_mark(&self) -> Option<PendingMark> {
         self.pending_mark
@@ -1908,18 +1941,25 @@ impl App {
             // the status bar's badge reads MARK meanwhile
             MarkAction::Await(pending) => self.pending_mark = Some(pending),
             MarkAction::Cancel => {}
-            MarkAction::Add(letter) => {
-                let marks = match mode {
-                    Mode::Line => self.line_mode.marks(),
-                    Mode::Terminal => self.terminal_mode.marks(),
+            MarkAction::Add(_) | MarkAction::AddAt(_) => {
+                let marks = self.marks();
+                let letter = match action {
+                    MarkAction::Add(letter) => letter,
+                    _ => None,
                 };
                 let Some(letter) = letter.or_else(|| marks.first_free()) else {
                     self.notify_warn("all 26 marks are set: delete one first");
                     return;
                 };
-                let added = match mode {
-                    Mode::Line => self.line_mode.add_mark(letter),
-                    Mode::Terminal => self.terminal_mode.add_mark(letter),
+                let added = match (mode, action) {
+                    (Mode::Line, MarkAction::AddAt(line)) => {
+                        self.line_mode.add_mark_at(letter, line)
+                    }
+                    (Mode::Terminal, MarkAction::AddAt(row)) => {
+                        self.terminal_mode.add_mark_at(letter, row)
+                    }
+                    (Mode::Line, _) => self.line_mode.add_mark(letter),
+                    (Mode::Terminal, _) => self.terminal_mode.add_mark(letter),
                 };
                 match added {
                     Some(_) => self.notify_info(format!("mark {letter}")),

@@ -11,8 +11,16 @@ use crate::{
 pub struct ActionMenu {
     /// The screen cell it was opened on, its top-left corner when it fits there
     pub at: (u16, u16),
-    pub items: Vec<(&'static str, KeyBindingAction)>,
+    pub items: Vec<(&'static str, MenuRun)>,
     pub selected: usize,
+}
+
+/// What a row of the menu runs: a keymap action, or a mark on the history line it was opened
+/// on, none when it was opened off the history (MAX-164)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuRun {
+    Action(KeyBindingAction),
+    AddMark(Option<usize>),
 }
 
 impl ActionMenu {
@@ -59,21 +67,33 @@ impl ActionMenu {
         ]);
         Self {
             at,
-            items,
+            items: (items.into_iter())
+                .map(|(label, action)| (label, MenuRun::Action(action)))
+                .collect(),
             selected: 0,
         }
+    }
+
+    /// The marks' rows after Search (MAX-164): "Add mark" when `add` is given, for a menu
+    /// opened on a scrolled view or in copy mode, on the history line clicked; "Marks…" when
+    /// there are marks to list
+    pub fn with_marks(mut self, add: Option<Option<usize>>, listed: bool) -> Self {
+        let search = (self.items.iter())
+            .position(|&(_, run)| run == MenuRun::Action(KeyBindingAction::EnterSearch))
+            .map_or(self.items.len(), |idx| idx + 1);
+        let add = add.map(|line| ("Add mark", MenuRun::AddMark(line)));
+        let list = listed.then_some(("Marks…", MenuRun::Action(KeyBindingAction::Marks)));
+        self.items
+            .splice(search..search, add.into_iter().chain(list));
+        self
     }
 
     pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
         let last = self.items.len().saturating_sub(1);
         match action {
             DialogAction::Close => return OverlayResponse::Close,
-            DialogAction::Confirm => return OverlayResponse::Run(self.items[self.selected].1),
-            DialogAction::Pick(PopupTarget::MenuItem(idx)) => {
-                if let Some(&(_, action)) = self.items.get(idx) {
-                    return OverlayResponse::Run(action);
-                }
-            }
+            DialogAction::Confirm => return self.run(self.selected),
+            DialogAction::Pick(PopupTarget::MenuItem(idx)) => return self.run(idx),
             DialogAction::Up => self.selected = self.selected.checked_sub(1).unwrap_or(last),
             DialogAction::Down => self.selected = (self.selected + 1) % self.items.len().max(1),
             DialogAction::Home => self.selected = 0,
@@ -81,6 +101,14 @@ impl ActionMenu {
             _ => {}
         }
         OverlayResponse::Handled
+    }
+
+    fn run(&self, idx: usize) -> OverlayResponse {
+        match self.items.get(idx) {
+            Some(&(_, MenuRun::Action(action))) => OverlayResponse::Run(action),
+            Some(&(_, MenuRun::AddMark(line))) => OverlayResponse::AddMark(line),
+            None => OverlayResponse::Handled,
+        }
     }
 }
 

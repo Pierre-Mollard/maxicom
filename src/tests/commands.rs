@@ -119,6 +119,7 @@ fn action_index(action: KeyBindingAction) -> usize {
         A::DismissNotifications => 51,
         A::PrevMark => 52,
         A::NextMark => 53,
+        A::Marks => 54,
     }
 }
 
@@ -138,7 +139,7 @@ fn every_action_has_one_command() {
         })
         .collect();
     indexes.sort_unstable();
-    assert_eq!(indexes, (0..54).collect::<Vec<_>>());
+    assert_eq!(indexes, (0..55).collect::<Vec<_>>());
 }
 
 /// The help writes a required argument in angle brackets, an optional one in square ones

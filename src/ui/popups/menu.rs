@@ -9,7 +9,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     configs::{KeyResolver, ThemeConfig},
-    overlays::{ActionMenu, PopupTarget},
+    overlays::{ActionMenu, MenuRun, PopupTarget},
     ui::popups::row_area,
 };
 
@@ -26,7 +26,11 @@ pub fn render_action_menu(
     let keys: Vec<String> = menu
         .items
         .iter()
-        .map(|&(_, action)| resolver.action_keys(action).into_iter().next())
+        .map(|&(_, run)| match run {
+            MenuRun::Action(action) => resolver.action_keys(action).into_iter().next(),
+            // the `mark` key waits for a letter: not this row's
+            MenuRun::AddMark(_) => None,
+        })
         .map(|key| key.map(|key| caret(&key)).unwrap_or_default())
         .collect();
     let label_width = menu.items.iter().map(|(l, _)| l.width()).max().unwrap_or(0);

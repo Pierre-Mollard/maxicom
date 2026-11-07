@@ -23,6 +23,7 @@ use crate::{
         click_input_at, dispatch_input_key, dispatch_input_key_vi,
         local_dispatchers::dispatch_copy_key_vi, paste_into_input, vi::ViPending,
     },
+    overlays::MarkRow,
 };
 
 pub struct LineMode {
@@ -282,8 +283,29 @@ impl LineMode {
         self.middle_line.unwrap_or(last).min(last)
     }
 
+    /// Puts mark `letter` on entry `line`, none when there's no such entry (MAX-164)
+    pub fn add_mark_at(&mut self, letter: char, line: usize) -> Option<usize> {
+        let exists = line < self.local_history.len();
+        (exists && self.marks.set(letter, line)).then_some(line)
+    }
+
     pub fn remove_mark(&mut self, letter: char) -> Option<usize> {
         self.marks.remove(letter)
+    }
+
+    /// The marks as the popup lists them, by line: each entry's time and its text with its
+    /// escape sequences, for the popup to show as Pretty does (MAX-164)
+    pub fn mark_rows(&self) -> Vec<MarkRow> {
+        let rows = self.marks.sorted().into_iter();
+        rows.filter_map(|(letter, line)| {
+            let entry = self.local_history.get(line)?;
+            Some(MarkRow {
+                letter,
+                time: entry.timestamp,
+                text: entry.text.trim_end_matches(['\r', '\n']).to_string(),
+            })
+        })
+        .collect()
     }
 
     /// Goes to mark `letter`'s entry: the copy cursor moves to its start in copy mode, else the

@@ -313,6 +313,11 @@ pub static COMMANDS: &[CommandSpec] = {
             A::DismissNotifications,
             "Close all the notifications",
         ),
+        CommandSpec::action(
+            "marks",
+            A::Marks,
+            "Open the marks: a letter jumps to its mark",
+        ),
         CommandSpec::action("prev-mark", A::PrevMark, "Go to the mark above"),
         CommandSpec::action("next-mark", A::NextMark, "Go to the mark below"),
         CommandSpec::build(

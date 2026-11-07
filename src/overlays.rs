@@ -17,7 +17,8 @@ pub use command_line::CommandLine;
 pub use directory::{Directory, DirectoryTab};
 pub use help::{HelpCategory, HelpDialog};
 pub use link_form::{LinkForm, LinkFormField};
-pub use menu::ActionMenu;
+pub use marks::{MarkBrowser, MarkRow};
+pub use menu::{ActionMenu, MenuRun};
 pub use misc::{ErrorDialog, FilePathDialog, ScreenshotDialog};
 pub use reconfigure::{LineSettingField, LineSettingsDialog};
 pub use resize::{ResizeDialog, ResizeField};
@@ -29,6 +30,7 @@ pub mod command_line;
 pub mod directory;
 pub mod help;
 pub mod link_form;
+pub mod marks;
 pub mod menu;
 pub mod misc;
 pub mod reconfigure;
@@ -55,6 +57,7 @@ pub enum Overlay {
     Sessions(Box<SessionBrowser>),
     CommandLine(Box<CommandLine>),
     Triggers(TriggerBrowser),
+    Marks(MarkBrowser),
     Directory(Directory),
     LinkForm(Box<LinkForm>),
     DeleteLink(SavedLink),
@@ -90,6 +93,9 @@ pub enum PopupTarget {
     TriggerToggle,
     TriggerToggleAll,
     TriggerCopyPath,
+    MarkRow(usize),
+    MarkJump,
+    MarkDelete,
     ConfigPath(usize),
     DirectoryTab(DirectoryTab),
     DirectoryRow(usize),
@@ -160,6 +166,9 @@ pub enum OverlayResponse {
         name: String,
         on: bool,
     },
+    JumpMark(char),
+    DeleteMark(char),
+    AddMark(Option<usize>),
 }
 
 impl Overlay {
@@ -172,6 +181,12 @@ impl Overlay {
                 | Overlay::CommandLine(_)
                 | Overlay::LinkForm(_)
         )
+    }
+
+    /// A plain letter key goes to the popup before the popup keys (`q`, `j`...): the marks
+    /// popup jumps to the mark of that letter (MAX-164)
+    pub fn takes_letters(&self) -> bool {
+        matches!(self, Overlay::Marks(_))
     }
 
     pub fn closes_on_click_outside(&self) -> bool {
@@ -199,6 +214,7 @@ impl Overlay {
             Overlay::Sessions(browser) => browser.handle_action(action),
             Overlay::CommandLine(command_line) => command_line.handle_action(action),
             Overlay::Triggers(browser) => browser.handle_action(action),
+            Overlay::Marks(browser) => browser.handle_action(action),
             Overlay::Directory(directory) => directory.handle_action(action),
             Overlay::LinkForm(form) => form.handle_action(action),
             Overlay::Error(_) => match action {

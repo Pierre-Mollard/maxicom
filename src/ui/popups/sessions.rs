@@ -9,7 +9,6 @@ use ratatui::{
 };
 
 use crate::{
-    app::data_processing::displayable_line_string,
     capture::{Session, SessionOrder},
     configs::{
         KeyPattern, KeyResolver, LineDisplayMode, ThemeConfig, keybindings::KeyBindingDialogAction,
@@ -20,6 +19,7 @@ use crate::{
     },
     ui::{
         common::popup_area,
+        data_display::format_line_content,
         popups::{Hints, hint_spans, popup_block, render_scrollbar, section},
     },
 };
@@ -272,9 +272,21 @@ fn render_preview(browser: &SessionBrowser, area: Rect, frame: &mut Frame, theme
     lines.push(section("Last lines", theme));
     let room = (area.height as usize).saturating_sub(lines.len());
     let tail = browser.preview.len().saturating_sub(room);
-    // as Clean shows them: the escape sequences of a terminal session left out
+    // the timestamp the session wrote before each line, dimmed: as wide as its format
+    // gives, a space after it
+    let stamp_width = (session.meta.as_ref())
+        .and_then(|meta| meta.text.timestamp.as_deref())
+        .map(|format| Local::now().format(format).to_string().len() + 1);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    // the text as Pretty shows it: in its colors, the other escape sequences left out
     lines.extend(browser.preview[tail..].iter().map(|line| {
-        Line::from(displayable_line_string(line, LineDisplayMode::Clean).into_owned())
+        let (stamp, text) = match stamp_width {
+            Some(width) if line.is_char_boundary(width) => line.split_at(width),
+            _ => ("", line.as_str()),
+        };
+        let mut spans = vec![Span::styled(stamp.to_string(), dim)];
+        spans.extend(format_line_content(text, LineDisplayMode::Pretty, theme));
+        Line::from(spans)
     }));
     frame.render_widget(Paragraph::new(lines), area);
 }

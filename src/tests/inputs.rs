@@ -279,7 +279,7 @@ fn default_keymap_per_context() {
     assert_eq!(
         walk(&app, "App(SetPrefix(false))"),
         [
-            "' => run jump-mark",
+            "' => App(OpenMarks)",
             "( => App(Mark(Adjacent(false)))",
             ") => App(Mark(Adjacent(true)))",
             ", => run mark",
@@ -341,7 +341,7 @@ fn default_keymap_per_context() {
         walk(&app, "copy keys"),
         [
             "$ => CopyMode(EndOfLine)",
-            "' => run jump-mark",
+            "' => App(OpenMarks)",
             "( => App(Mark(Adjacent(false)))",
             ") => App(Mark(Adjacent(true)))",
             ", => run mark",
@@ -548,9 +548,9 @@ fn last_toast(app: &App) -> String {
 
 /// MAX-164: prefix `,` (`mark` without a letter) waits for a mark's letter: a letter marks the
 /// line, Enter takes the first free letter, anything else (Esc, the prefix) cancels; a toast
-/// says what happened. Prefix `'` (`jump-mark`) waits for the letter to jump to. In copy mode
-/// the same keys run the same command lines: `,` and `'` wait the same way, `(` and `)` walk
-/// the marks. In both modes.
+/// says what happened. Prefix `'` opens the marks popup, where a letter jumps to its mark, `q`
+/// too. In copy mode the same keys do the same: `,` waits, `'` opens the popup, `(` and `)`
+/// walk the marks. In both modes.
 /// How: two lines received, then the keys one by one, as the loop runs them (a bound command
 /// line queued, then run).
 #[test]
@@ -591,15 +591,22 @@ fn mark_keys_wait_for_a_letter() {
             assert_eq!(marks(&app).sorted().len(), 2, "{mode:?}");
         }
 
+        // the marks popup: a letter jumps and closes it, `q` too (not a close)
         press(&mut app, ctrl('a'));
         press(&mut app, char_key('\''));
-        assert_eq!(app.pending_mark(), Some(PendingMark::Jump), "{mode:?}");
+        assert!(matches!(app.overlay(), Some(Overlay::Marks(_))), "{mode:?}");
         press(&mut app, char_key('c'));
+        assert!(app.overlay().is_none());
         assert!(!app.is_copy_mode_active());
+        press(&mut app, ctrl('a'));
+        press(&mut app, char_key('\''));
+        press(&mut app, char_key('q'));
+        assert!(app.overlay().is_none());
+        assert_eq!(last_toast(&app), "mark q is not set");
 
         app.update(Action::CopyMode(CopyModeAction::Enter));
         press(&mut app, char_key('\''));
-        assert_eq!(app.pending_mark(), Some(PendingMark::Jump));
+        assert!(matches!(app.overlay(), Some(Overlay::Marks(_))), "{mode:?}");
         press(&mut app, char_key('z'));
         assert_eq!(last_toast(&app), "mark z is not set");
         press(&mut app, char_key(','));

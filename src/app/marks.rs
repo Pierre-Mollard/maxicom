@@ -73,6 +73,10 @@ impl Marks {
     pub fn clear(&mut self) {
         *self = Self::default();
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.lines.iter().all(Option::is_none)
+    }
 }
 
 #[cfg(test)]

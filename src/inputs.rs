@@ -89,6 +89,7 @@ pub enum AppAction {
     DismissToasts,
     StartMash(Box<Mash>),
     Mark(MarkAction),
+    OpenMarks,
     Quit,
 }
 
@@ -101,6 +102,8 @@ pub enum MarkAction {
     Cancel,
     /// On the line `add_mark` picks; none = the first free letter
     Add(Option<char>),
+    /// On that history line, the first free letter: the menu's "Add mark"
+    AddAt(usize),
     Jump(char),
     Delete(char),
     /// The closest mark below (`true`) or above
@@ -310,6 +313,15 @@ pub fn handle_event(event: Event, app: &App) -> Action {
                 return Action::Overlay(DialogAction::Confirm);
             }
             let is_text_input = app.overlay().map_or_else(|| false, |o| o.is_text_input());
+
+            // the marks popup jumps on a letter, `q` and `j` too (MAX-164)
+            let plain_letter = matches!(key_event.code, KeyCode::Char(c) if c.is_ascii_lowercase())
+                && !key_event
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+            if plain_letter && app.overlay().is_some_and(Overlay::takes_letters) {
+                return Action::Overlay(DialogAction::HandleKey(key_event));
+            }
 
             if is_text_input {
                 // only close, confirm and cycle: the field keeps Ctrl-U, Ctrl-D, Home, End (MAX-155)

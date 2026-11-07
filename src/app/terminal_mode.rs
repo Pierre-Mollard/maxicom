@@ -27,6 +27,7 @@ use crate::{
         click_input_at, dispatch_input_key, local_dispatchers::dispatch_copy_key_vi,
         paste_into_input,
     },
+    overlays::MarkRow,
     terminal::{TerminalParser, new_parser, vt100_dim, vt100_size},
 };
 
@@ -367,8 +368,35 @@ impl TerminalMode {
         self.marks.set(letter, row).then_some(row)
     }
 
+    /// Puts mark `letter` on world row `row`, none when there's no such row (MAX-164)
+    pub fn add_mark_at(&mut self, letter: char, row: usize) -> Option<usize> {
+        let exists = row < self.max_content_scrollback + self.get_vt100_size().0 as usize;
+        (exists && self.marks.set(letter, row)).then_some(row)
+    }
+
     pub fn remove_mark(&mut self, letter: char) -> Option<usize> {
         self.marks.remove(letter)
+    }
+
+    /// The marks as the popup lists them, by row: each row's time and its text with its
+    /// styles' escape sequences, for the popup to show as Pretty does (MAX-164)
+    pub fn mark_rows(&mut self) -> Vec<MarkRow> {
+        let marks = self.marks.sorted();
+        marks
+            .into_iter()
+            .map(|(letter, row)| {
+                let text = read_vt100_world_line_formatted(
+                    &mut self.vt100_parser,
+                    self.max_content_scrollback,
+                    row,
+                );
+                MarkRow {
+                    letter,
+                    time: self.get_timeline_timestamp(row),
+                    text: String::from_utf8_lossy(&text.unwrap_or_default()).into_owned(),
+                }
+            })
+            .collect()
     }
 
     /// Goes to mark `letter`'s row: the copy cursor moves to its start in copy mode, else the
