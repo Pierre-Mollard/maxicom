@@ -729,7 +729,7 @@ impl Default for StatusBarConfig {
     fn default() -> Self {
         Self {
             left: block_lines(&[
-                "[ {mode} ](prefix?(bg=secondary fg=black bold):copy_raw?(bg=selection_raw fg=black bold):copy?(bg=selection fg=black bold):search?(bg=search fg=black bold):(fg=primary bold))",
+                "[ {mode} ](prefix?(bg=secondary fg=black bold):mark?(bg=good fg=black bold):copy_raw?(bg=selection_raw fg=black bold):copy?(bg=selection fg=black bold):search?(bg=search fg=black bold):(fg=primary bold))",
                 "[|](muted prio=3)",
                 "[ {port}](link prio=3)",
                 "[ |](muted prio=3)",

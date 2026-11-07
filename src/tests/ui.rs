@@ -1898,8 +1898,9 @@ fn lost_popup_says_its_reason() {
 /// MAX-12: the help's third tab lists the keys bound to a command line, the direct ones
 /// first, then every command: those with arguments with their help under them, then the
 /// others, one a row.
-/// How: the default keymap (break and the DTR pulse after the prefix) and `send-hex 03` on
-/// F5, the tab reached two forward from the first.
+/// How: the default keymap (break and the DTR pulse after the prefix, the marks' keys after
+/// the prefix and in copy mode) and `send-hex 03` on F5, the tab reached two forward from
+/// the first.
 #[test]
 fn help_lists_the_commands() {
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 60);
@@ -1919,12 +1920,22 @@ fn help_lists_the_commands() {
     let f5 = row_of(&rows, "F5 ").expect("F5");
     assert!(rows[f5].contains("-> send-hex 03"), "{rows:#?}");
     // the letters in order, a shifted one after its plain one: `L` back to live, then `U`,
-    // the u-boot trigger, last
+    // the u-boot trigger; then the symbols (the marks', MAX-164); the copy mode keys last
     assert_eq!(row_of(&rows, "Ctrl-a + f "), Some(f5 + 1), "{rows:#?}");
-    let pulse = row_of(&rows, "Ctrl-a + h -> dtr off; sleep 100; dtr on");
+    let pulse = row_of(&rows, "Ctrl-a + h ");
     assert_eq!(pulse, Some(f5 + 2), "{rows:#?}");
+    assert!(
+        rows[f5 + 2].contains("-> dtr off; sleep 100; dtr on"),
+        "{rows:#?}"
+    );
     assert_eq!(row_of(&rows, "Ctrl-a + L "), Some(f5 + 3), "{rows:#?}");
     assert_eq!(row_of(&rows, "Ctrl-a + U "), Some(f5 + 4), "{rows:#?}");
+    assert_eq!(row_of(&rows, "Ctrl-a + ' "), Some(f5 + 5), "{rows:#?}");
+    assert!(rows[f5 + 5].contains("-> jump-mark"), "{rows:#?}");
+    assert_eq!(row_of(&rows, "Ctrl-a + , "), Some(f5 + 6), "{rows:#?}");
+    assert_eq!(row_of(&rows, "copy mode ' "), Some(f5 + 7), "{rows:#?}");
+    assert_eq!(row_of(&rows, "copy mode , "), Some(f5 + 8), "{rows:#?}");
+    assert!(rows[f5 + 8].contains("-> mark"), "{rows:#?}");
     assert!(has(&rows, "on the command line (Ctrl-a :)"), "{rows:#?}");
 
     // scrolled down until `text` shows with the row under it
@@ -6548,4 +6559,200 @@ fn mouse_forwarded_to_a_remote_program() {
     h.draw();
     assert_eq!(sent(&mut h, MouseEventKind::ScrollUp), None);
     assert!(h.app.terminal_mode.vt100_screen().scrollback() > 0);
+}
+
+/// 60 numbered lines, mark a on "line 19" and b on "line 39" as they arrive, the live view
+/// drawn: the harness and the history's text rows count (MAX-164)
+fn marked_lines() -> (Harness, usize) {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 40, 12);
+    for i in 0..60 {
+        h.feed(format!("line {i:02}\r\n").as_bytes());
+        match i {
+            19 => assert_eq!(h.app.line_mode.add_mark('a'), Some(19)),
+            39 => assert_eq!(h.app.line_mode.add_mark('b'), Some(39)),
+            _ => {}
+        }
+    }
+    h.draw();
+    let height = h.app.frame_areas().content.height as usize;
+    (h, height)
+}
+
+/// MAX-164: out of copy mode a mark jump only scrolls: the mark's line on the view's middle
+/// row, no copy mode; an unset mark moves nothing.
+/// How: from the live view, jump to a, then to b, then to the unset z.
+#[test]
+fn mark_jump_centers_the_view() {
+    let (mut h, height) = marked_lines();
+    assert_eq!(h.app.line_mode.jump_to_mark('a'), Some(19));
+    let rows = text_rows(&mut h, height);
+    assert_eq!(rows[height / 2], "│ line 19", "{rows:#?}");
+    assert!(!h.app.is_copy_mode_active());
+
+    h.app.line_mode.jump_to_mark('b');
+    let rows = text_rows(&mut h, height);
+    assert_eq!(rows[height / 2], "│ line 39", "{rows:#?}");
+
+    assert_eq!(h.app.line_mode.jump_to_mark('z'), None);
+    assert_eq!(text_rows(&mut h, height), rows);
+}
+
+/// MAX-164: in copy mode a mark jump moves the copy cursor to the start of the mark's line,
+/// which the view shows centered.
+/// How: copy mode from the live view, jump to a.
+#[test]
+fn mark_jump_moves_the_copy_cursor() {
+    let (mut h, height) = marked_lines();
+    h.app.update(Action::CopyMode(CopyModeAction::Enter));
+    h.draw();
+    h.app.line_mode.jump_to_mark('a');
+    let cursor = h.app.line_mode.copy_state().cursor;
+    assert_eq!((cursor.line_idx, cursor.char_idx), (19, 0));
+    let rows = text_rows(&mut h, height);
+    assert_eq!(rows[height / 2], "│ line 19", "{rows:#?}");
+}
+
+/// MAX-164: previous / next mark walk the marks from the view's middle line, or from the copy
+/// cursor in copy mode; past the last one nothing moves.
+/// How: from the live view (middle around line 55) previous twice, once more, then next; in
+/// copy mode from the live view's last line, previous twice, next twice.
+#[test]
+fn previous_and_next_mark() {
+    let (mut h, height) = marked_lines();
+    let walk = |h: &mut Harness, forward| {
+        let letter = h.app.line_mode.jump_to_adjacent_mark(forward);
+        (letter, text_rows(h, height)[height / 2].clone())
+    };
+    assert_eq!(walk(&mut h, false), (Some('b'), "│ line 39".to_string()));
+    assert_eq!(walk(&mut h, false), (Some('a'), "│ line 19".to_string()));
+    assert_eq!(walk(&mut h, false), (None, "│ line 19".to_string()));
+    assert_eq!(walk(&mut h, true), (Some('b'), "│ line 39".to_string()));
+
+    h.app.update(Action::CopyMode(CopyModeAction::Enter));
+    let line = |h: &Harness| h.app.line_mode.copy_state().cursor.line_idx;
+    assert_eq!(h.app.line_mode.jump_to_adjacent_mark(false), Some('b'));
+    assert_eq!(line(&h), 39);
+    assert_eq!(h.app.line_mode.jump_to_adjacent_mark(false), Some('a'));
+    assert_eq!(line(&h), 19);
+    assert_eq!(h.app.line_mode.jump_to_adjacent_mark(true), Some('b'));
+    assert_eq!(h.app.line_mode.jump_to_adjacent_mark(true), None);
+    assert_eq!(line(&h), 39);
+}
+
+/// Terminal mode, 60 numbered lines, mark a on "line 19" and b on "line 39" as the cursor
+/// reaches them, the live view drawn: the harness and the history's rows count (MAX-164)
+fn terminal_marked_lines() -> (Harness, usize) {
+    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 40, 12, |s| {
+        s.mode = Mode::Terminal;
+    });
+    h.draw();
+    for i in 0..60 {
+        let sep = if i == 0 { "" } else { "\r\n" };
+        let line = format!("{sep}line {i:02}");
+        h.app
+            .terminal_mode
+            .process_rx(TextEncoding::Utf8, line.as_bytes());
+        if matches!(i, 19 | 39) {
+            let letter = if i == 19 { 'a' } else { 'b' };
+            assert!(h.app.terminal_mode.add_mark(letter).is_some());
+        }
+    }
+    h.draw();
+    let height = h.app.frame_areas().content.height as usize;
+    (h, height)
+}
+
+/// The terminal view's middle row: a jump centers its row there (MAX-164)
+fn terminal_middle_row(h: &mut Harness, height: usize) -> String {
+    let rows = text_rows(h, height);
+    rows[(height - 1) / 2].clone()
+}
+
+/// MAX-164: in terminal mode, out of copy mode, a mark jump only scrolls: the mark's row on
+/// the view's middle row, no copy mode; an unset mark moves nothing.
+/// How: from the live view, jump to a, then to b, then to the unset z.
+#[test]
+fn terminal_mark_jump_centers_the_view() {
+    let (mut h, height) = terminal_marked_lines();
+    assert!(h.app.terminal_mode.jump_to_mark('a').is_some());
+    assert_eq!(terminal_middle_row(&mut h, height), "line 19");
+    assert!(!h.app.is_copy_mode_active());
+
+    h.app.terminal_mode.jump_to_mark('b');
+    assert_eq!(terminal_middle_row(&mut h, height), "line 39");
+
+    let rows = text_rows(&mut h, height);
+    assert_eq!(h.app.terminal_mode.jump_to_mark('z'), None);
+    assert_eq!(text_rows(&mut h, height), rows);
+}
+
+/// MAX-164: in terminal copy mode a mark jump moves the copy cursor to the start of the mark's
+/// row, which the view shows centered.
+/// How: copy mode from the live view, jump to a.
+#[test]
+fn terminal_mark_jump_moves_the_copy_cursor() {
+    let (mut h, height) = terminal_marked_lines();
+    h.app.update(Action::CopyMode(CopyModeAction::Enter));
+    h.draw();
+    let a = h.app.terminal_mode.jump_to_mark('a').unwrap();
+    let cursor = h.app.terminal_mode.copy_state().cursor;
+    assert_eq!((cursor.line_idx, cursor.char_idx), (a, 0));
+    assert_eq!(terminal_middle_row(&mut h, height), "line 19");
+}
+
+/// MAX-164: in terminal mode previous / next mark walk the marks from the view's middle row,
+/// or from the copy cursor in copy mode; past the last one nothing moves.
+/// How: from the live view previous twice, once more, then next; copy mode from the live
+/// view, previous twice, next twice.
+#[test]
+fn terminal_previous_and_next_mark() {
+    let (mut h, height) = terminal_marked_lines();
+    let walk = |h: &mut Harness, forward| {
+        let letter = h.app.terminal_mode.jump_to_adjacent_mark(forward);
+        (letter, terminal_middle_row(h, height))
+    };
+    assert_eq!(walk(&mut h, false), (Some('b'), "line 39".to_string()));
+    assert_eq!(walk(&mut h, false), (Some('a'), "line 19".to_string()));
+    assert_eq!(walk(&mut h, false), (None, "line 19".to_string()));
+    assert_eq!(walk(&mut h, true), (Some('b'), "line 39".to_string()));
+
+    h.app.update(Action::CopyMode(CopyModeAction::Enter));
+    let marks = h.app.terminal_mode.marks().clone();
+    let line = |h: &Harness| h.app.terminal_mode.copy_state().cursor.line_idx;
+    assert_eq!(h.app.terminal_mode.jump_to_adjacent_mark(false), Some('b'));
+    assert_eq!(Some(line(&h)), marks.get('b'));
+    assert_eq!(h.app.terminal_mode.jump_to_adjacent_mark(false), Some('a'));
+    assert_eq!(Some(line(&h)), marks.get('a'));
+    assert_eq!(h.app.terminal_mode.jump_to_adjacent_mark(true), Some('b'));
+    assert_eq!(h.app.terminal_mode.jump_to_adjacent_mark(true), None);
+    assert_eq!(Some(line(&h)), marks.get('b'));
+}
+
+/// MAX-164: from a scrolled view (no copy mode) a mark goes on the line on the view's middle
+/// row, what is looked at, not on the last line received.
+/// How: the marked lines scrolled up 20 rows, mark c, then the line on the middle row.
+#[test]
+fn mark_from_a_scrolled_view_takes_its_middle_line() {
+    let (mut h, height) = marked_lines();
+    h.scroll(HistoryAction::ScrollUp(20));
+    let middle = text_rows(&mut h, height)[height / 2].clone();
+    let line = h.app.line_mode.add_mark('c').unwrap();
+    assert_eq!(middle, format!("│ line {line:02}"));
+    assert!(line < 59, "{line}");
+}
+
+/// MAX-164: in terminal mode, from a scrolled view (no copy mode) a mark goes on the row on
+/// the view's middle row, not on the terminal cursor's.
+/// How: the marked lines scrolled up 20 rows, mark c, then jump back to it from the live view.
+#[test]
+fn terminal_mark_from_a_scrolled_view_takes_its_middle_row() {
+    let (mut h, height) = terminal_marked_lines();
+    h.scroll(HistoryAction::ScrollUp(20));
+    let middle = terminal_middle_row(&mut h, height);
+    assert!(h.app.terminal_mode.add_mark('c').is_some());
+    h.scroll(HistoryAction::ScrollToBottom);
+    h.draw();
+    h.app.terminal_mode.jump_to_mark('c');
+    assert_eq!(terminal_middle_row(&mut h, height), middle);
+    assert_ne!(middle, "line 59");
 }

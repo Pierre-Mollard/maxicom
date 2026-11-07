@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::{
-    configs::{KeyBindingsConfig, KeyResolver, SettingsConfig},
+    configs::{KeyBindingsConfig, KeyResolver, Mode, SettingsConfig},
     link::LinkConfig,
     overlays::SettingsDialog,
 };
@@ -279,6 +279,10 @@ fn default_keymap_per_context() {
     assert_eq!(
         walk(&app, "App(SetPrefix(false))"),
         [
+            "' => run jump-mark",
+            "( => App(Mark(Adjacent(false)))",
+            ") => App(Mark(Adjacent(true)))",
+            ", => run mark",
             "/ => Search(Start)",
             ": => open CommandLine",
             "< => App(ResizeSidePanel(-5))",
@@ -337,6 +341,10 @@ fn default_keymap_per_context() {
         walk(&app, "copy keys"),
         [
             "$ => CopyMode(EndOfLine)",
+            "' => run jump-mark",
+            "( => App(Mark(Adjacent(false)))",
+            ") => App(Mark(Adjacent(true)))",
+            ", => run mark",
             "0 => CopyMode(StartOfLine)",
             "Ctrl-a => App(SetPrefix(true))",
             "Ctrl-e => History(ScrollDown(1))",
@@ -523,4 +531,82 @@ fn keys_reach_the_device() {
 fn resize_redraws() {
     let action = handle_event(Event::Resize(150, 35), &app());
     assert!(matches!(action, Action::Redraw), "{action:?}");
+}
+
+/// The marks of the current mode's view (MAX-164)
+fn marks(app: &App) -> crate::app::marks::Marks {
+    match app.settings().mode {
+        Mode::Line => app.line_mode.marks().clone(),
+        Mode::Terminal => app.terminal_mode.marks().clone(),
+    }
+}
+
+fn last_toast(app: &App) -> String {
+    let toasts = app.notifications.active_toasts();
+    toasts.last().map(|toast| toast.message.clone()).unwrap()
+}
+
+/// MAX-164: prefix `,` (`mark` without a letter) waits for a mark's letter: a letter marks the
+/// line, Enter takes the first free letter, anything else (Esc, the prefix) cancels; a toast
+/// says what happened. Prefix `'` (`jump-mark`) waits for the letter to jump to. In copy mode
+/// the same keys run the same command lines: `,` and `'` wait the same way, `(` and `)` walk
+/// the marks. In both modes.
+/// How: two lines received, then the keys one by one, as the loop runs them (a bound command
+/// line queued, then run).
+#[test]
+fn mark_keys_wait_for_a_letter() {
+    for mode in [Mode::Line, Mode::Terminal] {
+        let mut app = app();
+        app.settings_mut().mode = mode;
+        app.feed_rx(b"one\r\ntwo\r\n");
+        let press = |app: &mut App, event| {
+            let action = handle_event(event, app);
+            app.update(action);
+            while let Some(action) = app.next_command_action(std::time::Instant::now()) {
+                app.update(action);
+            }
+        };
+        let char_key = |c| plain(KeyCode::Char(c));
+
+        press(&mut app, ctrl('a'));
+        press(&mut app, char_key(','));
+        assert_eq!(app.pending_mark(), Some(PendingMark::Add), "{mode:?}");
+        press(&mut app, char_key('c'));
+        assert_eq!(app.pending_mark(), None);
+        assert!(marks(&app).get('c').is_some(), "{mode:?}");
+        assert_eq!(last_toast(&app), "mark c");
+
+        press(&mut app, ctrl('a'));
+        press(&mut app, char_key(','));
+        press(&mut app, plain(KeyCode::Enter));
+        assert!(marks(&app).get('a').is_some(), "{mode:?}");
+        assert_eq!(last_toast(&app), "mark a");
+
+        for cancel in [plain(KeyCode::Esc), ctrl('a'), char_key('A')] {
+            press(&mut app, ctrl('a'));
+            press(&mut app, char_key(','));
+            press(&mut app, cancel);
+            assert_eq!(app.pending_mark(), None);
+            assert!(!app.is_prefix_active(), "{mode:?}");
+            assert_eq!(marks(&app).sorted().len(), 2, "{mode:?}");
+        }
+
+        press(&mut app, ctrl('a'));
+        press(&mut app, char_key('\''));
+        assert_eq!(app.pending_mark(), Some(PendingMark::Jump), "{mode:?}");
+        press(&mut app, char_key('c'));
+        assert!(!app.is_copy_mode_active());
+
+        app.update(Action::CopyMode(CopyModeAction::Enter));
+        press(&mut app, char_key('\''));
+        assert_eq!(app.pending_mark(), Some(PendingMark::Jump));
+        press(&mut app, char_key('z'));
+        assert_eq!(last_toast(&app), "mark z is not set");
+        press(&mut app, char_key(','));
+        press(&mut app, char_key('d'));
+        assert_eq!(last_toast(&app), "mark d");
+        press(&mut app, char_key('('));
+        assert_eq!(last_toast(&app), "no mark above", "{mode:?}");
+        assert!(app.is_copy_mode_active());
+    }
 }

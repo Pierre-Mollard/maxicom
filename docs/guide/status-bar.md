@@ -56,7 +56,7 @@ as between `[{time}](...)` and `[?](...)` below.
 ```toml
 [ui.status_bar]
 left = '''
-[ {mode} ](prefix?(bg=secondary fg=black bold):copy_raw?(bg=selection_raw fg=black bold):copy?(bg=selection fg=black bold):search?(bg=search fg=black bold):(fg=primary bold))\
+[ {mode} ](prefix?(bg=secondary fg=black bold):mark?(bg=good fg=black bold):copy_raw?(bg=selection_raw fg=black bold):copy?(bg=selection fg=black bold):search?(bg=search fg=black bold):(fg=primary bold))\
     [|](muted prio=3)\
     [ {port}](link prio=3)\
     [ |](muted prio=3)\

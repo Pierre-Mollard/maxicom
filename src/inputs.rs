@@ -2,7 +2,7 @@
 /// Using the 'crossterm' crate
 use std::{io, path::PathBuf, time::Duration};
 
-use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 
 use crate::{
@@ -88,7 +88,30 @@ pub enum AppAction {
     DismissToast(Option<u64>),
     DismissToasts,
     StartMash(Box<Mash>),
+    Mark(MarkAction),
     Quit,
+}
+
+/// The history's marks (MAX-164), in the view of the current mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkAction {
+    /// Waits for the next key: a letter, Enter for the first free one when adding
+    Await(PendingMark),
+    /// The key waited for wasn't a letter
+    Cancel,
+    /// On the line `add_mark` picks; none = the first free letter
+    Add(Option<char>),
+    Jump(char),
+    Delete(char),
+    /// The closest mark below (`true`) or above
+    Adjacent(bool),
+}
+
+/// What a letter key does while a mark waits for it
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingMark {
+    Add,
+    Jump,
 }
 
 /// The left button on the history's scrollbar (MAX-142): a press on one of its rows (`0` the
@@ -270,6 +293,13 @@ pub fn handle_event(event: Event, app: &App) -> Action {
     let resolver = &app.key_resolver;
     let ctx = app.input_context();
 
+    // the key after an add or jump mark key is its letter (MAX-164)
+    if let Some(pending) = app.pending_mark()
+        && ctx != InputContext::Overlay
+    {
+        return Action::App(AppAction::Mark(mark_key(pending, key_event)));
+    }
+
     // Actions using or ignoring with prefix
     match ctx {
         InputContext::Overlay => {
@@ -361,6 +391,8 @@ pub fn handle_event(event: Event, app: &App) -> Action {
         InputContext::CopyMode => {
             if let Some(copy_action_binding) = resolver.copy_actions.get(&pattern) {
                 copy_action_binding.to_action()
+            } else if let Some(line) = resolver.copy_commands.get(&pattern) {
+                Action::App(AppAction::QueueCommands(line.invocations.clone()))
             } else if let Some(action_binding) = resolver.direct_actions.get(&pattern)
                 && action_binding.is_navigation()
             {
@@ -393,6 +425,24 @@ pub fn handle_event(event: Event, app: &App) -> Action {
             }
         }
         InputContext::Overlay | InputContext::Search | InputContext::Prefix => unreachable!(),
+    }
+}
+
+/// The mark action for the key a mark waited for: a letter `a`..`z` (no Ctrl or Alt), Enter
+/// for the first free letter when adding; anything else cancels
+fn mark_key(pending: PendingMark, key_event: KeyEvent) -> MarkAction {
+    let plain = !key_event
+        .modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+    match (pending, key_event.code) {
+        (PendingMark::Add, KeyCode::Char(letter)) if plain && letter.is_ascii_lowercase() => {
+            MarkAction::Add(Some(letter))
+        }
+        (PendingMark::Jump, KeyCode::Char(letter)) if plain && letter.is_ascii_lowercase() => {
+            MarkAction::Jump(letter)
+        }
+        (PendingMark::Add, KeyCode::Enter) => MarkAction::Add(None),
+        _ => MarkAction::Cancel,
     }
 }
 

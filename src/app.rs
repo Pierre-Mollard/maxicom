@@ -23,7 +23,8 @@ use crate::{
     },
     inputs::{
         Action, AppAction, ClickHoldAction, CopyModeAction, HistoryAction, LineInputAction,
-        ScrollbarAction, SearchModeAction, SideHandleAction, SideViewAction, TerminalAction,
+        MarkAction, PendingMark, ScrollbarAction, SearchModeAction, SideHandleAction,
+        SideViewAction, TerminalAction,
     },
     link::{
         Address, LinkConfig, LinkKind, LinkState,
@@ -42,6 +43,7 @@ pub mod capture;
 pub mod data_processing;
 pub mod device;
 pub mod line_mode;
+pub mod marks;
 pub mod mash;
 pub mod raw_scroller;
 pub mod scroller;
@@ -122,6 +124,8 @@ pub struct App {
     /// The directory's port test running (MAX-181)
     link_test: Option<device::LinkTest>,
     prefix_active: bool,
+    /// An add or jump mark key waits for its letter (MAX-164)
+    pending_mark: Option<PendingMark>,
     overlay: Option<Overlay>,
     pub notifications: NotificationManager,
     pub viewport: ViewportSize,
@@ -254,6 +258,7 @@ impl App {
 
         let mut app = Self {
             prefix_active: false,
+            pending_mark: None,
             settings,
             key_resolver,
             link: LinkState::new(link_config),
@@ -1478,6 +1483,10 @@ impl App {
                 self.notifications.dismiss_all();
                 UpdateEffect::None
             }
+            AppAction::Mark(action) => {
+                self.update_mark(action);
+                UpdateEffect::None
+            }
             AppAction::PasteBuffer => {
                 let Some(text) = self.paste_buffer.clone() else {
                     return UpdateEffect::None;
@@ -1884,6 +1893,72 @@ impl App {
 
     pub fn is_prefix_active(&self) -> bool {
         self.prefix_active
+    }
+
+    #[inline]
+    pub fn pending_mark(&self) -> Option<PendingMark> {
+        self.pending_mark
+    }
+
+    /// The marks of the current mode's view (MAX-164); a toast says what happened
+    fn update_mark(&mut self, action: MarkAction) {
+        self.pending_mark = None;
+        let mode = self.settings.mode;
+        match action {
+            // the status bar's badge reads MARK meanwhile
+            MarkAction::Await(pending) => self.pending_mark = Some(pending),
+            MarkAction::Cancel => {}
+            MarkAction::Add(letter) => {
+                let marks = match mode {
+                    Mode::Line => self.line_mode.marks(),
+                    Mode::Terminal => self.terminal_mode.marks(),
+                };
+                let Some(letter) = letter.or_else(|| marks.first_free()) else {
+                    self.notify_warn("all 26 marks are set: delete one first");
+                    return;
+                };
+                let added = match mode {
+                    Mode::Line => self.line_mode.add_mark(letter),
+                    Mode::Terminal => self.terminal_mode.add_mark(letter),
+                };
+                match added {
+                    Some(_) => self.notify_info(format!("mark {letter}")),
+                    None => self.notify_warn("no line to mark yet"),
+                }
+            }
+            MarkAction::Jump(letter) => {
+                let jumped = match mode {
+                    Mode::Line => self.line_mode.jump_to_mark(letter),
+                    Mode::Terminal => self.terminal_mode.jump_to_mark(letter),
+                };
+                if jumped.is_none() {
+                    self.notify_warn(format!("mark {letter} is not set"));
+                }
+            }
+            MarkAction::Delete(letter) => {
+                let removed = match mode {
+                    Mode::Line => self.line_mode.remove_mark(letter),
+                    Mode::Terminal => self.terminal_mode.remove_mark(letter),
+                };
+                match removed {
+                    Some(_) => self.notify_info(format!("mark {letter} deleted")),
+                    None => self.notify_warn(format!("mark {letter} is not set")),
+                }
+            }
+            MarkAction::Adjacent(forward) => {
+                let jumped = match mode {
+                    Mode::Line => self.line_mode.jump_to_adjacent_mark(forward),
+                    Mode::Terminal => self.terminal_mode.jump_to_adjacent_mark(forward),
+                };
+                if jumped.is_none() {
+                    self.notify_info(if forward {
+                        "no mark below"
+                    } else {
+                        "no mark above"
+                    });
+                }
+            }
+        }
     }
 
     /// The session backup runs, what the optional `session` status bar condition shows

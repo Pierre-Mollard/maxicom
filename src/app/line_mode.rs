@@ -9,6 +9,7 @@ use crate::{
         data_processing::{
             build_display_to_raw_byte_map, entry_display_text, entry_display_to_wire_map,
         },
+        marks::Marks,
         raw_scroller::RawSideScroller,
         scroller::{ScrollStatus, ViewportScroller},
         search::SearchState,
@@ -76,6 +77,12 @@ pub struct LineMode {
     view_floor: Option<ViewFloor>,
     /// Copy mode held the live view when lines arrived: leaving it goes back live (MAX-193)
     copy_held: bool,
+    /// The marks on history entries (MAX-164)
+    marks: Marks,
+    /// The entry a mark jump centers the view on, for the next frame
+    mark_jump: Option<usize>,
+    /// The entry on the view's middle row in the last frame: previous / next mark start there
+    middle_line: Option<usize>,
 }
 
 /// The entry the live view starts on, and the rows scrolled above it while blank rows still
@@ -120,6 +127,9 @@ impl LineMode {
             bottom_row_start: None,
             view_floor: None,
             copy_held: false,
+            marks: Marks::default(),
+            mark_jump: None,
+            middle_line: None,
         }
     }
 
@@ -231,12 +241,98 @@ impl LineMode {
                 ..floor
             })
         });
+        self.marks.rebase_after_eviction(evicted);
+        self.mark_jump = self.mark_jump.and_then(|line| line.checked_sub(evicted));
+        self.middle_line = self.middle_line.and_then(|line| line.checked_sub(evicted));
     }
 
     pub fn clear_history(&mut self) {
         self.local_history.clear();
         self.row_heights.clear();
         self.view_floor = None;
+        self.marks.clear();
+        self.mark_jump = None;
+        self.middle_line = None;
+    }
+
+    #[inline]
+    pub fn marks(&self) -> &Marks {
+        &self.marks
+    }
+
+    /// Puts mark `letter` on the copy cursor's entry in copy mode, on the last one from the
+    /// live view (what just arrived), else on the view's middle one (what is looked at);
+    /// returns that entry, none when there is no line or the letter isn't `a`..`z` (MAX-164)
+    pub fn add_mark(&mut self, letter: char) -> Option<usize> {
+        let last = self.local_history.len().checked_sub(1)?;
+        let live = self.scroller.offset_y == 0 && self.rows_below == 0;
+        let line = if self.copy_state.active {
+            self.copy_state.cursor.line_idx
+        } else if live {
+            last
+        } else {
+            self.view_middle_line()
+        };
+        self.marks.set(letter, line).then_some(line)
+    }
+
+    /// The entry on the view's middle row in the last frame, the last one before any frame
+    fn view_middle_line(&self) -> usize {
+        let last = self.local_history.len().saturating_sub(1);
+        self.middle_line.unwrap_or(last).min(last)
+    }
+
+    pub fn remove_mark(&mut self, letter: char) -> Option<usize> {
+        self.marks.remove(letter)
+    }
+
+    /// Goes to mark `letter`'s entry: the copy cursor moves to its start in copy mode, else the
+    /// next frame centers the view on it. None when the mark isn't set
+    pub fn jump_to_mark(&mut self, letter: char) -> Option<usize> {
+        let line = self.marks.get(letter)?;
+        self.go_to_line(line);
+        Some(line)
+    }
+
+    /// Goes to the closest mark below (`forward`) or above the copy cursor in copy mode, else
+    /// the view's middle row; returns its letter, none when there's none that way
+    pub fn jump_to_adjacent_mark(&mut self, forward: bool) -> Option<char> {
+        let from = if self.copy_state.active {
+            self.copy_state.cursor.line_idx
+        } else {
+            self.view_middle_line()
+        };
+        let (letter, line) = if forward {
+            self.marks.next(from)
+        } else {
+            self.marks.prev(from)
+        }?;
+        self.go_to_line(line);
+        Some(letter)
+    }
+
+    fn go_to_line(&mut self, line: usize) {
+        if self.copy_state.active {
+            let cursor = &mut self.copy_state.cursor;
+            cursor.line_idx = line;
+            cursor.char_idx = 0;
+            cursor.preferred_col = 0;
+            cursor.byte_idx = 0;
+            self.copy_reveal = Some(Reveal::Center);
+        } else {
+            self.mark_jump = Some(line);
+        }
+    }
+
+    /// The entry a mark jump asked to center the view on
+    #[inline]
+    pub fn take_mark_jump(&mut self) -> Option<usize> {
+        self.mark_jump.take()
+    }
+
+    #[inline]
+    pub fn set_middle_line(&mut self, line: usize) {
+        self.middle_line = Some(line);
     }
 
     /// The `clear` command: the live view starts on the next entry (the partial RX line, a

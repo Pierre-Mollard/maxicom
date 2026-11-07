@@ -140,7 +140,9 @@ pub fn render_monitor(
     let global_max_scroll = total_entries.saturating_sub(1);
 
     let search_jump = app.line_mode.search_mut().target_jump.take();
-    if let Some((target_line, target_col)) = search_jump {
+    // a mark jump centers the view on its entry like a match, the search open or not (MAX-164)
+    let mark_jump = app.line_mode.take_mark_jump();
+    if let Some((target_line, target_col)) = search_jump.or(mark_jump.map(|line| (line, 0))) {
         let line_from_bottom = (total_entries.saturating_sub(1)).saturating_sub(target_line);
         app.line_mode
             .scroll_to(line_from_bottom.min(global_max_scroll));
@@ -172,7 +174,7 @@ pub fn render_monitor(
     } else if is_search_active && search_jump.is_some() {
         app.line_mode.search().current_match_position()
     } else {
-        None
+        mark_jump.map(|line| (line, 0))
     };
 
     let scroll_from_bottom = app.line_mode.scroll_offset();
@@ -668,6 +670,10 @@ pub fn render_monitor(
         .sum();
     app.line_mode
         .set_bottom_row_start((start_idx + local, char_idx));
+    // the entry on the middle row, where previous / next mark start from (MAX-164)
+    let middle = (paragraph_y_offset + content_height / 2).min(last_row);
+    let middle_local = entries.partition_point(|meta| meta.visual_row_start <= middle) - 1;
+    app.line_mode.set_middle_line(start_idx + middle_local);
 
     // ---- Scroll position in rows (#5d) ----
     //

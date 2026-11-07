@@ -1736,3 +1736,45 @@ fn restored_and_held_queries_unanswered() {
     assert_eq!(app.take_query_answers(), DSR_READY);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// MAX-164: `mark`, `jump-mark` and `delete-mark` take a mark's letter from the command line,
+/// a toast saying what happened; `mark` and `jump-mark` without one wait for it as the next
+/// key. A 27th mark is refused, Enter (the first free letter) then says so.
+/// How: two lines in line mode, then command lines; then all 26 letters marked.
+#[test]
+fn mark_commands() {
+    let mut app = app();
+    app.settings.mode = Mode::Line;
+    app.feed_rx(b"one\r\ntwo\r\n");
+    let run_line = |app: &mut App, line: &str| {
+        app.update(KeyBindingAction::CommandLine.to_action(app));
+        app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
+        app.update(Action::Overlay(DialogAction::Confirm));
+        while let Some(action) = app.next_command_action(Instant::now()) {
+            app.update(action);
+        }
+        let toasts = app.notifications.active_toasts();
+        toasts.last().map(|toast| toast.message.clone()).unwrap()
+    };
+    assert_eq!(run_line(&mut app, "mark k"), "mark k");
+    assert_eq!(app.line_mode.marks().get('k'), Some(1));
+    assert_eq!(run_line(&mut app, "jump-mark q"), "mark q is not set");
+    assert_eq!(run_line(&mut app, "delete-mark k"), "mark k deleted");
+    assert_eq!(run_line(&mut app, "delete-mark k"), "mark k is not set");
+    assert!(app.line_mode.marks().sorted().is_empty());
+    run_line(&mut app, "mark");
+    assert_eq!(app.pending_mark(), Some(PendingMark::Add));
+    run_line(&mut app, "jump-mark");
+    assert_eq!(app.pending_mark(), Some(PendingMark::Jump));
+    app.update(Action::App(AppAction::Mark(MarkAction::Cancel)));
+
+    let all: Vec<String> = ('a'..='z').map(|letter| format!("mark {letter}")).collect();
+    run_line(&mut app, &all.join("; "));
+    assert_eq!(app.line_mode.marks().first_free(), None);
+    app.update(Action::App(AppAction::Mark(MarkAction::Add(None))));
+    let toasts = app.notifications.active_toasts();
+    assert_eq!(
+        toasts.last().unwrap().message,
+        "all 26 marks are set: delete one first"
+    );
+}

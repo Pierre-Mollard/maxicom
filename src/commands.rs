@@ -114,6 +114,13 @@ impl CommandSpec {
     }
 }
 
+/// A mark's letter, waited for as the next key when left out (MAX-164)
+const MARK_LETTER: ArgSpec = ArgSpec {
+    name: "letter",
+    kind: ArgKind::Enum(build::MARK_LETTERS),
+    optional: true,
+};
+
 const fn arg(name: &'static str, kind: ArgKind) -> ArgSpec {
     ArgSpec {
         name,
@@ -305,6 +312,26 @@ pub static COMMANDS: &[CommandSpec] = {
             "dismiss-notifications",
             A::DismissNotifications,
             "Close all the notifications",
+        ),
+        CommandSpec::action("prev-mark", A::PrevMark, "Go to the mark above"),
+        CommandSpec::action("next-mark", A::NextMark, "Go to the mark below"),
+        CommandSpec::build(
+            "mark",
+            &[MARK_LETTER],
+            build::mark,
+            "Mark a line; without a letter, waits for it (Enter: the first free one)",
+        ),
+        CommandSpec::build(
+            "jump-mark",
+            &[MARK_LETTER],
+            build::jump_mark,
+            "Go to a mark; without a letter, waits for it",
+        ),
+        CommandSpec::build(
+            "delete-mark",
+            &[arg("letter", ArgKind::Enum(build::MARK_LETTERS))],
+            build::delete_mark,
+            "Delete a mark",
         ),
         CommandSpec::build(
             "send",

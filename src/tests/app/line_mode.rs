@@ -98,6 +98,33 @@ fn copy_cursor_follows_its_line_when_history_is_full() {
     assert_eq!(lm.history()[lm.copy_state().cursor.line_idx].text, "b\n");
 }
 
+/// MAX-164: a mark goes on the last line, or on the copy cursor's in copy mode; it follows its
+/// line when old lines are dropped, goes with it, and clearing the history takes them all.
+/// How: a 3-line history: a on "c" (last), b on "b" (copy cursor), then "d" and "e" streamed in,
+/// then cleared.
+#[test]
+fn marks_follow_their_lines_and_go_with_them() {
+    let mut lm = line_mode(3);
+    assert_eq!(lm.add_mark('a'), None);
+    lm.feed_rx(false, TextEncoding::Utf8, b"a\nb\nc\n");
+    assert_eq!(lm.add_mark('a'), Some(2));
+    assert_eq!(lm.add_mark('A'), None);
+    lm.copy_state.enter_at(1, 3);
+    assert_eq!(lm.add_mark('b'), Some(1));
+    lm.copy_state.active = false;
+
+    lm.feed_rx(false, TextEncoding::Utf8, b"d\n");
+    assert_eq!(lm.history()[lm.marks().get('a').unwrap()].text, "c\n");
+    assert_eq!(lm.history()[lm.marks().get('b').unwrap()].text, "b\n");
+    lm.feed_rx(false, TextEncoding::Utf8, b"e\n");
+    assert_eq!(lm.marks().sorted(), [('a', 0)]);
+
+    assert_eq!(lm.remove_mark('a'), Some(0));
+    lm.add_mark('c');
+    lm.clear_history();
+    assert!(lm.marks().sorted().is_empty());
+}
+
 /// A large configured history doesn't reserve memory up front (#21).
 /// How: capacity of a fresh 100k-line LineMode.
 #[test]

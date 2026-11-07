@@ -10,7 +10,7 @@ use crate::{
     app::{App, mash::Mash, transfer::FileTransfer},
     commands::ArgValue,
     configs::{Mode, TextEncoding, links::SavedLink},
-    inputs::{Action, AppAction, SearchModeAction},
+    inputs::{Action, AppAction, MarkAction, PendingMark, SearchModeAction},
     link::{
         Address, LinkConfig, LinkKind,
         replay::ReplayControl,
@@ -415,4 +415,45 @@ pub fn screenshot(app: &App, args: &[ArgValue]) -> Result<Action, String> {
         return Err("screenshots are in terminal mode".to_string());
     }
     Ok(Action::App(AppAction::SaveScreenshot(name.clone())))
+}
+
+/// The letters a mark takes (MAX-164)
+pub const MARK_LETTERS: &[&str] = &[
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s",
+    "t", "u", "v", "w", "x", "y", "z",
+];
+
+/// The letter of a mark command, none when left out
+fn mark_letter(args: &[ArgValue]) -> Option<char> {
+    match args {
+        [] => None,
+        [ArgValue::Enum(letter)] => letter.chars().next(),
+        _ => unreachable!("a mark command takes a letter"),
+    }
+}
+
+fn mark_action(action: MarkAction) -> Result<Action, String> {
+    Ok(Action::App(AppAction::Mark(action)))
+}
+
+/// `mark [letter]`: the line a mark takes; without a letter, waits for it
+pub fn mark(_app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    mark_action(match mark_letter(args) {
+        Some(letter) => MarkAction::Add(Some(letter)),
+        None => MarkAction::Await(PendingMark::Add),
+    })
+}
+
+/// `jump-mark [letter]`: without a letter, waits for it
+pub fn jump_mark(_app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    mark_action(match mark_letter(args) {
+        Some(letter) => MarkAction::Jump(letter),
+        None => MarkAction::Await(PendingMark::Jump),
+    })
+}
+
+/// `delete-mark <letter>`
+pub fn delete_mark(_app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let letter = mark_letter(args).expect("delete-mark takes a letter");
+    mark_action(MarkAction::Delete(letter))
 }

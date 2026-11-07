@@ -177,6 +177,40 @@ fn line_refs_follow_rows_when_scrollback_is_full() {
     assert_eq!(tm.copy_state.cursor.line_idx, 0);
 }
 
+/// MAX-164: a mark goes on the terminal cursor's row, or on the copy cursor's in copy mode; it
+/// follows its row when the scrollback is full, goes with it, and clearing the history takes
+/// them all.
+/// How: 3 rows of history, 2 on screen: a on "l4" (cursor), b on "l2" (copy cursor), then
+/// lines until "l2" is evicted (row 0 after "l6", gone after "l7"), then cleared.
+#[test]
+fn marks_follow_their_rows_and_go_with_them() {
+    let mut tm = terminal_with(3, 2);
+    feed_and_stamp(&mut tm, &["l0", "l1", "l2", "l3", "l4"]);
+    let a = tm.add_mark('a').unwrap();
+    assert_eq!(row_text(&mut tm, a), "l4");
+    assert_eq!(tm.add_mark('1'), None);
+    let l2 = (0..5).find(|&r| row_text(&mut tm, r) == "l2").unwrap();
+    tm.copy_state.enter_at(l2, 1);
+    assert_eq!(tm.add_mark('b'), Some(l2));
+    tm.copy_state.active = false;
+
+    tm.process_rx(TextEncoding::Utf8, b"\r\nl5");
+    let a = tm.marks().get('a').unwrap();
+    assert_eq!(row_text(&mut tm, a), "l4");
+    let b = tm.marks().get('b').unwrap();
+    assert_eq!(row_text(&mut tm, b), "l2");
+    tm.process_rx(TextEncoding::Utf8, b"\r\nl6");
+    assert_eq!(tm.marks().get('b'), Some(0));
+    tm.process_rx(TextEncoding::Utf8, b"\r\nl7");
+    assert_eq!(tm.marks().get('b'), None);
+    assert!(tm.marks().get('a').is_some());
+
+    assert!(tm.remove_mark('a').is_some());
+    tm.add_mark('c');
+    tm.clear_history();
+    assert!(tm.marks().sorted().is_empty());
+}
+
 /// One chunk with several lines stamps every row it writes, the first one included (#13).
 /// How: "a", "b", "c" in a single chunk on a 5 row screen; the 2 rows below stay unstamped.
 #[test]

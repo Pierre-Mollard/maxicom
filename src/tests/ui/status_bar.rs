@@ -302,6 +302,42 @@ fn copy_side_variable_and_condition() {
     );
 }
 
+/// MAX-164: while a mark waits for its letter `{mode}` reads MARK, in copy mode too, and the
+/// `mark` condition holds: the default badge is black on the theme's good color.
+/// How: a mark waiting from terminal mode, then cancelled; in line copy mode, then a jump.
+#[test]
+fn mark_badge_while_a_letter_is_awaited() {
+    use crate::inputs::{MarkAction, PendingMark};
+    let d = StatusBarConfig::default();
+    let good = format!("Some({:?})", ThemeConfig::default().palette.text_good);
+    let mut t = app(Mode::Terminal);
+    assert_eq!(render("[x](mark?red:hide)", &t), Vec::<String>::new());
+    t.update(Action::App(AppAction::Mark(MarkAction::Await(
+        PendingMark::Add,
+    ))));
+    assert_eq!(render("{mode}", &t), [plain("MARK")]);
+    assert_eq!(
+        render("[x](mark_pending?red:hide)", &t),
+        [span("x", "Some(Red)", BG, "NONE")]
+    );
+    assert_eq!(
+        render(&d.left, &t)[0],
+        span(" MARK ", "Some(Black)", &good, "BOLD")
+    );
+    t.update(Action::App(AppAction::Mark(MarkAction::Cancel)));
+    assert_eq!(render("{mode}", &t), [plain("TERM")]);
+
+    let mut l = app(Mode::Line);
+    l.feed_rx(b"abc\r\n");
+    l.update(Action::CopyMode(CopyModeAction::Enter));
+    l.update(Action::App(AppAction::Mark(MarkAction::Await(
+        PendingMark::Jump,
+    ))));
+    assert_eq!(render("{mode}", &l), [plain("MARK")]);
+    l.update(Action::App(AppAction::Mark(MarkAction::Jump('z'))));
+    assert_eq!(render("{mode}", &l), [plain("COPY")]);
+}
+
 /// MAX-193: the default mode badge takes the theme's selection colors in copy mode, and the
 /// search bar label's while searching, so a theme changing `[ui.selection]`,
 /// `[ui.selection_raw]` or `[search.search_indicator]` changes it too.

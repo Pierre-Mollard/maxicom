@@ -13,6 +13,7 @@ use tui_input::Input;
 use crate::{
     app::{
         UpdateEffect, ViewportSize,
+        marks::Marks,
         raw_scroller::RawSideScroller,
         scroller::ViewportScroller,
         search::SearchState,
@@ -67,6 +68,8 @@ pub struct TerminalMode {
     rx_after_cr: bool,
     /// Copy mode held the live view when rows arrived: leaving it goes back live (MAX-193)
     copy_held: bool,
+    /// The marks on world rows (MAX-164)
+    marks: Marks,
 }
 
 impl TerminalMode {
@@ -95,6 +98,7 @@ impl TerminalMode {
             restored_separator: None,
             rx_after_cr: false,
             copy_held: false,
+            marks: Marks::default(),
         }
     }
 
@@ -313,6 +317,7 @@ impl TerminalMode {
         self.restored_separator = self
             .restored_separator
             .and_then(|row| row.checked_sub(evicted));
+        self.marks.rebase_after_eviction(evicted);
     }
 
     pub fn total_timeline_len(&self) -> usize {
@@ -330,6 +335,7 @@ impl TerminalMode {
         self.row_timestamps = VecDeque::from(vec![None; rows as usize]);
         self.search_text = None;
         self.restored_separator = None;
+        self.marks.clear();
 
         self.max_content_scrollback = 0;
         self.pan_offset_y = 0;
@@ -340,6 +346,73 @@ impl TerminalMode {
         self.scroller.max_scroll_y = 0;
         self.scroller.offset_x = 0;
         self.scroller.pan_right_explored = 0;
+    }
+
+    #[inline]
+    pub fn marks(&self) -> &Marks {
+        &self.marks
+    }
+
+    /// Puts mark `letter` on the copy cursor's row in copy mode, on the terminal cursor's from
+    /// the live view, else on the view's middle row; returns that world row, none when the
+    /// letter isn't `a`..`z` (MAX-164)
+    pub fn add_mark(&mut self, letter: char) -> Option<usize> {
+        let row = if self.copy_state.active {
+            self.copy_state.cursor.line_idx
+        } else if self.scroller.offset_y == 0 {
+            self.max_content_scrollback + self.vt100_screen().cursor_position().0 as usize
+        } else {
+            self.view_middle_row()
+        };
+        self.marks.set(letter, row).then_some(row)
+    }
+
+    pub fn remove_mark(&mut self, letter: char) -> Option<usize> {
+        self.marks.remove(letter)
+    }
+
+    /// Goes to mark `letter`'s row: the copy cursor moves to its start in copy mode, else the
+    /// view is centered on it. None when the mark isn't set
+    pub fn jump_to_mark(&mut self, letter: char) -> Option<usize> {
+        let row = self.marks.get(letter)?;
+        self.go_to_row(row);
+        Some(row)
+    }
+
+    /// Goes to the closest mark below (`forward`) or above the copy cursor in copy mode, else
+    /// the view's middle row; returns its letter, none when there's none that way
+    pub fn jump_to_adjacent_mark(&mut self, forward: bool) -> Option<char> {
+        let from = if self.copy_state.active {
+            self.copy_state.cursor.line_idx
+        } else {
+            self.view_middle_row()
+        };
+        let (letter, row) = if forward {
+            self.marks.next(from)
+        } else {
+            self.marks.prev(from)
+        }?;
+        self.go_to_row(row);
+        Some(letter)
+    }
+
+    fn view_middle_row(&self) -> usize {
+        let (top, bottom) = self.visible_lines();
+        (top + bottom) / 2
+    }
+
+    fn go_to_row(&mut self, row: usize) {
+        if self.copy_state.active {
+            let cursor = &mut self.copy_state.cursor;
+            cursor.line_idx = row;
+            cursor.char_idx = 0;
+            cursor.preferred_col = 0;
+            cursor.byte_idx = 0;
+            self.reveal_copy_cursor(Reveal::Center);
+        } else {
+            let (width, height) = (self.scroller.view_width, self.scroller.view_height);
+            self.center_on_target_match(row, 0, width, height);
+        }
     }
 
     #[inline]

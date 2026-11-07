@@ -136,12 +136,19 @@ pub fn render_help_popup(
             direct.sort_by_key(|(k, _)| k.help_order());
             let mut prefixed: Vec<_> = resolver.prefix_commands.iter().collect();
             prefixed.sort_by_key(|(k, _)| k.help_order());
+            let mut in_copy: Vec<_> = resolver.copy_commands.iter().collect();
+            in_copy.sort_by_key(|(k, _)| k.help_order());
             let bound: Vec<_> = (direct.into_iter())
                 .map(|(key, line)| (format!("{key}"), line))
                 .chain(
                     prefixed
                         .into_iter()
                         .map(|(key, line)| (format!("{prefix_str} + {key}"), line)),
+                )
+                .chain(
+                    in_copy
+                        .into_iter()
+                        .map(|(key, line)| (format!("copy mode {key}"), line)),
                 )
                 .collect();
             if !bound.is_empty() {
@@ -199,6 +206,9 @@ pub fn render_help_popup(
             let (scrolls, moves): (Vec<_>, Vec<_>) = moves
                 .into_iter()
                 .partition(|(_, action)| action.is_scroll());
+            // the copy keys running a command line, the marks' (MAX-164)
+            let mut bound: Vec<_> = resolver.copy_commands.iter().collect();
+            bound.sort_by_key(|(k, _)| k.help_order());
             // the direct scroll and pan keys a copy key doesn't take reach copy mode (MAX-143)
             let mut direct: Vec<_> = resolver
                 .direct_actions
@@ -220,6 +230,9 @@ pub fn render_help_popup(
             };
             for (pattern, action) in moves {
                 lines.push(key_line(format!("{pattern}"), format!("{action}")));
+            }
+            for (pattern, line) in bound {
+                lines.push(key_line(format!("{pattern}"), line.text.clone()));
             }
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(

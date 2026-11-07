@@ -74,6 +74,8 @@ pub enum KeyBindingAction {
     SideShrink5,
     DismissNotification,
     DismissNotifications,
+    PrevMark,
+    NextMark,
 }
 
 impl FromStr for KeyBindingAction {
@@ -266,6 +268,8 @@ pub enum KeyBindingCopyAction {
     ScrollDown,
     ScrollPageUp,
     ScrollPageDown,
+    PrevMark,
+    NextMark,
 }
 
 impl KeyBindingCopyAction {
@@ -301,6 +305,8 @@ impl std::str::FromStr for KeyBindingCopyAction {
             "scroll-down" => Ok(Self::ScrollDown),
             "scroll-page-up" => Ok(Self::ScrollPageUp),
             "scroll-page-down" => Ok(Self::ScrollPageDown),
+            "prev-mark" => Ok(Self::PrevMark),
+            "next-mark" => Ok(Self::NextMark),
             other => Err(UnknownActionError(other.to_string())),
         }
     }
@@ -327,6 +333,8 @@ impl std::fmt::Display for KeyBindingCopyAction {
             Self::ScrollDown => "scroll-down",
             Self::ScrollPageUp => "scroll-page-up",
             Self::ScrollPageDown => "scroll-page-down",
+            Self::PrevMark => "prev-mark",
+            Self::NextMark => "next-mark",
         };
         write!(f, "{s}")
     }
@@ -694,6 +702,7 @@ pub struct KeyResolver {
     pub terminal_actions: HashMap<KeyPattern, KeyBindingTerminalAction>,
     pub search_actions: HashMap<KeyPattern, KeyBindingSearchAction>,
     pub copy_actions: HashMap<KeyPattern, KeyBindingCopyAction>,
+    pub copy_commands: HashMap<KeyPattern, BoundLine>,
     pub dialog_actions: HashMap<KeyPattern, KeyBindingDialogAction>,
 }
 
@@ -739,18 +748,17 @@ impl std::fmt::Display for KeymapError {
 
 impl std::error::Error for KeymapError {}
 
-/// A global section's keys to their action, and to their command line
-type GlobalSection = (
-    HashMap<KeyPattern, KeyBindingAction>,
-    HashMap<KeyPattern, BoundLine>,
-);
+/// A section's keys to their action, and to their command line
+type SectionWithLines<A> = (HashMap<KeyPattern, A>, HashMap<KeyPattern, BoundLine>);
 
 /// A global section's keys, to an action name or else to a command line (MAX-12). A value
 /// neither is an error naming its key: an unknown action, the line's parse error
-fn global_section(
+/// A section whose keys take an action of the section, or else a command line: the global
+/// ones and `[copy_mode]` (MAX-164)
+fn section_with_lines<A: std::str::FromStr>(
     section: &'static str,
     entries: &BTreeMap<String, String>,
-) -> Result<GlobalSection, KeymapError> {
+) -> Result<SectionWithLines<A>, KeymapError> {
     let mut actions = HashMap::new();
     let mut lines = HashMap::new();
     for (key, value) in entries {
@@ -867,9 +875,9 @@ impl KeyResolver {
             })?;
 
         let (prefix_actions, prefix_commands) =
-            global_section("prefix_actions", &config.prefix_actions)?;
+            section_with_lines("prefix_actions", &config.prefix_actions)?;
         let (direct_actions, direct_commands) =
-            global_section("direct_actions", &config.direct_actions)?;
+            section_with_lines("direct_actions", &config.direct_actions)?;
 
         let mut line_actions = HashMap::new();
         for (k, action_str) in &config.line_mode {
@@ -916,20 +924,7 @@ impl KeyResolver {
             search_actions.insert(pat, act);
         }
 
-        let mut copy_actions = HashMap::new();
-        for (k, action_str) in &config.copy_mode {
-            let pat = k.parse().map_err(|err| KeymapError::InvalidKey {
-                section: "copy_mode",
-                key: k.clone(),
-                reason: err,
-            })?;
-            let act: KeyBindingCopyAction =
-                action_str.parse().map_err(|_| KeymapError::InvalidAction {
-                    section: "copy_mode",
-                    action: action_str.clone(),
-                })?;
-            copy_actions.insert(pat, act);
-        }
+        let (copy_actions, copy_commands) = section_with_lines("copy_mode", &config.copy_mode)?;
 
         let mut dialog_actions = HashMap::new();
         for (k, action_str) in &config.dialog_actions {
@@ -956,6 +951,7 @@ impl KeyResolver {
             terminal_actions,
             search_actions,
             copy_actions,
+            copy_commands,
             dialog_actions,
         })
     }
@@ -1040,6 +1036,10 @@ impl Default for KeyBindingsConfig {
             "T"     => KeyBindingAction::Triggers,
             ">"     => KeyBindingAction::SideGrow5,
             "<"     => KeyBindingAction::SideShrink5,
+            "("     => KeyBindingAction::PrevMark,
+            ")"     => KeyBindingAction::NextMark,
+            ","     => "mark", // waits for the letter
+            "'"     => "jump-mark", // waits for the letter
             "f"     => "break", // a break like minicom's
             "h"     => "dtr off; sleep 100; dtr on", // DTR pulse which resets most boards
             "U"     => "trigger toggle u-boot", // the default triggers.toml's
@@ -1095,6 +1095,10 @@ impl Default for KeyBindingsConfig {
             "esc"       => KeyBindingCopyAction::Exit,
             "ctrl-y"    => KeyBindingCopyAction::ScrollUp,
             "ctrl-e"    => KeyBindingCopyAction::ScrollDown,
+            "("         => KeyBindingCopyAction::PrevMark,
+            ")"         => KeyBindingCopyAction::NextMark,
+            ","         => "mark", // waits for the letter
+            "'"         => "jump-mark", // waits for the letter
         };
 
         let dialog_actions = default_bindings! {

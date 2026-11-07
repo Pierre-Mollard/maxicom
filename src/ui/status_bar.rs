@@ -26,7 +26,7 @@
 //! ## Available Variables
 //! | Variable            | Description                                             | Example          |
 //! |---------------------|---------------------------------------------------------|------------------|
-//! | `{mode}`            | Current input mode (`TERM` or `LINE`)                   | `TERM`           |
+//! | `{mode}`            | Input mode: `TERM`, `LINE`, `COPY`, `MARK` (a letter)   | `TERM`           |
 //! | `{port}`            | Address: serial path, `tcp://host:port`, `file://name`  | `/dev/ttyUSB0`   |
 //! | `{baud}`            | Baudrate (a replayed session's), `raw` (TCP), `replay`  | `115200`         |
 //! | `{framing}`         | Data bits, parity, stop bits, `TCP`, the replay's state | `8N1`            |
@@ -77,6 +77,7 @@
 //! | State / Keyword                 | Aliases                                    | Matches When...                                          |
 //! |---------------------------------|--------------------------------------------|----------------------------------------------------------|
 //! | `prefix`                        | —                                          | Leader prefix key (`Ctrl-a`) is currently active         |
+//! | `mark`                          | `mark_pending`                             | A mark key waits for its letter (`mark`, `jump-mark`)    |
 //! | `rec`                           | `logging`                                  | File recording / capture session is active               |
 //! | `session`                       | `backup`                                   | The session backup runs (not in the default layout)      |
 //! | `line`                          | `linemode`                                 | Line Input mode is active                                |
@@ -594,11 +595,13 @@ impl Var {
     fn write_text(self, out: &mut String, app: &App, time_format: &str) {
         let scroll = app.scroll_status();
         let _ = match self {
-            // copy mode takes the badge while it's on (MAX-208)
+            // copy mode takes the badge while it's on (MAX-208), a mark waiting for its letter
+            // over it (MAX-164)
             Self::Mode => write!(
                 out,
                 "{}",
                 match app.settings().mode {
+                    _ if app.pending_mark().is_some() => "MARK",
                     _ if app.is_copy_mode_active() => "COPY",
                     Mode::Terminal => "TERM",
                     Mode::Line => "LINE",
@@ -706,6 +709,7 @@ enum StyleWord {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Cond {
     Prefix,
+    Mark,
     Copy,
     CopyRaw,
     Search,
@@ -745,6 +749,7 @@ impl Cond {
     fn from_name(name: &str) -> Self {
         match name.trim().to_ascii_lowercase().as_str() {
             "prefix" => Self::Prefix,
+            "mark" | "mark_pending" => Self::Mark,
             "copy" | "copymode" => Self::Copy,
             "copy_raw" | "raw_cursor" => Self::CopyRaw,
             "search" => Self::Search,
@@ -785,6 +790,7 @@ impl Cond {
         let scroll = app.scroll_status();
         match self {
             Self::Prefix => ctx == InputContext::Prefix || app.is_prefix_active(),
+            Self::Mark => app.pending_mark().is_some(),
             Self::Copy => ctx == InputContext::CopyMode || app.is_copy_mode_active(),
             Self::CopyRaw => app.copy_side() == Some(CopySide::Raw),
             Self::Search => ctx == InputContext::Search || app.is_search_active(),
