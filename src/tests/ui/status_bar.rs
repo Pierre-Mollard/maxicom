@@ -65,8 +65,44 @@ fn default_left_terminal() {
             span("115200", "Some(Cyan)", BG, "NONE"),
             plain(" "),
             plain("8N1"),
+            span(" |", MUTED, BG, "NONE"),
+            span(" NOR", MUTED, BG, "NONE"),
         ]
     );
+}
+
+/// MAX-205: `{cursor_keys}` is the cursor keys mode the remote set (DECCKM), `NOR` or `APP`
+/// like minicom's, and `app_cursor` holds in `APP`; both only in terminal mode, where the
+/// arrows go to the remote. The default bar shows it after the framing, muted.
+/// How: `ESC[?1h` then `ESC[?1l` received in terminal mode, then `ESC[?1h` in line mode.
+#[test]
+fn cursor_keys_variable_and_condition() {
+    let d = StatusBarConfig::default();
+    let template = "[{cursor_keys}](app_cursor?red:blue)";
+    let mut t = app(Mode::Terminal);
+    assert_eq!(
+        render(template, &t),
+        [span("NOR", "Some(Blue)", BG, "NONE")]
+    );
+
+    t.feed_rx(b"\x1b[?1h");
+    assert_eq!(render(template, &t), [span("APP", "Some(Red)", BG, "NONE")]);
+    assert_eq!(
+        render(&d.left, &t).last().unwrap(),
+        &span(" APP", MUTED, BG, "NONE")
+    );
+
+    t.feed_rx(b"\x1b[?1l");
+    assert_eq!(
+        render(template, &t),
+        [span("NOR", "Some(Blue)", BG, "NONE")]
+    );
+
+    let mut l = app(Mode::Line);
+    l.feed_rx(b"\x1b[?1h");
+    assert_eq!(render(template, &l), Vec::<String>::new());
+    assert_eq!(render("[x](app_cursor?red:hide)", &l), Vec::<String>::new());
+    assert_eq!(render(&d.left, &l).last().unwrap(), &plain("8N1"));
 }
 
 /// MAX-156: a TCP link has no line settings: `{baud}` is `raw` and `{framing}` the link
@@ -89,6 +125,8 @@ fn tcp_link_has_no_baud_nor_framing() {
             span("raw", "Some(Cyan)", BG, "NONE"),
             plain(" "),
             plain("TCP"),
+            span(" |", MUTED, BG, "NONE"),
+            span(" NOR", MUTED, BG, "NONE"),
         ]
     );
     assert_eq!(render("<{baud:5}>", &a), [plain("<raw  >")]);
@@ -116,6 +154,8 @@ fn replay_shows_its_file_and_state() {
             span("replay", "Some(Cyan)", BG, "NONE"),
             plain(" "),
             plain("RUN"),
+            span(" |", MUTED, BG, "NONE"),
+            span(" NOR", MUTED, BG, "NONE"),
         ]
     );
     a.end_replay();
@@ -185,6 +225,8 @@ fn session_replay_shows_its_recorded_line() {
             span("9600", "Some(Cyan)", BG, "NONE"),
             plain(" "),
             plain("7E1"),
+            span(" |", MUTED, BG, "NONE"),
+            span(" NOR", MUTED, BG, "NONE"),
         ]
     );
     assert_eq!(render("<{baud:5}>", &a), [plain("< 9600>")]);

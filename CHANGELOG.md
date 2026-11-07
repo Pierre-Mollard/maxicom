@@ -21,6 +21,8 @@ What changes in each version of maxicom. The format follows
   than `config.toml`, for a setup per board.
 - `focus_effects` in `[ui]`: off, the window keeps its focused look when it
   loses the focus.
+- The status bar shows the cursor keys mode in terminal mode, `NOR` or `APP`
+  as in minicom: `{cursor_keys}` and the `app_cursor` condition.
 
 ### Changed
 

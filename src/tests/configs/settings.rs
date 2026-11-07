@@ -108,7 +108,10 @@ fn status_bar_templates_written_one_block_per_line() {
         "{written}"
     );
     assert!(written.contains("\\\n    [|](muted prio=3)"), "{written}");
-    assert!(written.contains("[{framing}](prio=4)'''"), "{written}");
+    assert!(
+        written.contains("[ {cursor_keys}](term?muted:hide prio=4)'''"),
+        "{written}"
+    );
     assert_eq!(toml::from_str::<StatusBarConfig>(&written).unwrap(), config);
 }
 

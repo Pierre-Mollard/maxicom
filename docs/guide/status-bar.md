@@ -63,7 +63,9 @@ left = '''
     [ ](prio=2)\
     [{baud}](primary prio=2)\
     [ ](prio=4)\
-    [{framing}](prio=4)'''
+    [{framing}](prio=4)\
+    [ |](term?muted:hide prio=4)\
+    [ {cursor_keys}](term?muted:hide prio=4)'''
 center = '''
 [◎ {trigger_count} ](armed?(fg=warn bold):hide)\
     [⟳ mash ](mashing?(fg=secondary bold):hide click=cancel)\
@@ -108,6 +110,7 @@ layout = "border"
 | `{scroll_offset}` | Lines scrolled away from tail | `15` |
 | `{scroll_max}` | Total scrollback depth | `500` |
 | `{copy_side}` | The copy cursor's panel, `TXT` or `RAW`, empty out of copy mode | `RAW` |
+| `{cursor_keys}` | The cursor keys mode the remote set, `NOR` or `APP` (application: the arrows send `ESC O A`), empty in line mode | `APP` |
 | `{send_file}` / `{send_percent}` | The file `send-file` sends (empty when none) / how much is sent, 0..100 | `fw.hex` |
 | `{trigger_count}` | How many triggers are armed | `2` |
 | `{trigger_names}` | The armed triggers' names | `login, u-boot` |
@@ -166,6 +169,7 @@ otherwise. Conditions chain:
 | `session` | `backup` | The session backup runs |
 | `line_settings` | `serial` | The link has line settings: a serial port, not a TCP link whose bridge sets them |
 | `add_cr` / `add_lf` | | Add CR / add LF is on |
+| `app_cursor` | `decckm` | Terminal mode, and the remote turned on the application cursor keys (`APP`) |
 | `sending` | `send_file` | A file is being sent |
 | `armed` | `trigger` | A trigger is armed |
 | `mashing` | `mash` | `mash` is running |

@@ -737,6 +737,8 @@ impl Default for StatusBarConfig {
                 "[{baud}](primary prio=2)",
                 "[ ](prio=4)",
                 "[{framing}](prio=4)",
+                "[ |](term?muted:hide prio=4)",
+                "[ {cursor_keys}](term?muted:hide prio=4)",
             ]),
             center: block_lines(&[
                 "[◎ {trigger_count} ](armed?(fg=warn bold):hide)",

@@ -43,6 +43,7 @@
 //! | `{scroll_offset}`   | Lines scrolled up from the bottom                       | `15`             |
 //! | `{scroll_max}`      | Maximum total scrollback lines available                | `500`            |
 //! | `{copy_side}`       | Copy cursor panel (`TXT` or `RAW`), empty out of copy  | `RAW`            |
+//! | `{cursor_keys}`     | Cursor keys mode (`NOR`, `APP`), in terminal mode       | `APP`            |
 //! | `{send_file}`       | The file `send-file` sends, empty when none             | `fw.hex`         |
 //! | `{send_percent}`    | How much of it is sent, in percent                      | `42`             |
 //! | `{trigger_count}`   | How many triggers (`triggers.toml`) are armed           | `2`              |
@@ -98,6 +99,7 @@
 //! | `wide`                          | `pannable`                                 | The content is wider than the view: it can pan           |
 //! | `new_data`                      | `unread`, `missed`                         | Data arrived while scrolled up, not seen yet             |
 //! | `mouse`                         | —                                          | Mouse capture is on (`ui.mouse`)                         |
+//! | `app_cursor`                    | `decckm`                                   | Cursor keys in application mode (`APP`), terminal mode   |
 //! | `add_cr`                        | —                                          | Add CR is on: a received LF read as CR LF (`add_cr`)     |
 //! | `add_lf`                        | —                                          | Add LF is on: a received CR read as CR LF (`add_lf`)     |
 //! | `line_settings`                 | `serial`                                   | Line settings to show: a serial port, a replayed session |
@@ -443,6 +445,7 @@ enum Var {
     ScrollOffset,
     ScrollMax,
     CopySide,
+    CursorKeys,
     SendFile,
     SendPercent,
     TriggerCount,
@@ -474,6 +477,7 @@ impl Var {
             "scroll_offset" => Self::ScrollOffset,
             "scroll_max" => Self::ScrollMax,
             "copy_side" => Self::CopySide,
+            "cursor_keys" => Self::CursorKeys,
             "send_file" => Self::SendFile,
             "send_percent" => Self::SendPercent,
             "trigger_count" => Self::TriggerCount,
@@ -506,6 +510,7 @@ impl Var {
             | Self::TxBytes
             | Self::Time
             | Self::ScrollMax
+            | Self::CursorKeys
             | Self::ReplayFile
             | Self::ReplayState
             | Self::ReplayPercent
@@ -636,6 +641,17 @@ impl Var {
                     None => "",
                 }
             ),
+            // the arrows go to the remote in terminal mode only (MAX-205)
+            Self::CursorKeys if app.settings().mode == Mode::Terminal => write!(
+                out,
+                "{}",
+                if app.terminal_mode.vt100_screen().application_cursor() {
+                    "APP"
+                } else {
+                    "NOR"
+                }
+            ),
+            Self::CursorKeys => Ok(()),
             Self::SendFile => write!(
                 out,
                 "{}",
@@ -718,6 +734,7 @@ enum Cond {
     Mashing,
     Replaying,
     Replaced,
+    AppCursor,
     AddCr,
     AddLf,
     /// Unknown condition name, always false
@@ -756,6 +773,7 @@ impl Cond {
             "mashing" | "mash" => Self::Mashing,
             "replaying" | "replay" => Self::Replaying,
             "replaced" | "live_behind" => Self::Replaced,
+            "app_cursor" | "decckm" => Self::AppCursor,
             "add_cr" => Self::AddCr,
             "add_lf" => Self::AddLf,
             _ => Self::Unknown,
@@ -801,6 +819,10 @@ impl Cond {
             Self::Mashing => app.mash().is_some(),
             Self::Replaying => app.link_kind() == LinkKind::Replay,
             Self::Replaced => app.replays_over_live_link(),
+            Self::AppCursor => {
+                app.settings().mode == Mode::Terminal
+                    && app.terminal_mode.vt100_screen().application_cursor()
+            }
             Self::AddCr => app.settings().add_cr,
             Self::AddLf => app.settings().add_lf,
             Self::Unknown => false,
