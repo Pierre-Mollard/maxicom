@@ -77,6 +77,8 @@ these names too (`main`, `secondary`...).
 | `hover` | reversed | What's under the mouse |
 | `status_bar` | `White` on `#1E232D` | The status bar's text; its background fills the `band` layout |
 | `scrollbar_thumb` / `scrollbar_track` | `DarkGray` / `#303038` | The scrollbar |
+| `flash` | `DarkGray` on `White` | The flash when a screenshot is taken, and on a mark's line after a jump |
+| `mark` / `scrollbar_mark` | `Yellow` bold / `Yellow` | A mark's letter in the history's left column / on the scrollbar |
 
 The selection colors match the copy mode badge: magenta in the text, red
 while the cursor is in the raw side panel.
@@ -96,7 +98,6 @@ while the cursor is in the raw side panel.
 | `term_inside` / `term_outside` | `Reset` / `DarkGray` | The emulated screen, the view around it (`empty_fill_char`) |
 | `timestamp` | `Yellow` | The times column |
 | `timestamp_del`, `timestamp_del_empty` | `Yellow`, `DarkGray` | The `│` after a time, after an empty one |
-| `term_flash_fg_color`, `term_flash_bg_color` | `DarkGray`, `White` | The flash when a screenshot is taken |
 
 ### `[search]`
 

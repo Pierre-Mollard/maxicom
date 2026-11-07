@@ -264,6 +264,16 @@ While the prefix is active, a status bar hidden this way shows over the
 view's last row, so you can see the prefix and the link. The view keeps its
 size. `show_status_bar = false` keeps it off for good.
 
+### `[ui.marks]`
+
+How the history's [marks](marks.md#how-marks-show) show.
+
+| Setting | Default | |
+| --- | --- | --- |
+| `letters` | `true` | A mark's letter in the history's left column |
+| `scrollbar` | `true` | The marks' letters on the scrollbar |
+| `flash` | `true` | The line a jump lands on flashes |
+
 ### `[raw_side]`
 
 See [Raw side panel](raw-side-panel.md#size-and-position).

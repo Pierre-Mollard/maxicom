@@ -1,5 +1,6 @@
 use ratatui::{
     Frame,
+    buffer::Buffer,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
@@ -13,10 +14,12 @@ use crate::{
         selection::CopySide,
         types::{FocusTarget, RawRow, RowChars, ScrollbarMap, TextRow},
     },
-    configs::{KeywordHighlight, RawSideView, ThemeConfig, settings::raw_view_to_display_mode},
+    configs::{
+        KeywordHighlight, Mode, RawSideView, ThemeConfig, settings::raw_view_to_display_mode,
+    },
     terminal::{MaxicomCursor, MaxicomTerminal, vt100_size},
     ui::{
-        common::{apply_keyword_highlights, render_search_bar},
+        common::{apply_keyword_highlights, draw_scrollbar_marks, render_search_bar},
         raw_side::{
             CharHighlight, format_raw_bytes_with_highlights, raw_panel_layout,
             render_raw_panel_widget,
@@ -309,6 +312,12 @@ pub fn render_vt100_terminal(
                 .end_style(*theme.ui.scrollbar_thumb);
 
             frame.render_stateful_widget(scrollbar, sb_area, &mut scrollbar_state);
+            // the marks' ticks, each at its row of the scrollback and the screen (MAX-164)
+            if app.settings().ui.marks.scrollbar {
+                let marks = app.terminal_mode.marks().sorted();
+                let total = app.terminal_mode.total_timeline_len();
+                draw_scrollbar_marks(frame.buffer_mut(), sb_area, &marks, total, theme);
+            }
             // for the mouse (MAX-142)
             app.frame_map_mut().scrollbar = Some(ScrollbarMap {
                 area: sb_area,
@@ -359,14 +368,29 @@ pub fn render_vt100_terminal(
         map.search_query = Some(query);
     }
 
+    // the row a mark jump landed on, flashed for a moment (MAX-164)
+    if let Some(flash) = app.mark_flash(Mode::Terminal) {
+        let (top, bottom) = app.terminal_mode.visible_lines();
+        if (top..=bottom).contains(&flash) {
+            let y = content_area.y + (flash - top) as u16;
+            if y < content_area.bottom() {
+                let row = Rect {
+                    y,
+                    height: 1,
+                    ..content_area
+                };
+                frame.buffer_mut().set_style(row, *theme.ui.flash);
+            }
+        }
+    }
+
     // flash for screenshot
     if app.terminal_mode.is_flashing() {
         let buf = frame.buffer_mut();
         for y in content_area.top()..content_area.bottom() {
             for x in content_area.left()..content_area.right() {
                 let cell = &mut buf[(x, y)];
-                cell.set_bg(theme.terminal.term_flash_bg_color);
-                cell.set_fg(theme.terminal.term_flash_fg_color);
+                cell.set_style(*theme.ui.flash);
             }
         }
     }
@@ -421,6 +445,37 @@ pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect, theme: 
 
     let gutter = Paragraph::new(lines);
     frame.render_widget(gutter, area);
+}
+
+/// The history marks' letters on their rows (MAX-164), next to the text: on the timestamp
+/// gutter's `│`, else in the left border; with neither, none (never over the screen's text)
+pub fn draw_mark_letters(
+    app: &App,
+    buf: &mut Buffer,
+    content_area: Rect,
+    gutter: Option<Rect>,
+    theme: &ThemeConfig,
+) {
+    if !app.settings().ui.marks.letters {
+        return;
+    }
+    let x = if let Some(gutter) = gutter {
+        // the bar after the time
+        gutter.x + app.settings().timestamp_width() as u16
+    } else if app.show_borders() && content_area.x > 0 {
+        content_area.x - 1
+    } else {
+        return;
+    };
+    let marks = app.terminal_mode.marks();
+    let (top, bottom) = app.terminal_mode.visible_lines();
+    for (row, y) in (top..=bottom).zip(content_area.top()..content_area.bottom()) {
+        if let Some(letter) = marks.letter_at(row) {
+            buf[(x, y)]
+                .set_symbol(letter.encode_utf8(&mut [0; 4]))
+                .set_style(*theme.ui.mark);
+        }
+    }
 }
 
 pub fn render_vt100_raw_side_panel(

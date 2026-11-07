@@ -1778,3 +1778,19 @@ fn mark_commands() {
         "all 26 marks are set: delete one first"
     );
 }
+
+/// MAX-164: a jump's flash is its mode's only, and goes once its time is up: the tick stops
+/// asking for frames.
+/// How: a flash set on line mode's line 3, read from both modes, then one already over.
+#[test]
+fn mark_flash_ends() {
+    let mut app = app();
+    app.mark_flash = Some((Mode::Line, 3, Instant::now() + MARK_FLASH));
+    assert_eq!(app.mark_flash(Mode::Terminal), None);
+    assert_eq!(app.mark_flash(Mode::Line), Some(3));
+
+    app.mark_flash = Some((Mode::Line, 3, Instant::now() - Duration::from_millis(1)));
+    assert_eq!(app.mark_flash(Mode::Line), None);
+    assert!(app.mark_flash.is_none());
+    assert!(!app.tick());
+}

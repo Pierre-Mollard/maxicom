@@ -50,7 +50,8 @@ Quote the keys TOML doesn't accept bare: `"/" = "enter-search"`,
 ### What a key does
 
 A value is an action name, from the [list below](#actions). In
-`[prefix_actions]` and `[direct_actions]`, it can also be a command line:
+`[prefix_actions]`, `[direct_actions]` and `[copy_mode]`, it can also be a
+command line:
 
 ```toml
 h = "dtr off; sleep 100; dtr on"
@@ -96,6 +97,9 @@ directory's `n`, `e` and `s`. Those are fixed, and each chapter lists them.
 
 | Key | Action | |
 | --- | --- | --- |
+| `Ctrl-a '` | `marks` | Open the marks |
+| `Ctrl-a (` / `Ctrl-a )` | `prev-mark` / `next-mark` | Go to the mark above / below |
+| `Ctrl-a ,` | `mark` | A command line: mark a line, waits for its letter |
 | `Ctrl-a /` | `enter-search` | Search the history |
 | `Ctrl-a :` | `command-line` | Open the command line |
 | `Ctrl-a <` | `side-shrink-5` | Shrink the side view by 5 % |
@@ -186,6 +190,9 @@ are built in: see [Line mode](line-mode.md#editing-the-line).
 | `Tab` | `toggle-side` | Cursor to the raw panel and back |
 | `Ctrl-y` / `Ctrl-e` | `scroll-up` / `scroll-down` | Scroll the view a line |
 | `PageUp` / `PageDown` | `page-up` / `page-down` | A page |
+| `,` | `mark` | A command line: mark the cursor's line, waits for its letter |
+| `'` | `marks` | Open the marks |
+| `(` / `)` | `prev-mark` / `next-mark` | Cursor to the mark above / below |
 | `q`, `Esc` | `exit` | Leave |
 
 The vi motions (`w`, `b`, `gg`, `G`, `iw`...) are built in: see
@@ -275,3 +282,6 @@ commands with arguments (`send`, `open`, `baud`, `replay`...).
 | `triggers` | Open the triggers | `Ctrl-a T` |
 | `dismiss-notification` | Close the top notification | `Ctrl-a n` |
 | `dismiss-notifications` | Close all the notifications | `Ctrl-a N` |
+| `marks` | Open the marks: a letter jumps to its mark | `Ctrl-a '` |
+| `prev-mark` | Go to the mark above | `Ctrl-a (` |
+| `next-mark` | Go to the mark below | `Ctrl-a )` |

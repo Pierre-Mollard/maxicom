@@ -148,6 +148,11 @@ pub struct UiStyles {
     pub status_bar: ConfigStyle,
     pub scrollbar_thumb: ConfigStyle,
     pub scrollbar_track: ConfigStyle,
+    /// The screenshot's flash, and a jumped-to mark's line (MAX-164)
+    pub flash: ConfigStyle,
+    /// A mark's letter in the history's left column, and on the scrollbar (MAX-164)
+    pub mark: ConfigStyle,
+    pub scrollbar_mark: ConfigStyle,
 }
 
 impl UiStyles {
@@ -185,6 +190,13 @@ impl Default for UiStyles {
             ),
             scrollbar_thumb: ConfigStyle::from_fg(Color::DarkGray),
             scrollbar_track: ConfigStyle::from_fg(Color::Rgb(0x30, 0x30, 0x38)),
+            flash: ConfigStyle::new(Style::default().bg(Color::White).fg(Color::DarkGray)),
+            mark: ConfigStyle::new(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            scrollbar_mark: ConfigStyle::from_fg(Color::Yellow),
         }
     }
 }
@@ -243,8 +255,6 @@ impl Default for SearchStyles {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TerminalStyles {
-    pub term_flash_fg_color: Color,
-    pub term_flash_bg_color: Color,
     pub term_inside: ConfigStyle,
     pub term_outside: ConfigStyle,
     pub timestamp: ConfigStyle,
@@ -255,8 +265,6 @@ pub struct TerminalStyles {
 impl Default for TerminalStyles {
     fn default() -> Self {
         Self {
-            term_flash_fg_color: Color::DarkGray,
-            term_flash_bg_color: Color::White,
             term_inside: ConfigStyle::from_fg(Color::Reset),
             term_outside: ConfigStyle::from_fg(Color::DarkGray),
             timestamp: ConfigStyle::from_fg(Color::Yellow),

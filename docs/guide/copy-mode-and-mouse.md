@@ -44,6 +44,9 @@ terminal mode.
 | `y` or Enter | Copy the selection and leave |
 | `Y` | Copy the selection's bytes as the raw side panel shows them |
 | Tab | Move the cursor to the raw side panel and back |
+| `,` | Mark the cursor's line: then a letter, see [Marks](marks.md) |
+| `'` | Open the marks popup, a letter jumps there |
+| `(` / `)` | To the mark above / below |
 | `q` or Esc | Leave |
 
 ### The view while copying
@@ -102,6 +105,10 @@ A right click opens a menu of the main actions at the pointer: switch the
 mode, Help, Settings, Directory, Search, Record (or Stop recording),
 Screenshot and Terminal size (terminal mode), Sessions, Triggers, Clear,
 Clear history, Back to live (during a replay), Reload config, Quit.
+
+Scrolled up or in copy mode, it also has Add mark, which marks the line
+clicked; and while there are marks, Marks…, which opens the marks popup. See
+[Marks](marks.md).
 
 ### Right-click paste
 

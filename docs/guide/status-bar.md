@@ -96,7 +96,7 @@ layout = "border"
 
 | Variable | Value | Example |
 | --- | --- | --- |
-| `{mode}` | `TERM` or `LINE`, `COPY` while copy mode is on | `TERM` |
+| `{mode}` | `TERM` or `LINE`, `COPY` while copy mode is on, `MARK` while a mark waits for its letter | `TERM` |
 | `{port}` | Device address, or a saved link's name | `/dev/ttyUSB0`, `tcp://192.168.1.50:4000`, `esp32` |
 | `{baud}` | Baud rate; `raw` for a raw TCP link | `115200` |
 | `{framing}` | Serial framing; `TCP` for a TCP link | `8N1` |
@@ -158,6 +158,7 @@ otherwise. Conditions chain:
 | Condition | Aliases | True when |
 | --- | --- | --- |
 | `prefix` | | The prefix (`Ctrl-a`) is active |
+| `mark` | `mark_pending` | A [mark](marks.md) waits for its letter |
 | `line` / `term` | `linemode` / `terminal` | Line / terminal mode |
 | `copy` | `copymode` | Copy mode |
 | `copy_raw` | `raw_cursor` | The copy cursor is in the raw side panel |

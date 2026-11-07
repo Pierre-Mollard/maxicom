@@ -879,6 +879,27 @@ pub struct UiConfig {
     pub hide_scrollbar_below: [u16; 2],
     pub hide_status_bar_below: [u16; 2],
     pub status_bar: StatusBarConfig,
+    pub marks: MarksConfig,
+}
+
+/// How the history's marks show (MAX-164), each part on its own: the letter in the left
+/// column, on the scrollbar, the flash of the line jumped to
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MarksConfig {
+    pub letters: bool,
+    pub scrollbar: bool,
+    pub flash: bool,
+}
+
+impl Default for MarksConfig {
+    fn default() -> Self {
+        Self {
+            letters: true,
+            scrollbar: true,
+            flash: true,
+        }
+    }
 }
 
 impl Default for UiConfig {
@@ -895,6 +916,7 @@ impl Default for UiConfig {
             hide_scrollbar_below: [40, 10],
             hide_status_bar_below: [35, 6],
             status_bar: StatusBarConfig::default(),
+            marks: MarksConfig::default(),
         }
     }
 }

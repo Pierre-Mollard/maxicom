@@ -23,6 +23,7 @@
 - [Encoding and newlines](encoding-and-newlines.md)
 - [Copy mode and mouse](copy-mode-and-mouse.md)
 - [Search](search.md)
+- [Marks](marks.md)
 - [Raw side panel](raw-side-panel.md)
 - [Triggers](triggers.md)
 - [Capture](capture.md)

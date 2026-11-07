@@ -127,3 +127,14 @@ fn timestamp_width_is_cached_from_format() {
         14 + settings.line_prefixes().line.chars().count()
     );
 }
+
+/// MAX-164: `[ui.marks]` turns each way marks show on or off on its own, all on by default.
+/// How: the default settings, then a file turning the scrollbar ticks off only.
+#[test]
+fn marks_switches() {
+    let marks = SettingsConfig::default().ui.marks;
+    assert!(marks.letters && marks.scrollbar && marks.flash);
+    let settings: SettingsConfig = toml::from_str("[ui.marks]\nscrollbar = false\n").unwrap();
+    let marks = settings.ui.marks;
+    assert!(marks.letters && !marks.scrollbar && marks.flash);
+}

@@ -494,3 +494,32 @@ pub fn prompt_view(
     }
     (scroll, scroll > 0, scroll < max_scroll)
 }
+
+/// The history marks' letters on the scrollbar's track, each where its row is in the whole
+/// history (MAX-164): `marks` gives each letter's row, of `total` rows. On the thumb a letter
+/// takes the thumb's color as its background, so the thumb shows no hole
+pub fn draw_scrollbar_marks(
+    buf: &mut Buffer,
+    area: Rect,
+    marks: &[(char, usize)],
+    total: usize,
+    theme: &ThemeConfig,
+) {
+    let track = area.height.saturating_sub(2) as usize;
+    if track == 0 || total == 0 {
+        return;
+    }
+    let thumb = theme.ui.scrollbar_thumb.fg;
+    for &(letter, row) in marks {
+        let at = (row * track / total).min(track - 1);
+        let cell = &mut buf[(area.x, area.y + 1 + at as u16)];
+        let mut style = *theme.ui.scrollbar_mark;
+        if cell.symbol() == "█"
+            && let Some(thumb) = thumb
+        {
+            style = style.bg(thumb);
+        }
+        cell.set_symbol(letter.encode_utf8(&mut [0; 4]))
+            .set_style(style);
+    }
+}

@@ -104,6 +104,9 @@ enum ScrollbarHold {
     Thumb { grab: usize },
 }
 
+/// How long the line a mark jump lands on flashes (MAX-164)
+const MARK_FLASH: Duration = Duration::from_millis(400);
+
 pub struct App {
     settings: SettingsConfig,
     pub key_resolver: KeyResolver,
@@ -126,6 +129,8 @@ pub struct App {
     prefix_active: bool,
     /// An add or jump mark key waits for its letter (MAX-164)
     pending_mark: Option<PendingMark>,
+    /// The line a mark jump landed on, in its mode's view, flashed until then (MAX-164)
+    mark_flash: Option<(Mode, usize, Instant)>,
     overlay: Option<Overlay>,
     pub notifications: NotificationManager,
     pub viewport: ViewportSize,
@@ -259,6 +264,7 @@ impl App {
         let mut app = Self {
             prefix_active: false,
             pending_mark: None,
+            mark_flash: None,
             settings,
             key_resolver,
             link: LinkState::new(link_config),
@@ -1211,7 +1217,9 @@ impl App {
         let drag_scrolled =
             self.drag_scroll(now) || self.scrollbar_repeat(now) || self.click_repeat(now);
         let tested = self.poll_link_test();
-        toasts_expired || self.terminal_mode.has_pending_flash() || drag_scrolled || tested
+        // a flash is redrawn until it's over, the last frame without it
+        let flashing = self.terminal_mode.has_pending_flash() || self.mark_flash.is_some();
+        toasts_expired || flashing || drag_scrolled || tested
     }
 
     /// The left button is on the scrollbar, from its press to its release (MAX-142)
@@ -1971,8 +1979,9 @@ impl App {
                     Mode::Line => self.line_mode.jump_to_mark(letter),
                     Mode::Terminal => self.terminal_mode.jump_to_mark(letter),
                 };
-                if jumped.is_none() {
-                    self.notify_warn(format!("mark {letter} is not set"));
+                match jumped {
+                    Some(line) => self.flash_mark(line),
+                    None => self.notify_warn(format!("mark {letter} is not set")),
                 }
             }
             MarkAction::Delete(letter) => {
@@ -1990,15 +1999,34 @@ impl App {
                     Mode::Line => self.line_mode.jump_to_adjacent_mark(forward),
                     Mode::Terminal => self.terminal_mode.jump_to_adjacent_mark(forward),
                 };
-                if jumped.is_none() {
-                    self.notify_info(if forward {
+                match jumped.and_then(|letter| self.marks().get(letter)) {
+                    Some(line) => self.flash_mark(line),
+                    None => self.notify_info(if forward {
                         "no mark below"
                     } else {
                         "no mark above"
-                    });
+                    }),
                 }
             }
         }
+    }
+
+    /// The line a jump landed on flashes, unless `[ui.marks] flash` is off (MAX-164)
+    fn flash_mark(&mut self, line: usize) {
+        if self.settings.ui.marks.flash {
+            let until = Instant::now() + MARK_FLASH;
+            self.mark_flash = Some((self.settings.mode, line, until));
+        }
+    }
+
+    /// The line flashing in `mode`'s view after a mark jump, forgotten once its time is up
+    pub fn mark_flash(&mut self, mode: Mode) -> Option<usize> {
+        let (flash_mode, line, until) = self.mark_flash?;
+        if Instant::now() >= until {
+            self.mark_flash = None;
+            return None;
+        }
+        (flash_mode == mode).then_some(line)
     }
 
     /// The session backup runs, what the optional `session` status bar condition shows

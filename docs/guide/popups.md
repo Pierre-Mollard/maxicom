@@ -64,6 +64,7 @@ popup with the details. Esc or Enter closes it.
 | Screenshot | `Ctrl-a k`, `Ctrl-a K` | [Capture](capture.md#screenshots) |
 | Session browser | `Ctrl-a j` | [Capture](capture.md#session-browser) |
 | Triggers | `Ctrl-a T` | [Triggers](triggers.md#the-trigger-browser) |
+| Marks | `Ctrl-a '` | [Marks](marks.md#the-marks-popup) |
 | Command line | `Ctrl-a :` | [Command line](command-line.md) |
 | Right-click menu | A right click | [Copy mode and mouse](copy-mode-and-mouse.md#right-click-menu) |
 | Detached, Connection Lost, No device | Shown by the link | [Links](links.md#the-links-popups) |

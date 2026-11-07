@@ -6583,12 +6583,12 @@ fn mark_jump_centers_the_view() {
     let (mut h, height) = marked_lines();
     assert_eq!(h.app.line_mode.jump_to_mark('a'), Some(19));
     let rows = text_rows(&mut h, height);
-    assert_eq!(rows[height / 2], "│ line 19", "{rows:#?}");
+    assert_eq!(rows[height / 2], "a line 19", "{rows:#?}");
     assert!(!h.app.is_copy_mode_active());
 
     h.app.line_mode.jump_to_mark('b');
     let rows = text_rows(&mut h, height);
-    assert_eq!(rows[height / 2], "│ line 39", "{rows:#?}");
+    assert_eq!(rows[height / 2], "b line 39", "{rows:#?}");
 
     assert_eq!(h.app.line_mode.jump_to_mark('z'), None);
     assert_eq!(text_rows(&mut h, height), rows);
@@ -6606,7 +6606,7 @@ fn mark_jump_moves_the_copy_cursor() {
     let cursor = h.app.line_mode.copy_state().cursor;
     assert_eq!((cursor.line_idx, cursor.char_idx), (19, 0));
     let rows = text_rows(&mut h, height);
-    assert_eq!(rows[height / 2], "│ line 19", "{rows:#?}");
+    assert_eq!(rows[height / 2], "a line 19", "{rows:#?}");
 }
 
 /// MAX-164: previous / next mark walk the marks from the view's middle line, or from the copy
@@ -6620,10 +6620,10 @@ fn previous_and_next_mark() {
         let letter = h.app.line_mode.jump_to_adjacent_mark(forward);
         (letter, text_rows(h, height)[height / 2].clone())
     };
-    assert_eq!(walk(&mut h, false), (Some('b'), "│ line 39".to_string()));
-    assert_eq!(walk(&mut h, false), (Some('a'), "│ line 19".to_string()));
-    assert_eq!(walk(&mut h, false), (None, "│ line 19".to_string()));
-    assert_eq!(walk(&mut h, true), (Some('b'), "│ line 39".to_string()));
+    assert_eq!(walk(&mut h, false), (Some('b'), "b line 39".to_string()));
+    assert_eq!(walk(&mut h, false), (Some('a'), "a line 19".to_string()));
+    assert_eq!(walk(&mut h, false), (None, "a line 19".to_string()));
+    assert_eq!(walk(&mut h, true), (Some('b'), "b line 39".to_string()));
 
     h.app.update(Action::CopyMode(CopyModeAction::Enter));
     let line = |h: &Harness| h.app.line_mode.copy_state().cursor.line_idx;
@@ -6778,7 +6778,7 @@ fn marks_popup_lists_and_jumps() {
     assert!(h.app.overlay().is_some());
     click(&mut h, cell_of(&rows, "line 39"));
     assert!(h.app.overlay().is_none());
-    assert_eq!(text_rows(&mut h, height)[height / 2], "│ line 39");
+    assert_eq!(text_rows(&mut h, height)[height / 2], "b line 39");
 
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
     h.app.update(KeyBindingAction::Marks.to_action(&h.app));
@@ -6836,4 +6836,238 @@ fn right_click_menu_adds_a_mark() {
     let rows = right_click(&mut h, (5, 11));
     click(&mut h, cell_of(&rows, "Add mark"));
     assert_eq!(h.app.line_mode.marks().get('d'), Some(cursor));
+}
+
+/// `prefix_rows`' lines with mark b on "short" and a on the wrapped line (MAX-164)
+fn marked_prefix_rows(tweak: impl FnOnce(&mut SettingsConfig)) -> Vec<String> {
+    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 40, 12, |s| {
+        s.line_mode.prefix_place = crate::configs::settings::PrefixPlace::Border;
+        tweak(s);
+    });
+    h.feed(b"short\r\n");
+    h.feed(format!("{}\r\n", "word ".repeat(10)).as_bytes());
+    h.feed(b"part");
+    h.app.line_mode.add_mark_at('b', 0);
+    h.app.line_mode.add_mark_at('a', 1);
+    h.draw()
+}
+
+/// MAX-164: a mark's letter goes where the rows' markers are, next to the text: on the
+/// prefix's first column (the bar after the timestamp, or the inset prefix's), with borders
+/// too; else the left border's cell. A wrapped row keeps its `┆`; with neither, no letter,
+/// the text is never covered. `[ui.marks] letters = false` shows none.
+/// How: the prefix rows with marks, in each place.
+#[test]
+fn mark_letters_in_the_left_column() {
+    let rows = marked_prefix_rows(|s| s.ui.show_borders = true);
+    let short = rows.iter().position(|row| row.contains("short")).unwrap();
+    assert!(rows[short].starts_with("bshort"), "{rows:#?}");
+    assert!(rows[short + 1].starts_with("aword word"), "{rows:#?}");
+    assert!(rows[short + 2].starts_with("┆word"), "{rows:#?}");
+
+    let rows = marked_prefix_rows(|_| {});
+    let short = rows.iter().position(|row| row.contains("short")).unwrap();
+    assert!(rows[short].starts_with("short"), "{rows:#?}");
+    assert!(rows[short + 1].starts_with("word word"), "{rows:#?}");
+
+    let rows = marked_prefix_rows(|s| {
+        s.show_timestamps = true;
+        s.timestamp_format = String::from("%M:%S");
+        s.refresh_timestamp_width();
+    });
+    let short = rows.iter().position(|row| row.contains("short")).unwrap();
+    let after_time = |row: usize| rows[row].chars().skip(5).collect::<String>();
+    assert!(after_time(short + 1).starts_with("aword"), "{rows:#?}");
+    assert!(after_time(short + 2).starts_with("┆word"), "{rows:#?}");
+
+    // with borders and timestamps: on the bar after the time, the border stays plain
+    let rows = marked_prefix_rows(|s| {
+        s.ui.show_borders = true;
+        s.show_timestamps = true;
+        s.timestamp_format = String::from("%M:%S");
+        s.refresh_timestamp_width();
+    });
+    let short = rows.iter().position(|row| row.contains("short")).unwrap();
+    assert!(rows[short + 1].starts_with('│'), "{rows:#?}");
+    let after_time = |row: usize| rows[row].chars().skip(6).collect::<String>();
+    assert!(after_time(short + 1).starts_with("aword"), "{rows:#?}");
+
+    let rows = marked_prefix_rows(|s| {
+        s.line_mode.prefix_place = crate::configs::settings::PrefixPlace::Inset;
+        s.line_mode.inset_prefix = crate::configs::settings::InsetPrefix::default();
+    });
+    let short = rows.iter().position(|row| row.contains("short")).unwrap();
+    assert!(rows[short + 1].starts_with("a word"), "{rows:#?}");
+
+    let rows = marked_prefix_rows(|s| {
+        s.ui.show_borders = true;
+        s.ui.marks.letters = false;
+    });
+    let short = rows.iter().position(|row| row.contains("short")).unwrap();
+    assert!(rows[short + 1].starts_with("│word word"), "{rows:#?}");
+}
+
+/// MAX-164: in terminal mode a mark's letter goes on the bar after the row's time, with
+/// borders too; without timestamps in the left border's cell; with neither, none.
+/// How: three lines, b on the first, a on the cursor's; with borders, with timestamps, both.
+#[test]
+fn terminal_mark_letters_in_the_left_column() {
+    let rows = |tweak: fn(&mut SettingsConfig)| {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 40, 12, |s| {
+            s.mode = Mode::Terminal;
+            tweak(s);
+        });
+        h.draw();
+        h.app
+            .terminal_mode
+            .process_rx(TextEncoding::Utf8, b"one\r\ntwo\r\nthree");
+        h.app.terminal_mode.add_mark('a');
+        let one = h.app.terminal_mode.marks().get('a').unwrap() - 2;
+        h.app.terminal_mode.add_mark_at('b', one);
+        h.draw()
+    };
+    let shown = rows(|s| s.ui.show_borders = true);
+    let one = shown.iter().position(|row| row.contains("one")).unwrap();
+    assert!(shown[one].starts_with("bone"), "{shown:#?}");
+    assert!(shown[one + 1].starts_with("│two"), "{shown:#?}");
+    assert!(shown[one + 2].starts_with("athree"), "{shown:#?}");
+
+    let shown = rows(|s| {
+        s.show_timestamps = true;
+        s.timestamp_format = String::from("%M:%S");
+        s.refresh_timestamp_width();
+    });
+    let one = shown.iter().position(|row| row.contains("one")).unwrap();
+    let after_time = |row: usize| shown[row].chars().skip(5).collect::<String>();
+    assert!(after_time(one).starts_with("bone"), "{shown:#?}");
+    assert!(after_time(one + 1).starts_with("│two"), "{shown:#?}");
+
+    let shown = rows(|s| {
+        s.ui.show_borders = true;
+        s.show_timestamps = true;
+        s.timestamp_format = String::from("%M:%S");
+        s.refresh_timestamp_width();
+    });
+    let one = shown.iter().position(|row| row.contains("one")).unwrap();
+    assert!(shown[one].starts_with('│'), "{shown:#?}");
+    let after_time = |row: usize| shown[row].chars().skip(6).collect::<String>();
+    assert!(after_time(one).starts_with("bone"), "{shown:#?}");
+
+    let shown = rows(|_| {});
+    let one = shown.iter().position(|row| row.contains("one")).unwrap();
+    assert!(shown[one].starts_with("one"), "{shown:#?}");
+}
+
+/// MAX-164: a marked line taller than the view still shows its letter: on its first row shown,
+/// the top wrapped row when its first one is above the view; the rows under keep their `┆`.
+/// How: a line of 200 words marked from the live view, with borders: the view shows its last
+/// rows only.
+#[test]
+fn mark_letter_on_the_first_row_shown() {
+    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 40, 12, |s| {
+        s.line_mode.prefix_place = crate::configs::settings::PrefixPlace::Border;
+        s.ui.show_borders = true;
+    });
+    h.feed(format!("{}\r\n", "word ".repeat(200)).as_bytes());
+    h.draw();
+    assert_eq!(h.app.line_mode.add_mark('a'), Some(0));
+    let rows = h.draw();
+    let top = h.app.frame_areas().content.y as usize;
+    assert!(rows[top].starts_with("aword"), "{rows:#?}");
+    assert!(rows[top + 1].starts_with("┆word"), "{rows:#?}");
+    assert!(
+        !rows.iter().any(|row| row.starts_with("│word")),
+        "{rows:#?}"
+    );
+}
+
+/// The letters on the history's scrollbar and their row in its track, top down (MAX-164)
+fn scrollbar_letters(h: &mut Harness) -> Vec<(usize, char)> {
+    let rows = h.draw();
+    let area = h.app.frame_map().scrollbar.expect("a scrollbar").area;
+    (1..area.height as usize - 1)
+        .filter_map(|row| {
+            let y = area.y as usize + row;
+            let c = rows[y].chars().nth(area.x as usize)?;
+            c.is_ascii_lowercase().then_some((row - 1, c))
+        })
+        .collect()
+}
+
+/// MAX-164: each mark shows as its letter on the scrollbar, where its line is in the whole
+/// history, in both modes; `[ui.marks] scrollbar = false` shows none.
+/// On the thumb a letter has the thumb's color behind it, no hole in the thumb.
+/// How: the marked lines (a on line 19, b on 39, of 60 one-row lines): a about a third down
+/// the track, b two thirds; b on the thumb once jumped to; then the switch off; then terminal
+/// mode's.
+#[test]
+fn scrollbar_shows_the_marks() {
+    let (mut h, _) = marked_lines();
+    let track = h.app.frame_map().scrollbar.unwrap().track();
+    assert_eq!(
+        scrollbar_letters(&mut h),
+        [('a', 19 * track / 60), ('b', 39 * track / 60)].map(|(c, r)| (r, c))
+    );
+    // on the thumb, in the thumb's color: b's line is in the view once jumped to
+    h.app.line_mode.jump_to_mark('b');
+    h.draw();
+    let area = h.app.frame_map().scrollbar.unwrap().area;
+    let (first, length) = h.app.frame_map().scrollbar.unwrap().thumb();
+    let b_row = scrollbar_letters(&mut h)[1].0;
+    assert!(
+        (first..first + length).contains(&b_row),
+        "{first} {length} {b_row}"
+    );
+    let cell = &h.terminal.backend().buffer()[(area.x, area.y + 1 + b_row as u16)];
+    let thumb = ThemeConfig::default().ui.scrollbar_thumb.fg;
+    assert_eq!(cell.style().bg, thumb);
+
+    h.app.settings_mut().ui.marks.scrollbar = false;
+    assert_eq!(scrollbar_letters(&mut h), []);
+
+    let (mut h, _) = terminal_marked_lines();
+    let letters = scrollbar_letters(&mut h);
+    assert_eq!(letters.iter().map(|&(_, c)| c).collect::<String>(), "ab");
+    assert!(letters[0].0 < letters[1].0, "{letters:?}");
+}
+
+/// MAX-164: the line a mark jump lands on flashes, in `ui.flash`'s colors, its rows only, in
+/// both modes, the tick asking for frames meanwhile; `[ui.marks] flash = false` doesn't.
+/// How: a jump to a in the marked lines, the middle row's cells and the next row's; then
+/// terminal mode's; then the switch off.
+#[test]
+fn mark_jump_flashes_its_line() {
+    use crate::inputs::MarkAction;
+    let flash_bg = ThemeConfig::default().ui.flash.bg;
+    let bg_at = |h: &Harness, x: u16, y: u16| h.terminal.backend().buffer()[(x, y)].style().bg;
+
+    let (mut h, height) = marked_lines();
+    h.app
+        .update(Action::App(AppAction::Mark(MarkAction::Jump('a'))));
+    let rows = h.draw();
+    let content = h.app.frame_areas().content;
+    let middle = content.y + (height / 2) as u16;
+    assert!(rows[middle as usize].contains("line 19"), "{rows:#?}");
+    assert_eq!(bg_at(&h, content.x + 3, middle), flash_bg);
+    assert_ne!(bg_at(&h, content.x + 3, middle + 1), flash_bg);
+    assert!(h.app.tick());
+
+    let (mut h, height) = terminal_marked_lines();
+    h.app
+        .update(Action::App(AppAction::Mark(MarkAction::Jump('a'))));
+    let rows = h.draw();
+    let content = h.app.frame_areas().content;
+    let middle = content.y + ((height - 1) / 2) as u16;
+    assert!(rows[middle as usize].contains("line 19"), "{rows:#?}");
+    assert_eq!(bg_at(&h, content.x + 3, middle), flash_bg);
+    assert_ne!(bg_at(&h, content.x + 3, middle + 1), flash_bg);
+
+    let (mut h, height) = marked_lines();
+    h.app.settings_mut().ui.marks.flash = false;
+    h.app
+        .update(Action::App(AppAction::Mark(MarkAction::Jump('a'))));
+    h.draw();
+    let content = h.app.frame_areas().content;
+    let middle = content.y + (height / 2) as u16;
+    assert_ne!(bg_at(&h, content.x + 3, middle), flash_bg);
 }

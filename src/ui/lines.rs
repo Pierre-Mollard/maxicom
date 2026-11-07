@@ -24,7 +24,7 @@ use crate::{
         types::{FocusTarget, LogEntry, PromptMap, RawRow, RowChars, ScrollbarMap, TextRow},
     },
     configs::{
-        KeywordHighlight, LineDisplayMode, SettingsConfig, ThemeConfig, WrapMode,
+        KeywordHighlight, LineDisplayMode, Mode, SettingsConfig, ThemeConfig, WrapMode,
         settings::{
             BORDER_PARTIAL, BORDER_WRAP, PrefixWrapBehavior, RawSideView, raw_view_to_display_mode,
         },
@@ -32,8 +32,8 @@ use crate::{
     ui::{
         PostRenderEffect,
         common::{
-            apply_keyword_highlights, apply_selection_to_spans, border_style_for, prompt_view,
-            render_search_bar,
+            apply_keyword_highlights, apply_selection_to_spans, border_style_for,
+            draw_scrollbar_marks, prompt_view, render_search_bar,
         },
         data_display::{format_entry_content, format_line_content},
         layout::{
@@ -125,7 +125,7 @@ pub fn render_monitor(
     if total_entries == 0 {
         // no text yet, the separator still runs down the pane
         let marks = vec![RowMark::Empty; content_height];
-        draw_row_marks(app, frame.buffer_mut(), content_area, &marks, 0, theme);
+        draw_row_marks(app, frame.buffer_mut(), content_area, &marks, (0, 0), theme);
         return PostRenderEffect::None;
     }
 
@@ -697,6 +697,18 @@ pub fn render_monitor(
         offset_from_bottom,
     };
     app.line_mode.set_scroll_status(scroll_status);
+    // each mark's first row in the whole history, for its tick on the scrollbar (MAX-164)
+    let mut mark_rows = app.line_mode.marks().sorted();
+    let mut rows_above = 0;
+    let mut heights = row_heights.iter();
+    let mut line = 0;
+    for (_, mark_line) in &mut mark_rows {
+        while line < *mark_line {
+            rows_above += heights.next().map_or(0, |&height| height as usize);
+            line += 1;
+        }
+        *mark_line = rows_above;
+    }
     app.line_mode.put_row_heights(row_heights);
 
     let line_x_offset = match wrap_mode {
@@ -840,9 +852,18 @@ pub fn render_monitor(
         frame.buffer_mut(),
         content_area,
         &marks,
-        line_x_offset,
+        (start_idx, line_x_offset),
         theme,
     );
+    // the line a mark jump landed on, flashed for a moment (MAX-164)
+    if let Some(local) = (app.mark_flash(Mode::Line)).and_then(|line| line.checked_sub(start_idx)) {
+        let buf = frame.buffer_mut();
+        for (mark, row) in marks.iter().zip(content_area.rows()) {
+            if mark.entry() == Some(local) {
+                buf.set_style(row, *theme.ui.flash);
+            }
+        }
+    }
 
     apply_keyword_highlights(frame.buffer_mut(), content_area, highlights);
 
@@ -945,6 +966,10 @@ pub fn render_monitor(
                 .end_style(*theme.ui.scrollbar_thumb);
 
             frame.render_stateful_widget(scrollbar, sb_area, &mut scrollbar_state);
+            if app.settings().ui.marks.scrollbar {
+                let buf = frame.buffer_mut();
+                draw_scrollbar_marks(buf, sb_area, &mark_rows, total_rows, theme);
+            }
             // for the mouse (MAX-142)
             app.frame_map_mut().scrollbar = Some(ScrollbarMap {
                 area: sb_area,
@@ -1064,10 +1089,21 @@ pub fn render_input_prompt(app: &mut App, frame: &mut Frame, area: Rect, theme: 
 /// partial RX line's first row, or no text
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RowMark {
-    Line,
-    Wrap,
+    /// A line's first row and its wrapped rows, with the entry's place in the window (MAX-164)
+    Line(usize),
+    Wrap(usize),
     Partial,
     Empty,
+}
+
+impl RowMark {
+    /// The entry the row shows, its place in the window
+    fn entry(self) -> Option<usize> {
+        match self {
+            Self::Line(local) | Self::Wrap(local) => Some(local),
+            Self::Partial | Self::Empty => None,
+        }
+    }
 }
 
 /// The mark of each screen row, from the window row on the view's top line. `partial_idx` is
@@ -1091,11 +1127,11 @@ fn row_marks(
             if window_row < first_text_row {
                 RowMark::Empty
             } else if window_row > first_text_row {
-                RowMark::Wrap
+                RowMark::Wrap(local)
             } else if partial_idx == Some(local) {
                 RowMark::Partial
             } else {
-                RowMark::Line
+                RowMark::Line(local)
             }
         })
         .collect()
@@ -1104,13 +1140,15 @@ fn row_marks(
 /// Line mode's marks over the drawn text (MAX-163): with `prefix_place = "border"` and no
 /// timestamps, the wrapped and partial rows' glyphs in the left border cell (the plain border
 /// marks a line); and the separator on the rows with no text, so it runs down to the bottom of
-/// the pane. It sits where the prefixes start, after the timestamp, moved by the pan
+/// the pane. It sits where the prefixes start, after the timestamp, moved by the pan. Then the
+/// history marks' letters on their lines' first rows (MAX-164). `start_idx` is the window's
+/// first entry
 fn draw_row_marks(
     app: &App,
     buf: &mut Buffer,
     content_area: Rect,
     marks: &[RowMark],
-    x_offset: usize,
+    (start_idx, x_offset): (usize, usize),
     theme: &ThemeConfig,
 ) {
     let settings = app.settings();
@@ -1120,7 +1158,7 @@ fn draw_row_marks(
         let x = content_area.x - 1;
         for (mark, row) in rows() {
             match mark {
-                RowMark::Wrap => {
+                RowMark::Wrap(_) => {
                     buf[(x, row.y)].set_symbol(BORDER_WRAP);
                 }
                 RowMark::Partial => {
@@ -1128,25 +1166,57 @@ fn draw_row_marks(
                         .set_symbol(BORDER_PARTIAL)
                         .set_style(*theme.line_mode.line_partial_prefix);
                 }
-                RowMark::Line | RowMark::Empty => {}
+                RowMark::Line(_) | RowMark::Empty => {}
             }
         }
     }
 
     let prefixes = settings.line_prefixes();
-    if prefixes.separator.is_empty() {
-        return;
-    }
     let timestamp_width = settings
         .line_gutter_width()
         .saturating_sub(prefixes.line.width());
-    let Some(col) = timestamp_width.checked_sub(x_offset) else {
+    // where the prefixes start, none once panned past
+    let col = timestamp_width
+        .checked_sub(x_offset)
+        .filter(|&col| col < content_area.width as usize);
+    if let Some(col) = col
+        && !prefixes.separator.is_empty()
+    {
+        let style = *theme.line_mode.line_prefix;
+        let width = (content_area.width as usize).saturating_sub(col);
+        for (_, row) in rows().filter(|(mark, _)| **mark == RowMark::Empty) {
+            buf.set_stringn(row.x + col as u16, row.y, prefixes.separator, width, style);
+        }
+    }
+
+    // a mark's letter where the rows' markers are, next to the text: the prefix's first column
+    // (the timestamp's bar or the inset prefix), else the left border; on the line's first
+    // row shown, its wrapped row on top when its first one is above the view; never over the
+    // text
+    if !settings.ui.marks.letters {
+        return;
+    }
+    let x = if let Some(col) = col
+        && !prefixes.line.is_empty()
+    {
+        content_area.x + col as u16
+    } else if app.show_borders() && content_area.x > 0 {
+        content_area.x - 1
+    } else {
         return;
     };
-    let style = *theme.line_mode.line_prefix;
-    let width = (content_area.width as usize).saturating_sub(col);
-    for (_, row) in rows().filter(|(mark, _)| **mark == RowMark::Empty) {
-        buf.set_stringn(row.x + col as u16, row.y, prefixes.separator, width, style);
+    let line_marks = app.line_mode.marks();
+    let mut above = None;
+    for (mark, row) in rows() {
+        let local = mark.entry();
+        let first_shown = local.is_some() && local != std::mem::replace(&mut above, local);
+        if first_shown
+            && let Some(letter) = local.and_then(|local| line_marks.letter_at(start_idx + local))
+        {
+            buf[(x, row.y)]
+                .set_symbol(letter.encode_utf8(&mut [0; 4]))
+                .set_style(*theme.ui.mark);
+        }
     }
 }
 

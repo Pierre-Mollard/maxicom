@@ -23,11 +23,26 @@ What changes in each version of maxicom. The format follows
   loses the focus.
 - The status bar shows the cursor keys mode in terminal mode, `NOR` or `APP`
   as in minicom: `{cursor_keys}` and the `app_cursor` condition.
+- [Marks](https://pierre-mollard.github.io/maxicom/marks.html) in the
+  history, `a` to `z` as in vi: `Ctrl-a ,` then a letter marks a line,
+  `Ctrl-a '` lists them and a letter jumps back, `Ctrl-a (` / `)` walk them.
+  The same keys in copy mode, Add mark and Marks… in the right-click menu,
+  the letters in the history's left column and on the scrollbar, the line
+  flashing after a jump; `[ui.marks]` turns each part off. Commands `mark`,
+  `jump-mark`, `delete-mark`, `marks`, `prev-mark`, `next-mark`.
+- Keys in `[copy_mode]` can run a
+  [command line](https://pierre-mollard.github.io/maxicom/command-line.html#binding-a-command-line-to-a-key),
+  like the prefix's.
 
 ### Changed
 
 - The status bar's mode badge reads `COPY` in copy mode, instead of `TERM`
   or `LINE` in the copy colors.
+- The session browser's preview shows the lines in their colors, the
+  timestamps dimmed.
+- The theme's flash colors moved from `[terminal]` (`term_flash_fg_color`,
+  `term_flash_bg_color`) to one `flash` style in `[ui]`, shared by the
+  screenshot and the mark jumps.
 
 ## [0.1.0] - 2026-11-06
 

@@ -50,7 +50,7 @@ use crate::{
             triggers::render_triggers_popup,
         },
         status_bar::{CompiledStatusBar, render_status_bar},
-        terminal::{render_timestamp_gutter, render_vt100_terminal},
+        terminal::{draw_mark_letters, render_timestamp_gutter, render_vt100_terminal},
     },
 };
 
@@ -166,6 +166,8 @@ pub fn render(
                 theme,
                 highlights,
             );
+            let (content, gutter) = (layout.content_area, layout.timestamp_gutter);
+            draw_mark_letters(app, frame.buffer_mut(), content, gutter, theme);
             PostRenderEffect::None
         }
         Mode::Line => render_monitor(

@@ -50,6 +50,14 @@ impl Marks {
         marks
     }
 
+    /// The first letter marking `line`, the one shown on it
+    pub fn letter_at(&self, line: usize) -> Option<char> {
+        self.lines
+            .iter()
+            .position(|&at| at == Some(line))
+            .map(letter)
+    }
+
     /// The closest mark above `line` (the first letter on that line), none when there's none
     pub fn prev(&self, line: usize) -> Option<(char, usize)> {
         let marks = self.sorted();

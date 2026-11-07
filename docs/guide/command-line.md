@@ -221,6 +221,16 @@ dtr off; rts on; rts off; mash ' ' '=> '
 `trigger on|off|toggle [name]` arms, disarms or toggles all the triggers,
 or the one named. The names complete. See [Triggers](triggers.md).
 
+### Marks
+
+| Command | Does |
+| --- | --- |
+| `mark [letter]` | Marks the line you're looking at; without a letter, waits for it as the next key |
+| `jump-mark [letter]` | Jumps to a mark; without a letter, waits for it |
+| `delete-mark <letter>` | Removes a mark |
+
+See [Marks](marks.md).
+
 ### Commands the link can't run
 
 A command the link can't do, like anything that sends during a replay, stops
@@ -228,8 +238,9 @@ the line there and shows the error.
 
 ## Binding a command line to a key
 
-In `keymap.toml`, a key in `[prefix_actions]` or `[direct_actions]` can take
-a command line instead of an action name, like tmux's `bind`.
+In `keymap.toml`, a key in `[prefix_actions]`, `[direct_actions]` or
+`[copy_mode]` can take a command line instead of an action name, like
+tmux's `bind`.
 
 For example, put an ESP32 in its bootloader with one key, the way esptool
 does it, and send Ctrl-c as a byte with another:
@@ -246,8 +257,10 @@ The key runs its line as if you typed it:
 
 - it runs after a line still waiting, unless it starts with `cancel`;
 - it doesn't go in the history;
-- like the other keys of these sections, it does nothing in copy mode and
-  search.
+- a `[prefix_actions]` or `[direct_actions]` key does nothing in copy mode
+  and search, like the other keys of these sections;
+- a `[copy_mode]` key runs its line in copy mode: `x = "send-hex 03"` there
+  sends Ctrl-c while you copy.
 
 A line that doesn't parse stops the keymap from loading, naming its key. A
 reload keeps the keymap in use.
@@ -260,6 +273,7 @@ reload keeps the keymap in use.
 | `Ctrl-a h` | `dtr off; sleep 100; dtr on` | Pulses DTR, which resets most boards |
 | `Ctrl-a L` | `replay-stop` | Goes back to the live link from a replay |
 | `Ctrl-a U` | `trigger toggle u-boot` | Toggles the `u-boot` trigger |
+| `Ctrl-a ,`, `,` in copy mode | `mark` | Marks a line, waiting for its letter |
 
 The help's Commands tab lists every command and the keys bound to a line.
 

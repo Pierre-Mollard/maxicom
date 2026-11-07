@@ -918,7 +918,7 @@ impl TerminalMode {
     }
 
     /// The world rows on screen, first and last
-    fn visible_lines(&self) -> (usize, usize) {
+    pub fn visible_lines(&self) -> (usize, usize) {
         let (grid_rows, _) = self.get_vt100_size();
         let current_sb = self.vt100_screen().scrollback();
         // on the live screen the view starts `pan_offset_y` rows into a grid taller than it: a

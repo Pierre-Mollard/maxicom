@@ -45,7 +45,7 @@ fn first_free_letter() {
 }
 
 /// MAX-164: marks list by line then letter; previous / next are the closest mark lines
-/// strictly above / below, the first letter when several share a line.
+/// strictly above / below, the first letter when several share a line, the one shown on it.
 /// How: c and a on line 5, b on 20, d on 40; walked from lines around them.
 #[test]
 fn sorted_prev_next() {
@@ -65,6 +65,10 @@ fn sorted_prev_next() {
     assert_eq!(marks.next(5), Some(('b', 20)));
     assert_eq!(marks.next(39), Some(('d', 40)));
     assert_eq!(marks.next(40), None);
+
+    assert_eq!(marks.letter_at(5), Some('a'));
+    assert_eq!(marks.letter_at(40), Some('d'));
+    assert_eq!(marks.letter_at(6), None);
 
     assert_eq!(Marks::default().prev(10), None);
     assert_eq!(Marks::default().next(0), None);
