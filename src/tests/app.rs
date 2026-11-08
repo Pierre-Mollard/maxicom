@@ -186,6 +186,60 @@ fn saved_links_on_the_command_line() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// MAX-213: `session-name` names the running session, quoted with spaces, and no text takes the
+/// name away. The name stays when the recording writes its meta again, and a replay's paused
+/// live session can be named. No session refuses it.
+/// How: a session started in a temp folder, each command through the command line, its meta read;
+/// a resize; a replay; then an app without a session.
+#[test]
+fn name_the_running_session() {
+    use crate::capture::{RecordingMeta, TerminalSize, list_sessions};
+    let dir = std::env::temp_dir().join(format!("maxicom_name_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut app = app();
+    app.start_session(Some(dir.clone()));
+    let run_line = |app: &mut App, line: &str| {
+        app.update(KeyBindingAction::CommandLine.to_action(app));
+        app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
+        app.update(Action::Overlay(DialogAction::Confirm));
+        while let Some(action) = app.next_command_action(Instant::now()) {
+            app.update(action);
+        }
+    };
+    let last_toast = |app: &App| {
+        let toasts = app.notifications.active_toasts();
+        toasts.last().map(|toast| toast.message.clone()).unwrap()
+    };
+    let name = |dir: &std::path::Path| {
+        let sessions = list_sessions(dir).unwrap();
+        let raw = sessions[0].raw_path().unwrap();
+        RecordingMeta::read(&RecordingMeta::path_of(raw))
+            .unwrap()
+            .name
+    };
+    run_line(&mut app, "session-name 'boot test'");
+    assert_eq!(name(&dir).as_deref(), Some("boot test"));
+    assert_eq!(last_toast(&app), "Session named 'boot test'");
+
+    app.recorder
+        .set_terminal_size(TerminalSize { rows: 9, cols: 40 });
+    assert_eq!(name(&dir).as_deref(), Some("boot test"));
+
+    run_line(&mut app, "session-name");
+    assert_eq!(name(&dir), None);
+    assert_eq!(last_toast(&app), "Session name removed");
+
+    // the live link's session, paused by a replay over it
+    app.start_replay(PathBuf::from("/tmp/a.raw"), None);
+    run_line(&mut app, "session-name paused");
+    assert_eq!(name(&dir).as_deref(), Some("paused"));
+
+    let mut none = super::tests::app();
+    run_line(&mut none, "session-name x");
+    assert_eq!(last_toast(&none), "session-name: no session running");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// MAX-12: `send` and `send-hex` transmit their bytes, in the chain's order. A command that
 /// refuses (nothing to send, a replay) stops the chain with the error.
 /// How: chains run on a live port, then on a replay (`file://`).

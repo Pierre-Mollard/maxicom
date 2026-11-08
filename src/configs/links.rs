@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -27,8 +28,8 @@ pub struct LinksConfig {
     pub links: Vec<SavedLink>,
 }
 
-/// A link as written: its name, the machines it's for, its address, and the line settings
-/// that differ from `[link]`'s (none on a TCP link)
+/// A link as written: its name, the machines it's for, its address, its color in place of the
+/// palette's (MAX-201), and the line settings that differ from `[link]`'s (none on a TCP link)
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SavedLink {
@@ -36,6 +37,8 @@ pub struct SavedLink {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hosts: Vec<String>,
     pub address: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<Color>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub baud: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]

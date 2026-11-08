@@ -158,6 +158,14 @@ is loaded at once, so only `replay-stop` applies to it.
 Both refuse what the [directory](directory.md) refuses, and stop the rest of
 the line. See [Saved links](saved-links.md).
 
+### Naming the session
+
+| Command | Does |
+| --- | --- |
+| `session-name [text]` | [Names](capture.md#naming-a-session) the running session, in quotes when it has spaces; without text, takes its name away |
+
+Without a running session it refuses, and stops the rest of the line.
+
 ### Settings
 
 | Command | Does |

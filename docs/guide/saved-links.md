@@ -16,6 +16,7 @@ on the first save. `links_path` in `config.toml` moves it elsewhere.
 name = "esp32"
 hosts = ["laptop"]           # the machines it's for; none: every one
 address = "/dev/ttyUSB0"
+color = "#ff8800"            # none: one of the palette's, by its port
 baud = 115200                # the line fields left out are [link]'s
 bits = 8
 parity = "none"
@@ -83,6 +84,22 @@ maxicom calls a saved link by its name:
 - in the status bar (`{port}`);
 - in the notices and the link's popups, with the address after it:
   `esp32 (/dev/ttyUSB0)`.
+
+## Its color
+
+Each link has a color. It shows on its name in the Saved links tab, on its
+sessions in the [session browser](capture.md#session-browser), and in the
+status bar wherever a style uses [`link`](status-bar.md).
+
+Without a `color`, the link gets one of the [palette's](theme.md) `links`,
+picked from its port. With one, it takes what `theme.toml` takes: a name
+(`red`), a 256-color index (`75`) or a hex value (`#ff8800`). The form shows a
+sample as you type.
+
+The session browser looks the color up when it opens, so changing a link's
+color changes its past sessions too, and deleting the link gives them back the
+palette's. Sessions recorded on another machine keep the palette's, as the same
+path can be another device there.
 
 ## When the file doesn't load
 

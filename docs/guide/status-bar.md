@@ -206,7 +206,7 @@ and `bg=<color>` you set either one; `fg=none` and `bg=none` clear them.
 | `match`, `match_active` | The search highlights |
 | `border` | The frame's color, for separators that blend into it |
 | `bar` | The bar's background |
-| `link` | The current link's color, one of `[palette] links`, as in the session browser: `[{port}](link)` |
+| `link` | The current link's color, as in the session browser: its [saved color](saved-links.md#its-color), or one of `[palette] links`: `[{port}](link)` |
 | `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `gray`, `darkgray`, `white` | Named colors |
 | `#RRGGBB` | An exact color |
 

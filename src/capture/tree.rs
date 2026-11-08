@@ -47,10 +47,14 @@ pub struct SessionNode {
 impl SessionNode {
     fn leaf(sessions: &[Session], index: usize, parent: &str) -> Self {
         let session = &sessions[index];
+        let label = match session.name() {
+            Some(name) => format!("{name} · {}", session.time_span()),
+            None => session.time_span(),
+        };
         Self {
             kind: NodeKind::Session,
             key: format!("{parent}/{}", session.stem),
-            label: session.time_span(),
+            label,
             sessions: vec![index],
             size: session.size,
             children: Vec::new(),

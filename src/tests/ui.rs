@@ -2927,6 +2927,138 @@ fn link_form_popup() {
     assert_eq!(form.field, crate::overlays::LinkFormField::Address);
 }
 
+/// MAX-201: the form's color field shows a sample of the color typed, of the palette's when empty,
+/// and says when it isn't a color. The Saved tab writes a link's name in its color, the
+/// palette's without one, and its selected row is one bar.
+/// How: the form with each color; the directory with two links, the second then selected.
+#[test]
+fn saved_link_colors_show() {
+    use crate::overlays::LinkForm;
+    use ratatui::style::Color;
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 30);
+    let link = crate::configs::links::SavedLink {
+        address: "/dev/ttyUSB9".to_string(),
+        ..Default::default()
+    };
+    let mut form = LinkForm::new(link, &crate::configs::LinkDefaults::default());
+    let mut sample = |form: &LinkForm| {
+        let overlay = Overlay::LinkForm(Box::new(form.clone()));
+        h.app.update(Action::App(AppAction::OpenOverlay(overlay)));
+        let rows = h.draw();
+        let (x, y) = cell_of(&rows, "██");
+        (rows, h.terminal.backend().buffer()[(x, y)].fg)
+    };
+    let palette = h_palette_color("ttyUSB9");
+    let (rows, color) = sample(&form);
+    assert!(has(&rows, "  Color     : from the palette ██"), "{rows:#?}");
+    assert_eq!(color, palette, "{rows:#?}");
+    form.color = "#102030".to_string().into();
+    let (rows, color) = sample(&form);
+    assert!(has(&rows, "  Color     : #102030 ██"), "{rows:#?}");
+    assert_eq!(color, Color::Rgb(0x10, 0x20, 0x30), "{rows:#?}");
+
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 30);
+    form.color = "not-one".to_string().into();
+    let overlay = Overlay::LinkForm(Box::new(form.clone()));
+    h.app.update(Action::App(AppAction::OpenOverlay(overlay)));
+    let rows = h.draw();
+    assert!(has(&rows, "  Color     : not-one not a color"), "{rows:#?}");
+    h.app.update(Action::Overlay(DialogAction::Close));
+
+    let links = "[[link]]\nname = 'esp32'\naddress = '/dev/ttyUSB9'\ncolor = '#102030'\n\
+                 [[link]]\nname = 'router'\naddress = 'tcp://10.0.0.1:4000'\n";
+    h.app.set_links(Ok(toml::from_str(links).unwrap()));
+    let directory = h.app.directory(Vec::new());
+    h.app
+        .update(Action::App(AppAction::OpenOverlay(Overlay::Directory(
+            directory,
+        ))));
+    let rows = h.draw();
+    let name_fg = |h: &Harness, rows: &[String], name: &str| {
+        let (x, y) = cell_of(rows, name);
+        h.terminal.backend().buffer()[(x, y)].fg
+    };
+    let address = "tcp://10.0.0.1:4000"
+        .parse::<crate::link::Address>()
+        .unwrap();
+    let router = h_palette_color(&address.file_tag());
+    assert_eq!(name_fg(&h, &rows, "router"), router, "{rows:#?}");
+    // the first row is selected, one bar
+    assert_eq!(
+        name_fg(&h, &rows, "esp32"),
+        h.theme.palette.text,
+        "{rows:#?}"
+    );
+    h.app.update(Action::Overlay(DialogAction::Down));
+    let rows = h.draw();
+    assert_eq!(
+        name_fg(&h, &rows, "esp32"),
+        Color::Rgb(0x10, 0x20, 0x30),
+        "{rows:#?}"
+    );
+    assert_eq!(
+        name_fg(&h, &rows, "router"),
+        h.theme.palette.text,
+        "{rows:#?}"
+    );
+}
+
+/// The default palette's color of a link's tag
+fn h_palette_color(tag: &str) -> ratatui::style::Color {
+    crate::configs::ThemeConfig::default()
+        .palette
+        .link_color(tag)
+}
+
+/// MAX-213: through the real keys, `n` opens the name's field in the session browser: the popup
+/// keys `q` and `j` are typed there, the buttons are its Save and Cancel, the cursor is in it.
+/// Enter names the app's own running session through its recording, and the list and the details
+/// show the name. A past session named from the same keys shows it too.
+/// How: a past session next to the app's running one, each named with the keys.
+#[test]
+fn session_browser_names_with_the_real_keys() {
+    use crossterm::event::KeyCode;
+    let dir =
+        std::env::temp_dir().join(format!("maxicom_test_{}_browser_names", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let text = crate::capture::CaptureFormat::default();
+    crate::capture::tests::write_test_session(&dir, "/dev/old", &text, b"x\r\n", b"");
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
+    h.app.start_session(Some(dir.clone()));
+    open_session_list(&mut h);
+    let rows = h.draw();
+    assert!(has(&rows, "n Name"), "{rows:#?}");
+
+    key_do(&mut h, KeyCode::Char('n'), KeyModifiers::NONE);
+    for c in "qj".chars() {
+        key_do(&mut h, KeyCode::Char(c), KeyModifiers::NONE);
+    }
+    let rows = h.draw();
+    assert!(h.app.overlay().is_some(), "q closed it");
+    assert!(has(&rows, "Session name: qj"), "{rows:#?}");
+    assert!(has(&rows, "Enter Save"), "{rows:#?}");
+    assert!(has(&rows, "Esc Cancel"), "{rows:#?}");
+    let (x, y) = cell_of(&rows, "Session name: qj");
+    assert_eq!(cursor_cell(&mut h), (x + 16, y));
+
+    key_do(&mut h, KeyCode::Enter, KeyModifiers::NONE);
+    let rows = h.draw();
+    assert!(!has(&rows, "Session name:"), "{rows:#?}");
+    assert!(has(&rows, "qj · "), "{rows:#?}");
+    assert!(has(&rows, "Name    qj"), "{rows:#?}");
+    let sessions = crate::capture::list_sessions(&dir).unwrap();
+    assert_eq!(sessions[0].name(), Some("qj"));
+
+    key_do(&mut h, KeyCode::Down, KeyModifiers::NONE);
+    key_do(&mut h, KeyCode::Char('n'), KeyModifiers::NONE);
+    key_do(&mut h, KeyCode::Char('z'), KeyModifiers::NONE);
+    key_do(&mut h, KeyCode::Enter, KeyModifiers::NONE);
+    let sessions = crate::capture::list_sessions(&dir).unwrap();
+    assert_eq!(sessions[1].name(), Some("z"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// MAX-185: the link's popups name a saved link by its name, its address after it.
 /// How: the app's `/dev/ttyUSB0` saved as `esp32`, the detached then the lost popup.
 #[test]

@@ -4,13 +4,18 @@ use std::{
 };
 
 use crossterm::event::KeyCode;
+use ratatui::style::Color;
+use tui_input::Input;
 
 use crate::{
     capture::{
-        DEFAULT_GROUP_BY, GroupLevel, NodeKind, Session, SessionNode, delete_sessions,
-        group_separator, list_sessions, read_tail_lines, session_list, session_tree,
+        DEFAULT_GROUP_BY, GroupLevel, NodeKind, Session, SessionNode, clean_session_name,
+        delete_sessions, group_separator, hostname, list_sessions, name_finished_session,
+        read_tail_lines, session_list, session_name_notice, session_tree,
     },
-    inputs::DialogAction,
+    configs::ThemeConfig,
+    inputs::{DialogAction, dispatch_input_key, paste_into_input},
+    link::Address,
     overlays::{OverlayResponse, PopupTarget, copy_path},
     ui::status_bar::write_human,
 };
@@ -69,9 +74,11 @@ pub struct ConfirmDelete {
 /// path or the folder's, and reads the folder again. `selected` is a row of `rows`, `open` the
 /// keys of the open groups: they stay across a reload. `restored` is the session the history was filled from
 /// restore at the next launch. `live` says a replay set the live link aside, which the browser
-/// goes back to, and `live_raw` is that link's paused session (MAX-166). `max_size` is the
-/// folder's size limit, for its usage in the header (MAX-202). The preview is read when the
-/// selection changes, not on every frame
+/// goes back to, and `live_raw` is that link's paused session (MAX-166). `own_raw` is this
+/// maxicom's running session, paused or not, the one running session it can name, and `naming` the
+/// name being typed for the selected session (MAX-213). `max_size` is the folder's size limit, for
+/// its usage in the header (MAX-202). `link_colors` are this machine's saved colors, `host` this
+/// machine (MAX-201). The preview is read when the selection changes, not on every frame
 #[derive(Debug, Clone)]
 pub struct SessionBrowser {
     pub dir: PathBuf,
@@ -85,8 +92,12 @@ pub struct SessionBrowser {
     pub restored: Option<String>,
     pub live: bool,
     pub live_raw: Option<PathBuf>,
+    pub own_raw: Option<PathBuf>,
     pub max_size: Option<u64>,
+    pub link_colors: Vec<(Address, Color)>,
+    pub host: String,
     pub confirm_delete: Option<ConfirmDelete>,
+    pub naming: Option<Input>,
     pub preview: Vec<PreviewLine>,
 }
 
@@ -104,8 +115,12 @@ impl SessionBrowser {
             restored,
             live: false,
             live_raw: None,
+            own_raw: None,
             max_size: None,
+            link_colors: Vec::new(),
+            host: hostname(),
             confirm_delete: None,
+            naming: None,
             preview: Vec::new(),
         };
         browser.reload();
@@ -154,6 +169,33 @@ impl SessionBrowser {
         self.live = true;
         self.live_raw = raw;
         self
+    }
+
+    /// This maxicom's running session, whose name goes through its recording (MAX-213)
+    pub fn with_own_session(mut self, raw: Option<&Path>) -> Self {
+        self.own_raw = raw.map(Path::to_path_buf);
+        self
+    }
+
+    /// This machine's saved colors (MAX-201)
+    pub fn with_link_colors(mut self, colors: Vec<(Address, Color)>) -> Self {
+        self.link_colors = colors;
+        self
+    }
+
+    /// A session's color: the one its address is saved with, when it was recorded on this
+    /// machine (MAX-201), else the palette's by its port
+    pub fn link_color(&self, session: &Session, theme: &ThemeConfig) -> Color {
+        let device = session.meta.as_ref().map(|meta| &meta.device);
+        let device = device.filter(|device| device.host.eq_ignore_ascii_case(&self.host));
+        device
+            .and_then(|device| {
+                (self.link_colors.iter()).find(|(address, _)| *address == device.address)
+            })
+            .map_or_else(
+                || theme.palette.link_color(session.port_tag()),
+                |(_, color)| *color,
+            )
     }
 
     /// The folder's size limit, none for no limit
@@ -254,7 +296,7 @@ impl SessionBrowser {
 
     /// Reads the folder again, the groups staying open and the same row staying selected when
     /// it is still there, else the row holding its newest session
-    fn reload(&mut self) {
+    pub fn reload(&mut self) {
         let kept = self.selected_row().map(|row| {
             let newest = row.node.sessions.last();
             let stem = newest.map(|&index| self.sessions[index].stem.clone());
@@ -354,6 +396,9 @@ impl SessionBrowser {
         if self.confirm_delete.is_some() {
             return self.handle_confirm(action);
         }
+        if self.naming.is_some() {
+            return self.handle_naming(action);
+        }
         let last = self.rows().len().saturating_sub(1);
         match action {
             DialogAction::Close => return OverlayResponse::Close,
@@ -379,6 +424,7 @@ impl SessionBrowser {
             DialogAction::Pick(PopupTarget::SessionBackToLive) => return self.back_to_live(),
             DialogAction::Pick(PopupTarget::SessionDelete) => return self.delete_selected(),
             DialogAction::Pick(PopupTarget::SessionDeleteAll) => return self.ask_delete_all(),
+            DialogAction::Pick(PopupTarget::SessionName) => return self.ask_name(),
             DialogAction::Pick(PopupTarget::SessionView) => self.switch_view(),
             DialogAction::Pick(PopupTarget::SessionCopyLog) => return self.copy_log_path(),
             DialogAction::Pick(PopupTarget::SessionCopyFolder) => {
@@ -390,6 +436,7 @@ impl SessionBrowser {
                 KeyCode::Char('L') => return self.back_to_live(),
                 KeyCode::Char('d') | KeyCode::Delete => return self.delete_selected(),
                 KeyCode::Char('D') => return self.ask_delete_all(),
+                KeyCode::Char('n') => return self.ask_name(),
                 KeyCode::Char('s') => self.switch_view(),
                 KeyCode::Char('c') => return self.copy_log_path(),
                 KeyCode::Char('C') => return copy_path(&self.dir, "folder"),
@@ -416,6 +463,72 @@ impl SessionBrowser {
         match self.confirm_delete.take() {
             Some(confirm) if yes => self.delete_confirmed(&confirm.sessions),
             _ => OverlayResponse::Handled,
+        }
+    }
+
+    /// The name's field on the selected session, with its name (MAX-213). Only a session has one:
+    /// a group is a view, its periods change as sessions are pruned. Nor one without a meta to
+    /// keep it, or running in another maxicom, whose recording rewrites its meta
+    fn ask_name(&mut self) -> OverlayResponse {
+        let Some(session) = self.selected_session() else {
+            return notify("Only a session has a name".to_string(), false);
+        };
+        let Some(meta) = &session.meta else {
+            return notify("This session has no meta file for a name".to_string(), true);
+        };
+        if session.running && session.raw_path() != self.own_raw.as_deref() {
+            return notify(
+                "Name this session in the maxicom running it".to_string(),
+                true,
+            );
+        }
+        let name = meta.name.clone().unwrap_or_default();
+        self.naming = Some(Input::new(name));
+        OverlayResponse::Handled
+    }
+
+    /// The name typed: Enter or its button saves it, Esc or its button leaves it as it was
+    fn handle_naming(&mut self, action: DialogAction) -> OverlayResponse {
+        match action {
+            DialogAction::Confirm | DialogAction::Pick(PopupTarget::SessionConfirm) => {
+                return self.save_name();
+            }
+            DialogAction::Close | DialogAction::Pick(PopupTarget::SessionCancel) => {
+                self.naming = None;
+            }
+            DialogAction::HandleKey(key) => {
+                if let Some(input) = &mut self.naming {
+                    dispatch_input_key(input, key);
+                }
+            }
+            DialogAction::Paste(text) => {
+                if let Some(input) = &mut self.naming {
+                    paste_into_input(input, &text);
+                }
+            }
+            _ => {}
+        }
+        OverlayResponse::Handled
+    }
+
+    /// The name typed in the selected session's meta, through the app for this maxicom's running
+    /// session, whose recording holds it. Empty, it takes the name away
+    fn save_name(&mut self) -> OverlayResponse {
+        let Some(input) = self.naming.take() else {
+            return OverlayResponse::Handled;
+        };
+        let Some(session) = self.selected_session() else {
+            return OverlayResponse::Handled;
+        };
+        if session.running {
+            return OverlayResponse::NameRunningSession(input.value().to_string());
+        }
+        let name = clean_session_name(input.value());
+        let result = name_finished_session(session, name.clone());
+        self.reload();
+        match result {
+            Ok(()) => notify(session_name_notice(name.as_deref()), false),
+            Err(err) => notify(format!("Session not named: {err}"), true),
         }
     }
 

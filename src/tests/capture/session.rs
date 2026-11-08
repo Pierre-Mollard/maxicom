@@ -258,6 +258,7 @@ fn write_session(dir: &Path, stem: &str, device: &CaptureDevice, raw: &[u8]) {
     let meta = RecordingMeta {
         version: SESSION_META_VERSION,
         started: 1_700_000_000,
+        name: None,
         device: device.clone(),
         text: CaptureFormat::default(),
         terminal: None,
@@ -701,4 +702,47 @@ fn default_limits_are_the_size_alone() {
     );
     sessions.keep = 5;
     assert_eq!(sessions.limits().keep, Some(5));
+}
+
+/// MAX-213: a session's name is kept in its meta, which reads the same without one (a meta from
+/// before, written with none too). Naming a finished session changes only that; a running one
+/// is refused, as its recording rewrites its meta. Typed text keeps one printable line, and
+/// nothing left takes the name away.
+/// How: a session written and named, read back from the folder; then a running one.
+#[test]
+fn session_names() {
+    let dir = temp_dir("session_names");
+    let text = CaptureFormat::default();
+    let session = write_test_session(&dir, "/dev/ttyUSB0", &text, b"data\r\n", b"");
+    assert_eq!(session.name(), None);
+    let meta = fs::read_to_string(folder_file(&session.folder, "meta")).unwrap();
+    assert!(!meta.contains("name"), "{meta}");
+
+    name_finished_session(&session, Some("boot test".into())).unwrap();
+    let named = list_sessions(&dir).unwrap().remove(0);
+    assert_eq!(named.name(), Some("boot test"));
+    assert_eq!(
+        named.meta.as_ref().map(|meta| &meta.device),
+        session.meta.as_ref().map(|meta| &meta.device)
+    );
+    assert_eq!(named.ended, session.ended);
+    name_finished_session(&named, None).unwrap();
+    assert_eq!(list_sessions(&dir).unwrap().remove(0).name(), None);
+
+    assert_eq!(
+        clean_session_name("  boot\x1b[31m\ttest\n "),
+        Some("boot[31mtest".to_string())
+    );
+    assert_eq!(clean_session_name(" \t "), None);
+
+    let device = device("/dev/ttyUSB1");
+    let mut recorder = Recorder::default();
+    recorder
+        .start_session(&dir, &device, &text, SessionLimits::keep(20))
+        .unwrap();
+    let running = list_sessions(&dir).unwrap().remove(0);
+    assert!(running.running);
+    assert!(name_finished_session(&running, Some("no".into())).is_err());
+    drop(recorder);
+    let _ = fs::remove_dir_all(&dir);
 }

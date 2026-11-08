@@ -235,6 +235,15 @@ pub fn link_delete(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     Ok(Action::App(AppAction::DeleteLink(link.clone())))
 }
 
+/// `session-name [text]` (MAX-213): the running session named, no text taking the name away
+pub fn session_name(_app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let name = match args {
+        [ArgValue::String(name)] => name.clone(),
+        _ => String::new(),
+    };
+    Ok(Action::App(AppAction::NameSession(name)))
+}
+
 /// `replay <path> [delay-ms]`: the file's bytes in place of the link's, a buffer every delay
 /// (MAX-166)
 pub fn replay(_app: &App, args: &[ArgValue]) -> Result<Action, String> {

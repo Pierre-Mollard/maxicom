@@ -114,7 +114,7 @@
 //! ## Style Keywords
 //! - **Modifiers**: `bold`, `dim`, `italic`, `underlined` (`underline`), `reversed` (`reverse`), `reset` (`default`), `crossed`, `slow_blink` (`sblink`), `rapid_blink` (`rblink`)
 //! - **Visibility**: `hide`, `hidden`, `none` (omits the span completely)
-//! - **Theme Palette Names**: `main` (or `primary`), `secondary`, `ternary`, `text`, `muted`, `warn` (`warning`), `good` (`ok`, `success`), `unselected`; `selection` and `selection_raw` are the background of `[ui.selection]` / `[ui.selection_raw]`, `search` the one of `[search.search_indicator]`; `border` the color of `[ui.border_panel]`, `bar` the bar's background, `match` / `match_active` the search highlights' backgrounds, `link` the current link's color from the palette's `links`, as in the session browser
+//! - **Theme Palette Names**: `main` (or `primary`), `secondary`, `ternary`, `text`, `muted`, `warn` (`warning`), `good` (`ok`, `success`), `unselected`; `selection` and `selection_raw` are the background of `[ui.selection]` / `[ui.selection_raw]`, `search` the one of `[search.search_indicator]`; `border` the color of `[ui.border_panel]`, `bar` the bar's background, `match` / `match_active` the search highlights' backgrounds, `link` the current link's color, its saved `color` or the palette's `links`, as in the session browser
 //! - **Standard Named Colors**: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `gray`, `darkgray`, `white`, or hex `#RRGGBB`
 //! - **Explicit Foregrounds**: `fg=<color>` or simply `<color>`
 //! - **Explicit Backgrounds**: `bg=<color>` (e.g. `bg=main`, `bg=red`, `bg=#1e1e2e`)
@@ -1131,9 +1131,12 @@ fn resolve_style(exprs: &[StyleExpr], base_style: Style, app: &App) -> Option<St
     Some(style)
 }
 
-/// The current link's color in the session browser, by the name its sessions take
+/// The current link's color in the session browser: the one it's saved with (MAX-201), else by
+/// the name its sessions take
 fn link_color(palette: &PaletteColors, app: &App) -> Color {
-    palette.link_color(&app.link_config().address.file_tag())
+    let address = &app.link_config().address;
+    app.saved_color(address)
+        .unwrap_or_else(|| palette.link_color(&address.file_tag()))
 }
 
 impl StyleExpr {

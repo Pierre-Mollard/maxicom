@@ -818,3 +818,127 @@ fn focus_opens_down_to_the_session() {
         assert_eq!(shown(&browser), [format!("> {DEVICE}")]);
     }
 }
+
+fn type_name(browser: &mut SessionBrowser, name: &str) {
+    for c in name.chars() {
+        assert!(matches!(
+            browser.handle_action(key(c)),
+            OverlayResponse::Handled
+        ));
+    }
+}
+
+/// MAX-213: `n` asks a finished session's name in a field holding its name, whose letters are
+/// typed and not the browser's keys. Enter writes it and says so, Esc leaves it as it was, and
+/// an emptied field takes it away.
+/// How: a session on port a, named, renamed then cancelled, then emptied.
+#[test]
+fn name_a_finished_session() {
+    let (dir, running) = folder("browser_name");
+    let mut browser = list_view(&dir);
+    select(&mut browser, "a");
+    browser.handle_action(key('n'));
+    assert_eq!(browser.naming.as_ref().unwrap().value(), "");
+    // `d` and `s` here are letters of the name
+    type_name(&mut browser, "dps");
+    assert!(browser.confirm_delete.is_none());
+    assert!(matches!(
+        browser.handle_action(DialogAction::Confirm),
+        OverlayResponse::HandledNotify { message, warn: false } if message == "Session named 'dps'"
+    ));
+    assert!(browser.naming.is_none());
+    let session = browser.selected_session().unwrap();
+    assert_eq!((session.port_tag(), session.name()), ("a", Some("dps")));
+
+    browser.handle_action(key('n'));
+    assert_eq!(browser.naming.as_ref().unwrap().value(), "dps");
+    type_name(&mut browser, "x");
+    browser.handle_action(DialogAction::Close);
+    assert!(browser.naming.is_none());
+    assert_eq!(browser.selected_session().unwrap().name(), Some("dps"));
+
+    browser.handle_action(DialogAction::Pick(PopupTarget::SessionName));
+    browser.naming = Some(Input::default());
+    assert!(matches!(
+        browser.handle_action(DialogAction::Pick(PopupTarget::SessionConfirm)),
+        OverlayResponse::HandledNotify { message, warn: false } if message == "Session name removed"
+    ));
+    assert_eq!(browser.selected_session().unwrap().name(), None);
+    drop(running);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-213: this maxicom's running session is named through the app, as its recording holds the
+/// meta; one running in another maxicom, a group and a session without a meta aren't, and say so.
+/// How: the running session of `folder` first as another maxicom's, then as this one's; the tree's
+/// group; a session's meta removed.
+#[test]
+fn what_can_not_be_named() {
+    let (dir, running) = folder("browser_name_refused");
+    let refused = |response: OverlayResponse, expected: &str| match response {
+        OverlayResponse::HandledNotify { message, .. } => assert_eq!(message, expected),
+        _ => panic!("not refused: {expected}"),
+    };
+    let mut browser = list_view(&dir);
+    select(&mut browser, "live");
+    refused(
+        browser.handle_action(key('n')),
+        "Name this session in the maxicom running it",
+    );
+    assert!(browser.naming.is_none());
+
+    let mut browser = list_view(&dir).with_own_session(running.session_raw());
+    select(&mut browser, "live");
+    browser.handle_action(key('n'));
+    type_name(&mut browser, "mine");
+    assert!(matches!(
+        browser.handle_action(DialogAction::Confirm),
+        OverlayResponse::NameRunningSession(name) if name == "mine"
+    ));
+
+    let mut tree = SessionBrowser::new(dir.clone(), None);
+    assert!(tree.selected_session().is_none());
+    refused(tree.handle_action(key('n')), "Only a session has a name");
+
+    let mut browser = list_view(&dir);
+    select(&mut browser, "a");
+    let meta = browser.selected_session().unwrap().raw_path().unwrap();
+    std::fs::remove_file(meta.with_extension("meta")).unwrap();
+    browser.handle_action(key('r'));
+    select(&mut browser, "a");
+    refused(
+        browser.handle_action(key('n')),
+        "This session has no meta file for a name",
+    );
+    drop(running);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-201: a session takes the color its address is saved with when it was recorded on this
+/// machine, the palette's otherwise: another address, or the same path on another machine.
+/// How: sessions on two ports, one saved; then the host changed.
+#[test]
+fn a_session_takes_its_link_color() {
+    let (dir, running) = folder("browser_link_color");
+    let theme = ThemeConfig::default();
+    let address = "/dev/a".parse::<Address>().unwrap();
+    let mut browser =
+        SessionBrowser::new(dir.clone(), None).with_link_colors(vec![(address, Color::Indexed(9))]);
+    let session = |browser: &SessionBrowser, tag: &str| {
+        let found = browser.sessions.iter().find(|s| s.port_tag() == tag);
+        found.unwrap().clone()
+    };
+    let (a, b) = (session(&browser, "a"), session(&browser, "b"));
+    assert_eq!(browser.link_color(&a, &theme), Color::Indexed(9));
+    assert_eq!(
+        browser.link_color(&b, &theme),
+        theme.palette.link_color("b")
+    );
+    browser.host = "another-machine".to_string();
+    assert_eq!(
+        browser.link_color(&a, &theme),
+        theme.palette.link_color("a")
+    );
+    drop(running);
+    let _ = std::fs::remove_dir_all(&dir);
+}

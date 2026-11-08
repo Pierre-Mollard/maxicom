@@ -77,6 +77,7 @@ pub enum AppAction {
     OpenLink(LinkConfig),
     SaveLink(SavedLink),
     DeleteLink(SavedLink),
+    NameSession(String),
     Replay { path: PathBuf, delay: Duration },
     StopReplay,
     ControlReplay(ReplayControl),

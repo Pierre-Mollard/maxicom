@@ -262,6 +262,11 @@ impl Recorder {
         }
     }
 
+    /// The session backup, for what changes in its meta (MAX-213)
+    pub fn session_mut(&mut self) -> Option<&mut RecordingWriter> {
+        self.session.as_mut()
+    }
+
     /// The `.raw` of the session backup running, none without one
     pub fn session_raw(&self) -> Option<&Path> {
         self.session.as_ref().map(RecordingWriter::raw_path)
@@ -499,6 +504,15 @@ impl RecordingWriter {
         };
         meta.terminal = Some(size);
         let _ = meta.write(&RecordingMeta::path_of(&self.raw_path));
+    }
+
+    /// The meta written again with `name` (MAX-213)
+    pub fn set_name(&mut self, name: Option<String>) -> io::Result<()> {
+        let Some(meta) = self.meta.as_mut() else {
+            return Err(io::Error::other("the session has no meta file"));
+        };
+        meta.name = name;
+        meta.write(&RecordingMeta::path_of(&self.raw_path))
     }
 
     /// The bytes received at `time`: the time first, so a crash between the writes leaves

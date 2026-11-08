@@ -13,6 +13,8 @@ command, or Directory in the right-click menu.
 | Saved links | Name, Address, Line (the line settings), State |
 | Serial ports | Port (its path), Device, ID, State |
 
+A saved link's name shows in [its color](saved-links.md#its-color).
+
 Switch tabs with Tab, Left / Right, or a click on the tab.
 
 The directory opens on Saved links when you have at least one, with the link

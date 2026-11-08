@@ -172,6 +172,7 @@ fn saved_from_a_config() {
         name: "esp32".into(),
         hosts: vec!["laptop".into()],
         address: "/dev/ttyUSB0".into(),
+        color: None,
         baud: Some(9600),
         bits: Some(7),
         parity: Some(Parity::Even),
@@ -265,4 +266,34 @@ fn add_reads_again_and_writes_whole() {
 #[test]
 fn this_host_is_known() {
     assert!(this_host().is_some_and(|name| !name.contains('\0')));
+}
+
+/// MAX-201: a link's `color` takes what `theme.toml` takes, is written back the same way, stays
+/// out of the file when there's none; one that isn't a color doesn't load.
+/// How: a name, an index and a hex read, written and read again; then a bad one.
+#[test]
+fn link_colors() {
+    let colors: LinksConfig = toml::from_str(
+        "[[link]]\nname = 'a'\naddress = 'COM1'\ncolor = 'red'\n\
+         [[link]]\nname = 'b'\naddress = 'COM2'\ncolor = '75'\n\
+         [[link]]\nname = 'c'\naddress = 'COM3'\ncolor = '#ff8800'\n\
+         [[link]]\nname = 'd'\naddress = 'COM4'\n",
+    )
+    .unwrap();
+    let read: Vec<_> = colors.links.iter().map(|link| link.color).collect();
+    assert_eq!(
+        read,
+        [
+            Some(ratatui::style::Color::Red),
+            Some(ratatui::style::Color::Indexed(75)),
+            Some(ratatui::style::Color::Rgb(0xff, 0x88, 0)),
+            None,
+        ]
+    );
+    let written = toml::to_string(&colors).unwrap();
+    assert_eq!(toml::from_str::<LinksConfig>(&written).unwrap(), colors);
+    assert!(!written.split("[[link]]").nth(4).unwrap().contains("color"));
+
+    let bad = "[[link]]\nname = 'a'\naddress = 'COM1'\ncolor = 'not-one'\n";
+    assert!(toml::from_str::<LinksConfig>(bad).is_err());
 }

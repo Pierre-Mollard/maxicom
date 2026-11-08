@@ -43,6 +43,12 @@ What changes in each version of maxicom. The format follows
   of sessions, a day or a week, to scroll and search them together: `p` on a
   group. A notification says what doesn't fit in the histories. A group also
   has a preview, and `d` deletes it after a question.
+- [Name a session](https://pierre-mollard.github.io/maxicom/capture.html#naming-a-session)
+  with `n` in the session browser, or `session-name` for the running one. The
+  name shows in the browser and in the restore and replay separators.
+- A [saved link's color](https://pierre-mollard.github.io/maxicom/saved-links.html#its-color),
+  `color` in `links.toml` or in the link's form. It shows in the directory, on
+  its sessions in the session browser, and in the status bar's `link`.
 
 ### Changed
 

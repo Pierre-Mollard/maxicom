@@ -118,12 +118,14 @@ pub struct TerminalSize {
 
 /// The `.meta` file of a session or a full recording, written when it starts, and again when
 /// the terminal grid changes size: a restore replays the bytes at the size they ended on
-/// (MAX-178), none in a meta written before. A file of another `version` is read as none, and
-/// never restores
+/// (MAX-178), none in a meta written before, and when the session is named (MAX-213). A file of
+/// another `version` is read as none, and never restores
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordingMeta {
     pub version: u32,
     pub started: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub device: CaptureDevice,
     pub text: CaptureFormat,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -135,6 +137,7 @@ impl RecordingMeta {
         Self {
             version: SESSION_META_VERSION,
             started: started.timestamp(),
+            name: None,
             device,
             text,
             terminal: None,
@@ -362,6 +365,11 @@ impl Session {
         self.stem.splitn(3, '_').nth(2).unwrap_or(&self.stem)
     }
 
+    /// The name it was given (MAX-213)
+    pub fn name(&self) -> Option<&str> {
+        self.meta.as_ref().and_then(|meta| meta.name.as_deref())
+    }
+
     pub fn text_path(&self) -> Option<&Path> {
         self.file("log")
     }
@@ -386,6 +394,38 @@ impl Session {
     pub fn time_span(&self) -> String {
         time_span(self.started, self.ended)
     }
+}
+
+/// A session's name as typed: one line of printable text, as it ends up in the separators, which
+/// go through the terminal. None when nothing is left, which takes the name away (MAX-213)
+pub fn clean_session_name(name: &str) -> Option<String> {
+    let name: String = name.chars().filter(|c| !c.is_control()).collect();
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// What naming a session says
+pub fn session_name_notice(name: Option<&str>) -> String {
+    match name {
+        Some(name) => format!("Session named '{name}'"),
+        None => "Session name removed".to_string(),
+    }
+}
+
+/// `name` in the meta of the finished session `entry`, refused while it is still running: its
+/// recording rewrites the meta from what it holds (MAX-213)
+pub fn name_finished_session(entry: &Session, name: Option<String>) -> io::Result<()> {
+    if is_running(&entry.folder) {
+        return Err(io::Error::other("the session is still running"));
+    }
+    let Some(meta) = &entry.meta else {
+        return Err(io::Error::other("the session has no meta file"));
+    };
+    let meta = RecordingMeta {
+        name,
+        ..meta.clone()
+    };
+    meta.write(&folder_file(&entry.folder, "meta"))
 }
 
 /// `started → ended`, the end without its date on the same day

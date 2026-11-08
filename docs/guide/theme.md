@@ -62,7 +62,7 @@ these names too (`main`, `secondary`...).
 | `text_warn` | `Red` | Alerts (`warn`): `● REC`, `+CR`, armed triggers |
 | `text_good` | `Green` | Good states |
 | `unselected` | `White` | Unselected items |
-| `links` | 8 indexes | The colors given to links, one per port and the same at every launch (status bar `link`, session browser) |
+| `links` | 8 indexes | The colors given to links, one per port and the same at every launch (status bar `link`, session browser, directory), unless a [saved link](saved-links.md#its-color) has its own |
 
 ### `[ui]`
 

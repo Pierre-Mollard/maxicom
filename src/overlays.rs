@@ -82,6 +82,7 @@ pub enum PopupTarget {
     SessionBackToLive,
     SessionDelete,
     SessionDeleteAll,
+    SessionName,
     SessionView,
     SessionCopyLog,
     SessionCopyFolder,
@@ -142,6 +143,7 @@ pub enum OverlayResponse {
     },
     ReplayGroup(Vec<Session>),
     StopReplay,
+    NameRunningSession(String),
     HandledNotify {
         message: String,
         warn: bool,
@@ -181,7 +183,7 @@ impl Overlay {
                 | Overlay::TerminalSize(_)
                 | Overlay::CommandLine(_)
                 | Overlay::LinkForm(_)
-        )
+        ) || matches!(self, Overlay::Sessions(browser) if browser.naming.is_some())
     }
 
     /// A plain letter key goes to the popup before the popup keys (`q`, `j`...): the marks

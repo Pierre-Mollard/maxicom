@@ -390,6 +390,16 @@ pub static COMMANDS: &[CommandSpec] = {
             "Delete a saved link from links.toml",
         ),
         CommandSpec::build(
+            "session-name",
+            &[ArgSpec {
+                name: "text",
+                kind: ArgKind::String,
+                optional: true,
+            }],
+            build::session_name,
+            "Name the running session, in quotes with spaces; no text takes the name away",
+        ),
+        CommandSpec::build(
             "replay",
             &[
                 arg("path", ArgKind::Path),

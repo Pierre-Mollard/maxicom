@@ -120,4 +120,19 @@ fn restore_separator_names_port_and_times() {
         restore_separator(&session),
         "── restored: ttyUSB0, 2026-01-01 10:15 → 2026-01-02 09:15 ──"
     );
+
+    // MAX-213: a named session's separators start with its name
+    let device = crate::capture::tests::device("/dev/ttyUSB0");
+    let mut meta = crate::capture::RecordingMeta::new(day(1, 10), device, Default::default());
+    meta.name = Some("boot test".to_string());
+    session.meta = Some(meta);
+    session.ended = Some(day(1, 16));
+    assert_eq!(
+        restore_separator(&session),
+        "── restored: boot test, ttyUSB0, 2026-01-01 10:15 → 16:15 ──"
+    );
+    assert_eq!(
+        group_separator(&session),
+        "── end of session: boot test, ttyUSB0, 2026-01-01 10:15 → 16:15 ──"
+    );
 }

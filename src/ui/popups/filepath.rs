@@ -195,7 +195,7 @@ const FILE_NOTE: &str = " [type filepath]";
 
 /// The part of a field's text that fits `width` columns with the cursor in view (one column
 /// kept for it at the end), and the cursor's column in that part
-fn field_view(input: &Input, width: usize) -> (String, u16) {
+pub fn field_view(input: &Input, width: usize) -> (String, u16) {
     let scroll = input.visual_scroll(width.saturating_sub(1));
     let (mut skipped, mut used) = (0, 0);
     let mut shown = String::new();

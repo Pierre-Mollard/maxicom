@@ -39,6 +39,7 @@ fn new_link() {
     type_in(&mut form, "/dev/ttyUSB0");
     form.handle_action(key(KeyCode::Down));
     form.handle_action(key(KeyCode::Down));
+    form.handle_action(key(KeyCode::Down));
     assert_eq!(form.field, LinkFormField::Baud);
     form.baud = Input::new("74880".into());
     form.handle_action(key(KeyCode::Down));
@@ -61,6 +62,7 @@ fn new_link() {
         name: "esp32".into(),
         hosts: vec!["laptop".into()],
         address: "/dev/ttyUSB0".into(),
+        color: None,
         baud: Some(74880),
         bits: Some(7),
         parity: Some(Parity::Even),
@@ -105,6 +107,8 @@ fn edit_link() {
     assert_eq!(form.field, LinkFormField::Hosts);
     type_in(&mut form, "a, ,b");
     form.handle_action(DialogAction::CycleNext);
+    assert_eq!(form.field, LinkFormField::Color);
+    form.handle_action(DialogAction::CycleNext);
     assert_eq!(form.field, LinkFormField::Name);
     form.handle_action(DialogAction::Pick(PopupTarget::LinkFormField(
         LinkFormField::Parity,
@@ -119,4 +123,41 @@ fn edit_link() {
         form.handle_action(DialogAction::Close),
         OverlayResponse::Run(KeyBindingAction::Directory)
     ));
+}
+
+/// MAX-201: the color is a typed field after the hosts, also on a link without line settings. Empty
+/// it saves none, a bad one says so and doesn't save, and an edit starts from the link's own.
+/// How: a TCP link, its fields walked, then each color typed and Enter.
+#[test]
+fn link_color_field() {
+    let defaults = LinkDefaults::default();
+    let link = SavedLink {
+        name: "router".into(),
+        address: "tcp://10.0.0.1:4000".into(),
+        color: Some(Color::Indexed(75)),
+        ..SavedLink::default()
+    };
+    let mut form = LinkForm::edit(link, &defaults);
+    assert_eq!(form.color.value(), "75");
+    for _ in 0..3 {
+        form.handle_action(DialogAction::CycleNext);
+    }
+    assert_eq!(form.field, LinkFormField::Color);
+    let (saved_link, _) = saved(form.handle_action(DialogAction::Confirm));
+    assert_eq!(saved_link.color, Some(Color::Indexed(75)));
+
+    form.color = Input::default();
+    type_in(&mut form, "not-one");
+    assert!(matches!(
+        form.handle_action(DialogAction::Confirm),
+        OverlayResponse::HandledNotify { message, warn: true }
+            if message == "color: 'not-one' is not a color"
+    ));
+    form.color = Input::default();
+    type_in(&mut form, "#ff8800");
+    let (saved_link, _) = saved(form.handle_action(DialogAction::Confirm));
+    assert_eq!(saved_link.color, Some(Color::Rgb(0xff, 0x88, 0)));
+    form.color = Input::default();
+    let (saved_link, _) = saved(form.handle_action(DialogAction::Confirm));
+    assert_eq!(saved_link.color, None);
 }

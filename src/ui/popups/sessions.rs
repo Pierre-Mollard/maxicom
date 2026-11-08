@@ -20,7 +20,7 @@ use crate::{
     ui::{
         common::popup_area,
         data_display::format_line_content,
-        popups::{Hints, hint_spans, popup_block, render_scrollbar, section},
+        popups::{Hints, filepath::field_view, hint_spans, popup_block, render_scrollbar, section},
     },
 };
 
@@ -29,7 +29,8 @@ const LIST_WIDTH: u16 = 52;
 
 /// The session browser (MAX-148): the sessions on the left, the selected one's details and
 /// last lines on the right, its buttons in the bottom border. While it asks before deleting
-/// all, the question is its last row and the buttons answer it
+/// all, the question is its last row and the buttons answer it; the same for the field of a
+/// session's name (MAX-213)
 pub fn render_sessions_popup(
     browser: &SessionBrowser,
     resolver: &KeyResolver,
@@ -59,10 +60,25 @@ pub fn render_sessions_popup(
         .dialog_keys(KeyBindingDialogAction::Close)
         .into_iter()
         .next();
+    // a key the field doesn't take for itself
+    let typed = |action| (resolver.dialog_keys(action).into_iter()).find(KeyPattern::is_modal);
     let buttons = if browser.confirm_delete.is_some() {
         vec![
             (key('y'), PopupTarget::SessionConfirm, "Delete"),
             (key('n'), PopupTarget::SessionCancel, "Cancel"),
+        ]
+    } else if browser.naming.is_some() {
+        vec![
+            (
+                typed(KeyBindingDialogAction::Confirm),
+                PopupTarget::SessionConfirm,
+                "Save",
+            ),
+            (
+                typed(KeyBindingDialogAction::Close),
+                PopupTarget::SessionCancel,
+                "Cancel",
+            ),
         ]
     } else {
         let mut buttons = vec![(key('p'), PopupTarget::SessionReplay, "Replay")];
@@ -71,6 +87,7 @@ pub fn render_sessions_popup(
             buttons.push((key('L'), PopupTarget::SessionBackToLive, "Back to live"));
         }
         buttons.extend([
+            (key('n'), PopupTarget::SessionName, "Name"),
             (key('d'), PopupTarget::SessionDelete, "Delete"),
             (key('D'), PopupTarget::SessionDeleteAll, "Delete all"),
             (key('s'), PopupTarget::SessionView, other_view),
@@ -116,7 +133,7 @@ pub fn render_sessions_popup(
         Span::styled(browser.dir.display().to_string(), muted),
     ]);
     frame.render_widget(Paragraph::new(folder), Rect { height: 1, ..inner });
-    if browser.confirm_delete.is_none() {
+    if browser.confirm_delete.is_none() && browser.naming.is_none() {
         let (line, spots) = as_hints(vec![
             (key('c'), PopupTarget::SessionCopyLog, "Copy path"),
             (key('C'), PopupTarget::SessionCopyFolder, "Copy folder"),
@@ -156,6 +173,20 @@ pub fn render_sessions_popup(
             .fg(theme.palette.text_warn)
             .add_modifier(Modifier::BOLD);
         frame.render_widget(Paragraph::new(Span::styled(question, warn)), at);
+        inner.height = inner.height.saturating_sub(2);
+    }
+
+    if let Some(input) = &browser.naming {
+        let at = Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1);
+        let label = "Session name: ";
+        let room = usize::from(at.width).saturating_sub(label.len());
+        let (shown, cursor) = field_view(input, room);
+        let line = Line::from(vec![
+            Span::styled(label, Style::default().fg(theme.palette.ternary)),
+            Span::styled(shown, Style::default().fg(theme.palette.text)),
+        ]);
+        frame.render_widget(Paragraph::new(line), at);
+        frame.set_cursor_position((at.x + label.len() as u16 + cursor, at.y));
         inner.height = inner.height.saturating_sub(2);
     }
 
@@ -276,7 +307,7 @@ fn tree_row<'a>(
         (_, false) => '▸',
     };
     let label_color = match node.kind {
-        NodeKind::Device => theme.palette.link_color(newest.port_tag()),
+        NodeKind::Device => browser.link_color(newest, theme),
         _ => date_color(newest, now, theme),
     };
     let count = match node.kind {
@@ -318,8 +349,8 @@ fn cut(text: &str, room: usize) -> String {
 }
 
 /// A row of the list, its mark first. Its columns are colored as `lsd -l` does (MAX-153): the
-/// date by the age of the last write, the size by its magnitude, the port by its name, cut
-/// when it doesn't fit
+/// date by the age of the last write, the size by its magnitude, the port, after the session's
+/// name (MAX-213), by its link's color (MAX-201), cut when it doesn't fit
 fn list_row<'a>(
     browser: &SessionBrowser,
     node: &SessionNode,
@@ -343,6 +374,10 @@ fn list_row<'a>(
     // what the port has left, a column before the scrollbar
     let used = 2 + started.chars().count() + pad + size_text.chars().count() + 1;
     let room = usize::from(width).saturating_sub(used + 1);
+    let port = match session.name() {
+        Some(name) => format!("{name} · {}", session.port_tag()),
+        None => session.port_tag().to_string(),
+    };
     Line::from(vec![
         cell(mark.to_string(), mark_color),
         gap(1),
@@ -350,10 +385,7 @@ fn list_row<'a>(
         gap(pad),
         cell(size_text, theme.session_browser.size_color(session.size)),
         gap(1),
-        cell(
-            cut(session.port_tag(), room),
-            theme.palette.link_color(session.port_tag()),
-        ),
+        cell(cut(&port, room), browser.link_color(session, theme)),
     ])
 }
 
@@ -444,6 +476,9 @@ fn details<'a>(
     let colors = &theme.session_browser;
     let plain = Style::default();
     let mut lines = Vec::new();
+    if let Some(name) = session.name() {
+        lines.push(field("Name", name.to_string(), plain));
+    }
     match &session.meta {
         Some(meta) => {
             let device = &meta.device;
@@ -460,7 +495,7 @@ fn details<'a>(
                     None => device.encoding.as_str().to_string(),
                 },
             };
-            let port = Style::default().fg(theme.palette.link_color(session.port_tag()));
+            let port = Style::default().fg(browser.link_color(session, theme));
             lines.push(field("Port", device.address.to_string(), port));
             lines.push(field("Line", line, plain));
             lines.push(field("Host", device.host.clone(), plain));

@@ -10,8 +10,9 @@ use crate::{
     app::{LineMode, terminal_mode::add_newlines, types::LogEntry},
     capture::{
         CaptureDevice, CaptureFormat, CaptureSource, PruneReport, RESTORE_RAW_TAIL,
-        RecordingWriter, Session, Stream, TerminalSize, TimedChunk, find_last_session,
-        group_separator, read_tail_bytes, read_times, restore_separator, timed_chunks,
+        RecordingWriter, Session, Stream, TerminalSize, TimedChunk, clean_session_name,
+        find_last_session, group_separator, read_tail_bytes, read_times, restore_separator,
+        session_name_notice, timed_chunks,
     },
     configs::{Mode, settings::RestoreMode},
     overlays::{
@@ -79,6 +80,22 @@ impl App {
     /// until `resume_session`
     pub fn pause_session(&mut self) -> Option<RecordingWriter> {
         self.recorder.take_session()
+    }
+
+    /// The running session named, or its name taken away when `name` leaves nothing: the live
+    /// link's, paused while a replay runs. Its recording holds the meta, so it writes it, and a
+    /// later write keeps the name (MAX-213)
+    pub fn name_session(&mut self, name: &str) -> Result<(), String> {
+        let paused = (self.replay.as_mut())
+            .and_then(|run| run.replaced.as_deref_mut())
+            .and_then(|replaced| replaced.session.as_mut());
+        let Some(session) = self.recorder.session_mut().or(paused) else {
+            return Err("no session running".to_string());
+        };
+        let name = clean_session_name(name);
+        (session.set_name(name.clone())).map_err(|err| err.to_string())?;
+        self.notify_success(session_name_notice(name.as_deref()));
+        Ok(())
     }
 
     /// The session backup `pause_session` set aside records again, the live link back
@@ -465,7 +482,9 @@ impl App {
         let mut browser = SessionBrowser::new(dir, self.restored_session.clone())
             .with_max_size(max_size)
             .with_group_by(self.settings.sessions.group_by.clone())
-            .with_focus(live_raw);
+            .with_focus(live_raw)
+            .with_own_session(live_raw)
+            .with_link_colors(self.link_colors());
         if replaced.is_some() {
             browser = browser.with_live(paused_raw.clone());
         }

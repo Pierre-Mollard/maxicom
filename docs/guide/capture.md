@@ -288,6 +288,29 @@ On top of the [popup keys](popups.md):
 | `d`, `Del` | Delete the selected session, or a group's sessions but the running ones, after a question |
 | `D` | Delete all but the running ones, after a question |
 | `s` | Switch between the tree and a list of all the sessions, newest first |
+| `n` | [Name](#naming-a-session) the selected session |
+
+### Naming a session
+
+A session has a date and a port, which is little to tell a day of tests on one
+board apart. `n` gives the selected session a name, kept in its `.meta`. Enter
+saves it, Esc leaves it as it was, and an empty name takes it away.
+
+The name shows in the tree and the list, in the session's details, and in the
+separators of a [restore](#restore) and of a
+[group replay](#replaying-a-group):
+
+```text
+── restored: boot test, ttyUSB0, 2026-11-07 10:15 → 16:15 ──
+```
+
+For the session running now, `n` works too, and so does
+[`session-name`](command-line.md#naming-the-session) from the command line. A
+new session starts without a name, even on the same device.
+
+Only a session has a name: a group is a view of the folder, not something on
+disk. A session without a `.meta` can't have one, and a session running in
+another maxicom is named from that maxicom, which keeps its `.meta` up to date.
 
 ## Replay
 

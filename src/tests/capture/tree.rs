@@ -210,3 +210,23 @@ fn group_by_setting() {
     );
     assert!(parse("group_by = [\"year\"]").is_err());
 }
+
+/// MAX-213: a session's row starts with its name, and its name doesn't change its key or split
+/// its device's group: a group holds one setup whatever the names.
+/// How: two sessions of a device, one named.
+#[test]
+fn a_name_labels_the_row_only() {
+    let device = device("/dev/ttyUSB0");
+    let text = CaptureFormat::default();
+    let plain = session("2026-11-07 09:00", &device, &text);
+    let mut named = session("2026-11-07 10:00", &device, &text);
+    let key = session_list(std::slice::from_ref(&named))[0].key.clone();
+    named.meta.as_mut().unwrap().name = Some("boot test".to_string());
+    assert_eq!(session_list(std::slice::from_ref(&named))[0].key, key);
+
+    let tree = session_tree(&[named, plain], &[]);
+    assert_eq!(tree.len(), 1);
+    let labels: Vec<_> = tree[0].children.iter().map(|c| c.label.as_str()).collect();
+    assert_eq!(labels[0], "boot test · 2026-11-07 10:00 → ?");
+    assert_eq!(labels[1], "2026-11-07 09:00 → ?");
+}

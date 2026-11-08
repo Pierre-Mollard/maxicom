@@ -667,6 +667,36 @@ fn theme_color_names() {
     );
 }
 
+/// MAX-201: the status bar's `link` is the link's saved color, for both fg and bg; the palette's
+/// without one, or with a saved link of another address.
+/// How: the app's port saved with a color, then another port saved with one.
+#[test]
+fn link_style_takes_the_saved_color() {
+    let saved = |address: &str| {
+        let text = format!("[[link]]\nname = 'x'\naddress = '{address}'\ncolor = '#102030'\n");
+        Ok(toml::from_str(&text).unwrap())
+    };
+    let theme = ThemeConfig::default();
+    let colors = |app: &App, template: &str| {
+        let compiled = CompiledTemplate::new(template, &theme);
+        let (spans, _) =
+            compiled.spans_and_clicks(app, *theme.ui.status_bar, "TIME", Fit::default());
+        (spans[0].style.fg, spans[0].style.bg)
+    };
+    let color = Color::Rgb(0x10, 0x20, 0x30);
+    let mut a = app(Mode::Terminal);
+    let address = LinkConfig::default().address.to_string();
+    a.set_links(saved(&address));
+    assert_eq!(colors(&a, "[x](link)").0, Some(color));
+    assert_eq!(colors(&a, "[x](bg=link)").1, Some(color));
+    a.set_links(saved("/dev/other"));
+    let tag = LinkConfig::default().address.file_tag();
+    assert_eq!(
+        colors(&a, "[x](link)").0,
+        Some(theme.palette.link_color(&tag))
+    );
+}
+
 fn clicks(template: &str, app: &App) -> Vec<(u16, u16, ClickAction)> {
     spots(template, app)
         .into_iter()

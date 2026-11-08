@@ -10,6 +10,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use ratatui::style::Color;
+
 use super::{App, UpdateEffect};
 use crate::{
     capture::{CaptureDevice, RecordingMeta, Session, recording_raw},
@@ -232,13 +234,34 @@ impl App {
         Ok(())
     }
 
+    /// This machine's saved links
+    fn links_here(&self) -> impl Iterator<Item = &SavedLink> {
+        let links = self
+            .links
+            .as_ref()
+            .map_or(&[][..], |links| &links.links[..]);
+        (links.iter()).filter(|link| link.is_for(self.host.as_deref()))
+    }
+
     /// The name `address` is saved under for this machine, when it is (MAX-185)
     pub fn saved_name(&self, address: &Address) -> Option<&str> {
-        let links = self.links.as_ref().ok()?;
-        (links.links.iter())
-            .filter(|link| link.is_for(self.host.as_deref()))
+        self.links_here()
             .find(|link| link.address.parse::<Address>().ok().as_ref() == Some(address))
             .map(|link| link.name.as_str())
+    }
+
+    /// This machine's saved colors by address, the first link of an address first (MAX-201)
+    pub fn link_colors(&self) -> Vec<(Address, Color)> {
+        self.links_here()
+            .filter_map(|link| Some((link.address.parse().ok()?, link.color?)))
+            .collect()
+    }
+
+    /// The color `address` is saved with for this machine, when it is (MAX-201)
+    pub fn saved_color(&self, address: &Address) -> Option<Color> {
+        self.links_here()
+            .filter(|link| link.address.parse::<Address>().ok().as_ref() == Some(address))
+            .find_map(|link| link.color)
     }
 
     /// The name of the link in use, when it's saved: what the status bar shows for it

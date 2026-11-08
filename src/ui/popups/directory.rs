@@ -12,7 +12,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::{
     app::App,
     configs::{KeyPattern, KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
-    link::{LinkConfig, LinkKind, probe::ProbeState},
+    link::{Address, LinkConfig, LinkKind, probe::ProbeState},
     overlays::{Directory, DirectoryTab, LinkForm, LinkFormField, PopupTarget},
     ui::{
         common::popup_area,
@@ -222,13 +222,17 @@ pub fn render_directory_popup(
     let first = (selected + 1).saturating_sub(visible);
     let lines: Vec<Line> = (table.rows.iter().enumerate().skip(first).take(visible))
         .map(|(idx, row)| {
-            let mut style = Style::default().fg(theme.palette.text);
-            if idx == selected {
-                style = style.add_modifier(Modifier::REVERSED);
-            }
+            let plain = Style::default().fg(theme.palette.text);
+            // the selected row one bar, as the session browser's: a color doesn't read reversed
+            let (name, style) = if idx == selected {
+                let bar = plain.add_modifier(Modifier::REVERSED);
+                (bar, bar)
+            } else {
+                (row.color.map_or(plain, |color| plain.fg(color)), plain)
+            };
             let row_area = Rect::new(inner.x, inner.y + (idx - first) as u16, inner.width, 1);
             targets.push((row_area, PopupTarget::DirectoryRow(idx)));
-            table.line(row, style, theme)
+            table.line(row, name, style, theme)
         })
         .collect();
     frame.render_widget(Paragraph::new(lines), centered(inner));
@@ -259,9 +263,11 @@ const STATE_WIDTH: usize = 12;
 /// when its row is selected
 const LONG_WIDTH: usize = 30;
 
-/// A tab's row: a cell per column but the state, whether it's the link in use, its state
+/// A tab's row: a cell per column but the state, a saved link's color, whether it's the link in
+/// use, its state
 struct Row {
     cells: [String; 3],
+    color: Option<Color>,
     in_use: bool,
     state: Option<Note>,
 }
@@ -353,8 +359,9 @@ impl Table {
         Line::from(spans)
     }
 
-    /// A row's line: `●` on the link in use, then its cells, the state in its color
-    fn line<'a>(&self, row: &Row, style: Style, theme: &ThemeConfig) -> Line<'a> {
+    /// A row's line: `●` on the link in use, then its cells, the first in `name`, the state in
+    /// its color
+    fn line<'a>(&self, row: &Row, name: Style, style: Style, theme: &ThemeConfig) -> Line<'a> {
         let mark = if row.in_use { "●" } else { " " };
         let (state, color) = row
             .state
@@ -364,7 +371,7 @@ impl Table {
             });
         let [a, b, c] = &row.cells;
         let cells = [
-            (a.as_str(), style),
+            (a.as_str(), name),
             (b.as_str(), style),
             (c.as_str(), style),
             (state, style.fg(color)),
@@ -378,10 +385,10 @@ impl Table {
     }
 }
 
-/// A tab's rows, the link in use marked, the state after: "opening…", "in use" or the last
-/// test's result
+/// A tab's rows, a saved link in its color (MAX-201), the link in use marked, the state after:
+/// "opening…", "in use" or the last test's result
 fn rows(app: &App, directory: &Directory, tab: DirectoryTab, theme: &ThemeConfig) -> Vec<Row> {
-    let entries: Vec<([String; 3], String)> = match tab {
+    let entries: Vec<([String; 3], String, Option<Color>)> = match tab {
         DirectoryTab::Ports => (directory.ports.iter())
             .map(|port| {
                 let details = directory.details.get(port).cloned().unwrap_or_default();
@@ -390,13 +397,16 @@ fn rows(app: &App, directory: &Directory, tab: DirectoryTab, theme: &ThemeConfig
                     details.device.unwrap_or_default(),
                     details.id.unwrap_or_default(),
                 ];
-                (cells, port.clone())
+                (cells, port.clone(), None)
             })
             .collect(),
         DirectoryTab::Saved => (directory.links.as_deref().unwrap_or_default().iter())
             .map(|(link, config)| {
                 let address = config.address.to_string();
-                ([link.name.clone(), address.clone(), line(config)], address)
+                let color = (link.color)
+                    .unwrap_or_else(|| theme.palette.link_color(&config.address.file_tag()));
+                let cells = [link.name.clone(), address.clone(), line(config)];
+                (cells, address, Some(color))
             })
             .collect(),
     };
@@ -405,7 +415,7 @@ fn rows(app: &App, directory: &Directory, tab: DirectoryTab, theme: &ThemeConfig
         .is_link_open()
         .then(|| app.link_config().address.to_string());
     (entries.into_iter())
-        .map(|(cells, address)| {
+        .map(|(cells, address, color)| {
             let in_use = current.as_ref() == Some(&address);
             let state = if directory.opening.as_ref() == Some(&address) {
                 Some(("opening…".to_string(), theme.palette.text_muted))
@@ -419,6 +429,7 @@ fn rows(app: &App, directory: &Directory, tab: DirectoryTab, theme: &ThemeConfig
             };
             Row {
                 cells,
+                color,
                 in_use,
                 state,
             }
@@ -455,6 +466,7 @@ pub fn render_link_form_popup(
         LinkFormField::Name => form.name.value().to_string(),
         LinkFormField::Address => form.address.value().to_string(),
         LinkFormField::Hosts => form.hosts.value().to_string(),
+        LinkFormField::Color => form.color.value().to_string(),
         LinkFormField::Baud => form.baud.value().to_string(),
         LinkFormField::Bits => format!("< {bits} >"),
         LinkFormField::Parity => format!("< {:?} >", line.framing.parity),
@@ -465,6 +477,7 @@ pub fn render_link_form_popup(
         LinkFormField::Name => "Name",
         LinkFormField::Address => "Address",
         LinkFormField::Hosts => "For",
+        LinkFormField::Color => "Color",
         LinkFormField::Baud => "Baud rate",
         LinkFormField::Bits => "Data bits",
         LinkFormField::Parity => "Parity",
@@ -495,6 +508,9 @@ pub fn render_link_form_popup(
         ];
         if field == LinkFormField::Hosts && form.hosts.value().trim().is_empty() {
             spans.push(Span::styled("every machine", muted));
+        }
+        if field == LinkFormField::Color {
+            spans.extend(color_sample(form, theme));
         }
         text.push(Line::from(spans));
     }
@@ -531,6 +547,27 @@ pub fn render_link_form_popup(
         frame.set_cursor_position((x, inner.y + 2 + y as u16));
     }
     area
+}
+
+/// After the form's color: a sample of it, or of the palette's when none is typed; what is
+/// wrong when it isn't a color (MAX-201)
+fn color_sample<'a>(form: &LinkForm, theme: &ThemeConfig) -> Vec<Span<'a>> {
+    let muted = Style::default().fg(theme.palette.text_muted);
+    let sample = |color| Span::styled(" ██", Style::default().fg(color));
+    match form.typed_color() {
+        Ok(Some(color)) => vec![sample(color)],
+        Ok(None) => {
+            let address = form.address.value().trim().parse::<Address>();
+            let palette = address.map(|address| theme.palette.link_color(&address.file_tag()));
+            let mut spans = vec![Span::styled("from the palette", muted)];
+            spans.extend(palette.ok().map(sample));
+            spans
+        }
+        Err(_) => vec![Span::styled(
+            " not a color",
+            Style::default().fg(theme.palette.text_warn),
+        )],
+    }
 }
 
 /// The tab bar on the first row, each tab a click target

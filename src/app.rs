@@ -969,7 +969,16 @@ impl App {
                             self.overlay = Some(overlay);
                             UpdateEffect::OpenLink(config)
                         }
-                        // the popup stays when it can't go on, saying why
+                        OverlayResponse::NameRunningSession(name) => {
+                            if let Err(err) = self.name_session(&name) {
+                                self.notify_warn(format!("Session not named: {err}"));
+                            }
+                            if let Overlay::Sessions(browser) = &mut overlay {
+                                browser.reload();
+                            }
+                            self.overlay = Some(overlay);
+                            UpdateEffect::None
+                        }
                         OverlayResponse::NameLink(address) => {
                             self.overlay = Some(overlay);
                             self.name_link(address);
@@ -1490,6 +1499,12 @@ impl App {
             AppAction::DeleteLink(link) => {
                 if let Err(err) = self.remove_link(&link) {
                     self.fail_commands(format!("link-delete: {err}"));
+                }
+                UpdateEffect::None
+            }
+            AppAction::NameSession(name) => {
+                if let Err(err) = self.name_session(&name) {
+                    self.fail_commands(format!("session-name: {err}"));
                 }
                 UpdateEffect::None
             }

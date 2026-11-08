@@ -1,4 +1,5 @@
 use crossterm::event::KeyCode;
+use ratatui::style::Color;
 use tui_input::Input;
 
 use crate::{
@@ -13,6 +14,7 @@ pub enum LinkFormField {
     Name,
     Address,
     Hosts,
+    Color,
     Baud,
     Bits,
     Parity,
@@ -21,10 +23,11 @@ pub enum LinkFormField {
 }
 
 impl LinkFormField {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Name,
         Self::Address,
         Self::Hosts,
+        Self::Color,
         Self::Baud,
         Self::Bits,
         Self::Parity,
@@ -44,15 +47,15 @@ impl LinkFormField {
     }
 
     pub fn is_line(self) -> bool {
-        !matches!(self, Self::Name | Self::Address | Self::Hosts)
+        !matches!(self, Self::Name | Self::Address | Self::Hosts | Self::Color)
     }
 }
 
 /// The form a saved link is written in (MAX-185), new (blank from `n`, filled from the link
 /// in use or a port from `s`) or edited: its name, its address, the
-/// machines it's for (comma separated, none for every machine) and its line settings, which a
-/// TCP address hasn't (skipped, and shown muted). Name, address, hosts and baud are typed, the
-/// other line fields cycle with Left / Right or Space. Tab or Down goes to the next field,
+/// machines it's for (comma separated, none for every machine), its color (MAX-201, none for the
+/// palette's) and its line settings, which a TCP address hasn't (skipped, and shown muted). Name,
+/// address, hosts, color and baud are typed, the other line fields cycle with Left / Right or Space. Tab or Down goes to the next field,
 /// Shift-Tab or Up to the one before; Enter saves, in place of `editing` for an edit; Esc
 /// goes back to the directory
 #[derive(Debug, Clone)]
@@ -61,6 +64,7 @@ pub struct LinkForm {
     pub name: Input,
     pub address: Input,
     pub hosts: Input,
+    pub color: Input,
     pub baud: Input,
     pub line: LineSettingsDialog,
     pub editing: Option<SavedLink>,
@@ -89,6 +93,7 @@ impl LinkForm {
             name: Input::new(link.name),
             address: Input::new(link.address),
             hosts: Input::new(link.hosts.join(", ")),
+            color: Input::new(link.color.map_or(String::new(), |color| color.to_string())),
             baud: Input::new(line.baud.to_string()),
             line: line_dialog,
             editing,
@@ -101,12 +106,22 @@ impl LinkForm {
             .map_or(true, |address| address.kind().has_line_settings())
     }
 
+    /// The color as typed, none when empty: as `theme.toml` writes one
+    pub fn typed_color(&self) -> Result<Option<Color>, String> {
+        let color = self.color.value().trim();
+        if color.is_empty() {
+            return Ok(None);
+        }
+        (color.parse().map(Some)).map_err(|_| format!("color: '{color}' is not a color"))
+    }
+
     /// The typed field's text, for the field that is one
     pub fn input(&self) -> Option<&Input> {
         match self.field {
             LinkFormField::Name => Some(&self.name),
             LinkFormField::Address => Some(&self.address),
             LinkFormField::Hosts => Some(&self.hosts),
+            LinkFormField::Color => Some(&self.color),
             LinkFormField::Baud => Some(&self.baud),
             _ => None,
         }
@@ -117,6 +132,7 @@ impl LinkForm {
             LinkFormField::Name => Some(&mut self.name),
             LinkFormField::Address => Some(&mut self.address),
             LinkFormField::Hosts => Some(&mut self.hosts),
+            LinkFormField::Color => Some(&mut self.color),
             LinkFormField::Baud => Some(&mut self.baud),
             _ => None,
         }
@@ -165,6 +181,7 @@ impl LinkForm {
             name: self.name.value().trim().to_string(),
             hosts,
             address: self.address.value().trim().to_string(),
+            color: self.typed_color()?,
             ..SavedLink::default()
         };
         if !self.has_line() {

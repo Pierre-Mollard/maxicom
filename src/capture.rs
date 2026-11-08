@@ -17,7 +17,8 @@ pub use restore::{
 pub use screenshot::{Screenshot, ScreenshotFormat};
 pub use session::{
     CaptureDevice, CaptureFormat, CaptureLine, CaptureSource, PruneReport, RecordingMeta, Session,
-    SessionLimits, TerminalSize, delete_sessions, find_last_session, list_sessions, recording_raw,
+    SessionLimits, TerminalSize, clean_session_name, delete_sessions, find_last_session, hostname,
+    list_sessions, name_finished_session, recording_raw, session_name_notice,
 };
 pub use tree::{DEFAULT_GROUP_BY, GroupLevel, NodeKind, SessionNode, session_list, session_tree};
 

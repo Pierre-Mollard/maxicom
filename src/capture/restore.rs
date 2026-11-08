@@ -146,20 +146,20 @@ fn read_tail_lines_by(path: &Path, max: usize, chunk: u64) -> io::Result<Vec<u8>
 
 /// The line that marks where a restored session ends and the live data starts
 pub fn restore_separator(session: &Session) -> String {
-    format!(
-        "── restored: {}, {} ──",
-        session.port_tag(),
-        session.time_span()
-    )
+    format!("── restored: {} ──", separator_subject(session))
 }
 
 /// The line that ends a session in a group replay (MAX-202)
 pub fn group_separator(session: &Session) -> String {
-    format!(
-        "── end of session: {}, {} ──",
-        session.port_tag(),
-        session.time_span()
-    )
+    format!("── end of session: {} ──", separator_subject(session))
+}
+
+/// A session in a separator: its name when it has one (MAX-213), its port and its times
+fn separator_subject(session: &Session) -> String {
+    let name = session
+        .name()
+        .map_or(String::new(), |name| format!("{name}, "));
+    format!("{name}{}, {}", session.port_tag(), session.time_span())
 }
 
 #[cfg(test)]
