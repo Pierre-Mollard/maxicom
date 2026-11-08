@@ -128,6 +128,19 @@ clipboard write. It doesn't talk to the system clipboard itself. When a copy
 doesn't arrive, see
 [A copy doesn't reach the clipboard](troubleshooting.md#a-copy-doesnt-reach-the-clipboard).
 
+## Marks
+
+### Marks aren't saved
+
+[Marks](marks.md) last as long as maxicom runs. A restart, or a session
+restored, starts without them.
+
+### A terminal mode jump lands a row high
+
+On a view with an even number of rows, terminal mode puts the mark's line
+one row above the middle, where line mode puts it on the middle row. Its
+search jumps do the same.
+
 ## Recordings and replays
 
 ### A text recording can't be replayed

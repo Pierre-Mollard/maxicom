@@ -1,11 +1,11 @@
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 
 use crossterm::event::KeyCode;
 
 use crate::{
     capture::{
-        Session, SessionOrder, delete_session, delete_sessions, list_sessions, read_tail_lines,
-        sort_sessions,
+        DEFAULT_GROUP_BY, GroupLevel, NodeKind, Session, SessionNode, delete_session,
+        delete_sessions, list_sessions, read_tail_lines, session_list, session_tree,
     },
     inputs::DialogAction,
     overlays::{OverlayResponse, PopupTarget, copy_path},
@@ -18,41 +18,92 @@ const PREVIEW_LINES: usize = 200;
 /// How far PageUp and PageDown move the selection
 const PAGE: usize = 10;
 
-/// The session browser (MAX-148): the session backups of the cache folder, the selected one's
-/// details and last lines. Replays the selected one (MAX-166), deletes it, or all but the
-/// running ones once asked, sorts them by date or by device, copies the selected one's log path
-/// or the folder's, and reads the folder again. `restorable` is the session this device would
+/// How the session browser shows the sessions: as the tree of groups, or newest first
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BrowserView {
+    #[default]
+    Tree,
+    List,
+}
+
+impl BrowserView {
+    fn other(self) -> Self {
+        match self {
+            Self::Tree => Self::List,
+            Self::List => Self::Tree,
+        }
+    }
+}
+
+/// A row the browser shows: a node of the view, how deep it is, whether it is open, and the
+/// row of its parent
+#[derive(Debug, Clone, Copy)]
+pub struct BrowserRow<'a> {
+    pub node: &'a SessionNode,
+    pub depth: usize,
+    pub open: bool,
+    pub parent: Option<usize>,
+}
+
+/// The session browser (MAX-148): the session backups of the cache folder as a tree or a list
+/// (MAX-202), the selected one's details and last lines. Replays the selected session
+/// (MAX-166), deletes it, or all but the running ones once asked, copies the selected one's log
+/// path or the folder's, and reads the folder again. `selected` is a row of `rows`, `open` the
+/// keys of the open groups: they stay across a reload. `restored` is the session the history was filled from
 /// restore at the next launch. `live` says a replay set the live link aside, which the browser
-/// goes back to, and `live_raw` is that link's paused session (MAX-166). The preview is read
-/// when the selection changes, not on every frame
+/// goes back to, and `live_raw` is that link's paused session (MAX-166). `max_size` is the
+/// folder's size limit, for its usage in the header (MAX-202). The preview is read when the
+/// selection changes, not on every frame
 #[derive(Debug, Clone)]
 pub struct SessionBrowser {
     pub dir: PathBuf,
     pub sessions: Vec<Session>,
+    pub tree: Vec<SessionNode>,
+    pub list: Vec<SessionNode>,
+    pub group_by: Vec<GroupLevel>,
+    pub open: HashSet<String>,
+    pub view: BrowserView,
     pub selected: usize,
-    pub order: SessionOrder,
-    pub restorable: Option<String>,
+    pub restored: Option<String>,
     pub live: bool,
     pub live_raw: Option<PathBuf>,
+    pub max_size: Option<u64>,
     pub confirm_delete_all: bool,
     pub preview: Vec<String>,
 }
 
 impl SessionBrowser {
-    pub fn new(dir: PathBuf, restorable: Option<String>) -> Self {
+    pub fn new(dir: PathBuf, restored: Option<String>) -> Self {
         let mut browser = Self {
             dir,
             sessions: Vec::new(),
+            tree: Vec::new(),
+            list: Vec::new(),
+            group_by: DEFAULT_GROUP_BY.to_vec(),
+            open: HashSet::new(),
+            view: BrowserView::default(),
             selected: 0,
-            order: SessionOrder::default(),
-            restorable,
+            restored,
             live: false,
             live_raw: None,
+            max_size: None,
             confirm_delete_all: false,
             preview: Vec::new(),
         };
         browser.reload();
+        // the newest device's months at once: most folders have one device
+        let first_group = browser.tree.iter().find(|node| !node.children.is_empty());
         browser
+            .open
+            .extend(first_group.map(|node| node.key.clone()));
+        browser
+    }
+
+    /// The time levels of the tree, as `sessions.group_by` says
+    pub fn with_group_by(mut self, group_by: Vec<GroupLevel>) -> Self {
+        self.group_by = group_by;
+        self.build();
+        self
     }
 
     /// A replay set the live link aside: the browser can go back to it, and `raw` is its
@@ -63,8 +114,85 @@ impl SessionBrowser {
         self
     }
 
+    /// The folder's size limit, none for no limit
+    pub fn with_max_size(mut self, max_size: Option<u64>) -> Self {
+        self.max_size = max_size;
+        self
+    }
+
+    /// How full the folder is, and since when it holds sessions (MAX-202): `186MB / 200MB ·
+    /// oldest 2026-10-13`, without the limit when there is none
+    pub fn usage(&self) -> String {
+        let used: u64 = self.sessions.iter().map(|session| session.size).sum();
+        let mut usage = size(used);
+        if let Some(max) = self.max_size {
+            usage.push_str(&format!(" / {}", size(max)));
+        }
+        let oldest = (self.sessions.iter())
+            .filter_map(|session| session.started)
+            .min();
+        if let Some(oldest) = oldest {
+            usage.push_str(&format!(" · oldest {}", oldest.format("%Y-%m-%d")));
+        }
+        usage
+    }
+
+    /// The rows on show: the view's nodes, with the children of the open ones
+    pub fn rows(&self) -> Vec<BrowserRow<'_>> {
+        let nodes = match self.view {
+            BrowserView::Tree => &self.tree,
+            BrowserView::List => &self.list,
+        };
+        let mut rows = Vec::new();
+        self.push_rows(nodes, 0, None, &mut rows);
+        rows
+    }
+
+    fn push_rows<'a>(
+        &'a self,
+        nodes: &'a [SessionNode],
+        depth: usize,
+        parent: Option<usize>,
+        rows: &mut Vec<BrowserRow<'a>>,
+    ) {
+        for node in nodes {
+            let row = rows.len();
+            let open = self.open.contains(&node.key);
+            rows.push(BrowserRow {
+                node,
+                depth,
+                open,
+                parent,
+            });
+            if open {
+                self.push_rows(&node.children, depth + 1, Some(row), rows);
+            }
+        }
+    }
+
+    pub fn selected_row(&self) -> Option<BrowserRow<'_>> {
+        self.rows().get(self.selected).copied()
+    }
+
+    /// The session of the selected row, none on a group
     pub fn selected_session(&self) -> Option<&Session> {
-        self.sessions.get(self.selected)
+        let row = self.selected_row()?;
+        match row.node.kind {
+            NodeKind::Session => self.sessions.get(*row.node.sessions.first()?),
+            _ => None,
+        }
+    }
+
+    /// The key of the selected row when it is a group
+    fn selected_group(&self) -> Option<String> {
+        let row = self.selected_row()?;
+        (row.node.kind != NodeKind::Session).then(|| row.node.key.clone())
+    }
+
+    /// The deepest row on show holding the session at `index`: itself, or the closed group
+    /// that hides it
+    fn row_holding(&self, index: usize) -> Option<usize> {
+        (self.rows().iter()).rposition(|row| row.node.sessions.contains(&index))
     }
 
     /// What deleting all would remove: the sessions not running, and their size
@@ -75,17 +203,35 @@ impl SessionBrowser {
         })
     }
 
-    /// Reads the folder again, the same session staying selected when it is still there
+    /// Builds the views from the sessions
+    fn build(&mut self) {
+        self.tree = session_tree(&self.sessions, &self.group_by);
+        self.list = session_list(&self.sessions);
+    }
+
+    /// Reads the folder again, the groups staying open and the same row staying selected when
+    /// it is still there, else the row holding its newest session
     fn reload(&mut self) {
-        let stem = self.selected_session().map(|session| session.stem.clone());
+        let kept = self.selected_row().map(|row| {
+            let newest = row.node.sessions.last();
+            let stem = newest.map(|&index| self.sessions[index].stem.clone());
+            (row.node.key.clone(), stem)
+        });
         self.sessions = list_sessions(&self.dir).unwrap_or_default();
-        sort_sessions(&mut self.sessions, self.order);
-        let kept = stem.and_then(|stem| self.sessions.iter().position(|s| s.stem == stem));
+        self.build();
+        let kept = kept.and_then(|(key, stem)| {
+            let same_key = self.rows().iter().position(|row| row.node.key == key);
+            same_key.or_else(|| {
+                let stem = stem?;
+                let index = self.sessions.iter().position(|s| s.stem == stem)?;
+                self.row_holding(index)
+            })
+        });
         self.select(kept.unwrap_or(self.selected));
     }
 
     fn select(&mut self, idx: usize) {
-        self.selected = idx.min(self.sessions.len().saturating_sub(1));
+        self.selected = idx.min(self.rows().len().saturating_sub(1));
         self.preview = self
             .selected_session()
             .and_then(Session::text_path)
@@ -99,19 +245,45 @@ impl SessionBrowser {
             .unwrap_or_default();
     }
 
-    fn switch_order(&mut self) {
-        self.order = self.order.other();
-        let stem = self.selected_session().map(|session| session.stem.clone());
-        sort_sessions(&mut self.sessions, self.order);
-        let kept = stem.and_then(|stem| self.sessions.iter().position(|s| s.stem == stem));
-        self.selected = kept.unwrap_or(0);
+    /// Tree to list and back, on the row holding the selected row's newest session
+    fn switch_view(&mut self) {
+        let newest = self.selected_row();
+        let newest = newest.and_then(|row| row.node.sessions.last().copied());
+        self.view = self.view.other();
+        let kept = newest.and_then(|index| self.row_holding(index));
+        self.select(kept.unwrap_or(0));
+    }
+
+    fn open_selected(&mut self) {
+        self.open.extend(self.selected_group());
+    }
+
+    fn toggle_selected(&mut self) {
+        if let Some(key) = self.selected_group()
+            && !self.open.remove(&key)
+        {
+            self.open.insert(key);
+        }
+    }
+
+    /// Closes the selected group when it is open, else goes to its parent
+    fn close_selected(&mut self) {
+        let Some(row) = self.selected_row() else {
+            return;
+        };
+        let (key, open, parent) = (row.node.key.clone(), row.open, row.parent);
+        if open {
+            self.open.remove(&key);
+        } else if let Some(parent) = parent {
+            self.select(parent);
+        }
     }
 
     pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
         if self.confirm_delete_all {
             return self.handle_confirm(action);
         }
-        let last = self.sessions.len().saturating_sub(1);
+        let last = self.rows().len().saturating_sub(1);
         match action {
             DialogAction::Close => return OverlayResponse::Close,
             DialogAction::Up => self.select(self.selected.saturating_sub(1)),
@@ -120,14 +292,23 @@ impl SessionBrowser {
             DialogAction::PageDown => self.select((self.selected + PAGE).min(last)),
             DialogAction::Home => self.select(0),
             DialogAction::End => self.select(last),
+            DialogAction::Right => self.open_selected(),
+            DialogAction::Left => self.close_selected(),
+            // a click selects, a click on the selected group opens or closes it
+            DialogAction::Pick(PopupTarget::SessionRow(idx))
+                if idx == self.selected && self.selected_group().is_some() =>
+            {
+                self.toggle_selected();
+            }
             DialogAction::Pick(PopupTarget::SessionRow(idx)) => self.select(idx),
+            DialogAction::Confirm if self.selected_group().is_some() => self.toggle_selected(),
             DialogAction::Confirm | DialogAction::Pick(PopupTarget::SessionReplay) => {
                 return self.replay_selected();
             }
             DialogAction::Pick(PopupTarget::SessionBackToLive) => return self.back_to_live(),
             DialogAction::Pick(PopupTarget::SessionDelete) => return self.delete_selected(),
             DialogAction::Pick(PopupTarget::SessionDeleteAll) => return self.ask_delete_all(),
-            DialogAction::Pick(PopupTarget::SessionSort) => self.switch_order(),
+            DialogAction::Pick(PopupTarget::SessionView) => self.switch_view(),
             DialogAction::Pick(PopupTarget::SessionCopyLog) => return self.copy_log_path(),
             DialogAction::Pick(PopupTarget::SessionCopyFolder) => {
                 return copy_path(&self.dir, "folder");
@@ -138,7 +319,7 @@ impl SessionBrowser {
                 KeyCode::Char('L') => return self.back_to_live(),
                 KeyCode::Char('d') | KeyCode::Delete => return self.delete_selected(),
                 KeyCode::Char('D') => return self.ask_delete_all(),
-                KeyCode::Char('s') => self.switch_order(),
+                KeyCode::Char('s') => self.switch_view(),
                 KeyCode::Char('c') => return self.copy_log_path(),
                 KeyCode::Char('C') => return copy_path(&self.dir, "folder"),
                 KeyCode::Char('r') => return self.reload_folder(),

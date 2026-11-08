@@ -177,6 +177,8 @@ pub struct App {
     mash: Option<Mash>,
     /// Where the session backups are, for the session browser (MAX-148)
     sessions_dir: Option<PathBuf>,
+    /// The session the history was filled from, for the session browser's mark (MAX-202)
+    restored_session: Option<String>,
     pub is_window_focused: bool,
     /// When the window last gained focus, until the next press: one this soon after only
     /// focused it
@@ -302,6 +304,7 @@ impl App {
             host: crate::configs::links::this_host(),
             mash: None,
             sessions_dir: None,
+            restored_session: None,
             is_window_focused: true,
             focused_at: None,
             unfocused_press_at: None,

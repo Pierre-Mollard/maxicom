@@ -162,10 +162,10 @@ impl RecordingMeta {
 }
 
 /// How many sessions the session folder keeps, and up to what size all together (MAX-163):
-/// `max_size` none for no limit
+/// none for no limit, the size alone by default (MAX-202)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionLimits {
-    pub keep: usize,
+    pub keep: Option<usize>,
     pub max_size: Option<u64>,
 }
 
@@ -174,9 +174,28 @@ impl SessionLimits {
     /// `keep` sessions, whatever their size
     pub const fn keep(keep: usize) -> Self {
         Self {
-            keep,
+            keep: Some(keep),
             max_size: None,
         }
+    }
+}
+
+/// What pruning removed to stay within the limits (MAX-202): how many sessions, their size
+/// and the newest one's stem. The empty sessions it removes first lose nothing, so they
+/// aren't in it
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PruneReport {
+    pub removed: usize,
+    pub size: u64,
+    pub newest: Option<String>,
+}
+
+impl PruneReport {
+    /// The day the newest session removed started, from its stem (`2026-10-12`)
+    pub fn newest_day(&self) -> Option<String> {
+        let stem = self.newest.as_deref()?;
+        let day = chrono::NaiveDate::parse_from_str(stem.get(..8)?, "%Y%m%d").ok()?;
+        Some(day.format("%Y-%m-%d").to_string())
     }
 }
 
@@ -218,8 +237,9 @@ pub fn recording_raw(path: &Path) -> io::Result<PathBuf> {
 /// Removes the empty sessions in `dir`, then the oldest so `limits.keep` are left and their
 /// files together fit `limits.max_size`, never `current` nor a session still running (MAX-148,
 /// MAX-163): those count in the size but stay. A session is the folder of one stem with its
-/// `.log`, `.raw` and `.meta` files; the stem starts with its date so the names sort by age
-pub fn prune_sessions(dir: &Path, limits: SessionLimits, current: &str) -> io::Result<()> {
+/// `.log`, `.raw` and `.meta` files; the stem starts with its date so the names sort by age.
+/// Says what the limits removed (MAX-202)
+pub fn prune_sessions(dir: &Path, limits: SessionLimits, current: &str) -> io::Result<PruneReport> {
     let mut sessions = session_files(dir)?;
     let removable = |stem: &str| stem != current && !is_running(&dir.join(stem));
     let remove = |stem: &str| fs::remove_dir_all(dir.join(stem));
@@ -242,9 +262,10 @@ pub fn prune_sessions(dir: &Path, limits: SessionLimits, current: &str) -> io::R
     };
     let mut size: u64 = sessions.values().map(|paths| files_size(paths)).sum();
     let mut left = sessions.len();
+    let mut report = PruneReport::default();
     // the oldest first
     for (stem, paths) in &sessions {
-        let too_many = left > limits.keep;
+        let too_many = limits.keep.is_some_and(|keep| left > keep);
         let too_big = limits.max_size.is_some_and(|max| size > max);
         if !too_many && !too_big {
             break;
@@ -254,10 +275,13 @@ pub fn prune_sessions(dir: &Path, limits: SessionLimits, current: &str) -> io::R
             if remove(stem).is_ok() {
                 size = size.saturating_sub(freed);
                 left -= 1;
+                report.removed += 1;
+                report.size += freed;
+                report.newest = Some(stem.clone());
             }
         }
     }
-    Ok(())
+    Ok(report)
 }
 
 /// The session files in `dir` by stem, which starts with the date so they sort by age: the
@@ -360,33 +384,20 @@ impl Session {
 
     /// When it started and ended, the end without its date on the same day
     pub fn time_span(&self) -> String {
-        let day = |time: &DateTime<Local>| time.date_naive();
-        let started = self.started.map(|t| t.format("%Y-%m-%d %H:%M").to_string());
-        let ended = self.ended.map(|ended| match self.started {
-            Some(started) if day(&started) == day(&ended) => ended.format("%H:%M").to_string(),
-            _ => ended.format("%Y-%m-%d %H:%M").to_string(),
-        });
-        let or_unknown = |time: Option<String>| time.unwrap_or_else(|| "?".to_string());
-        format!("{} → {}", or_unknown(started), or_unknown(ended))
+        time_span(self.started, self.ended)
     }
 }
 
-/// How the session browser orders the sessions: the newest first, or by port, then the newest
-/// first
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SessionOrder {
-    #[default]
-    Date,
-    Device,
-}
-
-impl SessionOrder {
-    pub fn other(self) -> Self {
-        match self {
-            Self::Date => Self::Device,
-            Self::Device => Self::Date,
-        }
-    }
+/// `started → ended`, the end without its date on the same day
+pub fn time_span(started: Option<DateTime<Local>>, ended: Option<DateTime<Local>>) -> String {
+    let day = |time: &DateTime<Local>| time.date_naive();
+    let ended = ended.map(|ended| match started {
+        Some(started) if day(&started) == day(&ended) => ended.format("%H:%M").to_string(),
+        _ => ended.format("%Y-%m-%d %H:%M").to_string(),
+    });
+    let started = started.map(|t| t.format("%Y-%m-%d %H:%M").to_string());
+    let or_unknown = |time: Option<String>| time.unwrap_or_else(|| "?".to_string());
+    format!("{} → {}", or_unknown(started), or_unknown(ended))
 }
 
 /// The sessions in `dir`, the newest first. A missing folder has none
@@ -400,7 +411,8 @@ pub fn list_sessions(dir: &Path) -> io::Result<Vec<Session>> {
         .into_iter()
         .map(|(stem, files)| read_session(dir, stem, files))
         .collect();
-    sort_sessions(&mut entries, SessionOrder::Date);
+    // the names start with the date, so they sort by age
+    entries.sort_by(|a, b| b.stem.cmp(&a.stem));
     Ok(entries)
 }
 
@@ -431,18 +443,6 @@ fn read_session(dir: &Path, stem: String, files: Vec<PathBuf>) -> Session {
         stem,
         folder,
         files,
-    }
-}
-
-/// Sorts the sessions in `order`. The names start with the date, so they sort by age
-pub fn sort_sessions(entries: &mut [Session], order: SessionOrder) {
-    match order {
-        SessionOrder::Date => entries.sort_by(|a, b| b.stem.cmp(&a.stem)),
-        SessionOrder::Device => entries.sort_by(|a, b| {
-            a.port_tag()
-                .cmp(b.port_tag())
-                .then_with(|| b.stem.cmp(&a.stem))
-        }),
     }
 }
 

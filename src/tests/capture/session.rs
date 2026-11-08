@@ -115,7 +115,7 @@ fn prune_keeps_the_folder_under_its_size() {
         put(&dir, &format!("2026010{day}_000000_a.log"), [b'x'; 40]);
     }
     let limits = |max| SessionLimits {
-        keep: 10,
+        keep: Some(10),
         max_size: Some(max),
     };
     prune_sessions(&dir, limits(250), "20260104_000000_a").unwrap();
@@ -598,51 +598,6 @@ fn sessions_are_listed() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// MAX-148: by device, the sessions go by port, then the newest first.
-#[test]
-fn sessions_sort_by_device() {
-    let entry = |stem: &str| Session {
-        stem: stem.to_string(),
-        folder: PathBuf::new(),
-        files: Vec::new(),
-        meta: None,
-        started: None,
-        ended: None,
-        raw_len: 0,
-        size: 0,
-        running: false,
-    };
-    let mut entries = vec![
-        entry("20260101_000000_b"),
-        entry("20260103_000000_a"),
-        entry("20260102_000000_b"),
-        entry("20260101_000000_a"),
-    ];
-    let stems =
-        |entries: &[Session]| -> Vec<String> { entries.iter().map(|e| e.stem.clone()).collect() };
-    sort_sessions(&mut entries, SessionOrder::Device);
-    assert_eq!(
-        stems(&entries),
-        [
-            "20260103_000000_a",
-            "20260101_000000_a",
-            "20260102_000000_b",
-            "20260101_000000_b"
-        ]
-    );
-    sort_sessions(&mut entries, SessionOrder::Date);
-    assert_eq!(
-        stems(&entries),
-        [
-            "20260103_000000_a",
-            "20260102_000000_b",
-            "20260101_000000_b",
-            "20260101_000000_a"
-        ]
-    );
-    assert_eq!(SessionOrder::Date.other(), SessionOrder::Device);
-}
-
 /// MAX-148: deleting a session removes its files only, and is refused while it runs;
 /// deleting all keeps the running ones and says what it did.
 /// How: two past sessions, a running session backup and a note.
@@ -685,4 +640,65 @@ fn sessions_are_deleted_but_running_ones() {
     assert!(dir.join("notes.txt").exists());
     drop(running);
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// MAX-202: with no `keep` (the default), only the size limits the folder, and pruning says
+/// what the limits removed: how many, their size, the newest one. The empty sessions it
+/// removes first aren't in the report, and nothing past the limits leaves an empty report.
+/// How: 4 sessions of 100 bytes and an empty one, the newest current, no `keep`; no limit
+/// at all, then 250 bytes.
+#[test]
+fn prune_reports_what_the_limits_removed() {
+    let dir = temp_dir("prune_report");
+    fs::create_dir_all(&dir).unwrap();
+    for day in 1..=4 {
+        put(&dir, &format!("2026010{day}_000000_a.raw"), [b'x'; 60]);
+        put(&dir, &format!("2026010{day}_000000_a.log"), [b'x'; 40]);
+    }
+    put(&dir, "20260102_120000_a.raw", "");
+    let limits = |max_size| SessionLimits {
+        keep: None,
+        max_size,
+    };
+    let report = prune_sessions(&dir, limits(None), "20260104_000000_a").unwrap();
+    assert_eq!(report, PruneReport::default());
+    assert_eq!(file_names(&dir).len(), 8);
+
+    let report = prune_sessions(&dir, limits(Some(250)), "20260104_000000_a").unwrap();
+    assert_eq!(
+        report,
+        PruneReport {
+            removed: 2,
+            size: 200,
+            newest: Some("20260102_000000_a".to_string()),
+        }
+    );
+    assert_eq!(report.newest_day().as_deref(), Some("2026-01-02"));
+    assert_eq!(
+        file_names(&dir),
+        [
+            "20260103_000000_a.log",
+            "20260103_000000_a.raw",
+            "20260104_000000_a.log",
+            "20260104_000000_a.raw"
+        ]
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// MAX-202: by default the folder is limited by its size alone; `keep` 0 means no count
+/// limit (it used to keep only the new session).
+/// How: the default settings, then `keep` 5.
+#[test]
+fn default_limits_are_the_size_alone() {
+    let mut sessions = crate::configs::settings::SessionsConfig::default();
+    assert_eq!(
+        sessions.limits(),
+        SessionLimits {
+            keep: None,
+            max_size: Some(200 << 20),
+        }
+    );
+    sessions.keep = 5;
+    assert_eq!(sessions.limits().keep, Some(5));
 }

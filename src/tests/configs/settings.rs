@@ -84,7 +84,7 @@ fn session_max_size_parses() {
 
     let defaults = SessionsConfig::default();
     assert_eq!(defaults.limits().max_size, Some(200 << 20));
-    assert_eq!(defaults.keep, 200);
+    assert_eq!(defaults.keep, 0);
     let unlimited = toml::from_str::<SessionsConfig>("max_size = \"0\"").unwrap();
     assert_eq!(unlimited.limits().max_size, None);
 

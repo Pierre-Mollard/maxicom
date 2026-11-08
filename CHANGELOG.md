@@ -29,7 +29,9 @@ What changes in each version of maxicom. The format follows
   The same keys in copy mode, Add mark and Marks… in the right-click menu,
   the letters in the history's left column and on the scrollbar, the line
   flashing after a jump; `[ui.marks]` turns each part off. Commands `mark`,
-  `jump-mark`, `delete-mark`, `marks`, `prev-mark`, `next-mark`.
+  `jump-mark`, `delete-mark`, `marks`, `prev-mark`, `next-mark`. Marks
+  aren't saved across runs, see
+  [what maxicom doesn't do](https://pierre-mollard.github.io/maxicom/limits.html#marks).
 - Keys in `[copy_mode]` can run a
   [command line](https://pierre-mollard.github.io/maxicom/command-line.html#binding-a-command-line-to-a-key),
   like the prefix's.

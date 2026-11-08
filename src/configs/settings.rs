@@ -10,7 +10,7 @@ use chrono::format::strftime::StrftimeItems;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    capture::SessionLimits,
+    capture::{DEFAULT_GROUP_BY, GroupLevel, SessionLimits},
     link::serial::{FlowControl, Framing, LineSettings, Parity},
 };
 
@@ -487,7 +487,8 @@ impl CaptureConfig {
 
 /// The session backup (MAX-172): with `enabled`, every session is recorded in the cache
 /// folder, the last `keep` sessions kept, all together up to `max_size` (`0`: no limit,
-/// MAX-163). `restore` puts the last session on the same device back in the history at
+/// MAX-163; `keep` 0 by default, the size alone limits, MAX-202). `group_by` are the time
+/// levels of the session browser's tree (MAX-202). `restore` puts the last session on the same device back in the history at
 /// startup and on a device switch (MAX-187), when it ended within `restore_max_age` (0: no
 /// limit, MAX-148)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -499,16 +500,18 @@ pub struct SessionsConfig {
     pub restore: RestoreMode,
     #[serde(with = "humantime_serde")]
     pub restore_max_age: Duration,
+    pub group_by: Vec<GroupLevel>,
 }
 
 impl Default for SessionsConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            keep: 200,
+            keep: 0,
             max_size: ByteSize(200 << 20),
             restore: RestoreMode::default(),
             restore_max_age: Duration::from_secs(24 * 3600),
+            group_by: DEFAULT_GROUP_BY.to_vec(),
         }
     }
 }
@@ -522,7 +525,7 @@ impl SessionsConfig {
     /// What the session folder keeps
     pub fn limits(&self) -> SessionLimits {
         SessionLimits {
-            keep: self.keep,
+            keep: (self.keep > 0).then_some(self.keep),
             max_size: (self.max_size.0 > 0).then_some(self.max_size.0),
         }
     }

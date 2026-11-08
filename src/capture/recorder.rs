@@ -1,7 +1,7 @@
 use super::restore::times_line;
 use super::session::{
-    CaptureDevice, CaptureFormat, CaptureSource, RecordingMeta, STEM_TIME, SessionLimits,
-    TerminalSize, folder_file, prune_sessions, session_start, session_tag,
+    CaptureDevice, CaptureFormat, CaptureSource, PruneReport, RecordingMeta, STEM_TIME,
+    SessionLimits, TerminalSize, folder_file, prune_sessions, session_start, session_tag,
 };
 use crate::app::types::RxLineSplitter;
 use crate::configs::TextEncoding;
@@ -220,14 +220,15 @@ impl Recorder {
 
     /// Starts the session backup in a folder of its own in `dir` (MAX-175), named after now and
     /// the port, its text written as `text` says, with its meta file for a later restore, then
-    /// removes the oldest sessions there past `limits` (at least the new one stays)
+    /// removes the oldest sessions there past `limits` (at least the new one stays) and says
+    /// what went (MAX-202)
     pub fn start_session(
         &mut self,
         dir: &Path,
         device: &CaptureDevice,
         text: &CaptureFormat,
         limits: SessionLimits,
-    ) -> io::Result<()> {
+    ) -> io::Result<PruneReport> {
         let now = session_start(dir, Local::now());
         // to the millisecond: a relaunch within the second must not append to the last
         // session and overwrite its meta (MAX-148)
@@ -238,10 +239,6 @@ impl Recorder {
         // locks only loses that guard
         let _ = session.raw.writer.get_ref().try_lock();
         self.session = Some(session);
-        let limits = SessionLimits {
-            keep: limits.keep.max(1),
-            ..limits
-        };
         prune_sessions(dir, limits, &stem)
     }
 

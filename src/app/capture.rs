@@ -7,12 +7,12 @@ use super::App;
 use crate::{
     app::{terminal_mode::add_newlines, types::LogEntry},
     capture::{
-        CaptureDevice, CaptureFormat, CaptureSource, RESTORE_RAW_TAIL, RecordingWriter, Session,
-        Stream, TerminalSize, TimedChunk, find_last_session, read_tail_bytes, read_times,
-        restore_separator, timed_chunks,
+        CaptureDevice, CaptureFormat, CaptureSource, PruneReport, RESTORE_RAW_TAIL,
+        RecordingWriter, Session, Stream, TerminalSize, TimedChunk, find_last_session,
+        read_tail_bytes, read_times, restore_separator, timed_chunks,
     },
     configs::{Mode, settings::RestoreMode},
-    overlays::{ErrorDialog, FilePathDialog, Overlay, SessionBrowser},
+    overlays::{ErrorDialog, FilePathDialog, Overlay, SessionBrowser, sessions::size},
     paths::expand_home,
 };
 
@@ -37,8 +37,10 @@ impl App {
                 .start_session(&dir, &device, &text, sessions.limits()),
             None => Err(std::io::Error::other("no cache folder")),
         };
-        if let Err(err) = result {
-            self.notify_warn(format!("Session backup off: {err}"));
+        match result {
+            Ok(report) if report.removed > 0 => self.notify_info(pruned_message(&report)),
+            Ok(_) => {}
+            Err(err) => self.notify_warn(format!("Session backup off: {err}")),
         }
     }
 
@@ -57,6 +59,7 @@ impl App {
     /// session restored, then its own session backup
     pub fn switch_session(&mut self) {
         self.clear_screen();
+        self.restored_session = None;
         let dir = self.sessions_dir.clone();
         self.restore_last_session(dir.as_deref(), self.restore_flag);
         self.restart_session();
@@ -213,7 +216,10 @@ impl App {
 
     fn restore_now(&mut self, session: &Session) {
         match self.restore_session(session) {
-            Ok(()) => self.notify_info(format!("Restored the session of {}", session.time_span())),
+            Ok(()) => {
+                self.restored_session = Some(session.stem.clone());
+                self.notify_info(format!("Restored the session of {}", session.time_span()));
+            }
             Err(err) => self.notify_warn(format!("Session not restored: {err}")),
         }
     }
@@ -360,17 +366,17 @@ impl App {
         }
     }
 
-    /// The session browser on the session folder, the session this device would restore marked
-    /// (MAX-148)
+    /// The session browser on the session folder, the session restored into the history marked
+    /// (MAX-148, MAX-202)
     pub fn open_session_browser(&mut self) {
         let Some(dir) = self.sessions_dir.clone() else {
             self.notify_warn("No session folder");
             return;
         };
-        let max_age = self.settings.sessions.max_age();
-        let restorable =
-            find_last_session(&dir, &self.session_device(), max_age).map(|session| session.stem);
-        let mut browser = SessionBrowser::new(dir, restorable);
+        let max_size = self.settings.sessions.limits().max_size;
+        let mut browser = SessionBrowser::new(dir, self.restored_session.clone())
+            .with_max_size(max_size)
+            .with_group_by(self.settings.sessions.group_by.clone());
         if let Some(replaced) = self.replaced_link() {
             let raw = replaced
                 .session
@@ -380,6 +386,22 @@ impl App {
         }
         self.open_overlay(Overlay::Sessions(Box::new(browser)));
     }
+}
+
+/// The toast for the sessions pruning removed (MAX-202): `Session folder full: removed the 3
+/// oldest sessions (up to 2026-10-12, 14MB)`
+pub fn pruned_message(report: &PruneReport) -> String {
+    let what = match report.removed {
+        1 => "the oldest session".to_string(),
+        n => format!("the {n} oldest sessions"),
+    };
+    let up_to = (report.newest_day())
+        .map(|day| format!("up to {day}, "))
+        .unwrap_or_default();
+    format!(
+        "Session folder full: removed {what} ({up_to}{})",
+        size(report.size)
+    )
 }
 
 #[cfg(test)]

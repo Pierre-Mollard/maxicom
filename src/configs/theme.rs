@@ -320,7 +320,7 @@ pub struct SessionBrowserColors {
     pub size_huge: Color,
     pub size_giant: Color,
     pub mark_running: Color,
-    pub mark_restorable: Color,
+    pub mark_restored: Color,
     pub mark_no_meta: Color,
 }
 
@@ -339,7 +339,7 @@ impl Default for SessionBrowserColors {
             size_huge: Color::Indexed(172),
             size_giant: Color::Indexed(160),
             mark_running: Color::Indexed(40),
-            mark_restorable: Color::Cyan,
+            mark_restored: Color::Cyan,
             mark_no_meta: Color::Indexed(245),
         }
     }

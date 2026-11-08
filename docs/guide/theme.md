@@ -159,4 +159,4 @@ spirit of `lsd -l`. The defaults are 256-color indexes.
 | --- | --- |
 | `date_hour`, `date_day`, `date_week`, `date_month`, `date_older` | The date, fading with the age of the last write |
 | `size_empty`, `size_small`, `size_medium`, `size_large`, `size_huge`, `size_giant` | The size, warming as it grows: `size_empty` for an empty session, then steps at 100 KiB, 1 MiB, 100 MiB and 1 GiB |
-| `mark_running`, `mark_restorable`, `mark_no_meta` | The marks |
+| `mark_running`, `mark_restored`, `mark_no_meta` | The marks |

@@ -3180,6 +3180,86 @@ fn trigger_browser_fits_its_text() {
     assert_eq!(popup_width(&mut h), 60);
 }
 
+/// The session browser opened, in its list view.
+fn open_session_list(h: &mut Harness) {
+    h.app.update(Action::App(AppAction::OpenSessions));
+    h.app.update(Action::Overlay(DialogAction::Pick(
+        PopupTarget::SessionView,
+    )));
+}
+
+/// MAX-202: the browser opens on its tree, the newest device open: an arrow per group, its
+/// count and size on the right, its details beside it, and the marks of what it holds. A click
+/// on the selected group closes it. A list narrower than its full width counts with a bare
+/// number.
+/// How: two past sessions on another port and the app's own running session, without time
+/// levels through `group_by`; at 120 then 80 columns.
+#[test]
+fn session_browser_tree_rows() {
+    let dir =
+        std::env::temp_dir().join(format!("maxicom_test_{}_browser_tree", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let text = crate::capture::CaptureFormat::default();
+    crate::capture::tests::write_test_session(&dir, "/dev/other", &text, b"x\r\n", b"");
+    crate::capture::tests::write_test_session(&dir, "/dev/other", &text, b"y\r\n", b"");
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
+    h.app.settings_mut().sessions.group_by = Vec::new();
+    h.app.start_session(Some(dir.clone()));
+    h.app.update(Action::App(AppAction::OpenSessions));
+    let rows = h.draw();
+    let row = |rows: &[String], text: &str| {
+        let found = rows.iter().find(|row| row.contains(text));
+        found
+            .cloned()
+            .unwrap_or_else(|| panic!("{text}: {rows:#?}"))
+    };
+    let device = row(&rows, "▾ ttyUSB0 115200 8N1 UTF8");
+    assert!(device.contains('●'), "{rows:#?}");
+    assert!(device.contains("1 session"), "{rows:#?}");
+    let other = row(&rows, "▸ other 115200 8N1 UTF8");
+    assert!(other.contains("2 sessions"), "{rows:#?}");
+    assert!(!other.contains(['●', '○']), "{rows:#?}");
+    assert!(has(&rows, "Group   ttyUSB0 115200 8N1 UTF8"), "{rows:#?}");
+    assert!(has(&rows, "Holds   1 session"), "{rows:#?}");
+    assert!(has(&rows, "Span    "), "{rows:#?}");
+    assert!(has(&rows, "Size    "), "{rows:#?}");
+
+    click(&mut h, cell_of(&rows, "ttyUSB0 115200"));
+    let rows = h.draw();
+    assert!(has(&rows, "▸ ttyUSB0 115200 8N1 UTF8"), "{rows:#?}");
+
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+    h.app.settings_mut().sessions.group_by = Vec::new();
+    h.app.start_session(Some(dir.clone()));
+    h.app.update(Action::App(AppAction::OpenSessions));
+    let rows = h.draw();
+    let other = row(&rows, "▸ other");
+    assert!(!other.contains("session"), "{rows:#?}");
+    assert!(other.contains(" 2 "), "{rows:#?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-202: in the list view, a port too long for the row is cut with a `…`, its full name
+/// in the details.
+/// How: a session on a long port name, at 80 columns.
+#[test]
+fn session_list_cuts_a_long_port() {
+    let dir = std::env::temp_dir().join(format!("maxicom_test_{}_browser_cut", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let text = crate::capture::CaptureFormat::default();
+    let port = "/dev/serial-by-id-usb-a-very-long-adapter-name";
+    crate::capture::tests::write_test_session(&dir, port, &text, b"x\r\n", b"");
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+    h.app.start_session(Some(dir.clone()));
+    open_session_list(&mut h);
+    let rows = h.draw();
+    let row = rows.iter().find(|row| row.contains("serial-"));
+    assert!(row.is_some_and(|row| row.contains('…')), "{rows:#?}");
+    assert!(!has(&rows, "adapter-name "), "{rows:#?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// MAX-156: the browser shows a TCP session's address, and its line as `raw TCP` and the
 /// encoding, as the status bar does.
 /// How: a TCP session written, then selected with a click.
@@ -3192,7 +3272,7 @@ fn session_browser_shows_a_tcp_session_without_line_settings() {
     crate::capture::tests::write_test_session(&dir, port, &text, b"rx\r\n", b"");
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
     h.app.start_session(Some(dir.clone()));
-    h.app.update(Action::App(AppAction::OpenSessions));
+    open_session_list(&mut h);
     let rows = h.draw();
     click(&mut h, cell_of(&rows, "192.168.1.50_4000"));
     let rows = h.draw();
@@ -3217,7 +3297,7 @@ fn session_browser_scrollbar() {
     }
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 20);
     h.app.start_session(Some(dir.clone()));
-    h.app.update(Action::App(AppAction::OpenSessions));
+    open_session_list(&mut h);
     let rows = h.draw();
     let (bar_x, top) = cell_of(&rows, "▲");
     let thumb = |rows: &[String]| {
@@ -3238,7 +3318,7 @@ fn session_browser_scrollbar() {
     crate::capture::tests::write_test_session(&dir, "/dev/one", &text, b"x\r\n", b"");
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 20);
     h.app.start_session(Some(dir.clone()));
-    h.app.update(Action::App(AppAction::OpenSessions));
+    open_session_list(&mut h);
     let rows = h.draw();
     assert!(
         has(&rows, "Session backups") && has(&rows, "one"),
@@ -3263,7 +3343,7 @@ fn session_preview_is_clean() {
     std::thread::sleep(std::time::Duration::from_millis(2));
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
     h.app.start_session(Some(dir.clone()));
-    h.app.update(Action::App(AppAction::OpenSessions));
+    open_session_list(&mut h);
     let mut rows = h.draw();
     if !has(&rows, "green line") {
         key_do(&mut h, crossterm::event::KeyCode::Down, KeyModifiers::NONE);
@@ -3275,9 +3355,29 @@ fn session_preview_is_clean() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// MAX-148: the session browser lists the sessions with their marks (`●` running, `»`
-/// what this device would restore) and previews the selected one; a click selects a row,
-/// and the buttons sort, delete one, and delete all once the question is answered.
+/// MAX-202: only a session really restored is marked: a past session on this device that
+/// wasn't restored has no mark, nor does its group, and the details say `past`.
+/// How: a past session on this device, the app's session started without a restore.
+#[test]
+fn session_browser_marks_only_a_restored_session() {
+    let dir =
+        std::env::temp_dir().join(format!("maxicom_test_{}_browser_mark", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let text = crate::capture::CaptureFormat::default();
+    let port = LinkConfig::default().address.to_string();
+    crate::capture::tests::write_test_session(&dir, &port, &text, b"mine\r\n", b"");
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
+    h.app.start_session(Some(dir.clone()));
+    open_session_list(&mut h);
+    let rows = h.draw();
+    assert!(!has(&rows, "○"), "{rows:#?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-148: the session browser lists the sessions with their marks (`●` running, `○`
+/// the session restored into the history) and previews the selected one; a click selects a row,
+/// and the buttons switch the view, delete one, and delete all once the question is answered.
 /// How: a session on this device, one on another port, and the app's own running
 /// session backup, in a temp folder.
 #[test]
@@ -3291,11 +3391,12 @@ fn session_browser_lists_previews_and_deletes() {
     // the names are to the millisecond: the app's session backup must not get the same one
     std::thread::sleep(std::time::Duration::from_millis(2));
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
+    h.app.restore_last_session(Some(&dir), Some(true));
     h.app.start_session(Some(dir.clone()));
-    h.app.update(Action::App(AppAction::OpenSessions));
+    open_session_list(&mut h);
     let rows = h.draw();
     assert!(has(&rows, "Session backups"), "{rows:#?}");
-    // the app's own session backup runs, the past one on this port would restore
+    // the app's own session backup runs, the past one on this port was restored
     let row_with = |rows: &[String], text: &str| -> String {
         rows.iter().find(|row| row.contains(text)).cloned().unwrap()
     };
@@ -3304,18 +3405,21 @@ fn session_browser_lists_previews_and_deletes() {
             .any(|row| parts.iter().all(|part| row.contains(part)))
     };
     assert!(row_has(&rows, &["●", "ttyUSB0"]), "{rows:#?}");
-    assert!(row_has(&rows, &["»", "ttyUSB0"]), "{rows:#?}");
+    assert!(row_has(&rows, &["○", "ttyUSB0"]), "{rows:#?}");
     let other = row_with(&rows, " other ");
-    assert!(!other.contains(['●', '»', '?']), "{rows:#?}");
+    assert!(!other.contains(['●', '○', '?']), "{rows:#?}");
 
     click(&mut h, cell_of(&rows, " other "));
     let rows = h.draw();
     assert!(has(&rows, "/dev/other"), "{rows:#?}");
     assert!(has(&rows, "theirs"), "{rows:#?}");
 
-    click(&mut h, cell_of(&rows, "Sort by device"));
+    click(&mut h, cell_of(&rows, "Tree view"));
     let rows = h.draw();
-    assert!(has(&rows, "Sort by date"), "{rows:#?}");
+    assert!(has(&rows, "List view"), "{rows:#?}");
+    click(&mut h, cell_of(&rows, "List view"));
+    let rows = h.draw();
+    assert!(has(&rows, "Tree view"), "{rows:#?}");
 
     click(&mut h, cell_on_row(&rows, "Delete all", "Delete "));
     let rows = h.draw();
@@ -3327,7 +3431,7 @@ fn session_browser_lists_previews_and_deletes() {
     assert!(has(&rows, "Delete 1 session ("), "{rows:#?}");
     click(&mut h, cell_on_row(&rows, "Cancel", "Delete"));
     let rows = h.draw();
-    assert!(!row_has(&rows, &["»", "ttyUSB0"]), "{rows:#?}");
+    assert!(!row_has(&rows, &["○", "ttyUSB0"]), "{rows:#?}");
     assert!(row_has(&rows, &["●", "ttyUSB0"]), "{rows:#?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -3348,7 +3452,7 @@ fn session_browser_replays_the_selected_session() {
     crate::capture::tests::write_test_session(&dir, "/dev/other", &text, b"theirs\r\n", b"");
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
     h.app.start_session(Some(dir.clone()));
-    h.app.update(Action::App(AppAction::OpenSessions));
+    open_session_list(&mut h);
     let rows = h.draw();
     assert!(!has(&rows, "Back to live"), "{rows:#?}");
     click(&mut h, cell_of(&rows, " other "));
@@ -3371,7 +3475,7 @@ fn session_browser_replays_the_selected_session() {
     assert!(h.app.overlay().is_none());
 
     h.app.start_replay(path, session.as_ref());
-    h.app.update(Action::App(AppAction::OpenSessions));
+    open_session_list(&mut h);
     let rows = h.draw();
     let at = cell_of(&rows, "Back to live");
     let effects = [
@@ -3386,7 +3490,7 @@ fn session_browser_replays_the_selected_session() {
     );
     assert!(h.app.overlay().is_none());
 
-    h.app.update(Action::App(AppAction::OpenSessions));
+    open_session_list(&mut h);
     let shift = KeyModifiers::SHIFT;
     let effect = key_do(&mut h, crossterm::event::KeyCode::Char('L'), shift);
     assert!(matches!(effect, UpdateEffect::StopReplay));
@@ -3398,8 +3502,8 @@ fn session_browser_replays_the_selected_session() {
 /// the size by its magnitude, the port by its name, and the mark by its kind; the gaps
 /// between them keep the text color. The preview's port, times and size take the same
 /// colors.
-/// How: one past session written now on this device, so it is the restorable one, next to
-/// the app's own running session backup.
+/// How: one past session written now on this device, restored at the start, next to the app's
+/// own running session backup.
 #[test]
 fn session_browser_row_colors() {
     let dir = std::env::temp_dir().join(format!(
@@ -3413,19 +3517,20 @@ fn session_browser_row_colors() {
     // the names are to the millisecond: the app's session backup must not get the same one
     std::thread::sleep(std::time::Duration::from_millis(2));
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
+    h.app.restore_last_session(Some(&dir), Some(true));
     h.app.start_session(Some(dir.clone()));
-    h.app.update(Action::App(AppAction::OpenSessions));
+    open_session_list(&mut h);
     let rows = h.draw();
     let colors = h.theme.session_browser;
     let fg_at = |(x, y): (u16, u16)| h.terminal.backend().buffer()[(x, y)].fg;
-    let (x, y) = cell_of(&rows, "»");
-    assert_eq!(fg_at((x, y)), colors.mark_restorable, "{rows:#?}");
+    let (x, y) = cell_of(&rows, "○");
+    assert_eq!(fg_at((x, y)), colors.mark_restored, "{rows:#?}");
     assert_eq!(fg_at((x + 2, y)), colors.date_hour, "{rows:#?}");
     // the size is all its files', the meta and times too (MAX-175)
     let sessions = crate::capture::list_sessions(&dir).unwrap();
     let past = sessions.iter().find(|session| !session.running).unwrap();
     let size_text = crate::overlays::sessions::size(past.size);
-    let (size_x, _) = cell_on_row(&rows, "»", &size_text);
+    let (size_x, _) = cell_on_row(&rows, "○", &size_text);
     assert_eq!(fg_at((size_x, y)), colors.size_small, "{rows:#?}");
     // the gaps and the size's padding aren't colored, so a reversed column ends with its
     // text
@@ -3433,7 +3538,7 @@ fn session_browser_row_colors() {
     assert_eq!(fg_at((x + 1, y)), text, "{rows:#?}");
     assert_eq!(fg_at((x + 2 + 16, y)), text, "{rows:#?}");
     assert_eq!(fg_at((size_x - 1, y)), text, "{rows:#?}");
-    let tag = cell_on_row(&rows, "»", "ttyUSB0");
+    let tag = cell_on_row(&rows, "○", "ttyUSB0");
     assert_eq!(
         fg_at(tag),
         h.theme.palette.link_color("ttyUSB0"),
@@ -3454,7 +3559,7 @@ fn session_browser_row_colors() {
         h.theme.palette.link_color("ttyUSB0"),
         "{rows:#?}"
     );
-    let (times_x, times_y) = cell_on_row(&rows, " → ", "Session ");
+    let (times_x, times_y) = cell_on_row(&rows, "Session 20", "Session 20");
     let times = (times_x + 8, times_y);
     assert_eq!(fg_at(times), colors.date_hour, "{rows:#?}");
     let size = after(&rows, "Size    ");
@@ -3475,7 +3580,7 @@ fn session_browser_copies_paths() {
         crate::capture::tests::write_test_session(&dir, "/dev/past", &text, b"x\r\n", b"");
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
     h.app.start_session(Some(dir.clone()));
-    h.app.update(Action::App(AppAction::OpenSessions));
+    open_session_list(&mut h);
     let rows = h.draw();
     let folder = dir.display().to_string();
     assert!(has(&rows, &format!("Folder  {folder}")), "{rows:#?}");
@@ -3517,7 +3622,7 @@ fn session_browser_buttons_fit_80_columns() {
     let rows = h.draw();
     for label in [
         "Delete all",
-        "Sort by device",
+        "List view",
         "Close",
         "Copy path",
         "Copy folder",

@@ -292,6 +292,38 @@ fn session_without_text_restores_from_raw() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// MAX-202: the app remembers the session it really restored, for the browser's mark: none
+/// when the restore is off or the dialog is answered no, and none after switching to a device
+/// that restores nothing.
+/// How: one past session, restored in each mode; then a switch with no session folder.
+#[test]
+fn the_restored_session_is_remembered() {
+    let dir = crate::capture::tests::temp_dir("restored_remembered");
+    let port = LinkConfig::default().address.to_string();
+    let session = crate::capture::tests::write_test_session(
+        &dir,
+        &port,
+        &CaptureFormat::default(),
+        b"old\r\n",
+        b"",
+    );
+    let mut never = app();
+    never.settings.sessions.restore = RestoreMode::Never;
+    never.restore_last_session(Some(&dir), None);
+    assert_eq!(never.restored_session, None);
+
+    let mut refused = app();
+    refused.answer_restore(&session, false);
+    assert_eq!(refused.restored_session, None);
+
+    let mut app = app();
+    app.answer_restore(&session, true);
+    assert_eq!(app.restored_session, Some(session.stem.clone()));
+    app.switch_session();
+    assert_eq!(app.restored_session, None);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// MAX-172: a full recording's meta starts when the recording does, or when the session
 /// started when it includes the session.
 /// How: a session backup started, then two metas written once the clock is a second later,
@@ -634,5 +666,51 @@ fn ask_dialog_never_keeps_rx_stuck() {
     assert_eq!(texts(&app), ["held"]);
     app.feed_rx(b"\r\n");
     assert_eq!(texts(&app)[1].len(), HELD_RX_MAX);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-202: a session start that prunes sessions says what went, once; one that removes
+/// nothing says nothing.
+/// How: 2 past sessions; a start with no size limit, then one with a 1 byte limit; the
+/// message of fixed reports.
+#[test]
+fn pruning_is_told_in_a_toast() {
+    let dir = crate::capture::tests::temp_dir("prune_toast");
+    let text = CaptureFormat::default();
+    for _ in 0..2 {
+        crate::capture::tests::write_test_session(&dir, "/dev/ttyUSB0", &text, b"x\r\n", b"");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let mut unlimited = app();
+    unlimited.settings.sessions.max_size = crate::configs::settings::ByteSize(0);
+    unlimited.start_session(Some(dir.clone()));
+    assert_eq!(toasts(&unlimited), Vec::<String>::new());
+    drop(unlimited);
+
+    // the session above received nothing: removed as empty, not in the toast
+    let mut tiny = app();
+    tiny.settings.sessions.max_size = crate::configs::settings::ByteSize(1);
+    tiny.start_session(Some(dir.clone()));
+    let toasts = toasts(&tiny);
+    assert_eq!(toasts.len(), 1, "{toasts:?}");
+    assert!(
+        toasts[0].starts_with("Session folder full: removed the 2 oldest sessions (up to "),
+        "{toasts:?}"
+    );
+    drop(tiny);
+
+    let report = |removed| PruneReport {
+        removed,
+        size: 14 << 20,
+        newest: Some("20261012_093000123_ttyUSB0".to_string()),
+    };
+    assert_eq!(
+        pruned_message(&report(1)),
+        "Session folder full: removed the oldest session (up to 2026-10-12, 14MB)"
+    );
+    assert_eq!(
+        pruned_message(&report(3)),
+        "Session folder full: removed the 3 oldest sessions (up to 2026-10-12, 14MB)"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

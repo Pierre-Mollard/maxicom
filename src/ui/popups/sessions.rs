@@ -9,13 +9,13 @@ use ratatui::{
 };
 
 use crate::{
-    capture::{Session, SessionOrder},
+    capture::{NodeKind, Session, SessionNode},
     configs::{
         KeyPattern, KeyResolver, LineDisplayMode, ThemeConfig, keybindings::KeyBindingDialogAction,
     },
     overlays::{
         PopupTarget, SessionBrowser,
-        sessions::{sessions, size},
+        sessions::{BrowserRow, BrowserView, sessions, size},
     },
     ui::{
         common::popup_area,
@@ -25,7 +25,7 @@ use crate::{
 };
 
 /// Width of the session list, the preview takes the rest
-const LIST_WIDTH: u16 = 44;
+const LIST_WIDTH: u16 = 52;
 
 /// The session browser (MAX-148): the sessions on the left, the selected one's details and
 /// last lines on the right, its buttons in the bottom border. While it asks before deleting
@@ -44,9 +44,9 @@ pub fn render_sessions_popup(
         parent.height.saturating_sub(4).min(40),
     );
 
-    let sort = match browser.order {
-        SessionOrder::Date => "Sort by device",
-        SessionOrder::Device => "Sort by date",
+    let other_view = match browser.view {
+        BrowserView::Tree => "List view",
+        BrowserView::List => "Tree view",
     };
     // the browser's own keys, as typed: `D` shows as `D`, not `Shift-d`
     let key = |c| {
@@ -73,7 +73,7 @@ pub fn render_sessions_popup(
         buttons.extend([
             (key('d'), PopupTarget::SessionDelete, "Delete"),
             (key('D'), PopupTarget::SessionDeleteAll, "Delete all"),
-            (key('s'), PopupTarget::SessionSort, sort),
+            (key('s'), PopupTarget::SessionView, other_view),
             (
                 close,
                 PopupTarget::Hint(KeyBindingDialogAction::Close),
@@ -123,6 +123,13 @@ pub fn render_sessions_popup(
             (key('r'), PopupTarget::SessionReload, "Reload"),
         ]);
         let at = Rect::new(inner.x, inner.y + 1, inner.width, 1).intersection(inner);
+        // how full the folder is, on the right when it fits next to the buttons (MAX-202)
+        let usage = browser.usage();
+        let room = at.width as usize;
+        if line.width() + 2 + usage.chars().count() <= room {
+            let usage = Line::styled(usage, muted).right_aligned();
+            frame.render_widget(Paragraph::new(usage), at);
+        }
         frame.render_widget(Paragraph::new(line), at);
         for (start, width, target) in spots {
             let button = Rect::new(at.x.saturating_add(start), at.y, width, 1).intersection(at);
@@ -168,11 +175,8 @@ pub fn render_sessions_popup(
     area
 }
 
-/// One row per session from the one that keeps the selection in view, its marks first:
-/// `●` running, `»` what this device would restore, `?` no meta file. Its columns are
-/// colored as `lsd -l` does (MAX-153): the date by the age of the last write, the size by its
-/// magnitude, the port by its name. More sessions than rows: a scrollbar in the gap after the
-/// list (MAX-175)
+/// One row per node on show from the one that keeps the selection in view. More rows than
+/// fit: a scrollbar in the gap after the list (MAX-175)
 fn render_list(
     browser: &SessionBrowser,
     area: Rect,
@@ -180,50 +184,22 @@ fn render_list(
     theme: &ThemeConfig,
     targets: &mut Vec<(Rect, PopupTarget)>,
 ) {
-    let colors = &theme.session_browser;
     let now = Local::now();
     let height = area.height as usize;
+    let rows = browser.rows();
     let first = (browser.selected + 1).saturating_sub(height);
-    let rows = browser.sessions.iter().enumerate().skip(first).take(height);
-    let lines: Vec<Line> = rows
-        .map(|(idx, session)| {
-            let (mark, mark_color) = if session.running {
-                ('●', colors.mark_running)
-            } else if browser.restorable.as_deref() == Some(session.stem.as_str()) {
-                ('»', colors.mark_restorable)
-            } else if session.meta.is_none() {
-                ('?', colors.mark_no_meta)
-            } else {
-                (' ', theme.palette.text)
-            };
-            let started = session.started.map_or_else(
-                || "????-??-?? ??:??".to_string(),
-                |time| time.format("%Y-%m-%d %H:%M").to_string(),
-            );
-            let date_color = date_color(session, now, theme);
+    let lines: Vec<Line> = (rows.iter().enumerate().skip(first).take(height))
+        .map(|(idx, row)| {
             let mut style = Style::default();
             if idx == browser.selected {
                 style = style.add_modifier(Modifier::REVERSED);
             }
-            // only the text is colored: the gaps and the size's padding keep the text color,
-            // so a reversed column is as wide as its text
-            let cell = |text: String, color| Span::styled(text, style.fg(color));
-            let gap = |width: usize| cell(" ".repeat(width), theme.palette.text);
-            let size_text = size(session.size);
             let row_area = Rect::new(area.x, area.y + (idx - first) as u16, area.width, 1);
             targets.push((row_area, PopupTarget::SessionRow(idx)));
-            Line::from(vec![
-                cell(mark.to_string(), mark_color),
-                gap(1),
-                cell(started, date_color),
-                gap(1 + 5usize.saturating_sub(size_text.chars().count())),
-                cell(size_text, colors.size_color(session.size)),
-                gap(1),
-                cell(
-                    session.port_tag().to_string(),
-                    theme.palette.link_color(session.port_tag()),
-                ),
-            ])
+            match browser.view {
+                BrowserView::Tree => tree_row(browser, row, area.width, style, now, theme),
+                BrowserView::List => list_row(browser, row.node, area.width, style, now, theme),
+            }
         })
         .collect();
     // a column left before the scrollbar, so a long port doesn't touch it
@@ -233,7 +209,7 @@ fn render_list(
     };
     frame.render_widget(Paragraph::new(lines), text);
 
-    let max_scroll = browser.sessions.len().saturating_sub(height);
+    let max_scroll = rows.len().saturating_sub(height);
     if max_scroll > 0 {
         let bar = Rect {
             x: area.right(),
@@ -242,6 +218,130 @@ fn render_list(
         };
         render_scrollbar(frame, bar, (first, max_scroll, height), theme);
     }
+}
+
+/// A row's mark, the same for a group that holds such a session, which it can hide: `●`
+/// running, `○` the session restored into the history, `?` no meta file
+fn mark(browser: &SessionBrowser, node: &SessionNode, theme: &ThemeConfig) -> (char, Color) {
+    let colors = &theme.session_browser;
+    let any = |test: &dyn Fn(&Session) -> bool| {
+        (node.sessions.iter()).any(|&index| test(&browser.sessions[index]))
+    };
+    let restored = browser.restored.as_deref();
+    if any(&|session| session.running) {
+        ('●', colors.mark_running)
+    } else if any(&|session| restored == Some(session.stem.as_str())) {
+        ('○', colors.mark_restored)
+    } else if any(&|session| session.meta.is_none()) {
+        ('?', colors.mark_no_meta)
+    } else {
+        (' ', theme.palette.text)
+    }
+}
+
+/// A row of the tree (MAX-202): its mark, an arrow on a group, its label under its parent's,
+/// then its count of sessions and its size on the right. The count is a bare number in a list
+/// narrower than `LIST_WIDTH`, and the label is cut when it doesn't fit
+fn tree_row<'a>(
+    browser: &SessionBrowser,
+    row: &BrowserRow,
+    width: u16,
+    style: Style,
+    now: DateTime<Local>,
+    theme: &ThemeConfig,
+) -> Line<'a> {
+    let node = row.node;
+    let Some(newest) = node.sessions.last().map(|&index| &browser.sessions[index]) else {
+        return Line::default();
+    };
+    let (mark, mark_color) = mark(browser, node, theme);
+    let arrow = match (node.kind, row.open) {
+        (NodeKind::Session, _) => ' ',
+        (_, true) => '▾',
+        (_, false) => '▸',
+    };
+    let label_color = match node.kind {
+        NodeKind::Device => theme.palette.link_color(newest.port_tag()),
+        _ => date_color(newest, now, theme),
+    };
+    let count = match node.kind {
+        NodeKind::Session => String::new(),
+        _ if width >= LIST_WIDTH => sessions(node.sessions.len()),
+        _ => node.sessions.len().to_string(),
+    };
+    let size_text = size(node.size);
+    let size_pad = 1 + 5usize.saturating_sub(size_text.chars().count());
+    // a column left before the scrollbar
+    let width = usize::from(width).saturating_sub(1);
+    let indent = 1 + 2 * row.depth;
+    let left = 1 + indent + 2;
+    let right = count.chars().count() + size_pad + size_text.chars().count();
+    let label = cut(&node.label, width.saturating_sub(left + right + 1));
+    let pad = width.saturating_sub(left + label.chars().count() + right);
+    let cell = |text: String, color| Span::styled(text, style.fg(color));
+    let gap = |width: usize| cell(" ".repeat(width), theme.palette.text);
+    Line::from(vec![
+        cell(mark.to_string(), mark_color),
+        gap(indent),
+        cell(arrow.to_string(), theme.palette.text_muted),
+        gap(1),
+        cell(label, label_color),
+        gap(pad),
+        cell(count, theme.palette.text_muted),
+        gap(size_pad),
+        cell(size_text, theme.session_browser.size_color(node.size)),
+    ])
+}
+
+/// `text` in `room` columns, a `…` for the part cut
+fn cut(text: &str, room: usize) -> String {
+    if text.chars().count() <= room {
+        return text.to_string();
+    }
+    let kept = text.chars().take(room.saturating_sub(1));
+    kept.chain(Some('…').filter(|_| room > 0)).collect()
+}
+
+/// A row of the list, its mark first. Its columns are colored as `lsd -l` does (MAX-153): the
+/// date by the age of the last write, the size by its magnitude, the port by its name, cut
+/// when it doesn't fit
+fn list_row<'a>(
+    browser: &SessionBrowser,
+    node: &SessionNode,
+    width: u16,
+    style: Style,
+    now: DateTime<Local>,
+    theme: &ThemeConfig,
+) -> Line<'a> {
+    let Some(session) = node.sessions.first().map(|&index| &browser.sessions[index]) else {
+        return Line::default();
+    };
+    let (mark, mark_color) = mark(browser, node, theme);
+    let started = session.started.map_or_else(
+        || "????-??-?? ??:??".to_string(),
+        |time| time.format("%Y-%m-%d %H:%M").to_string(),
+    );
+    // only the text is colored: the gaps and the size's padding keep the text color,
+    // so a reversed column is as wide as its text
+    let cell = |text: String, color| Span::styled(text, style.fg(color));
+    let gap = |width: usize| cell(" ".repeat(width), theme.palette.text);
+    let size_text = size(session.size);
+    let pad = 1 + 5usize.saturating_sub(size_text.chars().count());
+    // what the port has left, a column before the scrollbar
+    let used = 2 + started.chars().count() + pad + size_text.chars().count() + 1;
+    let room = usize::from(width).saturating_sub(used + 1);
+    Line::from(vec![
+        cell(mark.to_string(), mark_color),
+        gap(1),
+        cell(started, date_color(session, now, theme)),
+        gap(pad),
+        cell(size_text, theme.session_browser.size_color(session.size)),
+        gap(1),
+        cell(
+            cut(session.port_tag(), room),
+            theme.palette.link_color(session.port_tag()),
+        ),
+    ])
 }
 
 /// The date's color by the age of the session's last write, muted when its times aren't known.
@@ -255,17 +355,22 @@ fn date_color(session: &Session, now: DateTime<Local>, theme: &ThemeConfig) -> C
     }
 }
 
-/// The selected session's details from its meta file, then its last text lines that fit
+/// The selected session's details from its meta file, then its last text lines that fit; a
+/// group's count, time span and size
 fn render_preview(browser: &SessionBrowser, area: Rect, frame: &mut Frame, theme: &ThemeConfig) {
-    let Some(session) = browser.selected_session() else {
-        return;
-    };
     let muted = Style::default().fg(theme.palette.text_muted);
     let field = |name: &'static str, value: String, style: Style| {
         Line::from(vec![
             Span::styled(format!("{name:<8}"), muted),
             Span::styled(value, style),
         ])
+    };
+    let Some(session) = browser.selected_session() else {
+        if let Some(row) = browser.selected_row() {
+            let lines = group_details(browser, row.node, theme, field);
+            frame.render_widget(Paragraph::new(lines), area);
+        }
+        return;
     };
     let mut lines = details(browser, session, theme, field, muted);
     lines.push(Line::from(""));
@@ -289,6 +394,30 @@ fn render_preview(browser: &SessionBrowser, area: Rect, frame: &mut Frame, theme
         Line::from(spans)
     }));
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn group_details<'a>(
+    browser: &SessionBrowser,
+    node: &SessionNode,
+    theme: &ThemeConfig,
+    field: impl Fn(&'static str, String, Style) -> Line<'a>,
+) -> Vec<Line<'a>> {
+    let plain = Style::default();
+    let size_color = theme.session_browser.size_color(node.size);
+    let newest = node.sessions.last().map(|&index| &browser.sessions[index]);
+    let date = newest.map_or(theme.palette.text_muted, |newest| {
+        date_color(newest, Local::now(), theme)
+    });
+    vec![
+        field("Group", node.label.clone(), plain),
+        field("Holds", sessions(node.sessions.len()), plain),
+        field(
+            "Span",
+            node.time_span(&browser.sessions),
+            Style::default().fg(date),
+        ),
+        field("Size", size(node.size), Style::default().fg(size_color)),
+    ]
 }
 
 fn details<'a>(
@@ -345,8 +474,8 @@ fn details<'a>(
     lines.push(field("Size", size(session.size), size_style));
     let state = if session.running {
         "running, can't be deleted"
-    } else if browser.restorable.as_deref() == Some(session.stem.as_str()) {
-        "what this device would restore"
+    } else if browser.restored.as_deref() == Some(session.stem.as_str()) {
+        "restored into the history when the device opened"
     } else {
         "past"
     };

@@ -82,7 +82,7 @@ pub enum PopupTarget {
     SessionBackToLive,
     SessionDelete,
     SessionDeleteAll,
-    SessionSort,
+    SessionView,
     SessionCopyLog,
     SessionCopyFolder,
     SessionReload,

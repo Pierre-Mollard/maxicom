@@ -123,8 +123,13 @@ the recordings, never for a running backup.
 When a session starts, maxicom removes:
 
 1. the sessions that received nothing;
-2. then the oldest ones, until at most `sessions.keep` are left and all of
-   them together fit in `sessions.max_size`.
+2. then the oldest ones, until all of them together fit in
+   `sessions.max_size`, and at most `sessions.keep` are left when it is set
+   (by default it is `0`, no limit: the size alone decides).
+
+When old sessions are removed this way, a notification says how many, up to
+which day, and their size. The session browser shows how full the folder is
+next to its buttons.
 
 The current session, and any still running in another maxicom, count in the
 size but are never removed.
@@ -231,7 +236,7 @@ format, times, size and last lines.
 | Mark | Means |
 | --- | --- |
 | `●` | Running; it can't be deleted |
-| `»` | What this device would restore |
+| `○` | Restored into the history when the device opened |
 | `?` | No `.meta`: from before the restore feature |
 
 ### Keys
@@ -332,7 +337,7 @@ tx_mark = "> "                           # before each sent line, "" for none
 
 [sessions]
 enabled = true                           # session backup (read at startup)
-keep = 200                               # sessions kept
+keep = 0                                 # sessions kept, 0: no limit (the size alone)
 max_size = "200M"                        # all sessions, K/M/G/T, "0": no limit
 restore = "always"                       # always, ask or never
 restore_max_age = "1day"                 # since it ended, "0s": no limit
