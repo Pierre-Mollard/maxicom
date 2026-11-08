@@ -1,6 +1,6 @@
 [package]
 name = "maxicom"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["Pierre Mollard <pierre.mollard@proton.me>"]
@@ -13,8 +13,9 @@ keywords = ["serial", "terminal", "minicom", "tui", "vt100"]
 categories = ["command-line-utilities", "hardware-support", "development-tools::debugging"]
 include = [
     "src/**/*",
+    "examples/**/*",
     "Cargo.toml",
-    "README.md",
+    "/README.md",
     "LICENSE-APACHE",
     "LICENSE-MIT",
 ]

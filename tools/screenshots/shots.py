@@ -292,41 +292,65 @@ def rgb(n, ground):
     return [ground, "2", str(int(h[0:2], 16)), str(int(h[2:4], 16)), str(int(h[4:6], 16))]
 
 
-def recolor_sgr(match):
-    p, out, i = match.group(1).split(";"), [], 0
+def state_sgr(state):
+    """The SGR of `state`, whole: freeze ignores reverse video and keeps the previous background
+    on 49, so the colors are written out, swapped while reversed. The UI's background is left
+    out: freeze draws each background half a character too wide, which would cut into the next
+    colored one"""
+    fg, bg = state["fg"], state["bg"]
+    if state["reverse"]:
+        fg, bg = bg, fg
+    background = [] if bg == BG[1:] else ["48"] + bg
+    return "\x1b[" + ";".join(["0", *state["attrs"], "38", *fg, *background]) + "m"
+
+
+def recolor_sgr(match, state):
+    """One SGR read into `state`, with the theme's colors, and written back whole"""
+    p, i = match.group(1).split(";"), 0
+    undone = {"22": ["1", "2"], "23": ["3"], "24": ["4"], "25": ["5"], "29": ["9"]}
     while i < len(p):
         v = p[i]
-        if v in ("38", "48") and i + 2 < len(p) and p[i + 1] == "5" and int(p[i + 2]) < 16:
-            out += rgb(int(p[i + 2]), v)
+        ground = {"38": "fg", "48": "bg"}.get(v)
+        if ground and i + 2 < len(p) and p[i + 1] == "5" and int(p[i + 2]) < 16:
+            state[ground] = rgb(int(p[i + 2]), v)[1:]
             i += 3
             continue
-        if v in ("38", "48") and i + 1 < len(p) and p[i + 1] in ("2", "5"):
+        if ground and i + 1 < len(p) and p[i + 1] in ("2", "5"):
             n = 5 if p[i + 1] == "2" else 3
-            out += p[i:i + n]
+            state[ground] = p[i + 1:i + n]
             i += n
             continue
         if v.isdigit() and (30 <= int(v) <= 37 or 40 <= int(v) <= 47):
-            out += rgb(int(v) % 10, "38" if int(v) < 40 else "48")
+            state["fg" if int(v) < 40 else "bg"] = rgb(int(v) % 10, "")[1:]
         elif v.isdigit() and (90 <= int(v) <= 97 or 100 <= int(v) <= 107):
-            out += rgb(int(v) % 10 + 8, "38" if int(v) < 100 else "48")
+            state["fg" if int(v) < 100 else "bg"] = rgb(int(v) % 10 + 8, "")[1:]
         elif v == "39":
-            out += FG
-        elif v == "49":  # freeze keeps the previous background on 49
-            out += BG
-        elif v == "7":  # freeze ignores reverse video: the text's colors swapped by hand
-            out += ["38"] + BG[1:] + ["48"] + FG[1:]
-        else:
-            out.append(v)
-            if v in ("", "0"):
-                out += FG
+            state["fg"] = FG[1:]
+        elif v == "49":
+            state["bg"] = BG[1:]
+        elif v == "7":
+            state["reverse"] = True
+        elif v == "27":
+            state["reverse"] = False
+        elif v in undone:
+            state["attrs"] = [a for a in state["attrs"] if a not in undone[v]]
+        elif v in ("", "0"):
+            state.update(fg=FG[1:], bg=BG[1:], reverse=False, attrs=[])
+        elif v not in state["attrs"]:
+            state["attrs"].append(v)
         i += 1
-    return "\x1b[" + ";".join(out) + "m"
+    return state_sgr(state)
 
 
 def recolor(ansi):
-    lines = ansi.rstrip("\n").split("\n")
-    ansi = "\n".join("\x1b[38;2;192;202;245m" + line if line else line for line in lines)
-    return re.sub(r"\x1b\[([0-9;]*)m", recolor_sgr, ansi)
+    """The capture with the theme's colors. tmux only writes a color when it changes, so a line
+    can start in the color of the line before: each line starts with the colors in use"""
+    state = {"fg": FG[1:], "bg": BG[1:], "reverse": False, "attrs": []}
+    lines = []
+    for line in ansi.rstrip("\n").split("\n"):
+        start = state_sgr(state)
+        lines.append(start + re.sub(r"\x1b\[([0-9;]*)m", lambda m: recolor_sgr(m, state), line))
+    return "\n".join(lines)
 
 
 def trim_and_scale(src, dst, width=1400):
@@ -373,7 +397,7 @@ def render(name, ansi, run, rows=None):
     subprocess.run(["freeze", f"{run}/{name}.tn.ans", "--language", "ansi", "--theme",
                     "tokyonight-night", "-o", f"{run}/{name}.png", "--window=false",
                     "--padding", "10", "--margin", "0", "--font.size", "14",
-                    "--line-height", "1.0"], stdin=subprocess.DEVNULL, capture_output=True,
+                    "--line-height", "1.2"], stdin=subprocess.DEVNULL, capture_output=True,
                    check=True, timeout=60)
     os.makedirs(IMAGES, exist_ok=True)
     trim_and_scale(f"{run}/{name}.png", f"{IMAGES}/{name}.png")

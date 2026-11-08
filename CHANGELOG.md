@@ -8,6 +8,8 @@ you says so in an "Upgrading" section.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-08
+
 ### Upgrading
 
 Coming from 0.1.0, your config files keep what 0.1.0 wrote in them. Run
@@ -92,6 +94,8 @@ to you:
   `»`: it marks the session really restored into the history, not the one that
   would be. The theme entry `mark_restorable` is now `mark_restored`.
 - The session browser's selected row is one bar across the list.
+- The directory's selected row is one color, its `●` and state included, and a
+  hovered row in the popups' lists too.
 - `d` in the session browser asks before deleting a session.
 - `s` in the session browser no longer sorts by device, as the tree groups by
   device.
@@ -147,5 +151,6 @@ The first release. Everything below is described in the
   [status bar](https://pierre-mollard.github.io/maxicom/status-bar.html),
   reloaded while it runs (`Ctrl-a r`).
 
-[Unreleased]: https://github.com/Pierre-Mollard/maxicom/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Pierre-Mollard/maxicom/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Pierre-Mollard/maxicom/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Pierre-Mollard/maxicom/releases/tag/v0.1.0

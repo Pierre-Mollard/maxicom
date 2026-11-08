@@ -2927,6 +2927,107 @@ fn link_form_popup() {
     assert_eq!(form.field, crate::overlays::LinkFormField::Address);
 }
 
+/// The directory's selected row is one bar in one color, its `●` and state included, and the
+/// others keep their colors.
+/// How: the device in use (a file stands for it) with another port: selected, then not.
+#[test]
+fn directory_selected_row_is_one_bar() {
+    use ratatui::style::Modifier;
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+    let current = h.app.link_config().address.clone();
+    let ports = vec![current.to_string(), "/dev/ttyACM0".to_string()];
+    let directory = crate::overlays::Directory::new(ports, &current);
+    h.app
+        .update(Action::App(AppAction::OpenOverlay(Overlay::Directory(
+            directory,
+        ))));
+    let path = std::env::temp_dir().join(format!("maxicom_bar_{}.raw", std::process::id()));
+    std::fs::write(&path, b"").unwrap();
+    let replay = crate::link::replay::Replay::open(&path, std::time::Duration::ZERO).unwrap();
+    h.app.link_mut().set_replay(replay);
+    let rows = h.draw();
+    let _ = std::fs::remove_file(&path);
+
+    let text = h.theme.palette.text;
+    for word in ["●", "in use"] {
+        let (x, y) = cell_of(&rows, word);
+        let cell = &h.terminal.backend().buffer()[(x, y)];
+        assert_eq!(cell.fg, text, "{word}");
+        assert!(cell.modifier.contains(Modifier::REVERSED), "{word}");
+    }
+
+    h.app.update(Action::Overlay(DialogAction::Down));
+    let rows = h.draw();
+    let (x, y) = cell_of(&rows, "●");
+    let cell = &h.terminal.backend().buffer()[(x, y)];
+    assert_eq!(cell.fg, h.theme.palette.text_good);
+    assert!(!cell.modifier.contains(Modifier::REVERSED));
+    let (x, y) = cell_of(&rows, "/dev/ttyACM0");
+    assert!(
+        h.terminal.backend().buffer()[(x, y)]
+            .modifier
+            .contains(Modifier::REVERSED)
+    );
+}
+
+/// A hovered row of a list is one bar too: hover reverses each cell as it is, so the blank mark
+/// column showed as a green block, and the `●` and state as blocks of their colors.
+/// How: the device in use (a file stands for it) with another port selected, the pointer on
+/// each row, then a button, which keeps its colors.
+#[test]
+fn directory_hovered_row_is_one_bar() {
+    use ratatui::style::Modifier;
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+    let current = h.app.link_config().address.clone();
+    let ports = vec![current.to_string(), "/dev/ttyACM0".to_string()];
+    let directory = crate::overlays::Directory::new(ports, &current);
+    h.app
+        .update(Action::App(AppAction::OpenOverlay(Overlay::Directory(
+            directory,
+        ))));
+    let path = std::env::temp_dir().join(format!("maxicom_hover_{}.raw", std::process::id()));
+    std::fs::write(&path, b"").unwrap();
+    let replay = crate::link::replay::Replay::open(&path, std::time::Duration::ZERO).unwrap();
+    h.app.link_mut().set_replay(replay);
+    let rows = h.draw();
+    let _ = std::fs::remove_file(&path);
+    let (mark, in_use) = (cell_of(&rows, "●"), cell_of(&rows, "in use"));
+    h.app.update(Action::Overlay(DialogAction::Down));
+    let rows = h.draw();
+    let port = cell_of(&rows, "/dev/ttyACM0");
+    let blank = (mark.0, port.1);
+    h.app.update(Action::Overlay(DialogAction::Up));
+    h.draw();
+
+    let hover = |h: &mut Harness, at| {
+        let event = mouse(MouseEventKind::Moved, at, KeyModifiers::NONE);
+        let action = crate::inputs::handle_event(event, &h.app);
+        h.app.update(action);
+        h.draw();
+    };
+    let text = h.theme.palette.text;
+    let check = |h: &Harness, at: (u16, u16)| {
+        let cell = &h.terminal.backend().buffer()[at];
+        assert_eq!(cell.fg, text, "{at:?}");
+        assert!(cell.modifier.contains(Modifier::REVERSED), "{at:?}");
+    };
+    // the blank mark of the row without a device in use
+    hover(&mut h, port);
+    check(&h, blank);
+    // the `●` and the state of the row in use, once it isn't the selected one
+    h.app.update(Action::Overlay(DialogAction::Down));
+    hover(&mut h, mark);
+    check(&h, mark);
+    check(&h, in_use);
+
+    // a hint isn't a row: its key keeps its color
+    let rows = h.draw();
+    let key = cell_of(&rows, "Esc");
+    hover(&mut h, key);
+    let cell = &h.terminal.backend().buffer()[key];
+    assert_ne!(cell.fg, text);
+}
+
 /// MAX-201: the form's color field shows a sample of the color typed, of the palette's when empty,
 /// and says when it isn't a color. The Saved tab writes a link's name in its color, the
 /// palette's without one, and its selected row is one bar.

@@ -222,17 +222,9 @@ pub fn render_directory_popup(
     let first = (selected + 1).saturating_sub(visible);
     let lines: Vec<Line> = (table.rows.iter().enumerate().skip(first).take(visible))
         .map(|(idx, row)| {
-            let plain = Style::default().fg(theme.palette.text);
-            // the selected row one bar, as the session browser's: a color doesn't read reversed
-            let (name, style) = if idx == selected {
-                let bar = plain.add_modifier(Modifier::REVERSED);
-                (bar, bar)
-            } else {
-                (row.color.map_or(plain, |color| plain.fg(color)), plain)
-            };
             let row_area = Rect::new(inner.x, inner.y + (idx - first) as u16, inner.width, 1);
             targets.push((row_area, PopupTarget::DirectoryRow(idx)));
-            table.line(row, name, style, theme)
+            table.line(row, idx == selected, theme)
         })
         .collect();
     frame.render_widget(Paragraph::new(lines), centered(inner));
@@ -359,9 +351,12 @@ impl Table {
         Line::from(spans)
     }
 
-    /// A row's line: `●` on the link in use, then its cells, the first in `name`, the state in
-    /// its color
-    fn line<'a>(&self, row: &Row, name: Style, style: Style, theme: &ThemeConfig) -> Line<'a> {
+    /// A row's line: `●` on the link in use, then its cells, the name in the link's color, the
+    /// state in its own. The selected row is one bar, as the session browser's: a color doesn't
+    /// read reversed
+    fn line<'a>(&self, row: &Row, selected: bool, theme: &ThemeConfig) -> Line<'a> {
+        let plain = Style::default().fg(theme.palette.text);
+        let bar = plain.add_modifier(Modifier::REVERSED);
         let mark = if row.in_use { "●" } else { " " };
         let (state, color) = row
             .state
@@ -369,15 +364,17 @@ impl Table {
             .map_or(("", theme.palette.text), |(text, color)| {
                 (text.as_str(), *color)
             });
+        let colored = |color: Color| if selected { bar } else { plain.fg(color) };
+        let style = if selected { bar } else { plain };
         let [a, b, c] = &row.cells;
         let cells = [
-            (a.as_str(), name),
+            (a.as_str(), colored(row.color.unwrap_or(theme.palette.text))),
             (b.as_str(), style),
             (c.as_str(), style),
-            (state, style.fg(color)),
+            (state, colored(color)),
         ];
         let mut spans = vec![
-            Span::styled(mark, style.fg(theme.palette.text_good)),
+            Span::styled(mark, colored(theme.palette.text_good)),
             Span::styled(" ", style),
         ];
         spans.extend(self.spans(cells, style));

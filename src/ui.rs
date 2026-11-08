@@ -199,7 +199,21 @@ pub fn render(
         let hovered = if map.popup.is_some() {
             map.popup_target_at(x, y)
                 .filter(|(_, target)| !matches!(target, PopupTarget::MenuItem(_)))
-                .map(|(area, _)| (area, *theme.ui.hover))
+                .map(|(area, target)| {
+                    // a list's row is one bar, as the selected one: a color doesn't read reversed
+                    let is_row = matches!(
+                        target,
+                        PopupTarget::DirectoryRow(_)
+                            | PopupTarget::SessionRow(_)
+                            | PopupTarget::MarkRow(_)
+                            | PopupTarget::TriggerRow(_)
+                    );
+                    if is_row {
+                        let plain = ratatui::style::Style::default().fg(theme.palette.text);
+                        frame.buffer_mut().set_style(area, plain);
+                    }
+                    (area, *theme.ui.hover)
+                })
         } else {
             map.click_target_at(x, y)
                 .and_then(|target| Some((target.area, target.hover?)))
