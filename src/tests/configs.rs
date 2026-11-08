@@ -60,3 +60,63 @@ fn config_file_paths_expand_home() {
         ("theme file", dir.join("themes"))
     );
 }
+
+/// MAX-209: a typo, an unknown nested key, an unknown section and the theme keys renamed since
+/// 0.1.0 are named, while the optional `*_path` keys and a style's fields aren't.
+/// How: settings and a theme holding both kinds, read for their unknown keys.
+#[test]
+fn unknown_keys_named_and_known_ones_not() {
+    let settings = "mdoe = \"line\"\ntheme_path = \"t.toml\"\nmode = \"line\"\n\
+        [line_mode]\nhistory_sise = 5\n[nope]\na = 1\n";
+    assert_eq!(
+        unknown_keys::<SettingsConfig>(settings),
+        ["line_mode.history_sise", "mdoe", "nope"]
+    );
+
+    let theme = "[ui]\nselection = { fg = \"Black\", bold = true }\n\
+        [terminal]\nterm_flash_fg_color = \"Red\"\n\
+        [session_browser]\nmark_restorable = \"Red\"\n";
+    assert_eq!(
+        unknown_keys::<ThemeConfig>(theme),
+        [
+            "session_browser.mark_restorable",
+            "terminal.term_flash_fg_color"
+        ]
+    );
+}
+
+/// MAX-209: the files maxicom writes itself have no unknown key, and a file that doesn't load
+/// isn't reported twice.
+/// How: the generated settings and theme with their comments, then two invalid files.
+#[test]
+fn unknown_keys_none_in_generated_files() {
+    let text = toml::to_string_pretty(&SettingsConfig::default()).unwrap();
+    let text = comments::with_comments(&text, comments::CONFIG_COMMENTS);
+    assert!(unknown_keys::<SettingsConfig>(&text).is_empty());
+    let text = toml::to_string_pretty(&ThemeConfig::default()).unwrap();
+    let text = comments::with_comments(&text, comments::THEME_COMMENTS);
+    assert!(unknown_keys::<ThemeConfig>(&text).is_empty());
+
+    assert!(unknown_keys::<SettingsConfig>("mdoe = ").is_empty());
+    assert!(unknown_keys::<SettingsConfig>("mdoe = 1\nmode = \"zzz\"\n").is_empty());
+}
+
+/// MAX-209: the warning names the file as it's really called, and says nothing without an
+/// unknown key.
+/// How: a settings file given another name in a temporary folder, then a clean one.
+#[test]
+fn unknown_keys_warning_names_the_file() {
+    let dir = std::env::temp_dir().join(format!("maxicom-unknown-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("board.toml");
+
+    fs::write(&path, "mdoe = \"line\"\nkep = 1\n").unwrap();
+    assert_eq!(
+        unknown_keys_warning::<SettingsConfig>(&path).as_deref(),
+        Some("Unknown keys in board.toml: kep, mdoe")
+    );
+    fs::write(&path, "mode = \"line\"\n").unwrap();
+    assert_eq!(unknown_keys_warning::<SettingsConfig>(&path), None);
+
+    fs::remove_dir_all(&dir).unwrap();
+}

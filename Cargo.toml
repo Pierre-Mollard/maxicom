@@ -39,6 +39,7 @@ libc = "0.2.189"
 memchr = "2.8.3"
 ratatui = { version = "0.30.2", features = ["unstable-rendered-line-info", "serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
+serde_ignored = "0.1.14"
 serial2 = "0.2.38"
 socket2 = { version = "0.6.5", features = ["all"] }
 terminput = "0.5.15"

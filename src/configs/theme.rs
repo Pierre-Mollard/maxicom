@@ -4,7 +4,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::configs::style::ConfigStyle;
+use crate::configs::{
+    comments::{THEME_COMMENTS, with_comments},
+    style::ConfigStyle,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -405,9 +408,11 @@ impl ThemeConfig {
             source: std::io::Error::other(err.to_string()),
         })?;
 
-        fs::write(path, toml_string).map_err(|err| ThemeError::Io {
-            path: path.to_path_buf(),
-            source: err,
+        fs::write(path, with_comments(&toml_string, THEME_COMMENTS)).map_err(|err| {
+            ThemeError::Io {
+                path: path.to_path_buf(),
+                source: err,
+            }
         })?;
 
         Ok(default_theme)

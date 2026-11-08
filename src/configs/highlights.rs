@@ -7,7 +7,10 @@ use std::{
 use ratatui::style::{Color, Style};
 use serde::{Deserialize, Serialize};
 
-use crate::configs::style::ConfigStyle;
+use crate::configs::{
+    comments::{HIGHLIGHTS_COMMENTS, with_comments},
+    style::ConfigStyle,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HighlightConfig {
@@ -94,9 +97,11 @@ impl HighlightConfig {
                 source: std::io::Error::other(err.to_string()),
             })?;
 
-        fs::write(path, toml_string).map_err(|err| HighlightError::Io {
-            path: path.to_path_buf(),
-            source: err,
+        fs::write(path, with_comments(&toml_string, HIGHLIGHTS_COMMENTS)).map_err(|err| {
+            HighlightError::Io {
+                path: path.to_path_buf(),
+                source: err,
+            }
         })?;
 
         Ok(default_config)

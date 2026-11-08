@@ -94,6 +94,7 @@ See [Command line](command-line.md).
 | Popup "Config Reload Failed" | A file doesn't load; the running config stays. The details name the file and the line. | Fix it, then reload |
 | `Config reloaded; restart to apply: <settings>` | Those settings are only read at startup | Restart maxicom. See [Reload](settings.md#reload). |
 | `Keymap: unreachable <keys>` | Keys in `[line_mode]` or `[terminal_mode]` that the prefix or `[direct_actions]` take first | Bind them to other keys. See [Keybindings](keybindings.md#sections). |
+| `Unknown keys in <file>: <keys>` | Keys of `config.toml` or `theme.toml` the app doesn't read, such as a typo: each takes its default | Fix or delete them, see [Unknown keys](settings.md#unknown-keys) |
 | `invalid link in '<file>': link #<n> '<name>': <problem>`, `invalid syntax in '<file>'` | `links.toml` doesn't load; maxicom runs without saved links | Fix the file. See [Saved links](saved-links.md). |
 | `changed in the file meanwhile: not saved` | `links.toml` changed since the directory read it | Open the directory again and redo it |
 

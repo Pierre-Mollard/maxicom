@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     capture::{DEFAULT_GROUP_BY, GroupLevel, SessionLimits},
+    configs::comments::{CONFIG_COMMENTS, with_comments},
     link::serial::{FlowControl, Framing, LineSettings, Parity},
 };
 
@@ -1049,9 +1050,11 @@ impl SettingsConfig {
                     source: std::io::Error::other(e.to_string()),
                 })?;
 
-            fs::write(path, toml_string).map_err(|e| SettingsError::Io {
-                path: path.to_path_buf(),
-                source: e,
+            fs::write(path, with_comments(&toml_string, CONFIG_COMMENTS)).map_err(|e| {
+                SettingsError::Io {
+                    path: path.to_path_buf(),
+                    source: e,
+                }
             })?;
 
             default_config

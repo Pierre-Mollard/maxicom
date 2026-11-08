@@ -43,6 +43,15 @@ fn cache_dir_flag() {
     }
 }
 
+/// MAX-209: `--write-config` asks for the update, wherever it is given.
+#[test]
+fn write_config_flag() {
+    for args in [&["--write-config"][..], &["-D", "x", "--write-config"]] {
+        let outcome = parse(args).unwrap();
+        assert!(matches!(outcome, ParseOutcome::WriteConfig), "{args:?}");
+    }
+}
+
 fn address_of(args: &[&str]) -> Result<String, String> {
     match parse(args) {
         Ok(ParseOutcome::Run { address, .. }) => Ok(address.expect("a device").to_string()),

@@ -141,6 +141,19 @@ its chapter, and in [CHANGELOG.md](CHANGELOG.md) under Unreleased.
 - **Visibility is private or `pub`.** No `pub(crate)` or `pub(super)`: a
   child module already sees its parent's private items.
 
+### Adding a setting
+
+A setting is a field and its default in its struct, in `src/configs/`. Serde
+writes it in the generated file, so its default lives in one place.
+
+The comments of the generated files are in `src/configs/comments.rs`, keyed by
+field. A new enum needs its `values:` comment, and a test fails without one or
+when the list differs from what serde accepts. Other keys only get a comment
+for choices that can't be guessed, like `1 or 2`. A comment never mentions a
+default value, since it would go stale.
+
+Then describe the setting in the guide.
+
 ## Commit messages
 
 A conventional prefix and a short lowercase summary:

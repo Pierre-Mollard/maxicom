@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     app::triggers::{StreamMatcher, Trigger},
     commands::{self, CommandError, tokenizer},
+    configs::comments::{TRIGGERS_COMMENTS, with_comments},
 };
 
 /// `triggers.toml` (MAX-6): a table per rule, named after it
@@ -120,9 +121,11 @@ impl TriggersConfig {
                 source: std::io::Error::other(err.to_string()),
             })?;
 
-        fs::write(path, toml_string).map_err(|err| TriggersFileError::Io {
-            path: path.to_path_buf(),
-            source: err,
+        fs::write(path, with_comments(&toml_string, TRIGGERS_COMMENTS)).map_err(|err| {
+            TriggersFileError::Io {
+                path: path.to_path_buf(),
+                source: err,
+            }
         })?;
 
         Ok(default_config)

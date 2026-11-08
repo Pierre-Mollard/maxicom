@@ -28,6 +28,7 @@ pub enum ParseOutcome {
     Help,
     Version,
     CacheDir,
+    WriteConfig,
 }
 
 #[derive(Debug)]
@@ -252,6 +253,7 @@ fn parse_args_from(
             }
             "--version" | "-v" => return Ok(ParseOutcome::Version),
             "--cache-dir" => return Ok(ParseOutcome::CacheDir),
+            "--write-config" => return Ok(ParseOutcome::WriteConfig),
             // a saved link's name, or the device without `--device`: `maxicom esp32`,
             // `maxicom /dev/ttyUSB0`, `maxicom tcp://host:port`
             word if !word.starts_with('-') => given = Some(Given::Word(word.to_string())),
@@ -349,6 +351,9 @@ Options:
       --restore            Restore the last session on this device into the history
       --no-restore         Start with an empty history, whatever sessions.restore says
       --cache-dir          Print the session backups folder and exit
+      --write-config       Update the config files to this version and exit: new keys
+                           and comments added, your values kept, the old files saved
+                           as .bak
 
   -C, --capturefile <PATH> Record the received text to PATH from the start
   -H, --displayhex         Show the raw side panel in hex

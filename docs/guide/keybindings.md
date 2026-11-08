@@ -67,6 +67,9 @@ section you leave out keeps its defaults.
 So to add one key to `[prefix_actions]`, copy the whole section from the
 default file and add your line to it.
 
+A section in your file also doesn't get the default keys of a later version.
+[`maxicom --write-config`](settings.md#updating-the-files) adds them.
+
 ### Errors
 
 A key or an action that doesn't parse stops the file from loading, naming

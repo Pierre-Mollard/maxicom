@@ -95,6 +95,7 @@ struct RuntimeConfig {
     highlight_rules: Vec<KeywordHighlight>,
     triggers: Vec<Trigger>,
     links: Result<LinksConfig, String>,
+    warnings: Vec<String>,
     status_bar: CompiledStatusBar,
 }
 
@@ -109,6 +110,7 @@ fn load_runtime_config(config_path: &Path) -> Result<RuntimeConfig, ConfigsError
         highlight_rules: configs.highlights.compile_rules(),
         triggers,
         links: configs.links,
+        warnings: configs.warnings,
         settings: configs.settings,
         theme: configs.theme,
         key_resolver,
@@ -129,6 +131,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         mut highlight_rules,
         triggers,
         links,
+        warnings,
         mut status_bar,
     } = match load_runtime_config(&config_path) {
         Ok(config) => config,
@@ -187,6 +190,17 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     return Ok(ExitCode::FAILURE);
                 }
             },
+            // the settings just loaded, so a file that doesn't load has already stopped it
+            Ok(ParseOutcome::WriteConfig) => match configs::update::update_files(&config_path) {
+                Ok(report) => {
+                    report.iter().for_each(|line| println!("{line}"));
+                    return Ok(ExitCode::SUCCESS);
+                }
+                Err(err) => {
+                    eprintln!("maxicom: {err}");
+                    return Ok(ExitCode::FAILURE);
+                }
+            },
             Err(error) => {
                 eprintln!("Argument error: {error}");
                 return Ok(ExitCode::from(EXIT_USAGE));
@@ -242,6 +256,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut app = App::new(settings, key_resolver, link_config);
     app.set_triggers(triggers);
     app.set_links(links);
+    warnings.into_iter().for_each(|w| app.notify_warn(w));
     app.set_restore_flag(restore);
     if let Some(ports) = pick_from {
         app.start_in_directory(ports, AppConfig::default_sessions_dir());
@@ -341,6 +356,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                             app.set_links(config.links);
                             status_bar = config.status_bar;
                             app.apply_reload(config.settings, config.key_resolver);
+                            config.warnings.into_iter().for_each(|w| app.notify_warn(w));
                         }
                         // the running config stays
                         Err(err) => app.open_overlay(Overlay::Error(

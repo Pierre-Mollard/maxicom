@@ -41,8 +41,52 @@ it next to the config folder.
 On the first start, maxicom writes each file with its defaults, except
 `links.toml`, which is created on the first save.
 
+The files stay short: a header, a link to the guide above each section, and
+at the end of a line the values its key takes.
+
+```toml
+# https://pierre-mollard.github.io/maxicom/links.html#default-link
+[link]
+device = ""
+baud = 115200
+bits = 8 # 5 to 8
+parity = "none" # values: none, even, odd
+stop_bits = 1 # 1 or 2
+flow = "none" # values: none, rtscts, xonxoff
+```
+
 A setting left out of a file takes its default, so a file can hold only what
 you change. Deleting a file brings back its defaults at the next start.
+
+### Updating the files
+
+Your files keep what they hold when you install a new version. Its new
+settings still work, with their defaults, but they aren't listed in your
+files, and a new default key doesn't reach a `keymap.toml` that has its
+section.
+
+`maxicom --write-config` brings the files up to date, then exits. With
+`--config <file>`, it starts from that settings file.
+
+```bash
+maxicom --write-config
+```
+
+Each file gets the settings and comments of this version, and keeps your
+values. The old file stays next to it as `config.toml.bak`, and the command
+prints what it did to each file. A file already up to date isn't touched.
+
+| What | Becomes |
+| --- | --- |
+| A value you set | Kept |
+| A setting the file doesn't have | Added with its default, even in a file that held only your changes |
+| A value at an old default | Kept, since it can't be told from a choice of yours. Delete the line to get the new default |
+| A key the app doesn't know | Dropped and named in the output |
+| Your own comments | Dropped, only the `.bak` has them |
+| A new default key in `keymap.toml` | Added when its section uses neither the key nor its action, and named in the output. A default you removed on purpose can come back this way |
+
+A file that doesn't load stops the command before anything is updated.
+`links.toml` is left alone.
 
 ### Errors
 
@@ -51,6 +95,18 @@ stops maxicom at startup, with the file and the reason.
 
 During a reload, the running config stays, and a popup says what went
 wrong.
+
+### Unknown keys
+
+A key that `config.toml` or `theme.toml` doesn't have, such as a typo, doesn't
+stop maxicom: the setting just takes its default. A warning names it at startup
+and on each reload.
+
+```text
+Unknown keys in config.toml: line_mode.history_sise, mdoe
+```
+
+The fields inside a theme style aren't checked this way.
 
 ## The settings popup
 

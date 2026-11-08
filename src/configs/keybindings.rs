@@ -7,7 +7,10 @@ use std::{
     str::FromStr,
 };
 
-use crate::commands::{self, CommandError, Invocation, Target};
+use crate::{
+    commands::{self, CommandError, Invocation, Target},
+    configs::comments::{KEYMAP_COMMENTS, with_comments},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnknownActionError(pub String);
@@ -985,6 +988,55 @@ pub struct KeyBindingsConfig {
     pub dialog_actions: BTreeMap<String, String>,
 }
 
+impl KeyBindingsConfig {
+    /// Adds the default bindings a section lacks, the ones whose key and action it doesn't use
+    /// at all, as `--write-config` does: a section replaces its default, so a new default key
+    /// never reaches an existing file otherwise (MAX-209). A key removed on purpose comes back,
+    /// which the returned list says, as `section: key = action`
+    pub fn add_new_defaults(&mut self) -> Vec<String> {
+        let defaults = Self::default();
+        let mut added = Vec::new();
+        for (name, section, default) in [
+            (
+                "direct_actions",
+                &mut self.direct_actions,
+                &defaults.direct_actions,
+            ),
+            (
+                "prefix_actions",
+                &mut self.prefix_actions,
+                &defaults.prefix_actions,
+            ),
+            ("line_mode", &mut self.line_mode, &defaults.line_mode),
+            (
+                "terminal_mode",
+                &mut self.terminal_mode,
+                &defaults.terminal_mode,
+            ),
+            ("search_mode", &mut self.search_mode, &defaults.search_mode),
+            ("copy_mode", &mut self.copy_mode, &defaults.copy_mode),
+            (
+                "dialog_actions",
+                &mut self.dialog_actions,
+                &defaults.dialog_actions,
+            ),
+        ] {
+            let keys: Vec<KeyPattern> = (section.keys())
+                .filter_map(|key| key.parse().ok())
+                .collect();
+            let actions: Vec<String> = section.values().cloned().collect();
+            for (key, action) in default {
+                let key_used = key.parse().is_ok_and(|key| keys.contains(&key));
+                if !key_used && !actions.contains(action) {
+                    section.insert(key.clone(), action.clone());
+                    added.push(format!("{name}: {key} = {action}"));
+                }
+            }
+        }
+        added
+    }
+}
+
 impl Default for KeyBindingsConfig {
     fn default() -> Self {
         let direct_actions = default_bindings! {
@@ -1184,9 +1236,11 @@ impl KeyBindingsConfig {
                 source: std::io::Error::other(err.to_string()),
             })?;
 
-        fs::write(path, toml_string).map_err(|err| KeymapFileError::Io {
-            path: path.to_path_buf(),
-            source: err,
+        fs::write(path, with_comments(&toml_string, KEYMAP_COMMENTS)).map_err(|err| {
+            KeymapFileError::Io {
+                path: path.to_path_buf(),
+                source: err,
+            }
         })?;
 
         Ok(default_keymap)

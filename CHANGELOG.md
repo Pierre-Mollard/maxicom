@@ -1,13 +1,39 @@
 # Changelog
 
 What changes in each version of maxicom. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
-[Semantic Versioning](https://semver.org/).
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Before 1.0, the
+version number only tells how big a release is: the last number for a regular
+release, the middle one for a big step. A release that needs something from
+you says so in an "Upgrading" section.
 
 ## [Unreleased]
 
+### Upgrading
+
+Coming from 0.1.0, your config files keep what 0.1.0 wrote in them. Run
+[`maxicom --write-config`](https://pierre-mollard.github.io/maxicom/settings.html#updating-the-files)
+to update them: it adds the new settings, the comments and the mark keys, and
+saves the old files as `.bak`. It keeps your values, so a few things are left
+to you:
+
+- The history and session folder sizes stay at their old values, see Changed.
+  Delete those lines to get the new defaults.
+- The status bar stays as it was. Delete `left`, `center` and `right` from
+  `[ui.status_bar]` to get the new one.
+- In `theme.toml`, `mark_restorable` is now `mark_restored`, and
+  `term_flash_fg_color` and `term_flash_bg_color` are now `flash` in `[ui]`.
+  Set your colors again under the new names if you had changed them.
+
 ### Added
 
+- The generated config files have
+  [a few comments](https://pierre-mollard.github.io/maxicom/settings.html#defaults):
+  a link to the guide above each section, and the values a key takes at the end
+  of its line.
+- `--write-config` [updates the config files](https://pierre-mollard.github.io/maxicom/settings.html#updating-the-files)
+  to the current version and keeps your values.
+- A warning names the [unknown keys](https://pierre-mollard.github.io/maxicom/settings.html#unknown-keys)
+  of `config.toml` and `theme.toml`, such as a typo, which were silently ignored.
 - [Size reports](https://pierre-mollard.github.io/maxicom/terminal-mode.html#size-reports-from-programs)
   for the programs that ask for them (mode 2048): maxicom sends the
   terminal's size on each change, so neovim 0.12 fits the screen over a

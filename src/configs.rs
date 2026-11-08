@@ -1,10 +1,14 @@
 use std::{
+    fs,
     path::{Path, PathBuf},
     sync::OnceLock,
 };
 
+use serde::de::DeserializeOwned;
+
 use crate::paths::expand_home;
 
+pub mod comments;
 pub mod highlights;
 pub mod keybindings;
 pub mod links;
@@ -12,6 +16,7 @@ pub mod settings;
 pub mod style;
 pub mod theme;
 pub mod triggers;
+pub mod update;
 
 // Re-exports
 pub use highlights::{HighlightConfig, HighlightError, KeywordHighlight};
@@ -49,6 +54,32 @@ pub struct AppConfig {
     pub triggers: TriggersConfig,
     /// A `links.toml` that doesn't load doesn't stop the app: its error, said in the app
     pub links: Result<LinksConfig, String>,
+    /// What `unknown_keys_warning` found in the settings and the theme, said in the app
+    pub warnings: Vec<String>,
+}
+
+/// The keys of `text` that `T` doesn't read: a typo or a renamed key takes its default without a
+/// word otherwise, as the settings use `#[serde(default)]` (MAX-209). None for a file that
+/// doesn't load, the loader says why. A style's own fields aren't checked
+fn unknown_keys<T: DeserializeOwned>(text: &str) -> Vec<String> {
+    let mut keys = Vec::new();
+    let Ok(deserializer) = toml::Deserializer::parse(text) else {
+        return keys;
+    };
+    let loaded: Result<T, _> =
+        serde_ignored::deserialize(deserializer, |path| keys.push(path.to_string()));
+    if loaded.is_err() {
+        keys.clear();
+    }
+    keys
+}
+
+/// A warning naming the keys of the file that `T` doesn't read, none when it reads them all
+fn unknown_keys_warning<T: DeserializeOwned>(path: &Path) -> Option<String> {
+    let text = fs::read_to_string(path).ok()?;
+    let keys = unknown_keys::<T>(&text);
+    let name = path.file_name()?.to_string_lossy();
+    (!keys.is_empty()).then(|| format!("Unknown keys in {name}: {}", keys.join(", ")))
 }
 
 impl AppConfig {
@@ -78,6 +109,11 @@ impl AppConfig {
         let links =
             LinksConfig::load(&Self::active_links_path(&settings)).map_err(|err| err.to_string());
 
+        let warnings = [
+            unknown_keys_warning::<SettingsConfig>(path),
+            unknown_keys_warning::<ThemeConfig>(&theme_path),
+        ];
+
         Ok(AppConfig {
             settings,
             theme,
@@ -85,6 +121,7 @@ impl AppConfig {
             highlights,
             triggers,
             links,
+            warnings: warnings.into_iter().flatten().collect(),
         })
     }
 
