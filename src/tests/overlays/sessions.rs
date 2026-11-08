@@ -184,8 +184,8 @@ fn back_to_live_only_with_a_live_link() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `d` deletes the selected session with a toast, and is refused on the running one with
-/// a warning, its files kept.
+/// `d` asks before deleting the selected session: `n` keeps it, `y` deletes it with a toast. On
+/// the running one it's refused at once with a warning, its files kept.
 #[test]
 fn delete_one_but_not_the_running_one() {
     let (dir, running) = folder("browser_delete");
@@ -193,15 +193,26 @@ fn delete_one_but_not_the_running_one() {
     select(&mut browser, "live");
     assert!(matches!(
         browser.handle_action(key('d')),
-        OverlayResponse::HandledNotify { warn: true, .. }
+        OverlayResponse::HandledNotify { warn: true, message }
+            if message == "A running session can't be deleted"
     ));
+    assert!(browser.confirm_delete.is_none());
     assert_eq!(browser.sessions.len(), 3);
 
     select(&mut browser, "a");
-    let response = browser.handle_action(DialogAction::Pick(PopupTarget::SessionDelete));
+    // `n` keeps it
+    browser.handle_action(key('d'));
+    assert!(browser.confirm_delete.is_some());
+    browser.handle_action(key('n'));
+    assert_eq!(browser.sessions.len(), 3);
+
+    browser.handle_action(DialogAction::Pick(PopupTarget::SessionDelete));
+    assert_eq!(browser.sessions.len(), 3, "deleted before the answer");
+    let response = browser.handle_action(key('y'));
     assert!(matches!(
         response,
-        OverlayResponse::HandledNotify { warn: false, .. }
+        OverlayResponse::HandledNotify { warn: false, message }
+            if message.starts_with("Deleted 1 session (")
     ));
     let mut left = tags(&browser);
     left.sort_unstable();
@@ -756,4 +767,54 @@ fn group_by_sets_the_tree_levels() {
             "  1020_1000".to_string(),
         ]
     );
+}
+
+/// MAX-202: focusing a session opens only the groups down to it, however deep, and selects it as
+/// a leaf with its details and preview; a session that isn't there changes nothing.
+/// How: the dated tree with the raw paths of its sessions faked, a session under a day under a
+/// week under the device; then an unknown path.
+#[test]
+fn focus_opens_down_to_the_session() {
+    let raw = |at: usize| PathBuf::from(format!("/nowhere/{at}.raw"));
+    let with_raws = || {
+        let mut browser = dated_browser();
+        for (at, session) in browser.sessions.iter_mut().enumerate() {
+            session.files = vec![raw(at)];
+        }
+        browser
+    };
+    let browser = with_raws().with_focus(Some(&raw(1)));
+    assert_eq!(
+        shown(&browser),
+        [
+            format!("v {DEVICE}"),
+            "  v 2026-W45 (Nov 02–08)".to_string(),
+            "    v Sat 2026-11-07".to_string(),
+            "      1107_1400".to_string(),
+            "      1107_0900".to_string(),
+            "    1106_1000".to_string(),
+            "  1020_1000".to_string(),
+        ]
+    );
+    assert_eq!(browser.selected, 4);
+    assert_eq!(browser.selected_session(), browser.sessions.get(1));
+
+    // a session right under the device: only the device opens
+    let browser = with_raws().with_focus(Some(&raw(3)));
+    assert_eq!(
+        shown(&browser),
+        [
+            format!("v {DEVICE}"),
+            "  > 2026-W45 (Nov 02–08)".to_string(),
+            "  1020_1000".to_string(),
+        ]
+    );
+    assert_eq!(browser.selected, 2);
+
+    // unknown, or none: as before
+    for focus in [Some(raw(9)), None] {
+        let browser = with_raws().with_focus(focus.as_deref());
+        assert_eq!(browser.selected, 0);
+        assert_eq!(shown(&browser), [format!("> {DEVICE}")]);
+    }
 }

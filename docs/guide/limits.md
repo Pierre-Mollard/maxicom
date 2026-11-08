@@ -148,6 +148,14 @@ search jumps do the same.
 A `.log` holds decoded text, not the bytes received. Only a full recording
 or a session backup can be replayed. See [Capture](capture.md#what-is-what).
 
+### A group replay holds at most a million lines
+
+Line mode loads 1,000,000 lines of a [group](capture.md#replaying-a-group), and
+terminal mode only its `history_size` rows. A notification says what's left out.
+To read more, copy the folder's path from the
+[session browser](capture.md#session-browser) and open the `.log` files with
+another tool.
+
 ### A replay sends nothing
 
 Commands that send are refused during a replay, and triggers don't fire.

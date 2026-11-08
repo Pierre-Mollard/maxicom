@@ -3220,11 +3220,14 @@ fn session_browser_tree_rows() {
     let other = row(&rows, "▸ other 115200 8N1 UTF8");
     assert!(other.contains("2 sessions"), "{rows:#?}");
     assert!(!other.contains(['●', '○']), "{rows:#?}");
+
+    // a click selects the group, with its details, a second one closes it
+    click(&mut h, cell_of(&rows, "ttyUSB0 115200"));
+    let rows = h.draw();
     assert!(has(&rows, "Group   ttyUSB0 115200 8N1 UTF8"), "{rows:#?}");
     assert!(has(&rows, "Holds   1 session"), "{rows:#?}");
     assert!(has(&rows, "Span    "), "{rows:#?}");
     assert!(has(&rows, "Size    "), "{rows:#?}");
-
     click(&mut h, cell_of(&rows, "ttyUSB0 115200"));
     let rows = h.draw();
     assert!(has(&rows, "▸ ttyUSB0 115200 8N1 UTF8"), "{rows:#?}");
@@ -3341,6 +3344,95 @@ fn session_browser_group_preview_and_question() {
         has(&rows, "Delete 2 sessions of other 115200 8N1 UTF8 ("),
         "{rows:#?}"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-202: the selected row is one bar as wide as the list, in one color, in both views, not
+/// each column reversed in its own; the other rows keep their colors, and the mark of a running
+/// session takes the main color, as the restored one does.
+/// How: two sessions and the app's own, the tree then the list.
+#[test]
+fn session_browser_selected_row_is_one_bar() {
+    use ratatui::style::Modifier;
+    let dir = std::env::temp_dir().join(format!(
+        "maxicom_test_{}_browser_bar_row",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    let text = crate::capture::CaptureFormat::default();
+    crate::capture::tests::write_test_session(&dir, "/dev/other", &text, b"x\r\n", b"");
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
+    h.app.settings_mut().sessions.group_by = Vec::new();
+    h.app.start_session(Some(dir.clone()));
+    h.app.update(Action::App(AppAction::OpenSessions));
+    let colors = h.theme.session_browser;
+    assert_eq!(colors.mark_running, h.theme.palette.main);
+    assert_eq!(colors.mark_restored, h.theme.palette.main);
+
+    let check = |h: &mut Harness, on: &str, other: &str| {
+        let rows = h.draw();
+        let buffer = h.terminal.backend().buffer().clone();
+        let (x, y) = cell_of(&rows, on);
+        let row = (buffer.area.x..buffer.area.right()).map(|x| &buffer[(x, y)]);
+        let bar: Vec<_> = row
+            .filter(|cell| cell.modifier.contains(Modifier::REVERSED))
+            .collect();
+        // the mark, the text and the padding, up to the column before the scrollbar
+        assert_eq!(bar.len(), 52 - 1, "{rows:#?}");
+        let colored = h.theme.palette.text;
+        assert!(bar.iter().all(|cell| cell.fg == colored), "{rows:#?}");
+        assert!(
+            buffer[(x, y)].modifier.contains(Modifier::REVERSED),
+            "{rows:#?}"
+        );
+        let (x, y) = cell_of(&rows, other);
+        assert!(
+            !buffer[(x, y)].modifier.contains(Modifier::REVERSED),
+            "{rows:#?}"
+        );
+    };
+    let rows = h.draw();
+    click(&mut h, cell_of(&rows, "ttyUSB0 115200"));
+    check(&mut h, "ttyUSB0 115200", "other 115200");
+    h.app.update(Action::Overlay(DialogAction::Pick(
+        PopupTarget::SessionView,
+    )));
+    let rows = h.draw();
+    assert!(has(&rows, " other"), "{rows:#?}");
+    check(&mut h, "ttyUSB0", " other");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-202: the browser opens on the live session: selected, with every group above it open.
+/// During a replay it's the live link's paused session.
+/// How: a past session on this device and the app's own, with the default levels; then a replay
+/// started and the browser opened again.
+#[test]
+fn session_browser_opens_on_the_live_session() {
+    let dir =
+        std::env::temp_dir().join(format!("maxicom_test_{}_browser_focus", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let text = crate::capture::CaptureFormat::default();
+    let port = LinkConfig::default().address.to_string();
+    let past = crate::capture::tests::write_test_session(&dir, &port, &text, b"past\r\n", b"");
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
+    h.app.start_session(Some(dir.clone()));
+    let check = |h: &mut Harness| {
+        h.app.update(Action::App(AppAction::OpenSessions));
+        let rows = h.draw();
+        assert!(has(&rows, "State   running"), "{rows:#?}");
+        let marked = rows
+            .iter()
+            .filter(|row| row.contains('●') && row.contains('▸'));
+        assert_eq!(marked.count(), 0, "a group above it is closed: {rows:#?}");
+    };
+    check(&mut h);
+    h.app.update(Action::Overlay(DialogAction::Close));
+    h.app
+        .start_replay(past.raw_path().unwrap().to_path_buf(), None);
+    check(&mut h);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -3505,10 +3597,15 @@ fn session_browser_lists_previews_and_deletes() {
     let rows = h.draw();
     assert!(has(&rows, "Tree view"), "{rows:#?}");
 
+    // Delete asks first, then its button answers
     click(&mut h, cell_on_row(&rows, "Delete all", "Delete "));
     let rows = h.draw();
+    assert!(has(&rows, "Delete 1 session of "), "{rows:#?}");
+    assert!(!has(&rows, "The running ones are kept"), "{rows:#?}");
+    click(&mut h, cell_on_row(&rows, "Cancel", "Delete"));
+    let rows = h.draw();
     assert!(!has(&rows, " other "), "{rows:#?}");
-    assert!(has(&rows, "Deleted the session of"), "{rows:#?}");
+    assert!(has(&rows, "Deleted 1 session ("), "{rows:#?}");
 
     click(&mut h, cell_of(&rows, "Delete all"));
     let rows = h.draw();

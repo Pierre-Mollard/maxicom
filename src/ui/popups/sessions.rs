@@ -144,11 +144,13 @@ pub fn render_sessions_popup(
     if let Some(confirm) = &browser.confirm_delete {
         let (count, bytes) = browser.deletable_in(&confirm.sessions);
         let group = (confirm.group.as_ref()).map_or(String::new(), |name| format!(" of {name}"));
-        let question = format!(
-            "Delete {}{group} ({})? The running ones are kept",
-            sessions(count),
-            size(bytes)
-        );
+        // only when some are: a question about one past session has nothing to add
+        let kept = if count < confirm.sessions.len() {
+            " The running ones are kept"
+        } else {
+            ""
+        };
+        let question = format!("Delete {}{group} ({})?{kept}", sessions(count), size(bytes));
         let at = Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1);
         let warn = Style::default()
             .fg(theme.palette.text_warn)
@@ -191,15 +193,16 @@ fn render_list(
     let first = (browser.selected + 1).saturating_sub(height);
     let lines: Vec<Line> = (rows.iter().enumerate().skip(first).take(height))
         .map(|(idx, row)| {
-            let mut style = Style::default();
-            if idx == browser.selected {
-                style = style.add_modifier(Modifier::REVERSED);
-            }
             let row_area = Rect::new(area.x, area.y + (idx - first) as u16, area.width, 1);
             targets.push((row_area, PopupTarget::SessionRow(idx)));
-            match browser.view {
-                BrowserView::Tree => tree_row(browser, row, area.width, style, now, theme),
-                BrowserView::List => list_row(browser, row.node, area.width, style, now, theme),
+            let line = match browser.view {
+                BrowserView::Tree => tree_row(browser, row, area.width, now, theme),
+                BrowserView::List => list_row(browser, row.node, area.width, now, theme),
+            };
+            if idx == browser.selected {
+                selected_bar(&line, area.width, theme)
+            } else {
+                line
             }
         })
         .collect();
@@ -219,6 +222,18 @@ fn render_list(
         };
         render_scrollbar(frame, bar, (first, max_scroll, height), theme);
     }
+}
+
+/// The selected row as one bar as wide as the list, in one color as the other popups' lists:
+/// its columns' many colors don't read reversed, and the details beside it keep them. A column
+/// is left before the scrollbar
+fn selected_bar<'a>(line: &Line, width: u16, theme: &ThemeConfig) -> Line<'a> {
+    let text: String = line.iter().map(|span| span.content.as_ref()).collect();
+    let room = usize::from(width).saturating_sub(1);
+    let style = Style::default()
+        .fg(theme.palette.text)
+        .add_modifier(Modifier::REVERSED);
+    Line::styled(format!("{text:<room$}"), style)
 }
 
 /// A row's mark, the same for a group that holds such a session, which it can hide: `●`
@@ -247,7 +262,6 @@ fn tree_row<'a>(
     browser: &SessionBrowser,
     row: &BrowserRow,
     width: u16,
-    style: Style,
     now: DateTime<Local>,
     theme: &ThemeConfig,
 ) -> Line<'a> {
@@ -279,7 +293,7 @@ fn tree_row<'a>(
     let right = count.chars().count() + size_pad + size_text.chars().count();
     let label = cut(&node.label, width.saturating_sub(left + right + 1));
     let pad = width.saturating_sub(left + label.chars().count() + right);
-    let cell = |text: String, color| Span::styled(text, style.fg(color));
+    let cell = |text: String, color| Span::styled(text, Style::default().fg(color));
     let gap = |width: usize| cell(" ".repeat(width), theme.palette.text);
     Line::from(vec![
         cell(mark.to_string(), mark_color),
@@ -300,7 +314,7 @@ fn cut(text: &str, room: usize) -> String {
         return text.to_string();
     }
     let kept = text.chars().take(room.saturating_sub(1));
-    kept.chain(Some('…').filter(|_| room > 0)).collect()
+    kept.chain((room > 0).then_some('…')).collect()
 }
 
 /// A row of the list, its mark first. Its columns are colored as `lsd -l` does (MAX-153): the
@@ -310,7 +324,6 @@ fn list_row<'a>(
     browser: &SessionBrowser,
     node: &SessionNode,
     width: u16,
-    style: Style,
     now: DateTime<Local>,
     theme: &ThemeConfig,
 ) -> Line<'a> {
@@ -322,9 +335,8 @@ fn list_row<'a>(
         || "????-??-?? ??:??".to_string(),
         |time| time.format("%Y-%m-%d %H:%M").to_string(),
     );
-    // only the text is colored: the gaps and the size's padding keep the text color,
-    // so a reversed column is as wide as its text
-    let cell = |text: String, color| Span::styled(text, style.fg(color));
+    // only the text is colored: the gaps and the size's padding keep the text color
+    let cell = |text: String, color| Span::styled(text, Style::default().fg(color));
     let gap = |width: usize| cell(" ".repeat(width), theme.palette.text);
     let size_text = size(session.size);
     let pad = 1 + 5usize.saturating_sub(size_text.chars().count());

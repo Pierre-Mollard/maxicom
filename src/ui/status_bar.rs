@@ -27,7 +27,8 @@
 //! | Variable            | Description                                             | Example          |
 //! |---------------------|---------------------------------------------------------|------------------|
 //! | `{mode}`            | Input mode: `TERM`, `LINE`, `COPY`, `MARK` (a letter)   | `TERM`           |
-//! | `{port}`            | Address: serial path, `tcp://host:port`, `file://name`  | `/dev/ttyUSB0`   |
+//! | `{port}`            | Address: serial path, `tcp://host:port`, `file://name`, | `/dev/ttyUSB0`   |
+//! |                     | or a group replay's device and count                    |                  |
 //! | `{baud}`            | Baudrate (a replayed session's), `raw` (TCP), `replay`  | `115200`         |
 //! | `{framing}`         | Data bits, parity, stop bits, `TCP`, the replay's state | `8N1`            |
 //! | `{rx_bytes}`        | Total bytes received                                    | `1024`           |
@@ -48,7 +49,7 @@
 //! | `{send_percent}`    | How much of it is sent, in percent                      | `42`             |
 //! | `{trigger_count}`   | How many triggers (`triggers.toml`) are armed           | `2`              |
 //! | `{trigger_names}`   | The armed triggers by name, empty when none             | `login, u-boot`  |
-//! | `{replay_file}`     | The file the replay reads, empty when none              | `boot.raw`       |
+//! | `{replay_file}`     | The file the replay reads, a group's count, or empty    | `boot.raw`       |
 //! | `{replay_state}`    | The replay's state (`RUN`, `PAUSE`, `END`), or empty    | `PAUSE`          |
 //! | `{replay_percent}`  | How much of the file the replay read, in percent        | `42`             |
 //! | `{replay_read}`     | The bytes it read                                       | `4096`           |

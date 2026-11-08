@@ -124,8 +124,9 @@ When a session starts, maxicom removes:
 
 1. the sessions that received nothing;
 2. then the oldest ones, until all of them together fit in
-   `sessions.max_size`, and at most `sessions.keep` are left when it is set
-   (by default it is `0`, no limit: the size alone decides).
+   `sessions.max_size` (5 GiB by default), and at most `sessions.keep` are
+   left when it is set (by default it is `0`, no limit: the size alone
+   decides).
 
 When old sessions are removed this way, a notification says how many, up to
 which day, and their size. The session browser shows how full the folder is
@@ -226,10 +227,42 @@ starts.
 ## Session browser
 
 `Ctrl-a j` (or Sessions… in the right-click menu) lists every backup on the
-left, for any device. The right side shows the selected one: its device,
-format, times, size and last lines.
+left, for any device, as a tree. It opens on the session running now, with the
+groups above it open.
 
-![The session browser: past sessions on the left, the selected one's device, times and last lines on the right](images/session-browser.png)
+The right side shows what is selected. For a session, that's its device,
+format, times, size and last lines. For a group, it's how many sessions it
+holds, the time they span, their size, and the last lines of its newest
+sessions one after the other.
+
+![The session browser: the sessions in a tree on the left, the selected one's device, times and last lines on the right](images/session-browser.png)
+
+### The tree
+
+Sessions are grouped by device, then by month, week and day, the newest first:
+
+```text
+▾ ttyUSB0 115200 8N1 UTF8        43 sessions  38MB
+  ▾ 2026-11                      31 sessions  27MB
+    ▾ 2026-W45 (Nov 02–08)       12 sessions   9MB
+      ▸ Sat 2026-11-07            7 sessions   4MB
+        2026-11-06 10:00 → 11:30              1MB
+```
+
+A device group holds the sessions recorded on the same machine, address, line
+settings and encoding. A session without a `.meta` stays alone at the top.
+
+Weeks are ISO weeks, Monday to Sunday. A week belongs to the month of its
+Thursday, so it never splits in two: a session from Monday, August 31 can show
+under September when its week is mostly in September.
+
+A group with a single child shows that child instead. A week of one day shows
+the day, and a day of one session shows the session.
+
+`sessions.group_by` picks the time levels, in any order. `["week", "day"]`
+leaves months out, and `[]` puts the sessions right under their device. Without
+a week level, months are calendar months. Nothing moves on disk: the tree is
+only a way of showing the folder.
 
 ### Marks
 
@@ -239,15 +272,22 @@ format, times, size and last lines.
 | `○` | Restored into the history when the device opened |
 | `?` | No `.meta`: from before the restore feature |
 
+A group shows the mark of what it holds, so a closed one still tells you where
+the running session is.
+
 ### Keys
 
 On top of the [popup keys](popups.md):
 
 | Key | Does |
 | --- | --- |
-| `d`, `Del` | Delete the selected session, after a question |
+| Enter | Open or close the selected group; replay the selected session |
+| Right | Open the selected group |
+| Left | Close the selected group, or go to the group above |
+| `p` | Replay the selected session or group, see [Replaying a group](#replaying-a-group) |
+| `d`, `Del` | Delete the selected session, or a group's sessions but the running ones, after a question |
 | `D` | Delete all but the running ones, after a question |
-| `s` | Sort by date (newest first) or by device |
+| `s` | Switch between the tree and a list of all the sessions, newest first |
 
 ## Replay
 
@@ -282,6 +322,40 @@ Run them from the [command line](command-line.md), or bind them to keys.
 
 While it plays, the status bar shows `▷ RUN 42%` (then `PAUSE` or `END`),
 from `{replay_state}` and `{replay_percent}`.
+
+### Replaying a group
+
+`p` on a group in the [session browser](#session-browser) loads all its
+sessions at once, oldest first, so you can scroll and search a day or a week
+together. There's nothing to wait for and no pace to set, so the commands
+above don't apply to it, apart from `replay-stop`. A group holding the running
+session stops just before it.
+
+A line after each session marks where it ends:
+
+```text
+── end of session: ttyUSB0, 2026-11-07 09:00 → 11:30 ──
+```
+
+The group opens in terminal mode, on its last lines. Terminal mode only keeps
+its `history_size` rows, so for a whole week, switch to line mode with
+`Ctrl-a m`. For the replay, line mode gets a history of its own of 1,000,000
+lines, or `line_mode.history_size` if that's more. Full-screen programs don't
+draw in line mode, so read those parts in terminal mode.
+
+A notification says when something doesn't fit:
+
+| Notification | Means |
+| --- | --- |
+| `Loaded 12 sessions` | All of it is in both modes |
+| `Loaded 12 sessions. Terminal mode keeps the last 100000 rows, line mode has them all` | Line mode has all of it, terminal mode the end |
+| `Loaded the last 9 of 31 sessions: line mode holds 1000000 lines` | The oldest sessions aren't loaded |
+| `Loaded 3 sessions without the start of the oldest: line mode holds 1000000 lines` | The oldest session is cut |
+
+Only what the two modes can hold is read, so a huge group takes no longer to
+open than a medium one. On a 50 MB group, it opened in about a second and used
+about 490 MB. Going back to the live link frees that for maxicom to reuse, but
+the system may not get it all back until maxicom quits.
 
 ### Back to the live link
 
@@ -339,6 +413,7 @@ tx_mark = "> "                           # before each sent line, "" for none
 enabled = true                           # session backup (read at startup)
 keep = 0                                 # sessions kept, 0: no limit (the size alone)
 max_size = "5G"                          # all sessions, K/M/G/T, "0": no limit
+group_by = ["month", "week", "day"]      # the session browser's tree, in any order
 restore = "always"                       # always, ask or never
 restore_max_age = "1day"                 # since it ended, "0s": no limit
 

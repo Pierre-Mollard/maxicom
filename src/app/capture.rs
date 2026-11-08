@@ -455,15 +455,19 @@ impl App {
             return;
         };
         let max_size = self.settings.sessions.limits().max_size;
+        // the live link's session backup, the one a replay paused while it runs
+        let replaced = self.replaced_link();
+        let paused_raw = replaced.and_then(|replaced| {
+            let session = replaced.session.as_ref()?;
+            Some(session.raw_path().to_path_buf())
+        });
+        let live_raw = self.recorder.session_raw().or(paused_raw.as_deref());
         let mut browser = SessionBrowser::new(dir, self.restored_session.clone())
             .with_max_size(max_size)
-            .with_group_by(self.settings.sessions.group_by.clone());
-        if let Some(replaced) = self.replaced_link() {
-            let raw = replaced
-                .session
-                .as_ref()
-                .map(|j| j.raw_path().to_path_buf());
-            browser = browser.with_live(raw);
+            .with_group_by(self.settings.sessions.group_by.clone())
+            .with_focus(live_raw);
+        if replaced.is_some() {
+            browser = browser.with_live(paused_raw.clone());
         }
         self.open_overlay(Overlay::Sessions(Box::new(browser)));
     }

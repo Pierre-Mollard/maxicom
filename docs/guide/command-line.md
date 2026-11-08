@@ -145,7 +145,8 @@ open file://boot.raw            # a replay
 | `replay-speed <delay-ms>` | Changes the delay |
 | `replay-restart` | Plays it again from the top |
 
-See [Replay](capture.md#replay).
+See [Replay](capture.md#replay). A [group replay](capture.md#replaying-a-group)
+is loaded at once, so only `replay-stop` applies to it.
 
 ### Saved links
 

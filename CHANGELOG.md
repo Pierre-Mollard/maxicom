@@ -35,9 +35,34 @@ What changes in each version of maxicom. The format follows
 - Keys in `[copy_mode]` can run a
   [command line](https://pierre-mollard.github.io/maxicom/command-line.html#binding-a-command-line-to-a-key),
   like the prefix's.
+- The [session browser](https://pierre-mollard.github.io/maxicom/capture.html#session-browser)
+  shows the sessions in a tree, by device, month, ISO week and day
+  (`group_by` in `[sessions]`), and opens on the running session. `s` switches
+  to the list of all the sessions.
+- [Replay a whole group](https://pierre-mollard.github.io/maxicom/capture.html#replaying-a-group)
+  of sessions, a day or a week, to scroll and search them together: `p` on a
+  group. A notification says what doesn't fit in the histories. A group also
+  has a preview, and `d` deletes it after a question.
 
 ### Changed
 
+- Much bigger defaults, which you can lower on an older computer: line mode
+  keeps 250,000 lines (`line_mode.history_size`, was 1,000), terminal mode
+  100,000 rows (`terminal_mode.history_size`, was 2,500), and the session
+  folder takes 5 GiB (`sessions.max_size`, was 200 MiB). A full
+  [history](https://pierre-mollard.github.io/maxicom/line-mode.html#history-size)
+  uses far more memory. A config file written by an earlier version keeps its
+  old values.
+- The size alone limits the session folder by default: `sessions.keep` is 0, no
+  limit (was 200). A notification says which sessions a cleanup removed, and
+  the session browser shows how full the folder is.
+- The session browser's `●` mark takes the theme's main color, and `○` replaces
+  `»`: it marks the session really restored into the history, not the one that
+  would be. The theme entry `mark_restorable` is now `mark_restored`.
+- The session browser's selected row is one bar across the list.
+- `d` in the session browser asks before deleting a session.
+- `s` in the session browser no longer sorts by device, as the tree groups by
+  device.
 - The status bar's mode badge reads `COPY` in copy mode, instead of `TERM`
   or `LINE` in the copy colors.
 - The session browser's preview shows the lines in their colors, the

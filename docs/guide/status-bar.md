@@ -97,7 +97,7 @@ layout = "border"
 | Variable | Value | Example |
 | --- | --- | --- |
 | `{mode}` | `TERM` or `LINE`, `COPY` while copy mode is on, `MARK` while a mark waits for its letter | `TERM` |
-| `{port}` | Device address, or a saved link's name | `/dev/ttyUSB0`, `tcp://192.168.1.50:4000`, `esp32` |
+| `{port}` | Device address, a saved link's name, or the device and count of a [group replay](capture.md#replaying-a-group) | `/dev/ttyUSB0`, `tcp://192.168.1.50:4000`, `esp32`, `ttyUSB0 · 12 sessions` |
 | `{baud}` | Baud rate; `raw` for a raw TCP link | `115200` |
 | `{framing}` | Serial framing; `TCP` for a TCP link | `8N1` |
 | `{rx_bytes}` / `{tx_bytes}` | Received / transmitted bytes count | `1024` |
@@ -114,7 +114,7 @@ layout = "border"
 | `{send_file}` / `{send_percent}` | The file `send-file` sends (empty when none) / how much is sent, 0..100 | `fw.hex` |
 | `{trigger_count}` | How many triggers are armed | `2` |
 | `{trigger_names}` | The armed triggers' names | `login, u-boot` |
-| `{replay_file}` | The file a replay reads, empty when none | `boot.raw` |
+| `{replay_file}` | The file a replay reads, a group replay's count, empty when none | `boot.raw`, `12 sessions` |
 | `{replay_state}` | `RUN`, `PAUSE`, `END`, empty when no replay | `PAUSE` |
 | `{replay_percent}` | How much of the file it read, 0..100 | `42` |
 | `{replay_read}` / `{replay_size}` | Bytes read / the file's size | `4096` |

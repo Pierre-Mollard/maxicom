@@ -338,7 +338,7 @@ impl Default for SessionBrowserColors {
             size_large: Color::Indexed(216),
             size_huge: Color::Indexed(172),
             size_giant: Color::Indexed(160),
-            mark_running: Color::Indexed(40),
+            mark_running: Color::Cyan,
             mark_restored: Color::Cyan,
             mark_no_meta: Color::Indexed(245),
         }

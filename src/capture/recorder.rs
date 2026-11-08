@@ -262,6 +262,11 @@ impl Recorder {
         }
     }
 
+    /// The `.raw` of the session backup running, none without one
+    pub fn session_raw(&self) -> Option<&Path> {
+        self.session.as_ref().map(RecordingWriter::raw_path)
+    }
+
     pub fn has_session(&self) -> bool {
         self.session.is_some()
     }

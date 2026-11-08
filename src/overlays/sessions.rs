@@ -1,12 +1,14 @@
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use crossterm::event::KeyCode;
 
 use crate::{
     capture::{
-        DEFAULT_GROUP_BY, GroupLevel, NodeKind, Session, SessionNode, delete_session,
-        delete_sessions, group_separator, list_sessions, read_tail_lines, session_list,
-        session_tree,
+        DEFAULT_GROUP_BY, GroupLevel, NodeKind, Session, SessionNode, delete_sessions,
+        group_separator, list_sessions, read_tail_lines, session_list, session_tree,
     },
     inputs::DialogAction,
     overlays::{OverlayResponse, PopupTarget, copy_path},
@@ -54,7 +56,7 @@ pub struct PreviewLine {
     pub session: Option<usize>,
 }
 
-/// The sessions a delete asks about (MAX-202): all of them, or those of the group named
+/// The sessions a delete asks about (MAX-202): all of them, or those of the row named
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConfirmDelete {
     pub sessions: Vec<usize>,
@@ -63,7 +65,7 @@ pub struct ConfirmDelete {
 
 /// The session browser (MAX-148): the session backups of the cache folder as a tree or a list
 /// (MAX-202), the selected row's details and last lines. Replays the selected session or group
-/// (MAX-166), deletes it (a group once asked), or all but the running ones once asked, copies the selected one's log
+/// (MAX-166), deletes it or all but the running ones once asked, copies the selected one's log
 /// path or the folder's, and reads the folder again. `selected` is a row of `rows`, `open` the
 /// keys of the open groups: they stay across a reload. `restored` is the session the history was filled from
 /// restore at the next launch. `live` says a replay set the live link aside, which the browser
@@ -119,6 +121,30 @@ impl SessionBrowser {
     pub fn with_group_by(mut self, group_by: Vec<GroupLevel>) -> Self {
         self.group_by = group_by;
         self.build();
+        self
+    }
+
+    /// The session whose `.raw` is `raw` selected, the live one, with only the groups down to it
+    /// open so it shows as a leaf (MAX-202). Without it, the newest device stays open and its row
+    /// selected
+    pub fn with_focus(mut self, raw: Option<&Path>) -> Self {
+        let index = raw.and_then(|raw| {
+            let is_it = |session: &Session| session.raw_path() == Some(raw);
+            self.sessions.iter().position(is_it)
+        });
+        let Some(index) = index else {
+            return self;
+        };
+        self.open.clear();
+        let mut nodes = self.tree.as_slice();
+        while let Some(node) = nodes.iter().find(|node| node.sessions.contains(&index)) {
+            if node.children.is_empty() {
+                break;
+            }
+            self.open.insert(node.key.clone());
+            nodes = &node.children;
+        }
+        self.select(self.row_holding(index).unwrap_or(0));
         self
     }
 
@@ -454,17 +480,16 @@ impl SessionBrowser {
         }
     }
 
+    /// The question before deleting the selected session or group: a delete can't be undone. A
+    /// running session is refused at once, as there's nothing to ask
     fn delete_selected(&mut self) -> OverlayResponse {
-        let Some(session) = self.selected_session() else {
-            return self.ask_delete_group();
-        };
-        let span = session.time_span();
-        let result = delete_session(session);
-        self.reload();
-        match result {
-            Ok(()) => notify(format!("Deleted the session of {span}"), false),
-            Err(err) => notify(format!("Session not deleted: {err}"), true),
+        if self
+            .selected_session()
+            .is_some_and(|session| session.running)
+        {
+            return notify("A running session can't be deleted".to_string(), true);
         }
+        self.ask_delete_selected()
     }
 
     /// Reads the folder again, for files changed or removed out of the app (MAX-154)
@@ -490,8 +515,8 @@ impl SessionBrowser {
         })
     }
 
-    /// The question before deleting the selected group's sessions (MAX-202)
-    fn ask_delete_group(&mut self) -> OverlayResponse {
+    /// The question before deleting the selected row's sessions, naming it (MAX-202)
+    fn ask_delete_selected(&mut self) -> OverlayResponse {
         let Some(row) = self.selected_row() else {
             return OverlayResponse::Handled;
         };

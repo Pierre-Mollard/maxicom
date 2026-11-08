@@ -313,6 +313,8 @@ def recolor_sgr(match):
             out += FG
         elif v == "49":  # freeze keeps the previous background on 49
             out += BG
+        elif v == "7":  # freeze ignores reverse video: the text's colors swapped by hand
+            out += ["38"] + BG[1:] + ["48"] + FG[1:]
         else:
             out.append(v)
             if v in ("", "0"):
@@ -506,7 +508,7 @@ SCENARIOS = {
         "directory", [esp(), Pty()], [fed(), press("C-a", "d"), press("t"), wait(2.8)],
         links=directory_links),
     "session-browser": lambda: scenario(
-        "session-browser", [esp()], [fed(), press("C-a", "j"), press("Down"), wait(0.6)],
+        "session-browser", [esp()], [fed(), press("C-a", "j"), wait(0.6)],
         config=LINE, links=esp_link, fixtures=browser_sessions),
     "settings-popup": lambda: scenario(
         "settings-popup", [esp()], [fed(), press("C-a", "o"), wait(0.5)], config=LINE,
