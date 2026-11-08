@@ -1371,3 +1371,194 @@ fn shared_tcp_link_warns() {
     assert!(toasts(&app).contains(&warning), "{:?}", toasts(&app));
     drop(lock);
 }
+
+/// Sessions on the app's own settings, a line of each: `one`, `two` and `three`.
+fn group_of_three(name: &str) -> (std::path::PathBuf, Vec<crate::capture::Session>) {
+    let dir = crate::capture::tests::temp_dir(name);
+    let text = CaptureFormat::default();
+    let write = crate::capture::tests::write_test_session;
+    let sessions = vec![
+        write(&dir, "/dev/a", &text, b"one\r\n", b""),
+        write(&dir, "/dev/a", &text, b"two\r\n", b""),
+        write(&dir, "/dev/a", &text, b"three\r\n", b""),
+    ];
+    (dir, sessions)
+}
+
+/// MAX-202: a group replay takes the link's place at once, already ended so it reads nothing and
+/// says no `Replay finished`: terminal mode first, line mode holds every session in order with
+/// a separator after each, on a big history of its own. Going back gives the live link its
+/// histories back.
+/// How: a live TCP link with a line of its own, then three sessions replayed as a group.
+#[test]
+fn group_replay_loads_at_once_and_gives_the_link_back() {
+    let (dir, sessions) = group_of_three("group_replay");
+    let (listener, address) = listener();
+    let (mut app, _peer) = connected(&listener, &address);
+    app.settings.mode = crate::configs::Mode::Line;
+    app.feed_rx(b"live line\r\n");
+
+    app.apply_link_effect(UpdateEffect::ReplayGroup(sessions.clone()));
+    assert_eq!(app.link_kind(), LinkKind::Replay);
+    assert_eq!(app.settings.mode, crate::configs::Mode::Terminal);
+    assert!(app.is_replay_ended());
+    assert_eq!(app.replay_group(), Some(3));
+    app.poll_link(&mut [0; 256]).unwrap();
+    let toasts = toasts(&app);
+    assert!(!toasts.iter().any(|t| t == "Replay finished"), "{toasts:?}");
+    assert!(
+        toasts.iter().any(|t| t == "Loaded 3 sessions"),
+        "{toasts:?}"
+    );
+
+    let texts: Vec<_> = (app.line_mode.history().iter())
+        .map(|entry| entry.text.clone())
+        .collect();
+    let lines: Vec<_> = texts.iter().map(|text| text.trim_end()).collect();
+    assert_eq!(
+        [lines[0], lines[2], lines[4]],
+        ["one", "two", "three"],
+        "{lines:?}"
+    );
+    for separator in [lines[1], lines[3], lines[5]] {
+        assert!(separator.starts_with("── end of session: a, "), "{lines:?}");
+    }
+    let terminal = app.terminal_mode.all_text_lines();
+    for line in ["one", "two", "three"] {
+        assert!(terminal.iter().any(|row| row == line), "{terminal:?}");
+    }
+
+    app.dispatch(Action::App(AppAction::StopReplay));
+    assert_eq!(
+        app.link_config().address,
+        address.parse::<Address>().unwrap()
+    );
+    assert_eq!(app.replay_group(), None);
+    assert_eq!(app.line_mode.history().len(), 1);
+    assert_eq!(app.line_mode.history()[0].text.trim_end(), "live line");
+    let _peer = listener.accept().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-202: what doesn't fit is said. Past line mode's history the oldest sessions go and the
+/// toast warns; past terminal mode's, the toast says line mode has them all.
+/// How: three sessions of two lines each (a line and a separator) in 3 lines, then a terminal
+/// history of 1 row.
+#[test]
+fn group_replay_says_what_does_not_fit() {
+    let (dir, sessions) = group_of_three("group_replay_fit");
+    let mut app = crate::app::tests::app();
+    app.load_group(&sessions, 3);
+    let lines = app.line_mode.history();
+    assert!(lines[0].text.starts_with("── end of session"));
+    assert_eq!(lines[1].text.trim_end(), "three");
+    assert_eq!(app.line_mode.dropped_lines(), 3);
+    let shown = crate::app::tests::toasts(&app);
+    assert!(
+        shown
+            .iter()
+            .any(|t| t == "Loaded the last 2 of 3 sessions: line mode holds 3 lines"),
+        "{shown:?}"
+    );
+
+    let mut app = crate::app::tests::app();
+    app.settings.terminal_mode.history_size = 1;
+    app.load_group(&sessions, 100);
+    let shown = crate::app::tests::toasts(&app);
+    assert!(
+        shown.iter().any(|t| t
+            == "Loaded 3 sessions. Terminal mode keeps the last 1 rows, line mode has them all"),
+        "{shown:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-202: a big group costs what the histories hold: older sessions aren't read at all, and a
+/// session too big has its start left out, which the toast says.
+/// How: two sessions of 1000 lines in a history of 20 lines; then one alone.
+#[test]
+fn group_replay_reads_only_what_fits() {
+    let dir = crate::capture::tests::temp_dir("group_replay_budget");
+    let text = CaptureFormat::default();
+    let lines = |name: &str| -> Vec<u8> {
+        (0..1000)
+            .flat_map(|i| format!("{name} line {i}\r\n").into_bytes())
+            .collect()
+    };
+    let write = crate::capture::tests::write_test_session;
+    let older = write(&dir, "/dev/a", &text, &lines("older"), b"");
+    let newer = write(&dir, "/dev/a", &text, &lines("newer"), b"");
+
+    let mut app = crate::app::tests::app();
+    app.load_group(&[older.clone(), newer.clone()], 20);
+    assert!(
+        (app.line_mode.history().iter()).all(|entry| !entry.text.starts_with("older")),
+        "the older session was read"
+    );
+    let shown = crate::app::tests::toasts(&app);
+    assert!(
+        shown
+            .iter()
+            .any(|t| t.starts_with("Loaded the last 1 of 2 sessions: line mode holds 20 lines")),
+        "{shown:?}"
+    );
+
+    let mut app = crate::app::tests::app();
+    app.load_group(&[newer], 20);
+    let shown = crate::app::tests::toasts(&app);
+    assert!(
+        shown
+            .iter()
+            .any(|t| t.starts_with("Loaded 1 session without the start of the oldest")),
+        "{shown:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-202: terminal mode gets only the end of a group, as it keeps little: with a small history
+/// the older sessions aren't read into it, while line mode has them.
+/// How: a large first session then a short one, a terminal history of 10 rows.
+#[test]
+fn group_replay_feeds_the_terminal_the_end_only() {
+    let dir = crate::capture::tests::temp_dir("group_replay_tail");
+    let text = CaptureFormat::default();
+    let big: Vec<u8> = (0..1000)
+        .flat_map(|i| format!("old line {i}\r\n").into_bytes())
+        .collect();
+    let write = crate::capture::tests::write_test_session;
+    let sessions = vec![
+        write(&dir, "/dev/a", &text, b"first of all\r\n", b""),
+        write(&dir, "/dev/a", &text, &big, b""),
+        write(&dir, "/dev/a", &text, b"newest\r\n", b""),
+    ];
+    let mut app = crate::app::tests::app();
+    app.settings.terminal_mode.history_size = 10;
+    app.terminal_mode = crate::app::TerminalMode::new(10, 24, 80);
+    app.load_group(&sessions, 10_000);
+    let terminal = app.terminal_mode.all_text_lines();
+    assert!(terminal.iter().any(|row| row == "newest"), "{terminal:?}");
+    assert!(
+        !terminal.iter().any(|row| row == "first of all"),
+        "{terminal:?}"
+    );
+    assert_eq!(app.line_mode.history()[0].text.trim_end(), "first of all");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-202: a group replay has no controls, it read everything at once.
+/// How: the commands after a group replay, each refused with the same reason.
+#[test]
+fn group_replay_has_no_controls() {
+    use crate::commands::build::{replay_pause, replay_restart, replay_resume};
+    let (dir, sessions) = group_of_three("group_replay_controls");
+    let mut app = crate::app::tests::app();
+    app.apply_link_effect(UpdateEffect::ReplayGroup(sessions));
+    for command in [replay_pause, replay_resume, replay_restart] {
+        let refused = command(&app, &[]).err();
+        assert_eq!(
+            refused.as_deref(),
+            Some("a group replay is loaded at once: it has no controls")
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

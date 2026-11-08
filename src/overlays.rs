@@ -140,6 +140,7 @@ pub enum OverlayResponse {
         path: PathBuf,
         device: Option<CaptureDevice>,
     },
+    ReplayGroup(Vec<Session>),
     StopReplay,
     HandledNotify {
         message: String,

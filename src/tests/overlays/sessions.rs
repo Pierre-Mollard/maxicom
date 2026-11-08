@@ -75,7 +75,12 @@ fn selection_moves_and_previews() {
     browser.handle_action(DialogAction::PageUp);
     assert_eq!(browser.selected, 0);
     select(&mut browser, "a");
-    assert_eq!(browser.preview, ["line of a"]);
+    let preview: Vec<_> = browser
+        .preview
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect();
+    assert_eq!(preview, ["line of a"]);
     drop(running);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -211,14 +216,15 @@ fn delete_one_but_not_the_running_one() {
 fn delete_all_asks_then_keeps_the_running_one() {
     let (dir, running) = folder("browser_delete_all");
     let mut browser = list_view(&dir);
-    assert_eq!(browser.deletable().0, 2);
+    let all: Vec<usize> = (0..browser.sessions.len()).collect();
+    assert_eq!(browser.deletable_in(&all).0, 2);
     browser.handle_action(key('D'));
-    assert!(browser.confirm_delete_all);
+    assert!(browser.confirm_delete.is_some());
     assert!(matches!(
         browser.handle_action(key('n')),
         OverlayResponse::Handled
     ));
-    assert!(!browser.confirm_delete_all);
+    assert!(browser.confirm_delete.is_none());
     assert_eq!(browser.sessions.len(), 3);
 
     browser.handle_action(DialogAction::Pick(PopupTarget::SessionDeleteAll));
@@ -242,7 +248,7 @@ fn delete_all_asks_then_keeps_the_running_one() {
         browser.handle_action(key('D')),
         OverlayResponse::HandledNotify { warn: false, .. }
     ));
-    assert!(!browser.confirm_delete_all);
+    assert!(browser.confirm_delete.is_none());
     drop(running);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -493,24 +499,180 @@ fn clicks_select_then_toggle() {
     assert!(!browser.rows()[0].open);
 }
 
-/// MAX-202: until a group can be replayed and deleted, `p` and `d` on one do nothing: it holds
-/// no one session to act on, and Delete all is still there.
-/// How: the dated tree's device selected, the keys pressed.
+/// MAX-202: a group holds no one session: `c` has no log to copy, and `p` on one without any
+/// `.raw` says so.
+/// How: the dated tree's device selected, its sessions without files.
 #[test]
-fn group_keys_touch_nothing() {
+fn group_keys_without_files() {
     let mut browser = dated_browser();
     assert!(browser.selected_session().is_none());
-    for action in [key('p'), key('d')] {
-        assert!(matches!(
-            browser.handle_action(action),
-            OverlayResponse::Handled
-        ));
-    }
-    assert_eq!(browser.sessions.len(), 4);
     assert!(matches!(
         browser.handle_action(key('c')),
         OverlayResponse::HandledNotify { warn: false, .. }
     ));
+    assert!(matches!(
+        browser.handle_action(key('p')),
+        OverlayResponse::HandledNotify { warn: true, message }
+            if message == "This group has no finished session to replay"
+    ));
+}
+
+/// Sessions on port a with these lines, a session on port b, and a running one on a, in a tree
+/// without time levels. Port a's device is selected.
+fn group_folder(name: &str, rx: &[&[u8]]) -> (PathBuf, Recorder, SessionBrowser, CaptureDevice) {
+    let dir = temp_dir(name);
+    let text = CaptureFormat::default();
+    write_test_session(&dir, "/dev/b", &text, b"on b\r\n", b"");
+    let sessions: Vec<Session> = (rx.iter())
+        .map(|rx| write_test_session(&dir, "/dev/a", &text, rx, b""))
+        .collect();
+    let device = sessions[0].meta.as_ref().unwrap().device.clone();
+    let mut running = Recorder::default();
+    running
+        .start_session(&dir, &device, &text, SessionLimits::keep(20))
+        .unwrap();
+    let mut browser = SessionBrowser::new(dir.clone(), None).with_group_by(Vec::new());
+    let device_row = browser
+        .rows()
+        .iter()
+        .position(|row| row.node.kind == NodeKind::Device);
+    browser.handle_action(DialogAction::Pick(PopupTarget::SessionRow(
+        device_row.unwrap(),
+    )));
+    (dir, running, browser, device)
+}
+
+/// MAX-202: a group's preview is the last lines of its sessions, oldest first, a separator after
+/// each session, its own session noted on each line.
+/// How: two sessions of a line each and the running one, the group selected.
+#[test]
+fn group_preview_goes_through_its_sessions() {
+    let (dir, running, browser, _) =
+        group_folder("browser_group_preview", &[b"first\r\n", b"second\r\n"]);
+    assert_eq!(browser.selected_row().unwrap().node.kind, NodeKind::Device);
+    let texts: Vec<_> = browser
+        .preview
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect();
+    assert_eq!(texts[0], "first", "{texts:?}");
+    assert!(texts[1].starts_with("── end of session: a, "), "{texts:?}");
+    assert_eq!(texts[2], "second", "{texts:?}");
+    assert!(texts[3].starts_with("── end of session: a, "), "{texts:?}");
+    assert_eq!(browser.preview[1].session, None);
+    let first = browser.preview[0].session.unwrap();
+    assert!(browser.sessions[first].stem.ends_with("_a"));
+    drop(running);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-202: a group's preview keeps at most `PREVIEW_LINES`, from the end: the newest session's
+/// lines and separators all there, the older sessions not read past it.
+/// How: two sessions of more lines than the preview keeps.
+#[test]
+fn group_preview_is_capped_from_the_end() {
+    let many = |name: &str| -> Vec<u8> {
+        (0..PREVIEW_LINES + 50)
+            .flat_map(|i| format!("{name} {i}\r\n").into_bytes())
+            .collect()
+    };
+    let (older, newer) = (many("older"), many("newer"));
+    let (dir, running, browser, _) = group_folder("browser_group_preview_cap", &[&older, &newer]);
+    assert_eq!(browser.preview.len(), PREVIEW_LINES);
+    assert!(
+        browser
+            .preview
+            .iter()
+            .all(|line| !line.text.starts_with("older"))
+    );
+    drop(running);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-202: `d` or the button on a group asks first, naming it: `n` keeps everything, `y` deletes
+/// its sessions but the running one, the others in the folder untouched.
+/// How: two sessions and the running one on port a, one on port b.
+#[test]
+fn group_delete_asks_then_keeps_the_running_one() {
+    let (dir, running, mut browser, _) =
+        group_folder("browser_group_delete", &[b"first\r\n", b"second\r\n"]);
+    let label = browser.selected_row().unwrap().node.label.clone();
+    assert!(matches!(
+        browser.handle_action(key('d')),
+        OverlayResponse::Handled
+    ));
+    let confirm = browser.confirm_delete.clone().unwrap();
+    assert_eq!(confirm.group.as_deref(), Some(label.as_str()));
+    assert_eq!(browser.deletable_in(&confirm.sessions).0, 2);
+    browser.handle_action(key('n'));
+    assert!(browser.confirm_delete.is_none());
+    assert_eq!(browser.sessions.len(), 4);
+
+    browser.handle_action(DialogAction::Pick(PopupTarget::SessionDelete));
+    match browser.handle_action(key('y')) {
+        OverlayResponse::HandledNotify { message, warn } => {
+            assert!(!warn);
+            assert!(message.starts_with("Deleted 2 sessions ("), "{message}");
+            assert!(message.ends_with("), 1 running kept"), "{message}");
+        }
+        _ => panic!("no toast"),
+    }
+    let mut left: Vec<_> = browser.sessions.iter().map(Session::port_tag).collect();
+    left.sort_unstable();
+    assert_eq!(left, ["a", "b"]);
+    assert!(browser.sessions.iter().any(|s| s.running));
+
+    // only the running one left in the group: nothing to delete, no question
+    let selected = browser.selected_row().unwrap();
+    assert_eq!(selected.node.sessions.len(), 1);
+    assert!(browser.sessions[selected.node.sessions[0]].running);
+    assert!(matches!(
+        browser.handle_action(key('d')),
+        OverlayResponse::HandledNotify { warn: false, message }
+            if message == "No session to delete"
+    ));
+    assert!(browser.confirm_delete.is_none());
+    drop(running);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-202: `p` or the button on a group gives its finished sessions, oldest first: a group
+/// with the running session stops just before it, and one with only that session says so.
+/// How: two past sessions on a port plus a running one on the same device; then the group of
+/// the running session on another port.
+#[test]
+fn group_replay_gives_the_finished_sessions_oldest_first() {
+    let dir = temp_dir("browser_group_replay");
+    let text = CaptureFormat::default();
+    let first = write_test_session(&dir, "/dev/a", &text, b"one\r\n", b"");
+    let second = write_test_session(&dir, "/dev/a", &text, b"two\r\n", b"");
+    let device = first.meta.as_ref().unwrap().device.clone();
+    let mut running = Recorder::default();
+    running
+        .start_session(&dir, &device, &text, SessionLimits::keep(20))
+        .unwrap();
+    let mut browser = SessionBrowser::new(dir.clone(), None).with_group_by(Vec::new());
+    for action in [key('p'), DialogAction::Pick(PopupTarget::SessionReplay)] {
+        match browser.handle_action(action) {
+            OverlayResponse::ReplayGroup(sessions) => {
+                let stems: Vec<_> = sessions.iter().map(|s| s.stem.clone()).collect();
+                assert_eq!(stems, [first.stem.clone(), second.stem.clone()]);
+            }
+            _ => panic!("no group replay"),
+        }
+    }
+    drop(running);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let (dir, running) = folder("browser_group_running");
+    let mut browser = SessionBrowser::new(dir.clone(), None).with_group_by(Vec::new());
+    assert!(browser.rows()[0].node.label.starts_with("live"));
+    assert!(matches!(
+        browser.handle_action(key('p')),
+        OverlayResponse::HandledNotify { warn: true, .. }
+    ));
+    drop(running);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// MAX-202: `s` switches to the newest-first list and back. The list selects the newest session

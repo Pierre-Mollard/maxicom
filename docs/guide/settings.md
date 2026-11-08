@@ -169,7 +169,7 @@ See [Line mode](line-mode.md).
 | `display_mode` | `"pretty"` | `pretty`, `clean`, `raw`, `hex`, `octal`, `binary` |
 | `wrap_mode` | `"word"` | `word`, `char`, `truncate` |
 | `wrap_indent` | `"timestamp"` | `timestamp`, `prefix`, `none` |
-| `history_size` | `1000` | Lines kept |
+| `history_size` | `250000` | Lines kept |
 | `send_history_size` | `1000` | Sent lines kept for Up / Down |
 | `show_partial_rx` | `true` | Show the line still coming in |
 | `entry_spacing` | `0` | Blank rows between lines |
@@ -187,7 +187,7 @@ See [Terminal mode](terminal-mode.md).
 | --- | --- | --- |
 | `dimension_mode` | `"grow_only"` | `grow_only`, `match_view`, `fixed_cols`, `fixed` |
 | `rows`, `cols` | `24`, `80` | The size of `fixed` (`cols` for `fixed_cols`) |
-| `history_size` | `2500` | Scrollback lines kept |
+| `history_size` | `100000` | Scrollback lines kept |
 | `empty_fill_char` | `"░"` | Fills the view outside the emulated screen |
 | `unfocused_cursor_glyph` | `"█"` | The cursor while unfocused |
 | `answer_queries` | `true` | Answer the device's terminal queries |

@@ -159,8 +159,25 @@ in the settings popup cycles it.
 | --- | --- | --- |
 | `show_partial_rx` | `true` | Shows the line still coming in as it grows. Off, a line shows once it ends. |
 | `entry_spacing` | `0` | Blank rows between two lines |
-| `history_size` | `1000` | Lines kept; older ones are dropped. Read at startup. |
+| `history_size` | `250000` | Lines kept; older ones are dropped. Read at startup. See [History size](#history-size). |
 | `unfocused_cursor_glyph` | `█` | The cursor drawn while the input box isn't focused |
+
+## History size
+
+Line mode keeps more than [terminal mode](terminal-mode.md#scrollback),
+because a line costs much less than a row of the terminal grid. Memory is
+only used as the history fills.
+
+With the default `dual_mode_buffering`, both modes receive everything. A full
+history of 250,000 lines of about 80 characters then takes roughly 325 MB, on
+top of the terminal's scrollback; with both full at 80 columns, maxicom used
+about 575 MB. Each line costs more than its text because the two modes' memory
+gets interleaved. With `dual_mode_buffering = "active_only"`, the same history
+takes about 40 MB.
+
+The first draw and each resize measure every line, which takes about 400 ms
+when the history is full. Lower `history_size` if resizing feels slow or
+memory is short.
 
 ## Telling the device the width
 

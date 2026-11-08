@@ -60,12 +60,15 @@ The view around the emulated screen is filled with `empty_fill_char`
 
 ## Scrollback
 
-`history_size` in `[terminal_mode]` (default `2500`) sets how many lines are
+`history_size` in `[terminal_mode]` (default `100000`) sets how many lines are
 kept above the screen. It is read at startup.
 
 The scrollback is maxicom's biggest use of memory: about
-`history_size x cols x 32` bytes. 2500 lines of 80 columns take 6.4 MB; of
-250 columns, 20 MB.
+`history_size x cols x 32` bytes once it is full. 100,000 lines of 80 columns
+take about 256 MB; of 250 columns, about 800 MB. A search also keeps a copy of
+the text until new data comes in, which added about 440 MB on a full 80-column
+scrollback. Lower `history_size` on a computer with little memory: 10,000 lines
+of 80 columns take about 26 MB.
 
 What the device sends never moves a view you scrolled up, so you can read
 in peace. What you send (a key in terminal mode, a line in line mode) brings

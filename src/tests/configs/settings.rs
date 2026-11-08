@@ -83,7 +83,7 @@ fn session_max_size_parses() {
     assert!(parse("max_size = \"big\"").is_err());
 
     let defaults = SessionsConfig::default();
-    assert_eq!(defaults.limits().max_size, Some(200 << 20));
+    assert_eq!(defaults.limits().max_size, Some(5 << 30));
     assert_eq!(defaults.keep, 0);
     let unlimited = toml::from_str::<SessionsConfig>("max_size = \"0\"").unwrap();
     assert_eq!(unlimited.limits().max_size, None);
@@ -137,4 +137,13 @@ fn marks_switches() {
     let settings: SettingsConfig = toml::from_str("[ui.marks]\nscrollbar = false\n").unwrap();
     let marks = settings.ui.marks;
     assert!(marks.letters && !marks.scrollbar && marks.flash);
+}
+
+/// MAX-202: the big defaults of the histories and the session folder, see MAX-214.
+#[test]
+fn history_defaults() {
+    let settings = SettingsConfig::default();
+    assert_eq!(settings.line_mode.history_size, 250_000);
+    assert_eq!(settings.terminal_mode.history_size, 100_000);
+    assert_eq!(settings.sessions.max_size.0, 5 << 30);
 }

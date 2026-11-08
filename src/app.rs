@@ -14,7 +14,9 @@ use crate::{
         triggers::Trigger,
         types::{FocusTarget, FrameAreas, FrameMap, ViewportSize},
     },
-    capture::{CaptureDevice, CaptureLine, Recorder, RecordingWriter, ScreenshotFormat, Stream},
+    capture::{
+        CaptureDevice, CaptureLine, Recorder, RecordingWriter, ScreenshotFormat, Session, Stream,
+    },
     commands::{CommandError, Invocation, Target},
     configs::{
         DualBufferMode, KeyBindingAction, KeyResolver, LinksConfig, Mode, RawSideView,
@@ -218,6 +220,8 @@ struct ReplacedLink {
 struct ReplayRun {
     device: Option<CaptureDevice>,
     ended: bool,
+    /// How many sessions a group replay loaded at once (MAX-202)
+    group: Option<usize>,
     replaced: Option<Box<ReplacedLink>>,
 }
 
@@ -236,6 +240,8 @@ pub enum UpdateEffect {
         delay: Duration,
         session: Option<CaptureDevice>,
     },
+    /// The sessions of a group to load at once, oldest first (MAX-202)
+    ReplayGroup(Vec<Session>),
     StopReplay,
     CopyToClipboard(String),
     CopyToClipboardAs {
@@ -522,6 +528,21 @@ impl App {
         self.replay.as_ref().and_then(|run| run.device.as_ref())
     }
 
+    /// How many sessions the replay loaded at once, none for a replay reading its file
+    /// (MAX-202)
+    pub fn replay_group(&self) -> Option<usize> {
+        self.replay.as_ref().and_then(|run| run.group)
+    }
+
+    /// What the status bar calls a group replay: `ttyUSB0 · 12 sessions` (MAX-202)
+    pub fn replay_group_label(&self) -> Option<String> {
+        let count = crate::overlays::sessions::sessions(self.replay_group()?);
+        Some(match self.replay_device() {
+            Some(device) => format!("{} · {count}", device.address.tag()),
+            None => count,
+        })
+    }
+
     /// The live link the replay set aside, to go back to (MAX-166)
     fn replaced_link(&self) -> Option<&ReplacedLink> {
         self.replay.as_ref().and_then(|run| run.replaced.as_deref())
@@ -564,6 +585,7 @@ impl App {
         self.replay = Some(ReplayRun {
             device: session.cloned(),
             ended: false,
+            group: None,
             replaced,
         });
     }
@@ -934,6 +956,9 @@ impl App {
                             delay: Duration::ZERO,
                             session: device,
                         },
+                        OverlayResponse::ReplayGroup(sessions) => {
+                            UpdateEffect::ReplayGroup(sessions)
+                        }
                         OverlayResponse::StopReplay => UpdateEffect::StopReplay,
                         // the directory stays until the port opens, or says why it doesn't
                         OverlayResponse::Open(address) => {

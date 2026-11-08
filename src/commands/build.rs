@@ -267,6 +267,9 @@ fn replay_control(app: &App, control: ReplayControl) -> Result<Action, String> {
             "no replay runs".to_string()
         });
     };
+    if app.replay_group().is_some() {
+        return Err("a group replay is loaded at once: it has no controls".to_string());
+    }
     match control {
         ReplayControl::Pause if replay.is_paused() => {
             Err("the replay is paused already".to_string())

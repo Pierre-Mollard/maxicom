@@ -153,6 +153,15 @@ pub fn restore_separator(session: &Session) -> String {
     )
 }
 
+/// The line that ends a session in a group replay (MAX-202)
+pub fn group_separator(session: &Session) -> String {
+    format!(
+        "── end of session: {}, {} ──",
+        session.port_tag(),
+        session.time_span()
+    )
+}
+
 #[cfg(test)]
 #[path = "../tests/capture/restore.rs"]
 mod tests;

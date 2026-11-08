@@ -12,7 +12,7 @@ use std::{
 
 use super::{App, UpdateEffect};
 use crate::{
-    capture::{CaptureDevice, RecordingMeta, recording_raw},
+    capture::{CaptureDevice, RecordingMeta, Session, recording_raw},
     configs::{
         AppConfig, LinksConfig,
         links::{SavedLink, default_name},
@@ -52,6 +52,10 @@ pub struct LinkTurn {
     pub rx_received: bool,
     pub redraw: bool,
 }
+
+/// The lines line mode holds during a group replay at least, freed with it (MAX-202): about
+/// 150 MB when full, as measured in MAX-214
+const GROUP_REPLAY_LINES: usize = 1_000_000;
 
 impl App {
     /// The link at start, with the device opened before the UI if any. A TCP link connects in
@@ -398,6 +402,7 @@ impl App {
                 delay,
                 session,
             } => self.replay_file(path, delay, session),
+            UpdateEffect::ReplayGroup(sessions) => self.open_group_replay(&sessions),
             UpdateEffect::StopReplay => self.stop_replay_link(),
             UpdateEffect::ToggleAttach => self.toggle_attach(),
             UpdateEffect::Transmit(bytes) => {
@@ -653,6 +658,32 @@ impl App {
         if let Err(e) = self.open_replay(path.clone(), delay, session.as_ref()) {
             self.fail_commands(format!("replay: {}: {e}", path.display()));
         }
+    }
+
+    /// A group of sessions in place of the link (MAX-202): loaded at once, so its replay starts
+    /// finished, on the newest session's file and device, in terminal mode as a replay does.
+    /// Line mode holds it on a history of its own, which goes with the replay
+    fn open_group_replay(&mut self, sessions: &[Session]) {
+        let Some(newest) = sessions.last() else {
+            return;
+        };
+        let Some(path) = newest.raw_path() else {
+            return;
+        };
+        let replay = match Replay::loaded(path) {
+            Ok(replay) => replay,
+            Err(e) => return self.notify_warn(format!("Group not replayed: {e}")),
+        };
+        self.link.set_replay(replay);
+        let device = newest.meta.as_ref().map(|meta| &meta.device);
+        self.start_replay(path.to_path_buf(), device);
+        if let Some(run) = &mut self.replay {
+            run.ended = true;
+            run.group = Some(sessions.len());
+        }
+        self.close_link_popups();
+        let lines = GROUP_REPLAY_LINES.max(self.settings.line_mode.history_size);
+        self.load_group(sessions, lines);
     }
 
     /// The link the replay replaced opens again as at start, its popup if it doesn't; a replay

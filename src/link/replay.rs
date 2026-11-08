@@ -44,6 +44,14 @@ impl Replay {
         })
     }
 
+    /// A replay with nothing left to read: what it plays was loaded at once (MAX-202)
+    pub fn loaded(path: &Path) -> io::Result<Self> {
+        let mut replay = Self::open(path, Duration::ZERO)?;
+        replay.finished = true;
+        replay.read = replay.size;
+        Ok(replay)
+    }
+
     /// Whether the whole file was read (MAX-166)
     pub fn is_finished(&self) -> bool {
         self.finished

@@ -3,21 +3,30 @@
 //! `capture::Recorder` writes the files
 use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, Local};
+
 use super::App;
 use crate::{
-    app::{terminal_mode::add_newlines, types::LogEntry},
+    app::{LineMode, terminal_mode::add_newlines, types::LogEntry},
     capture::{
         CaptureDevice, CaptureFormat, CaptureSource, PruneReport, RESTORE_RAW_TAIL,
         RecordingWriter, Session, Stream, TerminalSize, TimedChunk, find_last_session,
-        read_tail_bytes, read_times, restore_separator, timed_chunks,
+        group_separator, read_tail_bytes, read_times, restore_separator, timed_chunks,
     },
     configs::{Mode, settings::RestoreMode},
-    overlays::{ErrorDialog, FilePathDialog, Overlay, SessionBrowser, sessions::size},
+    overlays::{
+        ErrorDialog, FilePathDialog, Overlay, SessionBrowser,
+        sessions::{sessions as session_count, size},
+    },
     paths::expand_home,
 };
 
 /// The most kept while the restore dialog asks: past it, the dialog closes without a restore
 const HELD_RX_MAX: usize = 4 << 20;
+/// What a group replay reads for each line line mode holds and each row terminal mode keeps:
+/// past that it would be dropped anyway, so a big group costs no more than a small one (MAX-202)
+const GROUP_LINE_BYTES: u64 = 256;
+const GROUP_TERMINAL_BYTES_PER_ROW: u64 = 512;
 
 impl App {
     /// Starts the session backup in `dir` when `sessions.enabled` is on. Without it, a toast
@@ -243,17 +252,30 @@ impl App {
         let chunks = timed_chunks(start, &raw, &times);
         let separator = restore_separator(session);
 
-        let settings = &self.settings;
-        let (add_cr, add_lf, encoding) = (settings.add_cr, settings.add_lf, settings.encoding);
+        let (add_lf, encoding) = (self.settings.add_lf, self.settings.encoding);
         self.line_mode.restore_rx(add_lf, encoding, &chunks);
         // like a `clear`, the separator on the top row (MAX-176)
         self.line_mode.clear_view();
         let separator_line = LogEntry::restored(separator.clone(), None);
         self.line_mode.restore_entries([separator_line]);
-        // the view's size applies once the UI is up, by the dimension mode
-        if let Some(size) = meta.terminal {
+        self.restore_terminal(meta.terminal, &chunks, &separator);
+        Ok(())
+    }
+
+    /// A past session's chunks through the terminal, then `separator`, at the size the session
+    /// ended on when it is known. The view's size applies once the UI is up, by the dimension
+    /// mode
+    fn restore_terminal(
+        &mut self,
+        size: Option<TerminalSize>,
+        chunks: &[TimedChunk],
+        separator: &str,
+    ) {
+        if let Some(size) = size {
             self.terminal_mode.set_vt100_size(size.rows, size.cols);
         }
+        let settings = &self.settings;
+        let (add_cr, add_lf, encoding) = (settings.add_cr, settings.add_lf, settings.encoding);
         // add CR / add LF as live, through all the chunks (MAX-181)
         let mut after_cr = false;
         let shown: Vec<_> = (chunks.iter())
@@ -265,8 +287,67 @@ impl App {
                 time: chunk.time,
             })
             .collect();
-        (self.terminal_mode).restore(encoding, &shown_chunks, &separator);
-        Ok(())
+        (self.terminal_mode).restore(encoding, &shown_chunks, separator);
+    }
+
+    /// Loads a group of sessions, oldest first, for a replay (MAX-202): the end of the group that
+    /// line mode can hold on a new history of `lines`, then the end that terminal mode can, with
+    /// a separator after each session. Only that is read, however big the group. One mode after
+    /// the other: fed in turns, they fragment the heap, as measured in MAX-214. A toast says what
+    /// doesn't fit
+    pub fn load_group(&mut self, sessions: &[Session], lines: usize) {
+        let send_history = self.settings.line_mode.send_history_size;
+        self.line_mode = LineMode::new(lines, send_history);
+        let (add_lf, encoding) = (self.settings.add_lf, self.settings.encoding);
+        let tail = group_tail(sessions, lines as u64 * GROUP_LINE_BYTES);
+        let mut ends = Vec::new();
+        for &(session, take) in &tail {
+            let read = (session.raw_path()).and_then(|path| read_tail_bytes(path, take).ok());
+            let Some((start, raw)) = read else {
+                continue;
+            };
+            let times = session_times(session, start);
+            self.line_mode
+                .restore_rx(add_lf, encoding, &timed_chunks(start, &raw, &times));
+            let separator = LogEntry::restored(group_separator(session), None);
+            self.line_mode.restore_entries([separator]);
+            ends.push(self.line_mode.history().len() + self.line_mode.dropped_lines());
+        }
+        let dropped = self.line_mode.dropped_lines();
+        let rows = self.settings.terminal_mode.history_size;
+        let terminal_tail = group_tail(sessions, rows as u64 * GROUP_TERMINAL_BYTES_PER_ROW);
+        let fit = GroupFit {
+            sessions: sessions.len(),
+            unreadable: tail.len() - ends.len(),
+            kept: ends.iter().filter(|&&end| end > dropped).count(),
+            cut: dropped > 0 || tail_is_cut(sessions, &tail),
+            lines,
+            terminal_cut: rows < ends.last().copied().unwrap_or(0)
+                || tail_is_cut(sessions, &terminal_tail),
+            terminal_rows: rows,
+        };
+
+        for &(session, take) in &terminal_tail {
+            let read = (session.raw_path()).and_then(|path| read_tail_bytes(path, take).ok());
+            let Some((start, raw)) = read else {
+                continue;
+            };
+            let times = session_times(session, start);
+            let chunks = timed_chunks(start, &raw, &times);
+            let size = session.meta.as_ref().and_then(|meta| meta.terminal);
+            self.restore_terminal(size, &chunks, &group_separator(session));
+        }
+        // the end of the group in view, not the empty screen under the last separator
+        let (screen_rows, _) = self.terminal_mode.get_vt100_size();
+        self.terminal_mode
+            .scroll_up(usize::from(screen_rows.saturating_sub(1)));
+
+        let (message, warn) = fit.message();
+        if warn {
+            self.notify_warn(message);
+        } else {
+            self.notify_info(message);
+        }
     }
 
     /// Stops the recording, or opens the recording dialog on the mode's stream when none runs
@@ -385,6 +466,82 @@ impl App {
             browser = browser.with_live(raw);
         }
         self.open_overlay(Overlay::Sessions(Box::new(browser)));
+    }
+}
+
+/// The end of a group that fits in `budget` bytes, oldest first: each session with how much of
+/// its `.raw` to read (MAX-202)
+fn group_tail(sessions: &[Session], budget: u64) -> Vec<(&Session, u64)> {
+    let mut left = budget;
+    let mut tail = Vec::new();
+    for session in sessions.iter().rev() {
+        if left == 0 {
+            break;
+        }
+        let take = session.raw_len.min(left);
+        left -= take;
+        tail.push((session, take));
+    }
+    tail.reverse();
+    tail
+}
+
+/// Whether `tail` leaves out a session of `sessions`, or the start of its oldest
+fn tail_is_cut(sessions: &[Session], tail: &[(&Session, u64)]) -> bool {
+    let whole_oldest = tail
+        .first()
+        .is_none_or(|(oldest, take)| *take == oldest.raw_len);
+    tail.len() < sessions.len() || !whole_oldest
+}
+
+/// When a session's chunks from raw offset `start` on were received, none when it isn't known
+fn session_times(session: &Session, start: u64) -> Vec<(u64, DateTime<Local>)> {
+    (session.times_path())
+        .and_then(|path| read_times(path, start).ok())
+        .unwrap_or_default()
+}
+
+/// What a group replay could load (MAX-202): `sessions` asked, `unreadable` of them not read,
+/// `kept` with lines still in line mode's history of `lines`, whether line mode misses anything
+/// (`cut`), and whether terminal mode, with its `terminal_rows`, does
+struct GroupFit {
+    sessions: usize,
+    unreadable: usize,
+    kept: usize,
+    cut: bool,
+    lines: usize,
+    terminal_cut: bool,
+    terminal_rows: usize,
+}
+
+impl GroupFit {
+    /// The toast, and whether it warns: something is missing from line mode too
+    fn message(&self) -> (String, bool) {
+        let count = session_count(self.sessions);
+        let lines = self.lines;
+        let mut message = if !self.cut {
+            format!("Loaded {count}")
+        } else if self.kept == self.sessions {
+            format!("Loaded {count} without the start of the oldest: line mode holds {lines} lines")
+        } else {
+            format!(
+                "Loaded the last {} of {count}: line mode holds {lines} lines",
+                self.kept
+            )
+        };
+        if self.unreadable > 0 {
+            message.push_str(&format!(", {} unreadable", self.unreadable));
+        }
+        if self.terminal_cut {
+            message.push_str(&format!(
+                ". Terminal mode keeps the last {} rows",
+                self.terminal_rows
+            ));
+            if !self.cut {
+                message.push_str(", line mode has them all");
+            }
+        }
+        (message, self.cut || self.unreadable > 0)
     }
 }
 

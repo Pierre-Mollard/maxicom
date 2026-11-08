@@ -508,7 +508,7 @@ impl Default for SessionsConfig {
         Self {
             enabled: true,
             keep: 0,
-            max_size: ByteSize(200 << 20),
+            max_size: ByteSize(5 << 30),
             restore: RestoreMode::default(),
             restore_max_age: Duration::from_secs(24 * 3600),
             group_by: DEFAULT_GROUP_BY.to_vec(),
@@ -632,6 +632,8 @@ pub struct LineModeConfig {
     pub display_mode: LineDisplayMode,
     pub wrap_mode: WrapMode,
     pub wrap_indent: PrefixWrapBehavior,
+    /// Lines kept, memory used only as they come: about 1.3 KB a line with the default
+    /// `AlwaysBoth`, and a resize measures them all (MAX-214)
     pub history_size: usize,
     pub send_history_size: usize,
     pub show_partial_rx: bool,
@@ -652,7 +654,7 @@ impl Default for LineModeConfig {
             display_mode: LineDisplayMode::default(),
             wrap_mode: WrapMode::default(),
             wrap_indent: PrefixWrapBehavior::default(),
-            history_size: 1000,
+            history_size: 250_000,
             send_history_size: 1000,
             show_partial_rx: true,
             entry_spacing: 0,
@@ -675,7 +677,8 @@ pub struct TerminalModeConfig {
     pub dimension_mode: TerminalDimensionMode,
     /// Scrollback lines kept by the emulator. Biggest memory user of the app: vt100 stores
     /// every line as a full row of 32 B cells, even blank ones, so memory is about
-    /// `history_size × cols × 32 B` (2500 × 80 cols ≈ 6.4 MB, × 250 cols ≈ 20 MB).
+    /// `history_size × cols × 32 B` (100000 × 80 cols ≈ 256 MB, × 250 cols ≈ 800 MB), used only
+    /// as the rows come, and a search keeps a copy of their text until the next data (MAX-214).
     /// With `GrowOnly` the emulator keeps the widest width it has seen, and new lines use it
     /// even after the window shrinks (rows already in scrollback keep their own width)
     pub history_size: usize,
@@ -695,7 +698,7 @@ impl Default for TerminalModeConfig {
             rows: 24,
             cols: 80,
             dimension_mode: TerminalDimensionMode::GrowOnly,
-            history_size: 2500,
+            history_size: 100_000,
             empty_fill_char: String::from("░"),
             unfocused_cursor_glyph: String::from("█"),
             answer_queries: true,
@@ -748,9 +751,9 @@ impl Default for StatusBarConfig {
                 "[⟳ mash ](mashing?(fg=secondary bold):hide click=cancel)",
                 "[⇡ {send_file} {send_percent:>3}% ](sending?(fg=secondary bold):hide)",
                 "[▷ {replay_state} {replay_percent:>3}% ](replaying?(fg=secondary bold):hide prio=5)",
-                "[« live](replaced?(fg=main bold):hide click=toggle-attach)",
-                "[+CR](add_cr?(fg=warn bold):hide click=toggle-add-cr)",
-                "[+LF](add_lf?(fg=warn bold):hide click=toggle-add-lf)",
+                "[« live ](replaced?(fg=main bold):hide click=toggle-attach)",
+                "[+CR ](add_cr?(fg=warn bold):hide click=toggle-add-cr)",
+                "[+LF ](add_lf?(fg=warn bold):hide click=toggle-add-lf)",
                 "[● REC ](rec?(fg=warn bold):hide click=record)",
                 "[◀ ](wide?(pan_left?secondary:muted):hide click=pan-left)",
                 "[{pan_offset:>3}/{pan_max:<3}](wide?muted:hide)",

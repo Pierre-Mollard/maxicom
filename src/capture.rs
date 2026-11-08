@@ -11,8 +11,8 @@ mod tree;
 // Re-exports
 pub use recorder::{Recorder, RecordingWriter, Stream};
 pub use restore::{
-    RESTORE_RAW_TAIL, TimedChunk, read_tail_bytes, read_tail_lines, read_times, restore_separator,
-    timed_chunks,
+    RESTORE_RAW_TAIL, TimedChunk, group_separator, read_tail_bytes, read_tail_lines, read_times,
+    restore_separator, timed_chunks,
 };
 pub use screenshot::{Screenshot, ScreenshotFormat};
 pub use session::{

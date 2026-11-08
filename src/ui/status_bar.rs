@@ -567,6 +567,9 @@ impl Var {
             Some(value) => {
                 let _ = write!(out, "{value}");
             }
+            None if self == Self::Port && app.replay_group().is_some() => {
+                out.push_str(&app.replay_group_label().unwrap_or_default());
+            }
             // a saved link by its name, short already (MAX-185)
             None if compact && self == Self::Port => match app.link_name() {
                 Some(name) => out.push_str(name),
@@ -607,6 +610,9 @@ impl Var {
                     Mode::Line => "LINE",
                 }
             ),
+            Self::Port if app.replay_group().is_some() => {
+                write!(out, "{}", app.replay_group_label().unwrap_or_default())
+            }
             Self::Port => match app.link_name() {
                 Some(name) => write!(out, "{name}"),
                 None => write!(out, "{}", app.link_config().address.label()),
@@ -661,9 +667,11 @@ impl Var {
                 app.transfer().map_or("", |transfer| transfer.name())
             ),
             Self::TriggerNames => write!(out, "{}", app.armed_triggers().join(", ")),
-            Self::ReplayFile if app.link_kind() == LinkKind::Replay => {
-                write!(out, "{}", app.link_config().address.tag())
-            }
+            Self::ReplayFile if app.link_kind() == LinkKind::Replay => match app.replay_group() {
+                Some(1) => write!(out, "1 session"),
+                Some(count) => write!(out, "{count} sessions"),
+                None => write!(out, "{}", app.link_config().address.tag()),
+            },
             Self::ReplayState if app.link_kind() == LinkKind::Replay => {
                 write!(out, "{}", replay_state(app))
             }

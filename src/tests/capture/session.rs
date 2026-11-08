@@ -696,7 +696,7 @@ fn default_limits_are_the_size_alone() {
         sessions.limits(),
         SessionLimits {
             keep: None,
-            max_size: Some(200 << 20),
+            max_size: Some(5 << 30),
         }
     );
     sessions.keep = 5;

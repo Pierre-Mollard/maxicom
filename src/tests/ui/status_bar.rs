@@ -615,7 +615,28 @@ fn replay_has_a_back_to_live_button() {
     assert!(!live(&a) && !back(&a));
     a.start_replay(std::path::PathBuf::from("/tmp/logs/boot.raw"), None);
     assert!(live(&a), "{:?}", render(&d.center, &a));
+    // a column before what comes next, the pan arrows
+    let center = render(&d.center, &a);
+    assert!(
+        center.iter().any(|s| s.starts_with("« live ")),
+        "{center:?}"
+    );
     assert!(back(&a));
+}
+
+/// A flag of the default bar's center keeps a column before what comes next: the other flags or
+/// the pan arrows.
+/// How: +CR and +LF on, in the bar's center.
+#[test]
+fn center_flags_keep_a_space() {
+    let d = StatusBarConfig::default();
+    let mut a = app(Mode::Terminal);
+    a.settings_mut().add_cr = true;
+    a.settings_mut().add_lf = true;
+    let center = render(&d.center, &a);
+    for flag in ["+CR ", "+LF "] {
+        assert!(center.iter().any(|s| s.starts_with(flag)), "{center:?}");
+    }
 }
 
 /// The theme's colors a template can name: the frame's, the bar's background, the search

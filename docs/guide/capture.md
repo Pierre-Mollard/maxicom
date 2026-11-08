@@ -338,7 +338,7 @@ tx_mark = "> "                           # before each sent line, "" for none
 [sessions]
 enabled = true                           # session backup (read at startup)
 keep = 0                                 # sessions kept, 0: no limit (the size alone)
-max_size = "200M"                        # all sessions, K/M/G/T, "0": no limit
+max_size = "5G"                          # all sessions, K/M/G/T, "0": no limit
 restore = "always"                       # always, ask or never
 restore_max_age = "1day"                 # since it ended, "0s": no limit
 

@@ -71,9 +71,9 @@ center = '''
     [⟳ mash ](mashing?(fg=secondary bold):hide click=cancel)\
     [⇡ {send_file} {send_percent:>3}% ](sending?(fg=secondary bold):hide)\
     [▷ {replay_state} {replay_percent:>3}% ](replaying?(fg=secondary bold):hide prio=5)\
-    [« live](replaced?(fg=main bold):hide click=toggle-attach)\
-    [+CR](add_cr?(fg=warn bold):hide click=toggle-add-cr)\
-    [+LF](add_lf?(fg=warn bold):hide click=toggle-add-lf)\
+    [« live ](replaced?(fg=main bold):hide click=toggle-attach)\
+    [+CR ](add_cr?(fg=warn bold):hide click=toggle-add-cr)\
+    [+LF ](add_lf?(fg=warn bold):hide click=toggle-add-lf)\
     [● REC ](rec?(fg=warn bold):hide click=record)\
     [◀ ](wide?(pan_left?secondary:muted):hide click=pan-left)\
     [{pan_offset:>3}/{pan_max:<3}](wide?muted:hide)\

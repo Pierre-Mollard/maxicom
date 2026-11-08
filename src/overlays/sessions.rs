@@ -5,7 +5,8 @@ use crossterm::event::KeyCode;
 use crate::{
     capture::{
         DEFAULT_GROUP_BY, GroupLevel, NodeKind, Session, SessionNode, delete_session,
-        delete_sessions, list_sessions, read_tail_lines, session_list, session_tree,
+        delete_sessions, group_separator, list_sessions, read_tail_lines, session_list,
+        session_tree,
     },
     inputs::DialogAction,
     overlays::{OverlayResponse, PopupTarget, copy_path},
@@ -45,9 +46,24 @@ pub struct BrowserRow<'a> {
     pub parent: Option<usize>,
 }
 
+/// A line of the preview: a line of the `.log` of the session at this index, or a separator
+/// between the sessions of a group (MAX-202)
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreviewLine {
+    pub text: String,
+    pub session: Option<usize>,
+}
+
+/// The sessions a delete asks about (MAX-202): all of them, or those of the group named
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConfirmDelete {
+    pub sessions: Vec<usize>,
+    pub group: Option<String>,
+}
+
 /// The session browser (MAX-148): the session backups of the cache folder as a tree or a list
-/// (MAX-202), the selected one's details and last lines. Replays the selected session
-/// (MAX-166), deletes it, or all but the running ones once asked, copies the selected one's log
+/// (MAX-202), the selected row's details and last lines. Replays the selected session or group
+/// (MAX-166), deletes it (a group once asked), or all but the running ones once asked, copies the selected one's log
 /// path or the folder's, and reads the folder again. `selected` is a row of `rows`, `open` the
 /// keys of the open groups: they stay across a reload. `restored` is the session the history was filled from
 /// restore at the next launch. `live` says a replay set the live link aside, which the browser
@@ -68,8 +84,8 @@ pub struct SessionBrowser {
     pub live: bool,
     pub live_raw: Option<PathBuf>,
     pub max_size: Option<u64>,
-    pub confirm_delete_all: bool,
-    pub preview: Vec<String>,
+    pub confirm_delete: Option<ConfirmDelete>,
+    pub preview: Vec<PreviewLine>,
 }
 
 impl SessionBrowser {
@@ -87,7 +103,7 @@ impl SessionBrowser {
             live: false,
             live_raw: None,
             max_size: None,
-            confirm_delete_all: false,
+            confirm_delete: None,
             preview: Vec::new(),
         };
         browser.reload();
@@ -195,9 +211,10 @@ impl SessionBrowser {
         (self.rows().iter()).rposition(|row| row.node.sessions.contains(&index))
     }
 
-    /// What deleting all would remove: the sessions not running, and their size
-    pub fn deletable(&self) -> (usize, u64) {
-        let deletable = self.sessions.iter().filter(|session| !session.running);
+    /// What deleting the sessions at `indexes` would remove: those not running, and their size
+    pub fn deletable_in(&self, indexes: &[usize]) -> (usize, u64) {
+        let sessions = indexes.iter().map(|&index| &self.sessions[index]);
+        let deletable = sessions.filter(|session| !session.running);
         deletable.fold((0, 0), |(count, size), session| {
             (count + 1, size + session.size)
         })
@@ -232,17 +249,45 @@ impl SessionBrowser {
 
     fn select(&mut self, idx: usize) {
         self.selected = idx.min(self.rows().len().saturating_sub(1));
-        self.preview = self
-            .selected_session()
-            .and_then(Session::text_path)
-            .and_then(|path| read_tail_lines(path, PREVIEW_LINES).ok())
-            .map(|tail| {
-                String::from_utf8_lossy(&tail)
-                    .lines()
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default();
+        self.preview = self.read_preview();
+    }
+
+    /// The selected row's last text lines, at most `PREVIEW_LINES`: a session's, or a group's,
+    /// oldest first, a separator after each session. Read from the newest back, so a big group
+    /// costs what the preview shows (MAX-202)
+    fn read_preview(&self) -> Vec<PreviewLine> {
+        let Some(row) = self.selected_row() else {
+            return Vec::new();
+        };
+        let separators = usize::from(row.node.kind != NodeKind::Session);
+        let mut left = PREVIEW_LINES;
+        let mut parts = Vec::new();
+        for &index in row.node.sessions.iter().rev() {
+            if left == 0 {
+                break;
+            }
+            let session = &self.sessions[index];
+            let tail = session
+                .text_path()
+                .and_then(|path| read_tail_lines(path, left - separators).ok())
+                .unwrap_or_default();
+            let mut part: Vec<PreviewLine> = String::from_utf8_lossy(&tail)
+                .lines()
+                .map(|line| PreviewLine {
+                    text: line.to_string(),
+                    session: Some(index),
+                })
+                .collect();
+            if separators > 0 {
+                part.push(PreviewLine {
+                    text: group_separator(session),
+                    session: None,
+                });
+            }
+            left = left.saturating_sub(part.len());
+            parts.push(part);
+        }
+        parts.into_iter().rev().flatten().collect()
     }
 
     /// Tree to list and back, on the row holding the selected row's newest session
@@ -280,7 +325,7 @@ impl SessionBrowser {
     }
 
     pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
-        if self.confirm_delete_all {
+        if self.confirm_delete.is_some() {
             return self.handle_confirm(action);
         }
         let last = self.rows().len().saturating_sub(1);
@@ -342,11 +387,9 @@ impl SessionBrowser {
             },
             _ => return OverlayResponse::Handled,
         };
-        self.confirm_delete_all = false;
-        if yes {
-            self.delete_all()
-        } else {
-            OverlayResponse::Handled
+        match self.confirm_delete.take() {
+            Some(confirm) if yes => self.delete_confirmed(&confirm.sessions),
+            _ => OverlayResponse::Handled,
         }
     }
 
@@ -356,7 +399,7 @@ impl SessionBrowser {
     /// back to it instead
     fn replay_selected(&self) -> OverlayResponse {
         let Some(session) = self.selected_session() else {
-            return OverlayResponse::Handled;
+            return self.replay_selected_group();
         };
         if session.running {
             let raw = session.raw_path();
@@ -381,6 +424,26 @@ impl SessionBrowser {
         }
     }
 
+    /// The finished sessions of the selected group with a `.raw`, oldest first, to load at once:
+    /// a group with the running session stops just before it (MAX-202)
+    fn replay_selected_group(&self) -> OverlayResponse {
+        let Some(row) = self.selected_row() else {
+            return OverlayResponse::Handled;
+        };
+        let sessions: Vec<Session> = (row.node.sessions.iter())
+            .map(|&index| &self.sessions[index])
+            .filter(|session| !session.running && session.raw_path().is_some())
+            .cloned()
+            .collect();
+        if sessions.is_empty() {
+            return notify(
+                "This group has no finished session to replay".to_string(),
+                true,
+            );
+        }
+        OverlayResponse::ReplayGroup(sessions)
+    }
+
     /// The replay stops and the live link it set aside comes back, as `replay-stop` does;
     /// nothing without one
     fn back_to_live(&self) -> OverlayResponse {
@@ -393,7 +456,7 @@ impl SessionBrowser {
 
     fn delete_selected(&mut self) -> OverlayResponse {
         let Some(session) = self.selected_session() else {
-            return OverlayResponse::Handled;
+            return self.ask_delete_group();
         };
         let span = session.time_span();
         let result = delete_session(session);
@@ -421,15 +484,37 @@ impl SessionBrowser {
     }
 
     fn ask_delete_all(&mut self) -> OverlayResponse {
-        if self.deletable().0 == 0 {
+        self.ask_delete(ConfirmDelete {
+            sessions: (0..self.sessions.len()).collect(),
+            group: None,
+        })
+    }
+
+    /// The question before deleting the selected group's sessions (MAX-202)
+    fn ask_delete_group(&mut self) -> OverlayResponse {
+        let Some(row) = self.selected_row() else {
+            return OverlayResponse::Handled;
+        };
+        let confirm = ConfirmDelete {
+            sessions: row.node.sessions.clone(),
+            group: Some(row.node.label.clone()),
+        };
+        self.ask_delete(confirm)
+    }
+
+    fn ask_delete(&mut self, confirm: ConfirmDelete) -> OverlayResponse {
+        if self.deletable_in(&confirm.sessions).0 == 0 {
             return notify("No session to delete".to_string(), false);
         }
-        self.confirm_delete_all = true;
+        self.confirm_delete = Some(confirm);
         OverlayResponse::Handled
     }
 
-    fn delete_all(&mut self) -> OverlayResponse {
-        let report = delete_sessions(&self.sessions);
+    fn delete_confirmed(&mut self, indexes: &[usize]) -> OverlayResponse {
+        let entries: Vec<Session> = (indexes.iter())
+            .map(|&index| self.sessions[index].clone())
+            .collect();
+        let report = delete_sessions(&entries);
         self.reload();
         let mut message = format!(
             "Deleted {} ({})",

@@ -66,6 +66,8 @@ pub struct LineMode {
     raw_scroller: RawSideScroller,
     vi_state_copymode: Option<ViPending>,
     evicted_lines: usize,
+    /// All the lines dropped from the top of the history so far (MAX-202)
+    dropped_lines: usize,
     /// How the next frame brings the view to the copy cursor, which only the render can place
     /// in rows (MAX-143)
     copy_reveal: Option<Reveal>,
@@ -123,6 +125,7 @@ impl LineMode {
             raw_scroller,
             vi_state_copymode: None,
             evicted_lines: 0,
+            dropped_lines: 0,
             copy_reveal: None,
             copy_cursor_shown: false,
             bottom_row_start: None,
@@ -226,6 +229,7 @@ impl LineMode {
             self.local_history.pop_front();
             self.row_heights.pop_front();
             self.evicted_lines += 1;
+            self.dropped_lines += 1;
         }
     }
 
@@ -375,6 +379,11 @@ impl LineMode {
     #[inline]
     pub fn set_view_floor(&mut self, floor: Option<ViewFloor>) {
         self.view_floor = floor;
+    }
+
+    #[inline]
+    pub fn dropped_lines(&self) -> usize {
+        self.dropped_lines
     }
 
     /// Read-only slice/iterator of completed lines

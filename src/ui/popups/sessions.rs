@@ -59,7 +59,7 @@ pub fn render_sessions_popup(
         .dialog_keys(KeyBindingDialogAction::Close)
         .into_iter()
         .next();
-    let buttons = if browser.confirm_delete_all {
+    let buttons = if browser.confirm_delete.is_some() {
         vec![
             (key('y'), PopupTarget::SessionConfirm, "Delete"),
             (key('n'), PopupTarget::SessionCancel, "Cancel"),
@@ -116,7 +116,7 @@ pub fn render_sessions_popup(
         Span::styled(browser.dir.display().to_string(), muted),
     ]);
     frame.render_widget(Paragraph::new(folder), Rect { height: 1, ..inner });
-    if !browser.confirm_delete_all {
+    if browser.confirm_delete.is_none() {
         let (line, spots) = as_hints(vec![
             (key('c'), PopupTarget::SessionCopyLog, "Copy path"),
             (key('C'), PopupTarget::SessionCopyFolder, "Copy folder"),
@@ -141,10 +141,11 @@ pub fn render_sessions_popup(
     inner.y += 3;
     inner.height = inner.height.saturating_sub(3);
 
-    if browser.confirm_delete_all {
-        let (count, bytes) = browser.deletable();
+    if let Some(confirm) = &browser.confirm_delete {
+        let (count, bytes) = browser.deletable_in(&confirm.sessions);
+        let group = (confirm.group.as_ref()).map_or(String::new(), |name| format!(" of {name}"));
         let question = format!(
-            "Delete {} ({})? The running ones are kept",
+            "Delete {}{group} ({})? The running ones are kept",
             sessions(count),
             size(bytes)
         );
@@ -365,31 +366,31 @@ fn render_preview(browser: &SessionBrowser, area: Rect, frame: &mut Frame, theme
             Span::styled(value, style),
         ])
     };
-    let Some(session) = browser.selected_session() else {
-        if let Some(row) = browser.selected_row() {
-            let lines = group_details(browser, row.node, theme, field);
-            frame.render_widget(Paragraph::new(lines), area);
-        }
-        return;
+    let mut lines = match (browser.selected_session(), browser.selected_row()) {
+        (Some(session), _) => details(browser, session, theme, field, muted),
+        (None, Some(row)) => group_details(browser, row.node, theme, field),
+        (None, None) => return,
     };
-    let mut lines = details(browser, session, theme, field, muted);
     lines.push(Line::from(""));
     lines.push(section("Last lines", theme));
     let room = (area.height as usize).saturating_sub(lines.len());
     let tail = browser.preview.len().saturating_sub(room);
-    // the timestamp the session wrote before each line, dimmed: as wide as its format
-    // gives, a space after it
-    let stamp_width = (session.meta.as_ref())
-        .and_then(|meta| meta.text.timestamp.as_deref())
-        .map(|format| Local::now().format(format).to_string().len() + 1);
     let dim = Style::default().add_modifier(Modifier::DIM);
-    // the text as Pretty shows it: in its colors, the other escape sequences left out
     lines.extend(browser.preview[tail..].iter().map(|line| {
+        let Some(index) = line.session else {
+            return Line::styled(line.text.clone(), muted);
+        };
+        // the timestamp its session wrote before each line, dimmed: as wide as its format
+        // gives, a space after it. The sessions of a group can differ
+        let stamp_width = (browser.sessions[index].meta.as_ref())
+            .and_then(|meta| meta.text.timestamp.as_deref())
+            .map(|format| Local::now().format(format).to_string().len() + 1);
         let (stamp, text) = match stamp_width {
-            Some(width) if line.is_char_boundary(width) => line.split_at(width),
-            _ => ("", line.as_str()),
+            Some(width) if line.text.is_char_boundary(width) => line.text.split_at(width),
+            _ => ("", line.text.as_str()),
         };
         let mut spans = vec![Span::styled(stamp.to_string(), dim)];
+        // the text as Pretty shows it: in its colors, the other escape sequences left out
         spans.extend(format_line_content(text, LineDisplayMode::Pretty, theme));
         Line::from(spans)
     }));

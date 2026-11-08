@@ -3260,6 +3260,90 @@ fn session_list_cuts_a_long_port() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// MAX-202: `p` on a group from the browser replays it: the browser closes, the end of the group
+/// is in view in terminal mode, with its toast, and the status bar's file names the sessions.
+/// How: two past sessions on another port, a real draw, the group's row clicked then `p`.
+#[test]
+fn session_browser_replays_a_group() {
+    let dir =
+        std::env::temp_dir().join(format!("maxicom_test_{}_browser_group", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let text = crate::capture::CaptureFormat::default();
+    crate::capture::tests::write_test_session(&dir, "/dev/other", &text, b"older\r\n", b"");
+    crate::capture::tests::write_test_session(&dir, "/dev/other", &text, b"newer\r\n", b"");
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
+    h.app.settings_mut().sessions.group_by = Vec::new();
+    h.app.start_session(Some(dir.clone()));
+    h.app.update(Action::App(AppAction::OpenSessions));
+    let rows = h.draw();
+    click(&mut h, cell_of(&rows, "other 115200"));
+    let p =
+        crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('p'), KeyModifiers::NONE);
+    h.app.dispatch(Action::Overlay(DialogAction::HandleKey(p)));
+    assert!(h.app.overlay().is_none());
+    assert_eq!(h.app.replay_group(), Some(2));
+    let rows = h.draw();
+    assert!(has(&rows, "newer"), "{rows:#?}");
+    assert!(has(&rows, "Loaded 2 sessions"), "{rows:#?}");
+    assert!(has(&rows, "other · 2 sessions"), "{rows:#?}");
+    assert!(!has(&rows, "file://"), "{rows:#?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-202: a selected group shows its details and its sessions' last lines, separators muted,
+/// each session's timestamp dimmed by its own format; deleting it asks by name.
+/// How: a session with timestamps and one without on another port, the group selected.
+#[test]
+fn session_browser_group_preview_and_question() {
+    let dir = std::env::temp_dir().join(format!(
+        "maxicom_test_{}_browser_gpreview",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    let stamped = crate::capture::CaptureFormat {
+        timestamp: Some("%H:%M".to_string()),
+        tx_mark: None,
+    };
+    let plain = crate::capture::CaptureFormat::default();
+    let write = crate::capture::tests::write_test_session;
+    write(&dir, "/dev/other", &stamped, b"with stamp\r\n", b"");
+    write(&dir, "/dev/other", &plain, b"12:00 no stamp\r\n", b"");
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
+    h.app.settings_mut().sessions.group_by = Vec::new();
+    h.app.start_session(Some(dir.clone()));
+    h.app.update(Action::App(AppAction::OpenSessions));
+    let rows = h.draw();
+    click(&mut h, cell_of(&rows, "other 115200"));
+    let rows = h.draw();
+    assert!(has(&rows, "Holds   2 sessions"), "{rows:#?}");
+    assert!(has(&rows, "Last lines"), "{rows:#?}");
+    assert!(has(&rows, "── end of session: other, "), "{rows:#?}");
+
+    let modifier = |h: &Harness, (x, y): (u16, u16)| h.terminal.backend().buffer()[(x, y)].modifier;
+    let (x, y) = cell_of(&rows, "with stamp");
+    assert!(
+        modifier(&h, (x - 6, y)).contains(ratatui::style::Modifier::DIM),
+        "{rows:#?}"
+    );
+    let at = cell_of(&rows, "12:00 no stamp");
+    assert!(
+        !modifier(&h, at).contains(ratatui::style::Modifier::DIM),
+        "{rows:#?}"
+    );
+
+    let d =
+        crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('d'), KeyModifiers::NONE);
+    h.app.update(Action::Overlay(DialogAction::HandleKey(d)));
+    let rows = h.draw();
+    assert!(
+        has(&rows, "Delete 2 sessions of other 115200 8N1 UTF8 ("),
+        "{rows:#?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// MAX-156: the browser shows a TCP session's address, and its line as `raw TCP` and the
 /// encoding, as the status bar does.
 /// How: a TCP session written, then selected with a click.
