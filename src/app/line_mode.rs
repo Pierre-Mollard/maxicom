@@ -1,5 +1,4 @@
 use chrono::{DateTime, Local};
-use crossterm::event::KeyEvent;
 use std::collections::VecDeque;
 use tui_input::Input;
 
@@ -12,16 +11,16 @@ use crate::{
         marks::Marks,
         raw_scroller::RawSideScroller,
         scroller::{ScrollStatus, ViewportScroller},
-        search::{SearchDirection, SearchState},
-        selection::{CopyActionResult, CopyModeState, LogicalPosition, Reveal, TextSource},
+        search::{SearchHost, SearchState, SearchView},
+        selection::{CopyActionResult, CopyModeState, Reveal, TextSource},
         types::{LogEntry, RxLineSplitter, ViewportSize},
     },
     capture::TimedChunk,
     configs::{LineDisplayMode, RawSideView, SettingsConfig, TextEncoding, WrapMode},
     inputs::{
-        CopyModeAction, LineInputAction, SearchModeAction, SideViewAction, ViMode, ViState,
-        click_input_at, dispatch_input_key, dispatch_input_key_vi,
-        local_dispatchers::dispatch_copy_key_vi, paste_into_input, vi::ViPending,
+        CopyModeAction, LineInputAction, SideViewAction, ViMode, ViState, click_input_at,
+        dispatch_input_key_vi, local_dispatchers::dispatch_copy_key_vi, paste_into_input,
+        vi::ViPending,
     },
     overlays::MarkRow,
 };
@@ -647,143 +646,6 @@ impl LineMode {
         self.scroller.offset_x = self.scroller.offset_x.min(self.scroller.max_pan_x);
     }
 
-    pub fn update_search_matches(&mut self, display_mode: LineDisplayMode, raw_view: RawSideView) {
-        self.search_state
-            .update_matches_from_entries(&self.local_history, display_mode, raw_view);
-        self.follow_search_match();
-    }
-
-    /// The copy cursor a search opened from copy mode starts from (MAX-215)
-    fn copy_origin(&self) -> Option<LogicalPosition> {
-        self.copy_state.active.then_some(self.copy_state.cursor)
-    }
-
-    /// From copy mode the cursor goes to the current match as the query changes, so the view
-    /// follows it; back to where the search started without one (MAX-215)
-    fn follow_search_match(&mut self) {
-        let Some(origin) = self.search_state.origin else {
-            return;
-        };
-        match self.search_state.current_match_position() {
-            Some((row, col)) => self.copy_state.jump_to(row, col),
-            None => self.copy_state.cursor = origin,
-        }
-    }
-
-    pub fn handle_search_action(&mut self, action: SearchModeAction, settings: &SettingsConfig) {
-        let display_mode = settings.line_mode.display_mode;
-        let raw_view = settings.raw_side.view;
-        match action {
-            SearchModeAction::Start(direction) => {
-                self.search_state.direction = direction;
-                self.search_state.origin = self.copy_origin();
-                self.search_state.toggle_itself();
-                if self.search_state.active {
-                    self.search_state.open_empty();
-                    self.update_search_matches(display_mode, raw_view);
-                }
-            }
-            SearchModeAction::Next => {
-                if self.search_state.active
-                    && let Some((row, col)) = self.search_state.next_match()
-                {
-                    self.copy_state.jump_to(row, col);
-                }
-            }
-            SearchModeAction::Previous => {
-                if self.search_state.active
-                    && let Some((row, col)) = self.search_state.prev_match()
-                {
-                    self.copy_state.jump_to(row, col);
-                }
-            }
-            SearchModeAction::Cancel => {
-                self.search_state.restore_last_query();
-                self.update_search_matches(display_mode, raw_view);
-                self.search_state.toggle(false);
-                self.search_state.kept = false;
-                // from copy mode, back where the search started (MAX-215)
-                if let Some(origin) = self.search_state.origin.take() {
-                    self.copy_state.cursor = origin;
-                    self.copy_reveal = Some(Reveal::Center);
-                }
-            }
-            SearchModeAction::Confirm => {
-                if self.search_state.reuse_last_query() {
-                    self.update_search_matches(display_mode, raw_view);
-                }
-                let match_pos = self.search_state.current_match_position();
-                self.search_state.toggle(false);
-                self.search_state.kept = true;
-
-                // from copy mode the cursor is already on the match, the selection kept
-                if self.search_state.origin.take().is_none() {
-                    let (row, col) = match_pos.unwrap_or((0, 0));
-                    self.copy_state.enter_at(row, col);
-                }
-                self.copy_reveal = Some(Reveal::Center);
-            }
-            SearchModeAction::HandleKey(key_event) => {
-                if self.search_state.active {
-                    self.handle_input_search(key_event, display_mode, raw_view);
-                }
-            }
-            SearchModeAction::Paste(text) => {
-                if self.search_state.active {
-                    paste_into_input(&mut self.search_state.query, &text);
-                    self.update_search_matches(display_mode, raw_view);
-                }
-            }
-            SearchModeAction::Query(text) => {
-                self.search_state.direction = SearchDirection::Forward;
-                self.search_state.origin = self.copy_origin();
-                self.search_state.toggle(true);
-                self.search_state.query = Input::new(text);
-                self.update_search_matches(display_mode, raw_view);
-            }
-            SearchModeAction::Kind => {
-                self.search_state.toggle_mode();
-                self.update_search_matches(display_mode, raw_view);
-            }
-            SearchModeAction::ClickAt(column) => {
-                click_input_at(&mut self.search_state.query, column);
-            }
-            SearchModeAction::Repeat(_)
-            | SearchModeAction::History(_)
-            | SearchModeAction::Word(_) => {
-                unreachable!("run by App, which has the toasts and the history")
-            }
-        }
-    }
-
-    /// `n` in copy mode, `N` with `opposite` (MAX-215): the cursor to the next match of the
-    /// last search, its matches shown again. None without a match, `Some(true)` when it went
-    /// around the history's end
-    pub fn repeat_search(&mut self, opposite: bool) -> Option<bool> {
-        let cursor = (
-            self.copy_state.cursor.line_idx,
-            self.copy_state.cursor.char_idx,
-        );
-        let wrapped = self.search_state.step_from(cursor, opposite)?;
-        let (row, col) = self.search_state.current_match_position()?;
-        self.copy_state.jump_to(row, col);
-        self.search_state.kept = true;
-        Some(wrapped)
-    }
-
-    pub fn handle_input_search(
-        &mut self,
-        key_event: KeyEvent,
-        display_mode: LineDisplayMode,
-        raw_view: RawSideView,
-    ) {
-        let before = self.search_state.query.value().to_owned();
-        dispatch_input_key(&mut self.search_state.query, key_event);
-        if self.search_state.query.value() != before {
-            self.update_search_matches(display_mode, raw_view);
-        }
-    }
-
     pub fn handle_side_view_action(&mut self, action: SideViewAction, raw_view: RawSideView) {
         match action {
             SideViewAction::PanLeft(bytes) => {
@@ -1084,6 +946,25 @@ impl<'a> TextSource for LineModeTextSource<'a> {
 
     fn view_height(&mut self) -> usize {
         self.view_height
+    }
+}
+
+impl SearchHost for LineMode {
+    fn search_and_copy(&mut self) -> (&mut SearchState, &mut CopyModeState) {
+        (&mut self.search_state, &mut self.copy_state)
+    }
+
+    fn find_matches(&mut self, view: SearchView) {
+        self.search_state.update_matches_from_entries(
+            &self.local_history,
+            view.display_mode,
+            view.raw_view,
+        );
+    }
+
+    /// On the next frame, which lays the lines out
+    fn center_copy_cursor(&mut self) {
+        self.copy_reveal = Some(Reveal::Center);
     }
 }
 

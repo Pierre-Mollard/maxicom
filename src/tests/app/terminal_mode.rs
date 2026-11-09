@@ -1,6 +1,7 @@
 //! Bytes sent in terminal mode: typed keys (#31) and bracketed paste (#28).
 
 use super::*;
+use crate::inputs::SearchModeAction;
 
 /// Bytes restored without their times
 fn untimed(bytes: &[u8]) -> [TimedChunk<'_>; 1] {

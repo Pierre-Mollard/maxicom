@@ -201,13 +201,7 @@ pub fn render_search_bar(
 ) -> (Vec<ClickTarget>, Option<PromptMap>) {
     // in the history's bottom border, or on the row the layout leaves it (MAX-218)
     let in_border = !app.search_bar_row();
-    let is_terminal = app.settings().mode == Mode::Terminal;
-
-    let s = if is_terminal {
-        app.terminal_mode.search()
-    } else {
-        app.line_mode.search()
-    };
+    let s = app.search();
 
     let query_str = s.query_str();
     let visual_cursor = s.query.visual_cursor() as u16;

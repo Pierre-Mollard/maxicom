@@ -5050,9 +5050,8 @@ fn copy_mode_from_search_centers_a_scrolled_away_match() {
         assert_eq!(first_number(&rows[..height], "line "), 0, "{mode:?}");
         h.app.update(Action::Search(SearchModeAction::Confirm));
         let rows = h.draw();
-        // the kept bar takes the view's last row (MAX-218): 9 rows in line mode, 10 in
-        // terminal mode, which centers on the upper of the two middle rows
-        let middle = (height - 2) / 2;
+        // the kept bar takes the view's last row (MAX-218), the match on its middle row
+        let middle = (height - 1) / 2;
         assert_eq!(first_number(&rows[..height], "line "), 50 - middle);
         assert_eq!(cursor_cell(&mut h).1 as usize, middle, "{mode:?}");
     }

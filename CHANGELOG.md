@@ -84,6 +84,8 @@ color while you search: move its `search?(...)` before `copy_raw?` and
   `été` finds `ÉTÉ`.
 - A search from copy mode that found its match around the history's end
   says so when you press Enter, as `n` and `N` do.
+- On a view with an even number of rows, terminal mode puts a mark or a
+  search match on the middle row, as line mode does, not one row above.
 
 ## [0.1.1] - 2026-11-08
 

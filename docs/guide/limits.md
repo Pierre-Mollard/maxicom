@@ -135,12 +135,6 @@ doesn't arrive, see
 [Marks](marks.md) last as long as maxicom runs. A restart, or a session
 restored, starts without them.
 
-### A terminal mode jump lands a row high
-
-On a view with an even number of rows, terminal mode puts the mark's line
-one row above the middle, where line mode puts it on the middle row. Its
-search jumps do the same.
-
 ## Recordings and replays
 
 ### A text recording can't be replayed

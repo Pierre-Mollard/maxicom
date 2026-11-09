@@ -8,7 +8,10 @@ use crate::{
     app::{
         mash::{Mash, MashStep},
         scroller::ScrollStatus,
-        search::{SEARCH_HISTORY_SIZE, SearchDirection, SearchModeKind, SearchState, word_at},
+        search::{
+            SEARCH_HISTORY_SIZE, SearchDirection, SearchHost, SearchModeKind, SearchState,
+            SearchView, word_at,
+        },
         selection::{ClickCounter, CopySide, LogicalPosition, MouseUnit},
         term_answers::answer_bytes,
         transfer::FileTransfer,
@@ -1757,14 +1760,10 @@ impl App {
         } else {
             None
         };
+        let view = SearchView::from(&self.settings);
         match self.settings.mode {
-            Mode::Terminal => {
-                self.terminal_mode
-                    .handle_search_action(action, self.settings.raw_side.view);
-            }
-            Mode::Line => {
-                self.line_mode.handle_search_action(action, &self.settings);
-            }
+            Mode::Terminal => self.terminal_mode.handle_search_action(action, view),
+            Mode::Line => self.line_mode.handle_search_action(action, view),
         }
         if leaves_copy {
             self.copy_action(CopyModeAction::Exit);
@@ -1797,25 +1796,17 @@ impl App {
 
     /// Up / Down in the bar: an older / newer search in place of the query, its matches found
     fn walk_search_history(&mut self, up: bool) {
-        let raw_view = self.settings.raw_side.view;
+        let view = SearchView::from(&self.settings);
+        let history = &self.search_history;
         match self.settings.mode {
             Mode::Terminal => {
-                if self
-                    .terminal_mode
-                    .search_mut()
-                    .walk_history(&self.search_history, up)
-                {
-                    self.terminal_mode.update_search_matches(raw_view);
+                if self.terminal_mode.search_mut().walk_history(history, up) {
+                    self.terminal_mode.update_search_matches(view);
                 }
             }
             Mode::Line => {
-                let display_mode = self.settings.line_mode.display_mode;
-                if self
-                    .line_mode
-                    .search_mut()
-                    .walk_history(&self.search_history, up)
-                {
-                    self.line_mode.update_search_matches(display_mode, raw_view);
+                if self.line_mode.search_mut().walk_history(history, up) {
+                    self.line_mode.update_search_matches(view);
                 }
             }
         }
@@ -1859,6 +1850,14 @@ impl App {
         self.update_action_search_mode(SearchModeAction::Cancel);
     }
 
+    /// The current mode's search
+    pub fn search(&self) -> &SearchState {
+        match self.settings.mode {
+            Mode::Terminal => self.terminal_mode.search(),
+            Mode::Line => self.line_mode.search(),
+        }
+    }
+
     fn search_mut(&mut self) -> &mut SearchState {
         match self.settings.mode {
             Mode::Terminal => self.terminal_mode.search_mut(),
@@ -1868,17 +1867,11 @@ impl App {
 
     /// `n` / `N` in copy mode (MAX-215), with a toast when it goes around the history's end
     fn repeat_search(&mut self, opposite: bool) {
-        let (wrapped, direction) = match self.settings.mode {
-            Mode::Terminal => (
-                self.terminal_mode.repeat_search(opposite),
-                self.terminal_mode.search().direction,
-            ),
-            Mode::Line => (
-                self.line_mode.repeat_search(opposite),
-                self.line_mode.search().direction,
-            ),
+        let wrapped = match self.settings.mode {
+            Mode::Terminal => self.terminal_mode.repeat_search(opposite),
+            Mode::Line => self.line_mode.repeat_search(opposite),
         };
-        let forward = (direction == SearchDirection::Forward) != opposite;
+        let forward = (self.search().direction == SearchDirection::Forward) != opposite;
         match wrapped {
             None => self.notify_warn("No match to go to"),
             Some(true) => self.notify_search_went_around(forward),
@@ -2275,10 +2268,7 @@ impl App {
 
     /// The search bar open, or kept in copy mode with its matches (MAX-215)
     pub fn is_search_bar_shown(&self) -> bool {
-        let search = match self.settings.mode {
-            Mode::Line => self.line_mode.search(),
-            Mode::Terminal => self.terminal_mode.search(),
-        };
+        let search = self.search();
         search.active || search.shows_matches()
     }
 
@@ -2325,10 +2315,7 @@ impl App {
 
     #[inline]
     pub fn is_search_active(&self) -> bool {
-        match self.settings.mode {
-            Mode::Line => self.line_mode.search().active,
-            Mode::Terminal => self.terminal_mode.search().active,
-        }
+        self.search().active
     }
 
     #[inline]

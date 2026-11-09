@@ -8,7 +8,6 @@ use chrono::{DateTime, Local};
 use crossterm::event::KeyEvent;
 use terminput::Encoding;
 use terminput_crossterm::to_terminput_key;
-use tui_input::Input;
 
 use crate::{
     app::{
@@ -16,16 +15,15 @@ use crate::{
         marks::Marks,
         raw_scroller::RawSideScroller,
         scroller::ViewportScroller,
-        search::{SearchDirection, SearchState},
-        selection::{CopyActionResult, CopyModeState, LogicalPosition, Reveal, TextSource},
+        search::{SearchHost, SearchState, SearchView},
+        selection::{CopyActionResult, CopyModeState, Reveal, TextSource},
         term_answers::{Answer, size_report},
     },
     capture::{Screenshot, TimedChunk},
     configs::{SettingsConfig, TerminalDimensionMode, TextEncoding, settings::RawSideView},
     inputs::{
-        CopyModeAction, SearchModeAction, SideViewAction, TerminalAction, ViPending,
-        click_input_at, dispatch_input_key, local_dispatchers::dispatch_copy_key_vi,
-        paste_into_input,
+        CopyModeAction, SideViewAction, TerminalAction, ViPending,
+        local_dispatchers::dispatch_copy_key_vi,
     },
     overlays::MarkRow,
     terminal::{TerminalParser, new_parser, vt100_dim, vt100_size},
@@ -648,9 +646,15 @@ impl TerminalMode {
     }
 
     pub fn scroll_to_target_line(&mut self, target_line_idx: usize, view_height: usize) {
-        let (grid_rows, _) = self.get_vt100_size();
-        let half_canvas = (grid_rows as usize).min(view_height) / 2;
-        self.scroll_to_bottom_line(target_line_idx + half_canvas);
+        let below = self.rows_below_middle(view_height);
+        self.scroll_to_bottom_line(target_line_idx + below);
+    }
+
+    /// The rows under a centered line: `h / 2` above it, as line mode centers, so an even
+    /// view puts it on the lower of its two middle rows (MAX-218)
+    fn rows_below_middle(&self, view_height: usize) -> usize {
+        let shown = (self.get_vt100_size().0 as usize).min(view_height);
+        shown.saturating_sub(1) - shown / 2
     }
 
     /// Scrolls so the view's last row is world row `line_idx` (clamped)
@@ -814,105 +818,6 @@ impl TerminalMode {
         }
     }
 
-    pub fn handle_search_action(&mut self, action: SearchModeAction, raw_view: RawSideView) {
-        match action {
-            SearchModeAction::Start(direction) => {
-                self.search_state.direction = direction;
-                self.search_state.origin = self.copy_origin();
-                self.search_state.toggle_itself();
-                if self.search_state.active {
-                    self.search_state.open_empty();
-                    self.update_search_matches(raw_view);
-                }
-            }
-            SearchModeAction::Next => {
-                if self.search_state.active
-                    && let Some((row, col)) = self.search_state.next_match()
-                {
-                    self.copy_state.jump_to(row, col);
-                }
-            }
-            SearchModeAction::Previous => {
-                if self.search_state.active
-                    && let Some((row, col)) = self.search_state.prev_match()
-                {
-                    self.copy_state.jump_to(row, col);
-                }
-            }
-            SearchModeAction::Cancel => {
-                self.search_state.restore_last_query();
-                self.update_search_matches(raw_view);
-                self.search_state.toggle(false);
-                self.search_state.kept = false;
-                // from copy mode, back where the search started (MAX-215)
-                if let Some(origin) = self.search_state.origin.take() {
-                    self.copy_state.cursor = origin;
-                    self.reveal_copy_cursor(Reveal::Center);
-                }
-            }
-            SearchModeAction::Confirm => {
-                if self.search_state.reuse_last_query() {
-                    self.update_search_matches(raw_view);
-                }
-                let match_pos = self.search_state.current_match_position();
-                self.search_state.toggle(false);
-                self.search_state.kept = true;
-
-                // from copy mode the cursor is already on the match, the selection kept
-                if self.search_state.origin.take().is_none() {
-                    let (row, col) = match_pos.unwrap_or((0, 0));
-                    self.copy_state.enter_at(row, col);
-                }
-                self.reveal_copy_cursor(Reveal::Center);
-            }
-            SearchModeAction::HandleKey(key_event) => {
-                if self.search_state.active {
-                    self.handle_input_search(key_event, raw_view);
-                }
-            }
-            SearchModeAction::Paste(text) => {
-                if self.search_state.active {
-                    paste_into_input(&mut self.search_state.query, &text);
-                    self.update_search_matches(raw_view);
-                }
-            }
-            SearchModeAction::Query(text) => {
-                self.search_state.direction = SearchDirection::Forward;
-                self.search_state.origin = self.copy_origin();
-                self.search_state.toggle(true);
-                self.search_state.query = Input::new(text);
-                self.update_search_matches(raw_view);
-            }
-            SearchModeAction::Kind => {
-                self.search_state.toggle_mode();
-                self.update_search_matches(raw_view);
-            }
-            SearchModeAction::ClickAt(column) => {
-                click_input_at(&mut self.search_state.query, column);
-            }
-            SearchModeAction::Repeat(_)
-            | SearchModeAction::History(_)
-            | SearchModeAction::Word(_) => {
-                unreachable!("run by App, which has the toasts and the history")
-            }
-        }
-    }
-
-    /// `n` in copy mode, `N` with `opposite` (MAX-215): the cursor to the next match of the
-    /// last search, its matches shown again. None without a match, `Some(true)` when it went
-    /// around the history's end
-    pub fn repeat_search(&mut self, opposite: bool) -> Option<bool> {
-        let cursor = (
-            self.copy_state.cursor.line_idx,
-            self.copy_state.cursor.char_idx,
-        );
-        let wrapped = self.search_state.step_from(cursor, opposite)?;
-        let (row, col) = self.search_state.current_match_position()?;
-        self.copy_state.jump_to(row, col);
-        self.search_state.kept = true;
-        Some(wrapped)
-    }
-
     pub fn handle_copy_action(
         &mut self,
         action: CopyModeAction,
@@ -1040,25 +945,6 @@ impl TerminalMode {
         }
     }
 
-    pub fn update_search_matches(&mut self, raw_view: RawSideView) {
-        self.search_stale = false;
-        match (self.search_text.is_some(), self.search_text_from.take()) {
-            (false, _) => self.search_text = Some(self.all_text_lines()),
-            (true, Some(from)) => {
-                let fresh = self.text_lines_from(from);
-                if let Some(text) = self.search_text.as_mut() {
-                    text.truncate(from);
-                    text.extend(fresh);
-                }
-            }
-            (true, None) => {}
-        }
-        let text = self.search_text.as_deref().unwrap_or_default();
-        self.search_state
-            .update_matches_from_strings(text, raw_view);
-        self.follow_search_match();
-    }
-
     /// After data: the search text's lines from the first one it may have changed are to be
     /// read again, all of them when the remote went to or from the alternate screen; shown
     /// matches are found again on the next frame (MAX-218). Without a search open or kept, the
@@ -1103,31 +989,6 @@ impl TerminalMode {
                 .select_at((cursor.line_idx, cursor.char_idx));
             // the view stays where it is: only typing jumps to a match
             self.search_state.target_jump = None;
-        }
-    }
-
-    /// The copy cursor a search opened from copy mode starts from (MAX-215)
-    fn copy_origin(&self) -> Option<LogicalPosition> {
-        self.copy_state.active.then_some(self.copy_state.cursor)
-    }
-
-    /// From copy mode the cursor goes to the current match as the query changes, so the view
-    /// follows it; back to where the search started without one (MAX-215)
-    fn follow_search_match(&mut self) {
-        let Some(origin) = self.search_state.origin else {
-            return;
-        };
-        match self.search_state.current_match_position() {
-            Some((row, col)) => self.copy_state.jump_to(row, col),
-            None => self.copy_state.cursor = origin,
-        }
-    }
-
-    pub fn handle_input_search(&mut self, key_event: KeyEvent, raw_view: RawSideView) {
-        let before = self.search_state.query.value().to_owned();
-        dispatch_input_key(&mut self.search_state.query, key_event);
-        if self.search_state.query.value() != before {
-            self.update_search_matches(raw_view);
         }
     }
 
@@ -1318,7 +1179,7 @@ impl TerminalMode {
         view_w: usize,
         view_h: usize,
     ) {
-        let (grid_rows, grid_cols) = self.get_vt100_size();
+        let (_, grid_cols) = self.get_vt100_size();
         let max_sb = self.max_content_scrollback;
         // the offsets count from the live view's last row, not the grid's
         let total_world_lines = max_sb + self.live_rows();
@@ -1328,8 +1189,7 @@ impl TerminalMode {
         }
 
         let lines_from_bottom = (total_world_lines - 1).saturating_sub(target_row);
-        let half_h = (grid_rows as usize).min(view_h) / 2;
-        let target_scroll_y = lines_from_bottom.saturating_sub(half_h);
+        let target_scroll_y = lines_from_bottom.saturating_sub(self.rows_below_middle(view_h));
 
         self.scroller.max_scroll_y = self.max_vertical_scroll();
         self.scroller.scroll_to(target_scroll_y);
@@ -1520,6 +1380,36 @@ impl<'a> TextSource for TerminalModeTextSource<'a> {
 
     fn view_height(&mut self) -> usize {
         self.view_height
+    }
+}
+
+impl SearchHost for TerminalMode {
+    fn search_and_copy(&mut self) -> (&mut SearchState, &mut CopyModeState) {
+        (&mut self.search_state, &mut self.copy_state)
+    }
+
+    /// From the screen and the scrollback's text, only the lines data may have changed read
+    /// again (MAX-218)
+    fn find_matches(&mut self, view: SearchView) {
+        self.search_stale = false;
+        match (self.search_text.is_some(), self.search_text_from.take()) {
+            (false, _) => self.search_text = Some(self.all_text_lines()),
+            (true, Some(from)) => {
+                let fresh = self.text_lines_from(from);
+                if let Some(text) = self.search_text.as_mut() {
+                    text.truncate(from);
+                    text.extend(fresh);
+                }
+            }
+            (true, None) => {}
+        }
+        let text = self.search_text.as_deref().unwrap_or_default();
+        self.search_state
+            .update_matches_from_strings(text, view.raw_view);
+    }
+
+    fn center_copy_cursor(&mut self) {
+        self.reveal_copy_cursor(Reveal::Center);
     }
 }
 

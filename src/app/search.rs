@@ -5,11 +5,14 @@ use crate::app::data_processing::{
     entry_display_text, entry_display_to_wire_map, map_disp_byte_to_raw, raw_byte_to_display_col,
     safe_byte_to_char_col,
 };
-use crate::app::selection::LogicalPosition;
+use crate::app::selection::{CopyModeState, LogicalPosition};
 use crate::app::types::LogEntry;
 use crate::configs::LineDisplayMode;
+use crate::configs::SettingsConfig;
 use crate::configs::settings::RawSideView;
 use crate::inputs::vi::find_word_bounds;
+use crate::inputs::{SearchModeAction, click_input_at, dispatch_input_key, paste_into_input};
+use crossterm::event::KeyEvent;
 
 pub const MAX_SEARCH_MATCHES: usize = 1000;
 /// The searches kept for Up / Down in the bar, as many as the command line's by default
@@ -418,10 +421,6 @@ impl SearchState {
         true
     }
 
-    pub fn toggle_itself(&mut self) {
-        self.toggle(!self.active);
-    }
-
     #[inline]
     pub fn query_str(&self) -> &str {
         self.query.value()
@@ -638,6 +637,182 @@ pub fn find_case_insensitive_iter<'a>(
             rest.next();
         }
     }))
+}
+
+/// What a search reads from the settings: line mode's display mode, the raw panel's view
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SearchView {
+    pub display_mode: LineDisplayMode,
+    pub raw_view: RawSideView,
+}
+
+impl From<&SettingsConfig> for SearchView {
+    fn from(settings: &SettingsConfig) -> Self {
+        Self {
+            display_mode: settings.line_mode.display_mode,
+            raw_view: settings.raw_side.view,
+        }
+    }
+}
+
+impl From<RawSideView> for SearchView {
+    fn from(raw_view: RawSideView) -> Self {
+        Self {
+            raw_view,
+            ..Self::default()
+        }
+    }
+}
+
+impl From<(LineDisplayMode, RawSideView)> for SearchView {
+    fn from((display_mode, raw_view): (LineDisplayMode, RawSideView)) -> Self {
+        Self {
+            display_mode,
+            raw_view,
+        }
+    }
+}
+
+/// A mode's search, the same in both (MAX-218): the mode gives its search and copy cursor,
+/// finds the matches of its own text, and centers its view on the copy cursor
+pub trait SearchHost {
+    fn search_and_copy(&mut self) -> (&mut SearchState, &mut CopyModeState);
+
+    /// The query's matches found again, nothing else
+    fn find_matches(&mut self, view: SearchView);
+
+    /// The view centered on the copy cursor, now or on the next frame
+    fn center_copy_cursor(&mut self);
+
+    fn update_search_matches(&mut self, view: impl Into<SearchView>) {
+        self.find_matches(view.into());
+        follow_search_match(self.search_and_copy());
+    }
+
+    fn handle_input_search(&mut self, key_event: KeyEvent, view: impl Into<SearchView>) {
+        let (search, _) = self.search_and_copy();
+        let before = search.query.value().to_owned();
+        dispatch_input_key(&mut search.query, key_event);
+        if search.query.value() != before {
+            self.update_search_matches(view);
+        }
+    }
+
+    /// `n` in copy mode, `N` with `opposite` (MAX-215): the cursor to the next match of the
+    /// last search, its matches shown again. None without a match, `Some(true)` when it went
+    /// around the history's end
+    fn repeat_search(&mut self, opposite: bool) -> Option<bool> {
+        let (search, copy) = self.search_and_copy();
+        let cursor = (copy.cursor.line_idx, copy.cursor.char_idx);
+        let wrapped = search.step_from(cursor, opposite)?;
+        let (row, col) = search.current_match_position()?;
+        copy.jump_to(row, col);
+        search.kept = true;
+        Some(wrapped)
+    }
+
+    fn handle_search_action(&mut self, action: SearchModeAction, view: impl Into<SearchView>) {
+        let view = view.into();
+        let (search, copy) = self.search_and_copy();
+        match action {
+            SearchModeAction::Start(direction) => {
+                search.direction = direction;
+                search.origin = copy_origin(copy);
+                search.toggle(true);
+                search.open_empty();
+                self.update_search_matches(view);
+            }
+            SearchModeAction::Next => {
+                if search.active
+                    && let Some((row, col)) = search.next_match()
+                {
+                    copy.jump_to(row, col);
+                }
+            }
+            SearchModeAction::Previous => {
+                if search.active
+                    && let Some((row, col)) = search.prev_match()
+                {
+                    copy.jump_to(row, col);
+                }
+            }
+            SearchModeAction::Cancel => {
+                search.restore_last_query();
+                self.update_search_matches(view);
+                let (search, copy) = self.search_and_copy();
+                search.toggle(false);
+                search.kept = false;
+                // from copy mode, back where the search started (MAX-215)
+                if let Some(origin) = search.origin.take() {
+                    copy.cursor = origin;
+                    self.center_copy_cursor();
+                }
+            }
+            SearchModeAction::Confirm => {
+                if search.reuse_last_query() {
+                    self.update_search_matches(view);
+                }
+                let (search, copy) = self.search_and_copy();
+                let match_pos = search.current_match_position();
+                search.toggle(false);
+                search.kept = true;
+
+                // from copy mode the cursor is already on the match, the selection kept
+                if search.origin.take().is_none() {
+                    let (row, col) = match_pos.unwrap_or((0, 0));
+                    copy.enter_at(row, col);
+                }
+                self.center_copy_cursor();
+            }
+            SearchModeAction::HandleKey(key_event) => {
+                if search.active {
+                    self.handle_input_search(key_event, view);
+                }
+            }
+            SearchModeAction::Paste(text) => {
+                if search.active {
+                    paste_into_input(&mut search.query, &text);
+                    self.update_search_matches(view);
+                }
+            }
+            SearchModeAction::Query(text) => {
+                search.direction = SearchDirection::Forward;
+                search.origin = copy_origin(copy);
+                search.toggle(true);
+                search.query = Input::new(text);
+                self.update_search_matches(view);
+            }
+            SearchModeAction::Kind => {
+                search.toggle_mode();
+                self.update_search_matches(view);
+            }
+            SearchModeAction::ClickAt(column) => {
+                click_input_at(&mut search.query, column);
+            }
+            SearchModeAction::Repeat(_)
+            | SearchModeAction::History(_)
+            | SearchModeAction::Word(_) => {
+                unreachable!("run by App, which has the toasts and the history")
+            }
+        }
+    }
+}
+
+/// The copy cursor a search opened from copy mode starts from (MAX-215)
+fn copy_origin(copy: &CopyModeState) -> Option<LogicalPosition> {
+    copy.active.then_some(copy.cursor)
+}
+
+/// From copy mode the cursor goes to the current match as the query changes, so the view
+/// follows it; back to where the search started without one (MAX-215)
+fn follow_search_match((search, copy): (&mut SearchState, &mut CopyModeState)) {
+    let Some(origin) = search.origin else {
+        return;
+    };
+    match search.current_match_position() {
+        Some((row, col)) => copy.jump_to(row, col),
+        None => copy.cursor = origin,
+    }
 }
 
 #[cfg(test)]

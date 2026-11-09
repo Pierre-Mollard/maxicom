@@ -1,8 +1,9 @@
 //! RX ingest: line splitting, EOL modes, history cap and known data-model bugs.
 
 use super::*;
-use crate::app::search::SearchModeKind;
-use crossterm::event::{KeyCode, KeyModifiers};
+use crate::app::search::{SearchDirection, SearchModeKind};
+use crate::inputs::SearchModeAction;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 fn line_mode(max_lines: usize) -> LineMode {
     LineMode::new(max_lines, 1000)
@@ -75,7 +76,7 @@ fn search_matches_follow_their_line_when_history_is_full() {
         query: Input::from("target"),
         ..Default::default()
     };
-    lm.update_search_matches(LineDisplayMode::Pretty, RawSideView::Hex);
+    lm.update_search_matches((LineDisplayMode::Pretty, RawSideView::Hex));
     assert_eq!(lm.search().matches[0].line_idx, 1);
 
     lm.feed_rx(false, TextEncoding::Utf8, b"other\n");
@@ -270,7 +271,7 @@ fn raw_search_sees_received_bytes() {
             mode_kind: SearchModeKind::RawBytes,
             ..Default::default()
         };
-        lm.update_search_matches(LineDisplayMode::Pretty, RawSideView::Hex);
+        lm.update_search_matches((LineDisplayMode::Pretty, RawSideView::Hex));
         lm.search_state.matches.len()
     };
     assert_eq!(found("E9"), 1);
@@ -289,13 +290,13 @@ fn query_cursor_keys_keep_the_current_match() {
     lm.feed_rx(false, TextEncoding::Utf8, b"hit a\nhit b\n");
     lm.search_state.active = true;
     lm.search_state.query = tui_input::Input::new("hit".to_string());
-    lm.update_search_matches(LineDisplayMode::Pretty, RawSideView::Hex);
+    lm.update_search_matches((LineDisplayMode::Pretty, RawSideView::Hex));
     lm.search_state.next_match();
     lm.search_state.target_jump = None;
 
     let press = |lm: &mut LineMode, code| {
         let key = KeyEvent::new(code, KeyModifiers::NONE);
-        lm.handle_input_search(key, LineDisplayMode::Pretty, RawSideView::Hex);
+        lm.handle_input_search(key, (LineDisplayMode::Pretty, RawSideView::Hex));
     };
     press(&mut lm, KeyCode::Left);
     assert_eq!(lm.search_state.current_match, 1);
@@ -397,7 +398,7 @@ fn search_backward_starts_on_the_newest_match() {
     );
     assert!(lm.search_state.active);
     paste_into_input(&mut lm.search_state.query, "hit");
-    lm.update_search_matches(LineDisplayMode::Pretty, RawSideView::Hex);
+    lm.update_search_matches((LineDisplayMode::Pretty, RawSideView::Hex));
     assert_eq!(lm.search_state.current_match_position(), Some((2, 0)));
 
     lm.handle_search_action(SearchModeAction::Query("hit".to_string()), &settings);
