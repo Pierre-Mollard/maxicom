@@ -274,6 +274,7 @@ pub static COMMANDS: &[CommandSpec] = {
         CommandSpec::action("pan-right", A::PanRight, "Pan right"),
         CommandSpec::action("pan-left", A::PanLeft, "Pan left"),
         CommandSpec::action("pan-home", A::PanHome, "Pan to the line start"),
+        CommandSpec::action("pan-end", A::PanEnd, "Pan to the line end"),
         CommandSpec::action("pan-side-right", A::PanSideRight, "Pan the side view right"),
         CommandSpec::action("pan-side-left", A::PanSideLeft, "Pan the side view left"),
         CommandSpec::action("side-grow", A::SideGrow, "Grow the side view by 1 %"),

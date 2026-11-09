@@ -85,6 +85,7 @@ impl KeyBindingAction {
             KeyBindingAction::PanLeft => Action::History(HistoryAction::PanLeft(1)),
             KeyBindingAction::PanRight => Action::History(HistoryAction::PanRight(1)),
             KeyBindingAction::PanHome => Action::History(HistoryAction::PanLeft(usize::MAX)),
+            KeyBindingAction::PanEnd => Action::History(HistoryAction::PanRight(usize::MAX)),
             KeyBindingAction::PageUp => Action::History(HistoryAction::ScrollUpPage),
             KeyBindingAction::PageDown => Action::History(HistoryAction::ScrollDownPage),
             KeyBindingAction::EnterCopyMode => Action::CopyMode(CopyModeAction::Enter),

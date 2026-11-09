@@ -81,6 +81,7 @@ pub enum KeyBindingAction {
     NextMark,
     Marks,
     EnterSearchBackward,
+    PanEnd,
 }
 
 impl FromStr for KeyBindingAction {
@@ -116,6 +117,7 @@ impl KeyBindingAction {
                 | Self::PanLeft
                 | Self::PanRight
                 | Self::PanHome
+                | Self::PanEnd
                 | Self::PanSideLeft
                 | Self::PanSideRight
         )
@@ -1096,6 +1098,8 @@ impl Default for KeyBindingsConfig {
             "down"  => KeyBindingAction::ScrollDown,
             "left"  => KeyBindingAction::PanLeft,
             "right" => KeyBindingAction::PanRight,
+            "0"     => KeyBindingAction::PanHome,
+            "$"     => KeyBindingAction::PanEnd,
             "shift-left"  => KeyBindingAction::PanSideLeft,
             "shift-right" => KeyBindingAction::PanSideRight,
             "pageup"      => KeyBindingAction::PageUp,

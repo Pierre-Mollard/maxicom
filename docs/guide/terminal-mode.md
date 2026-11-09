@@ -53,7 +53,8 @@ Enter applies it. A size set this way applies exactly as asked.
 ### A screen wider than the view
 
 You pan sideways with `Ctrl-a Left` / `Ctrl-a Right`, or with the status
-bar's pan arrows (click them or use the wheel over them).
+bar's pan arrows (click them or use the wheel over them). `Ctrl-a 0` goes
+back to the left edge, and `Ctrl-a $` to the right edge of the screen.
 
 The view around the emulated screen is filled with `empty_fill_char`
 (default `░`), colored by `term_outside` in the theme's `[terminal]`.

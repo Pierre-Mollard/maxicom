@@ -78,6 +78,8 @@ pub struct LineMode {
     /// Where the live view starts while the lines after it don't fill it, like after a
     /// `clear` (MAX-176)
     view_floor: Option<ViewFloor>,
+    /// The pan when copy mode started, given back when it ends (MAX-217)
+    copy_pan: Option<usize>,
     /// Copy mode held the live view when lines arrived: leaving it goes back live (MAX-193)
     copy_held: bool,
     /// The marks on history entries (MAX-164)
@@ -130,6 +132,7 @@ impl LineMode {
             copy_cursor_shown: false,
             bottom_row_start: None,
             view_floor: None,
+            copy_pan: None,
             copy_held: false,
             marks: Marks::default(),
             mark_jump: None,
@@ -553,6 +556,10 @@ impl LineMode {
             }
             return None;
         }
+        // copy mode starting (a key or a mouse press): its pan comes back when it ends
+        if !self.copy_state.active {
+            self.copy_pan = Some(self.scroller.offset_x);
+        }
 
         let is_mouse = matches!(
             action,
@@ -594,6 +601,9 @@ impl LineMode {
         // matches kept after a search are no longer shown (MAX-215)
         if !self.copy_state.active {
             self.search_state.kept = false;
+            if let Some(pan) = self.copy_pan.take() {
+                self.scroller.offset_x = pan;
+            }
             if std::mem::take(&mut self.copy_held) {
                 self.scroll_to_bottom();
             }

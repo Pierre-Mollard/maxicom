@@ -38,6 +38,7 @@ defaults back. Note that `c` and `C` (Shift-c) are two different keys, see
 | `D` | Detach / attach the link |
 | `O` | Text encoding |
 | `/` / `?` | Search forward / backward |
+| `0` / `$` | Pan to the line start / end |
 | `:` | Command line |
 | `T` | Triggers |
 | `U` | Toggle the u-boot trigger |

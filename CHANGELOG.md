@@ -11,7 +11,8 @@ you says so in an "Upgrading" section.
 ### Upgrading
 
 Run [`maxicom --write-config`](https://pierre-mollard.github.io/maxicom/settings.html#updating-the-files)
-to get the new copy mode keys `/`, `?`, `n` and `N` in your `keymap.toml`.
+to get the new keys in your `keymap.toml`: `/`, `?`, `n` and `N` in copy
+mode, and `Ctrl-a 0` / `Ctrl-a $`.
 `Ctrl-a ?` now searches backward and the help stays on `Ctrl-a z`; your file
 keeps `"?" = "help"` until you change it to `"?" = "enter-search-backward"`.
 
@@ -29,6 +30,8 @@ keeps `"?" = "help"` until you change it to `"?" = "enter-search-backward"`.
   they go around the history's end. After Enter the matches stay lit and the
   search bar stays in the bottom border with its count, until you leave copy
   mode.
+- `Ctrl-a 0` and `Ctrl-a $` pan to the line start and end
+  ([`pan-home`, and the new `pan-end`](https://pierre-mollard.github.io/maxicom/keybindings.html#actions)).
 
 ### Changed
 
@@ -40,6 +43,8 @@ keeps `"?" = "help"` until you change it to `"?" = "enter-search-backward"`.
 
 - In terminal mode, the raw side panel can be panned during a search: it no
   longer comes back to the match on every frame.
+- Leaving copy mode gives back the pan you had when you entered it, instead
+  of leaving the view panned where the cursor took it.
 
 ## [0.1.1] - 2026-11-08
 

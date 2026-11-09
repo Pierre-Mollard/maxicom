@@ -167,7 +167,7 @@ fn mouse_toggle_default_key() {
 /// between words: the old `_` names are refused
 #[test]
 fn action_names() {
-    const NAMES: [(&str, KeyBindingAction); 53] = [
+    const NAMES: [(&str, KeyBindingAction); 54] = [
         ("quit", KeyBindingAction::Quit),
         ("toggle-input-mode", KeyBindingAction::SKInputMode),
         ("toggle-local-echo", KeyBindingAction::SKLocalEcho),
@@ -208,6 +208,7 @@ fn action_names() {
         ("pan-right", KeyBindingAction::PanRight),
         ("pan-left", KeyBindingAction::PanLeft),
         ("pan-home", KeyBindingAction::PanHome),
+        ("pan-end", KeyBindingAction::PanEnd),
         ("pan-side-right", KeyBindingAction::PanSideRight),
         ("pan-side-left", KeyBindingAction::PanSideLeft),
         ("clear-history", KeyBindingAction::ClearHistory),

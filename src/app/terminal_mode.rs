@@ -67,6 +67,8 @@ pub struct TerminalMode {
     restored_separator: Option<usize>,
     /// The last byte from the device was a CR, for add CR / add LF across chunks (MAX-181)
     rx_after_cr: bool,
+    /// The pan when copy mode started, given back when it ends (MAX-217)
+    copy_pan: Option<usize>,
     /// Copy mode held the live view when rows arrived: leaving it goes back live (MAX-193)
     copy_held: bool,
     /// The marks on world rows (MAX-164)
@@ -98,6 +100,7 @@ impl TerminalMode {
             search_text: None,
             restored_separator: None,
             rx_after_cr: false,
+            copy_pan: None,
             copy_held: false,
             marks: Marks::default(),
         }
@@ -897,6 +900,10 @@ impl TerminalMode {
             }
             return None;
         }
+        // copy mode starting (a key or a mouse press): its pan comes back when it ends
+        if !self.copy_state.active {
+            self.copy_pan = Some(self.scroller.offset_x);
+        }
 
         if action == CopyModeAction::Enter {
             self.copy_held = false;
@@ -930,6 +937,9 @@ impl TerminalMode {
         // matches kept after a search are no longer shown (MAX-215)
         if !self.copy_state.active {
             self.search_state.kept = false;
+            if let Some(pan) = self.copy_pan.take() {
+                self.scroller.offset_x = pan;
+            }
             if std::mem::take(&mut self.copy_held) {
                 self.scroll_to_bottom();
             }

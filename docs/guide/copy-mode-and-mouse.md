@@ -60,6 +60,9 @@ output.
 If you had scrolled up before entering copy mode, the view stays where you
 left it.
 
+On a view wider than the screen, the cursor pans the view as it moves.
+Leaving copy mode gives back the pan you had when you entered it.
+
 ### Where the copy goes
 
 A copy goes to the system clipboard through your terminal, with the OSC 52

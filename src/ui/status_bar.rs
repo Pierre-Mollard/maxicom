@@ -157,10 +157,10 @@
 //!
 //! The scroll and pan actions a `click=` can run: `scroll-up`, `scroll-down`, `page-up`,
 //! `page-down`, `scroll-to-top`, `scroll-to-bottom`, `pan-left`, `pan-right`, `pan-home` (back
-//! to the left edge). They move the view only, in copy mode too: the copy cursor stays. The
-//! steps (all but `scroll-to-top`, `scroll-to-bottom` and `pan-home`) repeat while the button
-//! is held on their block, until the pointer leaves it. The wheel over a block that pans pans
-//! the history. A custom scroll block:
+//! to the left edge), `pan-end`. They move the view only, in copy mode too: the copy cursor
+//! stays. The steps (all but the `-to-` ones, `pan-home` and `pan-end`) repeat while the
+//! button is held on their block, until the pointer leaves it. The wheel over a block that
+//! pans pans the history. A custom scroll block:
 //! `[▲](click=page-up)[{scroll_percent:>3}%](muted)[▼](click=page-down)`
 //!
 //! ## Examples

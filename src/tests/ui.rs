@@ -7654,3 +7654,99 @@ fn search_bar_kept_in_copy_mode() {
     h.app.update(Action::CopyMode(CopyModeAction::Exit));
     assert!(!has(&h.draw(), "SEARCH"));
 }
+
+/// The view's pan, in line or terminal mode (MAX-217)
+fn pan_x(h: &Harness) -> usize {
+    match h.app.settings().mode {
+        Mode::Line => h.app.line_mode.scroller().offset_x,
+        Mode::Terminal => h.app.terminal_mode.pan_offset_x(),
+    }
+}
+
+/// A line wider than an 80 columns view: in line mode truncated, in terminal mode on a
+/// 120 columns emulator, then the cursor on the next row (MAX-217)
+fn wide_line_harnesses() -> [Harness; 2] {
+    let mut line = "0123456789".repeat(11).into_bytes();
+    line.extend_from_slice(b"\r\n");
+    let mut lm = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+    lm.app.settings_mut().line_mode.wrap_mode = crate::configs::WrapMode::Truncate;
+    lm.feed(&line);
+    lm.draw();
+    let mut tm = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+        s.mode = Mode::Terminal;
+        s.terminal_mode.cols = 120;
+    });
+    tm.app.terminal_mode.process_rx(TextEncoding::Utf8, &line);
+    tm.draw();
+    [lm, tm]
+}
+
+/// MAX-217: a copy cursor moved past the view's right edge pans the view, and leaving copy
+/// mode gives back the pan it started with, also one set before.
+/// How: the wide line's end with `$` in copy mode, then an exit, from no pan and from a pan
+/// of 5, in both modes.
+#[test]
+fn copy_mode_exit_gives_back_the_pan() {
+    for start in [0, 5] {
+        for mut h in wide_line_harnesses() {
+            let mode = h.app.settings().mode;
+            h.scroll(HistoryAction::PanRight(start));
+            h.draw();
+            assert_eq!(pan_x(&h), start, "{mode:?}");
+            h.app.update(Action::CopyMode(CopyModeAction::Enter));
+            h.app.update(Action::CopyMode(CopyModeAction::MoveUp));
+            h.app.update(Action::CopyMode(CopyModeAction::EndOfLine));
+            h.draw();
+            assert!(pan_x(&h) > start, "{mode:?}");
+
+            h.app.update(Action::CopyMode(CopyModeAction::Exit));
+            h.draw();
+            assert_eq!(pan_x(&h), start, "{mode:?}");
+        }
+    }
+}
+
+/// MAX-217: `pan-home` brings a panned view back to its first column, in both modes.
+/// How: the wide line panned right by 10, then `pan-home`.
+#[test]
+fn pan_home_goes_back_to_the_first_column() {
+    for mut h in wide_line_harnesses() {
+        let mode = h.app.settings().mode;
+        h.scroll(HistoryAction::PanRight(10));
+        h.draw();
+        assert_eq!(pan_x(&h), 10, "{mode:?}");
+        h.app.update(KeyBindingAction::PanHome.to_action(&h.app));
+        h.draw();
+        assert_eq!(pan_x(&h), 0, "{mode:?}");
+    }
+}
+
+/// MAX-217: `pan-end` pans to the widest line's end, and its default key `Ctrl-a $` and
+/// `Ctrl-a 0` for `pan-home` reach them, in both modes.
+/// How: the wide line, `Ctrl-a $` then `Ctrl-a 0` through the keymap.
+#[test]
+fn pan_end_and_its_keys() {
+    for mut h in wide_line_harnesses() {
+        let mode = h.app.settings().mode;
+        let prefixed = |h: &mut Harness, c| {
+            h.app.update(Action::App(AppAction::SetPrefix(true)));
+            let key = crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(c),
+                KeyModifiers::NONE,
+            );
+            let event = Event::Key(key);
+            let action = crate::inputs::handle_event(event, &h.app);
+            h.app.update(action);
+            h.draw();
+        };
+        prefixed(&mut h, '$');
+        let end = pan_x(&h);
+        assert!(end > 0, "{mode:?}");
+        h.scroll(HistoryAction::PanRight(1));
+        h.draw();
+        assert_eq!(pan_x(&h), end, "{mode:?}");
+
+        prefixed(&mut h, '0');
+        assert_eq!(pan_x(&h), 0, "{mode:?}");
+    }
+}

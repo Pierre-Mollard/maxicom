@@ -65,7 +65,10 @@ pub fn handle_mouse(event: MouseEvent, app: &App) -> Action {
         && matches!(
             app.frame_map().click_target(event.column, event.row),
             Some(ClickAction::Run(
-                KeyBindingAction::PanLeft | KeyBindingAction::PanRight | KeyBindingAction::PanHome
+                KeyBindingAction::PanLeft
+                    | KeyBindingAction::PanRight
+                    | KeyBindingAction::PanHome
+                    | KeyBindingAction::PanEnd
             ))
         );
     let sideways = over_pan || event.modifiers.contains(KeyModifiers::SHIFT);

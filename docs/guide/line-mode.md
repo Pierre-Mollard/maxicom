@@ -125,7 +125,8 @@ cycles it.
 | `truncate` | Are cut; you pan sideways to read them |
 
 To pan, use `Ctrl-a Left` / `Ctrl-a Right`, or the arrows in the status bar.
-`pan-home` goes back to the left edge.
+`Ctrl-a 0` goes back to the left edge, and `Ctrl-a $` to the end of the
+widest line.
 
 `wrap_indent` sets where a wrapped row starts. `I` in the settings popup
 cycles it.

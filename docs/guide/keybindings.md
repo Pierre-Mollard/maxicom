@@ -100,10 +100,12 @@ directory's `n`, `e` and `s`. Those are fixed, and each chapter lists them.
 
 | Key | Action | |
 | --- | --- | --- |
+| `Ctrl-a $` | `pan-end` | Pan to the line end |
 | `Ctrl-a '` | `marks` | Open the marks |
 | `Ctrl-a (` / `Ctrl-a )` | `prev-mark` / `next-mark` | Go to the mark above / below |
 | `Ctrl-a ,` | `mark` | A command line: mark a line, waits for its letter |
 | `Ctrl-a /` | `enter-search` | Search the history |
+| `Ctrl-a 0` | `pan-home` | Pan to the line start |
 | `Ctrl-a :` | `command-line` | Open the command line |
 | `Ctrl-a <` | `side-shrink-5` | Shrink the side view by 5 % |
 | `Ctrl-a >` | `side-grow-5` | Grow the side view by 5 % |
@@ -268,7 +270,8 @@ commands with arguments (`send`, `open`, `baud`, `replay`...).
 | `page-down` | Scroll down one page | `Shift-PageDown`, `Ctrl-a PageDown` |
 | `pan-right` | Pan right | `Ctrl-a Right` |
 | `pan-left` | Pan left | `Ctrl-a Left` |
-| `pan-home` | Pan to the line start | — |
+| `pan-home` | Pan to the line start | `Ctrl-a 0` |
+| `pan-end` | Pan to the line end | `Ctrl-a $` |
 | `pan-side-right` | Pan the side view right | `Ctrl-a Shift-Right` |
 | `pan-side-left` | Pan the side view left | `Ctrl-a Shift-Left` |
 | `side-grow` | Grow the side view by 1 % | — |

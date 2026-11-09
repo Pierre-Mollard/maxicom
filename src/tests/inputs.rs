@@ -310,11 +310,13 @@ fn default_keymap_per_context() {
     assert_eq!(
         walk(&app, "App(SetPrefix(false))"),
         [
+            "$ => History(PanRight(18446744073709551615))",
             "' => App(OpenMarks)",
             "( => App(Mark(Adjacent(false)))",
             ") => App(Mark(Adjacent(true)))",
             ", => run mark",
             "/ => Search(Start(Forward))",
+            "0 => History(PanLeft(18446744073709551615))",
             ": => open CommandLine",
             "< => App(ResizeSidePanel(-5))",
             "> => App(ResizeSidePanel(5))",

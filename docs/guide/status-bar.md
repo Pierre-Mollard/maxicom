@@ -271,7 +271,8 @@ A variable in plain text, outside `[...]`, is clickable on its own.
 
 `click=` can run these scroll and pan actions: `scroll-up`, `scroll-down`,
 `page-up`, `page-down`, `scroll-to-top`, `scroll-to-bottom`, `pan-left`,
-`pan-right`, and `pan-home` (back to the left edge).
+`pan-right`, `pan-home` (back to the left edge) and `pan-end` (to the line
+end).
 
 - They only move the view. In copy mode, the copy cursor stays where it is.
 - The step actions (`scroll-up`, `scroll-down`, `page-up`, `page-down`,
