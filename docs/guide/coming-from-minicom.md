@@ -12,7 +12,7 @@ defaults back. Note that `c` and `C` (Shift-c) are two different keys, see
 
 | `Ctrl-a` + | minicom           | maxicom                          |
 | ---------- | ----------------- | -------------------------------- |
-| `z`        | help              | help (also `?`)                  |
+| `z`        | help              | help                             |
 | `x`, `q`   | quit              | quit                             |
 | `o`        | configure         | settings (also `s`)              |
 | `p`        | comm parameters   | line settings                    |
@@ -37,7 +37,7 @@ defaults back. Note that `c` and `C` (Shift-c) are two different keys, see
 | `j` | Session backups |
 | `D` | Detach / attach the link |
 | `O` | Text encoding |
-| `/` | Search |
+| `/` / `?` | Search forward / backward |
 | `:` | Command line |
 | `T` | Triggers |
 | `U` | Toggle the u-boot trigger |
@@ -52,7 +52,7 @@ defaults back. Note that `c` and `C` (Shift-c) are two different keys, see
 | `n` / `N` | Close the top notification / all of them |
 | `r` | Reload the config |
 
-`Ctrl-a ?` lists them all.
+`Ctrl-a z` lists them all.
 
 ## Options and files
 

@@ -8,6 +8,7 @@ use crate::{
     app::{
         mash::{Mash, MashStep},
         scroller::ScrollStatus,
+        search::{SearchDirection, SearchState},
         selection::{ClickCounter, CopySide, LogicalPosition, MouseUnit},
         term_answers::answer_bytes,
         transfer::FileTransfer,
@@ -762,10 +763,11 @@ impl App {
             InputContext::Overlay
         } else if self.is_prefix_active() {
             InputContext::Prefix
+        } else if self.is_search_active() {
+            // before copy mode: a search opened from it takes the keys (MAX-215)
+            InputContext::Search
         } else if self.is_copy_mode_active() {
             InputContext::CopyMode
-        } else if self.is_search_active() {
-            InputContext::Search
         } else {
             match self.settings().mode {
                 Mode::Line => InputContext::LineInput,
@@ -1683,7 +1685,7 @@ impl App {
                 // the press waiting for a drag enters copy mode where it was
                 if let Some((pos, side)) = self.pending_press.take() {
                     if self.is_search_active() {
-                        self.update_action_search_mode(SearchModeAction::Cancel);
+                        self.close_search_for_click();
                     }
                     self.copy_action(CopyModeAction::MousePress(pos, side, MouseUnit::Char));
                 }
@@ -1702,7 +1704,7 @@ impl App {
         };
         // a click in the history leaves the search for copy mode there (MAX-113)
         if matches!(action, CopyModeAction::MousePress(..)) && self.is_search_active() {
-            self.update_action_search_mode(SearchModeAction::Cancel);
+            self.close_search_for_click();
         }
         match self.copy_action(action) {
             Some(text) => {
@@ -1714,6 +1716,28 @@ impl App {
     }
 
     fn update_action_search_mode(&mut self, action: SearchModeAction) -> UpdateEffect {
+        match action {
+            SearchModeAction::Repeat(opposite) => {
+                self.repeat_search(opposite);
+                return UpdateEffect::None;
+            }
+            // a search always runs in copy mode (MAX-215): from out of it, copy mode starts
+            // at the view, its cursor at the end of its line so that `?` from the live view
+            // finds the newest line too, and Esc leaves it for the live view
+            SearchModeAction::Start(_) | SearchModeAction::Query(_)
+                if !self.is_copy_mode_active() =>
+            {
+                self.copy_action(CopyModeAction::Enter);
+                self.copy_action(CopyModeAction::EndOfLine);
+                self.search_mut().exits_copy = true;
+            }
+            _ => {}
+        }
+        let leaves_copy = matches!(action, SearchModeAction::Cancel)
+            && std::mem::take(&mut self.search_mut().exits_copy);
+        if matches!(action, SearchModeAction::Confirm) {
+            self.search_mut().exits_copy = false;
+        }
         match self.settings.mode {
             Mode::Terminal => {
                 self.terminal_mode
@@ -1723,8 +1747,47 @@ impl App {
                 self.line_mode.handle_search_action(action, &self.settings);
             }
         }
+        if leaves_copy {
+            self.copy_action(CopyModeAction::Exit);
+            self.update_action_history(HistoryAction::ScrollToBottom);
+        }
 
         UpdateEffect::None
+    }
+
+    /// A click in the history closes the search for copy mode there: copy mode stays, also
+    /// when the search started it (MAX-215)
+    fn close_search_for_click(&mut self) {
+        self.search_mut().exits_copy = false;
+        self.update_action_search_mode(SearchModeAction::Cancel);
+    }
+
+    fn search_mut(&mut self) -> &mut SearchState {
+        match self.settings.mode {
+            Mode::Terminal => self.terminal_mode.search_mut(),
+            Mode::Line => self.line_mode.search_mut(),
+        }
+    }
+
+    /// `n` / `N` in copy mode (MAX-215), with a toast when it goes around the history's end
+    fn repeat_search(&mut self, opposite: bool) {
+        let (wrapped, direction) = match self.settings.mode {
+            Mode::Terminal => (
+                self.terminal_mode.repeat_search(opposite),
+                self.terminal_mode.search().direction,
+            ),
+            Mode::Line => (
+                self.line_mode.repeat_search(opposite),
+                self.line_mode.search().direction,
+            ),
+        };
+        let forward = (direction == SearchDirection::Forward) != opposite;
+        match wrapped {
+            None => self.notify_warn("No match to go to"),
+            Some(true) if forward => self.notify_info("Search hit the end, went on from the top"),
+            Some(true) => self.notify_info("Search hit the top, went on from the end"),
+            Some(false) => {}
+        }
     }
 
     fn update_action_history(&mut self, action: HistoryAction) -> UpdateEffect {
@@ -2104,6 +2167,15 @@ impl App {
     #[inline]
     pub fn is_app_focused(&self) -> bool {
         self.is_window_focused || !self.settings.ui.focus_effects
+    }
+
+    /// The search bar open, or kept in copy mode with its matches (MAX-215)
+    pub fn is_search_bar_shown(&self) -> bool {
+        let search = match self.settings.mode {
+            Mode::Line => self.line_mode.search(),
+            Mode::Terminal => self.terminal_mode.search(),
+        };
+        search.active || search.shows_matches()
     }
 
     #[inline]

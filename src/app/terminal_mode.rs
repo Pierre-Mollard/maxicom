@@ -16,8 +16,8 @@ use crate::{
         marks::Marks,
         raw_scroller::RawSideScroller,
         scroller::ViewportScroller,
-        search::SearchState,
-        selection::{CopyActionResult, CopyModeState, Reveal, TextSource},
+        search::{SearchDirection, SearchState},
+        selection::{CopyActionResult, CopyModeState, LogicalPosition, Reveal, TextSource},
         term_answers::{Answer, size_report},
     },
     capture::{Screenshot, TimedChunk},
@@ -788,7 +788,9 @@ impl TerminalMode {
 
     pub fn handle_search_action(&mut self, action: SearchModeAction, raw_view: RawSideView) {
         match action {
-            SearchModeAction::Start => {
+            SearchModeAction::Start(direction) => {
+                self.search_state.direction = direction;
+                self.search_state.origin = self.copy_origin();
                 self.search_state.toggle_itself();
                 if self.search_state.active {
                     self.update_search_matches(raw_view);
@@ -798,31 +800,34 @@ impl TerminalMode {
                 if self.search_state.active
                     && let Some((row, col)) = self.search_state.next_match()
                 {
-                    self.copy_state.cursor.line_idx = row;
-                    self.copy_state.cursor.char_idx = col;
-                    self.copy_state.cursor.preferred_col = col;
+                    self.copy_state.jump_to(row, col);
                 }
             }
             SearchModeAction::Previous => {
                 if self.search_state.active
                     && let Some((row, col)) = self.search_state.prev_match()
                 {
-                    self.copy_state.cursor.line_idx = row;
-                    self.copy_state.cursor.char_idx = col;
-                    self.copy_state.cursor.preferred_col = col;
+                    self.copy_state.jump_to(row, col);
                 }
             }
             SearchModeAction::Cancel => {
                 self.search_state.toggle(false);
+                self.search_state.kept = false;
+                // from copy mode, back where the search started (MAX-215)
+                if let Some(origin) = self.search_state.origin.take() {
+                    self.copy_state.cursor = origin;
+                    self.reveal_copy_cursor(Reveal::Center);
+                }
             }
             SearchModeAction::Confirm => {
                 let match_pos = self.search_state.current_match_position();
                 self.search_state.toggle(false);
+                self.search_state.kept = true;
 
-                if let Some((row, col)) = match_pos {
+                // from copy mode the cursor is already on the match, the selection kept
+                if self.search_state.origin.take().is_none() {
+                    let (row, col) = match_pos.unwrap_or((0, 0));
                     self.copy_state.enter_at(row, col);
-                } else {
-                    self.copy_state.enter_at(0, 0);
                 }
                 self.reveal_copy_cursor(Reveal::Center);
             }
@@ -838,6 +843,8 @@ impl TerminalMode {
                 }
             }
             SearchModeAction::Query(text) => {
+                self.search_state.direction = SearchDirection::Forward;
+                self.search_state.origin = self.copy_origin();
                 self.search_state.toggle(true);
                 self.search_state.query = Input::new(text);
                 self.update_search_matches(raw_view);
@@ -849,7 +856,23 @@ impl TerminalMode {
             SearchModeAction::ClickAt(column) => {
                 click_input_at(&mut self.search_state.query, column);
             }
+            SearchModeAction::Repeat(_) => unreachable!("run by App, for its toast"),
         }
+    }
+
+    /// `n` in copy mode, `N` with `opposite` (MAX-215): the cursor to the next match of the
+    /// last search, its matches shown again. None without a match, `Some(true)` when it went
+    /// around the history's end
+    pub fn repeat_search(&mut self, opposite: bool) -> Option<bool> {
+        let cursor = (
+            self.copy_state.cursor.line_idx,
+            self.copy_state.cursor.char_idx,
+        );
+        let wrapped = self.search_state.step_from(cursor, opposite)?;
+        let (row, col) = self.search_state.current_match_position()?;
+        self.copy_state.jump_to(row, col);
+        self.search_state.kept = true;
+        Some(wrapped)
     }
 
     pub fn handle_copy_action(
@@ -903,9 +926,13 @@ impl TerminalMode {
         };
 
         let result = self.copy_state.apply_action(action, &mut source);
-        // out of copy mode (Esc, a yank), a view it held goes back live (MAX-193)
-        if !self.copy_state.active && std::mem::take(&mut self.copy_held) {
-            self.scroll_to_bottom();
+        // out of copy mode (Esc, a yank), a view it held goes back live (MAX-193), and the
+        // matches kept after a search are no longer shown (MAX-215)
+        if !self.copy_state.active {
+            self.search_state.kept = false;
+            if std::mem::take(&mut self.copy_held) {
+                self.scroll_to_bottom();
+            }
         }
         match result {
             CopyActionResult::Moved => {
@@ -977,6 +1004,24 @@ impl TerminalMode {
         let text = self.search_text.as_deref().unwrap_or_default();
         self.search_state
             .update_matches_from_strings(text, raw_view);
+        self.follow_search_match();
+    }
+
+    /// The copy cursor a search opened from copy mode starts from (MAX-215)
+    fn copy_origin(&self) -> Option<LogicalPosition> {
+        self.copy_state.active.then_some(self.copy_state.cursor)
+    }
+
+    /// From copy mode the cursor goes to the current match as the query changes, so the view
+    /// follows it; back to where the search started without one (MAX-215)
+    fn follow_search_match(&mut self) {
+        let Some(origin) = self.search_state.origin else {
+            return;
+        };
+        match self.search_state.current_match_position() {
+            Some((row, col)) => self.copy_state.jump_to(row, col),
+            None => self.copy_state.cursor = origin,
+        }
     }
 
     pub fn handle_input_search(&mut self, key_event: KeyEvent, raw_view: RawSideView) {

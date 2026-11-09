@@ -675,3 +675,37 @@ fn add_newlines_cases() {
     let lf = add_newlines(b"\n", true, false, &mut after_cr);
     assert_eq!(lf.as_ref(), b"\n");
 }
+
+/// MAX-215: a new search starts on the oldest match; Confirm closes the bar, keeps the
+/// matches and enters copy mode on the current match, without a selection; Next and
+/// Previous do nothing once the bar is closed.
+/// How: "hit" on the first and last of 5 rows, Next, Confirm, then Next and Previous.
+#[test]
+fn search_confirm_enters_copy_mode_on_the_match() {
+    let raw_view = RawSideView::default();
+    let mut tm = terminal(3);
+    feed_lines(&mut tm, &["hit one", "b", "c", "d", "the hit"]);
+    tm.handle_search_action(SearchModeAction::Query("hit".to_string()), raw_view);
+    let first = tm.search_state.matches[0];
+    let last = tm.search_state.matches[1];
+    assert!(first.line_idx < last.line_idx);
+    assert_eq!(
+        tm.search_state.current_match_position(),
+        Some((first.line_idx, 0))
+    );
+
+    tm.handle_search_action(SearchModeAction::Next, raw_view);
+    tm.handle_search_action(SearchModeAction::Confirm, raw_view);
+    assert!(!tm.search_state.active);
+    assert_eq!(tm.search_state.matches.len(), 2);
+    assert!(tm.copy_state.active);
+    assert_eq!(tm.copy_state.selection_anchor, None);
+    let cursor = &tm.copy_state.cursor;
+    assert_eq!((cursor.line_idx, cursor.char_idx), (last.line_idx, 4));
+
+    tm.handle_search_action(SearchModeAction::Next, raw_view);
+    tm.handle_search_action(SearchModeAction::Previous, raw_view);
+    assert_eq!(tm.search_state.current_match, 1);
+    let cursor = &tm.copy_state.cursor;
+    assert_eq!((cursor.line_idx, cursor.char_idx), (last.line_idx, 4));
+}

@@ -306,3 +306,169 @@ fn query_cursor_keys_keep_the_current_match() {
     assert_eq!(lm.search_state.current_match, 0);
     assert!(lm.search_state.target_jump.is_some());
 }
+
+/// MAX-215: Next moves the copy cursor even out of copy mode; Confirm closes the bar,
+/// keeps the matches and enters copy mode on the current match, without a selection;
+/// Next and Previous do nothing once the bar is closed.
+/// How: matches on lines 1 and 2, Next, Confirm, then Next and Previous.
+#[test]
+fn search_confirm_enters_copy_mode_on_the_match() {
+    let mut lm = line_mode(10);
+    let settings = SettingsConfig::default();
+    lm.feed_rx(false, TextEncoding::Utf8, b"x\nhit one\nthe hit\n");
+    lm.handle_search_action(SearchModeAction::Query("hit".to_string()), &settings);
+    assert_eq!(lm.search_state.current_match_position(), Some((1, 0)));
+
+    lm.handle_search_action(SearchModeAction::Next, &settings);
+    assert!(!lm.copy_state.active);
+    let cursor = &lm.copy_state.cursor;
+    assert_eq!((cursor.line_idx, cursor.char_idx), (2, 4));
+
+    lm.handle_search_action(SearchModeAction::Confirm, &settings);
+    assert!(!lm.search_state.active);
+    assert_eq!(lm.search_state.matches.len(), 2);
+    assert!(lm.copy_state.active);
+    assert_eq!(lm.copy_state.selection_anchor, None);
+    let cursor = &lm.copy_state.cursor;
+    assert_eq!((cursor.line_idx, cursor.char_idx), (2, 4));
+
+    lm.handle_search_action(SearchModeAction::Next, &settings);
+    lm.handle_search_action(SearchModeAction::Previous, &settings);
+    assert_eq!(lm.search_state.current_match, 1);
+    let cursor = &lm.copy_state.cursor;
+    assert_eq!((cursor.line_idx, cursor.char_idx), (2, 4));
+}
+
+/// MAX-215: Confirm without a match enters copy mode on the first line; from copy mode it
+/// stays where it was, the selection kept.
+/// How: a search for a missing text confirmed, out of copy mode then from copy mode on
+/// line 1 with a selection.
+#[test]
+fn search_confirm_without_match() {
+    let mut lm = line_mode(10);
+    let settings = SettingsConfig::default();
+    lm.feed_rx(false, TextEncoding::Utf8, b"a\nb\n");
+    lm.handle_search_action(SearchModeAction::Query("zzz".to_string()), &settings);
+    lm.handle_search_action(SearchModeAction::Confirm, &settings);
+    assert!(lm.copy_state.active);
+    let cursor = &lm.copy_state.cursor;
+    assert_eq!((cursor.line_idx, cursor.char_idx), (0, 0));
+
+    lm.copy_state.enter_at(1, 0);
+    lm.copy_state.selection_anchor = Some(lm.copy_state.cursor);
+    lm.handle_search_action(SearchModeAction::Query("zzz".to_string()), &settings);
+    lm.handle_search_action(SearchModeAction::Confirm, &settings);
+    assert!(lm.copy_state.active);
+    assert!(lm.copy_state.selection_anchor.is_some());
+    let cursor = &lm.copy_state.cursor;
+    assert_eq!((cursor.line_idx, cursor.char_idx), (1, 0));
+}
+
+/// MAX-215: Cancel closes the bar and leaves copy mode as it was: cursor and selection.
+/// How: copy mode on line 1 with a selection, a search with a match on line 0, Cancel.
+#[test]
+fn search_cancel_leaves_copy_mode_as_it_was() {
+    let mut lm = line_mode(10);
+    let settings = SettingsConfig::default();
+    lm.feed_rx(false, TextEncoding::Utf8, b"hit\nb\n");
+    lm.copy_state.enter_at(1, 0);
+    lm.copy_state.selection_anchor = Some(lm.copy_state.cursor);
+
+    lm.handle_search_action(SearchModeAction::Query("hit".to_string()), &settings);
+    lm.handle_search_action(SearchModeAction::Cancel, &settings);
+    assert!(!lm.search_state.active);
+    assert!(lm.copy_state.active);
+    assert!(lm.copy_state.selection_anchor.is_some());
+    let cursor = &lm.copy_state.cursor;
+    assert_eq!((cursor.line_idx, cursor.char_idx), (1, 0));
+}
+
+/// MAX-215: a backward start opens the bar on the newest match; the `search` command's
+/// Query searches forward again.
+/// How: matches on lines 0 and 2, Start backward with a typed query, then Query.
+#[test]
+fn search_backward_starts_on_the_newest_match() {
+    let mut lm = line_mode(10);
+    let settings = SettingsConfig::default();
+    lm.feed_rx(false, TextEncoding::Utf8, b"hit\nb\nhit\n");
+    lm.handle_search_action(
+        SearchModeAction::Start(SearchDirection::Backward),
+        &settings,
+    );
+    assert!(lm.search_state.active);
+    paste_into_input(&mut lm.search_state.query, "hit");
+    lm.update_search_matches(LineDisplayMode::Pretty, RawSideView::Hex);
+    assert_eq!(lm.search_state.current_match_position(), Some((2, 0)));
+
+    lm.handle_search_action(SearchModeAction::Query("hit".to_string()), &settings);
+    assert_eq!(lm.search_state.direction, SearchDirection::Forward);
+    assert_eq!(lm.search_state.current_match_position(), Some((0, 0)));
+}
+
+/// MAX-215: a search opened from copy mode moves the cursor to the match as the query
+/// changes and keeps the selection; Esc brings the cursor back, Enter leaves it on the match.
+/// How: copy mode on line 1 with a selection, `/` with "hit", Esc; again, Enter.
+#[test]
+fn search_from_copy_mode_moves_the_cursor() {
+    let mut lm = line_mode(10);
+    let settings = SettingsConfig::default();
+    lm.feed_rx(false, TextEncoding::Utf8, b"hit\nb\nc hit\n");
+    lm.copy_state.enter_at(1, 0);
+    lm.copy_state.selection_anchor = Some(lm.copy_state.cursor);
+    let cursor = |lm: &LineMode| (lm.copy_state.cursor.line_idx, lm.copy_state.cursor.char_idx);
+    let search = |lm: &mut LineMode| {
+        lm.handle_search_action(SearchModeAction::Start(SearchDirection::Forward), &settings);
+        lm.handle_search_action(SearchModeAction::Paste("hit".to_string()), &settings);
+    };
+
+    search(&mut lm);
+    assert_eq!(cursor(&lm), (2, 2));
+    assert!(lm.copy_state.selection_anchor.is_some());
+    lm.handle_search_action(SearchModeAction::Cancel, &settings);
+    assert_eq!(cursor(&lm), (1, 0));
+    assert!(lm.copy_state.active);
+
+    lm.search_state.query = Input::default();
+    search(&mut lm);
+    lm.handle_search_action(SearchModeAction::Confirm, &settings);
+    assert!(!lm.search_state.active);
+    assert_eq!(cursor(&lm), (2, 2));
+    assert!(lm.copy_state.selection_anchor.is_some());
+    assert_eq!(lm.search_state.origin, None);
+}
+
+/// MAX-215: after Enter the matches stay shown in copy mode and `n` / `N` move the cursor
+/// between them, the selection kept; leaving copy mode stops showing them, and `n` shows
+/// them again. Esc in the bar doesn't keep them.
+/// How: "hit" on lines 0, 2, 3, a forward search confirmed, n, N, a wrap, copy mode left.
+#[test]
+fn n_and_n_reverse_in_copy_mode() {
+    let mut lm = line_mode(10);
+    let settings = SettingsConfig::default();
+    lm.feed_rx(false, TextEncoding::Utf8, b"hit\nb\nhit\nhit\n");
+    let cursor = |lm: &LineMode| (lm.copy_state.cursor.line_idx, lm.copy_state.cursor.char_idx);
+    lm.handle_search_action(SearchModeAction::Query("hit".to_string()), &settings);
+    lm.handle_search_action(SearchModeAction::Confirm, &settings);
+    assert!(lm.search_state.shows_matches());
+    assert_eq!(cursor(&lm), (0, 0));
+    lm.copy_state.selection_anchor = Some(lm.copy_state.cursor);
+
+    assert_eq!(lm.repeat_search(false), Some(false));
+    assert_eq!(cursor(&lm), (2, 0));
+    assert_eq!(lm.repeat_search(true), Some(false));
+    assert_eq!(cursor(&lm), (0, 0));
+    assert_eq!(lm.repeat_search(true), Some(true));
+    assert_eq!(cursor(&lm), (3, 0));
+    assert!(lm.copy_state.selection_anchor.is_some());
+
+    lm.handle_copy_action(CopyModeAction::Exit, &settings);
+    assert!(!lm.search_state.shows_matches());
+    lm.copy_state.enter_at(1, 0);
+    assert_eq!(lm.repeat_search(false), Some(false));
+    assert_eq!(cursor(&lm), (2, 0));
+    assert!(lm.search_state.shows_matches());
+
+    lm.handle_search_action(SearchModeAction::Start(SearchDirection::Forward), &settings);
+    lm.handle_search_action(SearchModeAction::Cancel, &settings);
+    assert!(!lm.search_state.shows_matches());
+}

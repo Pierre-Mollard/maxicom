@@ -14,10 +14,13 @@ use unicode_width::UnicodeWidthStr;
 use crate::{
     app::{
         App,
-        search::SearchModeKind,
+        search::{SearchDirection, SearchModeKind},
         types::{ClickAction, ClickTarget, FocusTarget, PromptMap},
     },
-    configs::{KeyBindingAction, KeyBindingSearchAction, KeywordHighlight, Mode, ThemeConfig},
+    configs::{
+        KeyBindingAction, KeyBindingCopyAction, KeyBindingSearchAction, KeywordHighlight, Mode,
+        ThemeConfig,
+    },
     ui::popups::hint_spans,
 };
 
@@ -189,13 +192,14 @@ pub fn pan_right_indicator(app: &App) -> Option<String> {
 }
 
 /// Draws the search bar; returns its hints as click targets (MAX-131), and where its query is
-/// for a click in it
+/// for a click in it. Closed, in copy mode with its matches kept, it shows the last search and
+/// the copy keys going through its matches, without a cursor (MAX-215)
 pub fn render_search_bar(
     app: &App,
     frame: &mut Frame,
     area: Rect,
     theme: &ThemeConfig,
-) -> (Vec<ClickTarget>, PromptMap) {
+) -> (Vec<ClickTarget>, Option<PromptMap>) {
     let has_borders = app.show_borders();
     let is_terminal = app.settings().mode == Mode::Terminal;
 
@@ -223,9 +227,14 @@ pub fn render_search_bar(
         SearchModeKind::RawBytes => "byte",
     };
 
+    let label = match s.direction {
+        SearchDirection::Forward => " SEARCH: ",
+        SearchDirection::Backward => " SEARCH BACK: ",
+    };
+
     let mut spans = vec![
         Span::styled(format!(" [{}]", kind_str), *theme.search.search_indicator),
-        Span::styled(" SEARCH: ", *theme.search.search_indicator),
+        Span::styled(label, *theme.search.search_indicator),
         Span::styled(
             format!(" {} ", query_str),
             Style::default()
@@ -239,19 +248,43 @@ pub fn render_search_bar(
     // least needed ones first. A click on a key runs its action, on a label the first one
     let first_key = |action| {
         let keys = app.key_resolver.search_keys(action).into_iter().take(1);
-        keys.map(move |key| (key, action))
+        keys.map(move |key| (key, ClickAction::Search(action)))
     };
-    let hints: [(Vec<_>, &str); 4] = [
-        (
-            first_key(KeyBindingSearchAction::Next)
-                .chain(first_key(KeyBindingSearchAction::Previous))
-                .collect(),
-            "Match",
-        ),
-        (first_key(KeyBindingSearchAction::Cancel).collect(), "Exit"),
-        (first_key(KeyBindingSearchAction::Confirm).collect(), "Copy"),
-        (first_key(KeyBindingSearchAction::Kind).collect(), "Mode"),
-    ];
+    let first_copy_key = |action| {
+        let keys = app.key_resolver.copy_keys(action).into_iter().take(1);
+        keys.map(move |key| (key, ClickAction::Copy(action)))
+    };
+    let hints: Vec<(Vec<_>, &str)> = if s.active {
+        vec![
+            (
+                first_key(KeyBindingSearchAction::Next)
+                    .chain(first_key(KeyBindingSearchAction::Previous))
+                    .collect(),
+                "Match",
+            ),
+            (first_key(KeyBindingSearchAction::Cancel).collect(), "Exit"),
+            (first_key(KeyBindingSearchAction::Confirm).collect(), "Copy"),
+            (first_key(KeyBindingSearchAction::Kind).collect(), "Mode"),
+        ]
+    } else {
+        vec![
+            (
+                first_copy_key(KeyBindingCopyAction::SearchNext)
+                    .chain(first_copy_key(KeyBindingCopyAction::SearchPrev))
+                    .collect(),
+                "Match",
+            ),
+            (first_copy_key(KeyBindingCopyAction::Exit).collect(), "Exit"),
+            (
+                first_copy_key(KeyBindingCopyAction::Search).collect(),
+                "Search",
+            ),
+            (
+                first_copy_key(KeyBindingCopyAction::SearchBackward).collect(),
+                "Back",
+            ),
+        ]
+    };
     // the bar starts 2 columns in and keeps a space before the corner with borders
     let room = if has_borders {
         area.width.saturating_sub(4)
@@ -281,7 +314,7 @@ pub fn render_search_bar(
         .into_iter()
         .map(|(col, width, action)| ClickTarget {
             area: Rect::new(bar_x + hints_col + col, bar_y, width, 1),
-            action: ClickAction::Search(action),
+            action,
             hover: Some(*theme.ui.hover),
         })
         .collect();
@@ -303,8 +336,7 @@ pub fn render_search_bar(
             cur_x += span.content.chars().count() as u16;
         }
 
-        // start_x + 7 + " SEARCH: " (9) + " " (1) + visual_cursor
-        (start_x + 10 + 7 + visual_cursor, border_y)
+        (query_x + visual_cursor, border_y)
     } else {
         let bottom_y = area.y + area.height.saturating_sub(1);
         let search_area = Rect {
@@ -317,10 +349,13 @@ pub fn render_search_bar(
         frame.render_widget(Clear, search_area);
         frame.render_widget(Paragraph::new(line), search_area);
 
-        // area.x + " SEARCH: " (9) + " " (1) + visual_cursor
-        (area.x + 10 + 7 + visual_cursor, bottom_y)
+        (query_x + visual_cursor, bottom_y)
     };
 
+    // kept in copy mode, its query isn't typed in: no cursor, no click in it
+    if !s.active {
+        return (targets, None);
+    }
     if !app.is_app_focused() {
         let buf = frame.buffer_mut();
         if cursor_x < buf.area.width && cursor_y < buf.area.height {
@@ -328,7 +363,7 @@ pub fn render_search_bar(
         }
     }
     frame.set_cursor_position((cursor_x, cursor_y));
-    (targets, query)
+    (targets, Some(query))
 }
 
 /// A centered `width` x `height` popup, cut to the screen when it is smaller

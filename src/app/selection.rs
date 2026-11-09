@@ -178,6 +178,13 @@ impl CopyModeState {
         }
     }
 
+    /// Moves the cursor to a search match, the selection kept
+    pub fn jump_to(&mut self, line_idx: usize, char_idx: usize) {
+        self.cursor.line_idx = line_idx;
+        self.cursor.char_idx = char_idx;
+        self.cursor.preferred_col = char_idx;
+    }
+
     pub fn enter_at(&mut self, line_idx: usize, char_idx: usize) {
         self.active = true;
         self.cursor = LogicalPosition {

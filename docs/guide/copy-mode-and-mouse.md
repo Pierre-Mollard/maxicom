@@ -47,6 +47,8 @@ terminal mode.
 | `,` | Mark the cursor's line: then a letter, see [Marks](marks.md) |
 | `'` | Open the marks popup, a letter jumps there |
 | `(` / `)` | To the mark above / below |
+| `/` / `?` | Search forward / backward from the cursor, see [Search](search.md) |
+| `n` / `N` | Next match of the last search / the other way |
 | `q` or Esc | Leave |
 
 ### The view while copying

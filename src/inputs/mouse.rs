@@ -238,6 +238,7 @@ fn handle_left_button(event: MouseEvent, app: &App) -> Action {
                 ClickAction::Run(action) => action.to_action(app),
                 ClickAction::ToggleSide => Action::CopyMode(CopyModeAction::ToggleSide),
                 ClickAction::Search(action) => action.to_action(),
+                ClickAction::Copy(action) => action.to_action(),
             };
         }
         InputContext::Overlay | InputContext::Prefix => return Action::Ignore,

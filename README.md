@@ -47,7 +47,7 @@ maxicom /dev/ttyUSB0 -b 9600    # another baud rate
 maxicom                         # pick a port in the directory
 ```
 
-`Ctrl-a` is the prefix: `Ctrl-a ?` lists the keys, `Ctrl-a m` switches
+`Ctrl-a` is the prefix: `Ctrl-a z` lists the keys, `Ctrl-a m` switches
 between terminal and line mode, `Ctrl-a q` quits. The ten things you'll do
 most: [Quick start](docs/guide/quick-start.md).
 

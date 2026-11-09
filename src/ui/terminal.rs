@@ -92,8 +92,7 @@ pub fn render_vt100_terminal(
         }));
     }
 
-    let is_search_active =
-        app.terminal_mode.search().active && !app.terminal_mode.search().matches.is_empty();
+    let is_search_active = app.terminal_mode.search().shows_matches();
 
     // raw panel
     let active_focus = if app.terminal_mode.copy_state().active {
@@ -148,7 +147,8 @@ pub fn render_vt100_terminal(
 
             if let Some(raw_area) = raw_side_area {
                 let usable_width = (raw_area.width as usize).saturating_sub(1);
-                if is_search_active {
+                // centered on a match once, as it's jumped to: then the side pan keys move it
+                if is_search_active && search_jump.is_some() {
                     app.terminal_mode.center_raw_pan_on_byte(
                         raw_view,
                         usable_width,
@@ -361,11 +361,12 @@ pub fn render_vt100_terminal(
     }
 
     // search input
-    if app.terminal_mode.search().active {
+    // open, or its matches kept in copy mode (MAX-215)
+    if app.terminal_mode.search().active || app.terminal_mode.search().shows_matches() {
         let (targets, query) = render_search_bar(app, frame, content_area, theme);
         let map = app.frame_map_mut();
         map.click_targets.extend(targets);
-        map.search_query = Some(query);
+        map.search_query = query;
     }
 
     // the row a mark jump landed on, flashed for a moment (MAX-164)
@@ -519,7 +520,7 @@ pub fn render_vt100_raw_side_panel(
     let mut raw_cursor_cell = None;
 
     let search = app.terminal_mode.search();
-    let is_search_active = search.active && !search.matches.is_empty();
+    let is_search_active = search.shows_matches();
     let active_match_idx = search.current_match;
 
     let normal_style = *theme.search.search_match;

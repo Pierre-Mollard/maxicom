@@ -5,6 +5,7 @@ use crate::app::data_processing::{
     entry_display_text, entry_display_to_wire_map, map_disp_byte_to_raw, raw_byte_to_display_col,
     safe_byte_to_char_col,
 };
+use crate::app::selection::LogicalPosition;
 use crate::app::types::LogEntry;
 use crate::configs::LineDisplayMode;
 use crate::configs::settings::RawSideView;
@@ -16,6 +17,14 @@ pub enum SearchModeKind {
     #[default]
     Text,
     RawBytes,
+}
+
+/// Where a search starts (MAX-215): `/` from the beginning, `?` from the end
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SearchDirection {
+    #[default]
+    Forward,
+    Backward,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +42,10 @@ pub struct SearchState {
     pub active: bool,
     pub query: Input,
     pub mode_kind: SearchModeKind,
+    pub direction: SearchDirection,
+    pub origin: Option<LogicalPosition>,
+    pub kept: bool,
+    pub exits_copy: bool,
     pub matches: Vec<SearchMatch>,
     pub current_match: usize,
     pub target_jump: Option<(usize, usize)>,
@@ -46,161 +59,204 @@ impl SearchState {
         raw_view: RawSideView,
     ) {
         let q_str = self.query.value().to_string();
-        if q_str.is_empty() {
-            self.matches.clear();
-            self.current_match = 0;
-            self.target_jump = None;
-            return;
-        }
+        let backward = self.direction == SearchDirection::Backward;
 
-        self.matches.clear();
-
-        match self.mode_kind {
-            SearchModeKind::RawBytes => {
-                if let Some(target_bytes) = parse_raw_bytes_for_view(&q_str, raw_view) {
-                    let needle_len = target_bytes.len();
-                    'outer_raw: for (line_idx, entry) in history.iter().enumerate() {
-                        let raw_bytes = entry.wire_bytes();
+        self.matches = match self.mode_kind {
+            _ if q_str.is_empty() => Vec::new(),
+            SearchModeKind::RawBytes => match parse_raw_bytes_for_view(&q_str, raw_view) {
+                Some(target_bytes) => collect_matches(
+                    history.len(),
+                    self.start_line(history.len()),
+                    backward,
+                    |line_idx| {
+                        let entry = &history[line_idx];
+                        let needle_len = target_bytes.len();
                         let mut found =
-                            find_byte_subslice_iter(raw_bytes, &target_bytes).peekable();
+                            find_byte_subslice_iter(entry.wire_bytes(), &target_bytes).peekable();
                         if found.peek().is_none() {
-                            continue;
+                            return Vec::new();
                         }
                         let display_text = entry_display_text(entry, display_mode);
                         let disp_map = entry_display_to_wire_map(entry, display_mode);
 
-                        for (occ, raw_byte_idx) in found.enumerate() {
-                            let col_idx =
-                                raw_byte_to_display_col(raw_byte_idx, &disp_map, &display_text);
-
-                            self.matches.push(SearchMatch {
+                        found
+                            .enumerate()
+                            .map(|(occ, raw_byte_idx)| SearchMatch {
                                 line_idx,
-                                col_idx,
+                                col_idx: raw_byte_to_display_col(
+                                    raw_byte_idx,
+                                    &disp_map,
+                                    &display_text,
+                                ),
                                 occurrence_in_line: occ,
                                 match_char_len: needle_len,
                                 byte_offset: raw_byte_idx,
                                 byte_len: needle_len,
-                            });
-
-                            if self.matches.len() >= MAX_SEARCH_MATCHES {
-                                break 'outer_raw;
-                            }
-                        }
-                    }
-                }
-            }
+                            })
+                            .collect()
+                    },
+                ),
+                None => Vec::new(),
+            },
             SearchModeKind::Text => {
                 let needle = q_str.as_bytes();
                 let q_char_len = q_str.chars().count();
 
-                'outer_text: for (line_idx, entry) in history.iter().enumerate() {
-                    let raw_bytes = entry.wire_bytes();
-                    let display_text = entry_display_text(entry, display_mode);
-                    let mut found =
-                        find_ascii_case_insensitive_iter(display_text.as_bytes(), needle)
-                            .peekable();
-                    if found.peek().is_none() {
-                        continue;
-                    }
-                    let disp_map = entry_display_to_wire_map(entry, display_mode);
-
-                    for (occurrence, disp_byte_idx) in found.enumerate() {
-                        let col_idx = safe_byte_to_char_col(&display_text, disp_byte_idx);
-                        let raw_byte_offset =
-                            map_disp_byte_to_raw(disp_byte_idx, &disp_map, raw_bytes.len());
-                        let raw_byte_end = map_disp_byte_to_raw(
-                            disp_byte_idx + needle.len(),
-                            &disp_map,
-                            raw_bytes.len(),
-                        );
-
-                        self.matches.push(SearchMatch {
-                            line_idx,
-                            col_idx,
-                            occurrence_in_line: occurrence,
-                            match_char_len: q_char_len,
-                            byte_offset: raw_byte_offset,
-                            byte_len: raw_byte_end
-                                .saturating_sub(raw_byte_offset)
-                                .max(needle.len()),
-                        });
-
-                        if self.matches.len() >= MAX_SEARCH_MATCHES {
-                            break 'outer_text;
+                collect_matches(
+                    history.len(),
+                    self.start_line(history.len()),
+                    backward,
+                    |line_idx| {
+                        let entry = &history[line_idx];
+                        let raw_bytes = entry.wire_bytes();
+                        let display_text = entry_display_text(entry, display_mode);
+                        let mut found =
+                            find_ascii_case_insensitive_iter(display_text.as_bytes(), needle)
+                                .peekable();
+                        if found.peek().is_none() {
+                            return Vec::new();
                         }
-                    }
-                }
-            }
-        }
+                        let disp_map = entry_display_to_wire_map(entry, display_mode);
 
-        self.current_match = 0;
-        self.target_jump = self.matches.first().map(|m| (m.line_idx, m.col_idx));
+                        found
+                            .enumerate()
+                            .map(|(occurrence, disp_byte_idx)| {
+                                let raw_byte_offset =
+                                    map_disp_byte_to_raw(disp_byte_idx, &disp_map, raw_bytes.len());
+                                let raw_byte_end = map_disp_byte_to_raw(
+                                    disp_byte_idx + needle.len(),
+                                    &disp_map,
+                                    raw_bytes.len(),
+                                );
+                                SearchMatch {
+                                    line_idx,
+                                    col_idx: safe_byte_to_char_col(&display_text, disp_byte_idx),
+                                    occurrence_in_line: occurrence,
+                                    match_char_len: q_char_len,
+                                    byte_offset: raw_byte_offset,
+                                    byte_len: raw_byte_end
+                                        .saturating_sub(raw_byte_offset)
+                                        .max(needle.len()),
+                                }
+                            })
+                            .collect()
+                    },
+                )
+            }
+        };
+        self.select_first_match();
     }
 
     pub fn update_matches_from_strings(&mut self, all_lines: &[String], raw_view: RawSideView) {
         let q_str = self.query.value().to_string();
-        if q_str.is_empty() {
-            self.matches.clear();
-            self.current_match = 0;
-            self.target_jump = None;
-            return;
-        }
+        let backward = self.direction == SearchDirection::Backward;
 
-        self.matches.clear();
-
-        match self.mode_kind {
-            SearchModeKind::RawBytes => {
-                if let Some(target_bytes) = parse_raw_bytes_for_view(&q_str, raw_view) {
-                    let needle_len = target_bytes.len();
-                    'outer_raw: for (line_idx, line_text) in all_lines.iter().enumerate() {
-                        let bytes = line_text.as_bytes();
-                        for (occ, byte_idx) in
-                            find_byte_subslice_iter(bytes, &target_bytes).enumerate()
-                        {
-                            let col_idx = safe_byte_to_char_col(line_text, byte_idx);
-                            self.matches.push(SearchMatch {
+        self.matches = match self.mode_kind {
+            _ if q_str.is_empty() => Vec::new(),
+            SearchModeKind::RawBytes => match parse_raw_bytes_for_view(&q_str, raw_view) {
+                Some(target_bytes) => collect_matches(
+                    all_lines.len(),
+                    self.start_line(all_lines.len()),
+                    backward,
+                    |line_idx| {
+                        let line_text = &all_lines[line_idx];
+                        find_byte_subslice_iter(line_text.as_bytes(), &target_bytes)
+                            .enumerate()
+                            .map(|(occ, byte_idx)| SearchMatch {
                                 line_idx,
-                                col_idx,
+                                col_idx: safe_byte_to_char_col(line_text, byte_idx),
                                 occurrence_in_line: occ,
-                                match_char_len: needle_len,
+                                match_char_len: target_bytes.len(),
                                 byte_offset: byte_idx,
-                                byte_len: needle_len,
-                            });
-
-                            if self.matches.len() >= MAX_SEARCH_MATCHES {
-                                break 'outer_raw;
-                            }
-                        }
-                    }
-                }
-            }
+                                byte_len: target_bytes.len(),
+                            })
+                            .collect()
+                    },
+                ),
+                None => Vec::new(),
+            },
             SearchModeKind::Text => {
                 let q_char_len = q_str.chars().count();
-                'outer_text: for (line_idx, line_text) in all_lines.iter().enumerate() {
-                    for (occurrence, byte_idx) in
+                collect_matches(
+                    all_lines.len(),
+                    self.start_line(all_lines.len()),
+                    backward,
+                    |line_idx| {
+                        let line_text = &all_lines[line_idx];
                         find_ascii_case_insensitive_iter(line_text.as_bytes(), q_str.as_bytes())
                             .enumerate()
-                    {
-                        let col_idx = safe_byte_to_char_col(line_text, byte_idx);
-                        self.matches.push(SearchMatch {
-                            line_idx,
-                            col_idx,
-                            occurrence_in_line: occurrence,
-                            match_char_len: q_char_len,
-                            byte_offset: byte_idx,
-                            byte_len: q_str.len(),
-                        });
-
-                        if self.matches.len() >= MAX_SEARCH_MATCHES {
-                            break 'outer_text;
-                        }
-                    }
-                }
+                            .map(|(occurrence, byte_idx)| SearchMatch {
+                                line_idx,
+                                col_idx: safe_byte_to_char_col(line_text, byte_idx),
+                                occurrence_in_line: occurrence,
+                                match_char_len: q_char_len,
+                                byte_offset: byte_idx,
+                                byte_len: q_str.len(),
+                            })
+                            .collect()
+                    },
+                )
             }
-        }
+        };
+        self.select_first_match();
+    }
 
-        self.current_match = 0;
-        self.target_jump = self.matches.first().map(|m| (m.line_idx, m.col_idx));
+    /// The line a search reads first (MAX-215): the origin's from copy mode, else the first
+    /// line forward and the last one backward
+    fn start_line(&self, line_count: usize) -> usize {
+        let last = line_count.saturating_sub(1);
+        match (self.origin, self.direction) {
+            (Some(origin), _) => origin.line_idx.min(last),
+            (None, SearchDirection::Forward) => 0,
+            (None, SearchDirection::Backward) => last,
+        }
+    }
+
+    /// The match a new search starts on (MAX-215): the first one after the origin forward, the
+    /// last one before it backward, around the history's end past the last one. Without an
+    /// origin, the oldest forward and the newest backward
+    fn select_first_match(&mut self) {
+        let forward = self.direction == SearchDirection::Forward;
+        self.current_match = match self.origin {
+            None if forward => 0,
+            None => self.matches.len().saturating_sub(1),
+            Some(origin) => (self.match_from((origin.line_idx, origin.char_idx), forward))
+                .map_or(0, |(idx, _)| idx),
+        };
+        self.target_jump = self.current_match_position();
+    }
+
+    /// The first match after `from` forward, the last one before it backward; around the
+    /// history's end when nothing is past it, said by the bool
+    fn match_from(&self, from: (usize, usize), forward: bool) -> Option<(usize, bool)> {
+        let at = |m: &SearchMatch| (m.line_idx, m.col_idx);
+        let found = if forward {
+            self.matches.iter().position(|m| at(m) > from)
+        } else {
+            self.matches.iter().rposition(|m| at(m) < from)
+        };
+        match found {
+            Some(idx) => Some((idx, false)),
+            None if self.matches.is_empty() => None,
+            None if forward => Some((0, true)),
+            None => Some((self.matches.len() - 1, true)),
+        }
+    }
+
+    /// `n` from the copy cursor at `from`, `N` with `opposite` (MAX-215): the current match
+    /// becomes the next one in the search's direction, or the other one. None without a
+    /// match, `Some(true)` when it went around the history's end
+    pub fn step_from(&mut self, from: (usize, usize), opposite: bool) -> Option<bool> {
+        let forward = (self.direction == SearchDirection::Forward) != opposite;
+        let (idx, wrapped) = self.match_from(from, forward)?;
+        self.current_match = idx;
+        self.target_jump = self.current_match_position();
+        Some(wrapped)
+    }
+
+    /// The matches are drawn while the bar is open, and in copy mode after Enter (MAX-215)
+    pub fn shows_matches(&self) -> bool {
+        (self.active || self.kept) && !self.matches.is_empty()
     }
 
     /// The `evicted` oldest history lines were dropped: shift matches up, drop those that
@@ -219,6 +275,9 @@ impl SearchState {
         self.target_jump = self
             .target_jump
             .and_then(|(line, col)| line.checked_sub(evicted).map(|line| (line, col)));
+        if let Some(origin) = &mut self.origin {
+            origin.line_idx = origin.line_idx.saturating_sub(evicted);
+        }
     }
 
     pub fn current_match_position(&self) -> Option<(usize, usize)> {
@@ -294,6 +353,36 @@ impl SearchState {
             SearchModeKind::RawBytes => SearchModeKind::Text,
         };
     }
+}
+
+/// The matches of every line, sorted by line, up to MAX_SEARCH_MATCHES. The lines are read
+/// from `start` in the search's direction, around the history's end, so the cap keeps the
+/// matches a search reaches first
+fn collect_matches(
+    line_count: usize,
+    start: usize,
+    backward: bool,
+    mut line_matches: impl FnMut(usize) -> Vec<SearchMatch>,
+) -> Vec<SearchMatch> {
+    let mut matches = Vec::new();
+    for i in 0..line_count {
+        let line_idx = if backward {
+            (start + line_count - i) % line_count
+        } else {
+            (start + i) % line_count
+        };
+        let mut found = line_matches(line_idx);
+        if backward {
+            found.reverse();
+        }
+        found.truncate(MAX_SEARCH_MATCHES - matches.len());
+        matches.extend(found);
+        if matches.len() == MAX_SEARCH_MATCHES {
+            break;
+        }
+    }
+    matches.sort_unstable_by_key(|m| (m.line_idx, m.occurrence_in_line));
+    matches
 }
 
 pub fn parse_raw_bytes_for_view(input: &str, raw_view: RawSideView) -> Option<Vec<u8>> {

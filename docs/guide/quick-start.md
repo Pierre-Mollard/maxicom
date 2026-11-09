@@ -42,8 +42,10 @@ A right click where you type pastes the copy. See
 
 ## 6. Search
 
-Press `Ctrl-a /` and type: the matches light up. Ctrl-n and Ctrl-p jump from
-one to the next, and Enter drops you in copy mode on the match.
+Press `Ctrl-a ?` and type: the matches light up, the newest one first.
+Ctrl-n and Ctrl-p jump from one to the next. Enter leaves you in copy mode on
+the match, where `n` and `N` go on through the matches. `Ctrl-a /` searches
+from the oldest line instead.
 
 ## 7. Record
 
@@ -70,7 +72,7 @@ quits.
 
 ## Lost?
 
-`Ctrl-a ?` lists every key, and a right click opens a menu of the main
+`Ctrl-a z` lists every key, and a right click opens a menu of the main
 actions.
 
 ## Next steps

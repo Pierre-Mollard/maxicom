@@ -66,7 +66,7 @@ touches the [session backup](capture.md#session-backup) or a recording.
 ## The prefix
 
 What you type goes to the device. maxicom's own keys come after a prefix,
-`Ctrl-a`: press `Ctrl-a`, let go, then press the key. For example `Ctrl-a ?`
+`Ctrl-a`: press `Ctrl-a`, let go, then press the key. For example `Ctrl-a z`
 opens the help.
 
 - `Ctrl-a Ctrl-a` sends a real `Ctrl-a` to the device.
@@ -89,7 +89,7 @@ This guide writes keys the way maxicom shows them:
 
 | To | Press |
 | --- | --- |
-| See every key, by section, and the commands | `Ctrl-a ?` (or `Ctrl-a z`) |
+| See every key, by section, and the commands | `Ctrl-a z` |
 | Change the common settings, each with its key | `Ctrl-a o` (or `Ctrl-a s`) |
 | Reach the main actions with the mouse | A right click |
 | Run a command, with completion | `Ctrl-a :`, the [command line](command-line.md) |

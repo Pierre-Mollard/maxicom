@@ -129,8 +129,7 @@ pub fn render_monitor(
         return PostRenderEffect::None;
     }
 
-    let is_search_active =
-        app.line_mode.search().active && !app.line_mode.search().matches.is_empty();
+    let is_search_active = app.line_mode.search().shows_matches();
     let active_match_idx = app.line_mode.search().current_match;
     let copy_range = app.line_mode.copy_state().normalized_selection();
     let selection_style = theme
@@ -143,9 +142,13 @@ pub fn render_monitor(
     // a mark jump centers the view on its entry like a match, the search open or not (MAX-164)
     let mark_jump = app.line_mode.take_mark_jump();
     if let Some((target_line, target_col)) = search_jump.or(mark_jump.map(|line| (line, 0))) {
-        let line_from_bottom = (total_entries.saturating_sub(1)).saturating_sub(target_line);
-        app.line_mode
-            .scroll_to(line_from_bottom.min(global_max_scroll));
+        // in copy mode a match is the cursor's: the reveal below brings the view to it, and
+        // keeps a view already showing it (MAX-215)
+        if !(app.line_mode.copy_state().active && search_jump.is_some()) {
+            let line_from_bottom = (total_entries.saturating_sub(1)).saturating_sub(target_line);
+            app.line_mode
+                .scroll_to(line_from_bottom.min(global_max_scroll));
+        }
 
         if wrap_mode == WrapMode::Truncate {
             let half_x = content_width / 2;
@@ -983,11 +986,12 @@ pub fn render_monitor(
         }
     }
 
-    if app.line_mode.search().active {
+    // open, or its matches kept in copy mode (MAX-215)
+    if app.line_mode.search().active || app.line_mode.search().shows_matches() {
         let (targets, query) = render_search_bar(app, frame, content_area, theme);
         let map = app.frame_map_mut();
         map.click_targets.extend(targets);
-        map.search_query = Some(query);
+        map.search_query = query;
     }
 
     PostRenderEffect::None
@@ -1327,8 +1331,7 @@ pub fn render_raw_side_panel(
     let raw_display_mode = raw_view_to_display_mode(raw_view);
     let copy_range = app.line_mode.copy_state().normalized_selection();
     let history = app.line_mode.history();
-    let is_search_active =
-        app.line_mode.search().active && !app.line_mode.search().matches.is_empty();
+    let is_search_active = app.line_mode.search().shows_matches();
     let active_match_idx = app.line_mode.search().current_match;
 
     let normal_style = *theme.search.search_match;

@@ -1,6 +1,6 @@
 /// Converts Keybinding config action to a real action within contexts (mostly no context needed)
 use crate::{
-    app::App,
+    app::{App, search::SearchDirection},
     capture::ScreenshotFormat,
     configs::{
         AppConfig, KeyBindingAction, KeyBindingCopyAction, KeyBindingLineAction,
@@ -88,7 +88,12 @@ impl KeyBindingAction {
             KeyBindingAction::PageUp => Action::History(HistoryAction::ScrollUpPage),
             KeyBindingAction::PageDown => Action::History(HistoryAction::ScrollDownPage),
             KeyBindingAction::EnterCopyMode => Action::CopyMode(CopyModeAction::Enter),
-            KeyBindingAction::EnterSearch => Action::Search(SearchModeAction::Start),
+            KeyBindingAction::EnterSearch => {
+                Action::Search(SearchModeAction::Start(SearchDirection::Forward))
+            }
+            KeyBindingAction::EnterSearchBackward => {
+                Action::Search(SearchModeAction::Start(SearchDirection::Backward))
+            }
             KeyBindingAction::PanSideRight => {
                 Action::App(AppAction::SideView(SideViewAction::PanRight(2)))
             }
@@ -207,6 +212,12 @@ impl KeyBindingCopyAction {
             Self::Marks => Action::App(AppAction::OpenMarks),
             Self::PrevMark => Action::App(AppAction::Mark(MarkAction::Adjacent(false))),
             Self::NextMark => Action::App(AppAction::Mark(MarkAction::Adjacent(true))),
+            Self::Search => Action::Search(SearchModeAction::Start(SearchDirection::Forward)),
+            Self::SearchBackward => {
+                Action::Search(SearchModeAction::Start(SearchDirection::Backward))
+            }
+            Self::SearchNext => Action::Search(SearchModeAction::Repeat(false)),
+            Self::SearchPrev => Action::Search(SearchModeAction::Repeat(true)),
         }
     }
 }

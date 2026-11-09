@@ -3,7 +3,10 @@ use ratatui::{layout::Rect, style::Style};
 
 use crate::{
     app::selection::{CopySide, LogicalPosition},
-    configs::{KeyBindingAction, KeyBindingSearchAction, settings::RawSideOrientation},
+    configs::{
+        KeyBindingAction, KeyBindingCopyAction, KeyBindingSearchAction,
+        settings::RawSideOrientation,
+    },
     overlays::PopupTarget,
 };
 
@@ -272,6 +275,8 @@ pub enum ClickAction {
     ToggleSide,
     /// A search bar hint (MAX-131)
     Search(KeyBindingSearchAction),
+    /// A hint of the search bar kept in copy mode (MAX-215)
+    Copy(KeyBindingCopyAction),
 }
 
 /// The history's scrollbar as drawn (MAX-142): its column, `▲` on top and `▼` at the bottom

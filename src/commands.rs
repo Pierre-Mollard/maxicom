@@ -256,6 +256,11 @@ pub static COMMANDS: &[CommandSpec] = {
         CommandSpec::action("link-settings", A::LinkSettings, "Open the link settings"),
         CommandSpec::action("enter-copy-mode", A::EnterCopyMode, "Enter copy mode"),
         CommandSpec::action("enter-search", A::EnterSearch, "Search the history"),
+        CommandSpec::action(
+            "enter-search-backward",
+            A::EnterSearchBackward,
+            "Search the history from the end",
+        ),
         CommandSpec::action("scroll-up", A::ScrollUp, "Scroll up one line"),
         CommandSpec::action("scroll-down", A::ScrollDown, "Scroll down one line"),
         CommandSpec::action(

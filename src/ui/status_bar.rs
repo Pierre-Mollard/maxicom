@@ -800,7 +800,11 @@ impl Cond {
         match self {
             Self::Prefix => ctx == InputContext::Prefix || app.is_prefix_active(),
             Self::Mark => app.pending_mark().is_some(),
-            Self::Copy => ctx == InputContext::CopyMode || app.is_copy_mode_active(),
+            // a search runs in copy mode (MAX-215): its bar open, the badge is the search's
+            Self::Copy => {
+                (ctx == InputContext::CopyMode || app.is_copy_mode_active())
+                    && !app.is_search_active()
+            }
             Self::CopyRaw => app.copy_side() == Some(CopySide::Raw),
             Self::Search => ctx == InputContext::Search || app.is_search_active(),
             Self::Line => ctx == InputContext::LineInput,

@@ -97,9 +97,9 @@ impl ScreenLayout {
         };
         let status_bar_area = if status_in_border {
             // the last box's bottom border, inside its `└─` and `─┘`; in terminal mode it's the
-            // history's, which the search bar takes while it's open
+            // history's, which the search bar takes while it's shown
             let last_box = prompt_area.unwrap_or(monitor_outer);
-            let searching = prompt_area.is_none() && app.is_search_active();
+            let searching = prompt_area.is_none() && app.is_search_bar_shown();
             (!searching).then(|| {
                 Rect::new(
                     last_box.x.saturating_add(2),

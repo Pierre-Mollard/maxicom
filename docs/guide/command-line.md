@@ -181,7 +181,7 @@ Settings with more than two values cycle with their keys. See
 
 | Command | Does |
 | --- | --- |
-| `search <text>` | Opens the search bar on the text, with its matches shown |
+| `search <text>` | Starts a search forward for the text in copy mode, the bar open on it |
 | `screenshot <name>` | Saves the terminal at once, without the dialog. Terminal mode only. |
 
 A bare screenshot name is saved in `screenshot.dir`. A `.ans` name keeps

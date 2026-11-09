@@ -1,6 +1,7 @@
 //! Keys reaching navigation while the search bar is open (MAX-72), and popup keys (MAX-73).
 
 use super::*;
+use crate::app::search::SearchDirection;
 use crate::{
     configs::{KeyBindingsConfig, KeyResolver, Mode, SettingsConfig},
     link::LinkConfig,
@@ -66,7 +67,9 @@ fn bound_lines_run_where_global_keys_do() {
     app.update(Action::App(AppAction::ToggleSetting(SettingKey::Mode)));
     assert_eq!(commands(handle_event(f5(), &app)), ["send-hex"]);
 
-    app.update(Action::Search(SearchModeAction::Start));
+    app.update(Action::Search(SearchModeAction::Start(
+        SearchDirection::Forward,
+    )));
     assert!(matches!(
         handle_event(f5(), &app),
         Action::Search(SearchModeAction::HandleKey(_))
@@ -79,12 +82,40 @@ fn bound_lines_run_where_global_keys_do() {
     ));
 }
 
+/// MAX-215: `/` in copy mode opens the search, which then takes the keys: `y` edits the
+/// query instead of yanking, Esc closes the bar and copy mode takes the keys again.
+#[test]
+fn search_from_copy_mode_takes_the_keys() {
+    let mut app = app();
+    app.update(Action::CopyMode(CopyModeAction::Enter));
+    let slash = handle_event(plain(KeyCode::Char('/')), &app);
+    assert!(matches!(
+        slash,
+        Action::Search(SearchModeAction::Start(SearchDirection::Forward))
+    ));
+    app.update(slash);
+    assert!(matches!(
+        handle_event(plain(KeyCode::Char('y')), &app),
+        Action::Search(SearchModeAction::HandleKey(_))
+    ));
+    let esc = handle_event(plain(KeyCode::Esc), &app);
+    assert!(matches!(esc, Action::Search(SearchModeAction::Cancel)));
+    app.update(esc);
+    assert!(app.is_copy_mode_active());
+    assert!(matches!(
+        handle_event(plain(KeyCode::Char('y')), &app),
+        Action::CopyMode(CopyModeAction::Yank)
+    ));
+}
+
 /// In search mode the global navigation keys (direct and after the prefix) scroll and pan;
 /// other global actions are not reachable, and the other keys still edit the query.
 #[test]
 fn navigation_keys_work_in_search_mode() {
     let mut app = app();
-    app.update(Action::Search(SearchModeAction::Start));
+    app.update(Action::Search(SearchModeAction::Start(
+        SearchDirection::Forward,
+    )));
     assert!(app.is_search_active());
 
     let pageup = handle_event(key(KeyCode::PageUp, KeyModifiers::SHIFT), &app);
@@ -283,11 +314,11 @@ fn default_keymap_per_context() {
             "( => App(Mark(Adjacent(false)))",
             ") => App(Mark(Adjacent(true)))",
             ", => run mark",
-            "/ => Search(Start)",
+            "/ => Search(Start(Forward))",
             ": => open CommandLine",
             "< => App(ResizeSidePanel(-5))",
             "> => App(ResizeSidePanel(5))",
-            "? => open Help",
+            "? => Search(Start(Backward))",
             "B => App(ToggleSetting(DisplayRaw))",
             "C => History(Clear)",
             "Ctrl-a => TransmitRaw([1])",
@@ -345,7 +376,9 @@ fn default_keymap_per_context() {
             "( => App(Mark(Adjacent(false)))",
             ") => App(Mark(Adjacent(true)))",
             ", => run mark",
+            "/ => Search(Start(Forward))",
             "0 => CopyMode(StartOfLine)",
+            "? => Search(Start(Backward))",
             "Ctrl-a => App(SetPrefix(true))",
             "Ctrl-e => History(ScrollDown(1))",
             "Ctrl-y => History(ScrollUp(1))",
@@ -353,6 +386,7 @@ fn default_keymap_per_context() {
             "Enter => CopyMode(Yank)",
             "Esc => CopyMode(Exit)",
             "Left => CopyMode(MoveLeft)",
+            "N => Search(Repeat(true))",
             "PageDown => CopyMode(PageDown)",
             "PageUp => CopyMode(PageUp)",
             "Right => CopyMode(MoveRight)",
@@ -369,6 +403,7 @@ fn default_keymap_per_context() {
             "j => CopyMode(MoveDown)",
             "k => CopyMode(MoveUp)",
             "l => CopyMode(MoveRight)",
+            "n => Search(Repeat(false))",
             "q => CopyMode(Exit)",
             "v => CopyMode(Select)",
             "y => CopyMode(Yank)"
@@ -376,7 +411,9 @@ fn default_keymap_per_context() {
     );
     app.update(Action::CopyMode(CopyModeAction::Exit));
 
-    app.update(Action::Search(SearchModeAction::Start));
+    app.update(Action::Search(SearchModeAction::Start(
+        SearchDirection::Forward,
+    )));
     assert_eq!(
         walk(&app, "query"),
         [

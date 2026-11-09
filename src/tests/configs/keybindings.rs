@@ -167,7 +167,7 @@ fn mouse_toggle_default_key() {
 /// between words: the old `_` names are refused
 #[test]
 fn action_names() {
-    const NAMES: [(&str, KeyBindingAction); 52] = [
+    const NAMES: [(&str, KeyBindingAction); 53] = [
         ("quit", KeyBindingAction::Quit),
         ("toggle-input-mode", KeyBindingAction::SKInputMode),
         ("toggle-local-echo", KeyBindingAction::SKLocalEcho),
@@ -195,6 +195,10 @@ fn action_names() {
         ("link-settings", KeyBindingAction::LinkSettings),
         ("enter-copy-mode", KeyBindingAction::EnterCopyMode),
         ("enter-search", KeyBindingAction::EnterSearch),
+        (
+            "enter-search-backward",
+            KeyBindingAction::EnterSearchBackward,
+        ),
         ("scroll-up", KeyBindingAction::ScrollUp),
         ("scroll-down", KeyBindingAction::ScrollDown),
         ("scroll-to-bottom", KeyBindingAction::ScrollToBottom),

@@ -297,3 +297,161 @@ fn terminal_string_search() {
     let found: Vec<(usize, usize)> = s.matches.iter().map(|m| (m.line_idx, m.col_idx)).collect();
     assert_eq!(found, [(0, 4), (2, 0), (2, 3)]);
 }
+
+/// MAX-215: a new search starts on the oldest match, also after a step to another one.
+/// How: matches on lines 0 and 2, Next, then the search runs again (a typed key).
+#[test]
+fn a_new_search_starts_on_the_oldest_match() {
+    let lines = history(&["a", "b", "a"]);
+    let mut s = search("a", SearchModeKind::Text);
+    s.update_matches_from_entries(&lines, LineDisplayMode::Pretty, RawSideView::Hex);
+    assert_eq!(s.current_match_position(), Some((0, 0)));
+    assert_eq!(s.target_jump, Some((0, 0)));
+
+    s.next_match();
+    s.update_matches_from_entries(&lines, LineDisplayMode::Pretty, RawSideView::Hex);
+    assert_eq!(s.current_match_position(), Some((0, 0)));
+    assert_eq!(s.target_jump, Some((0, 0)));
+}
+
+/// MAX-215: a backward search starts on the newest match, the last one of its line, over
+/// history entries and terminal strings.
+/// How: "a" on lines 0 and 2 (twice), searched backward both ways.
+#[test]
+fn a_backward_search_starts_on_the_newest_match() {
+    let mut s = search("a", SearchModeKind::Text);
+    s.direction = SearchDirection::Backward;
+    s.update_matches_from_entries(
+        &history(&["a", "b", "a a"]),
+        LineDisplayMode::Pretty,
+        RawSideView::Hex,
+    );
+    assert_eq!(s.current_match_position(), Some((2, 2)));
+    assert_eq!(s.target_jump, Some((2, 2)));
+    assert_eq!(s.current_match_display(), 3);
+
+    let lines = ["a".to_string(), "b".to_string(), "a a".to_string()];
+    s.update_matches_from_strings(&lines, RawSideView::Hex);
+    assert_eq!(s.current_match_position(), Some((2, 2)));
+    let found: Vec<(usize, usize)> = s.matches.iter().map(|m| (m.line_idx, m.col_idx)).collect();
+    assert_eq!(found, [(0, 0), (2, 0), (2, 2)]);
+}
+
+/// MAX-215: past the match cap, a forward search keeps the oldest matches and a backward
+/// one the newest, still sorted by line with their occurrence numbers.
+/// How: two matches per line on more lines than the cap holds, searched both ways.
+#[test]
+fn the_match_cap_keeps_the_end_a_search_starts_from() {
+    let lines: Vec<&str> = vec!["a a"; MAX_SEARCH_MATCHES / 2 + 10];
+    let lines = history(&lines);
+    let last_line = lines.len() - 1;
+    let mut s = search("a", SearchModeKind::Text);
+    s.update_matches_from_entries(&lines, LineDisplayMode::Pretty, RawSideView::Hex);
+    assert_eq!(s.matches.len(), MAX_SEARCH_MATCHES);
+    assert_eq!(s.matches[0].line_idx, 0);
+    assert_eq!(s.matches.last().unwrap().line_idx, last_line - 10);
+
+    s.direction = SearchDirection::Backward;
+    s.update_matches_from_entries(&lines, LineDisplayMode::Pretty, RawSideView::Hex);
+    assert_eq!(s.matches.len(), MAX_SEARCH_MATCHES);
+    let first = s.matches[0];
+    assert_eq!((first.line_idx, first.occurrence_in_line), (10, 0));
+    assert!(s.matches.is_sorted_by_key(|m| (m.line_idx, m.col_idx)));
+    assert_eq!(s.current_match_position(), Some((last_line, 2)));
+}
+
+fn origin(line_idx: usize, char_idx: usize) -> Option<LogicalPosition> {
+    Some(LogicalPosition {
+        line_idx,
+        char_idx,
+        ..Default::default()
+    })
+}
+
+/// MAX-215: from copy mode a search starts after the cursor forward and before it backward,
+/// a match on the cursor itself skipped, around the history's end when nothing is past it.
+/// How: "a" at (0,0), (1,0), (1,2), (3,0), searched both ways from (1,0) then from the ends.
+#[test]
+fn a_search_from_copy_mode_starts_at_the_cursor() {
+    let lines = history(&["a", "a a", "b", "a"]);
+    let start = |direction, origin| {
+        let mut s = search("a", SearchModeKind::Text);
+        s.direction = direction;
+        s.origin = origin;
+        s.update_matches_from_entries(&lines, LineDisplayMode::Pretty, RawSideView::Hex);
+        s.current_match_position()
+    };
+    use SearchDirection::{Backward, Forward};
+    assert_eq!(start(Forward, origin(1, 0)), Some((1, 2)));
+    assert_eq!(start(Backward, origin(1, 0)), Some((0, 0)));
+    assert_eq!(start(Forward, origin(3, 0)), Some((0, 0)));
+    assert_eq!(start(Backward, origin(0, 0)), Some((3, 0)));
+}
+
+/// MAX-215: past the match cap, a search from copy mode keeps the matches it reaches first
+/// from the cursor, around the history's end, still sorted by line.
+/// How: one match per line on more lines than the cap holds, from a cursor near the end.
+#[test]
+fn the_match_cap_keeps_the_matches_after_the_cursor() {
+    let lines: Vec<&str> = vec!["a"; MAX_SEARCH_MATCHES + 100];
+    let lines = history(&lines);
+    let mut s = search("a", SearchModeKind::Text);
+    s.origin = origin(MAX_SEARCH_MATCHES + 50, 0);
+    s.update_matches_from_entries(&lines, LineDisplayMode::Pretty, RawSideView::Hex);
+    assert_eq!(s.matches.len(), MAX_SEARCH_MATCHES);
+    assert!(s.matches.is_sorted_by_key(|m| m.line_idx));
+    assert_eq!(s.matches[0].line_idx, 0);
+    assert_eq!(
+        s.current_match_position(),
+        Some((MAX_SEARCH_MATCHES + 51, 0))
+    );
+    assert_eq!(s.matches.last().unwrap().line_idx, MAX_SEARCH_MATCHES + 99);
+}
+
+/// MAX-215: `n` goes to the next match from the cursor in the search's direction, `N` the
+/// other way, a match on the cursor skipped; past the last one it goes around, said by the
+/// bool. Without a match there is nowhere to go.
+/// How: "a" at (0,0), (1,0), (1,2), stepping from a few cursors in both directions.
+#[test]
+fn step_from_the_cursor_both_ways() {
+    let mut s = search("a", SearchModeKind::Text);
+    s.update_matches_from_entries(
+        &history(&["a", "a a"]),
+        LineDisplayMode::Pretty,
+        RawSideView::Hex,
+    );
+    let mut step = |from, opposite| {
+        let wrapped = s.step_from(from, opposite)?;
+        assert_eq!(s.target_jump, s.current_match_position());
+        Some((s.current_match_position()?, wrapped))
+    };
+    assert_eq!(step((1, 0), false), Some(((1, 2), false)));
+    assert_eq!(step((1, 0), true), Some(((0, 0), false)));
+    assert_eq!(step((1, 2), false), Some(((0, 0), true)));
+    assert_eq!(step((0, 0), true), Some(((1, 2), true)));
+
+    s.direction = SearchDirection::Backward;
+    assert_eq!(s.step_from((1, 0), false), Some(false));
+    assert_eq!(s.current_match_position(), Some((0, 0)));
+    assert_eq!(s.step_from((1, 0), true), Some(false));
+    assert_eq!(s.current_match_position(), Some((1, 2)));
+
+    s.matches.clear();
+    assert_eq!(s.step_from((0, 0), false), None);
+}
+
+/// MAX-215: the matches are drawn while the bar is open, or kept after Enter, never without
+/// a match.
+/// How: shows_matches with the bar open, closed, kept, and without matches.
+#[test]
+fn matches_shown_while_open_or_kept() {
+    let mut s = search("a", SearchModeKind::Text);
+    s.update_matches_from_entries(&history(&["a"]), LineDisplayMode::Pretty, RawSideView::Hex);
+    assert!(s.shows_matches());
+    s.toggle(false);
+    assert!(!s.shows_matches());
+    s.kept = true;
+    assert!(s.shows_matches());
+    s.matches.clear();
+    assert!(!s.shows_matches());
+}

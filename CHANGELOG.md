@@ -8,6 +8,39 @@ you says so in an "Upgrading" section.
 
 ## [Unreleased]
 
+### Upgrading
+
+Run [`maxicom --write-config`](https://pierre-mollard.github.io/maxicom/settings.html#updating-the-files)
+to get the new copy mode keys `/`, `?`, `n` and `N` in your `keymap.toml`.
+`Ctrl-a ?` now searches backward and the help stays on `Ctrl-a z`; your file
+keeps `"?" = "help"` until you change it to `"?" = "enter-search-backward"`.
+
+### Added
+
+- [Search backward](https://pierre-mollard.github.io/maxicom/search.html#starting-a-search)
+  with `Ctrl-a ?` (`enter-search-backward`): from the live view, the newest
+  match first.
+- Search from [copy mode](https://pierre-mollard.github.io/maxicom/search.html#starting-a-search):
+  `/` and `?` search forward and backward from the cursor, which follows the
+  match as you type; Esc puts it back, a selection kept.
+- `n` / `N` in copy mode go to the
+  [next match](https://pierre-mollard.github.io/maxicom/search.html#going-through-the-matches)
+  of the last search, in its direction or the other way, a notification when
+  they go around the history's end. After Enter the matches stay lit and the
+  search bar stays in the bottom border with its count, until you leave copy
+  mode.
+
+### Changed
+
+- A search always runs in copy mode: `Ctrl-a /` and `Ctrl-a ?` enter it at
+  the view, and Esc goes back to the live view.
+- `Ctrl-a ?` searches backward; the help is on `Ctrl-a z`.
+
+### Fixed
+
+- In terminal mode, the raw side panel can be panned during a search: it no
+  longer comes back to the match on every frame.
+
 ## [0.1.1] - 2026-11-08
 
 ### Upgrading

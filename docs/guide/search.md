@@ -1,22 +1,70 @@
 # Search
 
-`Ctrl-a /` (or Search in the right-click menu) opens the search bar over the
-bottom of the history. It works in both modes.
+A search finds text or bytes in the history and moves the
+[copy mode](copy-mode-and-mouse.md#copy-mode) cursor to them. It works in
+both modes.
 
 ![A search for temp in line mode, its matches lit, the count in the search bar](images/search.png)
 
-## Searching
+## Starting a search
+
+| Key | Starts |
+| --- | --- |
+| `Ctrl-a /` | A search forward, down the history |
+| `Ctrl-a ?` | A search backward, up the history |
+| `/` in copy mode | A search forward, from the cursor |
+| `?` in copy mode | A search backward, from the cursor |
+
+Search in the right-click menu does the same as `Ctrl-a /`.
+
+A search always runs in copy mode. `Ctrl-a /` and `Ctrl-a ?` enter copy mode
+first, at the bottom of the view, then open the search bar over the bottom
+of the history. From the live view, `Ctrl-a ?` finds the newest match and
+`Ctrl-a /` the oldest. The bar shows `SEARCH:` for a search forward and
+`SEARCH BACK:` for a search backward.
+
+## Typing the search
 
 Type the text: every match lights up as you type, and the current one
-stands out. The bar shows the current match's number and the count. Up to
+stands out. The copy mode cursor follows the current match, and the view
+with it. The bar shows the current match's number and the count. Up to
 1000 matches are found.
+
+The first match is the one after the cursor for a search forward, and the
+one before it for a search backward. When there is none that way, the
+search goes on from the other end of the history. A match right on the
+cursor is skipped.
 
 | Key | Does |
 | --- | --- |
-| Ctrl-n / Ctrl-p | Next / previous match |
-| Enter | Close the bar and enter [copy mode](copy-mode-and-mouse.md#copy-mode) on the current match |
-| Esc | Close the bar where you are |
+| Ctrl-n / Ctrl-p | Next / previous match, down / up the history |
+| Enter | Close the bar, the cursor on the current match |
+| Esc | Close the bar |
 | Tab | Switch between a text search and a byte search |
+
+Esc takes you back to where you started. A search started with `Ctrl-a /` or
+`Ctrl-a ?` leaves copy mode for the live view. One started in copy mode puts
+the cursor back where it was, your selection kept.
+
+## Going through the matches
+
+After Enter, you stay in copy mode. The matches stay lit and the bar stays in
+the bottom border, showing the search, the current match and the keys to go
+through the matches. They go away when you leave copy mode.
+
+| Key | Does |
+| --- | --- |
+| `n` | Next match, in the search's direction |
+| `N` | Next match the other way |
+| `/` / `?` | A new search forward / backward from the cursor |
+
+`n` and `N` start from the cursor, so they also work after you moved it.
+They move the cursor without dropping a selection: start one with `v`, then
+`n` to stretch it to the next match. Going past the last match goes on from
+the other end of the history, and a notification says so.
+
+In copy mode, `n` also brings back the matches of your last search after you
+left copy mode.
 
 ## Text search
 
@@ -39,8 +87,9 @@ A byte search looks for bytes in the received data. Write them the way the
 
 ## From the command line
 
-`search <text>` on the [command line](command-line.md) opens the bar on that
-text. Bind it to a key for a search you use often.
+`search <text>` on the [command line](command-line.md) starts a search forward
+for that text, the bar open on it. Bind it to a key for a search you use
+often.
 
 ## Colors
 

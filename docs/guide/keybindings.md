@@ -3,7 +3,7 @@
 Every key of maxicom is defined in `keymap.toml`, in the config folder (see
 [Settings](settings.md)).
 
-- The help (`Ctrl-a ?`) lists the keys in use, your changes included.
+- The help (`Ctrl-a z`) lists the keys in use, your changes included.
 - `Ctrl-a r` applies a change without quitting.
 - Deleting the file brings back the defaults at the next start.
 
@@ -45,7 +45,7 @@ Any other key is its character: `d`, `/`, `[`. An uppercase letter means
 that letter with Shift, so `D` is Shift-d.
 
 Quote the keys TOML doesn't accept bare: `"/" = "enter-search"`,
-`"?" = "help"`.
+`"?" = "enter-search-backward"`.
 
 ### What a key does
 
@@ -107,7 +107,7 @@ directory's `n`, `e` and `s`. Those are fixed, and each chapter lists them.
 | `Ctrl-a :` | `command-line` | Open the command line |
 | `Ctrl-a <` | `side-shrink-5` | Shrink the side view by 5 % |
 | `Ctrl-a >` | `side-grow-5` | Grow the side view by 5 % |
-| `Ctrl-a ?`, `Ctrl-a z` | `help` | Open the help |
+| `Ctrl-a ?` | `enter-search-backward` | Search the history from the end |
 | `Ctrl-a B` | `toggle-display-raw` | Toggle the raw side view |
 | `Ctrl-a C` | `clear-history` | Clear the history |
 | `Ctrl-a D` | `toggle-attach` | Detach / attach the link |
@@ -147,6 +147,7 @@ directory's `n`, `e` and `s`. Those are fixed, and each chapter lists them.
 | `Ctrl-a u` | `toggle-add-cr` | Read a received LF as CR LF |
 | `Ctrl-a Up` | `scroll-up` | Scroll up one line |
 | `Ctrl-a w` | `toggle-line-wrap` | Toggle line wrap |
+| `Ctrl-a z` | `help` | Open the help |
 
 `Ctrl-a Ctrl-a` sends `Ctrl-a` to the device.
 
@@ -196,6 +197,8 @@ are built in: see [Line mode](line-mode.md#editing-the-line).
 | `,` | `mark` | A command line: mark the cursor's line, waits for its letter |
 | `'` | `marks` | Open the marks |
 | `(` / `)` | `prev-mark` / `next-mark` | Cursor to the mark above / below |
+| `/` / `?` | `search` / `search-backward` | Search from the cursor, forward / backward |
+| `n` / `N` | `search-next` / `search-prev` | Next match of the last search, in its direction / the other way |
 | `q`, `Esc` | `exit` | Leave |
 
 The vi motions (`w`, `b`, `gg`, `G`, `iw`...) are built in: see
@@ -206,8 +209,8 @@ The vi motions (`w`, `b`, `gg`, `G`, `iw`...) are built in: see
 | Key | Action | |
 | --- | --- | --- |
 | `Ctrl-n` / `Ctrl-p` | `next` / `previous` | Next / previous match |
-| `Enter` | `confirm` | Copy mode on the match |
-| `Esc` | `cancel` | Close |
+| `Enter` | `confirm` | Close the bar, the cursor on the match |
+| `Esc` | `cancel` | Close the bar, back where the search started |
 | `Tab` | `search-kind` | Text or bytes |
 
 ### `[dialog_actions]`
@@ -246,7 +249,7 @@ commands with arguments (`send`, `open`, `baud`, `replay`...).
 | `toggle-display-raw` | Toggle the raw side view | `Ctrl-a B` |
 | `screenshot-bytes` | Screenshot the terminal with its colors | `Ctrl-a k` |
 | `screenshot-text` | Screenshot the terminal as plain text | `Ctrl-a K` |
-| `help` | Open the help | `Ctrl-a ?`, `Ctrl-a z` |
+| `help` | Open the help | `Ctrl-a z` |
 | `settings` | Open the settings | `Ctrl-a o`, `Ctrl-a s` |
 | `record` | Start / stop recording (text or full) | `Ctrl-a l` |
 | `resize-dialog` | Set the terminal size | `Ctrl-a W` |
@@ -256,6 +259,7 @@ commands with arguments (`send`, `open`, `baud`, `replay`...).
 | `link-settings` | Open the link settings | `Ctrl-a p` |
 | `enter-copy-mode` | Enter copy mode | `Ctrl-a [`, `Ctrl-a b` |
 | `enter-search` | Search the history | `Ctrl-a /` |
+| `enter-search-backward` | Search the history from the end | `Ctrl-a ?` |
 | `scroll-up` | Scroll up one line | `Ctrl-a Up` |
 | `scroll-down` | Scroll down one line | `Ctrl-a Down` |
 | `scroll-to-bottom` | Scroll to the bottom | `Shift-End` |

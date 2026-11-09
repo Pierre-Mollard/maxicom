@@ -54,7 +54,7 @@ popup with the details. Esc or Enter closes it.
 
 | Popup | Key | Chapter |
 | --- | --- | --- |
-| Help | `Ctrl-a ?`, `Ctrl-a z` | [Settings](settings.md#help) |
+| Help | `Ctrl-a z` | [Settings](settings.md#help) |
 | Settings | `Ctrl-a o`, `Ctrl-a s` | [Settings](settings.md#the-settings-popup) |
 | Directory | `Ctrl-a d` | [The directory](directory.md) |
 | Saved link form | `n`, `e` or `s` in the directory | [Saved links](saved-links.md#editing-in-the-app) |

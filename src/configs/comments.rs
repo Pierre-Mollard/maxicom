@@ -101,7 +101,7 @@ pub const KEYMAP_COMMENTS: &[(&str, &str)] = &[
         concat!(
             "maxicom's keys: ",
             guide!("keybindings.html"),
-            "\nThe help (Ctrl-a ?) lists the keys in use. Ctrl-a r reloads this file.",
+            "\nThe help (Ctrl-a z) lists the keys in use. Ctrl-a r reloads this file.",
             "\nA section here replaces its default whole: keep the keys you want in it.",
             "\nThe actions: ",
             guide!("keybindings.html#actions"),

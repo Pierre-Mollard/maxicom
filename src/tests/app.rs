@@ -3,9 +3,10 @@
 use super::*;
 use crate::{
     app::capture::tests::asking_app,
+    app::search::SearchDirection,
     capture::{CaptureFormat, RecordingMeta},
     configs::KeyBindingsConfig,
-    inputs::DialogAction,
+    inputs::{DialogAction, SearchModeAction},
 };
 
 /// An app whose link is open
@@ -1847,4 +1848,79 @@ fn mark_flash_ends() {
     assert_eq!(app.mark_flash(Mode::Line), None);
     assert!(app.mark_flash.is_none());
     assert!(!app.tick());
+}
+
+/// MAX-215: `n` past the last match goes on from the top with a toast, `N` past the first
+/// one from the end; without a match it says there is nowhere to go.
+/// How: "hit" on lines 0 and 2 in line mode, a backward search confirmed on line 2, then
+/// N, N, n, n (a wrap each way), then a search without a match.
+#[test]
+fn repeated_search_says_when_it_wraps() {
+    let mut app = app();
+    app.settings.mode = Mode::Line;
+    app.feed_rx(b"hit\nb\nhit\n");
+    let last_toast = |app: &App| {
+        app.notifications
+            .active_toasts()
+            .last()
+            .unwrap()
+            .message
+            .clone()
+    };
+    let count = |app: &App| app.notifications.active_toasts().len();
+    app.update(Action::Search(SearchModeAction::Start(
+        SearchDirection::Backward,
+    )));
+    app.update(Action::Search(SearchModeAction::Paste("hit".to_string())));
+    app.update(Action::Search(SearchModeAction::Confirm));
+    assert!(app.is_copy_mode_active());
+
+    let before = count(&app);
+    app.update(Action::Search(SearchModeAction::Repeat(true)));
+    assert_eq!(last_toast(&app), "Search hit the end, went on from the top");
+    app.update(Action::Search(SearchModeAction::Repeat(true)));
+    app.update(Action::Search(SearchModeAction::Repeat(false)));
+    assert_eq!(count(&app), before + 1);
+    app.update(Action::Search(SearchModeAction::Repeat(false)));
+    assert_eq!(last_toast(&app), "Search hit the top, went on from the end");
+
+    app.update(Action::Search(SearchModeAction::Query("zzz".to_string())));
+    app.update(Action::Search(SearchModeAction::Confirm));
+    app.update(Action::Search(SearchModeAction::Repeat(false)));
+    assert_eq!(last_toast(&app), "No match to go to");
+}
+
+/// MAX-215: a search from out of copy mode starts it: `?` from the live view finds the
+/// newest line's match too; Esc closes the bar and copy mode, back to the live view; Enter
+/// stays in copy mode on the match. From copy mode, Esc stays in it.
+/// How: "hit" on lines 0 and 2 (the last), `?` then Esc, `?` then Enter, `/` then Esc.
+#[test]
+fn a_search_runs_in_copy_mode() {
+    let mut app = app();
+    app.settings.mode = Mode::Line;
+    app.feed_rx(b"hit\nb\nhit\n");
+    let start = |app: &mut App, direction| {
+        app.line_mode.search_mut().query = tui_input::Input::default();
+        app.update(Action::Search(SearchModeAction::Start(direction)));
+        app.update(Action::Search(SearchModeAction::Paste("hit".to_string())));
+    };
+    let cursor = |app: &App| app.line_mode.copy_state().cursor.line_idx;
+
+    start(&mut app, SearchDirection::Backward);
+    assert!(app.is_copy_mode_active() && app.is_search_active());
+    assert_eq!(cursor(&app), 2);
+    app.update(Action::Search(SearchModeAction::Cancel));
+    assert!(!app.is_copy_mode_active() && !app.is_search_active());
+    assert!(app.scroll_status().is_bottom());
+
+    start(&mut app, SearchDirection::Backward);
+    app.update(Action::Search(SearchModeAction::Confirm));
+    assert!(app.is_copy_mode_active());
+    assert_eq!(cursor(&app), 2);
+
+    start(&mut app, SearchDirection::Forward);
+    assert_eq!(cursor(&app), 0);
+    app.update(Action::Search(SearchModeAction::Cancel));
+    assert!(app.is_copy_mode_active());
+    assert_eq!(cursor(&app), 2);
 }

@@ -80,6 +80,7 @@ pub enum KeyBindingAction {
     PrevMark,
     NextMark,
     Marks,
+    EnterSearchBackward,
 }
 
 impl FromStr for KeyBindingAction {
@@ -275,6 +276,10 @@ pub enum KeyBindingCopyAction {
     Marks,
     PrevMark,
     NextMark,
+    Search,
+    SearchBackward,
+    SearchNext,
+    SearchPrev,
 }
 
 impl KeyBindingCopyAction {
@@ -313,6 +318,10 @@ impl std::str::FromStr for KeyBindingCopyAction {
             "marks" => Ok(Self::Marks),
             "prev-mark" => Ok(Self::PrevMark),
             "next-mark" => Ok(Self::NextMark),
+            "search" => Ok(Self::Search),
+            "search-backward" => Ok(Self::SearchBackward),
+            "search-next" => Ok(Self::SearchNext),
+            "search-prev" => Ok(Self::SearchPrev),
             other => Err(UnknownActionError(other.to_string())),
         }
     }
@@ -342,6 +351,10 @@ impl std::fmt::Display for KeyBindingCopyAction {
             Self::Marks => "marks",
             Self::PrevMark => "prev-mark",
             Self::NextMark => "next-mark",
+            Self::Search => "search",
+            Self::SearchBackward => "search-backward",
+            Self::SearchNext => "search-next",
+            Self::SearchPrev => "search-prev",
         };
         write!(f, "{s}")
     }
@@ -841,6 +854,11 @@ impl KeyResolver {
         keys_of(&self.search_actions, action)
     }
 
+    /// The keys bound to a copy mode action, for the search bar kept in copy mode (MAX-215)
+    pub fn copy_keys(&self, action: KeyBindingCopyAction) -> Vec<KeyPattern> {
+        keys_of(&self.copy_actions, action)
+    }
+
     /// The keys bound in `[line_mode]` or `[terminal_mode]` that never get there, because the
     /// prefix or `[direct_actions]` take them first (MAX-155), for a warning
     pub fn shadowed_keys(&self) -> Vec<String> {
@@ -1061,7 +1079,7 @@ impl Default for KeyBindingsConfig {
             "c"     => KeyBindingAction::Clear,
             "C"     => KeyBindingAction::ClearHistory,
             "z"     => KeyBindingAction::Help,
-            "?"     => KeyBindingAction::Help,
+            "?"     => KeyBindingAction::EnterSearchBackward,
             "o"     => KeyBindingAction::Settings,
             "s"     => KeyBindingAction::Settings,
             "l"     => KeyBindingAction::Record,
@@ -1155,6 +1173,10 @@ impl Default for KeyBindingsConfig {
             ")"         => KeyBindingCopyAction::NextMark,
             "'"         => KeyBindingCopyAction::Marks,
             ","         => "mark", // waits for the letter
+            "/"         => KeyBindingCopyAction::Search,
+            "?"         => KeyBindingCopyAction::SearchBackward,
+            "n"         => KeyBindingCopyAction::SearchNext,
+            "N"         => KeyBindingCopyAction::SearchPrev,
         };
 
         let dialog_actions = default_bindings! {

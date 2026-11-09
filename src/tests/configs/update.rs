@@ -111,8 +111,8 @@ fn update_stops_on_a_file_that_doesnt_load() {
 /// MAX-209: a keymap from before a new default gets it, said in the report. A key changed on
 /// purpose stays, an action still bound elsewhere in the section isn't added again, and a
 /// default whose key and action are both gone comes back.
-/// How: a default keymap without the mark keys, `Ctrl-a q` moved to `help`, `Ctrl-a ?` removed
-/// with `help` still on `z`, and `quit` removed from the section, updated and read back.
+/// How: a default keymap without the mark keys, `Ctrl-a q` moved to `help`, `Ctrl-a s` removed
+/// with `settings` still on `o`, and `quit` removed from the section, updated and read back.
 #[test]
 fn update_adds_new_default_keys() {
     let folder = Folder::new("update-keymap", "");
@@ -122,7 +122,7 @@ fn update_adds_new_default_keys() {
     }
     keymap.prefix_actions.insert("q".into(), "help".into());
     keymap.prefix_actions.remove("x");
-    keymap.prefix_actions.remove("?");
+    keymap.prefix_actions.remove("s");
     fs::write(
         folder.path("keymap.toml"),
         toml::to_string_pretty(&keymap).unwrap(),
@@ -136,5 +136,5 @@ fn update_adds_new_default_keys() {
     assert_eq!(new.prefix_actions[","], "mark");
     assert_eq!(new.prefix_actions["q"], "help");
     assert_eq!(new.prefix_actions["x"], "quit");
-    assert!(!new.prefix_actions.contains_key("?"));
+    assert!(!new.prefix_actions.contains_key("s"));
 }

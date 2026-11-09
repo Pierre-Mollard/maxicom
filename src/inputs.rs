@@ -9,6 +9,7 @@ use crate::{
     app::{
         App, InputContext,
         mash::Mash,
+        search::SearchDirection,
         selection::{CopySide, LogicalPosition, MouseUnit},
         transfer::FileTransfer,
     },
@@ -191,7 +192,7 @@ pub enum SideViewAction {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum SearchModeAction {
-    Start,
+    Start(SearchDirection),
     Next,
     Previous,
     Cancel,
@@ -201,6 +202,7 @@ pub enum SearchModeAction {
     Paste(String),
     ClickAt(usize),
     Query(String),
+    Repeat(bool),
 }
 
 #[derive(Debug, PartialEq, Eq)]

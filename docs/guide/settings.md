@@ -157,7 +157,7 @@ screen it uses one column, and it scrolls when the screen is too short.
 
 ## Help
 
-`Ctrl-a ?` or `Ctrl-a z` (or `?` in the status bar) lists the keys, in tabs:
+`Ctrl-a z` (or `?` in the status bar) lists the keys, in tabs:
 
 | Tab | Lists |
 | --- | --- |

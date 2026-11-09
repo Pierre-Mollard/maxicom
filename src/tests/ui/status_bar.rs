@@ -1,6 +1,7 @@
 //! Golden output of the status bar templates, locked before precompiling them (#10).
 
 use super::*;
+use crate::app::search::SearchDirection;
 use crate::{
     configs::{KeyBindingsConfig, KeyResolver, SettingsConfig},
     inputs::{Action, AppAction, CopyModeAction, SearchModeAction},
@@ -257,10 +258,12 @@ fn default_left_conditions() {
     );
 
     let mut s = app(Mode::Line);
-    s.update(Action::Search(SearchModeAction::Start));
+    s.update(Action::Search(SearchModeAction::Start(
+        SearchDirection::Forward,
+    )));
     assert_eq!(
         render(&d.left, &s)[0],
-        span(" LINE ", "Some(Black)", "Some(Green)", "BOLD")
+        span(" COPY ", "Some(Black)", "Some(Green)", "BOLD")
     );
 }
 
@@ -369,7 +372,9 @@ fn copy_badge_follows_the_selection_colors() {
     theme.search.search_indicator = Style::default().bg(Color::Yellow).into();
     let template = CompiledTemplate::new(&d.left, &theme);
     let mut s = app(Mode::Line);
-    s.update(Action::Search(SearchModeAction::Start));
+    s.update(Action::Search(SearchModeAction::Start(
+        SearchDirection::Forward,
+    )));
     let time_format = &s.settings().ui.status_bar.time_format;
     let spans = template.spans(&s, *theme.ui.status_bar, time_format);
     assert_eq!(spans[0].style.bg, Some(Color::Yellow));

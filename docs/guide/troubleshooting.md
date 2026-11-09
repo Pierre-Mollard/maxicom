@@ -102,7 +102,7 @@ it, or change `prefix` in `keymap.toml` (`prefix = "ctrl-b"`). See
 
 ### A key I bound doesn't work
 
-The help (`Ctrl-a ?`) shows the keymap in use. If the file didn't load,
+The help (`Ctrl-a z`) shows the keymap in use. If the file didn't load,
 maxicom named it at startup, or the reload's popup did.
 
 ### vim or top draws at the wrong size, the shell wraps at the wrong column

@@ -1,6 +1,7 @@
 //! Whole-frame rendering through `render`, on a test backend.
 
 use super::*;
+use crate::app::search::SearchDirection;
 use crate::{
     app::{
         UpdateEffect,
@@ -742,7 +743,9 @@ fn copy_mode_from_search_keeps_cursor_row_in_view() {
         ),
     ];
     for (mut h, raw_search, shown) in setups {
-        h.app.update(Action::Search(SearchModeAction::Start));
+        h.app.update(Action::Search(SearchModeAction::Start(
+            SearchDirection::Forward,
+        )));
         if raw_search {
             h.app.update(Action::Search(SearchModeAction::Kind));
         }
@@ -896,13 +899,15 @@ fn view_scrolled_inside_the_last_entry_stays_put() {
 }
 
 fn search(h: &mut Harness, query: &str) {
-    h.app.update(Action::Search(SearchModeAction::Start));
+    h.app.update(Action::Search(SearchModeAction::Start(
+        SearchDirection::Forward,
+    )));
     h.app
         .update(Action::Search(SearchModeAction::Paste(query.to_string())));
 }
 
 /// MAX-72: a search jump centers the view on the match once; after that the view scrolls
-/// freely and stays where it was moved, until the next jump.
+/// freely and stays where it was moved, also on Next to the match it still shows.
 /// How: 40 numbered lines, search "line 20", scroll down 3 rows, draw twice, then Next
 #[test]
 fn search_view_scrolls_freely_after_the_jump() {
@@ -930,8 +935,9 @@ fn search_view_scrolls_freely_after_the_jump() {
     );
     assert_eq!(line_rows(&h.draw()), moved);
 
+    // MAX-215: the search runs in copy mode, whose view stays when it shows the match
     h.app.update(Action::Search(SearchModeAction::Next));
-    assert_eq!(line_rows(&h.draw()), centered);
+    assert_eq!(line_rows(&h.draw()), moved);
 }
 
 /// MAX-72: the raw panel pan is centered on the match by the jump, then follows the side
@@ -4742,7 +4748,8 @@ fn mouse_in_terminal_mode() {
 }
 
 /// A click in the history while searching leaves the search for copy mode there; a click
-/// below the history does nothing.
+/// below the history does nothing. MAX-215: the search runs in copy mode, which the click
+/// keeps.
 #[test]
 fn mouse_click_while_searching_and_off_the_history() {
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 60, 12);
@@ -4753,11 +4760,11 @@ fn mouse_click_while_searching_and_off_the_history() {
     let (x, y) = cell_of(&rows, "one");
     let below = (x, y + 3);
     click(&mut h, below);
-    assert!(!h.app.line_mode.copy_state().active);
     assert!(h.app.is_search_active());
 
     click(&mut h, (x + 1, y));
     assert!(!h.app.is_search_active());
+    assert!(h.app.line_mode.copy_state().active);
     h.draw();
     assert_eq!(cursor_cell(&mut h), (x + 1, y));
 }
@@ -5130,7 +5137,7 @@ fn quit_asks_first() {
 /// MAX-130: a right-click opens the action menu at the pointer, moved back inside the
 /// screen at its corner; a click or Enter runs a row as its key would ("Quit…" asks
 /// first), and with another popup open a right-click does nothing. Its rows start right
-/// after the left border, their keys short: `^A ?`, not `Ctrl-a ?`.
+/// after the left border, their keys short: `^A z`, not `Ctrl-a z`.
 /// How: right-clicks in the history and at the bottom-right corner.
 #[test]
 fn right_click_menu() {
@@ -5145,7 +5152,7 @@ fn right_click_menu() {
     assert_eq!(cell_of(&rows, "┌ Menu"), (10, 3));
     // the first row is selected, and shows its key
     assert!(rows[4].contains("│▶ Help"), "{:?}", rows[4]);
-    assert!(rows[4].contains("^A ?"), "{:?}", rows[4]);
+    assert!(rows[4].contains("^A z"), "{:?}", rows[4]);
     assert!(!has(&rows, "Ctrl-a"), "{rows:#?}");
     click(&mut h, cell_of(&rows, "Settings"));
     assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
@@ -5446,7 +5453,9 @@ fn search_hints_and_border_buttons_hover() {
             s.ui.show_borders = borders;
         });
         h.feed(b"hi there\r\n");
-        h.app.update(Action::Search(SearchModeAction::Start));
+        h.app.update(Action::Search(SearchModeAction::Start(
+            SearchDirection::Forward,
+        )));
         let rows = h.draw();
         let mode = cell_of(&rows, "Mode");
         moved(&mut h, mode);
@@ -5663,7 +5672,9 @@ fn status_bar_in_the_history_border() {
     assert!(bottom.ends_with(" ─┘"), "{bottom:?}");
     let settings = status_cell(&rows, "≡");
 
-    h.app.update(Action::Search(SearchModeAction::Start));
+    h.app.update(Action::Search(SearchModeAction::Start(
+        SearchDirection::Forward,
+    )));
     let rows = h.draw();
     assert!(rows[23].contains("SEARCH"), "{:?}", rows[23]);
     assert!(!rows[23].contains("TERM "), "{:?}", rows[23]);
@@ -6900,7 +6911,9 @@ fn mouse_click_in_the_search_query() {
             .terminal_mode
             .process_rx(TextEncoding::Utf8, b"one\r\n");
         h.draw();
-        h.app.update(Action::Search(SearchModeAction::Start));
+        h.app.update(Action::Search(SearchModeAction::Start(
+            SearchDirection::Forward,
+        )));
         h.app.update(Action::Search(SearchModeAction::Paste(
             "hello world".to_string(),
         )));
@@ -7589,4 +7602,55 @@ fn mark_jump_flashes_its_line() {
     let content = h.app.frame_areas().content;
     let middle = content.y + (height / 2) as u16;
     assert_ne!(bg_at(&h, content.x + 3, middle), flash_bg);
+}
+
+/// MAX-215: the bar of a backward search says so, and counts from the newest match; its
+/// cursor follows the query after the longer label.
+/// How: "hit" on two lines, a backward search, the bar's row and the cursor's cell.
+#[test]
+fn backward_search_bar() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+    h.feed(b"hit one\r\nb\r\nhit two\r\n");
+    h.app.update(Action::Search(SearchModeAction::Start(
+        SearchDirection::Backward,
+    )));
+    h.app
+        .update(Action::Search(SearchModeAction::Paste("hit".to_string())));
+    let rows = h.draw();
+    let (y, bar) = (rows.iter().enumerate())
+        .find(|(_, row)| row.contains("SEARCH"))
+        .unwrap();
+    assert!(bar.contains("SEARCH BACK:  hit (2/2)"), "{bar:?}");
+    let label_end = bar.find("BACK: ").unwrap() + "BACK: ".len();
+    let query_end = bar[..label_end].chars().count() + " hit".len();
+    let cursor = h.terminal.get_cursor_position().unwrap();
+    assert_eq!((cursor.x as usize, cursor.y as usize), (query_end, y));
+}
+
+/// MAX-215: in copy mode after Enter the bar stays, showing the last search, its count and
+/// the copy keys through its matches, without a cursor; a click on `n` goes to the next
+/// match. Leaving copy mode takes the bar away.
+/// How: "hit" on three lines, a forward search confirmed, the bar, a click on `n`, an exit.
+#[test]
+fn search_bar_kept_in_copy_mode() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+    h.feed(b"hit one\r\nb\r\nhit two\r\nhit three\r\n");
+    search(&mut h, "hit");
+    h.app.update(Action::Search(SearchModeAction::Confirm));
+    let rows = h.draw();
+    let bar = rows.iter().find(|row| row.contains("SEARCH")).unwrap();
+    assert!(bar.contains("SEARCH:  hit (1/3)"), "{bar:?}");
+    assert!(
+        bar.contains("n/N Match · Esc Exit · / Search · ? Back"),
+        "{bar:?}"
+    );
+    assert!(h.app.frame_map().search_query.is_none());
+
+    click(&mut h, cell_of(&rows, "n/N"));
+    let rows = h.draw();
+    assert!(has(&rows, "hit (2/3)"), "{rows:#?}");
+    assert_eq!(h.app.line_mode.copy_state().cursor.line_idx, 2);
+
+    h.app.update(Action::CopyMode(CopyModeAction::Exit));
+    assert!(!has(&h.draw(), "SEARCH"));
 }
