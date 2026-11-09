@@ -97,17 +97,14 @@ impl ScreenLayout {
         };
         let status_bar_area = if status_in_border {
             // the last box's bottom border, inside its `└─` and `─┘`; in terminal mode it's the
-            // history's, which the search bar takes while it's shown
+            // history's, the search bar on a row above it (MAX-218)
             let last_box = prompt_area.unwrap_or(monitor_outer);
-            let searching = prompt_area.is_none() && app.is_search_bar_shown();
-            (!searching).then(|| {
-                Rect::new(
-                    last_box.x.saturating_add(2),
-                    last_box.bottom().saturating_sub(1),
-                    last_box.width.saturating_sub(4),
-                    1,
-                )
-            })
+            Some(Rect::new(
+                last_box.x.saturating_add(2),
+                last_box.bottom().saturating_sub(1),
+                last_box.width.saturating_sub(4),
+                1,
+            ))
         } else if show_status_bar {
             Some(v_chunks[2])
         } else if app.status_bar_over_view() && monitor_outer.height > 0 {
@@ -202,6 +199,16 @@ impl ScreenLayout {
             }
         } else {
             (remaining_after_gutter, None)
+        };
+
+        // the search bar's row, under the history and over a bottom side panel (MAX-218)
+        let main_stream_area = if app.search_bar_row() {
+            Rect {
+                height: main_stream_area.height.saturating_sub(1),
+                ..main_stream_area
+            }
+        } else {
+            main_stream_area
         };
 
         let (content_area, scrollbar_area) = if show_scrollbar {

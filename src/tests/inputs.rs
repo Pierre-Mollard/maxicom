@@ -377,6 +377,7 @@ fn default_keymap_per_context() {
             "' => App(OpenMarks)",
             "( => App(Mark(Adjacent(false)))",
             ") => App(Mark(Adjacent(true)))",
+            "* => Search(Word(Forward))",
             ", => run mark",
             "/ => Search(Start(Forward))",
             "0 => CopyMode(StartOfLine)",

@@ -26,6 +26,11 @@ keyboard. Enter it with `Ctrl-a [` or `Ctrl-a b`. The mode badge in the
 status bar reads `COPY` and turns magenta. It works the same in line and
 terminal mode.
 
+The cursor starts where you are looking: at the start of the view's bottom
+line when you have scrolled up. From the live view, it starts on the last
+line in line mode, and on the device's cursor in terminal mode, or on the
+last line with text when the device's cursor sits on an empty row.
+
 ![Copy mode in line mode: two lines selected, the mode badge in magenta](images/copy-mode.png)
 
 ### Keys

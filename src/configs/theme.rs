@@ -248,7 +248,7 @@ impl Default for SearchStyles {
             search_indicator: ConfigStyle::new(
                 Style::default()
                     .fg(Color::Black)
-                    .bg(Color::Green)
+                    .bg(Color::LightBlue)
                     .add_modifier(Modifier::BOLD),
             ),
         }

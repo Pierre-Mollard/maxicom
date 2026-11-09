@@ -40,6 +40,8 @@ pub fn render_vt100_terminal(
     let focus = app.focus_target();
     let is_terminal_focused = focus == FocusTarget::Terminal;
     let raw_view = app.settings().raw_side.view;
+    // matches shown while data came, found again once a frame (MAX-218)
+    app.terminal_mode.refresh_stale_matches(raw_view);
 
     let search_jump = app.terminal_mode.search_mut().target_jump.take();
     if let Some((target_row, target_col)) = search_jump {

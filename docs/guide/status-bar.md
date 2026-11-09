@@ -56,7 +56,7 @@ as between `[{time}](...)` and `[?](...)` below.
 ```toml
 [ui.status_bar]
 left = '''
-[ {mode} ](prefix?(bg=secondary fg=black bold):mark?(bg=good fg=black bold):copy_raw?(bg=selection_raw fg=black bold):copy?(bg=selection fg=black bold):search?(bg=search fg=black bold):(fg=primary bold))\
+[ {mode} ](prefix?(bg=secondary fg=black bold):mark?(bg=good fg=black bold):search?(bg=search fg=black bold):copy_raw?(bg=selection_raw fg=black bold):copy?(bg=selection fg=black bold):(fg=primary bold))\
     [|](muted prio=3)\
     [ {port}](link prio=3)\
     [ |](muted prio=3)\
@@ -96,7 +96,7 @@ layout = "border"
 
 | Variable | Value | Example |
 | --- | --- | --- |
-| `{mode}` | `TERM` or `LINE`, `COPY` while copy mode is on, `MARK` while a mark waits for its letter | `TERM` |
+| `{mode}` | `TERM` or `LINE`, `COPY` while copy mode is on, `SRCH` while you type a search, `MARK` while a mark waits for its letter | `TERM` |
 | `{port}` | Device address, a saved link's name, or the device and count of a [group replay](capture.md#replaying-a-group) | `/dev/ttyUSB0`, `tcp://192.168.1.50:4000`, `esp32`, `ttyUSB0 · 12 sessions` |
 | `{baud}` | Baud rate; `raw` for a raw TCP link | `115200` |
 | `{framing}` | Serial framing; `TCP` for a TCP link | `8N1` |
@@ -202,7 +202,7 @@ and `bg=<color>` you set either one; `fg=none` and `bg=none` clear them.
 | --- | --- |
 | `main` (or `primary`), `secondary`, `ternary`, `text`, `muted`, `warn` (`warning`), `good` (`ok`, `success`), `unselected` | The theme's [palette](theme.md#palette) |
 | `selection`, `selection_raw` | The background of `[ui.selection]` / `[ui.selection_raw]`, which the default mode badge takes in copy mode |
-| `search` | The background of `[search.search_indicator]`, which the badge takes while searching |
+| `search` | The background of `[search.search_indicator]`, which the default mode badge takes while you type a search |
 | `match`, `match_active` | The search highlights |
 | `border` | The frame's color, for separators that blend into it |
 | `bar` | The bar's background |
@@ -302,7 +302,7 @@ They react to clicks too:
 | --- | --- |
 | `line` | A row of its own, plain text on the UI background |
 | `band` | A row filled with the `status_bar` background |
-| `border` (default) | In the bottom border of the last box: the input box in line mode, the history in terminal mode, or the search bar while it's open |
+| `border` (default) | In the bottom border of the last box: the input box in line mode, the history in terminal mode (a search bar then takes a row above it) |
 | `box` | In a box of its own, 3 rows high |
 
 `border` and `box` need borders; without them, they fall back to `line`.

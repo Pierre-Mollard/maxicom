@@ -237,9 +237,11 @@ fn session_replay_shows_its_recorded_line() {
     );
 }
 
-/// The mode pill follows the prefix, copy-mode and search conditions; the search's is black
-/// on green, the search bar label's (MAX-193). In copy mode it reads COPY (MAX-208).
-/// How: same template with the prefix active, then in line copy mode, then searching.
+/// The mode pill follows the prefix, copy-mode and search conditions (MAX-193). In copy mode
+/// it reads COPY (MAX-208); while a search is typed SRCH, black on light blue, then COPY
+/// again once it's confirmed (MAX-218).
+/// How: same template with the prefix active, then in line copy mode, then searching, then
+/// the search confirmed.
 #[test]
 fn default_left_conditions() {
     let d = StatusBarConfig::default();
@@ -263,7 +265,12 @@ fn default_left_conditions() {
     )));
     assert_eq!(
         render(&d.left, &s)[0],
-        span(" COPY ", "Some(Black)", "Some(Green)", "BOLD")
+        span(" SRCH ", "Some(Black)", "Some(LightBlue)", "BOLD")
+    );
+    s.update(Action::Search(SearchModeAction::Confirm));
+    assert_eq!(
+        render(&d.left, &s)[0],
+        span(" COPY ", "Some(Black)", "Some(Magenta)", "BOLD")
     );
 }
 

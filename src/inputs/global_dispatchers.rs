@@ -221,6 +221,10 @@ impl KeyBindingCopyAction {
             }
             Self::SearchNext => Action::Search(SearchModeAction::Repeat(false)),
             Self::SearchPrev => Action::Search(SearchModeAction::Repeat(true)),
+            Self::SearchWord => Action::Search(SearchModeAction::Word(SearchDirection::Forward)),
+            Self::SearchWordBackward => {
+                Action::Search(SearchModeAction::Word(SearchDirection::Backward))
+            }
         }
     }
 }

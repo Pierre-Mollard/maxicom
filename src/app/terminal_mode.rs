@@ -61,7 +61,13 @@ pub struct TerminalMode {
     vi_pending_copy: Option<ViPending>,
     flash_until: Option<Instant>,
     row_timestamps: VecDeque<Option<DateTime<Local>>>,
+    /// The world lines' text a search reads, and the first line data may have changed since,
+    /// re-read when the search next needs it: the rows above it went up into the scrollback,
+    /// which doesn't change (MAX-218)
     search_text: Option<Vec<String>>,
+    search_text_from: Option<usize>,
+    /// Data came while the matches were shown: they're found again on the next frame
+    search_stale: bool,
     /// The restore separator's world row, until the grid first takes the view's size: a
     /// taller grid pulls rows back from the scrollback and would move it down (MAX-176)
     restored_separator: Option<usize>,
@@ -98,6 +104,8 @@ impl TerminalMode {
             flash_until: None,
             row_timestamps: VecDeque::from(vec![None; rows as usize]),
             search_text: None,
+            search_text_from: None,
+            search_stale: false,
             restored_separator: None,
             rx_after_cr: false,
             copy_pan: None,
@@ -131,15 +139,16 @@ impl TerminalMode {
         time: Option<DateTime<Local>>,
     ) {
         self.scroller.on_rx_received();
-        self.search_text = None;
 
         let started_on_main = !self.vt100_parser.screen().alternate_screen();
         let cursor_row_before = self.vt100_parser.screen().cursor_position().0 as usize;
         let live_rows_before = self.live_rows();
+        let lines_before = self.max_content_scrollback;
 
         let utf8_bytes = encoding.to_utf8_bytes(raw_bytes);
         self.vt100_parser.process(&utf8_bytes);
         let evicted = std::mem::take(&mut self.vt100_parser.callbacks_mut().evicted);
+        self.search_text_changed(started_on_main, lines_before, evicted);
         self.update_live_bottom();
         self.content_cols = None;
 
@@ -195,16 +204,20 @@ impl TerminalMode {
         }
     }
 
+    /// The view's size, and the grid's from it; `bar_rows` under the view, which the search bar
+    /// takes, are still the grid's: the remote isn't resized, the view pans to the rows hidden
+    /// (MAX-218)
     pub fn update_viewport(
         &mut self,
         viewport: ViewportSize,
+        bar_rows: u16,
         dim_mode: TerminalDimensionMode,
         conf_rows: u16,
         conf_cols: u16,
     ) {
         self.scroller.update_view_size(viewport.cols, viewport.rows);
 
-        let avail_h = viewport.rows as u16;
+        let avail_h = viewport.rows as u16 + bar_rows;
         let avail_w = viewport.cols as u16;
 
         if avail_h > 0 && avail_w > 0 {
@@ -337,7 +350,7 @@ impl TerminalMode {
 
         self.vt100_parser = new_parser(rows, cols, self.max_history_lines);
         self.row_timestamps = VecDeque::from(vec![None; rows as usize]);
-        self.search_text = None;
+        self.forget_search_text();
         self.restored_separator = None;
         self.marks.clear();
 
@@ -665,7 +678,7 @@ impl TerminalMode {
             return;
         }
 
-        self.search_text = None;
+        self.forget_search_text();
         let scrollback_before = self.max_content_scrollback;
         let cursor_row_before = self.vt100_parser.screen().cursor_position().0 as usize;
         // the parser's `set_size` (not the screen's) reports the rows it evicts
@@ -723,23 +736,35 @@ impl TerminalMode {
     }
 
     pub fn all_text_lines(&mut self) -> Vec<String> {
+        self.text_lines_from(0)
+    }
+
+    /// The text of the world lines from `from` on. The alternate screen has no scrollback: the
+    /// main one's lines read blank then, so the screen's rows keep their world line (MAX-218)
+    fn text_lines_from(&mut self, from: usize) -> Vec<String> {
         let max_sb = self.max_content_scrollback;
         let (rows, cols) = self.get_vt100_size();
         let current_sb = self.vt100_parser.screen().scrollback();
+        let alternate = self.vt100_parser.screen().alternate_screen();
 
-        let mut lines = Vec::with_capacity(max_sb + rows as usize);
+        let mut lines = Vec::with_capacity((max_sb + rows as usize).saturating_sub(from));
 
-        let mut sb = max_sb;
+        let mut sb = max_sb - from.min(max_sb);
         while sb > 0 {
-            self.vt100_parser.screen_mut().set_scrollback(sb);
-            if let Some(first_row) = self.vt100_parser.screen().rows(0, cols).next() {
-                lines.push(first_row);
+            if alternate {
+                lines.push(String::new());
+            } else {
+                self.vt100_parser.screen_mut().set_scrollback(sb);
+                if let Some(first_row) = self.vt100_parser.screen().rows(0, cols).next() {
+                    lines.push(first_row);
+                }
             }
             sb -= 1;
         }
 
         self.vt100_parser.screen_mut().set_scrollback(0);
-        for row in self.vt100_parser.screen().rows(0, cols) {
+        let screen_from = from.saturating_sub(max_sb);
+        for row in self.vt100_parser.screen().rows(0, cols).skip(screen_from) {
             lines.push(row);
         }
 
@@ -865,7 +890,9 @@ impl TerminalMode {
             SearchModeAction::ClickAt(column) => {
                 click_input_at(&mut self.search_state.query, column);
             }
-            SearchModeAction::Repeat(_) | SearchModeAction::History(_) => {
+            SearchModeAction::Repeat(_)
+            | SearchModeAction::History(_)
+            | SearchModeAction::Word(_) => {
                 unreachable!("run by App, which has the toasts and the history")
             }
         }
@@ -892,12 +919,7 @@ impl TerminalMode {
         settings: &SettingsConfig,
     ) -> Option<String> {
         if let CopyModeAction::HandleKey(key) = action {
-            let line_text = read_vt100_world_line_text(
-                &mut self.vt100_parser,
-                self.max_content_scrollback,
-                self.copy_state.cursor.line_idx,
-            )
-            .unwrap_or_default();
+            let line_text = self.copy_line_text();
             if let Some(sub_action) = dispatch_copy_key_vi(
                 &mut self.vi_pending_copy,
                 &line_text,
@@ -919,13 +941,16 @@ impl TerminalMode {
             let max_col = self.get_vt100_size().1.saturating_sub(1) as usize;
             // entering copy mode leaves the view where it is (MAX-143): on the remote cursor
             // from the live view, else on the start of the view's bottom row
+            let cursor_line = self.max_content_scrollback + (c_row as usize);
             if self.scroller.offset_y > 0 {
                 self.copy_state.enter_at(self.visible_lines().1, 0);
+            } else if let Some(line) = self.last_line_with_content(cursor_line) {
+                // a cursor on a blank row (output ended with a newline): the start of the
+                // last row with content instead (MAX-218)
+                self.copy_state.enter_at(line, 0);
             } else {
-                self.copy_state.enter_at(
-                    self.max_content_scrollback + (c_row as usize),
-                    (c_col as usize).min(max_col),
-                );
+                self.copy_state
+                    .enter_at(cursor_line, (c_col as usize).min(max_col));
             }
             return None;
         }
@@ -1016,13 +1041,69 @@ impl TerminalMode {
     }
 
     pub fn update_search_matches(&mut self, raw_view: RawSideView) {
-        if self.search_text.is_none() {
-            self.search_text = Some(self.all_text_lines());
+        self.search_stale = false;
+        match (self.search_text.is_some(), self.search_text_from.take()) {
+            (false, _) => self.search_text = Some(self.all_text_lines()),
+            (true, Some(from)) => {
+                let fresh = self.text_lines_from(from);
+                if let Some(text) = self.search_text.as_mut() {
+                    text.truncate(from);
+                    text.extend(fresh);
+                }
+            }
+            (true, None) => {}
         }
         let text = self.search_text.as_deref().unwrap_or_default();
         self.search_state
             .update_matches_from_strings(text, raw_view);
         self.follow_search_match();
+    }
+
+    /// After data: the search text's lines from the first one it may have changed are to be
+    /// read again, all of them when the remote went to or from the alternate screen; shown
+    /// matches are found again on the next frame (MAX-218). Without a search open or kept, the
+    /// text is dropped, as big as the history
+    fn search_text_changed(&mut self, started_on_main: bool, lines_before: usize, evicted: usize) {
+        let on_main = !self.vt100_parser.screen().alternate_screen();
+        let searching = self.search_state.active || self.search_state.kept;
+        if started_on_main != on_main || !searching {
+            self.forget_search_text();
+            return;
+        }
+        self.search_stale |= self.search_state.shows_matches();
+        let Some(text) = self.search_text.as_mut() else {
+            return;
+        };
+        let evicted = evicted.min(text.len());
+        text.drain(..evicted);
+        let from = lines_before.saturating_sub(evicted);
+        let earlier = self.search_text_from.map(|f| f.saturating_sub(evicted));
+        self.search_text_from = Some(earlier.map_or(from, |f| f.min(from)));
+    }
+
+    /// Every line of the search text to read again (a new grid, a new size), the shown matches
+    /// found again on the next frame
+    fn forget_search_text(&mut self) {
+        self.search_text = None;
+        self.search_text_from = None;
+        self.search_stale |= self.search_state.shows_matches();
+    }
+
+    /// Once a frame: the matches shown found again when data came (MAX-218). The current one
+    /// stays the copy cursor's, unless the bar is open: then it follows the query as typed
+    pub fn refresh_stale_matches(&mut self, raw_view: RawSideView) {
+        if !self.search_stale {
+            return;
+        }
+        let typing = self.search_state.active;
+        self.update_search_matches(raw_view);
+        if !typing {
+            let cursor = self.copy_state.cursor;
+            self.search_state
+                .select_at((cursor.line_idx, cursor.char_idx));
+            // the view stays where it is: only typing jumps to a match
+            self.search_state.target_jump = None;
+        }
     }
 
     /// The copy cursor a search opened from copy mode starts from (MAX-215)
@@ -1078,6 +1159,32 @@ impl TerminalMode {
     #[inline]
     pub fn copy_state(&self) -> &CopyModeState {
         &self.copy_state
+    }
+
+    pub fn copy_state_mut(&mut self) -> &mut CopyModeState {
+        &mut self.copy_state
+    }
+
+    /// When world line `line` is blank, the last line above it with content (MAX-218)
+    fn last_line_with_content(&mut self, line: usize) -> Option<usize> {
+        let mut has_content = |idx| {
+            read_vt100_world_line_text(&mut self.vt100_parser, self.max_content_scrollback, idx)
+                .is_some_and(|text| !text.trim().is_empty())
+        };
+        if has_content(line) {
+            return None;
+        }
+        (0..line).rev().find(|&idx| has_content(idx))
+    }
+
+    /// The text of the copy cursor's line
+    pub fn copy_line_text(&mut self) -> String {
+        read_vt100_world_line_text(
+            &mut self.vt100_parser,
+            self.max_content_scrollback,
+            self.copy_state.cursor.line_idx,
+        )
+        .unwrap_or_default()
     }
 
     #[inline]

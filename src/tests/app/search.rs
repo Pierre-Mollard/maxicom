@@ -186,7 +186,8 @@ fn ascii_case_insensitive_finder() {
     assert_eq!(found, [1]);
 }
 
-/// Non-ASCII chars must match exactly: only ASCII case is folded (#18 behavior change).
+/// The ASCII finder folds only ASCII case (#18): `find_case_insensitive_iter` uses it for an
+/// ASCII query.
 /// How: 'é' matches 'é' but not 'É'.
 #[test]
 fn ascii_case_insensitive_finder_non_ascii_exact() {
@@ -198,6 +199,23 @@ fn ascii_case_insensitive_finder_non_ascii_exact() {
         find_ascii_case_insensitive_iter("CAFÉ".as_bytes(), "é".as_bytes()).count(),
         0
     );
+}
+
+/// MAX-218: a query with non-ASCII chars folds their case too, char by char, each match's
+/// start and end bytes in the haystack (a folded char can have another length); an ASCII
+/// query matches as the ASCII finder does.
+/// How: "é" in "CAFÉ café", "ÉTÉ" in "été", the Kelvin sign (3 bytes) for "k", "aa" in "aaaa".
+#[test]
+fn case_insensitive_finder_folds_non_ascii() {
+    let found: Vec<_> = find_case_insensitive_iter("CAFÉ café", "é").collect();
+    assert_eq!(found, [(3, 5), (9, 11)]);
+    let found: Vec<_> = find_case_insensitive_iter("x été", "ÉTÉ").collect();
+    assert_eq!(found, [(2, 7)]);
+    let found: Vec<_> = find_case_insensitive_iter("ok \u{212A}é", "Ké").collect();
+    assert_eq!(found, [(3, 8)]);
+    let found: Vec<_> = find_case_insensitive_iter("aaaa", "AA").collect();
+    assert_eq!(found, [(0, 2), (2, 4)]);
+    assert_eq!(find_case_insensitive_iter("abc", "").count(), 0);
 }
 
 /// Lines without a match are skipped and matches on later lines keep the right line index.

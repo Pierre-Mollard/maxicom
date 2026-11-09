@@ -11,10 +11,13 @@ you says so in an "Upgrading" section.
 ### Upgrading
 
 Run [`maxicom --write-config`](https://pierre-mollard.github.io/maxicom/settings.html#updating-the-files)
-to get the new keys in your `keymap.toml`: `/`, `?`, `n` and `N` in copy
+to get the new keys in your `keymap.toml`: `/`, `?`, `n`, `N` and `*` in copy
 mode, Up / Down in the search bar, and `Ctrl-a 0` / `Ctrl-a $`.
 `Ctrl-a ?` now searches backward and the help stays on `Ctrl-a z`; your file
 keeps `"?" = "help"` until you change it to `"?" = "enter-search-backward"`.
+A `left` status bar template saved in your `settings.toml` keeps the copy
+color while you search: move its `search?(...)` before `copy_raw?` and
+`copy?`, as in the [default](https://pierre-mollard.github.io/maxicom/status-bar.html#the-default).
 
 ### Added
 
@@ -30,6 +33,9 @@ keeps `"?" = "help"` until you change it to `"?" = "enter-search-backward"`.
   they go around the history's end. After Enter the matches stay lit and the
   search bar stays in the bottom border with its count, until you leave copy
   mode.
+- `*` in copy mode
+  [searches the word under the cursor](https://pierre-mollard.github.io/maxicom/search.html#searching-the-word-under-the-cursor)
+  (`search-word`, and `search-word-backward` with no key).
 - Up / Down in the search bar walk the searches you ran, among those
   starting with what you typed (`history-prev` / `history-next` in
   `[search_mode]`).
@@ -41,8 +47,13 @@ keeps `"?" = "help"` until you change it to `"?" = "enter-search-backward"`.
 - A search always runs in copy mode: `Ctrl-a /` and `Ctrl-a ?` enter it at
   the view, and Esc goes back to the live view.
 - `Ctrl-a ?` searches backward; the help is on `Ctrl-a z`.
-- The search bar is shorter: `[text] /error (3/12)`, `?` for a search
-  backward, `1000+` past the match cap, and `Enter Go` as Enter's hint.
+- The search bar is shorter: `/error (3/12)`, `?` for a search backward,
+  `[bytes]` dimmed before a byte search only, `1000+` past the match cap, and
+  `Enter Go` as Enter's hint. The count and the keys sit at the bar's right
+  end, so they don't move as you type.
+- The status bar reads `SRCH` while you type a search, on a light blue badge
+  (`search_indicator`, green before, like the marks' badge); `COPY` again
+  once Enter takes you to the match.
 - The search bar opens empty, the last search dimmed in it: Enter searches it
   again, and Esc keeps it for `n` and `N`. Typing no longer adds to the last
   search.
@@ -55,6 +66,24 @@ keeps `"?" = "help"` until you change it to `"?" = "enter-search-backward"`.
   of leaving the view panned where the cursor took it.
 - The pan arrows of the history's bottom border no longer draw over the
   search bar.
+- Without borders, the search bar takes a row of its own under the history
+  instead of covering its last row, which could hide the cursor or a match.
+  In terminal mode the remote isn't resized: the view scrolls one row.
+- In terminal mode with the status bar in the bottom border (the `border`
+  layout), the search bar no longer hides it: it takes a row of its own
+  above the border.
+- In terminal mode, copy mode no longer starts on an empty row when the
+  output ended with a newline (the bottom left of a full screen): it starts
+  on the last line with text.
+- In terminal mode, the matches of a search follow the screen when the device
+  redraws it (a clear, a full-screen app): the old ones go, the new ones are
+  lit.
+- In a full-screen app (the alternate screen), a search no longer finds a
+  copy of the screen's top line for each line of the history.
+- A text search ignores the case of every letter, not only ASCII ones:
+  `été` finds `ÉTÉ`.
+- A search from copy mode that found its match around the history's end
+  says so when you press Enter, as `n` and `N` do.
 
 ## [0.1.1] - 2026-11-08
 

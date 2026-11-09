@@ -541,11 +541,7 @@ impl LineMode {
         let gutter_width = settings.line_gutter_width();
 
         if let CopyModeAction::HandleKey(key) = action {
-            let display_text = self
-                .local_history
-                .get(self.copy_state.cursor.line_idx)
-                .map(|e| entry_display_text(e, display_mode))
-                .unwrap_or_default();
+            let display_text = self.copy_line_text(display_mode);
             if let Some(sub_action) = dispatch_copy_key_vi(
                 &mut self.vi_state_copymode,
                 &display_text,
@@ -752,7 +748,9 @@ impl LineMode {
             SearchModeAction::ClickAt(column) => {
                 click_input_at(&mut self.search_state.query, column);
             }
-            SearchModeAction::Repeat(_) | SearchModeAction::History(_) => {
+            SearchModeAction::Repeat(_)
+            | SearchModeAction::History(_)
+            | SearchModeAction::Word(_) => {
                 unreachable!("run by App, which has the toasts and the history")
             }
         }
@@ -988,6 +986,18 @@ impl LineMode {
     #[inline]
     pub fn copy_state(&self) -> &CopyModeState {
         &self.copy_state
+    }
+
+    pub fn copy_state_mut(&mut self) -> &mut CopyModeState {
+        &mut self.copy_state
+    }
+
+    /// The text of the copy cursor's line, as shown
+    pub fn copy_line_text(&self, display_mode: LineDisplayMode) -> String {
+        self.local_history
+            .get(self.copy_state.cursor.line_idx)
+            .map(|e| entry_display_text(e, display_mode).into_owned())
+            .unwrap_or_default()
     }
 
     #[inline]

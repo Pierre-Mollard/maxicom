@@ -126,7 +126,7 @@ pub fn render(
             .status_bar_area
             .is_some_and(|bar| bar.y + 1 == outer.bottom());
         let pan_in_bar = layout.status_bar_area.is_some() && status_bar.shows_pan();
-        let search_in_border = app.show_borders() && app.is_search_bar_shown();
+        let search_in_border = app.is_search_bar_shown() && !app.search_bar_row();
         if !bar_in_border && !pan_in_bar && !search_in_border {
             for bottom_title in monitor_bottom_title(app, theme) {
                 block = block.title_bottom(bottom_title);

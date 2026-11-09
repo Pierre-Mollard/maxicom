@@ -204,6 +204,7 @@ pub enum SearchModeAction {
     Query(String),
     Repeat(bool),
     History(bool),
+    Word(SearchDirection),
 }
 
 #[derive(Debug, PartialEq, Eq)]

@@ -9,6 +9,7 @@ use crate::app::selection::LogicalPosition;
 use crate::app::types::LogEntry;
 use crate::configs::LineDisplayMode;
 use crate::configs::settings::RawSideView;
+use crate::inputs::vi::find_word_bounds;
 
 pub const MAX_SEARCH_MATCHES: usize = 1000;
 /// The searches kept for Up / Down in the bar, as many as the command line's by default
@@ -105,7 +106,6 @@ impl SearchState {
                 None => Vec::new(),
             },
             SearchModeKind::Text => {
-                let needle = q_str.as_bytes();
                 let q_char_len = q_str.chars().count();
 
                 collect_matches(
@@ -117,8 +117,7 @@ impl SearchState {
                         let raw_bytes = entry.wire_bytes();
                         let display_text = entry_display_text(entry, display_mode);
                         let mut found =
-                            find_ascii_case_insensitive_iter(display_text.as_bytes(), needle)
-                                .peekable();
+                            find_case_insensitive_iter(&display_text, &q_str).peekable();
                         if found.peek().is_none() {
                             return Vec::new();
                         }
@@ -126,14 +125,11 @@ impl SearchState {
 
                         found
                             .enumerate()
-                            .map(|(occurrence, disp_byte_idx)| {
+                            .map(|(occurrence, (disp_byte_idx, disp_byte_end))| {
                                 let raw_byte_offset =
                                     map_disp_byte_to_raw(disp_byte_idx, &disp_map, raw_bytes.len());
-                                let raw_byte_end = map_disp_byte_to_raw(
-                                    disp_byte_idx + needle.len(),
-                                    &disp_map,
-                                    raw_bytes.len(),
-                                );
+                                let raw_byte_end =
+                                    map_disp_byte_to_raw(disp_byte_end, &disp_map, raw_bytes.len());
                                 SearchMatch {
                                     line_idx,
                                     col_idx: safe_byte_to_char_col(&display_text, disp_byte_idx),
@@ -142,7 +138,7 @@ impl SearchState {
                                     byte_offset: raw_byte_offset,
                                     byte_len: raw_byte_end
                                         .saturating_sub(raw_byte_offset)
-                                        .max(needle.len()),
+                                        .max(disp_byte_end - disp_byte_idx),
                                 }
                             })
                             .collect()
@@ -189,15 +185,15 @@ impl SearchState {
                     backward,
                     |line_idx| {
                         let line_text = &all_lines[line_idx];
-                        find_ascii_case_insensitive_iter(line_text.as_bytes(), q_str.as_bytes())
+                        find_case_insensitive_iter(line_text, &q_str)
                             .enumerate()
-                            .map(|(occurrence, byte_idx)| SearchMatch {
+                            .map(|(occurrence, (byte_idx, byte_end))| SearchMatch {
                                 line_idx,
                                 col_idx: safe_byte_to_char_col(line_text, byte_idx),
                                 occurrence_in_line: occurrence,
                                 match_char_len: q_char_len,
                                 byte_offset: byte_idx,
-                                byte_len: q_str.len(),
+                                byte_len: byte_end - byte_idx,
                             })
                             .collect()
                     },
@@ -246,6 +242,28 @@ impl SearchState {
             None if self.matches.is_empty() => None,
             None if forward => Some((0, true)),
             None => Some((self.matches.len() - 1, true)),
+        }
+    }
+
+    /// The current match is behind `origin` in the search's direction: reached around the
+    /// history's end (MAX-218)
+    pub fn went_around(&self, origin: LogicalPosition) -> bool {
+        let from = (origin.line_idx, origin.char_idx);
+        match (self.current_match_position(), self.direction) {
+            (Some(at), SearchDirection::Forward) => at <= from,
+            (Some(at), SearchDirection::Backward) => at >= from,
+            (None, _) => false,
+        }
+    }
+
+    /// The match at `from` the current one, else the next one in the search's direction, the
+    /// matches found again (MAX-218)
+    pub fn select_at(&mut self, from: (usize, usize)) {
+        let at = |m: &SearchMatch| (m.line_idx, m.col_idx);
+        let forward = self.direction == SearchDirection::Forward;
+        let found = self.matches.iter().position(|m| at(m) == from);
+        if let Some(idx) = found.or_else(|| self.match_from(from, forward).map(|(idx, _)| idx)) {
+            self.current_match = idx;
         }
     }
 
@@ -417,6 +435,19 @@ impl SearchState {
     }
 }
 
+/// The word `*` searches (MAX-218): the one under char `cursor`, as a double-click selects it
+/// (vi `iw`), or on a blank the next one on the line; its first char and its text
+pub fn word_at(text: &str, cursor: usize) -> Option<(usize, String)> {
+    let chars: Vec<char> = text.chars().collect();
+    let at = cursor
+        + chars
+            .get(cursor..)?
+            .iter()
+            .position(|c| !c.is_whitespace())?;
+    let (start, end) = find_word_bounds(text, at, false, true);
+    Some((start, chars[start..end].iter().collect()))
+}
+
 /// The matches of every line, sorted by line, up to MAX_SEARCH_MATCHES. The lines are read
 /// from `start` in the search's direction, around the history's end, so the cap keeps the
 /// matches a search reaches first
@@ -573,6 +604,40 @@ pub fn find_ascii_case_insensitive_iter<'a>(
         }
         None
     })
+}
+
+/// Case-insensitive matches of `needle`, non-overlapping, as start and end bytes in
+/// `haystack` (MAX-218). An ASCII query takes the ASCII finder; one with other chars compares
+/// char by char, their lowercase forms equal, so `é` finds `É` too
+pub fn find_case_insensitive_iter<'a>(
+    haystack: &'a str,
+    needle: &'a str,
+) -> Box<dyn Iterator<Item = (usize, usize)> + 'a> {
+    if needle.is_ascii() {
+        let found = find_ascii_case_insensitive_iter(haystack.as_bytes(), needle.as_bytes());
+        return Box::new(found.map(move |at| (at, at + needle.len())));
+    }
+    let same = |a: char, b: char| a == b || a.to_lowercase().eq(b.to_lowercase());
+    let mut rest = haystack.char_indices();
+    Box::new(std::iter::from_fn(move || {
+        loop {
+            let (start, _) = rest.clone().next()?;
+            let mut chars = rest.clone();
+            let mut end = start;
+            let matched = needle.chars().all(|n| match chars.next() {
+                Some((at, c)) if same(c, n) => {
+                    end = at + c.len_utf8();
+                    true
+                }
+                _ => false,
+            });
+            if matched {
+                rest = chars;
+                return Some((start, end));
+            }
+            rest.next();
+        }
+    }))
 }
 
 #[cfg(test)]

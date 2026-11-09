@@ -679,7 +679,8 @@ pub struct TerminalModeConfig {
     /// Scrollback lines kept by the emulator. Biggest memory user of the app: vt100 stores
     /// every line as a full row of 32 B cells, even blank ones, so memory is about
     /// `history_size × cols × 32 B` (100000 × 80 cols ≈ 256 MB, × 250 cols ≈ 800 MB), used only
-    /// as the rows come, and a search keeps a copy of their text until the next data (MAX-214).
+    /// as the rows come, and a search keeps a copy of their text while it's open or its matches
+    /// are kept (MAX-214).
     /// With `GrowOnly` the emulator keeps the widest width it has seen, and new lines use it
     /// even after the window shrinks (rows already in scrollback keep their own width)
     pub history_size: usize,
@@ -736,7 +737,7 @@ impl Default for StatusBarConfig {
     fn default() -> Self {
         Self {
             left: block_lines(&[
-                "[ {mode} ](prefix?(bg=secondary fg=black bold):mark?(bg=good fg=black bold):copy_raw?(bg=selection_raw fg=black bold):copy?(bg=selection fg=black bold):search?(bg=search fg=black bold):(fg=primary bold))",
+                "[ {mode} ](prefix?(bg=secondary fg=black bold):mark?(bg=good fg=black bold):search?(bg=search fg=black bold):copy_raw?(bg=selection_raw fg=black bold):copy?(bg=selection fg=black bold):(fg=primary bold))",
                 "[|](muted prio=3)",
                 "[ {port}](link prio=3)",
                 "[ |](muted prio=3)",

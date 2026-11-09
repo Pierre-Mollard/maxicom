@@ -4,7 +4,6 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Clear, Paragraph},
 };
 
 use std::fmt::Write;
@@ -200,7 +199,8 @@ pub fn render_search_bar(
     area: Rect,
     theme: &ThemeConfig,
 ) -> (Vec<ClickTarget>, Option<PromptMap>) {
-    let has_borders = app.show_borders();
+    // in the history's bottom border, or on the row the layout leaves it (MAX-218)
+    let in_border = !app.search_bar_row();
     let is_terminal = app.settings().mode == Mode::Terminal;
 
     let s = if is_terminal {
@@ -222,11 +222,6 @@ pub fn render_search_bar(
         Style::default().fg(theme.palette.text_muted)
     };
 
-    let kind_str = match s.mode_kind {
-        SearchModeKind::Text => "text",
-        SearchModeKind::RawBytes => "byte",
-    };
-
     // as typed in vi: `/` forward, `?` backward, the query right after (MAX-218)
     let label = match s.direction {
         SearchDirection::Forward => " /",
@@ -238,27 +233,26 @@ pub fn render_search_bar(
         count => count.to_string(),
     };
 
+    let muted = Style::default().fg(theme.palette.text_muted);
+    let typed = Style::default()
+        .fg(theme.palette.secondary)
+        .add_modifier(Modifier::BOLD);
     // an empty query shows the last one dimmed, which Enter searches again (MAX-218)
     let query_span = if query_str.is_empty() && !s.last_query.is_empty() {
-        Span::styled(
-            format!("{} ", s.last_query),
-            Style::default().fg(theme.palette.text_muted),
-        )
+        Span::styled(format!("{} ", s.last_query), muted)
     } else {
-        Span::styled(
-            format!("{} ", query_str),
-            Style::default()
-                .fg(theme.palette.secondary)
-                .add_modifier(Modifier::BOLD),
-        )
+        Span::styled(format!("{} ", query_str), typed)
     };
 
-    let mut spans = vec![
-        Span::styled(format!(" [{}]", kind_str), *theme.search.search_indicator),
-        Span::styled(label, *theme.search.search_indicator),
-        query_span,
-        Span::styled(format!("({current_pos}/{count})"), stats_style),
-    ];
+    // a text search, the default, has no tag; a byte search's is dimmed (MAX-218)
+    let mut spans = Vec::with_capacity(6);
+    if s.mode_kind == SearchModeKind::RawBytes {
+        spans.push(Span::styled(" [bytes]", muted));
+    }
+    spans.push(Span::styled(label, typed));
+    let query_col: usize = spans.iter().map(Span::width).sum();
+    spans.push(query_span);
+    let counter = Span::styled(format!("({current_pos}/{count})"), stats_style);
 
     // one key per action, like the popups; the hints that don't fit whole are left out, the
     // least needed ones first. A click on a key runs its action, on a label the first one
@@ -301,31 +295,37 @@ pub fn render_search_bar(
             ),
         ]
     };
-    // the bar starts 2 columns in and keeps a space before the corner with borders
-    let room = if has_borders {
+    // in the border the bar starts 2 columns in and keeps a space before the corner
+    let room = if in_border {
         area.width.saturating_sub(4)
     } else {
         area.width
     } as usize;
-    let used: usize = spans.iter().map(|span| span.width()).sum::<usize>() + 3;
+    // the counter and the hints at the bar's right end, so typing doesn't move them; after
+    // the query when it's too long for that (MAX-218). The hints that fit there are shown
+    let left_width: usize = spans.iter().map(Span::width).sum();
+    let used = left_width + counter.width() + 4;
     let (hints, spots) = (0..=hints.len())
         .rev()
         .map(|count| hint_spans(hints[..count].iter().cloned(), theme))
         .find(|(line, _)| line.width() + used <= room)
         .unwrap_or_default();
-    // where the hints start in the bar, after the two spaces before them
-    let hints_col = spans.iter().map(|span| span.width()).sum::<usize>() as u16 + 2;
+    // a space before the counter, off the border line
+    let counter_width = counter.width() + 1;
+    let mut right = vec![Span::raw(" "), counter];
     if !hints.spans.is_empty() {
-        spans.push(Span::raw("  "));
-        spans.extend(hints.spans);
-        spans.push(Span::raw(" "));
+        right.push(Span::raw("  "));
+        right.extend(hints.spans);
     }
-    let line = Line::from(spans);
-    let (bar_x, bar_y) = if has_borders {
-        (area.x + 2, area.y + area.height)
-    } else {
-        (area.x, area.y + area.height.saturating_sub(1))
-    };
+    right.push(Span::raw(" "));
+    let right_width: usize = right.iter().map(Span::width).sum();
+    let right_col = room.saturating_sub(right_width).max(left_width);
+    // where the hints start in the bar, after the counter and the two spaces before them
+    let hints_col = (right_col + counter_width + 2) as u16;
+
+    // under the view: on its bottom border, or the row the layout leaves it (MAX-218)
+    let bar_y = area.y + area.height;
+    let bar_x = if in_border { area.x + 2 } else { area.x };
     let targets = spots
         .into_iter()
         .map(|(col, width, action)| ClickTarget {
@@ -335,38 +335,27 @@ pub fn render_search_bar(
         })
         .collect();
     // the query, right after the kind and the label, and a column past it for its end
-    let query_x = bar_x + line.spans[..2].iter().map(Span::width).sum::<usize>() as u16;
+    let query_x = bar_x + query_col as u16;
     let query = PromptMap {
         text_area: Rect::new(query_x, bar_y, query_str.width() as u16 + 1, 1),
         scroll: 0,
     };
 
-    let (cursor_x, cursor_y) = if has_borders {
-        let border_y = area.y + area.height;
-        let start_x = area.x + 2;
-
-        let buf = frame.buffer_mut();
-        let mut cur_x = start_x;
-        for span in &line.spans {
-            buf.set_string(cur_x, border_y, &span.content, span.style);
-            cur_x += span.content.chars().count() as u16;
+    // cut at the bar's end; in the border, the border line shows between the two parts
+    let bar_end = bar_x as usize + room;
+    let buf = frame.buffer_mut();
+    for (col, part) in [(0, &spans), (right_col, &right)] {
+        let mut x = bar_x as usize + col;
+        for span in part.iter() {
+            let width = bar_end.saturating_sub(x);
+            if width == 0 {
+                break;
+            }
+            buf.set_stringn(x as u16, bar_y, &span.content, width, span.style);
+            x += span.width();
         }
-
-        (query_x + visual_cursor, border_y)
-    } else {
-        let bottom_y = area.y + area.height.saturating_sub(1);
-        let search_area = Rect {
-            x: area.x,
-            y: bottom_y,
-            width: area.width,
-            height: 1,
-        };
-
-        frame.render_widget(Clear, search_area);
-        frame.render_widget(Paragraph::new(line), search_area);
-
-        (query_x + visual_cursor, bottom_y)
-    };
+    }
+    let (cursor_x, cursor_y) = (query_x + visual_cursor, bar_y);
 
     // kept in copy mode, its query isn't typed in: no cursor, no click in it
     if !s.active {

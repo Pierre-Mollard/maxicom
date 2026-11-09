@@ -898,6 +898,24 @@ fn view_scrolled_inside_the_last_entry_stays_put() {
     assert_eq!(binary_rows(&h.draw()), before);
 }
 
+/// A row with each run of blanks and border line as one space: the search bar reads as
+/// `/hit (1/3) n/N Match`, its counter and hints at the right end (MAX-218)
+fn squeeze(row: &str) -> String {
+    let mut out = String::with_capacity(row.len());
+    for c in row.chars() {
+        let blank = c == ' ' || c == '─';
+        if !(blank && out.ends_with(' ')) {
+            out.push(if blank { ' ' } else { c });
+        }
+    }
+    out
+}
+
+/// Some row holds `text` once squeezed: the search bar's query and counter together
+fn has_bar(rows: &[String], text: &str) -> bool {
+    rows.iter().any(|row| squeeze(row).contains(text))
+}
+
 fn search(h: &mut Harness, query: &str) {
     h.app.update(Action::Search(SearchModeAction::Start(
         SearchDirection::Forward,
@@ -2266,8 +2284,8 @@ fn search_bar_hint_follows_the_keymap() {
     }
 
     // a narrow bar shows the hints that fit whole, Match first: Esc Exit would end on
-    // column 49
-    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 47, 10);
+    // column 43
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 40, 10);
     h.feed(b"hi there\r\n");
     search(&mut h, "hi");
     let rows = h.draw();
@@ -5032,8 +5050,11 @@ fn copy_mode_from_search_centers_a_scrolled_away_match() {
         assert_eq!(first_number(&rows[..height], "line "), 0, "{mode:?}");
         h.app.update(Action::Search(SearchModeAction::Confirm));
         let rows = h.draw();
-        assert_eq!(first_number(&rows[..height], "line "), 50 - height / 2);
-        assert_eq!(cursor_cell(&mut h).1 as usize, height / 2, "{mode:?}");
+        // the kept bar takes the view's last row (MAX-218): 9 rows in line mode, 10 in
+        // terminal mode, which centers on the upper of the two middle rows
+        let middle = (height - 2) / 2;
+        assert_eq!(first_number(&rows[..height], "line "), 50 - middle);
+        assert_eq!(cursor_cell(&mut h).1 as usize, middle, "{mode:?}");
     }
 }
 
@@ -5654,10 +5675,10 @@ fn status_bar_in_the_tx_border() {
 }
 
 /// MAX-135: in terminal mode, the `border` layout draws the status bar in the history's
-/// bottom border, without the pan arrows; an open search takes the border, and the bar
-/// and its clicks come back when it closes.
-/// How: terminal mode with `border`, the last row and a click on `≡`, before, during and
-/// after a search.
+/// bottom border, without the pan arrows. MAX-218: a search keeps it there, the search bar
+/// on the history's last row above it, and the remote isn't resized.
+/// How: terminal mode with `border`, the last rows before, during and after a search, then
+/// a click on `≡`.
 #[test]
 fn status_bar_in_the_history_border() {
     use crate::configs::StatusBarLayout;
@@ -5672,14 +5693,20 @@ fn status_bar_in_the_history_border() {
     assert!(bottom.ends_with(" ─┘"), "{bottom:?}");
     let settings = status_cell(&rows, "≡");
 
+    let grid = h.app.terminal_mode.get_vt100_size();
+
     h.app.update(Action::Search(SearchModeAction::Start(
         SearchDirection::Forward,
     )));
     let rows = h.draw();
-    assert!(rows[23].contains("[text] /"), "{:?}", rows[23]);
-    assert!(!rows[23].contains("TERM "), "{:?}", rows[23]);
-    click(&mut h, settings);
-    assert!(!matches!(h.app.overlay(), Some(Overlay::Settings(_))));
+    assert!(
+        squeeze(&rows[22]).starts_with("│ / (0/0)"),
+        "{:?}",
+        rows[22]
+    );
+    assert!(rows[23].starts_with("└─ SRCH "), "{:?}", rows[23]);
+    assert_eq!(status_cell(&rows, "≡"), settings);
+    assert_eq!(h.app.terminal_mode.get_vt100_size(), grid);
 
     h.app.update(Action::Search(SearchModeAction::Cancel));
     let rows = h.draw();
@@ -6898,7 +6925,7 @@ fn scrollbar_mouse() {
 /// the text; a click on the bar's label leaves it. Without borders in line mode, and in the
 /// history's bottom border in terminal mode.
 /// How: "hello world" pasted in the query, clicks on "world", past its end and on
-/// "[text]", the cursor's index and its cell on screen.
+/// the "/" before it, the cursor's index and its cell on screen.
 #[test]
 fn mouse_click_in_the_search_query() {
     for (mode, borders) in [(Mode::Line, false), (Mode::Terminal, true)] {
@@ -6930,7 +6957,7 @@ fn mouse_click_in_the_search_query() {
 
         click(&mut h, (world.0 + 5, world.1));
         assert_eq!(cursor(&h), 11, "{mode:?}");
-        click(&mut h, cell_of(&rows, "[text]"));
+        click(&mut h, cell_of(&rows, "/hello"));
         assert_eq!(cursor(&h), 11, "{mode:?}");
         assert!(h.app.is_search_active(), "{mode:?}");
     }
@@ -7618,10 +7645,10 @@ fn backward_search_bar() {
         .update(Action::Search(SearchModeAction::Paste("hit".to_string())));
     let rows = h.draw();
     let (y, bar) = (rows.iter().enumerate())
-        .find(|(_, row)| row.contains("[text] ?"))
+        .find(|(_, row)| row.contains("?hit"))
         .unwrap();
-    assert!(bar.contains("[text] ?hit (2/2)"), "{bar:?}");
-    let label_end = bar.find("[text] ?").unwrap() + "[text] ?".len();
+    assert!(squeeze(bar).contains("?hit (2/2)"), "{bar:?}");
+    let label_end = bar.find("?hit").unwrap() + "?".len();
     let query_end = bar[..label_end].chars().count() + "hit".len();
     let cursor = h.terminal.get_cursor_position().unwrap();
     assert_eq!((cursor.x as usize, cursor.y as usize), (query_end, y));
@@ -7638,8 +7665,14 @@ fn search_bar_kept_in_copy_mode() {
     search(&mut h, "hit");
     h.app.update(Action::Search(SearchModeAction::Confirm));
     let rows = h.draw();
-    let bar = rows.iter().find(|row| row.contains("[text]")).unwrap();
-    assert!(bar.contains("[text] /hit (1/3)"), "{bar:?}");
+    let bar = rows
+        .iter()
+        .find(|row| squeeze(row).contains("/hit ("))
+        .unwrap();
+    assert!(
+        squeeze(bar).contains("/hit (1/3) n/N Match · Esc Exit · / Search · ? Back"),
+        "{bar:?}"
+    );
     assert!(
         bar.contains("n/N Match · Esc Exit · / Search · ? Back"),
         "{bar:?}"
@@ -7648,11 +7681,11 @@ fn search_bar_kept_in_copy_mode() {
 
     click(&mut h, cell_of(&rows, "n/N"));
     let rows = h.draw();
-    assert!(has(&rows, "hit (2/3)"), "{rows:#?}");
+    assert!(has_bar(&rows, "hit (2/3)"), "{rows:#?}");
     assert_eq!(h.app.line_mode.copy_state().cursor.line_idx, 2);
 
     h.app.update(Action::CopyMode(CopyModeAction::Exit));
-    assert!(!has(&h.draw(), "[text]"));
+    assert!(!has_bar(&h.draw(), "/hit ("));
 }
 
 /// The view's pan, in line or terminal mode (MAX-217)
@@ -7758,19 +7791,21 @@ fn search_bar_counter_at_the_cap() {
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
     h.feed(&b"a\r\n".repeat(crate::app::search::MAX_SEARCH_MATCHES + 5));
     search(&mut h, "a");
-    assert!(has(&h.draw(), "[text] /a (1/1000+)"));
+    assert!(has_bar(&h.draw(), "/a (1/1000+)"));
 }
 
 /// MAX-218: in terminal mode on a screen wider than the view, the border's pan arrows stay
 /// out of the search bar, open or kept in copy mode, and come back when it closes.
-/// How: a 120 columns screen in an 80 columns view with borders and the status bar in the
-/// bottom border (its pan block hidden under the bar), a search, Enter, an exit.
+/// How: a 120 columns screen in an 80 columns view with borders and no status bar (the
+/// arrows in the history's bottom border, which the search bar takes), a search, Enter, an
+/// exit.
 #[test]
 fn pan_arrows_stay_out_of_the_search_bar() {
     let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
         s.mode = Mode::Terminal;
         s.terminal_mode.cols = 120;
         s.ui.show_borders = true;
+        s.ui.show_status_bar = false;
     });
     let mut line = "0123456789".repeat(11).into_bytes();
     line.extend_from_slice(b" hit\r\n");
@@ -7781,13 +7816,13 @@ fn pan_arrows_stay_out_of_the_search_bar() {
     search(&mut h, "hit");
     let open = bottom(&mut h);
     assert!(
-        open.contains("[text] /hit") && !open.contains('▶'),
+        squeeze(&open).contains("/hit (") && !open.contains('▶'),
         "{open:?}"
     );
     h.app.update(Action::Search(SearchModeAction::Confirm));
     let kept = bottom(&mut h);
     assert!(
-        kept.contains("[text] /hit") && !kept.contains('◀'),
+        squeeze(&kept).contains("/hit (") && !kept.contains('◀'),
         "{kept:?}"
     );
     assert!(!kept.contains('▶'), "{kept:?}");
@@ -7808,9 +7843,363 @@ fn search_bar_shows_the_last_query() {
         SearchDirection::Forward,
     )));
     let rows = h.draw();
-    assert!(has(&rows, "[text] /hit (0/0)"), "{rows:#?}");
+    assert!(has_bar(&rows, "/hit (0/0)"), "{rows:#?}");
     let (x, y) = cell_of(&rows, "/hit");
     assert_eq!(cursor_cell(&mut h), (x + 1, y));
     let cell = &h.terminal.backend().buffer()[(x + 1, y)];
     assert_eq!(cell.fg, h.theme.palette.text_muted);
+}
+
+/// MAX-218: without borders the search bar takes a row of its own under the view, so a match
+/// on the last row stays shown above it; in terminal mode the grid keeps its size (the remote
+/// isn't resized), the view pans one row to show its bottom row.
+/// How: lines with "hit" last (terminal mode: on the grid's bottom row, the cursor after it),
+/// a search for it, then the bar closed.
+#[test]
+fn search_bar_takes_its_own_row_without_borders() {
+    for mode in [Mode::Line, Mode::Terminal] {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| s.mode = mode);
+        let mut text: Vec<u8> = (0..30)
+            .flat_map(|i| format!("line {i}\r\n").into_bytes())
+            .collect();
+        match mode {
+            Mode::Line => {
+                text.extend_from_slice(b"hit\r\n");
+                h.feed(&text);
+            }
+            Mode::Terminal => {
+                text.extend_from_slice(b"hit");
+                h.app.terminal_mode.process_rx(TextEncoding::Utf8, &text);
+            }
+        }
+        h.draw();
+        let grid = h.app.terminal_mode.get_vt100_size();
+
+        search(&mut h, "hit");
+        let rows = h.draw();
+        let bar = rows.iter().position(|r| squeeze(r).contains("/hit ("));
+        let shown = rows
+            .iter()
+            .position(|r| r.contains("hit") && !squeeze(r).contains("/hit ("));
+        assert!(bar.is_some() && shown.is_some(), "{mode:?} {rows:#?}");
+        assert_eq!(shown.unwrap() + 1, bar.unwrap(), "{mode:?} {rows:#?}");
+        assert_eq!(h.app.terminal_mode.get_vt100_size(), grid, "{mode:?}");
+
+        h.app.update(Action::Search(SearchModeAction::Cancel));
+        h.app.update(Action::CopyMode(CopyModeAction::Exit));
+        let rows = h.draw();
+        assert!(!has_bar(&rows, "/hit ("), "{mode:?} {rows:#?}");
+        assert_eq!(h.app.terminal_mode.get_vt100_size(), grid, "{mode:?}");
+    }
+}
+
+/// MAX-218: a text search shows no kind tag, a byte search `[bytes]` dimmed; the `/` takes
+/// the query's color.
+/// How: a search for "hit", its `/` cell, then Tab and the tag's cell.
+#[test]
+fn search_bar_kind_tag_only_for_bytes() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+    h.feed(b"hit one\r\n");
+    search(&mut h, "hit");
+    let rows = h.draw();
+    assert!(
+        has_bar(&rows, " /hit (1/1)") && !has(&rows, "[bytes]"),
+        "{rows:#?}"
+    );
+    let slash = cell_of(&rows, "/hit");
+    let cell = &h.terminal.backend().buffer()[slash];
+    assert_eq!(cell.fg, h.theme.palette.secondary);
+
+    h.app.update(Action::Search(SearchModeAction::Kind));
+    let rows = h.draw();
+    assert!(has(&rows, " [bytes] /"), "{rows:#?}");
+    let tag = cell_of(&rows, "[bytes]");
+    let cell = &h.terminal.backend().buffer()[tag];
+    assert_eq!(cell.fg, h.theme.palette.text_muted);
+}
+
+/// MAX-218: `*` in copy mode searches the word under the cursor as plain text, from the
+/// word's start: the matches kept as after Enter, the word in the search history, `n` going
+/// on; on a blank the next word of the line is taken, on a line without one nothing but a
+/// toast. `search-word-backward` goes the other way. In both modes.
+/// How: "alpha err one", an empty line, "error two", "err three"; copy mode on line 0, `w` to
+/// "err", `*`, `n`; then on the blank before "err"; then `search-word-backward` from line 3;
+/// then on the empty line.
+#[test]
+fn star_searches_the_word_under_the_cursor() {
+    use crate::configs::KeyBindingCopyAction;
+    for mode in [Mode::Line, Mode::Terminal] {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| s.mode = mode);
+        let text = b"alpha err one\r\n\r\nerror two\r\nerr three\r\n";
+        match mode {
+            Mode::Line => h.feed(text),
+            Mode::Terminal => h.app.terminal_mode.process_rx(TextEncoding::Utf8, text),
+        }
+        h.draw();
+        let cursor = |h: &Harness| {
+            let c = match mode {
+                Mode::Line => h.app.line_mode.copy_state().cursor,
+                Mode::Terminal => h.app.terminal_mode.copy_state().cursor,
+            };
+            (c.line_idx, c.char_idx)
+        };
+        let copy = |h: &mut Harness, action| {
+            h.app.update(Action::CopyMode(action));
+        };
+        let star = |h: &mut Harness, action: KeyBindingCopyAction| {
+            h.app.update(action.to_action());
+            h.draw()
+        };
+
+        copy(&mut h, CopyModeAction::Enter);
+        copy(&mut h, CopyModeAction::JumpToTop);
+        copy(&mut h, CopyModeAction::NextWord);
+        copy(&mut h, CopyModeAction::MoveRight);
+        assert_eq!(cursor(&h), (0, 7), "{mode:?}");
+        let rows = star(&mut h, KeyBindingCopyAction::SearchWord);
+        assert_eq!(cursor(&h), (2, 0), "{mode:?} plain text: error");
+        assert!(has_bar(&rows, "/err (2/3)"), "{mode:?} {rows:#?}");
+        assert!(!h.app.is_search_active() && h.app.is_copy_mode_active());
+        copy(&mut h, CopyModeAction::MoveDown);
+        h.app.update(KeyBindingCopyAction::SearchNext.to_action());
+        assert_eq!(cursor(&h), (0, 6), "{mode:?} n goes on, around the end");
+
+        // on the blank before "err": that word
+        copy(&mut h, CopyModeAction::MoveLeft);
+        assert_eq!(cursor(&h), (0, 5), "{mode:?}");
+        star(&mut h, KeyBindingCopyAction::SearchWord);
+        assert_eq!(cursor(&h), (2, 0), "{mode:?}");
+
+        // backward from the last line's "err": the one above, "error"
+        copy(&mut h, CopyModeAction::MoveDown);
+        assert_eq!(cursor(&h), (3, 0), "{mode:?}");
+        star(&mut h, KeyBindingCopyAction::SearchWordBackward);
+        assert_eq!(cursor(&h), (2, 0), "{mode:?}");
+        assert!(has_bar(&h.draw(), "?err ("), "{mode:?}");
+
+        // on the empty line: no word, a toast, the search kept
+        copy(&mut h, CopyModeAction::MoveUp);
+        assert_eq!(cursor(&h), (1, 0), "{mode:?}");
+        let rows = star(&mut h, KeyBindingCopyAction::SearchWord);
+        assert!(has(&rows, "No word under the cursor"), "{mode:?} {rows:#?}");
+        assert!(has_bar(&rows, "?err ("), "{mode:?} {rows:#?}");
+        assert_eq!(cursor(&h), (1, 0), "{mode:?}");
+
+        // the word is in the search history: Up in the bar
+        h.app.update(KeyBindingCopyAction::Search.to_action());
+        h.app
+            .update(Action::Search(SearchModeAction::History(true)));
+        let query = match mode {
+            Mode::Line => h.app.line_mode.search().query_str().to_string(),
+            Mode::Terminal => h.app.terminal_mode.search().query_str().to_string(),
+        };
+        assert_eq!(query, "err", "{mode:?}");
+    }
+}
+
+/// MAX-218: from the live view, terminal copy mode starts on the remote cursor, unless its
+/// row is blank (output ending in a newline, no prompt): then at the start of the last row
+/// with content, also once the screen is full and that row went up into the scrollback.
+/// `Ctrl-a ?` from there finds the newest line.
+/// How: "one\r\ntwo\r\n", 30 lines each ending in a newline, a prompt "$ "; copy mode in
+/// each; then a backward search for "two".
+#[test]
+fn terminal_copy_mode_enters_on_the_last_row_with_content() {
+    let enter = |text: &[u8]| {
+        let mut h =
+            Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| s.mode = Mode::Terminal);
+        h.app.terminal_mode.process_rx(TextEncoding::Utf8, text);
+        h.draw();
+        h.app.update(Action::CopyMode(CopyModeAction::Enter));
+        let c = h.app.terminal_mode.copy_state().cursor;
+        (h, (c.line_idx, c.char_idx))
+    };
+    assert_eq!(enter(b"one\r\ntwo\r\n").1, (1, 0));
+    assert_eq!(enter(b"one\r\ntwo\r\n$ ").1, (2, 2));
+
+    let full: Vec<u8> = (0..30)
+        .flat_map(|i| format!("line {i}\r\n").into_bytes())
+        .collect();
+    let (mut h, (line, col)) = enter(&full);
+    assert_eq!(col, 0);
+    let rows = h.draw();
+    let (x, y) = cell_of(&rows, "line 29");
+    assert_eq!(cursor_cell(&mut h), (x, y), "{line} {rows:#?}");
+
+    let mut h =
+        Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| s.mode = Mode::Terminal);
+    h.app
+        .terminal_mode
+        .process_rx(TextEncoding::Utf8, b"one two\r\ntwo\r\n");
+    h.draw();
+    h.app.update(Action::Search(SearchModeAction::Start(
+        SearchDirection::Backward,
+    )));
+    h.app
+        .update(Action::Search(SearchModeAction::Paste("two".to_string())));
+    let c = h.app.terminal_mode.copy_state().cursor;
+    assert_eq!((c.line_idx, c.char_idx), (1, 0));
+}
+
+/// The (line, column) of the terminal search's matches
+fn terminal_matches(h: &Harness) -> Vec<(usize, usize)> {
+    let s = h.app.terminal_mode.search();
+    s.matches.iter().map(|m| (m.line_idx, m.col_idx)).collect()
+}
+
+/// The world line of the terminal screen's top row
+fn screen_top(h: &Harness) -> usize {
+    let tm = &h.app.terminal_mode;
+    tm.total_timeline_len() - tm.get_vt100_size().0 as usize
+}
+
+/// MAX-218: in terminal mode the matches kept after Enter follow the screen when it's
+/// redrawn: a cleared screen's matches go, the new text's come, and the current match stays
+/// the one the copy cursor is on.
+/// How: 30 lines, "hit one" and "hit two" on the screen, a search confirmed; the screen
+/// cleared and "x hit" written on its top row; then `n` and a line with "hit" added.
+#[test]
+fn terminal_kept_matches_follow_a_redrawn_screen() {
+    use crate::configs::KeyBindingCopyAction;
+    let mut h =
+        Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| s.mode = Mode::Terminal);
+    let mut text: Vec<u8> = (0..30)
+        .flat_map(|i| format!("line {i}\r\n").into_bytes())
+        .collect();
+    text.extend_from_slice(b"hit one\r\nhit two\r\n");
+    h.app.terminal_mode.process_rx(TextEncoding::Utf8, &text);
+    h.draw();
+    let top = screen_top(&h);
+    search(&mut h, "hit");
+    h.app.update(Action::Search(SearchModeAction::Confirm));
+    h.draw();
+    assert_eq!(terminal_matches(&h).len(), 2);
+
+    h.app
+        .terminal_mode
+        .process_rx(TextEncoding::Utf8, b"\x1b[2J\x1b[Hx hit");
+    let rows = h.draw();
+    assert_eq!(terminal_matches(&h), [(top, 2)], "{rows:#?}");
+    assert!(has_bar(&rows, "/hit (1/1)"), "{rows:#?}");
+
+    // a new match below: the counter stays on the cursor's
+    h.app.update(KeyBindingCopyAction::SearchNext.to_action());
+    h.app
+        .terminal_mode
+        .process_rx(TextEncoding::Utf8, b"\r\nhit three");
+    let rows = h.draw();
+    assert_eq!(terminal_matches(&h), [(top, 2), (top + 1, 0)], "{rows:#?}");
+    assert!(has_bar(&rows, "/hit (1/2)"), "{rows:#?}");
+}
+
+/// MAX-218: on the alternate screen (a full-screen app) a search finds only the screen's
+/// matches, not copies of its top row for each scrollback line, and they follow its redraws.
+/// How: 30 lines, then the alternate screen with "hit top"; a search, Enter, then the app
+/// redraws with "hit" on its second row.
+#[test]
+fn terminal_search_on_the_alternate_screen() {
+    let mut h =
+        Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| s.mode = Mode::Terminal);
+    let text: Vec<u8> = (0..30)
+        .flat_map(|i| format!("line {i}\r\n").into_bytes())
+        .collect();
+    h.app.terminal_mode.process_rx(TextEncoding::Utf8, &text);
+    h.app.terminal_mode.process_rx(
+        TextEncoding::Utf8,
+        b"\x1b[?1049h\x1b[2J\x1b[Hhit top\r\nsecond",
+    );
+    h.draw();
+    let top = screen_top(&h);
+    search(&mut h, "hit");
+    h.draw();
+    assert_eq!(terminal_matches(&h), [(top, 0)]);
+
+    h.app.update(Action::Search(SearchModeAction::Confirm));
+    h.app
+        .terminal_mode
+        .process_rx(TextEncoding::Utf8, b"\x1b[2J\x1b[Hnew stuff\r\nhit later");
+    let rows = h.draw();
+    assert_eq!(terminal_matches(&h), [(top + 1, 0)], "{rows:#?}");
+}
+
+/// MAX-218: a search confirmed on a match it reached around the history's end says so, as
+/// `n` does; not from the live view, where `/` goes to the oldest match on purpose.
+/// How: "hit" on the first of three lines; copy mode on the last, `/hit` Enter; `?hit`
+/// Enter from that match; then `Ctrl-a /` from the live view.
+#[test]
+fn first_search_says_when_it_went_around() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+    h.feed(b"hit a\r\nb\r\nc\r\n");
+    h.draw();
+    h.app.update(Action::CopyMode(CopyModeAction::Enter));
+    h.app.update(Action::CopyMode(CopyModeAction::JumpToBottom));
+    search(&mut h, "hit");
+    h.app.update(Action::Search(SearchModeAction::Confirm));
+    let rows = h.draw();
+    assert!(has(&rows, "Search hit the end, went on"), "{rows:#?}");
+    assert_eq!(h.app.line_mode.copy_state().cursor.line_idx, 0);
+    h.app.update(Action::App(AppAction::DismissToast(None)));
+
+    // backward from the match itself: the only one, behind it the other way
+    h.app.update(Action::Search(SearchModeAction::Start(
+        SearchDirection::Backward,
+    )));
+    h.app
+        .update(Action::Search(SearchModeAction::Paste("hit".to_string())));
+    h.app.update(Action::Search(SearchModeAction::Confirm));
+    let rows = h.draw();
+    assert!(has(&rows, "Search hit the top, went on"), "{rows:#?}");
+    h.app.update(Action::App(AppAction::DismissToast(None)));
+
+    h.app.update(Action::CopyMode(CopyModeAction::Exit));
+    search(&mut h, "hit");
+    h.app.update(Action::Search(SearchModeAction::Confirm));
+    let rows = h.draw();
+    assert!(!has(&rows, "Search hit"), "{rows:#?}");
+}
+
+/// MAX-218: the bar's counter and hints sit at its right end, so typing doesn't move them;
+/// in the history's border too, before its corner. A query too long for them drops the
+/// hints, the counter still at the end.
+/// How: line mode without and with borders, `h` then `hit` typed: the hints' column; then a
+/// 60 chars query.
+#[test]
+fn search_bar_hints_stay_while_typing() {
+    for borders in [false, true] {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+            s.ui.show_borders = borders;
+        });
+        h.feed(b"hit one\r\n");
+        h.draw();
+        let bar = |h: &mut Harness| {
+            let rows = h.draw();
+            rows.into_iter()
+                .find(|r| r.contains("Match"))
+                .unwrap_or_default()
+        };
+        search(&mut h, "h");
+        // the screen column, `─` being 3 bytes
+        let column = |row: &str| row.find("Match").map(|at| row[..at].chars().count());
+        let short = bar(&mut h);
+        let at = column(&short).unwrap();
+        h.app
+            .update(Action::Search(SearchModeAction::Paste("it".to_string())));
+        let longer = bar(&mut h);
+        assert_eq!(column(&longer), Some(at), "{borders} {longer:?}");
+        assert!(squeeze(&longer).contains("/hit (1/1)"), "{longer:?}");
+        if borders {
+            assert!(longer.ends_with("Tab Mode ──┘"), "{longer:?}");
+        } else {
+            assert!(longer.trim_end().ends_with("Tab Mode"), "{longer:?}");
+        }
+
+        h.app
+            .update(Action::Search(SearchModeAction::Paste("x".repeat(60))));
+        let rows = h.draw();
+        let query = format!("/hit{} (0/0)", "x".repeat(60));
+        assert!(
+            has_bar(&rows, &query) && !has(&rows, "Match"),
+            "{borders} {rows:#?}"
+        );
+    }
 }

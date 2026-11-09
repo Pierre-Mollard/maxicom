@@ -107,7 +107,7 @@ See [Search](search.md).
 | --- | --- | --- |
 | `search_match` | black on `Yellow` | The matches |
 | `search_match_active` | black on `#FF8C00` | The current match |
-| `search_indicator` | black on `Green`, bold | The bar's label |
+| `search_indicator` | black on `LightBlue`, bold | The status bar's `SRCH` badge, while you type a search |
 
 ### `[raw_inspector]`
 

@@ -288,6 +288,8 @@ pub enum KeyBindingCopyAction {
     SearchBackward,
     SearchNext,
     SearchPrev,
+    SearchWord,
+    SearchWordBackward,
 }
 
 impl KeyBindingCopyAction {
@@ -330,6 +332,8 @@ impl std::str::FromStr for KeyBindingCopyAction {
             "search-backward" => Ok(Self::SearchBackward),
             "search-next" => Ok(Self::SearchNext),
             "search-prev" => Ok(Self::SearchPrev),
+            "search-word" => Ok(Self::SearchWord),
+            "search-word-backward" => Ok(Self::SearchWordBackward),
             other => Err(UnknownActionError(other.to_string())),
         }
     }
@@ -363,6 +367,8 @@ impl std::fmt::Display for KeyBindingCopyAction {
             Self::SearchBackward => "search-backward",
             Self::SearchNext => "search-next",
             Self::SearchPrev => "search-prev",
+            Self::SearchWord => "search-word",
+            Self::SearchWordBackward => "search-word-backward",
         };
         write!(f, "{s}")
     }
@@ -1189,6 +1195,7 @@ impl Default for KeyBindingsConfig {
             "?"         => KeyBindingCopyAction::SearchBackward,
             "n"         => KeyBindingCopyAction::SearchNext,
             "N"         => KeyBindingCopyAction::SearchPrev,
+            "*"         => KeyBindingCopyAction::SearchWord,
         };
 
         let dialog_actions = default_bindings! {

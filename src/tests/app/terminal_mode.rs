@@ -440,7 +440,7 @@ fn query_cursor_keys_keep_the_current_match() {
 
 /// A view of `cols`x`rows` in `mode`, the configured size 24x80
 fn view(tm: &mut TerminalMode, mode: TerminalDimensionMode, cols: u16, rows: u16) {
-    tm.update_viewport(ViewportSize::new(cols, rows), mode, 24, 80);
+    tm.update_viewport(ViewportSize::new(cols, rows), 0, mode, 24, 80);
 }
 
 /// MAX-140: `match_view` and `fixed_cols` don't shrink the grid past the content below
@@ -605,7 +605,7 @@ fn restore_separator_stays_on_top_when_the_grid_grows() {
             tm.process_rx(TextEncoding::Utf8, format!("{live}\r\n").as_bytes());
         }
         let viewport = ViewportSize::new(80, 50);
-        tm.update_viewport(viewport, TerminalDimensionMode::GrowOnly, 24, 80);
+        tm.update_viewport(viewport, 0, TerminalDimensionMode::GrowOnly, 24, 80);
         assert_eq!(tm.get_vt100_size().0, 50);
         let screen = tm.vt100_screen();
         let rows: Vec<String> = screen.rows(0, 80).take(3).collect();

@@ -201,6 +201,8 @@ are built in: see [Line mode](line-mode.md#editing-the-line).
 | `(` / `)` | `prev-mark` / `next-mark` | Cursor to the mark above / below |
 | `/` / `?` | `search` / `search-backward` | Search from the cursor, forward / backward |
 | `n` / `N` | `search-next` / `search-prev` | Next match of the last search, in its direction / the other way |
+| `*` | `search-word` | Search the word under the cursor, forward |
+| | `search-word-backward` | The same, backward (vim's `#`, no key by default) |
 | `q`, `Esc` | `exit` | Leave |
 
 The vi motions (`w`, `b`, `gg`, `G`, `iw`...) are built in: see

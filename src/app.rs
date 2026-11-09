@@ -8,7 +8,7 @@ use crate::{
     app::{
         mash::{Mash, MashStep},
         scroller::ScrollStatus,
-        search::{SEARCH_HISTORY_SIZE, SearchDirection, SearchState},
+        search::{SEARCH_HISTORY_SIZE, SearchDirection, SearchModeKind, SearchState, word_at},
         selection::{ClickCounter, CopySide, LogicalPosition, MouseUnit},
         term_answers::answer_bytes,
         transfer::FileTransfer,
@@ -753,6 +753,7 @@ impl App {
             Mode::Terminal => {
                 self.terminal_mode.update_viewport(
                     viewport,
+                    self.search_bar_row() as u16,
                     self.settings().terminal_mode.dimension_mode,
                     self.settings().terminal_mode.rows,
                     self.settings().terminal_mode.cols,
@@ -1728,6 +1729,10 @@ impl App {
                 self.walk_search_history(up);
                 return UpdateEffect::None;
             }
+            SearchModeAction::Word(direction) => {
+                self.search_word(direction);
+                return UpdateEffect::None;
+            }
             // a search always runs in copy mode (MAX-215): from out of it, copy mode starts
             // at the view, its cursor at the end of its line so that `?` from the live view
             // finds the newest line too, and Esc leaves it for the live view
@@ -1743,9 +1748,15 @@ impl App {
         let leaves_copy = matches!(action, SearchModeAction::Cancel)
             && std::mem::take(&mut self.search_mut().exits_copy);
         let confirmed = matches!(action, SearchModeAction::Confirm);
-        if confirmed {
-            self.search_mut().exits_copy = false;
-        }
+        // where a search from copy mode started, to tell a match around the history's end;
+        // from the live view it goes to the oldest or newest match on purpose (MAX-218)
+        let started_at = if confirmed {
+            let search = self.search_mut();
+            let from_live = std::mem::take(&mut search.exits_copy);
+            search.origin.filter(|_| !from_live)
+        } else {
+            None
+        };
         match self.settings.mode {
             Mode::Terminal => {
                 self.terminal_mode
@@ -1762,6 +1773,11 @@ impl App {
         if confirmed {
             let query = self.search_mut().query_str().to_string();
             self.push_search_history(query);
+            let search = self.search_mut();
+            let forward = search.direction == SearchDirection::Forward;
+            if started_at.is_some_and(|origin| search.went_around(origin)) {
+                self.notify_search_went_around(forward);
+            }
         }
 
         UpdateEffect::None
@@ -1805,6 +1821,37 @@ impl App {
         }
     }
 
+    /// `*` in copy mode (MAX-218): the word under the cursor searched as if typed, from its
+    /// first char so that the next match is another one, and kept as after Enter
+    fn search_word(&mut self, direction: SearchDirection) {
+        let (cursor, text) = match self.settings.mode {
+            Mode::Terminal => (
+                self.terminal_mode.copy_state().cursor,
+                self.terminal_mode.copy_line_text(),
+            ),
+            Mode::Line => {
+                let display_mode = self.settings.line_mode.display_mode;
+                (
+                    self.line_mode.copy_state().cursor,
+                    self.line_mode.copy_line_text(display_mode),
+                )
+            }
+        };
+        let Some((start, word)) = word_at(&text, cursor.char_idx) else {
+            self.notify_warn("No word under the cursor");
+            return;
+        };
+        let copy_state = match self.settings.mode {
+            Mode::Terminal => self.terminal_mode.copy_state_mut(),
+            Mode::Line => self.line_mode.copy_state_mut(),
+        };
+        copy_state.jump_to(cursor.line_idx, start);
+        self.search_mut().mode_kind = SearchModeKind::Text;
+        self.update_action_search_mode(SearchModeAction::Start(direction));
+        self.update_action_search_mode(SearchModeAction::Paste(word));
+        self.update_action_search_mode(SearchModeAction::Confirm);
+    }
+
     /// A click in the history closes the search for copy mode there: copy mode stays, also
     /// when the search started it (MAX-215)
     fn close_search_for_click(&mut self) {
@@ -1834,9 +1881,16 @@ impl App {
         let forward = (direction == SearchDirection::Forward) != opposite;
         match wrapped {
             None => self.notify_warn("No match to go to"),
-            Some(true) if forward => self.notify_info("Search hit the end, went on from the top"),
-            Some(true) => self.notify_info("Search hit the top, went on from the end"),
+            Some(true) => self.notify_search_went_around(forward),
             Some(false) => {}
+        }
+    }
+
+    fn notify_search_went_around(&mut self, forward: bool) {
+        if forward {
+            self.notify_info("Search hit the end, went on from the top");
+        } else {
+            self.notify_info("Search hit the top, went on from the end");
         }
     }
 
@@ -2226,6 +2280,17 @@ impl App {
             Mode::Terminal => self.terminal_mode.search(),
         };
         search.active || search.shows_matches()
+    }
+
+    /// The search bar on a row of its own under the view, taken from it (MAX-218): it goes
+    /// right under the history, in its bottom border when it has one free of the status bar.
+    /// Without borders it would cover the view's last row, the cursor or a match on it; in
+    /// terminal mode the `border` status bar has the history's border
+    pub fn search_bar_row(&self) -> bool {
+        let status_in_history_border = self.settings.mode == Mode::Terminal
+            && self.show_status_bar()
+            && self.status_bar_layout() == StatusBarLayout::Border;
+        self.is_search_bar_shown() && (!self.show_borders() || status_in_history_border)
     }
 
     #[inline]

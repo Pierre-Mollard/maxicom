@@ -26,7 +26,7 @@
 //! ## Available Variables
 //! | Variable            | Description                                             | Example          |
 //! |---------------------|---------------------------------------------------------|------------------|
-//! | `{mode}`            | Input mode: `TERM`, `LINE`, `COPY`, `MARK` (a letter)   | `TERM`           |
+//! | `{mode}`            | Input mode: `TERM`, `LINE`, `COPY`, `SRCH`, `MARK`      | `TERM`           |
 //! | `{port}`            | Address: serial path, `tcp://host:port`, `file://name`, | `/dev/ttyUSB0`   |
 //! |                     | or a group replay's device and count                    |                  |
 //! | `{baud}`            | Baudrate (a replayed session's), `raw` (TCP), `replay`  | `115200`         |
@@ -167,7 +167,7 @@
 //! ```toml
 //! [ui.status_bar]
 //! # Solid pill mode indicator that lights up with background when prefix is pressed:
-//! left = "[ {mode} ](prefix?(bg=main fg=black bold):copy?(bg=magenta fg=white bold):search?(bg=good fg=black bold):(fg=main bold)){port} | [{baud}](secondary) {framing}"
+//! left = "[ {mode} ](prefix?(bg=main fg=black bold):search?(bg=good fg=black bold):copy?(bg=magenta fg=white bold):(fg=main bold)){port} | [{baud}](secondary) {framing}"
 //!
 //! # Center scroll indicator and pan arrows with warning states:
 //! center = "[{pan_left} ](pan_left?warn:hide)[{scroll_pos}](has_scroll?muted:hide)[ {pan_right}](pan_right_alert?(bg=warn fg=black bold):(pan_right?warn:hide))"
@@ -599,13 +599,14 @@ impl Var {
     fn write_text(self, out: &mut String, app: &App, time_format: &str) {
         let scroll = app.scroll_status();
         let _ = match self {
-            // copy mode takes the badge while it's on (MAX-208), a mark waiting for its letter
-            // over it (MAX-164)
+            // copy mode takes the badge while it's on (MAX-208), a search typed in it over it
+            // (MAX-218) and a mark waiting for its letter over both (MAX-164)
             Self::Mode => write!(
                 out,
                 "{}",
                 match app.settings().mode {
                     _ if app.pending_mark().is_some() => "MARK",
+                    _ if app.is_search_active() => "SRCH",
                     _ if app.is_copy_mode_active() => "COPY",
                     Mode::Terminal => "TERM",
                     Mode::Line => "LINE",
