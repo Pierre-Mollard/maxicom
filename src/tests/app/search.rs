@@ -455,3 +455,55 @@ fn matches_shown_while_open_or_kept() {
     s.matches.clear();
     assert!(!s.shows_matches());
 }
+
+/// MAX-218: the bar opens empty, the query it had kept as the last one; an empty query (or
+/// none on the first search) keeps the last one. Enter on the empty bar puts it back, and
+/// Esc drops what was typed for it.
+/// How: open_empty, reuse_last_query and restore_last_query on a few queries.
+#[test]
+fn last_query_kept_when_the_bar_opens() {
+    let mut s = search("hit", SearchModeKind::Text);
+    s.open_empty();
+    assert_eq!((s.query_str(), s.last_query.as_str()), ("", "hit"));
+    s.open_empty();
+    assert_eq!(s.last_query, "hit");
+
+    assert!(s.reuse_last_query());
+    assert_eq!(s.query_str(), "hit");
+    assert!(!s.reuse_last_query());
+
+    s.query = Input::from("typed");
+    s.restore_last_query();
+    assert_eq!(s.query_str(), "hit");
+
+    let mut first = search("typed", SearchModeKind::Text);
+    first.restore_last_query();
+    assert_eq!(first.query_str(), "");
+    assert!(!first.reuse_last_query());
+}
+
+/// MAX-218: Up walks to older searches among those starting with what was typed, Down back
+/// to newer ones and past the newest to what was typed; an edit starts a new walk, Down
+/// alone does nothing.
+/// How: a history of four searches, walks from "er" and from an empty query.
+#[test]
+fn walk_the_search_history() {
+    let history: VecDeque<String> = ["error", "boot", "err 2", "warn"].map(String::from).into();
+    let mut s = search("er", SearchModeKind::Text);
+    let walk = |s: &mut SearchState, up| {
+        let changed = s.walk_history(&history, up);
+        (changed, s.query_str().to_string())
+    };
+    assert_eq!(walk(&mut s, false), (false, "er".into()));
+    assert_eq!(walk(&mut s, true), (true, "err 2".into()));
+    assert_eq!(walk(&mut s, true), (true, "error".into()));
+    assert_eq!(walk(&mut s, true), (true, "error".into()));
+    assert_eq!(walk(&mut s, false), (true, "err 2".into()));
+    assert_eq!(walk(&mut s, false), (true, "er".into()));
+    assert_eq!(walk(&mut s, false), (false, "er".into()));
+
+    s.query = Input::default();
+    assert_eq!(walk(&mut s, true), (true, "warn".into()));
+    s.query = Input::from("b");
+    assert_eq!(walk(&mut s, true), (true, "boot".into()));
+}

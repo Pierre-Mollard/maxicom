@@ -683,6 +683,7 @@ impl LineMode {
                 self.search_state.origin = self.copy_origin();
                 self.search_state.toggle_itself();
                 if self.search_state.active {
+                    self.search_state.open_empty();
                     self.update_search_matches(display_mode, raw_view);
                 }
             }
@@ -701,6 +702,8 @@ impl LineMode {
                 }
             }
             SearchModeAction::Cancel => {
+                self.search_state.restore_last_query();
+                self.update_search_matches(display_mode, raw_view);
                 self.search_state.toggle(false);
                 self.search_state.kept = false;
                 // from copy mode, back where the search started (MAX-215)
@@ -710,6 +713,9 @@ impl LineMode {
                 }
             }
             SearchModeAction::Confirm => {
+                if self.search_state.reuse_last_query() {
+                    self.update_search_matches(display_mode, raw_view);
+                }
                 let match_pos = self.search_state.current_match_position();
                 self.search_state.toggle(false);
                 self.search_state.kept = true;
@@ -746,7 +752,9 @@ impl LineMode {
             SearchModeAction::ClickAt(column) => {
                 click_input_at(&mut self.search_state.query, column);
             }
-            SearchModeAction::Repeat(_) => unreachable!("run by App, for its toast"),
+            SearchModeAction::Repeat(_) | SearchModeAction::History(_) => {
+                unreachable!("run by App, which has the toasts and the history")
+            }
         }
     }
 

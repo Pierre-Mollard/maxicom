@@ -11,6 +11,8 @@ use crate::configs::LineDisplayMode;
 use crate::configs::settings::RawSideView;
 
 pub const MAX_SEARCH_MATCHES: usize = 1000;
+/// The searches kept for Up / Down in the bar, as many as the command line's by default
+pub const SEARCH_HISTORY_SIZE: usize = 100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SearchModeKind {
@@ -46,6 +48,10 @@ pub struct SearchState {
     pub origin: Option<LogicalPosition>,
     pub kept: bool,
     pub exits_copy: bool,
+    pub last_query: String,
+    /// The history walk: the search shown and its index, and the query typed before
+    pub history_walk: Option<(usize, String)>,
+    pub history_draft: String,
     pub matches: Vec<SearchMatch>,
     pub current_match: usize,
     pub target_jump: Option<(usize, usize)>,
@@ -336,6 +342,62 @@ impl SearchState {
         if !active {
             self.target_jump = None;
         }
+    }
+
+    /// The bar opens empty, the query it had kept as the last one: shown as a placeholder,
+    /// searched again by Enter on the empty bar (MAX-218)
+    pub fn open_empty(&mut self) {
+        let query = std::mem::take(&mut self.query);
+        if !query.value().is_empty() {
+            self.last_query = query.value().to_string();
+        }
+    }
+
+    /// Enter on the empty bar: the last query back in it; true when there was one (MAX-218)
+    pub fn reuse_last_query(&mut self) -> bool {
+        let reuse = self.query.value().is_empty() && !self.last_query.is_empty();
+        if reuse {
+            self.restore_last_query();
+        }
+        reuse
+    }
+
+    /// Esc: what was typed is dropped for the last query, which `n` / `N` go on with, as in
+    /// vi; empty before any search (MAX-218)
+    pub fn restore_last_query(&mut self) {
+        self.query = Input::new(self.last_query.clone());
+    }
+
+    /// Up / Down in the bar (MAX-218): an older (`up`) or newer search of `history`, oldest
+    /// first, in place of the query, among those starting with what was typed; past the newest,
+    /// what was typed. An edit starts a new walk. False when the query is unchanged
+    pub fn walk_history(&mut self, history: &VecDeque<String>, up: bool) -> bool {
+        let walking = (self.history_walk.as_ref())
+            .filter(|(_, shown)| shown == self.query.value())
+            .map(|&(index, _)| index);
+        if walking.is_none() {
+            if !up {
+                return false;
+            }
+            self.history_draft = self.query.value().to_string();
+        }
+        let draft = self.history_draft.as_str();
+        let matches = |i: &usize| history[*i].starts_with(draft);
+        let index = match (walking, up) {
+            (None, _) => (0..history.len()).rev().find(matches),
+            (Some(i), true) => (0..i).rev().find(matches).or(Some(i)),
+            (Some(i), false) => (i + 1..history.len()).find(matches),
+        };
+        if index.is_none() && walking.is_none() {
+            return false;
+        }
+        let text = match index {
+            Some(i) => history[i].clone(),
+            None => std::mem::take(&mut self.history_draft),
+        };
+        self.history_walk = index.map(|i| (i, text.clone()));
+        self.query = Input::new(text);
+        true
     }
 
     pub fn toggle_itself(&mut self) {

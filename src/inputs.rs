@@ -203,6 +203,7 @@ pub enum SearchModeAction {
     ClickAt(usize),
     Query(String),
     Repeat(bool),
+    History(bool),
 }
 
 #[derive(Debug, PartialEq, Eq)]

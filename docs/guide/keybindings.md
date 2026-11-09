@@ -214,6 +214,7 @@ The vi motions (`w`, `b`, `gg`, `G`, `iw`...) are built in: see
 | `Enter` | `confirm` | Close the bar, the cursor on the match |
 | `Esc` | `cancel` | Close the bar, back where the search started |
 | `Tab` | `search-kind` | Text or bytes |
+| `Up` / `Down` | `history-prev` / `history-next` | Walk the searches run before |
 
 ### `[dialog_actions]`
 

@@ -8,7 +8,7 @@ use crate::{
     app::{
         mash::{Mash, MashStep},
         scroller::ScrollStatus,
-        search::{SearchDirection, SearchState},
+        search::{SEARCH_HISTORY_SIZE, SearchDirection, SearchState},
         selection::{ClickCounter, CopySide, LogicalPosition, MouseUnit},
         term_answers::answer_bytes,
         transfer::FileTransfer,
@@ -161,6 +161,8 @@ pub struct App {
     commands_resume_at: Option<Instant>,
     /// The command lines that ran, the oldest first (MAX-12)
     command_history: VecDeque<String>,
+    /// The searches Enter ran, oldest first, for Up / Down in the bar (MAX-218)
+    search_history: VecDeque<String>,
     pub line_mode: LineMode,
     pub terminal_mode: TerminalMode,
     recorder: Recorder,
@@ -300,6 +302,7 @@ impl App {
             pending_commands: VecDeque::new(),
             commands_resume_at: None,
             command_history: VecDeque::new(),
+            search_history: VecDeque::new(),
             line_mode: line_view,
             terminal_mode: terminal_view,
             recorder: Recorder::default(),
@@ -1721,6 +1724,10 @@ impl App {
                 self.repeat_search(opposite);
                 return UpdateEffect::None;
             }
+            SearchModeAction::History(up) => {
+                self.walk_search_history(up);
+                return UpdateEffect::None;
+            }
             // a search always runs in copy mode (MAX-215): from out of it, copy mode starts
             // at the view, its cursor at the end of its line so that `?` from the live view
             // finds the newest line too, and Esc leaves it for the live view
@@ -1735,7 +1742,8 @@ impl App {
         }
         let leaves_copy = matches!(action, SearchModeAction::Cancel)
             && std::mem::take(&mut self.search_mut().exits_copy);
-        if matches!(action, SearchModeAction::Confirm) {
+        let confirmed = matches!(action, SearchModeAction::Confirm);
+        if confirmed {
             self.search_mut().exits_copy = false;
         }
         match self.settings.mode {
@@ -1751,8 +1759,50 @@ impl App {
             self.copy_action(CopyModeAction::Exit);
             self.update_action_history(HistoryAction::ScrollToBottom);
         }
+        if confirmed {
+            let query = self.search_mut().query_str().to_string();
+            self.push_search_history(query);
+        }
 
         UpdateEffect::None
+    }
+
+    /// A search Enter ran, unless it is the last one; the oldest dropped past
+    /// SEARCH_HISTORY_SIZE (MAX-218)
+    fn push_search_history(&mut self, query: String) {
+        if query.is_empty() || self.search_history.back() == Some(&query) {
+            return;
+        }
+        self.search_history.push_back(query);
+        while self.search_history.len() > SEARCH_HISTORY_SIZE {
+            self.search_history.pop_front();
+        }
+    }
+
+    /// Up / Down in the bar: an older / newer search in place of the query, its matches found
+    fn walk_search_history(&mut self, up: bool) {
+        let raw_view = self.settings.raw_side.view;
+        match self.settings.mode {
+            Mode::Terminal => {
+                if self
+                    .terminal_mode
+                    .search_mut()
+                    .walk_history(&self.search_history, up)
+                {
+                    self.terminal_mode.update_search_matches(raw_view);
+                }
+            }
+            Mode::Line => {
+                let display_mode = self.settings.line_mode.display_mode;
+                if self
+                    .line_mode
+                    .search_mut()
+                    .walk_history(&self.search_history, up)
+                {
+                    self.line_mode.update_search_matches(display_mode, raw_view);
+                }
+            }
+        }
     }
 
     /// A click in the history closes the search for copy mode there: copy mode stays, also

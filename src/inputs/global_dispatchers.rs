@@ -183,6 +183,8 @@ impl KeyBindingSearchAction {
             Self::Next => Action::Search(SearchModeAction::Next),
             Self::Previous => Action::Search(SearchModeAction::Previous),
             Self::Cancel => Action::Search(SearchModeAction::Cancel),
+            Self::HistoryPrev => Action::Search(SearchModeAction::History(true)),
+            Self::HistoryNext => Action::Search(SearchModeAction::History(false)),
             Self::Confirm => Action::Search(SearchModeAction::Confirm),
             Self::Kind => Action::Search(SearchModeAction::Kind),
         }

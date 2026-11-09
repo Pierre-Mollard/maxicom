@@ -120,12 +120,14 @@ pub fn render(
             .title(title);
 
         // the pan shows once: in the status bar when it is drawn with a pan variable, else here;
-        // and in terminal mode the bar can take this bottom border (MAX-135, MAX-139)
+        // and in terminal mode the bar can take this bottom border (MAX-135, MAX-139), as the
+        // search bar does while it's shown (MAX-218)
         let bar_in_border = layout
             .status_bar_area
             .is_some_and(|bar| bar.y + 1 == outer.bottom());
         let pan_in_bar = layout.status_bar_area.is_some() && status_bar.shows_pan();
-        if !bar_in_border && !pan_in_bar {
+        let search_in_border = app.show_borders() && app.is_search_bar_shown();
+        if !bar_in_border && !pan_in_bar && !search_in_border {
             for bottom_title in monitor_bottom_title(app, theme) {
                 block = block.title_bottom(bottom_title);
             }

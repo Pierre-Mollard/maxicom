@@ -14,7 +14,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::{
     app::{
         App,
-        search::{SearchDirection, SearchModeKind},
+        search::{MAX_SEARCH_MATCHES, SearchDirection, SearchModeKind},
         types::{ClickAction, ClickTarget, FocusTarget, PromptMap},
     },
     configs::{
@@ -227,21 +227,37 @@ pub fn render_search_bar(
         SearchModeKind::RawBytes => "byte",
     };
 
+    // as typed in vi: `/` forward, `?` backward, the query right after (MAX-218)
     let label = match s.direction {
-        SearchDirection::Forward => " SEARCH: ",
-        SearchDirection::Backward => " SEARCH BACK: ",
+        SearchDirection::Forward => " /",
+        SearchDirection::Backward => " ?",
+    };
+    // the matches past the cap aren't counted
+    let count = match match_count {
+        MAX_SEARCH_MATCHES.. => format!("{MAX_SEARCH_MATCHES}+"),
+        count => count.to_string(),
+    };
+
+    // an empty query shows the last one dimmed, which Enter searches again (MAX-218)
+    let query_span = if query_str.is_empty() && !s.last_query.is_empty() {
+        Span::styled(
+            format!("{} ", s.last_query),
+            Style::default().fg(theme.palette.text_muted),
+        )
+    } else {
+        Span::styled(
+            format!("{} ", query_str),
+            Style::default()
+                .fg(theme.palette.secondary)
+                .add_modifier(Modifier::BOLD),
+        )
     };
 
     let mut spans = vec![
         Span::styled(format!(" [{}]", kind_str), *theme.search.search_indicator),
         Span::styled(label, *theme.search.search_indicator),
-        Span::styled(
-            format!(" {} ", query_str),
-            Style::default()
-                .fg(theme.palette.secondary)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(format!("({}/{})", current_pos, match_count), stats_style),
+        query_span,
+        Span::styled(format!("({current_pos}/{count})"), stats_style),
     ];
 
     // one key per action, like the popups; the hints that don't fit whole are left out, the
@@ -263,7 +279,7 @@ pub fn render_search_bar(
                 "Match",
             ),
             (first_key(KeyBindingSearchAction::Cancel).collect(), "Exit"),
-            (first_key(KeyBindingSearchAction::Confirm).collect(), "Copy"),
+            (first_key(KeyBindingSearchAction::Confirm).collect(), "Go"),
             (first_key(KeyBindingSearchAction::Kind).collect(), "Mode"),
         ]
     } else {
@@ -318,8 +334,8 @@ pub fn render_search_bar(
             hover: Some(*theme.ui.hover),
         })
         .collect();
-    // the query, after the kind, the label and a space, and a column past it for its end
-    let query_x = bar_x + line.spans[..2].iter().map(Span::width).sum::<usize>() as u16 + 1;
+    // the query, right after the kind and the label, and a column past it for its end
+    let query_x = bar_x + line.spans[..2].iter().map(Span::width).sum::<usize>() as u16;
     let query = PromptMap {
         text_area: Rect::new(query_x, bar_y, query_str.width() as u16 + 1, 1),
         scroll: 0,

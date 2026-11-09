@@ -422,13 +422,15 @@ fn default_keymap_per_context() {
             "Ctrl-a => App(SetPrefix(true))",
             "Ctrl-n => Search(Next)",
             "Ctrl-p => Search(Previous)",
+            "Down => Search(History(false))",
             "Enter => Search(Confirm)",
             "Esc => Search(Cancel)",
             "Shift-End => History(ScrollToBottom)",
             "Shift-Home => History(ScrollToTop)",
             "Shift-PageDown => History(ScrollDownPage)",
             "Shift-PageUp => History(ScrollUpPage)",
-            "Tab => Search(Kind)"
+            "Tab => Search(Kind)",
+            "Up => Search(History(true))"
         ]
     );
     app.update(Action::Search(SearchModeAction::Cancel));

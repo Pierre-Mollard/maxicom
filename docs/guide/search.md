@@ -20,10 +20,14 @@ Search in the right-click menu does the same as `Ctrl-a /`.
 A search always runs in copy mode. `Ctrl-a /` and `Ctrl-a ?` enter copy mode
 first, at the bottom of the view, then open the search bar over the bottom
 of the history. From the live view, `Ctrl-a ?` finds the newest match and
-`Ctrl-a /` the oldest. The bar shows `SEARCH:` for a search forward and
-`SEARCH BACK:` for a search backward.
+`Ctrl-a /` the oldest. The bar shows the search as you'd type it in vi,
+`/` for a search forward and `?` for a search backward, after the kind:
+`[text] /error (3/12)`. Past 1000 matches, the count reads `1000+`.
 
 ## Typing the search
+
+The bar opens empty, with your last search dimmed in it. Enter on the empty
+bar searches it again; type to search something else.
 
 Type the text: every match lights up as you type, and the current one
 stands out. The copy mode cursor follows the current match, and the view
@@ -41,8 +45,13 @@ cursor is skipped.
 | Enter | Close the bar, the cursor on the current match |
 | Esc | Close the bar |
 | Tab | Switch between a text search and a byte search |
+| Up / Down | An older / newer search in place of what you typed, among those starting with it |
 
-Esc takes you back to where you started. A search started with `Ctrl-a /` or
+The last 100 searches you ran with Enter are kept, for both modes, until
+maxicom quits.
+
+Esc takes you back to where you started, and keeps your last search for `n`
+and `N`: what you typed is dropped. A search started with `Ctrl-a /` or
 `Ctrl-a ?` leaves copy mode for the live view. One started in copy mode puts
 the cursor back where it was, your selection kept.
 

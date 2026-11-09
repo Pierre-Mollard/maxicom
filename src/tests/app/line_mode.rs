@@ -472,3 +472,40 @@ fn n_and_n_reverse_in_copy_mode() {
     lm.handle_search_action(SearchModeAction::Cancel, &settings);
     assert!(!lm.search_state.shows_matches());
 }
+
+/// MAX-218: a search opened again starts empty, nothing lit; Enter on it searches the last
+/// query from the cursor; Esc after typing another one goes back to the last, which `n`
+/// goes on with.
+/// How: "hit" on lines 0, 2, 3, `/hit` Enter, `/` Enter, `/zzz` Esc, then `n`.
+#[test]
+fn search_reopens_empty_with_the_last_query() {
+    let mut lm = line_mode(10);
+    let settings = SettingsConfig::default();
+    lm.feed_rx(false, TextEncoding::Utf8, b"hit\nb\nhit\nhit\n");
+    lm.copy_state.enter_at(0, 0);
+    let cursor = |lm: &LineMode| lm.copy_state.cursor.line_idx;
+    let open = |lm: &mut LineMode| {
+        lm.handle_search_action(SearchModeAction::Start(SearchDirection::Forward), &settings);
+    };
+
+    open(&mut lm);
+    lm.handle_search_action(SearchModeAction::Paste("hit".to_string()), &settings);
+    lm.handle_search_action(SearchModeAction::Confirm, &settings);
+    assert_eq!(cursor(&lm), 2);
+
+    open(&mut lm);
+    assert_eq!(lm.search_state.query_str(), "");
+    assert_eq!(lm.search_state.last_query, "hit");
+    assert!(!lm.search_state.shows_matches());
+    lm.handle_search_action(SearchModeAction::Confirm, &settings);
+    assert_eq!(lm.search_state.query_str(), "hit");
+    assert_eq!(cursor(&lm), 3);
+
+    open(&mut lm);
+    lm.handle_search_action(SearchModeAction::Paste("zzz".to_string()), &settings);
+    lm.handle_search_action(SearchModeAction::Cancel, &settings);
+    assert_eq!(lm.search_state.query_str(), "hit");
+    assert_eq!(cursor(&lm), 3);
+    assert_eq!(lm.repeat_search(false), Some(true));
+    assert_eq!(cursor(&lm), 0);
+}

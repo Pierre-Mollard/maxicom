@@ -1924,3 +1924,33 @@ fn a_search_runs_in_copy_mode() {
     assert!(app.is_copy_mode_active());
     assert_eq!(cursor(&app), 2);
 }
+
+/// MAX-218: the searches Enter ran are kept once each in a row, and Up / Down in the bar
+/// walk them, their matches found.
+/// How: "hit" then "b" then "b" again searched, then Up twice in a new bar.
+#[test]
+fn search_history_in_the_bar() {
+    let mut app = app();
+    app.settings.mode = Mode::Line;
+    app.feed_rx(b"hit\nb\nhit\n");
+    let search = |app: &mut App, query: &str| {
+        app.update(Action::Search(SearchModeAction::Start(
+            SearchDirection::Forward,
+        )));
+        app.update(Action::Search(SearchModeAction::Paste(query.to_string())));
+        app.update(Action::Search(SearchModeAction::Confirm));
+    };
+    search(&mut app, "hit");
+    search(&mut app, "b");
+    search(&mut app, "b");
+    assert_eq!(app.search_history, ["hit", "b"]);
+
+    app.update(Action::Search(SearchModeAction::Start(
+        SearchDirection::Forward,
+    )));
+    app.update(Action::Search(SearchModeAction::History(true)));
+    assert_eq!(app.line_mode.search().query_str(), "b");
+    app.update(Action::Search(SearchModeAction::History(true)));
+    assert_eq!(app.line_mode.search().query_str(), "hit");
+    assert_eq!(app.line_mode.search().matches_count(), 2);
+}
