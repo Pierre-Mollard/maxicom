@@ -71,6 +71,8 @@ fn unknown_keys<T: DeserializeOwned>(text: &str) -> Vec<String> {
     if loaded.is_err() {
         keys.clear();
     }
+    // sorted, the TOML parser keeping the file's order (MAX-216)
+    keys.sort();
     keys
 }
 

@@ -122,15 +122,28 @@ pub const KEYMAP_COMMENTS: &[(&str, &str)] = &[
     ("dialog_actions", "In the popups"),
 ];
 
-pub const HIGHLIGHTS_COMMENTS: &[(&str, &str)] = &[(
-    "",
-    concat!(
-        "Words colored in the received text: ",
-        guide!("highlights.html"),
-        "\nA word = its color, or a table = a style, written as in theme.toml.",
-        "\nQuote a word with spaces or symbols. Ctrl-a r reloads this file.",
+pub const HIGHLIGHTS_COMMENTS: &[(&str, &str)] = &[
+    (
+        "",
+        concat!(
+            "Words colored in the received text: ",
+            guide!("highlights.html"),
+            "\nA word = its color, or a table = a style, written as in theme.toml.",
+            "\nA table with words = [...] gives them all its style; ignore_case and whole_word",
+            "\nset how they match. Later entries are drawn over earlier ones.",
+            "\nQuote a word with spaces or symbols. Ctrl-a r reloads this file.",
+        ),
     ),
-)];
+    ("INFO", "a word on its own: its color"),
+    (
+        "errors",
+        "A group: each word of words in this style, any case, whole words only",
+    ),
+    (
+        "TIMEOUT",
+        "A word on its own in a style: a table without words styles its name",
+    ),
+];
 
 pub const TRIGGERS_COMMENTS: &[(&str, &str)] = &[(
     "",

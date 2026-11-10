@@ -27,7 +27,11 @@ bg = "#FFB86C"
 | Field | Takes |
 | --- | --- |
 | `fg`, `bg`, `underline_color` | A color |
-| `bold`, `dim`, `italic`, `underlined`, `reversed`, `crossed` | `true` or `false` |
+| `bold`, `dim`, `italic`, `underlined`, `slow_blink`, `rapid_blink`, `reversed`, `hidden`, `crossed` | `true` or `false` |
+
+Your terminal draws the styles, and not every terminal knows them all:
+blinking is often turned off or not supported, `rapid_blink` most of all,
+and the text then shows without it.
 
 A few entries take a color only, not a table: those of `[palette]`,
 `[raw_inspector]` and `[session_browser]`, and the terminal's flash colors.

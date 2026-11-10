@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -9,57 +8,198 @@ use serde::{Deserialize, Serialize};
 
 use crate::configs::{
     comments::{HIGHLIGHTS_COMMENTS, with_comments},
-    style::ConfigStyle,
+    style::{ConfigStyle, StyleTable},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The highlights, in the file's order: a later one is drawn over an earlier one (MAX-216)
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HighlightConfig {
-    #[serde(flatten)]
-    pub rules: BTreeMap<String, ConfigStyle>,
+    pub entries: Vec<(String, HighlightEntry)>,
 }
 
-impl Default for HighlightConfig {
-    fn default() -> Self {
-        let mut rules = BTreeMap::new();
+/// One entry of the file: a group of `words` with one style (MAX-216), or a single word, its
+/// key, as released: `WORD = "Green"` or a `[WORD]` style table
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "EntryDef", into = "EntryDef")]
+pub struct HighlightEntry {
+    pub words: Option<Vec<String>>,
+    pub ignore_case: bool,
+    pub whole_word: bool,
+    pub style: ConfigStyle,
+}
 
-        rules.insert(
-            "ERROR".to_string(),
-            ConfigStyle::new(
-                Style::default()
-                    .fg(Color::White)
-                    .bg(Color::Red)
-                    .add_modifier(ratatui::style::Modifier::BOLD),
-            ),
-        );
+impl HighlightEntry {
+    /// One word in a color, as `WORD = "Green"` writes it
+    pub fn color(fg: Color) -> Self {
+        Self::styled(Style::default().fg(fg))
+    }
 
-        rules.insert(
-            "WARN".to_string(),
-            ConfigStyle::new(
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(ratatui::style::Modifier::BOLD),
-            ),
-        );
-
-        rules.insert("ESP_OK".to_string(), ConfigStyle::from_fg(Color::Green));
-
-        Self { rules }
+    pub fn styled(style: Style) -> Self {
+        Self {
+            words: None,
+            ignore_case: false,
+            whole_word: false,
+            style: style.into(),
+        }
     }
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum EntryDef {
+    Color(Color),
+    Table(EntryTable),
+}
+
+#[derive(Serialize, Deserialize)]
+struct EntryTable {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    words: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    ignore_case: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    whole_word: bool,
+    #[serde(flatten)]
+    style: StyleTable,
+}
+
+impl From<EntryDef> for HighlightEntry {
+    fn from(def: EntryDef) -> Self {
+        match def {
+            EntryDef::Color(fg) => Self::color(fg),
+            EntryDef::Table(table) => Self {
+                words: table.words,
+                ignore_case: table.ignore_case,
+                whole_word: table.whole_word,
+                style: table.style.into(),
+            },
+        }
+    }
+}
+
+impl From<HighlightEntry> for EntryDef {
+    fn from(entry: HighlightEntry) -> Self {
+        let single = entry.words.is_none() && !entry.ignore_case && !entry.whole_word;
+        match entry.style.fg {
+            Some(fg) if single && entry.style.is_fg_only() => Self::Color(fg),
+            _ => Self::Table(EntryTable {
+                words: entry.words,
+                ignore_case: entry.ignore_case,
+                whole_word: entry.whole_word,
+                style: entry.style.into(),
+            }),
+        }
+    }
+}
+
+/// Written as a map, in order; read in the file's order
+impl Serialize for HighlightConfig {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(self.entries.len()))?;
+        for (key, entry) in &self.entries {
+            map.serialize_entry(key, entry)?;
+        }
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for HighlightConfig {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Entries;
+        impl<'de> serde::de::Visitor<'de> for Entries {
+            type Value = HighlightConfig;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("highlights: a word or a group, each with its style")
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut entries = Vec::new();
+                while let Some(entry) = map.next_entry()? {
+                    entries.push(entry);
+                }
+                Ok(HighlightConfig { entries })
+            }
+        }
+        deserializer.deserialize_map(Entries)
+    }
+}
+
+impl Default for HighlightConfig {
+    /// Three groups, case ignored and whole words only: errors, warnings, successes; and a word
+    /// on its own in each released form, as examples: `INFO` in a color, `TIMEOUT` in a style
+    /// (MAX-216)
+    fn default() -> Self {
+        let group = |words: &[&str], style: Style| HighlightEntry {
+            words: Some(words.iter().map(|word| word.to_string()).collect()),
+            ignore_case: true,
+            whole_word: true,
+            style: style.into(),
+        };
+        let bold = ratatui::style::Modifier::BOLD;
+        let entries = vec![
+            ("INFO".to_string(), HighlightEntry::color(Color::Cyan)),
+            (
+                "errors".to_string(),
+                group(
+                    &[
+                        "ERROR", "ERR", "FAIL", "FAILED", "FAILURE", "FATAL", "PANIC",
+                    ],
+                    Style::default()
+                        .fg(Color::White)
+                        .bg(Color::Red)
+                        .add_modifier(bold),
+                ),
+            ),
+            (
+                "warnings".to_string(),
+                group(
+                    &["WARN", "WARNING"],
+                    Style::default().fg(Color::Yellow).add_modifier(bold),
+                ),
+            ),
+            (
+                "ok".to_string(),
+                group(
+                    &["OK", "ESP_OK", "SUCCESS", "PASS", "PASSED"],
+                    Style::default().fg(Color::Green),
+                ),
+            ),
+            (
+                "TIMEOUT".to_string(),
+                HighlightEntry::styled(Style::default().fg(Color::Magenta).add_modifier(bold)),
+            ),
+        ];
+        Self { entries }
+    }
+}
+
+/// A word to color, from an entry: its group's style and matching flags (MAX-216)
 #[derive(Debug, Clone)]
 pub struct KeywordHighlight {
     pub pattern: String,
     pub style: Style,
+    pub ignore_case: bool,
+    pub whole_word: bool,
 }
 
 impl HighlightConfig {
+    /// One rule per word, in the file's order; an entry without `words` is its key
     pub fn compile_rules(&self) -> Vec<KeywordHighlight> {
-        self.rules
+        self.entries
             .iter()
-            .map(|(pattern, style)| KeywordHighlight {
-                pattern: pattern.clone(),
-                style: style.to_style(),
+            .flat_map(|(key, entry)| {
+                let words = entry.words.clone().unwrap_or_else(|| vec![key.clone()]);
+                words.into_iter().map(|pattern| KeywordHighlight {
+                    pattern,
+                    style: entry.style.to_style(),
+                    ignore_case: entry.ignore_case,
+                    whole_word: entry.whole_word,
+                })
             })
             .collect()
     }
@@ -145,3 +285,7 @@ impl std::error::Error for HighlightError {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/configs/highlights.rs"]
+mod tests;

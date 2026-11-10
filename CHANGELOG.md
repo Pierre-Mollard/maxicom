@@ -18,8 +18,17 @@ keeps `"?" = "help"` until you change it to `"?" = "enter-search-backward"`.
 A `left` status bar template saved in your `settings.toml` keeps the copy
 color while you search: move its `search?(...)` before `copy_raw?` and
 `copy?`, as in the [default](https://pierre-mollard.github.io/maxicom/status-bar.html#the-default).
+Your `highlights.toml` keeps working as it is: the new groups are only in a
+new file. To get them, delete it and maxicom writes the new default, or copy
+the [default](https://pierre-mollard.github.io/maxicom/highlights.html#the-file).
 
 ### Added
+
+- [Highlight groups](https://pierre-mollard.github.io/maxicom/highlights.html#the-file):
+  a table with a `words` list gives all of them one style, as
+  `[errors] words = ["ERROR", "FAIL"]`. `ignore_case` and `whole_word` set
+  how a group or a word matches, and the entries apply in the file's order,
+  a later one drawn over an earlier one.
 
 - [Search backward](https://pierre-mollard.github.io/maxicom/search.html#starting-a-search)
   with `Ctrl-a ?` (`enter-search-backward`): from the live view, the newest
@@ -44,6 +53,11 @@ color while you search: move its `search?(...)` before `copy_raw?` and
 
 ### Changed
 
+- The default `highlights.toml` has three groups, case ignored and whole
+  words only: errors (`ERROR`, `FAIL`, `FAILED`...) in white on red,
+  warnings (`WARN`, `WARNING`) in yellow, and `OK`, `SUCCESS`, `PASS` in
+  green. Two single words show the other forms: `INFO` in cyan, `TIMEOUT`
+  in bold magenta.
 - A search always runs in copy mode: `Ctrl-a /` and `Ctrl-a ?` enter it at
   the view, and Esc goes back to the live view.
 - `Ctrl-a ?` searches backward; the help is on `Ctrl-a z`.

@@ -13,7 +13,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::{
     app::{
         App,
-        search::{MAX_SEARCH_MATCHES, SearchDirection, SearchModeKind},
+        search::{MAX_SEARCH_MATCHES, SearchDirection, SearchModeKind, find_case_insensitive_iter},
         types::{ClickAction, ClickTarget, FocusTarget, PromptMap},
     },
     configs::{
@@ -405,9 +405,9 @@ pub fn apply_keyword_highlights(buf: &mut Buffer, area: Rect, highlights: &[Keyw
                 continue;
             }
 
-            for (byte_offset, _) in line_str.match_indices(&hl.pattern) {
+            for (byte_offset, byte_end) in keyword_matches(&line_str, hl) {
                 let start_char_col = line_str[..byte_offset].chars().count();
-                let match_len_chars = hl.pattern.chars().count();
+                let match_len_chars = line_str[byte_offset..byte_end].chars().count();
 
                 for char_offset in 0..match_len_chars {
                     let col = area.left() + (start_char_col + char_offset) as u16;
@@ -427,6 +427,29 @@ pub fn apply_keyword_highlights(buf: &mut Buffer, area: Rect, highlights: &[Keyw
             }
         }
     }
+}
+
+/// The start and end bytes of `hl`'s matches in `line`: as written, or in any case; with
+/// `whole_word`, only those with no letter, digit or `_` against them (MAX-216)
+fn keyword_matches<'a>(
+    line: &'a str,
+    hl: &'a KeywordHighlight,
+) -> impl Iterator<Item = (usize, usize)> + 'a {
+    let found: Box<dyn Iterator<Item = (usize, usize)>> = if hl.ignore_case {
+        find_case_insensitive_iter(line, &hl.pattern)
+    } else {
+        let len = hl.pattern.len();
+        Box::new(
+            line.match_indices(&hl.pattern)
+                .map(move |(at, _)| (at, at + len)),
+        )
+    };
+    let word_char = |c: char| c.is_alphanumeric() || c == '_';
+    found.filter(move |&(start, end)| {
+        let before = line[..start].chars().next_back();
+        let after = line[end..].chars().next();
+        !hl.whole_word || !(before.is_some_and(word_char) || after.is_some_and(word_char))
+    })
 }
 
 pub fn apply_selection_to_spans(
@@ -557,3 +580,7 @@ pub fn draw_scrollbar_marks(
             .set_style(style);
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/ui/common.rs"]
+mod tests;
