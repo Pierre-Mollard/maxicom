@@ -18,6 +18,7 @@ impl Folder {
             ("highlights_path", "highlights.toml"),
             ("triggers_path", "triggers.toml"),
             ("links_path", "links.toml"),
+            ("plots_path", "plots.toml"),
         ] {
             text += &format!("{key} = {:?}\n", dir.join(file).display().to_string());
         }
@@ -87,7 +88,7 @@ fn update_twice_changes_nothing() {
             .iter()
             .filter(|l| l.ends_with(": up to date"))
             .count(),
-        5,
+        6,
         "{report:?}"
     );
     assert_eq!(folder.read("config.toml"), new);

@@ -13,7 +13,7 @@ use crate::{
 /// over the settings' or a saved link's (MAX-185). `replay_delay` is
 /// `--delay`, for a replay only. `restore` is `--restore` / `--no-restore`, the last one given,
 /// over `sessions.restore`. `capture_file`, `display_hex` and `encoding` are minicom's `-C`,
-/// `-H` and `-R`, over the settings (MAX-181)
+/// `-H` and `-R`, over the settings (MAX-181). `plot` is `--plot`, over the settings' (MAX-222)
 #[derive(Debug)]
 pub enum ParseOutcome {
     Run {
@@ -24,6 +24,7 @@ pub enum ParseOutcome {
         capture_file: Option<PathBuf>,
         display_hex: bool,
         encoding: Option<TextEncoding>,
+        plot: Option<String>,
     },
     Help,
     Version,
@@ -118,6 +119,7 @@ const VALUE_OPTIONS: &[(&str, &str)] = &[
     ("", "--parity"),
     ("", "--flow"),
     ("", "--config"),
+    ("", "--plot"),
 ];
 
 /// The value glued to its option split off, as getopt takes it for minicom (MAX-181):
@@ -162,6 +164,7 @@ fn parse_args_from(
     let mut capture_file: Option<PathBuf> = None;
     let mut display_hex = false;
     let mut encoding: Option<TextEncoding> = None;
+    let mut plot: Option<String> = None;
     // the line options given, refused on a link whose bridge sets the line (MAX-156)
     let mut line_options: Vec<&'static str> = Vec::new();
 
@@ -242,6 +245,9 @@ fn parse_args_from(
                     .ok_or(ParseError::MissingValue("--remotecharset"))?;
                 encoding = Some(val.parse().map_err(ParseError::BadFormat)?);
             }
+            "--plot" => {
+                plot = Some(args.next().ok_or(ParseError::MissingValue("--plot"))?);
+            }
             // already read by `config_file`, before the settings loaded (MAX-206)
             "--config" => {
                 args.next().ok_or(ParseError::MissingValue("--config"))?;
@@ -299,6 +305,7 @@ fn parse_args_from(
         capture_file,
         display_hex,
         encoding,
+        plot,
     })
 }
 
@@ -360,6 +367,8 @@ Options:
   -R, --remotecharset <ENC>
                            Read the received bytes as utf8, ascii, cp437 or
                            latin1 [default: the settings' encoding]
+      --plot <NAME>        Show the plot NAME of plots.toml in the raw side panel's
+                           place [default: plot in config.toml]
 
   An option's value can be glued to it: --baudrate=9600, -b9600.
 

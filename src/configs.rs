@@ -12,6 +12,7 @@ pub mod comments;
 pub mod highlights;
 pub mod keybindings;
 pub mod links;
+pub mod plots;
 pub mod settings;
 pub mod style;
 pub mod theme;
@@ -25,6 +26,7 @@ pub use keybindings::{
     KeyBindingTerminalAction, KeyBindingsConfig, KeyPattern, KeyResolver, KeymapFileError,
 };
 pub use links::LinksConfig;
+pub use plots::{PlotsConfig, PlotsFileError};
 pub use settings::{
     CommandLineLayout, DualBufferMode, LineDisplayMode, LinkDefaults, Mode, PrefixWrapBehavior,
     QueryGroup, RawSideView, SettingsConfig, SettingsError, StatusBarConfig, StatusBarLayout,
@@ -41,6 +43,7 @@ const KEYMAP_FILE: &str = "keymap.toml";
 const HIGHLIGHT_FILE: &str = "highlights.toml";
 const TRIGGERS_FILE: &str = "triggers.toml";
 const LINKS_FILE: &str = "links.toml";
+const PLOTS_FILE: &str = "plots.toml";
 
 /// The settings file given with `--config`, set once at startup (MAX-206)
 static CONFIG_FILE_GIVEN: OnceLock<PathBuf> = OnceLock::new();
@@ -52,6 +55,7 @@ pub struct AppConfig {
     pub keybindings: KeyBindingsConfig,
     pub highlights: HighlightConfig,
     pub triggers: TriggersConfig,
+    pub plots: PlotsConfig,
     /// A `links.toml` that doesn't load doesn't stop the app: its error, said in the app
     pub links: Result<LinksConfig, String>,
     /// What `unknown_keys_warning` found in the settings and the theme, said in the app
@@ -108,12 +112,17 @@ impl AppConfig {
         let triggers = TriggersConfig::load_or_create_default(&triggers_path)
             .map_err(ConfigsError::Triggers)?;
 
+        let plots_path = Self::active_plots_path(&settings);
+        let plots =
+            PlotsConfig::load_or_create_default(&plots_path).map_err(ConfigsError::Plots)?;
+
         let links =
             LinksConfig::load(&Self::active_links_path(&settings)).map_err(|err| err.to_string());
 
         let warnings = [
             unknown_keys_warning::<SettingsConfig>(path),
             unknown_keys_warning::<ThemeConfig>(&theme_path),
+            unknown_keys_warning::<PlotsConfig>(&plots_path),
         ];
 
         Ok(AppConfig {
@@ -122,6 +131,7 @@ impl AppConfig {
             keybindings,
             highlights,
             triggers,
+            plots,
             links,
             warnings: warnings.into_iter().flatten().collect(),
         })
@@ -178,6 +188,12 @@ impl AppConfig {
             .unwrap_or_else(|| PathBuf::from(LINKS_FILE))
     }
 
+    pub fn default_plots_path() -> PathBuf {
+        dirs::config_dir()
+            .map(|p| p.join(APP_DIR).join(PLOTS_FILE))
+            .unwrap_or_else(|| PathBuf::from(PLOTS_FILE))
+    }
+
     /// The folder of the config files
     pub fn config_dir() -> PathBuf {
         let path = Self::default_config_path();
@@ -195,6 +211,7 @@ impl AppConfig {
             ("highlights file", Self::active_highlight_path(settings)),
             ("triggers file", Self::active_triggers_path(settings)),
             ("links file", Self::active_links_path(settings)),
+            ("plots file", Self::active_plots_path(settings)),
         ];
         let moved = (files.into_iter()).filter(|(_, path)| path.parent() != Some(dir.as_path()));
         std::iter::once(("config folder", dir.clone()))
@@ -224,6 +241,10 @@ impl AppConfig {
     pub fn active_links_path(settings: &SettingsConfig) -> PathBuf {
         (settings.links_path.as_deref()).map_or_else(Self::default_links_path, expand_home)
     }
+
+    pub fn active_plots_path(settings: &SettingsConfig) -> PathBuf {
+        (settings.plots_path.as_deref()).map_or_else(Self::default_plots_path, expand_home)
+    }
 }
 
 #[derive(Debug)]
@@ -233,6 +254,7 @@ pub enum ConfigsError {
     Keymap(Box<KeymapFileError>),
     Highlight(HighlightError),
     Triggers(TriggersFileError),
+    Plots(PlotsFileError),
 }
 
 impl std::fmt::Display for ConfigsError {
@@ -243,6 +265,7 @@ impl std::fmt::Display for ConfigsError {
             Self::Keymap(err) => write!(f, "{err}"),
             Self::Highlight(err) => write!(f, "{err}"),
             Self::Triggers(err) => write!(f, "{err}"),
+            Self::Plots(err) => write!(f, "{err}"),
         }
     }
 }
@@ -255,6 +278,7 @@ impl std::error::Error for ConfigsError {
             Self::Keymap(err) => Some(err),
             Self::Highlight(err) => Some(err),
             Self::Triggers(err) => Some(err),
+            Self::Plots(err) => Some(err),
         }
     }
 }

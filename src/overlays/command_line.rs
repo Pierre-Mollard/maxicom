@@ -39,6 +39,8 @@ pub struct CommandLine {
     trigger_names: Vec<String>,
     link_names: Vec<String>,
     ports: Vec<String>,
+    /// The plots of `plots.toml`, to complete `plot`'s (MAX-222)
+    plot_names: Vec<String>,
 }
 
 impl CommandLine {
@@ -55,6 +57,11 @@ impl CommandLine {
 
     pub fn with_link_names(mut self, link_names: Vec<String>) -> Self {
         self.link_names = link_names;
+        self
+    }
+
+    pub fn with_plot_names(mut self, plot_names: Vec<String>) -> Self {
+        self.plot_names = plot_names;
         self
     }
 
@@ -96,6 +103,7 @@ impl CommandLine {
                 &self.trigger_names,
                 &self.link_names,
                 &self.ports,
+                &self.plot_names,
             )
         } else {
             Completion::default()

@@ -7,6 +7,7 @@ use std::{
 use crate::{
     app::{
         mash::{Mash, MashStep},
+        plots::Plot,
         scroller::ScrollStatus,
         search::{
             SEARCH_HISTORY_SIZE, SearchDirection, SearchHost, SearchModeKind, SearchState,
@@ -23,7 +24,7 @@ use crate::{
     },
     commands::{CommandError, Invocation, Target},
     configs::{
-        DualBufferMode, KeyBindingAction, KeyResolver, LinksConfig, Mode, RawSideView,
+        DualBufferMode, KeyBindingAction, KeyResolver, LinksConfig, Mode, PlotsConfig, RawSideView,
         SettingsConfig, StatusBarLayout, TextEncoding, WrapMode,
         settings::{PrefixPlace, PrefixWrapBehavior, SPLIT_PERCENT_MAX, SPLIT_PERCENT_MIN},
     },
@@ -51,6 +52,7 @@ pub mod device;
 pub mod line_mode;
 pub mod marks;
 pub mod mash;
+pub mod plots;
 pub mod raw_scroller;
 pub mod scroller;
 pub mod search;
@@ -183,6 +185,10 @@ pub struct App {
     host: Option<String>,
     /// The text `mash` sends until another comes in (MAX-6)
     mash: Option<Mash>,
+    /// The plots of `plots.toml`, the one shown and when its clock started (MAX-222)
+    plots: PlotsConfig,
+    plot: Option<Plot>,
+    plot_started: Instant,
     /// Where the session backups are, for the session browser (MAX-148)
     sessions_dir: Option<PathBuf>,
     /// The session the history was filled from, for the session browser's mark (MAX-202)
@@ -316,6 +322,9 @@ impl App {
             links: Ok(LinksConfig::default()),
             host: crate::configs::links::this_host(),
             mash: None,
+            plots: PlotsConfig::default(),
+            plot: None,
+            plot_started: Instant::now(),
             sessions_dir: None,
             restored_session: None,
             is_window_focused: true,
@@ -608,6 +617,7 @@ impl App {
     /// Fresh histories of both modes and fresh counts, the ones they replace given back: for a
     /// replay to play on (MAX-166) and for a device switched to (MAX-187)
     fn clear_screen(&mut self) -> (LineMode, TerminalMode, Stats) {
+        self.clear_plot();
         let line_mode = LineMode::new(
             self.settings.line_mode.history_size,
             self.settings.line_mode.send_history_size,
@@ -659,6 +669,7 @@ impl App {
             return false;
         };
         self.replay = None;
+        self.clear_plot();
         self.link.set_config(replaced.link_config);
         self.settings.mode = replaced.mode;
         self.settings.encoding = replaced.encoding;
@@ -1033,7 +1044,10 @@ impl App {
         }
     }
 
+    /// Live RX, a replay's too. The plot reads it as it comes, before the restore question
+    /// holds it back (MAX-222)
     pub fn feed_rx(&mut self, chunk: &[u8]) {
+        self.feed_plot(chunk);
         if self.hold_rx(chunk) {
             return;
         }
@@ -1550,6 +1564,10 @@ impl App {
             }
             AppAction::ArmTriggers { on, name } => {
                 self.arm_triggers(on, name.as_deref());
+                UpdateEffect::None
+            }
+            AppAction::ShowPlot(name) => {
+                self.show_plot(name.as_deref());
                 UpdateEffect::None
             }
             AppAction::DismissToast(id) => {

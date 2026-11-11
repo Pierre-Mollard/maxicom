@@ -21,8 +21,9 @@ pub const CONFIG_COMMENTS: &[(&str, &str)] = &[
             guide!("settings.html#settings-that-need-a-restart"),
             "\nDurations are written \"500ms\", \"30s\", \"4h\" or \"1day\".",
             "\n\nPut a file elsewhere by adding, at the top of this file, theme_path,",
-            "\nkeybindings_path, highlights_path, triggers_path or links_path:",
+            "\nkeybindings_path, highlights_path, triggers_path, links_path or plots_path:",
             "\ntheme_path = \"~/maxicom/dark.toml\"",
+            "\n\nStart with a plot of plots.toml in the raw side panel's place: plot = \"<name>\"",
         ),
     ),
     ("encoding", "values: utf8, ascii, cp437, latin1"),
@@ -154,6 +155,32 @@ pub const TRIGGERS_COMMENTS: &[(&str, &str)] = &[(
         "\nrearm: stay armed after firing; armed: armed at startup",
     ),
 )];
+
+pub const PLOTS_COMMENTS: &[(&str, &str)] = &[
+    (
+        "",
+        concat!(
+            "Numbers charted from the received lines: ",
+            guide!("plots.html"),
+            "\nA table per plot. separator: what joins a key to its value (\"=\", \":\", \"->\")",
+            "\nkeys = [\"temp\", \"hum\"]: only these series, in this order; left out: every key",
+            "\nfound, up to 8. columns = true: a line of bare numbers gives series 1, 2, 3...",
+            "\nline_contains = \"PID\": only the lines with this text",
+            "\nmin / max: a fixed Y range, autoscale without them",
+            "\ncolors = { temp = \"Red\" }: a series' color, else the theme's link colors",
+            "\nCtrl-a r reloads this file.",
+        ),
+    ),
+    ("key-value.window", "a duration: the X axis is time"),
+    (
+        "arduino.columns",
+        "a line of bare numbers: series 1, 2, 3...",
+    ),
+    (
+        "arduino.window",
+        "a number: the last samples of each series",
+    ),
+];
 
 fn write_comment(out: &mut String, comment: &str) {
     for line in comment.lines() {

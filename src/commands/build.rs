@@ -418,6 +418,23 @@ pub fn trigger(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     }
 }
 
+/// `plot [name]` (MAX-222): the plot named, `off`, or alone the next one in the file's order,
+/// off after the last
+pub fn plot(app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let plots = app.plots();
+    if plots.plots.is_empty() {
+        return Err("plots.toml has no plot".to_string());
+    }
+    let name = match args {
+        [] => app.next_plot().map(String::from),
+        [ArgValue::String(name)] if name == "off" => None,
+        [ArgValue::String(name)] if plots.get(name).is_some() => Some(name.clone()),
+        [ArgValue::String(name)] => return Err(format!("no plot named '{name}'")),
+        _ => unreachable!("plot takes a name, or none"),
+    };
+    Ok(Action::App(AppAction::ShowPlot(name)))
+}
+
 /// `screenshot <name>`: the terminal saved at once, without the dialog
 pub fn screenshot(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     let [ArgValue::Path(name)] = args else {

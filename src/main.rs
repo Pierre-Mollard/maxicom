@@ -18,8 +18,8 @@ use crate::{
     app::{App, UpdateEffect, selection::copy_via_osc52, triggers::Trigger},
     args::{ParseOutcome, parse_args, print_help, print_version},
     configs::{
-        AppConfig, ConfigsError, KeyResolver, KeywordHighlight, LinksConfig, RawSideView,
-        SettingsConfig, ThemeConfig,
+        AppConfig, ConfigsError, KeyResolver, KeywordHighlight, LinksConfig, PlotsConfig,
+        RawSideView, SettingsConfig, ThemeConfig,
     },
     link::{Address, ByteSource, LinkConfig, LinkError},
     overlays::{ErrorDialog, Overlay},
@@ -95,6 +95,7 @@ struct RuntimeConfig {
     highlight_rules: Vec<KeywordHighlight>,
     triggers: Vec<Trigger>,
     links: Result<LinksConfig, String>,
+    plots: PlotsConfig,
     warnings: Vec<String>,
     status_bar: CompiledStatusBar,
 }
@@ -110,6 +111,7 @@ fn load_runtime_config(config_path: &Path) -> Result<RuntimeConfig, ConfigsError
         highlight_rules: configs.highlights.compile_rules(),
         triggers,
         links: configs.links,
+        plots: configs.plots,
         warnings: configs.warnings,
         settings: configs.settings,
         theme: configs.theme,
@@ -131,6 +133,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         mut highlight_rules,
         triggers,
         links,
+        plots,
         warnings,
         mut status_bar,
     } = match load_runtime_config(&config_path) {
@@ -161,6 +164,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 capture_file,
                 display_hex,
                 encoding,
+                plot,
             }) => {
                 // minicom's `-H` and `-R`, over the settings until a reload (MAX-181)
                 if display_hex {
@@ -168,6 +172,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 }
                 if let Some(encoding) = encoding {
                     settings.encoding = encoding;
+                }
+                if plot.is_some() {
+                    settings.plot = plot;
                 }
                 (address, line, replay_delay, restore, capture_file)
             }
@@ -256,6 +263,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut app = App::new(settings, key_resolver, link_config);
     app.set_triggers(triggers);
     app.set_links(links);
+    app.set_plots(plots);
+    app.show_start_plot();
     warnings.into_iter().for_each(|w| app.notify_warn(w));
     app.set_restore_flag(restore);
     if let Some(ports) = pick_from {
@@ -354,6 +363,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                             highlight_rules = config.highlight_rules;
                             app.set_triggers(config.triggers);
                             app.set_links(config.links);
+                            app.set_plots(config.plots);
                             status_bar = config.status_bar;
                             app.apply_reload(config.settings, config.key_resolver);
                             config.warnings.into_iter().for_each(|w| app.notify_warn(w));

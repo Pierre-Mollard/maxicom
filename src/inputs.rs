@@ -87,6 +87,7 @@ pub enum AppAction {
     QueueCommands(Vec<Invocation>),
     ToggleTriggers,
     ArmTriggers { on: bool, name: Option<String> },
+    ShowPlot(Option<String>),
     DismissToast(Option<u64>),
     DismissToasts,
     StartMash(Box<Mash>),

@@ -203,14 +203,17 @@ fn line_command_arguments() {
         assert!(parse(line).is_err(), "{line}");
     }
     assert_eq!(
-        values(&complete("baud 1", &[], &[], &[])),
+        values(&complete("baud 1", &[], &[], &[], &[])),
         ["19200", "115200"]
     );
     assert_eq!(
-        values(&complete("flow ", &[], &[], &[])),
+        values(&complete("flow ", &[], &[], &[], &[])),
         ["none", "hw", "sw"]
     );
-    assert_eq!(values(&complete("dtr o", &[], &[], &[])), ["on", "off"]);
+    assert_eq!(
+        values(&complete("dtr o", &[], &[], &[], &[])),
+        ["on", "off"]
+    );
 }
 
 /// MAX-6: `trigger` takes on, off or toggle, then a trigger's name, completed from the
@@ -222,13 +225,23 @@ fn trigger_names() {
         "uart menu".to_string(),
         "login".to_string(),
     ];
-    assert_eq!(values(&complete("trigger t", &names, &[], &[])), ["toggle"]);
     assert_eq!(
-        values(&complete("trigger on u", &names, &[], &[])),
+        values(&complete("trigger t", &names, &[], &[], &[])),
+        ["toggle"]
+    );
+    assert_eq!(
+        values(&complete("trigger on u", &names, &[], &[], &[])),
         ["u-boot", "uart\\ menu"]
     );
-    assert_eq!(values(&complete("trigger off ", &names, &[], &[])).len(), 3);
-    assert!(complete("trigger on ", &[], &[], &[]).candidates.is_empty());
+    assert_eq!(
+        values(&complete("trigger off ", &names, &[], &[], &[])).len(),
+        3
+    );
+    assert!(
+        complete("trigger on ", &[], &[], &[], &[])
+            .candidates
+            .is_empty()
+    );
     assert!(parse("trigger toggle u-boot").is_ok());
     assert!(parse("trigger flip").is_err());
 }
@@ -369,7 +382,7 @@ fn values(completion: &Completion) -> Vec<&str> {
 
 #[test]
 fn complete_command_names() {
-    let complete = |line| complete(line, &[], &[], &[]);
+    let complete = |line| complete(line, &[], &[], &[], &[]);
     let all = complete("");
     assert_eq!(all.start, 0);
     assert_eq!(all.candidates.len(), COMMANDS.len());
@@ -400,7 +413,7 @@ fn complete_command_names() {
 
 #[test]
 fn complete_argument_values() {
-    let complete = |line| complete_in(&TEST_COMMANDS, line, &[], &[], &[]);
+    let complete = |line| complete_in(&TEST_COMMANDS, line, &[], &[], &[], &[]);
     assert_eq!(values(&complete("test 1 ")), ["on", "off"]);
     assert_eq!(values(&complete("test  1   o")), ["on", "off"]);
     let flow = complete("quit; test 1 on h");
@@ -431,7 +444,7 @@ fn complete_paths() {
     let folder = format!("{}/", dir.display()).replace('\\', "/");
     let complete = |typed: &str| {
         let line = format!("test 1 on none x {folder}{typed}");
-        let completion = complete_in(&TEST_COMMANDS, &line, &[], &[], &[]);
+        let completion = complete_in(&TEST_COMMANDS, &line, &[], &[], &[], &[]);
         assert_eq!(completion.start, 17);
         completion
             .candidates
@@ -448,7 +461,7 @@ fn complete_paths() {
     let line = format!("test 1 on none x {folder}my\\ file.bin");
     // the escaped name is whole, and the argument is the name
     assert!(
-        complete_in(&TEST_COMMANDS, &line, &[], &[], &[])
+        complete_in(&TEST_COMMANDS, &line, &[], &[], &[], &[])
             .candidates
             .is_empty()
     );
@@ -482,7 +495,7 @@ fn open_takes_an_address() {
     }
 
     let ports = ["/dev/ttyUSB0".to_string(), "COM3".to_string()];
-    let complete = |line: &str| complete(line, &[], &[], &ports);
+    let complete = |line: &str| complete(line, &[], &[], &ports, &[]);
     assert_eq!(
         values(&complete("open ")),
         ["tcp://", "file://", "/dev/ttyUSB0", "COM3"]
@@ -492,7 +505,7 @@ fn open_takes_an_address() {
     assert!(complete("open tcp://192.").candidates.is_empty());
     // MAX-185: this machine's saved links first, escaped; `link-delete` takes them only
     let names = ["esp32".to_string(), "router console".to_string()];
-    let saved = |line: &str| super::complete(line, &[], &names, &ports);
+    let saved = |line: &str| super::complete(line, &[], &names, &ports, &[]);
     assert_eq!(
         values(&saved("open ")),
         [

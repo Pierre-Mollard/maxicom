@@ -12,8 +12,8 @@ use serde::{Serialize, de::DeserializeOwned};
 use super::{
     AppConfig,
     comments::{
-        CONFIG_COMMENTS, HIGHLIGHTS_COMMENTS, KEYMAP_COMMENTS, THEME_COMMENTS, TRIGGERS_COMMENTS,
-        with_comments,
+        CONFIG_COMMENTS, HIGHLIGHTS_COMMENTS, KEYMAP_COMMENTS, PLOTS_COMMENTS, THEME_COMMENTS,
+        TRIGGERS_COMMENTS, with_comments,
     },
     unknown_keys,
 };
@@ -83,6 +83,11 @@ pub fn update_files(path: &Path) -> Result<Vec<String>, String> {
             AppConfig::active_triggers_path(settings),
             &config.triggers,
             TRIGGERS_COMMENTS,
+        )?,
+        update_of(
+            AppConfig::active_plots_path(settings),
+            &config.plots,
+            PLOTS_COMMENTS,
         )?,
     ];
     if !added.is_empty() {

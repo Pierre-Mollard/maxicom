@@ -30,6 +30,7 @@ pub enum ArgKind {
     Bytes,
     Trigger,
     Link,
+    Plot,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -586,6 +587,16 @@ pub static COMMANDS: &[CommandSpec] = {
             "Arm, disarm or toggle the triggers, or the one named",
         ),
         CommandSpec::build(
+            "plot",
+            &[ArgSpec {
+                name: "name",
+                kind: ArgKind::Plot,
+                optional: true,
+            }],
+            build::plot,
+            "Show a plot of plots.toml by name, off, or the next one",
+        ),
+        CommandSpec::build(
             "flow",
             &[arg("flow", ArgKind::Enum(&["none", "hw", "sw"]))],
             build::flow,
@@ -623,14 +634,22 @@ pub struct Completion {
 /// names (sorted) for a command's first word, else the values of the argument it is. None for
 /// a word already whole, nor for one with a quote or an escape. `link_names` are this
 /// machine's saved links (MAX-185), first for an address; `ports` the serial ports the system
-/// lists, for an address
+/// lists, for an address; `plot_names` the plots of `plots.toml` (MAX-222)
 pub fn complete(
     before_cursor: &str,
     trigger_names: &[String],
     link_names: &[String],
     ports: &[String],
+    plot_names: &[String],
 ) -> Completion {
-    complete_in(COMMANDS, before_cursor, trigger_names, link_names, ports)
+    complete_in(
+        COMMANDS,
+        before_cursor,
+        trigger_names,
+        link_names,
+        ports,
+        plot_names,
+    )
 }
 
 fn complete_in(
@@ -639,6 +658,7 @@ fn complete_in(
     trigger_names: &[String],
     link_names: &[String],
     ports: &[String],
+    plot_names: &[String],
 ) -> Completion {
     let Some(word) = last_word(line) else {
         return Completion::default();
@@ -672,6 +692,11 @@ fn complete_in(
                     .collect(),
                 ArgKind::Link => (link_names.iter())
                     .map(|name| escape_word(name))
+                    .filter(|name| name.starts_with(prefix))
+                    .collect(),
+                ArgKind::Plot => (plot_names.iter().map(String::as_str))
+                    .chain(["off"])
+                    .map(escape_word)
                     .filter(|name| name.starts_with(prefix))
                     .collect(),
                 kind => kind
@@ -931,7 +956,9 @@ impl ArgKind {
                 .find(|value| **value == text)
                 .map(|value| ArgValue::Enum(value))
                 .ok_or_else(|| format!("'{text}' is not one of {}", values.join(", "))),
-            Self::String | Self::Trigger | Self::Link => Ok(ArgValue::String(text.to_string())),
+            Self::String | Self::Trigger | Self::Link | Self::Plot => {
+                Ok(ArgValue::String(text.to_string()))
+            }
             Self::Path => Ok(ArgValue::Path(PathBuf::from(text))),
             Self::Address => text.parse().map(ArgValue::Address),
             Self::Hex => parse_hex(text).map(ArgValue::Bytes),
@@ -953,7 +980,8 @@ impl ArgKind {
             | Self::Hex
             | Self::Bytes
             | Self::Trigger
-            | Self::Link => &[],
+            | Self::Link
+            | Self::Plot => &[],
         };
         values
             .iter()

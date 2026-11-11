@@ -297,6 +297,27 @@ fn minicom_options() {
     }
 }
 
+/// MAX-222: `--plot` names the plot shown at start, glued or not; none by default, and it
+/// needs its name.
+#[test]
+fn plot_option() {
+    let plot = |args: &[&str]| match parse(args) {
+        Ok(ParseOutcome::Run { plot, .. }) => Ok(plot),
+        Ok(other) => panic!("not a run: {other:?}"),
+        Err(err) => Err(err.to_string()),
+    };
+    assert_eq!(plot(&[]), Ok(None));
+    assert_eq!(
+        plot(&["--plot", "arduino"]),
+        Ok(Some("arduino".to_string()))
+    );
+    assert_eq!(plot(&["--plot=pid"]), Ok(Some("pid".to_string())));
+    assert_eq!(
+        plot(&["--plot"]),
+        Err("Missing value for option '--plot'.".to_string())
+    );
+}
+
 /// MAX-156: the device can be given without `--device`, a TCP one with `--tcp` too, and the
 /// last one given wins.
 #[test]
