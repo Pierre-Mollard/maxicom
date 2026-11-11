@@ -114,6 +114,7 @@ directory's `n`, `e` and `s`. Those are fixed, and each chapter lists them.
 | `Ctrl-a C` | `clear-history` | Clear the history |
 | `Ctrl-a D` | `toggle-attach` | Detach / attach the link |
 | `Ctrl-a E` | `auto-resize-emulator` | Resize the emulator to the view |
+| `Ctrl-a G` | `plot-freeze` | Freeze / unfreeze the plot |
 | `Ctrl-a K` | `screenshot-text` | Screenshot the terminal as plain text |
 | `Ctrl-a L` | `replay-stop` | Stop the replay, back to the link it replaced |
 | `Ctrl-a M` | `toggle-mouse` | Toggle mouse support |
@@ -129,6 +130,7 @@ directory's `n`, `e` and `s`. Those are fixed, and each chapter lists them.
 | `Ctrl-a Down` | `scroll-down` | Scroll down one line |
 | `Ctrl-a e` | `toggle-local-echo` | Toggle local echo |
 | `Ctrl-a f` | `break` | Hold the line in break, 250 ms by default |
+| `Ctrl-a g` | `plot` | A command line: the next plot, off after the last |
 | `Ctrl-a h` | `dtr off; sleep 100; dtr on` | A command line |
 | `Ctrl-a j` | `sessions` | Open the session backups |
 | `Ctrl-a k` | `screenshot-bytes` | Screenshot the terminal with its colors |
@@ -293,6 +295,9 @@ commands with arguments (`send`, `open`, `baud`, `replay`...).
 | `cancel` | Stop the file transfer and queued commands | — |
 | `toggle-triggers` | Arm / disarm the triggers | — |
 | `triggers` | Open the triggers | `Ctrl-a T` |
+| `plot-freeze` | Freeze / unfreeze the plot, its data still collected | `Ctrl-a G` |
+| `plot-next` | Show the next plot of plots.toml, off after the last | — |
+| `plot-prev` | Show the previous plot of plots.toml, off before the first | — |
 | `dismiss-notification` | Close the top notification | `Ctrl-a n` |
 | `dismiss-notifications` | Close all the notifications | `Ctrl-a N` |
 | `marks` | Open the marks: a letter jumps to its mark | `Ctrl-a '` |

@@ -3,9 +3,6 @@
 //! `Plot` is pure: RX bytes and the time they arrived come in, points go out. The app picks
 //! the plot, feeds it live RX (a replay's too) with its clock, and clears it with the views.
 
-// TODO: (MAX-222) the chart reads the series in step 4, drop this then
-#![allow(dead_code)]
-
 use std::{
     collections::VecDeque,
     time::{Duration, Instant},
@@ -30,7 +27,8 @@ pub const MAX_LINE: usize = 4096;
 const COLUMN_NAMES: [&str; MAX_SERIES] = ["1", "2", "3", "4", "5", "6", "7", "8"];
 
 /// A plot: its definition, what it reads in a line, the series it fed, and the line still
-/// coming in
+/// coming in. Frozen, it keeps the series as they were and the time it froze at, for the
+/// chart, while the live ones go on
 #[derive(Debug, Clone)]
 pub struct Plot {
     pub name: String,
@@ -40,6 +38,7 @@ pub struct Plot {
     pending: Vec<u8>,
     /// The line coming in is longer than `MAX_LINE`: skipped up to its end of line
     skipping: bool,
+    frozen: Option<(PlotData, Duration)>,
 }
 
 impl Plot {
@@ -51,6 +50,7 @@ impl Plot {
             data: PlotData::new(def),
             pending: Vec::new(),
             skipping: false,
+            frozen: None,
         }
     }
 
@@ -97,11 +97,30 @@ impl Plot {
         &self.data
     }
 
-    /// The series emptied and the line coming in dropped
+    /// What the chart draws at `at`: the live series, or frozen, the ones it froze on at the
+    /// time it froze
+    pub fn shown(&self, at: Duration) -> (&PlotData, Duration) {
+        match &self.frozen {
+            Some((data, frozen_at)) => (data, *frozen_at),
+            None => (&self.data, at),
+        }
+    }
+
+    pub fn is_frozen(&self) -> bool {
+        self.frozen.is_some()
+    }
+
+    /// Frozen at `at`, or back to the live series
+    pub fn freeze(&mut self, at: Option<Duration>) {
+        self.frozen = at.map(|at| (self.data.clone(), at));
+    }
+
+    /// The series emptied, the line coming in dropped and the freeze over
     pub fn clear(&mut self) {
         self.data.clear();
         self.pending.clear();
         self.skipping = false;
+        self.frozen = None;
     }
 }
 
@@ -152,7 +171,6 @@ impl PlotParser {
             let after = at + self.separator.len();
             let key = key_before(&line[cursor..at]);
             let value_start = after + blank_len(&line[after..]);
-            // blank_len needed here?
             match number_prefix(&line[value_start..]) {
                 Some((value, len)) if !key.is_empty() => {
                     if !samples.iter().any(|(name, _)| *name == key) {
@@ -254,12 +272,37 @@ impl PlotSeries {
         }
     }
 
+    #[cfg(test)]
     pub fn points(&self) -> &VecDeque<(f64, f64)> {
         &self.points
     }
 
+    #[cfg(test)]
     pub fn last(&self) -> Option<f64> {
         self.points.back().map(|(_, y)| *y)
+    }
+
+    /// The points from `from` on: the ones a time window's chart still shows between two lines
+    pub fn visible(&self, from: f64) -> impl Iterator<Item = (f64, f64)> + '_ {
+        let first = self.points.partition_point(|(x, _)| *x < from);
+        self.points.range(first..).copied()
+    }
+
+    /// The last, lowest and highest values from `from` on, for the legend; none without a point
+    pub fn stats(&self, from: f64) -> Option<SeriesStats> {
+        let mut values = self.visible(from).map(|(_, y)| y);
+        let first = values.next()?;
+        let mut stats = SeriesStats {
+            last: first,
+            min: first,
+            max: first,
+        };
+        for y in values {
+            stats.last = y;
+            stats.min = stats.min.min(y);
+            stats.max = stats.max.max(y);
+        }
+        Some(stats)
     }
 
     /// Drops the points before `from`
@@ -268,6 +311,13 @@ impl PlotSeries {
             self.points.pop_front();
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SeriesStats {
+    pub last: f64,
+    pub min: f64,
+    pub max: f64,
 }
 
 /// The series of a plot, windowed by time or by count. With `keys`, one series per key in
@@ -310,6 +360,45 @@ impl PlotData {
         match self.window {
             PlotWindow::Time(window) => at.saturating_sub(window).as_secs_f64(),
             PlotWindow::Samples(count) => self.samples.saturating_sub(count as u64) as f64,
+        }
+    }
+
+    /// The X axis at `at`: a whole window wide, ending where the window ends, so a window not
+    /// full yet fills from the right
+    pub fn x_bounds(&self, at: Duration) -> [f64; 2] {
+        let width = match self.window {
+            PlotWindow::Time(window) => window.as_secs_f64(),
+            PlotWindow::Samples(count) => count as f64,
+        };
+        let end = self.x_end(at);
+        [end - width, end]
+    }
+
+    /// The Y axis: `min` and `max` when set, else the lowest and highest values from `from`
+    /// on. A fixed side with the values all past it, or a flat line, gets a range around it;
+    /// no value at all, 0 to 1
+    pub fn y_bounds(&self, from: f64, min: Option<f64>, max: Option<f64>) -> [f64; 2] {
+        let values = (self.series.iter()).flat_map(|series| series.visible(from).map(|(_, y)| y));
+        let seen = values.fold(None, |range: Option<(f64, f64)>, y| match range {
+            None => Some((y, y)),
+            Some((lo, hi)) => Some((lo.min(y), hi.max(y))),
+        });
+        match (min, max, seen) {
+            (Some(lo), Some(hi), _) => [lo, hi],
+            (Some(lo), None, Some((_, hi))) if hi > lo => [lo, hi],
+            (Some(lo), None, _) => [lo, lo + 1.0],
+            (None, Some(hi), Some((lo, _))) if lo < hi => [lo, hi],
+            (None, Some(hi), _) => [hi - 1.0, hi],
+            (None, None, Some((lo, hi))) if lo < hi => [lo, hi],
+            (None, None, Some((value, _))) => {
+                let pad = if value == 0.0 {
+                    1.0
+                } else {
+                    value.abs() / 10.0
+                };
+                [value - pad, value + pad]
+            }
+            (None, None, None) => [0.0, 1.0],
         }
     }
 
@@ -436,6 +525,54 @@ impl App {
             None => names.next(),
             Some(plot) => names.skip_while(|name| *name != plot.name).nth(1),
         }
+    }
+
+    /// The plot before the one shown, off before the first, the last from off
+    pub fn prev_plot(&self) -> Option<&str> {
+        let mut names = self.plots.plots.iter().rev().map(|(name, _)| name.as_str());
+        match &self.plot {
+            None => names.next(),
+            Some(plot) => names.skip_while(|name| *name != plot.name).nth(1),
+        }
+    }
+
+    /// `plot-next` / `plot-prev`, the settings popup's row and the panel's arrows: the next
+    /// or previous plot, off past the ends
+    pub fn step_plot(&mut self, forward: bool) {
+        if self.plots.plots.is_empty() {
+            self.notify_warn("plots.toml has no plot");
+            return;
+        }
+        let name = if forward {
+            self.next_plot()
+        } else {
+            self.prev_plot()
+        };
+        let name = name.map(String::from);
+        self.show_plot(name.as_deref());
+    }
+
+    /// The time on the plot's clock: since it was shown or last cleared
+    pub fn plot_clock(&self) -> Duration {
+        self.plot_started.elapsed()
+    }
+
+    /// `plot-freeze`: the chart stops moving or jumps back to now; the data is collected
+    /// either way
+    pub fn toggle_plot_freeze(&mut self) {
+        let at = self.plot_clock();
+        let Some(plot) = &mut self.plot else {
+            self.notify_warn("No plot shown");
+            return;
+        };
+        let frozen = !plot.is_frozen();
+        plot.freeze(frozen.then_some(at));
+        let name = plot.name.clone();
+        self.notify_info(if frozen {
+            format!("Plot {name} frozen")
+        } else {
+            format!("Plot {name} live")
+        });
     }
 
     /// RX bytes for the plot shown, at the time they came in on its clock

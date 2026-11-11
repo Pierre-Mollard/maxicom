@@ -27,7 +27,7 @@ maxicom prints these and exits.
 | `maxicom: could not open the device: <reason>` | The port given exists but doesn't open | See [Opening a link](#opening-a-link) below |
 | `maxicom: could not open replay file <path>: not a recording (a .raw, its .meta or its folder)` | The path of `--replay` is a `.log` or another file | Give the recording's folder, `.raw` or `.meta`. See [Replay](capture.md#replay). |
 | `maxicom: could not open replay file <path>: <reason>` | The file doesn't open | The reason comes from the system |
-| `maxicom: invalid settings syntax in '<file>': …`, `invalid theme in …`, `invalid keybinding in …`, `invalid trigger in …` | A config file doesn't load. The message names the file, and the line or the culprit. | Fix it. See [Settings](settings.md#errors). |
+| `maxicom: invalid settings syntax in '<file>': …`, `invalid theme in …`, `invalid keybinding in …`, `invalid trigger in …`, `invalid plot in …` | A config file doesn't load. The message names the file, and the line or the culprit. | Fix it. See [Settings](settings.md#errors). |
 | `maxicom: no cache folder on this system` | `--cache-dir` found no cache folder | |
 
 A port that doesn't exist at startup doesn't stop maxicom: it waits for
@@ -83,6 +83,8 @@ See [Command line](command-line.md).
 | `Mash stopped: <why>` | A key was typed, the link closed, or a replay started |
 | `Stopped sending <file> at <n>%: <why>` | The write failed, the link closed, or a replay started |
 | `no trigger named '<name>'`, `triggers.toml has no trigger` | `trigger` names no trigger. See [Triggers](triggers.md). |
+| `no plot named '<name>'`, `plots.toml has no plot` | `plot` names no plot, or the file has none. See [Plots](plots.md). |
+| `No plot shown` | `plot-freeze` with no plot shown |
 | `screenshots are in terminal mode` | `screenshot` in line mode |
 | `no replay runs`, `the replay isn't paused`, `the replay is finished …` | A replay command with nothing to act on |
 | `a replay can't open a link (replay-stop ends it)` | `open` during a replay |
@@ -94,9 +96,11 @@ See [Command line](command-line.md).
 | Popup "Config Reload Failed" | A file doesn't load; the running config stays. The details name the file and the line. | Fix it, then reload |
 | `Config reloaded; restart to apply: <settings>` | Those settings are only read at startup | Restart maxicom. See [Reload](settings.md#reload). |
 | `Keymap: unreachable <keys>` | Keys in `[line_mode]` or `[terminal_mode]` that the prefix or `[direct_actions]` take first | Bind them to other keys. See [Keybindings](keybindings.md#sections). |
-| `Unknown keys in <file>: <keys>` | Keys of `config.toml` or `theme.toml` the app doesn't read, such as a typo: each takes its default | Fix or delete them, see [Unknown keys](settings.md#unknown-keys) |
+| `Unknown keys in <file>: <keys>` | Keys of `config.toml`, `theme.toml` or `plots.toml` the app doesn't read, such as a typo: each takes its default | Fix or delete them, see [Unknown keys](settings.md#unknown-keys) |
 | `invalid link in '<file>': link #<n> '<name>': <problem>`, `invalid syntax in '<file>'` | `links.toml` doesn't load; maxicom runs without saved links | Fix the file. See [Saved links](saved-links.md). |
 | `changed in the file meanwhile: not saved` | `links.toml` changed since the directory read it | Open the directory again and redo it |
+| `No plot named '<name>' in plots.toml: plot off` | `--plot` or `plot` in `config.toml` names no plot of the file | Fix the name. See [Plots](plots.md#showing-a-plot). |
+| `Plot <name> is gone from plots.toml: plot off` | A reload removed the plot shown | Pick another one with `Ctrl-a g` |
 
 ## Recordings and sessions
 

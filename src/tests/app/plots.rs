@@ -325,6 +325,97 @@ fn points_capped() {
     assert_eq!(series.points().front(), Some(&(5.0, 5.0)));
 }
 
+/// The X axis is a whole window wide, ending at the clock on a time window and after the
+/// last sample on a count window: a window not full yet fills from the right.
+#[test]
+fn x_bounds() {
+    let mut plot = Plot::new("kv".to_string(), &PlotDef::default());
+    assert_eq!(plot.data().x_bounds(secs(5.0)), [-25.0, 5.0]);
+    plot.feed_line("a=1", secs(40.0));
+    assert_eq!(plot.data().x_bounds(secs(45.0)), [15.0, 45.0]);
+
+    let mut plot = Plot::new("arduino".to_string(), &arduino());
+    assert_eq!(plot.data().x_bounds(secs(5.0)), [-500.0, 0.0]);
+    plot.feed_line("1", Duration::ZERO);
+    plot.feed_line("2", Duration::ZERO);
+    assert_eq!(plot.data().x_bounds(secs(99.0)), [-498.0, 2.0]);
+}
+
+/// The values from a point on: the last, lowest and highest of them, none without one.
+#[test]
+fn visible_and_stats() {
+    let mut plot = Plot::new("kv".to_string(), &PlotDef::default());
+    for (at, value) in [(1.0, 5.0), (2.0, -3.0), (3.0, 8.0), (4.0, 1.0)] {
+        plot.feed_line(&format!("a={value}"), secs(at));
+    }
+    let series = &plot.data().series()[0];
+    let visible: Vec<_> = series.visible(2.5).collect();
+    assert_eq!(visible, [(3.0, 8.0), (4.0, 1.0)]);
+    let all = SeriesStats {
+        last: 1.0,
+        min: -3.0,
+        max: 8.0,
+    };
+    assert_eq!(series.stats(0.0), Some(all));
+    assert_eq!(series.stats(2.0), Some(all));
+    assert_eq!(series.stats(2.5).map(|s| (s.min, s.max)), Some((1.0, 8.0)));
+    assert_eq!(series.stats(5.0), None);
+}
+
+/// Autoscale on the values shown, every series; `min` / `max` over it, a fixed side the
+/// values are all past gets a unit range, a flat line a range around it, nothing 0 to 1.
+#[test]
+fn y_bounds() {
+    let mut plot = Plot::new("kv".to_string(), &PlotDef::default());
+    let data = |plot: &Plot, min, max| plot.data().y_bounds(0.0, min, max);
+    assert_eq!(data(&plot, None, None), [0.0, 1.0]);
+    assert_eq!(data(&plot, Some(5.0), None), [5.0, 6.0]);
+    assert_eq!(data(&plot, None, Some(5.0)), [4.0, 5.0]);
+
+    plot.feed_line("a=20 b=20", secs(1.0));
+    assert_eq!(data(&plot, None, None), [18.0, 22.0]);
+    plot.feed_line("a=0", secs(2.0));
+    plot.feed_line("b=50", secs(3.0));
+    assert_eq!(data(&plot, None, None), [0.0, 50.0]);
+    assert_eq!(
+        plot.data().y_bounds(2.5, None, None),
+        [50.0 - 5.0, 50.0 + 5.0]
+    );
+    assert_eq!(data(&plot, Some(-10.0), Some(100.0)), [-10.0, 100.0]);
+    assert_eq!(data(&plot, Some(10.0), None), [10.0, 50.0]);
+    assert_eq!(data(&plot, None, Some(30.0)), [0.0, 30.0]);
+    assert_eq!(data(&plot, Some(60.0), None), [60.0, 61.0]);
+    assert_eq!(data(&plot, None, Some(-1.0)), [-2.0, -1.0]);
+
+    let mut flat = Plot::new("kv".to_string(), &PlotDef::default());
+    flat.feed_line("a=0", secs(1.0));
+    assert_eq!(flat.data().y_bounds(0.0, None, None), [-1.0, 1.0]);
+}
+
+/// Frozen, the chart shows the series as they were at the time it froze, while the live ones
+/// go on; back live, it shows them; cleared, the freeze is over.
+#[test]
+fn freeze_keeps_what_was_shown() {
+    let mut plot = Plot::new("kv".to_string(), &PlotDef::default());
+    plot.feed_line("a=1", secs(1.0));
+    plot.freeze(Some(secs(2.0)));
+    plot.feed_line("a=2 b=5", secs(3.0));
+
+    let (shown, at) = plot.shown(secs(9.0));
+    assert_eq!(at, secs(2.0));
+    assert_eq!(points(shown, "a"), [(1.0, 1.0)]);
+    assert_eq!(shown.series().len(), 1);
+    assert_eq!(points(plot.data(), "a"), [(1.0, 1.0), (3.0, 2.0)]);
+
+    plot.freeze(None);
+    let (shown, at) = plot.shown(secs(9.0));
+    assert_eq!((points(shown, "a").len(), at), (2, secs(9.0)));
+
+    plot.freeze(Some(secs(4.0)));
+    plot.clear();
+    assert!(!plot.is_frozen());
+}
+
 fn fed(chunks: &[&[u8]]) -> Plot {
     let mut plot = Plot::new("kv".to_string(), &PlotDef::default());
     for chunk in chunks {
@@ -474,6 +565,8 @@ mod app {
         run(&mut app, "plot");
         assert_eq!(shown(&app), Some("arduino"));
         assert_eq!(last_of(&app, "2"), None);
+        run(&mut app, "plot; plot");
+        assert_eq!(shown(&app), Some("tagged"));
         run(&mut app, "plot");
         assert_eq!(shown(&app), None);
 
@@ -493,7 +586,10 @@ mod app {
             let candidates = command_line.completion.candidates.iter();
             candidates.map(|c| c.value.clone()).collect::<Vec<_>>()
         };
-        assert_eq!(complete(&mut app, "plot "), ["key-value", "arduino", "off"]);
+        assert_eq!(
+            complete(&mut app, "plot "),
+            ["key-value", "arduino", "sensors", "tagged", "off"]
+        );
         app.update(Action::Overlay(DialogAction::Close));
 
         app.set_plots(PlotsConfig { plots: Vec::new() });
@@ -549,6 +645,100 @@ mod app {
             last_toast(&app),
             "Plot key-value is gone from plots.toml: plot off"
         );
+    }
+
+    /// MAX-222: `plot-freeze` (`Ctrl-a G`) freezes the plot shown and gives it back live,
+    /// each said; with no plot shown it says so. A device switch, as a replay's start, ends
+    /// the freeze. `Ctrl-a g` goes to the next plot as `plot` alone does; `plot-next` and
+    /// `plot-prev` step both ways, off past the ends. The settings popup's `V` goes to the
+    /// next one; its `g` is the popups' Home, not a plot key.
+    /// How: the commands, then the default keys, then the popup's keys typed.
+    #[test]
+    fn plot_freeze_and_keys() {
+        let mut app = app();
+        run(&mut app, "plot-freeze");
+        assert_eq!(last_toast(&app), "No plot shown");
+
+        run(&mut app, "plot key-value; plot-freeze");
+        assert!(app.plot().unwrap().is_frozen());
+        assert_eq!(last_toast(&app), "Plot key-value frozen");
+        app.feed_rx(b"a=1\n");
+        assert_eq!(last_of(&app, "a"), Some(1.0));
+        let (frozen, _) = app.plot().unwrap().shown(app.plot_clock());
+        assert!(frozen.series().is_empty());
+        run(&mut app, "plot-freeze");
+        assert!(!app.plot().unwrap().is_frozen());
+        assert_eq!(last_toast(&app), "Plot key-value live");
+
+        run(&mut app, "plot-freeze");
+        app.start_replay("/tmp/x.raw".into(), None);
+        assert!(!app.plot().unwrap().is_frozen());
+
+        let prefix_key = |app: &mut App, c: char| {
+            app.update(Action::App(AppAction::SetPrefix(true)));
+            let event = crossterm::event::Event::Key(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(c),
+                crossterm::event::KeyModifiers::NONE,
+            ));
+            let action = crate::inputs::handle_event(event, app);
+            app.update(action);
+            while let Some(action) = app.next_command_action(Instant::now()) {
+                app.update(action);
+            }
+        };
+        prefix_key(&mut app, 'G');
+        assert!(app.plot().unwrap().is_frozen());
+        prefix_key(&mut app, 'g');
+        assert_eq!(shown(&app), Some("arduino"));
+
+        run(&mut app, "plot-prev");
+        assert_eq!(shown(&app), Some("key-value"));
+        run(&mut app, "plot-prev");
+        assert_eq!(shown(&app), None);
+        run(&mut app, "plot-prev");
+        assert_eq!(shown(&app), Some("tagged"));
+        run(&mut app, "plot-next");
+        assert_eq!(shown(&app), None);
+        run(&mut app, "plot-next");
+        assert_eq!(shown(&app), Some("key-value"));
+
+        let typed = |app: &mut App, c: char| {
+            let event = crossterm::event::Event::Key(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(c),
+                crossterm::event::KeyModifiers::NONE,
+            ));
+            let action = crate::inputs::handle_event(event, app);
+            app.update(action);
+        };
+        app.update(KeyBindingAction::Settings.to_action(&app));
+        typed(&mut app, 'g');
+        assert_eq!(shown(&app), Some("key-value"));
+        typed(&mut app, 'v');
+        assert_eq!(shown(&app), Some("arduino"));
+        typed(&mut app, 'V');
+        assert_eq!(shown(&app), Some("sensors"));
+        assert!(matches!(app.overlay(), Some(Overlay::Settings(_))));
+
+        app.set_plots(PlotsConfig { plots: Vec::new() });
+        run(&mut app, "plot-next");
+        assert_eq!(last_toast(&app), "plots.toml has no plot");
+    }
+
+    /// MAX-222: the side resize keys warn that there's no side panel only when neither the
+    /// raw view nor a plot shows one.
+    #[test]
+    fn resize_side_with_a_plot() {
+        let mut app = app();
+        let resize = |app: &mut App| app.update(Action::App(AppAction::ResizeSidePanel(5)));
+        resize(&mut app);
+        assert_eq!(last_toast(&app), "SideView is Off");
+
+        run(&mut app, "plot key-value");
+        let before = toasts(&app).len();
+        let percent = app.settings().raw_side.split_percent;
+        resize(&mut app);
+        assert_eq!(toasts(&app).len(), before);
+        assert_eq!(app.settings().raw_side.split_percent, percent + 5);
     }
 
     /// MAX-222: `plot` in config.toml (or `--plot` over it) shows that plot at start; a name

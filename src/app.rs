@@ -1570,6 +1570,14 @@ impl App {
                 self.show_plot(name.as_deref());
                 UpdateEffect::None
             }
+            AppAction::TogglePlotFreeze => {
+                self.toggle_plot_freeze();
+                UpdateEffect::None
+            }
+            AppAction::StepPlot(forward) => {
+                self.step_plot(forward);
+                UpdateEffect::None
+            }
             AppAction::DismissToast(id) => {
                 self.notifications.dismiss(id);
                 UpdateEffect::None
@@ -1636,11 +1644,11 @@ impl App {
         }
     }
 
-    /// The raw side panel's share of the split, by `by` percent, kept in the config's range
-    /// (MAX-189)
+    /// The side panel's share of the split, by `by` percent, kept in the config's range
+    /// (MAX-189): the raw panel's or the plot's (MAX-222)
     fn resize_side_panel(&mut self, by: i16) {
-        if self.settings.raw_side.view == RawSideView::Off {
-            self.notify_warn("Raw SideView is Off");
+        if self.settings.raw_side.view == RawSideView::Off && self.plot.is_none() {
+            self.notify_warn("SideView is Off");
         }
         let percent = self.settings.raw_side.split_percent as i16 + by;
         self.settings.raw_side.split_percent =
@@ -2123,6 +2131,8 @@ impl App {
                 let eol = self.settings.line_mode.tx_eol.as_str();
                 self.notify_info(format!("Line Enter sends {eol}"));
             }
+            // the next plot of plots.toml, off after the last, as `plot` alone (MAX-222)
+            SettingKey::Plot => self.step_plot(true),
             SettingKey::DisplayRaw => {
                 self.settings.raw_side.view.toggle();
                 self.notify_info(format!(

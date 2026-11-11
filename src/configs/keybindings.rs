@@ -82,6 +82,9 @@ pub enum KeyBindingAction {
     Marks,
     EnterSearchBackward,
     PanEnd,
+    PlotFreeze,
+    PlotNext,
+    PlotPrev,
 }
 
 impl FromStr for KeyBindingAction {
@@ -1134,6 +1137,8 @@ impl Default for KeyBindingsConfig {
             "h"     => "dtr off; sleep 100; dtr on", // DTR pulse which resets most boards
             "U"     => "trigger toggle u-boot", // the default triggers.toml's
             "L"     => "replay-stop", // back to the live link, as the session browser's L
+            "g"     => "plot", // the next plot of plots.toml, off after the last
+            "G"     => KeyBindingAction::PlotFreeze,
         };
 
         let line_mode = default_bindings! {

@@ -25,6 +25,7 @@
 - [Search](search.md)
 - [Marks](marks.md)
 - [Raw side panel](raw-side-panel.md)
+- [Plots](plots.md)
 - [Triggers](triggers.md)
 - [Capture](capture.md)
 - [Notifications](notifications.md)

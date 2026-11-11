@@ -71,6 +71,7 @@ center = '''
     [⟳ mash ](mashing?(fg=secondary bold):hide click=cancel)\
     [⇡ {send_file} {send_percent:>3}% ](sending?(fg=secondary bold):hide)\
     [▷ {replay_state} {replay_percent:>3}% ](replaying?(fg=secondary bold):hide prio=5)\
+    [∿ {plot} ](plot?(frozen?(fg=warn bold):(fg=secondary)):hide prio=5)\
     [« live ](replaced?(fg=main bold):hide click=toggle-attach)\
     [+CR ](add_cr?(fg=warn bold):hide click=toggle-add-cr)\
     [+LF ](add_lf?(fg=warn bold):hide click=toggle-add-lf)\
@@ -118,6 +119,7 @@ layout = "border"
 | `{replay_state}` | `RUN`, `PAUSE`, `END`, empty when no replay | `PAUSE` |
 | `{replay_percent}` | How much of the file it read, 0..100 | `42` |
 | `{replay_read}` / `{replay_size}` | Bytes read / the file's size | `4096` |
+| `{plot}` | The [plot](plots.md) shown, empty when none | `pid` |
 
 The default bar doesn't show `{copy_side}`: in copy mode the mode badge reads
 `COPY`, and its color tells the panel instead. To show it, add this block
@@ -176,6 +178,8 @@ otherwise. Conditions chain:
 | `mashing` | `mash` | `mash` is running |
 | `replaying` | `replay` | A replay takes the link's place, ended or not |
 | `replaced` | `live_behind` | That replay holds a live link's place, which `toggle-attach` (the default bar's `« live`) goes back to |
+| `plot` | `plotting` | A [plot](plots.md) is shown |
+| `frozen` | `plot_frozen` | The plot's chart is frozen |
 | `is_live` | `live`, `is_bottom`, `bottom`, `bot` | Following the live output |
 | `is_top` | `top` | Scrolled to the top |
 | `is_scrolled` | `scrolled`, `paused` | Scrolled up into the history |
@@ -263,6 +267,7 @@ A block without `click=` runs what its first variable implies:
 | `{pan_left}`, `{pan_right}` | Pan left / right |
 | `{pan_offset}`, `{pan_max}` | Back to the left edge |
 | `{send_file}`, `{send_percent}` | Stop sending the file |
+| `{plot}` | Freeze / unfreeze the plot |
 | `{scroll_pos}`, `{scroll_pos_up}`, `{scroll_percent}`, `{scroll_offset}` | Back to the live output |
 
 A variable in plain text, outside `[...]`, is clickable on its own.

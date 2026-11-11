@@ -100,6 +100,7 @@ image.
 | `restore` | A restored session and its separator | Capture |
 | `session-browser` | The session browser with past sessions | Capture |
 | `status-bar` | The status bar alone, with a recording and a trigger armed | Status bar |
+| `plots` | A heater's PID loop plotted next to its log, at 130 columns | Plots |
 
 ## Adding a scenario
 
@@ -118,9 +119,10 @@ Add an entry to `SCENARIOS` at the end of `shots.py`:
   types text, and `wait(seconds)` waits.
 - The options: `config` sets keys of `config.toml` as
   `{(section, key): "toml value"}`, with `None` for the top level. There are
-  also `links`, `triggers`, `fixtures` (past sessions), `size`, `rows` (a slice
-  of the screen's rows, like `(-1, None)` for the bottom row only), and
-  `restore=True` to let maxicom restore.
+  also `links`, `triggers`, `plots` (the text of `plots.toml`), `args` (in place of
+  `esp32`), `fixtures` (past sessions), `size`, `rows` (a slice of the screen's rows,
+  like `(-1, None)` for the bottom row only), `restore=True` to let maxicom restore,
+  and `braille=True` for a screen with a plot (see below).
 
 Then reference the image in the guide:
 
@@ -139,6 +141,14 @@ Then reference the image in the guide:
 - **Long paths.** Popups that show a path in full (the session browser's
   folder) would show `target/screenshots/...`. The script shows it as
   `/home/me/...` in the image, with the same width so the popup's border stays.
+- **Braille, for the plots.** freeze's font has no braille, which the plot's lines are
+  drawn with, and freeze doesn't fall back to another font: they come out as boxes. A
+  scenario with `braille=True` goes another way: freeze writes an SVG, its font is
+  swapped for Cascadia Mono (it has braille), and ffmpeg draws it with librsvg. The font
+  is Windows Terminal's under WSL (`/mnt/c/Windows/Fonts`), `fonts-cascadia-code` on
+  Debian and Ubuntu, `~/Library/Fonts` on macOS, or any monospace font with braille
+  given as `SHOTS_BRAILLE_FONT=/path/to/font.ttf`. Without one, that scenario fails and
+  says so.
 - **The fake ports are ptys.** Where maxicom shows a port's path or name (the
   directory, the session browser, the restore separator), it reads
   `/dev/pts/N` or `N`, where a board would give `ttyUSB0`.

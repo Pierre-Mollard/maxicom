@@ -4,6 +4,7 @@ pub mod common;
 pub mod data_display;
 pub mod layout;
 pub mod lines;
+pub mod plot;
 pub mod popups;
 pub mod raw_side;
 pub mod status_bar;
@@ -30,6 +31,7 @@ use crate::{
         },
         layout::{LayoutWarning, ScreenLayout},
         lines::{render_input_prompt, render_monitor},
+        plot::render_plot_panel,
         popups::{
             alert::{
                 render_confirm_quit_popup, render_delete_link_popup, render_detached_popup,
@@ -87,7 +89,8 @@ pub fn render(
         raw_side: layout.raw_side_area,
     });
     app.frame_map_mut().clear();
-    if let (Some(panel), Some(split)) = (layout.raw_side_area, layout.raw_split_area) {
+    let side_area = layout.raw_side_area.or(layout.plot_area);
+    if let (Some(panel), Some(split)) = (side_area, layout.raw_split_area) {
         let orientation = app.settings().raw_side.orientation;
         app.frame_map_mut().side_handle = Some(SideHandle::new(panel, split, orientation));
     }
@@ -182,6 +185,11 @@ pub fn render(
             highlights,
         ),
     };
+
+    if let Some(plot_area) = layout.plot_area {
+        let targets = render_plot_panel(app, frame, plot_area, theme);
+        app.frame_map_mut().click_targets.extend(targets);
+    }
 
     if let Some(prompt_rect) = layout.prompt_area {
         render_input_prompt(app, frame, prompt_rect, theme);

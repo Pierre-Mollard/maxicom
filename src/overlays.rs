@@ -296,6 +296,7 @@ pub enum SettingKey {
     AddCr,
     AddLf,
     TxEol,
+    Plot,
 }
 
 /// `d`, or a click on its hint, in the link's popups (MAX-181)

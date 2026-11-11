@@ -171,7 +171,15 @@ pub const PLOTS_COMMENTS: &[(&str, &str)] = &[
             "\nCtrl-a r reloads this file.",
         ),
     ),
+    (
+        "key-value",
+        "every key=value pair of every line: temp=23.4 hum=51",
+    ),
     ("key-value.window", "a duration: the X axis is time"),
+    (
+        "arduino",
+        "the Arduino IDE serial plotter's format: temp:23.4,hum:51 or 23.4 51",
+    ),
     (
         "arduino.columns",
         "a line of bare numbers: series 1, 2, 3...",
@@ -180,6 +188,21 @@ pub const PLOTS_COMMENTS: &[(&str, &str)] = &[
         "arduino.window",
         "a number: the last samples of each series",
     ),
+    (
+        "sensors",
+        "two series by name, on a fixed range, in their colors",
+    ),
+    ("sensors.keys", "only these series, in this order"),
+    ("sensors.max", "with min: a fixed Y range"),
+    (
+        "sensors.colors",
+        "a color per series, else the theme's link colors",
+    ),
+    (
+        "tagged",
+        "only the lines tagged for it: [plot] err=-1.5 out=40",
+    ),
+    ("tagged.line_contains", "only the lines with this text"),
 ];
 
 fn write_comment(out: &mut String, comment: &str) {

@@ -143,8 +143,9 @@ impl<'de> Deserialize<'de> for PlotsConfig {
 }
 
 impl Default for PlotsConfig {
-    /// Two demos: `key=value` pairs on a time axis, and the Arduino IDE plotter's format
-    /// (`name:value` or bare numbers) on the last 500 samples
+    /// Four demos, each showing other fields: every `key=value` pair on a time axis, the
+    /// Arduino IDE plotter's format (`name:value` or bare numbers) on the last 500 samples,
+    /// two named series on a fixed range with their colors, and the lines tagged `[plot]`
     fn default() -> Self {
         let plots = vec![
             ("key-value".to_string(), PlotDef::default()),
@@ -154,6 +155,28 @@ impl Default for PlotsConfig {
                     separator: ":".to_string(),
                     columns: true,
                     window: PlotWindow::Samples(500),
+                    ..PlotDef::default()
+                },
+            ),
+            (
+                "sensors".to_string(),
+                PlotDef {
+                    keys: vec!["temp".to_string(), "hum".to_string()],
+                    window: PlotWindow::Time(Duration::from_secs(300)),
+                    min: Some(0.0),
+                    max: Some(100.0),
+                    colors: BTreeMap::from([
+                        ("temp".to_string(), Color::LightRed),
+                        ("hum".to_string(), Color::LightBlue),
+                    ]),
+                    ..PlotDef::default()
+                },
+            ),
+            (
+                "tagged".to_string(),
+                PlotDef {
+                    line_contains: Some("[plot]".to_string()),
+                    window: PlotWindow::Samples(200),
                     ..PlotDef::default()
                 },
             ),

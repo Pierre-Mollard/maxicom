@@ -311,6 +311,21 @@ pub static COMMANDS: &[CommandSpec] = {
         ),
         CommandSpec::action("triggers", A::Triggers, "Open the triggers"),
         CommandSpec::action(
+            "plot-freeze",
+            A::PlotFreeze,
+            "Freeze / unfreeze the plot, its data still collected",
+        ),
+        CommandSpec::action(
+            "plot-next",
+            A::PlotNext,
+            "Show the next plot of plots.toml, off after the last",
+        ),
+        CommandSpec::action(
+            "plot-prev",
+            A::PlotPrev,
+            "Show the previous plot of plots.toml, off before the first",
+        ),
+        CommandSpec::action(
             "dismiss-notification",
             A::DismissNotification,
             "Close the top notification",

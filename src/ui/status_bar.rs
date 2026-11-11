@@ -54,6 +54,7 @@
 //! | `{replay_percent}`  | How much of the file the replay read, in percent        | `42`             |
 //! | `{replay_read}`     | The bytes it read                                       | `4096`           |
 //! | `{replay_size}`     | The file's size                                         | `9752`           |
+//! | `{plot}`            | The plot shown in the side panel (`plots.toml`), or empty | `pid`          |
 //!
 //! ## Formats
 //! `{name:spec}` with spec `[<>^][0][width][h]`, close to Rust's and C's:
@@ -110,6 +111,8 @@
 //! | `mashing`                       | `mash`                                     | `mash` sends its text, waiting for the other one         |
 //! | `replaying`                     | `replay`                                   | A replay takes the link's place, ended or not            |
 //! | `replaced`                      | `live_behind`                              | That replay holds a live link's place: `toggle-attach` goes back to it |
+//! | `plot`                          | `plotting`                                 | A plot is shown in the side panel (`plots.toml`)         |
+//! | `frozen`                        | `plot_frozen`                              | The plot is frozen (`plot-freeze`)                       |
 //!
 //! ## Style Keywords
 //! - **Modifiers**: `bold`, `dim`, `italic`, `underlined` (`underline`), `reversed` (`reverse`), `reset` (`default`), `crossed`, `slow_blink` (`sblink`), `rapid_blink` (`rblink`)
@@ -154,6 +157,7 @@
 //! | `{scroll_pos}` `{scroll_pos_up}` `{scroll_percent}` `{scroll_offset}` | `scroll-to-bottom` |
 //! | `{send_file}`, `{send_percent}`                            | `cancel`                  |
 //! | `{trigger_count}`, `{trigger_names}`                       | `triggers`                |
+//! | `{plot}`                                                   | `plot-freeze`             |
 //!
 //! The scroll and pan actions a `click=` can run: `scroll-up`, `scroll-down`, `page-up`,
 //! `page-down`, `scroll-to-top`, `scroll-to-bottom`, `pan-left`, `pan-right`, `pan-home` (back
@@ -457,6 +461,7 @@ enum Var {
     ReplayPercent,
     ReplayRead,
     ReplaySize,
+    Plot,
 }
 
 impl Var {
@@ -489,6 +494,7 @@ impl Var {
             "replay_percent" => Self::ReplayPercent,
             "replay_read" => Self::ReplayRead,
             "replay_size" => Self::ReplaySize,
+            "plot" => Self::Plot,
             _ => return None,
         })
     }
@@ -507,6 +513,7 @@ impl Var {
             Self::CopySide => return Some(ClickAction::ToggleSide),
             Self::SendFile | Self::SendPercent => KeyBindingAction::CancelCommands,
             Self::TriggerCount | Self::TriggerNames => KeyBindingAction::Triggers,
+            Self::Plot => KeyBindingAction::PlotFreeze,
             Self::Port
             | Self::RxBytes
             | Self::TxBytes
@@ -678,6 +685,7 @@ impl Var {
                 write!(out, "{}", replay_state(app))
             }
             Self::ReplayFile | Self::ReplayState => Ok(()),
+            Self::Plot => write!(out, "{}", app.plot().map_or("", |plot| plot.name.as_str())),
             // the numbers, written by `write`
             Self::Baud
             | Self::RxBytes
@@ -751,6 +759,8 @@ enum Cond {
     AppCursor,
     AddCr,
     AddLf,
+    Plot,
+    PlotFrozen,
     /// Unknown condition name, always false
     Unknown,
 }
@@ -791,6 +801,8 @@ impl Cond {
             "app_cursor" | "decckm" => Self::AppCursor,
             "add_cr" => Self::AddCr,
             "add_lf" => Self::AddLf,
+            "plot" | "plotting" => Self::Plot,
+            "frozen" | "plot_frozen" => Self::PlotFrozen,
             _ => Self::Unknown,
         }
     }
@@ -845,6 +857,8 @@ impl Cond {
             }
             Self::AddCr => app.settings().add_cr,
             Self::AddLf => app.settings().add_lf,
+            Self::Plot => app.plot().is_some(),
+            Self::PlotFrozen => app.plot().is_some_and(|plot| plot.is_frozen()),
             Self::Unknown => false,
         }
     }

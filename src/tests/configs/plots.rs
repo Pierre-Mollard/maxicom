@@ -7,14 +7,15 @@ fn load(toml: &str) -> Result<PlotsConfig, String> {
 }
 
 /// MAX-222: the default file round-trips and checks: `key-value` on 30 s, `arduino` with
-/// `:`, bare columns and 500 samples, in this order.
+/// `:`, bare columns and 500 samples, `sensors` with its keys, range and colors, `tagged`
+/// with `line_contains`, in this order.
 #[test]
 fn default_plots() {
     let text = toml::to_string_pretty(&PlotsConfig::default()).unwrap();
     let config = load(&text).unwrap();
     assert_eq!(config, PlotsConfig::default());
     let names: Vec<_> = config.plots.iter().map(|(name, _)| name.as_str()).collect();
-    assert_eq!(names, ["key-value", "arduino"]);
+    assert_eq!(names, ["key-value", "arduino", "sensors", "tagged"]);
     let arduino = &config.plots[1].1;
     assert_eq!(arduino.separator, ":");
     assert!(arduino.columns);
@@ -23,6 +24,13 @@ fn default_plots() {
         config.plots[0].1.window,
         PlotWindow::Time(Duration::from_secs(30))
     );
+    let sensors = &config.plots[2].1;
+    assert_eq!(sensors.keys, ["temp", "hum"]);
+    assert_eq!((sensors.min, sensors.max), (Some(0.0), Some(100.0)));
+    assert_eq!(sensors.colors.len(), 2);
+    let tagged = &config.plots[3].1;
+    assert_eq!(tagged.line_contains.as_deref(), Some("[plot]"));
+    assert_eq!(tagged.window, PlotWindow::Samples(200));
 }
 
 /// MAX-222: the default file as written: short (fields at their default left out, but the
@@ -44,6 +52,14 @@ fn default_file_text() {
         "{text}"
     );
     assert!(text.contains("window = 500 # a number"), "{text}");
+    assert!(
+        text.contains("# every key=value pair of every line: temp=23.4 hum=51\n[key-value]"),
+        "{text}"
+    );
+    assert!(
+        text.contains("line_contains = \"[plot]\" # only the lines with this text"),
+        "{text}"
+    );
     assert_eq!(load(&text).unwrap(), PlotsConfig::default());
 }
 

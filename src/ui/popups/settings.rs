@@ -62,7 +62,10 @@ pub fn render_settings_popup(
     let raw_display_str = app.settings().raw_side.view.as_str();
     let dimension_str = app.settings().terminal_mode.dimension_mode.as_str();
 
-    let row = |key: &'static str, label: &'static str, value: &'static str| {
+    let plot_str = app.plot().map_or("off".to_string(), |plot| {
+        crate::ui::plot::shorten(&plot.name, VALUE_WIDTH)
+    });
+    let row = |key: &'static str, label: &'static str, value: &str| {
         Line::from(vec![
             Span::styled(
                 format!("[{key}] "),
@@ -111,6 +114,7 @@ pub fn render_settings_popup(
                 row("B", "Byte Inspect", raw_display_str),
             ),
             (SettingKey::Mouse, row("U", "Mouse", mouse_str)),
+            (SettingKey::Plot, row("V", "Plot", &plot_str)),
         ],
     );
     // what's received (both modes) and what Enter sends (line mode, MAX-184)

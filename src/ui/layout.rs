@@ -34,6 +34,8 @@ pub struct ScreenLayout {
     pub content_area: Rect,
     pub scrollbar_area: Option<Rect>,
     pub raw_side_area: Option<Rect>,
+    /// The side area when a plot is shown: it takes the raw panel's place (MAX-222)
+    pub plot_area: Option<Rect>,
     pub raw_split_area: Option<Rect>,
     pub timestamp_gutter: Option<Rect>,
     pub prompt_area: Option<Rect>,
@@ -148,8 +150,8 @@ impl ScreenLayout {
             _ => (None, inner_monitor),
         };
 
-        let (main_stream_area, raw_side_area) = if app.settings().raw_side.view != RawSideView::Off
-        {
+        let side_shown = app.settings().raw_side.view != RawSideView::Off || app.plot().is_some();
+        let (main_stream_area, side_area) = if side_shown {
             let inspector_percent = app
                 .settings()
                 .raw_side
@@ -243,8 +245,9 @@ impl ScreenLayout {
             monitor_outer,
             content_area,
             scrollbar_area,
-            raw_side_area,
-            raw_split_area: raw_side_area.map(|_| remaining_after_gutter),
+            raw_side_area: side_area.filter(|_| app.plot().is_none()),
+            plot_area: side_area.filter(|_| app.plot().is_some()),
+            raw_split_area: side_area.map(|_| remaining_after_gutter),
             timestamp_gutter: gutter_area,
             prompt_area,
             status_bar_area,

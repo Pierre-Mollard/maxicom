@@ -82,4 +82,5 @@ actions.
 | The text looks wrong: staircase lines, lines written over each other, odd characters | [Encoding and newlines](encoding-and-newlines.md) |
 | A shell on the device wraps at the wrong column, or vim draws at the wrong size | [Serial shells](terminal-mode.md#serial-shells) |
 | You want one key to put an ESP32 in its bootloader, or to stop U-Boot's autoboot | [Command line](command-line.md) and [Triggers](triggers.md) |
+| Your device prints numbers you'd like to see as a chart | [Plots](plots.md) |
 | You want other keys, colors or status bar | [Keybindings](keybindings.md), [Theme](theme.md), [Status bar](status-bar.md) |

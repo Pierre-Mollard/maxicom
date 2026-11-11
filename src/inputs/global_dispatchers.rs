@@ -118,6 +118,9 @@ impl KeyBindingAction {
             }
             KeyBindingAction::CancelCommands => Action::App(AppAction::CancelCommands),
             KeyBindingAction::ToggleTriggers => Action::App(AppAction::ToggleTriggers),
+            KeyBindingAction::PlotFreeze => Action::App(AppAction::TogglePlotFreeze),
+            KeyBindingAction::PlotNext => Action::App(AppAction::StepPlot(true)),
+            KeyBindingAction::PlotPrev => Action::App(AppAction::StepPlot(false)),
             KeyBindingAction::DismissNotification => Action::App(AppAction::DismissToast(None)),
             KeyBindingAction::DismissNotifications => Action::App(AppAction::DismissToasts),
             KeyBindingAction::Marks => Action::App(AppAction::OpenMarks),

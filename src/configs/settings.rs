@@ -753,6 +753,7 @@ impl Default for StatusBarConfig {
                 "[⟳ mash ](mashing?(fg=secondary bold):hide click=cancel)",
                 "[⇡ {send_file} {send_percent:>3}% ](sending?(fg=secondary bold):hide)",
                 "[▷ {replay_state} {replay_percent:>3}% ](replaying?(fg=secondary bold):hide prio=5)",
+                "[∿ {plot} ](plot?(frozen?(fg=warn bold):(fg=secondary)):hide prio=5)",
                 "[« live ](replaced?(fg=main bold):hide click=toggle-attach)",
                 "[+CR ](add_cr?(fg=warn bold):hide click=toggle-add-cr)",
                 "[+LF ](add_lf?(fg=warn bold):hide click=toggle-add-lf)",

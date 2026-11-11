@@ -9,6 +9,7 @@ the pane in color, then renders it: tokyonight-night colors, freeze, the bottom 
 
 import os
 import pty
+import random
 import re
 import shutil
 import socket
@@ -132,6 +133,38 @@ ESP_BOOT = [
 ]
 ESP_MORE = [f"{G}I ({8126 + 1000 * i}) app: temp=21.{5 + i % 3}C hum=4{7 - i % 2}%{N}"
             for i in range(4)]
+
+def pid_feed(samples=300):
+    """A heater's PID loop logging each step: the setpoint steps up then down, the temperature
+    overshoots and settles, the output saturates then eases. Other log lines come between
+    them, which the plot's `line_contains` skips"""
+    rng = random.Random(7)
+    temp, integral, prev = 22.0, 0.0, 0.0
+    delayed = [0.0] * 8  # the heater's dead time, in steps
+    lines = ESP_BOOT[:14]
+    for i in range(samples):
+        setpoint = 40.0 if i < 40 else 65.0 if i < 170 else 50.0
+        err = setpoint - temp
+        integral = max(-400.0, min(400.0, integral + err))
+        out = max(0.0, min(100.0, 4.0 * err + 0.3 * integral + 2.0 * (err - prev)))
+        prev = err
+        delayed.append(out)
+        temp += 0.03 * delayed.pop(0) - 0.035 * (temp - 22.0) + rng.gauss(0, 0.12)
+        ms = 4200 + 100 * i
+        lines.append(f"{G}I ({ms}) pid: setpoint={setpoint:.1f} temp={temp:.2f}C "
+                     f"out={out:.0f}%{N}")
+        if i % 60 == 30:
+            lines.append(f"{G}I ({ms + 40}) mqtt: published heater/state (42 bytes){N}")
+    return lines
+
+
+PLOTS = """[pid]
+separator = "="
+keys = ["setpoint", "temp", "out"]
+line_contains = "pid:"
+window = 300
+colors = { setpoint = "Yellow", temp = "LightRed" }
+"""
 
 PROMPT = "\x1b[1;32mroot@gateway\x1b[0m:\x1b[1;34m~\x1b[0m# "
 BD, CY = "\x1b[1;34m", "\x1b[1;36m"
@@ -260,7 +293,7 @@ def set_key(toml, section, key, value):
     return "\n".join(lines)
 
 
-def prepare(run, config, links, triggers):
+def prepare(run, config, links, triggers, plots=None):
     env = {k: v for k, v in os.environ.items() if not k.startswith("XDG_")}
     env["HOME"] = run
     # the first start writes the default files
@@ -276,6 +309,8 @@ def prepare(run, config, links, triggers):
         open(f"{run}/.config/maxicom/links.toml", "w").write(links)
     if triggers:
         open(f"{run}/.config/maxicom/triggers.toml", "w").write(triggers)
+    if plots:
+        open(f"{run}/.config/maxicom/plots.toml", "w").write(plots)
     return env
 
 
@@ -388,17 +423,63 @@ def as_user_home(ansi, run):
     return re.sub(re.escape(REPO) + r"[^ │\x1b]*", fix, ansi)
 
 
-def render(name, ansi, run, rows=None):
+# monospace fonts with the braille block, for the plot's dots: Windows Terminal's (WSL), the
+# Debian / Ubuntu package fonts-cascadia-code, macOS; SHOTS_BRAILLE_FONT names another file
+BRAILLE_FONTS = ["/mnt/c/Windows/Fonts/CascadiaMono.ttf",
+                 "/usr/share/fonts/truetype/cascadia-code/CascadiaMono.ttf",
+                 os.path.expanduser("~/Library/Fonts/CascadiaMono.ttf")]
+
+
+def braille_font():
+    """A monospace font file with braille, and its family name"""
+    given = os.environ.get("SHOTS_BRAILLE_FONT")
+    path = given or next((f for f in BRAILLE_FONTS if os.path.exists(f)), None)
+    if not path or not os.path.exists(path):
+        raise RuntimeError("no monospace font with braille: install fonts-cascadia-code, or "
+                           "set SHOTS_BRAILLE_FONT to one")
+    # a variable font lists its family once per instance
+    family = subprocess.run(["fc-query", "-f", "%{family[0]}\n", path], capture_output=True,
+                            text=True, check=True).stdout.split("\n")[0]
+    return path, family
+
+
+def freeze_braille(ans, png, run):
+    """freeze's PNG draws braille as boxes, its font has none and it doesn't fall back. So:
+    freeze's SVG, its font swapped for one with braille, drawn by ffmpeg's librsvg, which
+    finds that font through a fontconfig file of the run's"""
+    path, family = braille_font()
+    svg = png[:-4] + ".svg"
+    subprocess.run(["freeze", ans, "--language", "ansi", "--theme", "tokyonight-night", "-o",
+                    svg, "--window=false", "--padding", "10", "--margin", "0", "--font.size",
+                    "14", "--line-height", "1.2"], stdin=subprocess.DEVNULL,
+                   capture_output=True, check=True, timeout=60)
+    text = open(svg).read().replace('font-family="JetBrains Mono"', f'font-family="{family}"')
+    open(svg, "w").write(text)
+    conf = f"{run}/fonts.conf"
+    open(conf, "w").write(
+        '<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "fonts.dtd">\n<fontconfig>\n'
+        '  <include ignore_missing="yes">/etc/fonts/fonts.conf</include>\n'
+        f'  <dir>{os.path.dirname(path)}</dir>\n  <cachedir>{run}/fontcache</cachedir>\n'
+        '</fontconfig>\n')
+    subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-width", "2800",
+                    "-keep_ar", "1", "-i", svg, png], env={**os.environ, "FONTCONFIG_FILE": conf},
+                   check=True, timeout=120)
+
+
+def render(name, ansi, run, rows=None, braille=False):
     ansi = as_user_home(ansi, run)
     if rows:
         ansi = "\n".join(ansi.rstrip("\n").split("\n")[rows[0]:rows[1]])
     open(f"{run}/{name}.ans", "w").write(ansi)
     open(f"{run}/{name}.tn.ans", "w").write(recolor(ansi))
-    subprocess.run(["freeze", f"{run}/{name}.tn.ans", "--language", "ansi", "--theme",
-                    "tokyonight-night", "-o", f"{run}/{name}.png", "--window=false",
-                    "--padding", "10", "--margin", "0", "--font.size", "14",
-                    "--line-height", "1.2"], stdin=subprocess.DEVNULL, capture_output=True,
-                   check=True, timeout=60)
+    if braille:
+        freeze_braille(f"{run}/{name}.tn.ans", f"{run}/{name}.png", run)
+    else:
+        subprocess.run(["freeze", f"{run}/{name}.tn.ans", "--language", "ansi", "--theme",
+                        "tokyonight-night", "-o", f"{run}/{name}.png", "--window=false",
+                        "--padding", "10", "--margin", "0", "--font.size", "14",
+                        "--line-height", "1.2"], stdin=subprocess.DEVNULL,
+                       capture_output=True, check=True, timeout=60)
     os.makedirs(IMAGES, exist_ok=True)
     trim_and_scale(f"{run}/{name}.png", f"{IMAGES}/{name}.png")
 
@@ -412,14 +493,16 @@ def esp_link(devices):
     return f'[[link]]\nname = "esp32"\naddress = "{devices[0].path}"\n'
 
 
-def scenario(name, devices, steps, *, config=None, links=None, triggers=None, args=None,
-             restore=False, rows=None, fixtures=None, size=(COLS, ROWS)):
+def scenario(name, devices, steps, *, config=None, links=None, triggers=None, plots=None,
+             args=None, restore=False, rows=None, fixtures=None, size=(COLS, ROWS),
+             braille=False):
     run = f"{WORK}/{name}"
     if not os.path.isabs(run) or not run.startswith(f"{REPO}/target/"):
         sys.exit(f"refusing: {run} isn't under target/")  # it becomes HOME
     shutil.rmtree(run, ignore_errors=True)
     os.makedirs(f"{run}/rec")
-    env = prepare(run, config or {}, links(devices) if callable(links) else links, triggers)
+    env = prepare(run, config or {}, links(devices) if callable(links) else links, triggers,
+                  plots)
     if fixtures:
         fixtures(f"{run}/.cache", devices)
     argv = [BIN, *(args(devices) if callable(args) else args or ["esp32"])]
@@ -442,7 +525,7 @@ def scenario(name, devices, steps, *, config=None, links=None, triggers=None, ar
         tmux("send-keys", "-t", "=shots:", "C-q", check=False)
         time.sleep(0.3)
         tmux("kill-server", check=False)
-    render(name, ansi, run, rows)
+    render(name, ansi, run, rows, braille)
     plain = re.sub(r"\x1b\[[0-9;]*m", "", ansi)
     open(f"{run}/{name}.txt", "w").write(plain)
     print(f"{name}: done")
@@ -568,6 +651,10 @@ SCENARIOS = {
         "restore", [Pty(ESP_MORE, 0.3)], [fed(0.6), press("PPage"), wait(0.4)], config=LINE,
         links=esp_link,
         restore=True, fixtures=restore_session),
+    "plots": lambda: scenario(
+        "plots", [Pty(pid_feed(), 0.02)], [fed(0.8)],
+        config={("raw_side", "split_percent"): "55"}, links=esp_link, plots=PLOTS,
+        args=["esp32", "--plot", "pid"], size=(130, ROWS), braille=True),
 }
 
 if __name__ == "__main__":

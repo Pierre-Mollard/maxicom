@@ -517,6 +517,40 @@ fn armed_triggers() {
     }
 }
 
+/// MAX-222: the default center shows the plot shown, `{plot}`, in the secondary color, in
+/// the warning one while frozen (`frozen`), hidden without a plot (`plot`); a click on the
+/// name freezes it.
+/// How: no plot, `arduino` shown, frozen, then off.
+#[test]
+fn plot_shown_and_frozen() {
+    let mut a = app(Mode::Terminal);
+    a.set_plots(crate::configs::PlotsConfig::default());
+    let center = StatusBarConfig::default().center;
+    let theme = ThemeConfig::default();
+    assert!(render(&center, &a).is_empty());
+    assert_eq!(render("{plot}", &a), [plain("")]);
+
+    a.show_plot(Some("arduino"));
+    let secondary = format!("Some({:?})", theme.palette.secondary);
+    assert_eq!(
+        render(&center, &a),
+        [span("∿ arduino ", &secondary, BG, "NONE")]
+    );
+    assert_eq!(render("{plot}", &a), [plain("arduino")]);
+    assert_eq!(render("[x](frozen?bold:hide)", &a), Vec::<String>::new());
+
+    a.update(Action::App(AppAction::TogglePlotFreeze));
+    let warn = format!("Some({:?})", theme.palette.text_warn);
+    assert_eq!(render(&center, &a), [span("∿ arduino ", &warn, BG, "BOLD")]);
+
+    a.show_plot(None);
+    assert!(render(&center, &a).is_empty());
+    assert_eq!(
+        Var::Plot.click(),
+        Some(ClickAction::Run(KeyBindingAction::PlotFreeze))
+    );
+}
+
 /// Every variable is filled; an unknown variable stays as written.
 /// How: one template with all variables, one with `{unknown}`.
 #[test]

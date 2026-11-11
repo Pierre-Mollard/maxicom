@@ -14,9 +14,10 @@ folder: `~/.config/maxicom/` on Linux, see
 | `highlights.toml` | Words colored in the received text | [Highlights](highlights.md) |
 | `triggers.toml` | Answers to boot prompts | [Triggers](triggers.md) |
 | `links.toml` | The saved links, once one is saved | [Saved links](saved-links.md) |
+| `plots.toml` | Numbers charted from the received lines | [Plots](plots.md) |
 
-`theme_path`, `keybindings_path`, `highlights_path`, `triggers_path` and
-`links_path` in `config.toml` put a file elsewhere. `~` is your home
+`theme_path`, `keybindings_path`, `highlights_path`, `triggers_path`,
+`links_path` and `plots_path` in `config.toml` put a file elsewhere. `~` is your home
 folder.
 
 ### Another settings file
@@ -98,8 +99,8 @@ wrong.
 
 ### Unknown keys
 
-A key that `config.toml` or `theme.toml` doesn't have, such as a typo, doesn't
-stop maxicom: the setting just takes its default. A warning names it at startup
+A key that `config.toml`, `theme.toml` or `plots.toml` doesn't have, such as
+a typo, doesn't stop maxicom: the setting just takes its default. A warning names it at startup
 and on each reload.
 
 ```text
@@ -121,11 +122,11 @@ isn't written. A click on a setting does the same.
 | `M` | Mode (line / terminal) | `E` | Local echo |
 | `X` | Text encoding | `T` | Timestamps |
 | `U` | Mouse | `B` | Raw side panel view |
-| `R` | Add CR | `F` | Add LF |
-| `N` | Line Enter (`tx_eol`) | `W` | Line wrap |
-| `I` | Wrap indent | `P` | Row marks (`prefix_place`) |
-| `D` | Display mode | `S` | Dimension mode |
-| `A` | Answer queries | | |
+| `V` | The next [plot](plots.md) | `R` | Add CR |
+| `F` | Add LF | `N` | Line Enter (`tx_eol`) |
+| `W` | Line wrap | `I` | Wrap indent |
+| `P` | Row marks (`prefix_place`) | `D` | Display mode |
+| `S` | Dimension mode | `A` | Answer queries |
 
 ### Setting a value directly
 
@@ -190,6 +191,9 @@ changed:
 - `terminal_mode.history_size`, `terminal_mode.rows`, `terminal_mode.cols`;
 - `sessions.enabled`, `sessions.keep`, `sessions.max_size`.
 
+`plot` is read at startup too, but a reload doesn't mention it: it only
+picks the plot you start with, and the plot you're on stays.
+
 A running session backup also keeps its text settings until the next
 session.
 
@@ -213,7 +217,8 @@ Durations are written `"500ms"`, `"30s"`, `"4h"` or `"1day"`.
 | `show_timestamps` | `false` | Times before the lines / rows: [Line mode](line-mode.md#timestamps) |
 | `timestamp_format` | `"[%H:%M:%S%.3f]"` | strftime format of those times |
 | `inactivity_detach_timeout` | `"4h"` | Detach a link idle that long, `"0s"` never: [Links](links.md#idle-links) |
-| `theme_path`, `keybindings_path`, `highlights_path`, `triggers_path`, `links_path` | none | Another place for that file |
+| `plot` | none | The plot shown at startup, by its name: [Plots](plots.md#showing-a-plot) |
+| `theme_path`, `keybindings_path`, `highlights_path`, `triggers_path`, `links_path`, `plots_path` | none | Another place for that file |
 
 ### `[line_mode]`
 

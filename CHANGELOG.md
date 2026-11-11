@@ -12,7 +12,10 @@ you says so in an "Upgrading" section.
 
 Run [`maxicom --write-config`](https://pierre-mollard.github.io/maxicom/settings.html#updating-the-files)
 to get the new keys in your `keymap.toml`: `/`, `?`, `n`, `N` and `*` in copy
-mode, Up / Down in the search bar, and `Ctrl-a 0` / `Ctrl-a $`.
+mode, Up / Down in the search bar, `Ctrl-a 0` / `Ctrl-a $`, and
+`Ctrl-a g` / `Ctrl-a G` for the plots. A `center` status bar template saved
+in your `settings.toml` doesn't show the plot: add the `∿ {plot}` block of the
+[default](https://pierre-mollard.github.io/maxicom/status-bar.html#the-default).
 `Ctrl-a ?` now searches backward and the help stays on `Ctrl-a z`; your file
 keeps `"?" = "help"` until you change it to `"?" = "enter-search-backward"`.
 A `left` status bar template saved in your `settings.toml` keeps the copy
@@ -24,6 +27,15 @@ the [default](https://pierre-mollard.github.io/maxicom/highlights.html#the-file)
 
 ### Added
 
+- [Plots](https://pierre-mollard.github.io/maxicom/plots.html): the numbers
+  your device prints (`temp=23.4 hum=51`, the Arduino plotter's
+  `temp:23.4,hum:51` or bare columns) charted live in the raw side panel's
+  place, with a legend, autoscale and a time or sample window. The plots are
+  defined in the new `plots.toml`, which comes with four examples. `Ctrl-a g`
+  (`plot`) goes from one to the next, `Ctrl-a G` (`plot-freeze`) freezes the
+  chart while the data goes on, and `--plot <name>` or `plot = "<name>"` in
+  `config.toml` shows one at startup. The status bar shows `∿ <name>`
+  (`{plot}`), and the settings popup has a `V` row.
 - [Highlight groups](https://pierre-mollard.github.io/maxicom/highlights.html#the-file):
   a table with a `words` list gives all of them one style, as
   `[errors] words = ["ERROR", "FAIL"]`. `ignore_case` and `whole_word` set

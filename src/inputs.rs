@@ -88,6 +88,8 @@ pub enum AppAction {
     ToggleTriggers,
     ArmTriggers { on: bool, name: Option<String> },
     ShowPlot(Option<String>),
+    TogglePlotFreeze,
+    StepPlot(bool),
     DismissToast(Option<u64>),
     DismissToasts,
     StartMash(Box<Mash>),

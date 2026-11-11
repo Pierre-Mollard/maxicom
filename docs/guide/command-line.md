@@ -230,6 +230,17 @@ dtr off; rts on; rts off; mash ' ' '=> '
 `trigger on|off|toggle [name]` arms, disarms or toggles all the triggers,
 or the one named. The names complete. See [Triggers](triggers.md).
 
+### Plots
+
+| Command | Does |
+| --- | --- |
+| `plot <name>` | Shows that plot in the side panel. The names complete. |
+| `plot off` | Hides it |
+| `plot` | Shows the next plot, off after the last |
+| `plot-freeze` | Freezes the chart, or gives it back live |
+
+See [Plots](plots.md).
+
 ### Marks
 
 | Command | Does |
@@ -279,6 +290,7 @@ reload keeps the keymap in use.
 | Key | Line | Does |
 | --- | --- | --- |
 | `Ctrl-a f` | `break` | Sends a break |
+| `Ctrl-a g` | `plot` | Shows the next plot |
 | `Ctrl-a h` | `dtr off; sleep 100; dtr on` | Pulses DTR, which resets most boards |
 | `Ctrl-a L` | `replay-stop` | Goes back to the live link from a replay |
 | `Ctrl-a U` | `trigger toggle u-boot` | Toggles the `u-boot` trigger |

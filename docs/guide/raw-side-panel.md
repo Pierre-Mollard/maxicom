@@ -5,6 +5,8 @@ they are the bytes as they came off the wire, so it reveals what the
 decoding and the colors hide: a stray `\r`, a `0x00`, a framing problem. In
 terminal mode it shows less, see [In terminal mode](#in-terminal-mode).
 
+A [plot](plots.md) takes the panel's place while one is shown.
+
 ![Line mode with the raw side panel in hex: each line next to its bytes](images/raw-side-panel.png)
 
 ## Showing it

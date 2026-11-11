@@ -207,6 +207,141 @@ fn raw_panel_and_hex_view_show_received_bytes() {
     );
 }
 
+/// A harness showing the plot `key-value` with the raw view in Hex, fed `rx` live
+fn plot_harness(w: u16, h: u16, rx: &[u8]) -> Harness {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, w, h);
+    h.app.settings_mut().raw_side.view = RawSideView::Hex;
+    h.app.set_plots(crate::configs::PlotsConfig::default());
+    h.app.show_plot(Some("key-value"));
+    h.app.feed_rx(rx);
+    h.app.notifications.dismiss_all();
+    h
+}
+
+/// MAX-222: a plot takes the raw side panel's place, raw view on or off: its name in the
+/// title, the window back to now on the X axis, the legend with each series' last, lowest
+/// and highest value, no raw bytes. The mouse sees no raw panel there, the border drag
+/// still works. Off, the raw panel is back.
+/// How: two values of `temp` on an 80x16 screen, the raw view in Hex, then off, then the
+/// plot off with Hex.
+#[test]
+fn plot_in_the_side_panel() {
+    let mut h = plot_harness(80, 16, b"temp=20\ntemp=25\n");
+    let rows = h.draw();
+    let screen = rows.join("\n");
+    assert!(screen.contains(" key-value "), "{screen}");
+    assert!(screen.contains("temp 25 ↓20 ↑25"), "{screen}");
+    assert!(
+        screen.contains("-30s") && screen.contains("now"),
+        "{screen}"
+    );
+    // the lines in braille dots
+    let braille = |c: char| ('\u{2801}'..='\u{28FF}').contains(&c);
+    assert!(rows.iter().any(|row| row.chars().any(braille)), "{screen}");
+    assert!(!screen.contains("74 65 6D"), "{screen}");
+    assert_eq!(h.app.frame_areas().raw_side, None);
+    assert!(h.app.frame_map().side_handle.is_some());
+
+    h.app.settings_mut().raw_side.view = RawSideView::Off;
+    let screen = h.draw().join("\n");
+    assert!(screen.contains("temp 25 ↓20 ↑25"), "{screen}");
+    assert!(h.app.frame_map().side_handle.is_some());
+
+    h.app.settings_mut().raw_side.view = RawSideView::Hex;
+    h.app.show_plot(None);
+    h.feed(b"temp=1\n");
+    let screen = h.draw().join("\n");
+    assert!(!screen.contains("key-value"), "{screen}");
+    assert!(screen.contains("74 65 6D 70"), "{screen}");
+}
+
+/// MAX-222: a click on the title's `▶` shows the next plot, on its `◀` the previous one; a
+/// name too long for the panel is cut with `…`, the arrows kept.
+/// How: `key-value` shown, `▶`, `◀`, `◀` (off: the hex panel back); then a plot with a
+/// long name.
+#[test]
+fn plot_title_arrows_and_long_names() {
+    let mut h = plot_harness(80, 16, b"");
+    let rows = h.draw();
+    click(&mut h, cell_of(&rows, "▶"));
+    assert_eq!(h.app.plot().map(|p| p.name.as_str()), Some("arduino"));
+    let rows = h.draw();
+    assert!(has(&rows, "◀ arduino ▶"), "{rows:#?}");
+    click(&mut h, cell_of(&rows, "◀"));
+    assert_eq!(h.app.plot().map(|p| p.name.as_str()), Some("key-value"));
+    let rows = h.draw();
+    click(&mut h, cell_of(&rows, "◀"));
+    assert!(h.app.plot().is_none());
+
+    let long = "a-plot-with-a-name-far-too-long-for-the-side-panel";
+    let mut plots = crate::configs::PlotsConfig::default();
+    plots.plots[0].0 = long.to_string();
+    h.app.set_plots(plots);
+    h.app.show_plot(Some(long));
+    h.app.notifications.dismiss_all();
+    let rows = h.draw();
+    let title = rows.iter().find(|row| row.contains('◀')).unwrap();
+    assert!(
+        title.contains("◀ a-plot-with-a-name-far-t… ▶"),
+        "{title}"
+    );
+    click(&mut h, cell_of(&rows, "▶"));
+    assert_eq!(h.app.plot().map(|p| p.name.as_str()), Some("arduino"));
+}
+
+/// MAX-222: frozen, the panel's title says so after the plot's name.
+#[test]
+fn plot_frozen_title() {
+    let mut h = plot_harness(80, 16, b"temp=20\n");
+    h.app.toggle_plot_freeze();
+    h.app.notifications.dismiss_all();
+    let screen = h.draw().join("\n");
+    assert!(screen.contains(" ◀ key-value ▶ frozen "), "{screen}");
+    assert!(screen.contains("temp 20 "), "{screen}");
+}
+
+/// MAX-222: before a number comes in, the panel says the format it waits for; at the
+/// bottom, its title is in the panel's top border.
+#[test]
+fn plot_waiting_at_the_bottom() {
+    let mut h = plot_harness(60, 30, b"boot\n");
+    h.app.settings_mut().raw_side.orientation =
+        crate::configs::settings::RawSideOrientation::Bottom;
+    let rows = h.draw();
+    assert!(
+        rows.iter().any(|row| row.starts_with(" ◀ key-value ▶ ──")),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| row.contains("Waiting for key=value")),
+        "{rows:#?}"
+    );
+}
+
+/// MAX-222: a side too small for the panel warns as for the raw panel, and the plot isn't
+/// drawn.
+#[test]
+fn plot_side_too_small() {
+    let mut h = plot_harness(40, 16, b"temp=20\n");
+    h.app.settings_mut().raw_side.view = RawSideView::Off;
+    let Harness {
+        app,
+        theme,
+        status_bar,
+        terminal,
+    } = &mut h;
+    let mut effect = PostRenderEffect::None;
+    terminal
+        .draw(|frame| effect = render(app, theme, frame, &[], status_bar))
+        .unwrap();
+    assert!(
+        matches!(&effect, PostRenderEffect::LayoutWarnings(warnings)
+            if matches!(warnings[..], [LayoutWarning::SidePanelTooSmall { required: 50, .. }])),
+        "{effect:?}"
+    );
+    assert!(!h.draw().join("\n").contains("key-value"));
+}
+
 /// The rows `prefix_place` marks: a line, a wrapped row and the partial RX line (MAX-163).
 /// Fed: a short line, a line wrapping over two rows, then a partial line; drawn 40 wide.
 fn prefix_rows(tweak: impl FnOnce(&mut SettingsConfig)) -> Vec<String> {
@@ -1411,7 +1546,9 @@ fn settings_in_two_columns() {
         "General                           Line Mode",
         "[M] Input Mode    : Line          [W] Line Wrap     : Word-Wrap",
         "[U] Mouse         : ON            Terminal Mode",
-        "Newlines                          [A] Query Answers : ON",
+        "[V] Plot          : off           [S] Size Mode     : Grow Only",
+        "                                  [A] Query Answers : ON",
+        "Newlines",
         "[N] Line Enter    : LF",
         "Files",
         "[C] Config        :",
@@ -1943,20 +2080,23 @@ fn help_lists_the_commands() {
     let row_of = |rows: &[String], text: &str| rows.iter().position(|row| row.contains(text));
     let f5 = row_of(&rows, "F5 ").expect("F5");
     assert!(rows[f5].contains("-> send-hex 03"), "{rows:#?}");
-    // the letters in order, a shifted one after its plain one: `L` back to live, then `U`,
-    // the u-boot trigger; then the symbols (the marks', MAX-164); the copy mode keys last
+    // the letters in order, a shifted one after its plain one: `g` the next plot (MAX-222),
+    // `L` back to live, then `U`, the u-boot trigger; then the symbols (the marks', MAX-164);
+    // the copy mode keys last
     assert_eq!(row_of(&rows, "Ctrl-a + f "), Some(f5 + 1), "{rows:#?}");
+    assert_eq!(row_of(&rows, "Ctrl-a + g "), Some(f5 + 2), "{rows:#?}");
+    assert!(rows[f5 + 2].contains("-> plot"), "{rows:#?}");
     let pulse = row_of(&rows, "Ctrl-a + h ");
-    assert_eq!(pulse, Some(f5 + 2), "{rows:#?}");
+    assert_eq!(pulse, Some(f5 + 3), "{rows:#?}");
     assert!(
-        rows[f5 + 2].contains("-> dtr off; sleep 100; dtr on"),
+        rows[f5 + 3].contains("-> dtr off; sleep 100; dtr on"),
         "{rows:#?}"
     );
-    assert_eq!(row_of(&rows, "Ctrl-a + L "), Some(f5 + 3), "{rows:#?}");
-    assert_eq!(row_of(&rows, "Ctrl-a + U "), Some(f5 + 4), "{rows:#?}");
-    assert_eq!(row_of(&rows, "Ctrl-a + , "), Some(f5 + 5), "{rows:#?}");
-    assert!(rows[f5 + 5].contains("-> mark"), "{rows:#?}");
-    assert_eq!(row_of(&rows, "copy mode , "), Some(f5 + 6), "{rows:#?}");
+    assert_eq!(row_of(&rows, "Ctrl-a + L "), Some(f5 + 4), "{rows:#?}");
+    assert_eq!(row_of(&rows, "Ctrl-a + U "), Some(f5 + 5), "{rows:#?}");
+    assert_eq!(row_of(&rows, "Ctrl-a + , "), Some(f5 + 6), "{rows:#?}");
+    assert!(rows[f5 + 6].contains("-> mark"), "{rows:#?}");
+    assert_eq!(row_of(&rows, "copy mode , "), Some(f5 + 7), "{rows:#?}");
     assert!(has(&rows, "on the command line (Ctrl-a :)"), "{rows:#?}");
 
     // scrolled down until `text` shows with the row under it
@@ -4531,7 +4671,7 @@ fn side_actions_resize_the_raw_panel() {
 
     h.app.settings_mut().raw_side.view = RawSideView::Off;
     assert_eq!(run(&mut h, KeyBindingAction::SideGrow), (11, None));
-    assert_eq!(crate::app::tests::toasts(&h.app), ["Raw SideView is Off"]);
+    assert_eq!(crate::app::tests::toasts(&h.app), ["SideView is Off"]);
 }
 
 /// MAX-189: the raw panel's border is a handle: a drag from it puts it under the pointer,
