@@ -72,6 +72,16 @@ pub fn config_file() -> Option<PathBuf> {
     config_file_from(env::args().skip(1))
 }
 
+/// Whether `--reset-config` is given (MAX-231): read before the settings load, as a file
+/// that doesn't load mustn't stop it
+pub fn reset_config() -> bool {
+    reset_config_from(env::args().skip(1))
+}
+
+fn reset_config_from(args: impl IntoIterator<Item = String>) -> bool {
+    args.into_iter().any(|arg| arg == "--reset-config")
+}
+
 /// The value of the last `--config`, as the last of any option wins
 fn config_file_from(args: impl IntoIterator<Item = String>) -> Option<PathBuf> {
     let args = split_values(args);
@@ -260,6 +270,8 @@ fn parse_args_from(
             "--version" | "-v" => return Ok(ParseOutcome::Version),
             "--cache-dir" => return Ok(ParseOutcome::CacheDir),
             "--write-config" => return Ok(ParseOutcome::WriteConfig),
+            // already handled by `reset_config`, before the settings loaded (MAX-231)
+            "--reset-config" => {}
             // a saved link's name, or the device without `--device`: `maxicom esp32`,
             // `maxicom /dev/ttyUSB0`, `maxicom tcp://host:port`
             word if !word.starts_with('-') => given = Some(Given::Word(word.to_string())),
@@ -361,6 +373,8 @@ Options:
       --write-config       Update the config files to this version and exit: new keys
                            and comments added, your values kept, the old files saved
                            as .bak
+      --reset-config       Put the config files back to the defaults and exit, after a
+                           confirmation: the old files saved as .bak, links.toml kept
 
   -C, --capturefile <PATH> Record the received text to PATH from the start
   -H, --displayhex         Show the raw side panel in hex

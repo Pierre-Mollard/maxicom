@@ -52,6 +52,21 @@ fn write_config_flag() {
     }
 }
 
+/// MAX-231: `--reset-config` is found before the settings load, wherever it is given; the
+/// usual parse then takes it without complaint.
+#[test]
+fn reset_config_flag() {
+    let args = |list: &[&str]| list.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+    assert!(reset_config_from(args(&["--reset-config"])));
+    assert!(reset_config_from(args(&[
+        "--config",
+        "x.toml",
+        "--reset-config"
+    ])));
+    assert!(!reset_config_from(args(&["--write-config"])));
+    assert!(parse(&["-D", "x", "--reset-config"]).is_ok());
+}
+
 fn address_of(args: &[&str]) -> Result<String, String> {
     match parse(args) {
         Ok(ParseOutcome::Run { address, .. }) => Ok(address.expect("a device").to_string()),

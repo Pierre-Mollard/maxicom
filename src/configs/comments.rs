@@ -162,6 +162,7 @@ pub const TRIGGERS_COMMENTS: &[(&str, &str)] = &[(
         guide!("triggers.html"),
         "\nmatch: the text to wait for; run: the command line to run",
         "\nrearm: stay armed after firing; armed: armed at startup",
+        "\nsilent: no notice when it fires, its run can notify",
     ),
 )];
 

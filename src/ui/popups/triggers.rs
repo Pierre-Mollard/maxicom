@@ -168,10 +168,11 @@ fn config(trigger: &Trigger, theme: &ThemeConfig) -> [(&'static str, String, Sty
     } else {
         ("disarmed", muted)
     };
-    let fires = if trigger.rearm {
-        "each time, it stays armed"
-    } else {
-        "once, then disarms"
+    let fires = match (trigger.rearm, trigger.silent) {
+        (true, false) => "each time, it stays armed",
+        (true, true) => "each time, silently, it stays armed",
+        (false, false) => "once, then disarms",
+        (false, true) => "once, silently, then disarms",
     };
     [
         ("State  ", state.to_string(), state_style),

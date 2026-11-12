@@ -481,7 +481,9 @@ fn default_center_and_right() {
 #[test]
 fn armed_triggers() {
     let mut a = app(Mode::Terminal);
-    let triggers = crate::configs::TriggersConfig::default().compile().unwrap();
+    let triggers = crate::configs::triggers::tests::two_examples()
+        .compile()
+        .unwrap();
     a.set_triggers(triggers);
     let d = StatusBarConfig::default();
     let texts = |a: &App| -> Vec<String> {

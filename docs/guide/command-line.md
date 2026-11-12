@@ -245,6 +245,16 @@ or the one named. The names complete. See [Triggers](triggers.md).
 
 See [Plots](plots.md).
 
+### Notifications
+
+| Command | Does |
+| --- | --- |
+| `notify <info\|success\|warn\|error> <text>` | Shows a notification of yours: `notify warn "power-cycle the board"` |
+
+It follows the rules of maxicom's own: see [Notifications](notifications.md).
+It sends nothing to the device, so a [trigger](triggers.md) or a key bound to
+a command line can use it to tell you something, like a boot that failed.
+
 ### Marks
 
 | Command | Does |

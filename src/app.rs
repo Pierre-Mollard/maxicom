@@ -536,12 +536,9 @@ impl App {
 
     /// `cancel` (MAX-12): stops the file being sent and drops the commands waiting
     fn cancel(&mut self) {
-        let mut stopped = Vec::new();
-        if self.mash.take().is_some() {
-            stopped.push("Stopped mashing".to_string());
-        }
-        // a stopped transfer says so in its own box
-        let transfer_stopped = self.transfer.is_some();
+        // the transfer says it in its own box, "Cancelled", where a failure says "Stopped"
+        // (MAX-228)
+        let transfer_cancelled = self.transfer.is_some();
         if let Some(mut transfer) = self.transfer.take() {
             // a protocol's receiver is told to stop too
             let cans = transfer.cancel();
@@ -549,23 +546,23 @@ impl App {
                 self.write_link(&cans, false);
                 self.recancel_until = Some(Instant::now() + RECANCEL_FOR);
             }
-            stopped.push(stopped_text(&transfer));
+            self.notify_transfer(ToastLevel::Warn, cancelled_text(&transfer));
+        }
+        let mut stopped = Vec::new();
+        if self.mash.take().is_some() {
+            stopped.push("Stopped mashing".to_string());
         }
         match self.drop_pending_commands() {
             0 => {}
             1 => stopped.push("dropped 1 waiting command".to_string()),
             n => stopped.push(format!("dropped {n} waiting commands")),
         }
-        if stopped.is_empty() {
-            self.notify_info("Nothing to cancel");
-        } else {
+        if !stopped.is_empty() {
             let mut message = stopped.join(", ");
             message[..1].make_ascii_uppercase();
-            if transfer_stopped {
-                self.notify_transfer(ToastLevel::Warn, message);
-            } else {
-                self.notify_warn(message);
-            }
+            self.notify_warn(message);
+        } else if !transfer_cancelled {
+            self.notify_info("Nothing to cancel");
         }
     }
 
@@ -1254,7 +1251,10 @@ impl App {
                 let trigger = &self.triggers[i];
                 let notice = format!("Trigger {}: {}", trigger.name, trigger.run);
                 let invocations = trigger.invocations.clone();
-                self.notify_info(notice);
+                // a silent one leaves it to its command line (`notify`, MAX-228)
+                if !trigger.silent {
+                    self.notify_info(notice);
+                }
                 self.queue_commands(invocations);
             }
         }
@@ -1578,6 +1578,10 @@ impl App {
             }
             AppAction::OpenSessions => {
                 self.open_session_browser();
+                UpdateEffect::None
+            }
+            AppAction::Notify(level, text) => {
+                self.notify(level, text);
                 UpdateEffect::None
             }
             AppAction::StartMash(mash) => {
@@ -2565,7 +2569,19 @@ fn file_name(path: &std::path::Path) -> String {
     )
 }
 
-/// What a stopped transfer says: how far a send got, the partial file a download keeps
+/// What a cancelled transfer says: how far a send got, the partial file a download keeps
+fn cancelled_text(transfer: &FileTransfer) -> String {
+    if !transfer.is_download() {
+        return format!("Cancelled: {} at {}%", transfer.name(), transfer.percent());
+    }
+    match transfer.partial() {
+        Some(part) => format!("Cancelled: {}, kept as {}", transfer.name(), part.display()),
+        None => "Cancelled: the download".to_string(),
+    }
+}
+
+/// What a transfer stopped by a failure says, before why: how far a send got, the partial
+/// file a download keeps
 fn stopped_text(transfer: &FileTransfer) -> String {
     if !transfer.is_download() {
         return format!(

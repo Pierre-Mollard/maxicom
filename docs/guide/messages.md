@@ -88,6 +88,7 @@ See [Command line](command-line.md).
 | `mash: '<text>' didn't come in` | The mash timed out |
 | `Mash stopped: <why>` | A key was typed, the link closed, or a replay started |
 | `Stopped sending <file> at <n>%: <why>` | The write failed, the link closed, a replay started, or an upload failed. See [When an upload fails](file-transfers.md#when-an-upload-fails). |
+| `Cancelled: <file> at <n>%`, `Cancelled: <file>, kept as <part>` | Your `cancel` stopped a transfer; a download keeps its partial file. See [Stopping a transfer](file-transfers.md#stopping-a-transfer). |
 | `no trigger named '<name>'`, `triggers.toml has no trigger` | `trigger` names no trigger. See [Triggers](triggers.md). |
 | `no plot named '<name>'`, `plots.toml has no plot` | `plot` names no plot, or the file has none. See [Plots](plots.md). |
 | `No plot shown` | `plot-freeze` with no plot shown |

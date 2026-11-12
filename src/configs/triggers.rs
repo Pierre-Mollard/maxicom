@@ -30,23 +30,40 @@ pub struct TriggerRule {
     pub rearm: bool,
     #[serde(default)]
     pub armed: bool,
+    /// No notice of its own when it fires: its `run` can say something (`notify`, MAX-228)
+    #[serde(default)]
+    pub silent: bool,
 }
 
 impl Default for TriggersConfig {
-    /// Examples, disarmed: nothing is sent until the user arms them
+    /// Examples, disarmed: nothing runs until the user arms them
     fn default() -> Self {
-        let rule = |text: &str, run: &str, rearm| TriggerRule {
+        let rule = |text: &str, run: &str, rearm, silent| TriggerRule {
             text: text.to_string(),
             run: run.to_string(),
             rearm,
             armed: false,
+            silent,
         };
         let rules = BTreeMap::from([
             (
                 "u-boot".to_string(),
-                rule("Hit any key to stop autoboot", "send ' '", false),
+                rule("Hit any key to stop autoboot", "send ' '", false, false),
             ),
-            ("login".to_string(), rule("login: ", "send root\\r", true)),
+            (
+                "login".to_string(),
+                rule("login: ", "send root\\r", true, false),
+            ),
+            // only its own notification says it, not the trigger's notice too (MAX-228)
+            (
+                "panic".to_string(),
+                rule(
+                    "Kernel panic",
+                    "notify error \"the board panicked\"",
+                    true,
+                    true,
+                ),
+            ),
         ]);
         Self { rules }
     }
@@ -78,7 +95,8 @@ impl TriggersConfig {
                     invocations,
                     rule.rearm,
                     rule.armed,
-                ))
+                )
+                .with_silent(rule.silent))
             })
             .collect()
     }
@@ -209,4 +227,4 @@ impl std::error::Error for TriggersFileError {
 
 #[cfg(test)]
 #[path = "../tests/configs/triggers.rs"]
-mod tests;
+pub mod tests;

@@ -21,6 +21,7 @@ use crate::{
         replay::ReplayControl,
         serial::{LineControl, LineSettings},
     },
+    notification::ToastLevel,
     overlays::{Overlay, PopupTarget, SettingKey},
     transfer::FileTransfer,
 };
@@ -92,6 +93,7 @@ pub enum AppAction {
     StepPlot(bool),
     DismissToast(Option<u64>),
     DismissToasts,
+    Notify(ToastLevel, String),
     StartMash(Box<Mash>),
     Mark(MarkAction),
     OpenMarks,

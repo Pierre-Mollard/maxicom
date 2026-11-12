@@ -121,12 +121,48 @@ fn load_runtime_config(config_path: &Path) -> Result<RuntimeConfig, ConfigsError
     })
 }
 
+/// `--reset-config` (MAX-231): the files it resets, a confirmation, then what it did
+fn reset_config(config_path: &std::path::Path) -> ExitCode {
+    let files = configs::update::reset_targets(config_path);
+    println!("These files go back to the defaults, each one kept as .bak first:");
+    for file in &files {
+        println!("  {}", file.display());
+    }
+    println!("links.toml, your saved links, is left alone.");
+    print!("Reset these files to the defaults? [y/N] ");
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    let mut answer = String::new();
+    let _ = std::io::stdin().read_line(&mut answer);
+    // a piped answer has no Enter typed after the question
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        println!();
+    }
+    if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
+        println!("Nothing reset.");
+        return ExitCode::SUCCESS;
+    }
+    match configs::update::reset_files(&files) {
+        Ok(report) => {
+            report.iter().for_each(|line| println!("{line}"));
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("maxicom: {err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     // `--config` first: the other options need the settings it gives (MAX-206)
     if let Some(path) = args::config_file() {
         AppConfig::use_config_file(path);
     }
     let config_path = AppConfig::config_path();
+    // before the settings load: a file that doesn't load mustn't stop it (MAX-231)
+    if args::reset_config() {
+        return Ok(reset_config(&config_path));
+    }
     let RuntimeConfig {
         mut settings,
         mut theme,

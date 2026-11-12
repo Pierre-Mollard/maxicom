@@ -168,7 +168,8 @@ taken gets a number instead of overwriting anything: `logs.tar.gz.1`,
 
 A download that stops in the middle of a file keeps its `.part`, and the
 notification says where: `Stopped receiving logs.tar.gz, kept as
-/home/me/logs.tar.gz.part: the sender cancelled`.
+/home/me/logs.tar.gz.part: the sender cancelled`, or after your `cancel`,
+`Cancelled: logs.tar.gz, kept as /home/me/logs.tar.gz.part`.
 
 ### Starting the sender
 
@@ -221,6 +222,11 @@ otherwise. The status bar can show the transfer too, with `{send_file}`,
 
 `cancel`, or a click on the row's `✕`, stops it. An upload or a download also
 tells the other side to stop. A detach, a lost link or a replay stops it too.
+
+The notification tells your stop from a failure. A cancel says `Cancelled`, as
+a warning: `Cancelled: fw.bin at 32%`, or for a download
+`Cancelled: logs.tar.gz, kept as /home/me/logs.tar.gz.part`. A failure says
+`Stopped`, as an error, with why: see below.
 
 ## When an upload fails
 

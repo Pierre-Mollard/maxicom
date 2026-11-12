@@ -24,6 +24,8 @@ color while you search: move its `search?(...)` before `copy_raw?` and
 Your `highlights.toml` keeps working as it is: the new groups are only in a
 new file. To get them, delete it and maxicom writes the new default, or copy
 the [default](https://pierre-mollard.github.io/maxicom/highlights.html#the-file).
+Your `triggers.toml` keeps its rules: to get the new `panic` example, add it
+from the [default](https://pierre-mollard.github.io/maxicom/triggers.html#the-file).
 A `center` status bar template saved in your `settings.toml` keeps its
 `⇡ {send_file} {send_percent}%` block, which the new progress row repeats:
 remove it, or turn the row off with `ui.transfer_row = false`.
@@ -39,6 +41,18 @@ remove it, or turn the row off with `ui.transfer_row = false`.
   overwritten, a stopped file kept as `.part`. While a transfer runs the link
   is its own: keys and `send` wait, the protocol's bytes stay off the screen.
   ZMODEM and Kermit go through a detach and your own tools.
+- [`maxicom --reset-config`](https://pierre-mollard.github.io/maxicom/settings.html#resetting-the-files)
+  puts the config files back to the defaults, after a confirmation, each old
+  file kept as `.bak`; `links.toml` is left alone. It works when a file
+  doesn't load.
+- `notify <info|success|warn|error> <text>` shows a
+  [notification of yours](https://pierre-mollard.github.io/maxicom/notifications.html#your-own-notifications),
+  from the command line, a key bound to a command line or a
+  [trigger](https://pierre-mollard.github.io/maxicom/triggers.html#raising-a-notification)
+  (`run = 'notify error "the board panicked"'`). It sends nothing to the
+  device. A trigger with `silent = true` fires without its own notice, so its
+  `notify` is the only one; the default `triggers.toml` has such a `panic`
+  trigger, disarmed.
 - A [progress row](https://pierre-mollard.github.io/maxicom/file-transfers.html#the-progress-row)
   over the status bar while a file is sent (`send-file` or `upload`): a
   gauge, the bytes, the rate, the time left, the retries, and a `✕` that
@@ -109,7 +123,10 @@ remove it, or turn the row off with `ui.transfer_row = false`.
   reconnected), instead of piling up. A reconnect says "Reconnected to" as an
   attach does. While the progress row shows, no notification repeats that a
   transfer waits for the other side; a download names its files and gives the
-  folder once, at the end.
+  folder once, at the end. A full stack drops infos before warnings and
+  errors, a message said again counts in its title (`×2`), the time starts
+  when a notification first shows, and a `cancel` says `Cancelled: …` where a
+  failure says `Stopped …: why`.
 
 ### Fixed
 

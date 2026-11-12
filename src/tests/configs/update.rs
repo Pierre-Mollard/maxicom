@@ -139,3 +139,75 @@ fn update_adds_new_default_keys() {
     assert_eq!(new.prefix_actions["x"], "quit");
     assert!(!new.prefix_actions.contains_key("s"));
 }
+
+/// The six files of a reset, in `folder`, in `reset_targets`' order
+fn reset_paths(folder: &Folder) -> [PathBuf; 6] {
+    [
+        "config.toml",
+        "theme.toml",
+        "keymap.toml",
+        "highlights.toml",
+        "triggers.toml",
+        "plots.toml",
+    ]
+    .map(|file| folder.path(file))
+}
+
+/// MAX-231: `--reset-config` writes each file back to its defaults and comments, without
+/// loading it: a changed file and one that doesn't load are kept as `.bak` first, a missing
+/// one is created; reset again, nothing changes. `links.toml` isn't one of them.
+/// How: a settings file with a typo that stops it loading, a changed theme, the others
+/// missing; reset twice.
+#[test]
+fn reset_puts_back_the_defaults() {
+    let folder = Folder::new("reset", "mdoe = = \"line\"\n");
+    fs::write(folder.path("theme.toml"), "[palette]\nmain = \"Red\"\n").unwrap();
+    fs::write(folder.path("links.toml"), "# my links\n").unwrap();
+    let broken = folder.read("config.toml");
+    let files = reset_paths(&folder);
+
+    let report = reset_files(&files).unwrap();
+    let config = folder.path("config.toml").display().to_string();
+    let theme = folder.path("theme.toml").display().to_string();
+    assert_eq!(
+        report[..2],
+        [
+            format!("{config}: reset, the old file is {config}.bak"),
+            format!("{theme}: reset, the old file is {theme}.bak"),
+        ]
+    );
+    let keymap = folder.path("keymap.toml").display().to_string();
+    assert_eq!(report[2], format!("{keymap}: created"));
+    assert_eq!(folder.read("config.toml.bak"), broken);
+    assert_eq!(folder.read("links.toml"), "# my links\n");
+
+    // the defaults, with their comments, and they load as the defaults
+    let settings: SettingsConfig = toml::from_str(&folder.read("config.toml")).unwrap();
+    assert_eq!(settings, SettingsConfig::default());
+    let keymap_text = folder.read("keymap.toml");
+    assert!(keymap_text.starts_with("# maxicom's keys"), "{keymap_text}");
+    let keymap: KeyBindingsConfig = toml::from_str(&keymap_text).unwrap();
+    assert_eq!(keymap, KeyBindingsConfig::default());
+    let triggers: crate::configs::TriggersConfig =
+        toml::from_str(&folder.read("triggers.toml")).unwrap();
+    assert!(triggers.rules.contains_key("panic"));
+
+    let again = reset_files(&files).unwrap();
+    assert!(
+        again
+            .iter()
+            .all(|line| line.ends_with(": already the defaults")),
+        "{again:?}"
+    );
+    assert_eq!(folder.read("config.toml.bak"), broken);
+}
+
+/// MAX-231: the files a reset takes: the settings given, the others at their default places,
+/// never `links.toml`.
+#[test]
+fn reset_targets_skip_the_links() {
+    let targets = reset_targets(Path::new("/elsewhere/mine.toml"));
+    assert_eq!(targets[0], Path::new("/elsewhere/mine.toml"));
+    assert_eq!(targets[1], AppConfig::default_theme_path());
+    assert!(targets.iter().all(|path| !path.ends_with("links.toml")));
+}

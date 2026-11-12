@@ -572,6 +572,15 @@ pub static COMMANDS: &[CommandSpec] = {
             "Read the received bytes as utf8, ascii, cp437 or latin1",
         ),
         CommandSpec::build(
+            "notify",
+            &[
+                arg("level", ArgKind::Enum(build::NOTIFY_LEVELS)),
+                arg("text", ArgKind::String),
+            ],
+            build::notify,
+            "Show a notification: notify warn \"power-cycle the board\"",
+        ),
+        CommandSpec::build(
             "search",
             &[arg("text", ArgKind::String)],
             build::search,

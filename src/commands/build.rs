@@ -17,6 +17,7 @@ use crate::{
         replay::ReplayControl,
         serial::{FlowControl, Framing, LineControl, LineSettings},
     },
+    notification::ToastLevel,
     overlays::SettingKey,
     paths::expand_home,
     transfer::{FileTransfer, modem::Protocol},
@@ -471,6 +472,27 @@ pub fn encoding(_app: &App, args: &[ArgValue]) -> Result<Action, String> {
         _ => unreachable!("encoding takes utf8, ascii, cp437 or latin1"),
     };
     Ok(Action::App(AppAction::SetEncoding(encoding)))
+}
+
+/// The levels `notify` takes
+pub const NOTIFY_LEVELS: &[&str] = &["info", "success", "warn", "error"];
+
+/// `notify <level> <text>` (MAX-228): a notification of the user's, for a key bound to a
+/// command line, a trigger, later the local API; it sends nothing to the device
+pub fn notify(_app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let [ArgValue::Enum(level), ArgValue::String(text)] = args else {
+        unreachable!("notify takes a level and a text");
+    };
+    if text.trim().is_empty() {
+        return Err("nothing to say".to_string());
+    }
+    let level = match *level {
+        "info" => ToastLevel::Info,
+        "success" => ToastLevel::Success,
+        "warn" => ToastLevel::Warn,
+        _ => ToastLevel::Error,
+    };
+    Ok(Action::App(AppAction::Notify(level, text.clone())))
 }
 
 /// `search <text>`: the search bar open on it, its matches shown

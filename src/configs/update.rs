@@ -1,5 +1,6 @@
 //! `--write-config` (MAX-209): brings the config files up to date in place, keeping their
 //! values: each is loaded, serialized with the keys it lacks, and written with its comments.
+//! `--reset-config` (MAX-231) writes them back to the defaults instead, without loading them.
 //! `links.toml` isn't one of them, the app writes it itself.
 
 use std::{
@@ -10,7 +11,8 @@ use std::{
 use serde::{Serialize, de::DeserializeOwned};
 
 use super::{
-    AppConfig,
+    AppConfig, HighlightConfig, KeyBindingsConfig, PlotsConfig, SettingsConfig, ThemeConfig,
+    TriggersConfig,
     comments::{
         CONFIG_COMMENTS, HIGHLIGHTS_COMMENTS, KEYMAP_COMMENTS, PLOTS_COMMENTS, THEME_COMMENTS,
         TRIGGERS_COMMENTS, with_comments,
@@ -113,6 +115,75 @@ pub fn update_files(path: &Path) -> Result<Vec<String>, String> {
             backup.display()
         ));
         report.extend(update.notes.iter().map(|note| format!("  {note}")));
+    }
+    Ok(report)
+}
+
+/// The files `--reset-config` puts back (MAX-231): the settings at `config`, then the theme,
+/// keymap, highlights, triggers and plots files at their default places, where the reset
+/// settings point. `links.toml` is left alone: the saved links are the user's data
+pub fn reset_targets(config: &Path) -> [PathBuf; 6] {
+    [
+        config.to_path_buf(),
+        AppConfig::default_theme_path(),
+        AppConfig::default_keybindings_path(),
+        AppConfig::default_highlights_path(),
+        AppConfig::default_triggers_path(),
+        AppConfig::default_plots_path(),
+    ]
+}
+
+/// The text each file of `reset_targets` gets: its defaults and comments, as a first start
+/// writes them
+fn default_texts() -> Result<[String; 6], String> {
+    fn text<T: Serialize + Default>(comments: &[(&str, &str)]) -> Result<String, String> {
+        let text = toml::to_string_pretty(&T::default()).map_err(|err| err.to_string())?;
+        Ok(with_comments(&text, comments))
+    }
+    Ok([
+        text::<SettingsConfig>(CONFIG_COMMENTS)?,
+        text::<ThemeConfig>(THEME_COMMENTS)?,
+        text::<KeyBindingsConfig>(KEYMAP_COMMENTS)?,
+        text::<HighlightConfig>(HIGHLIGHTS_COMMENTS)?,
+        text::<TriggersConfig>(TRIGGERS_COMMENTS)?,
+        text::<PlotsConfig>(PLOTS_COMMENTS)?,
+    ])
+}
+
+/// Puts `files`, as `reset_targets` gives them, back to their defaults, what happened to each
+/// in the lines returned. Nothing is loaded, so a file that doesn't load is reset too. A file
+/// that differs is kept next to it as `.bak` first, one at the defaults already is left as is,
+/// a missing one is created
+pub fn reset_files(files: &[PathBuf; 6]) -> Result<Vec<String>, String> {
+    let texts = default_texts()?;
+    let mut report = Vec::new();
+    for (path, text) in files.iter().zip(texts) {
+        let file = path.display();
+        let failed = |err: std::io::Error| format!("{file}: {err}");
+        match fs::read(path) {
+            Ok(old) if old == text.as_bytes() => {
+                report.push(format!("{file}: already the defaults"));
+            }
+            Ok(_) => {
+                let name =
+                    (path.file_name()).map_or_else(Default::default, |n| n.to_string_lossy());
+                let backup = path.with_file_name(format!("{name}.bak"));
+                fs::copy(path, &backup).map_err(failed)?;
+                fs::write(path, &text).map_err(failed)?;
+                report.push(format!(
+                    "{file}: reset, the old file is {}",
+                    backup.display()
+                ));
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent).map_err(failed)?;
+                }
+                fs::write(path, &text).map_err(failed)?;
+                report.push(format!("{file}: created"));
+            }
+            Err(err) => return Err(failed(err)),
+        }
     }
     Ok(report)
 }

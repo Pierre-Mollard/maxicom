@@ -357,7 +357,11 @@ fn triggers_fire_on_live_bytes() {
 #[test]
 fn arming_triggers() {
     let mut app = app();
-    app.set_triggers(crate::configs::TriggersConfig::default().compile().unwrap());
+    app.set_triggers(
+        crate::configs::triggers::tests::two_examples()
+            .compile()
+            .unwrap(),
+    );
     let last_toast = |app: &App| {
         let toasts = app.notifications.active_toasts();
         toasts.last().unwrap().message.clone()
@@ -1114,10 +1118,12 @@ fn command_line_cancel() {
     let sleep = app.next_command_action(Instant::now()).unwrap();
     app.update(sleep);
     queue_line(&mut app, "cancel");
-    assert_eq!(
-        last_toast(&app),
-        "Stopped sending fw.bin at 0%, dropped 2 waiting commands"
-    );
+    // the transfer in its own box, "Cancelled" (MAX-228), the commands apart
+    assert_eq!(last_toast(&app), "Dropped 2 waiting commands");
+    let toasts = app.notifications.active_toasts();
+    let transfer = toasts.iter().find(|toast| toast.key == Some("transfer"));
+    let transfer = transfer.map(|toast| toast.message.as_str());
+    assert_eq!(transfer, Some("Cancelled: fw.bin at 0%"));
     assert!(app.transfer().is_none());
     assert!(
         app.next_command_action(Instant::now() + Duration::from_secs(2))
@@ -2152,4 +2158,149 @@ fn download_summary() {
         format!("Received 2 files (120 bytes) into {}", folder.display())
     );
     let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// MAX-228: a cancelled download says "Cancelled", with the partial file it keeps, in the
+/// transfer's box; a failure says "Stopped" and why.
+/// How: a YMODEM download cancelled in its file, then one cancelled before any file.
+#[test]
+fn cancel_texts() {
+    use crate::transfer::{FileTransfer, modem::Protocol, modem::packet};
+    let mut app = app();
+    let folder = std::env::temp_dir().join(format!("maxicom_test_{}_cancel", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    let now = Instant::now();
+    let transfer_toast = |app: &App| {
+        let toasts = app.notifications.active_toasts();
+        let toast = toasts.iter().find(|toast| toast.key == Some("transfer"));
+        toast.map(|toast| toast.message.clone()).unwrap_or_default()
+    };
+    let start = |app: &mut App| {
+        let transfer = FileTransfer::download(Protocol::Ymodem, folder.clone(), None, now);
+        app.update(Action::App(AppAction::StartTransfer(Box::new(transfer))));
+        app.transfer_step(b"", now);
+    };
+
+    start(&mut app);
+    let mut header = b"a.bin\x00500\x00".to_vec();
+    header.resize(128, 0);
+    app.transfer_step(&packet(0, &header, true), now);
+    app.transfer_step(&packet(1, &[7; 128], true), now);
+    app.update(KeyBindingAction::CancelCommands.to_action(&app));
+    let part = folder.join("a.bin.part");
+    assert_eq!(
+        transfer_toast(&app),
+        format!("Cancelled: a.bin, kept as {}", part.display())
+    );
+
+    start(&mut app);
+    app.update(KeyBindingAction::CancelCommands.to_action(&app));
+    assert_eq!(transfer_toast(&app), "Cancelled: the download");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// MAX-228: `notify <level> <text>` shows a notification of the user's at that level, said
+/// again it counts; an empty text is refused. Nothing goes to the device.
+#[test]
+fn command_line_notify() {
+    use crate::notification::ToastLevel;
+    let mut app = app();
+    let run_line = |app: &mut App, line: &str| -> Vec<UpdateEffect> {
+        app.update(KeyBindingAction::CommandLine.to_action(app));
+        app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
+        app.update(Action::Overlay(DialogAction::Confirm));
+        let mut effects = Vec::new();
+        while let Some(action) = app.next_command_action(Instant::now()) {
+            effects.push(app.update(action));
+        }
+        effects
+    };
+    let shown = |app: &App| -> Vec<(String, ToastLevel, u32)> {
+        let toasts = app.notifications.active_toasts();
+        toasts
+            .iter()
+            .map(|t| (t.message.clone(), t.level, t.count))
+            .collect()
+    };
+
+    let effects = run_line(&mut app, "notify warn \"power-cycle the board\"");
+    assert!(matches!(&effects[..], [UpdateEffect::None]));
+    assert_eq!(
+        shown(&app),
+        [("power-cycle the board".to_string(), ToastLevel::Warn, 1)]
+    );
+    run_line(
+        &mut app,
+        "notify warn 'power-cycle the board'; notify success \"done\\tok\"",
+    );
+    assert_eq!(
+        shown(&app),
+        [
+            ("power-cycle the board".to_string(), ToastLevel::Warn, 2),
+            ("done\tok".to_string(), ToastLevel::Success, 1),
+        ]
+    );
+
+    app.notifications.dismiss_all();
+    run_line(&mut app, "notify error \" \"");
+    let refused = app
+        .notifications
+        .active_toasts()
+        .last()
+        .map(|t| t.message.clone());
+    assert_eq!(refused.as_deref(), Some("notify: nothing to say"));
+}
+
+/// MAX-228: a trigger can run `notify`: the default file's `panic` one, silent, gives the
+/// error notification only, and sends nothing; without `silent`, its own notice comes too.
+/// How: the default triggers, `panic` armed, then the same rule not silent.
+#[test]
+fn trigger_runs_notify() {
+    use crate::notification::ToastLevel;
+    let fire = |app: &mut App| {
+        app.feed_rx(b"[   12.345] Kernel panic - not syncing");
+        let mut effects = Vec::new();
+        while let Some(action) = app.next_command_action(Instant::now()) {
+            effects.push(app.update(action));
+        }
+        effects
+    };
+    let shown = |app: &App| -> Vec<(String, ToastLevel)> {
+        let toasts = app.notifications.active_toasts();
+        toasts
+            .iter()
+            .map(|t| (t.message.clone(), t.level))
+            .collect()
+    };
+
+    let mut app = app();
+    app.set_triggers(crate::configs::TriggersConfig::default().compile().unwrap());
+    app.update(Action::App(AppAction::QueueCommands(
+        crate::commands::parse("trigger on panic").unwrap(),
+    )));
+    while let Some(action) = app.next_command_action(Instant::now()) {
+        app.update(action);
+    }
+    app.notifications.dismiss_all();
+    assert!(matches!(&fire(&mut app)[..], [UpdateEffect::None]));
+    let panicked = ("the board panicked".to_string(), ToastLevel::Error);
+    assert_eq!(shown(&app), std::slice::from_ref(&panicked));
+
+    let config: crate::configs::TriggersConfig = toml::from_str(
+        r#"
+            [panic]
+            match = "Kernel panic"
+            run = 'notify error "the board panicked"'
+            armed = true
+        "#,
+    )
+    .unwrap();
+    let mut app = self::app();
+    app.set_triggers(config.compile().unwrap());
+    fire(&mut app);
+    let notice = (
+        "Trigger panic: notify error \"the board panicked\"".to_string(),
+        ToastLevel::Info,
+    );
+    assert_eq!(shown(&app), [notice, panicked]);
 }

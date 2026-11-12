@@ -89,6 +89,27 @@ prints what it did to each file. A file already up to date isn't touched.
 A file that doesn't load stops the command before anything is updated.
 `links.toml` is left alone.
 
+### Resetting the files
+
+`maxicom --reset-config` puts the files back to the defaults of this version,
+your values gone, then exits. It lists the files and asks first:
+
+```text
+Reset these files to the defaults? [y/N]
+```
+
+Only `y` or `yes` goes on. Each file that differs from the defaults is kept
+next to it as `.bak` first, a missing one is created, and the command prints
+what it did to each.
+
+It resets `config.toml` (or the file given with `--config`), `theme.toml`,
+`keymap.toml`, `highlights.toml`, `triggers.toml` and `plots.toml`, at their
+default places. `links.toml`, your saved links, is left alone.
+
+Nothing is loaded first, so it works when a file doesn't load and stops
+maxicom. It also brings the defaults that `--write-config` can't, since that
+keeps your values: new highlight groups, new example triggers.
+
 ### Errors
 
 A file that doesn't load (a TOML error, an unknown value, a bad time format)

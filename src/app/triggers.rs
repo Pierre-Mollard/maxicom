@@ -17,6 +17,7 @@ pub struct Trigger {
     pub run: String,
     pub invocations: Vec<Invocation>,
     pub rearm: bool,
+    pub silent: bool,
     armed: bool,
     matcher: StreamMatcher,
 }
@@ -37,9 +38,15 @@ impl Trigger {
             run,
             invocations,
             rearm,
+            silent: false,
             armed,
             matcher,
         }
+    }
+
+    pub fn with_silent(mut self, silent: bool) -> Self {
+        self.silent = silent;
+        self
     }
 
     pub fn is_armed(&self) -> bool {

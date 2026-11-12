@@ -1,12 +1,20 @@
 use super::*;
 
+/// The default's two examples that send something (`login`, `u-boot`): the tests of arming,
+/// the browser and the status bar were written on them, before the `panic` one (MAX-228)
+pub fn two_examples() -> TriggersConfig {
+    let mut config = TriggersConfig::default();
+    config.rules.remove("panic");
+    config
+}
+
 fn compile(toml: &str) -> Result<Vec<Trigger>, String> {
     let config: TriggersConfig = toml::from_str(toml).map_err(|e| e.to_string())?;
     config.compile().map_err(|e| e.to_string())
 }
 
-/// The default file round-trips and compiles: both examples, disarmed, the login one
-/// rearming.
+/// The default file round-trips and compiles: the three examples, disarmed, the login one
+/// rearming, the panic one rearming and silent (MAX-228), its `notify` its only notice.
 #[test]
 fn default_examples() {
     let text = toml::to_string_pretty(&TriggersConfig::default()).unwrap();
@@ -14,10 +22,12 @@ fn default_examples() {
     assert_eq!(config, TriggersConfig::default());
     let triggers = config.compile().unwrap();
     let names: Vec<_> = triggers.iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, ["login", "u-boot"]);
+    assert_eq!(names, ["login", "panic", "u-boot"]);
     assert!(triggers.iter().all(|t| !t.is_armed()));
-    assert!(triggers[0].rearm && !triggers[1].rearm);
+    assert!(triggers[0].rearm && triggers[1].rearm && !triggers[2].rearm);
     assert_eq!(triggers[0].invocations.len(), 1);
+    assert!(triggers[1].silent && !triggers[0].silent && !triggers[2].silent);
+    assert_eq!(triggers[1].run, "notify error \"the board panicked\"");
 }
 
 /// `rearm` and `armed` are optional; `match` takes the escapes, `run` a command line.

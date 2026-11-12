@@ -34,6 +34,18 @@ link's do the same: connecting then connected, lost then reconnected, detached
 then attached. Each new message takes the box's place and starts its time
 again.
 
+## Your own notifications
+
+The `notify` command shows one of yours, at the level you choose:
+
+```text
+notify success "flash done, power-cycle the board"
+```
+
+From a [trigger](triggers.md#raising-a-notification) or a key bound to a
+command line, it tells you about something the device printed. See
+[Command line](command-line.md#notifications).
+
 ## Closing them
 
 | To close | Do |

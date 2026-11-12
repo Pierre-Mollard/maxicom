@@ -8,7 +8,7 @@ name.
 ## The file
 
 Triggers live in `triggers.toml`, one table per trigger, named by its table.
-The default file has these two, disarmed:
+The default file has these three, disarmed:
 
 ```toml
 [u-boot]
@@ -19,6 +19,12 @@ run = "send ' '"
 match = "login: "
 run = 'send root\r'
 rearm = true
+
+[panic]
+match = "Kernel panic"
+run = 'notify error "the board panicked"'
+rearm = true
+silent = true
 ```
 
 | Field | Means |
@@ -27,8 +33,25 @@ rearm = true
 | `run` | The [command line](command-line.md) to run, as if typed, after any line still waiting |
 | `rearm` | `true` keeps the trigger armed after it fires |
 | `armed` | `true` arms it at startup |
+| `silent` | `true` fires it without its notice, see [Raising a notification](#raising-a-notification) |
 
 `triggers_path` in `config.toml` points to another file.
+
+### Raising a notification
+
+`run` can also just tell you, with `notify`, without sending anything to the
+device. The default file's `panic` trigger does, each time with `rearm`:
+
+```toml
+[panic]
+match = "Kernel panic"
+run = 'notify error "the board panicked"'
+rearm = true
+silent = true
+```
+
+`silent = true` leaves the trigger's own notice out, so the error is the only
+notification. Arm it with `Ctrl-a T`, `trigger on panic`, or `armed = true`.
 
 ## How matching works
 
@@ -46,7 +69,8 @@ after, so the next boot goes on normally. `rearm = true` keeps it armed.
 
 Triggers start disarmed unless they have `armed = true`.
 
-When one fires, a notice says so.
+When one fires, a notice says so, `Trigger u-boot: send ' '`, unless it has
+`silent = true`.
 
 ## The trigger browser
 

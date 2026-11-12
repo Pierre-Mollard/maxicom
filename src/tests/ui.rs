@@ -2955,8 +2955,11 @@ fn cell_on_row(rows: &[String], on: &str, text: &str) -> (u16, u16) {
 #[test]
 fn trigger_browser_lists_and_toggles() {
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
-    h.app
-        .set_triggers(crate::configs::TriggersConfig::default().compile().unwrap());
+    h.app.set_triggers(
+        crate::configs::triggers::tests::two_examples()
+            .compile()
+            .unwrap(),
+    );
     h.app.update(KeyBindingAction::Triggers.to_action(&h.app));
     let rows = h.draw();
     let shows = |rows: &[String], texts: &[&str]| {
@@ -3643,8 +3646,11 @@ fn directory_columns() {
 fn trigger_browser_keys() {
     use crossterm::event::KeyCode::{BackTab, Char, Down, Left, Right, Tab, Up};
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
-    h.app
-        .set_triggers(crate::configs::TriggersConfig::default().compile().unwrap());
+    h.app.set_triggers(
+        crate::configs::triggers::tests::two_examples()
+            .compile()
+            .unwrap(),
+    );
     h.app.update(KeyBindingAction::Triggers.to_action(&h.app));
     let none = KeyModifiers::NONE;
     let toasts = |h: &Harness| h.app.notifications.active_toasts().len();

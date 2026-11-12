@@ -1681,7 +1681,7 @@ fn cancel_stops_the_receiver() {
     peer.read_exact(&mut cans).unwrap();
     assert_eq!(cans, [0x18; 5]);
     assert!(!app.link_busy());
-    assert!(toasts(&app).contains(&"Stopped sending fw.bin at 0%".to_string()));
+    assert!(toasts(&app).contains(&"Cancelled: fw.bin at 0%".to_string()));
 
     // a receiver that missed them (lrzsz's rb drops what came with a block's end) ACKs the
     // block: the CANs again. A `C` in the device's text doesn't
