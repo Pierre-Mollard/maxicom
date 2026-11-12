@@ -102,7 +102,11 @@ fn lost_link_reconnects() {
     poll_until(&mut app, "reconnected", |app| app.link.is_open());
     let _peer = listener.accept().unwrap();
     assert!(app.overlay().is_none());
-    assert!(toasts(&app).contains(&format!("Device Reconnected: {address}")));
+    assert!(toasts(&app).contains(&format!("Reconnected to {address}")));
+    // connected, lost and reconnected followed each other in one box (MAX-228)
+    let link = app.notifications.active_toasts();
+    assert_eq!(link.iter().filter(|t| t.key == Some("link")).count(), 1);
+    assert!(!toasts(&app).contains(&"TCP connection lost".to_string()));
 }
 
 /// MAX-199: a read error that isn't a gone device closes the link too, once: the lost popup
@@ -170,9 +174,11 @@ fn failed_writes_are_said_once() {
     assert_eq!(said(&app), 1);
     assert!(app.link.is_open() && app.overlay().is_none());
 
+    // said again, in the link's box (MAX-228)
     assert!(app.transmit(b"x"));
+    app.notifications.dismiss_all();
     app.write_failed(&failed());
-    assert_eq!(said(&app), 2);
+    assert_eq!(said(&app), 1);
 }
 
 /// MAX-199: a write that finds the device gone closes the link as a read does: the lost
@@ -1735,11 +1741,12 @@ fn download_writes_the_file() {
 
     let transfer = FileTransfer::download(Protocol::Ymodem, folder.clone(), None, Instant::now());
     app.dispatch(Action::App(AppAction::StartTransfer(Box::new(transfer))));
-    let started = format!(
-        "Receiving with YMODEM into {}: waiting for the sender",
-        folder.display()
+    // the progress row says it waits: no toast (MAX-228)
+    assert!(
+        !toasts(&app).iter().any(|t| t.starts_with("Receiving")),
+        "{:?}",
+        toasts(&app)
     );
-    assert!(toasts(&app).contains(&started), "{:?}", toasts(&app));
     poll_until(&mut app, "ended", |app| app.transfer().is_none());
     let _peer = device.join().unwrap();
     poll_until(&mut app, "prompt after", |app| {
@@ -1747,9 +1754,17 @@ fn download_writes_the_file() {
     });
 
     assert_eq!(std::fs::read(folder.join("fw.bin")).unwrap(), content);
-    let received = format!("Received {} (3000 bytes)", folder.join("fw.bin").display());
+    // the file by name, the folder once (MAX-228)
+    let received = format!("Received fw.bin (3000 bytes) into {}", folder.display());
+    let transfer_toasts = app.notifications.active_toasts();
+    let transfer_toasts = transfer_toasts.iter().filter(|t| t.key == Some("transfer"));
+    assert_eq!(transfer_toasts.count(), 1);
     let toasts = toasts(&app);
     assert!(toasts.contains(&received), "{toasts:?}");
+    assert!(
+        !toasts.iter().any(|t| t.starts_with("Receiving")),
+        "{toasts:?}"
+    );
     let screen = app.terminal_mode.vt100_screen().contents();
     assert!(screen.starts_with("sb fw.bin\n$"), "{screen:?}");
     let _ = std::fs::remove_dir_all(&folder);

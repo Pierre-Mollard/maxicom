@@ -57,3 +57,32 @@ fn dismiss_by_id_top_or_all() {
     assert!(!manager.dismiss_all());
     assert!(!manager.dismiss(None));
 }
+
+/// MAX-228: a keyed toast takes the place of its key's toast still shown, with the same id
+/// (a click still finds it), its text, level and time renewed; other toasts stay as they
+/// are. Once gone, the key starts a new one at the bottom.
+/// How: a plain toast, a keyed one, another plain one, then the key again.
+#[test]
+fn keyed_toast_replaces_in_place() {
+    let mut manager = NotificationManager::new();
+    let long = Duration::from_secs(60);
+    manager.push("plain", ToastLevel::Info, long);
+    manager.push_keyed("transfer", "Sending", ToastLevel::Info, Duration::ZERO);
+    manager.push("other", ToastLevel::Warn, long);
+    let id = manager.active_toasts()[1].id;
+
+    manager.push_keyed("transfer", "Sent", ToastLevel::Success, long);
+    let toasts = manager.active_toasts();
+    let messages: Vec<&str> = toasts.iter().map(|t| t.message.as_str()).collect();
+    assert_eq!(messages, ["plain", "Sent", "other"]);
+    assert_eq!(toasts[1].id, id);
+    assert!(matches!(toasts[1].level, ToastLevel::Success));
+    // the renewed time: it didn't expire with the first one's zero
+    assert!(!manager.tick());
+
+    assert!(manager.dismiss(Some(id)));
+    manager.push_keyed("transfer", "again", ToastLevel::Info, long);
+    let toasts = manager.active_toasts();
+    assert_eq!(toasts.last().map(|t| t.message.as_str()), Some("again"));
+    assert_eq!(toasts.len(), 3);
+}

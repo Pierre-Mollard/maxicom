@@ -182,8 +182,10 @@ While it runs, the link is the download's, as for an upload, see
 [While it runs](#while-it-runs). The device's text before the first packet,
 like the shell echoing `sb logs.tar.gz`, and after the end shows as usual.
 
-Each file that comes in is said by a notification:
-`Received /home/me/logs.tar.gz (5546432 bytes)`.
+Each file that comes in is said by name in the transfer's notification,
+`Received logs.tar.gz (5546432 bytes)`, and the end gives the folder once:
+`Received logs.tar.gz (5546432 bytes) into /home/me`, or for a batch
+`Received 3 files (6012345 bytes) into /home/me`.
 
 ## The progress row
 
@@ -209,9 +211,11 @@ left, the rate, the sizes and the protocol, the gauge last.
 The row sits over the status bar, which doesn't move. A search bar opened
 during a transfer goes over the row.
 
-`ui.transfer_row = false` in `config.toml` hides it. The status bar can show
-the transfer instead, with `{send_file}`, `{send_percent}`, `{send_rate}` and
-`{send_eta}`, see [Status bar](status-bar.md#variables).
+`ui.transfer_row = false` in `config.toml` hides it. A notification then says
+when the transfer starts and waits for the other side, which the row does
+otherwise. The status bar can show the transfer too, with `{send_file}`,
+`{send_percent}`, `{send_rate}` and `{send_eta}`, see
+[Status bar](status-bar.md#variables).
 
 ## Stopping a transfer
 

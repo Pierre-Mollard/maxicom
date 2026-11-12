@@ -29,6 +29,10 @@ pub struct Download {
     /// The files complete, with their sizes, not yet taken
     received: Vec<(PathBuf, u64)>,
     count: usize,
+    /// The bytes of the files complete, for the summary at the end
+    total: u64,
+    /// The last file complete, with its size
+    last: Option<(PathBuf, u64)>,
 }
 
 impl Download {
@@ -39,6 +43,8 @@ impl Download {
             current: None,
             received: Vec::new(),
             count: 0,
+            total: 0,
+            last: None,
         }
     }
 
@@ -62,6 +68,16 @@ impl Download {
     /// How many files are complete
     pub fn count(&self) -> usize {
         self.count
+    }
+
+    /// The bytes of the files complete
+    pub fn total(&self) -> u64 {
+        self.total
+    }
+
+    /// The last file complete, with its size
+    pub fn last(&self) -> Option<&(PathBuf, u64)> {
+        self.last.as_ref()
     }
 
     /// The files completed since the last call, with their sizes
@@ -143,8 +159,10 @@ impl Download {
         }
         drop(file);
         fs::rename(&current.part, &current.path)?;
-        self.received.push((current.path, current.written));
+        self.received.push((current.path.clone(), current.written));
+        self.last = Some((current.path, current.written));
         self.count += 1;
+        self.total += current.written;
         Ok(())
     }
 }

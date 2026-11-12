@@ -102,6 +102,14 @@ remove it, or turn the row off with `ui.transfer_row = false`.
   search.
 - The default status bar no longer shows the file being sent: the new
   progress row does.
+- [Notifications](https://pierre-mollard.github.io/maxicom/notifications.html)
+  stay the time to read them, from 2 seconds for a short one to 10 for a
+  long one, an error at least 6. A file transfer's messages follow each other
+  in one notification, and so do the link's (connecting, connected, lost,
+  reconnected), instead of piling up. A reconnect says "Reconnected to" as an
+  attach does. While the progress row shows, no notification repeats that a
+  transfer waits for the other side; a download names its files and gives the
+  folder once, at the end.
 
 ### Fixed
 

@@ -68,7 +68,8 @@ enum Mode {
     Receive {
         protocol: Protocol,
         receiver: ModemReceiver,
-        download: Download,
+        // boxed: the biggest mode by far
+        download: Box<Download>,
     },
 }
 
@@ -134,7 +135,7 @@ impl FileTransfer {
             mode: Mode::Receive {
                 protocol,
                 receiver: ModemReceiver::new(protocol, now),
-                download: Download::new(folder, xmodem_name),
+                download: Box::new(Download::new(folder, xmodem_name)),
             },
         }
     }
@@ -208,6 +209,22 @@ impl FileTransfer {
         match &self.mode {
             Mode::Receive { download, .. } => download.count(),
             _ => 0,
+        }
+    }
+
+    /// The bytes of the files a download completed
+    pub fn received_total(&self) -> u64 {
+        match &self.mode {
+            Mode::Receive { download, .. } => download.total(),
+            _ => 0,
+        }
+    }
+
+    /// The last file a download completed, with its size
+    pub fn last_received(&self) -> Option<&(PathBuf, u64)> {
+        match &self.mode {
+            Mode::Receive { download, .. } => download.last(),
+            _ => None,
         }
     }
 

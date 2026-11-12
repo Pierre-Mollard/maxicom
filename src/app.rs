@@ -395,8 +395,10 @@ impl App {
         };
         let received = transfer.take_received();
         let outcome = transfer.outcome();
+        // by name as they come: the folder is said once, at the end (MAX-228)
         for (path, size) in received {
-            self.notify_success(format!("Received {} ({size} bytes)", path.display()));
+            let message = format!("Received {} ({size} bytes)", file_name(&path));
+            self.notify_transfer(ToastLevel::Success, message);
         }
         match outcome {
             None => {}
@@ -405,18 +407,16 @@ impl App {
                     return step;
                 };
                 if transfer.is_download() {
-                    // the files were said as they came; a YMODEM batch can hold none
-                    if transfer.received_count() == 0 {
-                        self.notify_info("Nothing received: the sender sent no file");
-                    }
+                    self.notify_received(&transfer);
                 } else {
                     let protocol = transfer.protocol().map(|p| format!(", {}", p.name()));
-                    self.notify_success(format!(
+                    let message = format!(
                         "Sent {} ({} bytes{})",
                         transfer.name(),
                         transfer.size().unwrap_or_default(),
                         protocol.unwrap_or_default()
-                    ));
+                    );
+                    self.notify_transfer(ToastLevel::Success, message);
                 }
             }
             Some(Err(failure)) => self.stop_transfer(&failure.to_string()),
@@ -424,10 +424,33 @@ impl App {
         step
     }
 
+    /// The end of a download, in the transfer's box: the file or how many, and the folder
+    /// once (MAX-228). A YMODEM batch can hold none
+    fn notify_received(&mut self, transfer: &FileTransfer) {
+        let folder = transfer.folder().map(|folder| folder.display().to_string());
+        let folder = folder.unwrap_or_default();
+        let message = match (transfer.received_count(), transfer.last_received()) {
+            (0, _) => "Nothing received: the sender sent no file".to_string(),
+            (1, Some((path, size))) => {
+                format!("Received {} ({size} bytes) into {folder}", file_name(path))
+            }
+            (count, _) => format!(
+                "Received {count} files ({} bytes) into {folder}",
+                transfer.received_total()
+            ),
+        };
+        let level = match transfer.received_count() {
+            0 => ToastLevel::Info,
+            _ => ToastLevel::Success,
+        };
+        self.notify_transfer(level, message);
+    }
+
     /// Ends the file going through, the link can't take it (`why`)
     pub fn stop_transfer(&mut self, why: &str) {
         if let Some(transfer) = self.transfer.take() {
-            self.notify_error(format!("{}: {why}", stopped_text(&transfer)));
+            let message = format!("{}: {why}", stopped_text(&transfer));
+            self.notify_transfer(ToastLevel::Error, message);
         }
     }
 
@@ -517,6 +540,8 @@ impl App {
         if self.mash.take().is_some() {
             stopped.push("Stopped mashing".to_string());
         }
+        // a stopped transfer says so in its own box
+        let transfer_stopped = self.transfer.is_some();
         if let Some(mut transfer) = self.transfer.take() {
             // a protocol's receiver is told to stop too
             let cans = transfer.cancel();
@@ -536,7 +561,11 @@ impl App {
         } else {
             let mut message = stopped.join(", ");
             message[..1].make_ascii_uppercase();
-            self.notify_warn(message);
+            if transfer_stopped {
+                self.notify_transfer(ToastLevel::Warn, message);
+            } else {
+                self.notify_warn(message);
+            }
         }
     }
 
@@ -1586,7 +1615,10 @@ impl App {
                         transfer.size().unwrap_or_default()
                     ),
                 };
-                self.notify_info(message);
+                // the progress row says it already (MAX-228)
+                if !self.settings.ui.transfer_row {
+                    self.notify_transfer(ToastLevel::Info, message);
+                }
                 self.transfer = Some(*transfer);
                 self.busy_said = false;
                 self.recancel_until = None;
@@ -2469,30 +2501,69 @@ impl App {
     }
 
     pub fn notify_info(&mut self, msg: impl Into<String>) {
-        self.notifications
-            .push(msg, ToastLevel::Info, Duration::from_secs(3));
+        self.notify(ToastLevel::Info, msg);
     }
 
     pub fn notify_success(&mut self, msg: impl Into<String>) {
-        self.notifications
-            .push(msg, ToastLevel::Success, std::time::Duration::from_secs(3));
+        self.notify(ToastLevel::Success, msg);
     }
 
     pub fn notify_warn(&mut self, msg: impl Into<String>) {
-        self.notifications
-            .push(msg, ToastLevel::Warn, std::time::Duration::from_secs(4));
+        self.notify(ToastLevel::Warn, msg);
     }
 
     pub fn notify_error(&mut self, msg: impl Into<String>) {
-        self.notifications
-            .push(msg, ToastLevel::Error, std::time::Duration::from_secs(5));
+        self.notify(ToastLevel::Error, msg);
     }
+
+    fn notify(&mut self, level: ToastLevel, msg: impl Into<String>) {
+        let msg = msg.into();
+        let duration = toast_duration(level, &msg);
+        self.notifications.push(msg, level, duration);
+    }
+
+    /// A file transfer's toast: its messages follow each other in one box (MAX-228)
+    pub fn notify_transfer(&mut self, level: ToastLevel, msg: impl Into<String>) {
+        let msg = msg.into();
+        let duration = toast_duration(level, &msg);
+        self.notifications
+            .push_keyed("transfer", msg, level, duration);
+    }
+
+    /// The link's toast, the same way: connecting then connected, lost then reconnected,
+    /// detached then attached (MAX-228)
+    pub fn notify_link(&mut self, level: ToastLevel, msg: impl Into<String>) {
+        let msg = msg.into();
+        let duration = toast_duration(level, &msg);
+        self.notifications.push_keyed("link", msg, level, duration);
+    }
+}
+
+/// How long a toast stays: the time to read it (MAX-228), 2 s to notice it then 50 ms a
+/// character (20 a second), so "Copied" goes in about 2 s and a line with a path stays twice
+/// that. A warning stays at least 4 s and an error 6 s, however short; none more than 10 s
+fn toast_duration(level: ToastLevel, message: &str) -> Duration {
+    let read = 2_000 + 50 * message.chars().count() as u64;
+    let floor = match level {
+        ToastLevel::Info | ToastLevel::Success => 0,
+        ToastLevel::Warn => 4_000,
+        ToastLevel::Error => 6_000,
+    };
+    Duration::from_millis(read.max(floor).min(10_000))
 }
 
 /// How long after a cancel the other side's ACK or NAK gets the CANs again: lrzsz's `rb`
 /// drops what it read past a good block, so CANs that came with the block's end are lost to
 /// it, and only its next ACK can be answered with them (MAX-162)
 const RECANCEL_FOR: Duration = Duration::from_secs(5);
+
+/// A path's file name, for a short message; the path whole when it has none
+fn file_name(path: &std::path::Path) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into(),
+    )
+}
 
 /// What a stopped transfer says: how far a send got, the partial file a download keeps
 fn stopped_text(transfer: &FileTransfer) -> String {

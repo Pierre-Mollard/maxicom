@@ -761,10 +761,16 @@ fn command_line_send_file() {
     }
     assert_eq!(sent, 300);
     assert!(app.transfer().is_none());
+    // the transfer's toasts follow each other in one box, above the refusal (MAX-228)
+    let transfer_toast = |app: &App| -> String {
+        let toasts = app.notifications.active_toasts();
+        let toast = toasts.iter().find(|toast| toast.key == Some("transfer"));
+        toast.map(|toast| toast.message.clone()).unwrap_or_default()
+    };
     assert!(
-        last_toast(&app).starts_with("Sent maxicom_test_"),
+        transfer_toast(&app).starts_with("Sent maxicom_test_"),
         "{}",
-        last_toast(&app)
+        transfer_toast(&app)
     );
 
     run_line(&mut app, &format!("send-file {file}"));
@@ -772,9 +778,9 @@ fn command_line_send_file() {
     run_line(&mut app, "cancel");
     assert!(app.transfer().is_none());
     assert!(
-        last_toast(&app).ends_with(" at 32%"),
+        transfer_toast(&app).ends_with(" at 32%"),
         "{}",
-        last_toast(&app)
+        transfer_toast(&app)
     );
 
     run_line(&mut app, &format!("send-file {file}.nope; help"));
@@ -821,6 +827,14 @@ fn command_line_upload() {
         toasts.iter().map(|toast| toast.message.clone()).collect()
     };
     let name = path.file_name().unwrap().to_string_lossy().into_owned();
+
+    // with the progress row, which says it waits: no start toast (MAX-228)
+    run_line(&mut app, &format!("upload ymodem {file}"));
+    assert!(app.transfer().is_some());
+    assert!(!toasts(&app).iter().any(|t| t.starts_with("Sending")));
+    run_line(&mut app, "cancel");
+    // without it, the toast says it
+    app.settings_mut().ui.transfer_row = false;
 
     for (typed, protocol) in [
         ("xmodem", Protocol::Xmodem),
@@ -2079,4 +2093,63 @@ fn search_history_in_the_bar() {
     app.update(Action::Search(SearchModeAction::History(true)));
     assert_eq!(app.line_mode.search().query_str(), "hit");
     assert_eq!(app.line_mode.search().matches_count(), 2);
+}
+
+/// MAX-228: a toast stays the time to read it: 2 s plus 50 ms a character, a warning at
+/// least 4 s, an error 6 s, none more than 10 s.
+#[test]
+fn toast_duration_from_its_length() {
+    use crate::notification::ToastLevel;
+    let ms = |level, message: &str| toast_duration(level, message).as_millis();
+    assert_eq!(ms(ToastLevel::Success, "Copied"), 2_300);
+    // a received file with its path: about 4 s
+    let received = "Received /tmp/maxicom-dl/rand-129.bin (129 bytes)";
+    let len = received.chars().count() as u128;
+    assert_eq!(ms(ToastLevel::Success, received), 2_000 + 50 * len);
+    assert_eq!(ms(ToastLevel::Warn, "TCP connection lost"), 4_000);
+    assert_eq!(ms(ToastLevel::Error, "break: busy"), 6_000);
+    assert_eq!(ms(ToastLevel::Info, &"x".repeat(500)), 10_000);
+}
+
+/// MAX-228: a download says each file by name as it comes, then the folder once at the end:
+/// the file and its size for one, how many and their bytes for a batch, in the transfer's
+/// box.
+/// How: a YMODEM batch of two files fed as packets, then the empty block 0.
+#[test]
+fn download_summary() {
+    use crate::transfer::{FileTransfer, modem::Protocol, modem::packet};
+    let mut app = app();
+    let folder = std::env::temp_dir().join(format!("maxicom_test_{}_summary", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    let now = Instant::now();
+    let transfer = FileTransfer::download(Protocol::Ymodem, folder.clone(), None, now);
+    app.update(Action::App(AppAction::StartTransfer(Box::new(transfer))));
+    let block0 = |info: &[u8]| {
+        let mut data = info.to_vec();
+        data.resize(128, 0);
+        packet(0, &data, true)
+    };
+    let transfer_toast = |app: &App| {
+        let toasts = app.notifications.active_toasts();
+        let toast = toasts.iter().find(|toast| toast.key == Some("transfer"));
+        toast.map(|toast| toast.message.clone()).unwrap_or_default()
+    };
+    app.transfer_step(b"", now);
+    for (name, size) in [("a.bin", 100), ("b.bin", 20)] {
+        app.transfer_step(&block0(format!("{name}\0{size}\0").as_bytes()), now);
+        app.transfer_step(&packet(1, &[7; 128], true), now);
+        app.transfer_step(&[0x04], now);
+        app.transfer_step(&[0x04], now);
+        assert_eq!(
+            transfer_toast(&app),
+            format!("Received {name} ({size} bytes)")
+        );
+    }
+    app.transfer_step(&block0(b""), now);
+    assert!(app.transfer().is_none());
+    assert_eq!(
+        transfer_toast(&app),
+        format!("Received 2 files (120 bytes) into {}", folder.display())
+    );
+    let _ = std::fs::remove_dir_all(&folder);
 }

@@ -9,7 +9,8 @@ Messages show up in three places:
 - **on the shell**, when maxicom stops before its screen opens;
 - **in a popup**, for a failure you need to see;
 - **in a [notification](notifications.md)**, in the top right corner.
-  Errors stay 5 seconds, warnings 4.
+  They stay the time to read them, errors at least 6 seconds, see
+  [How long they stay](notifications.md#how-long-they-stay).
 
 A toggle also says its new state in a notification, like `Add CR ON` or
 `Display Mode is hex`. Those aren't listed here.

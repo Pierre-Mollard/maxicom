@@ -27,6 +27,7 @@ use crate::{
         replay::{Replay, ReplayControl},
         serial::{self, LineControl, LineSettings},
     },
+    notification::ToastLevel,
     overlays::{Directory, DirectoryTab, ErrorDialog, LinkForm, Overlay},
     transfer::{
         FileTransfer,
@@ -397,10 +398,8 @@ impl App {
             let timeout = self.settings.inactivity_detach_timeout;
             if self.link.detach_if_idle(timeout) {
                 self.show_detached();
-                self.notify_warn(format!(
-                    "Device idle for {}s: port detached",
-                    timeout.as_secs()
-                ));
+                let message = format!("Device idle for {}s: port detached", timeout.as_secs());
+                self.notify_link(ToastLevel::Warn, message);
                 turn.redraw = true;
             }
         } else if let Some((why, result)) = self.link.poll_open() {
@@ -464,7 +463,8 @@ impl App {
     /// A write refused while a protocol transfer owns the link, said once per transfer
     pub fn say_link_busy(&mut self) {
         if !std::mem::replace(&mut self.busy_said, true) {
-            self.notify_warn("A file transfer is running: cancel stops it");
+            let message = "A file transfer is running: cancel stops it";
+            self.notify_transfer(ToastLevel::Warn, message);
         }
     }
 
@@ -498,7 +498,8 @@ impl App {
     /// or the link opens again (MAX-199)
     fn write_failed(&mut self, e: &LinkError) {
         if !std::mem::replace(&mut self.write_failing, true) {
-            self.notify_error(format!("{}: {e}", self.link_kind().name()));
+            let message = format!("{}: {e}", self.link_kind().name());
+            self.notify_link(ToastLevel::Error, message);
         }
     }
 
@@ -507,7 +508,8 @@ impl App {
     fn lose_link(&mut self, reason: Option<String>) {
         self.lost_reason = reason;
         self.show_disconnected();
-        self.notify_warn(format!("{} lost", self.link_kind().name()));
+        let message = format!("{} lost", self.link_kind().name());
+        self.notify_link(ToastLevel::Warn, message);
     }
 
     /// Everything already waiting, instead of one buffer per frame, for `RX_DRAIN_BUDGET` at
@@ -533,7 +535,8 @@ impl App {
                     break;
                 }
                 Err(e) => {
-                    self.notify_error(format!("{} read error", self.link_kind().name()));
+                    let message = format!("{} read error", self.link_kind().name());
+                    self.notify_link(ToastLevel::Error, message);
                     return Err(e);
                 }
             }
@@ -625,25 +628,28 @@ impl App {
         self.lost_reason = None;
         self.write_failing = false;
         let label = self.link_label();
-        // some servers take several clients: said, not refused (MAX-186)
+        // some servers take several clients: said, not refused (MAX-186); in a box of its own,
+        // as the link's box says it opened right after
         if let Some(holder) = self.link.shared_with() {
             self.notify_warn(format!("{label} is open in {holder} too"));
         }
         match why {
-            OpenFor::Start => self.notify_success(format!("Connected to {label}")),
+            OpenFor::Start => {
+                self.notify_link(ToastLevel::Success, format!("Connected to {label}"))
+            }
             OpenFor::Attach => {
-                self.notify_success(format!("Reconnected to {label}"));
+                self.notify_link(ToastLevel::Success, format!("Reconnected to {label}"));
                 self.close_overlay();
             }
             OpenFor::Retry => {
-                self.notify_success(format!("Device Reconnected: {label}"));
+                self.notify_link(ToastLevel::Success, format!("Reconnected to {label}"));
                 if let Some(Overlay::DeviceDisconnected) = self.overlay() {
                     self.close_overlay();
                 }
             }
             OpenFor::Open { previous } => {
                 let switched = previous.address != self.link.config().address;
-                self.notify_success(format!("Opened {label}"));
+                self.notify_link(ToastLevel::Success, format!("Opened {label}"));
                 if let Some(Overlay::Directory(_)) = self.overlay() {
                     self.close_overlay();
                 }
@@ -673,7 +679,7 @@ impl App {
         match why {
             // what a missing port does at start, after the restore question
             OpenFor::Start => {
-                self.notify_warn(e.to_string());
+                self.notify_link(ToastLevel::Warn, e.to_string());
                 if matches!(self.overlay(), Some(Overlay::RestoreSession(_))) {
                     self.disconnected_after_restore = true;
                 } else {
@@ -682,7 +688,7 @@ impl App {
             }
             // still detached, its popup back: no quiet retries of a port held elsewhere
             OpenFor::Attach => {
-                self.notify_error(format!("Failed to reattach: {e}"));
+                self.notify_link(ToastLevel::Error, format!("Failed to reattach: {e}"));
                 self.link.detach();
                 if self.overlay.is_none() {
                     self.show_detached();
@@ -706,7 +712,8 @@ impl App {
     fn begin_open(&mut self, why: OpenFor) {
         self.link.begin_open(why);
         if self.link_kind() == LinkKind::Tcp {
-            self.notify_info(format!("Connecting to {}", self.link_label()));
+            let message = format!("Connecting to {}", self.link_label());
+            self.notify_link(ToastLevel::Info, message);
         }
     }
 
@@ -720,7 +727,8 @@ impl App {
         }
         self.link.switch_to(config);
         self.pause_commands(Instant::now() + CONNECT_TIMEOUT * 2);
-        self.notify_info(format!("Opening {}", self.link_label()));
+        let message = format!("Opening {}", self.link_label());
+        self.notify_link(ToastLevel::Info, message);
         self.close_link_popups();
     }
 
@@ -807,7 +815,8 @@ impl App {
         if self.link.is_open() {
             self.link.detach();
             self.show_detached();
-            self.notify_warn(format!("{} detached", self.link_kind().name()));
+            let message = format!("{} detached", self.link_kind().name());
+            self.notify_link(ToastLevel::Warn, message);
         } else {
             self.begin_open(OpenFor::Attach);
         }

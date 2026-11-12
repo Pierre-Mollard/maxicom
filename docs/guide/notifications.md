@@ -3,6 +3,23 @@
 Notifications are short messages that stack in the top right corner and go
 away after a few seconds.
 
+## How long they stay
+
+A notification stays the time it takes to read it: 2 seconds, plus a second
+for every 20 characters. A short one like "Text copied" goes in under 3
+seconds, a line with a file's path stays about 4.
+
+A warning stays at least 4 seconds and an error at least 6, however short, and
+none stays more than 10. Click one to close it sooner.
+
+## One box per activity
+
+The messages of a file transfer follow each other in one notification instead
+of piling up: waiting, then each file received, then done or stopped. The
+link's do the same: connecting then connected, lost then reconnected, detached
+then attached. Each new message takes the box's place and starts its time
+again.
+
 ## Closing them
 
 | To close | Do |

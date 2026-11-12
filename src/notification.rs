@@ -42,6 +42,8 @@ pub struct Toast {
     /// Its own number, so a click dismisses the toast drawn there even if others expired
     /// since (MAX-197)
     pub id: u64,
+    /// The activity whose toasts follow each other in this one (MAX-228)
+    pub key: Option<&'static str>,
     pub message: String,
     pub level: ToastLevel,
     pub expires_at: Instant,
@@ -59,13 +61,45 @@ impl NotificationManager {
     }
 
     pub fn push(&mut self, message: impl Into<String>, level: ToastLevel, duration: Duration) {
+        self.push_toast(None, message.into(), level, duration);
+    }
+
+    /// A toast of one activity (`key`, as `transfer`): it takes the place of the activity's
+    /// toast still shown, its text, level and time renewed, so the activity's messages follow
+    /// each other in one box instead of piling up (MAX-228)
+    pub fn push_keyed(
+        &mut self,
+        key: &'static str,
+        message: impl Into<String>,
+        level: ToastLevel,
+        duration: Duration,
+    ) {
+        match self.toasts.iter_mut().find(|toast| toast.key == Some(key)) {
+            // same place and id: a click on it still finds it
+            Some(toast) => {
+                toast.message = message.into();
+                toast.level = level;
+                toast.expires_at = Instant::now() + duration;
+            }
+            None => self.push_toast(Some(key), message.into(), level, duration),
+        }
+    }
+
+    fn push_toast(
+        &mut self,
+        key: Option<&'static str>,
+        message: String,
+        level: ToastLevel,
+        duration: Duration,
+    ) {
         if self.toasts.len() >= 4 {
             self.toasts.remove(0);
         }
         self.next_id += 1;
         self.toasts.push(Toast {
             id: self.next_id,
-            message: message.into(),
+            key,
+            message,
             level,
             expires_at: Instant::now() + duration,
         });
