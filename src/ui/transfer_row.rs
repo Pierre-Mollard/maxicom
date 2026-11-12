@@ -28,7 +28,8 @@ const CANCEL: &str = " ✕ ";
 ///
 /// ` ⇡ fw.bin YMODEM [██████░░░░]  54%  70K/131K  11K/s  ETA 0:05  2 retries        ✕ `
 ///
-/// A protocol transfer waiting for its receiver says so instead of the numbers. On a narrow
+/// A download has `⇣`, and without a size (XMODEM) only the bytes received. A protocol
+/// transfer waiting for the other side says so instead of the numbers. On a narrow
 /// row the parts go, the retries first, then the time left, the rate, the bytes and the
 /// protocol, the gauge last. Returns the cancel button as a click target
 pub fn render_transfer_row(
@@ -72,7 +73,12 @@ fn row_spans(
     let text = Style::default().fg(theme.palette.text);
     let warn = Style::default().fg(theme.palette.text_warn);
 
-    let mut head = vec![Span::styled(format!(" ⇡ {} ", transfer.name()), accent)];
+    // ⇡ to the device, ⇣ from it (`download`)
+    let arrow = if transfer.is_download() { '⇣' } else { '⇡' };
+    let mut head = vec![Span::styled(
+        format!(" {arrow} {} ", transfer.name()),
+        accent,
+    )];
     let protocol = transfer
         .protocol()
         .map(|protocol| Span::styled(format!("{} ", protocol.name()), muted));
@@ -80,15 +86,26 @@ fn row_spans(
     let mut spans;
     if transfer.waiting() {
         head.extend(protocol);
-        let wait = "waiting for the receiver (C or NAK) ";
+        let wait = if transfer.is_download() {
+            "waiting for the sender (sb, sx) "
+        } else {
+            "waiting for the receiver (C or NAK) "
+        };
         head.push(Span::styled(wait, muted));
         spans = head;
     } else {
-        let percent = Span::styled(format!(" {:>3}% ", transfer.percent()), text);
+        // an XMODEM download has no size: the bytes only, no gauge or percent
+        let size = transfer.size();
+        let percent = match size {
+            Some(_) => Span::styled(format!(" {:>3}% ", transfer.percent()), text),
+            None => Span::raw(""),
+        };
         let mut bytes = String::new();
         write_human(&mut bytes, transfer.sent());
-        bytes.push('/');
-        write_human(&mut bytes, transfer.size());
+        if let Some(size) = size {
+            bytes.push('/');
+            write_human(&mut bytes, size);
+        }
         let rate = transfer.rate(now).map(|rate| {
             let mut out = String::new();
             write_human(&mut out, rate as u64);
@@ -114,8 +131,9 @@ fn row_spans(
             optional.iter().flatten().map(Span::width).sum()
         };
         // the gauge first: the optional parts go until its smallest one fits
+        let gauge_min = if size.is_some() { GAUGE_MIN + 2 } else { 0 };
         for i in 0..optional.len() {
-            if fixed + optional_width(&optional) + GAUGE_MIN + 2 <= width {
+            if fixed + optional_width(&optional) + gauge_min <= width {
                 break;
             }
             optional[i] = None;
@@ -125,7 +143,7 @@ fn row_spans(
 
         spans = head;
         spans.extend(protocol);
-        if room >= GAUGE_MIN {
+        if size.is_some() && room >= GAUGE_MIN {
             spans.extend(gauge(
                 transfer.percent(),
                 room.min(GAUGE_MAX),

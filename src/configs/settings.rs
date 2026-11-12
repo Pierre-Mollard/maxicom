@@ -618,6 +618,25 @@ impl Default for ScreenshotConfig {
     }
 }
 
+/// Where `download` puts what it receives (MAX-162): `dir` when the command names no
+/// folder, the current directory when empty, and `xmodem_name` (strftime) for an XMODEM file,
+/// which comes with no name
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TransfersConfig {
+    pub dir: PathBuf,
+    pub xmodem_name: String,
+}
+
+impl Default for TransfersConfig {
+    fn default() -> Self {
+        Self {
+            dir: PathBuf::new(),
+            xmodem_name: String::from("xmodem_%Y%m%d_%H%M%S.bin"),
+        }
+    }
+}
+
 impl ScreenshotConfig {
     /// The screenshot path without its extension, which comes with the format
     pub fn stem(&self) -> PathBuf {
@@ -971,6 +990,7 @@ pub struct SettingsConfig {
     pub capture: CaptureConfig,
     pub sessions: SessionsConfig,
     pub screenshot: ScreenshotConfig,
+    pub transfers: TransfersConfig,
     pub theme_path: Option<PathBuf>,
     pub keybindings_path: Option<PathBuf>,
     pub highlights_path: Option<PathBuf>,
@@ -1005,6 +1025,7 @@ impl Default for SettingsConfig {
             capture: CaptureConfig::default(),
             sessions: SessionsConfig::default(),
             screenshot: ScreenshotConfig::default(),
+            transfers: TransfersConfig::default(),
             inactivity_detach_timeout: DEFAULT_INACTIVITY_DETACH,
             theme_path: None,
             keybindings_path: None,
@@ -1109,6 +1130,7 @@ impl SettingsConfig {
         for (field, name) in [
             ("capture.name", &self.capture.name),
             ("screenshot.name", &self.screenshot.name),
+            ("transfers.xmodem_name", &self.transfers.xmodem_name),
         ] {
             if let Err(err) = StrftimeItems::new(name).parse() {
                 return Err(ConfigValidationError::InvalidCaptureName {

@@ -30,12 +30,15 @@ remove it, or turn the row off with `ui.transfer_row = false`.
 
 ### Added
 
-- [File uploads](https://pierre-mollard.github.io/maxicom/file-transfers.html)
+- [File transfers](https://pierre-mollard.github.io/maxicom/file-transfers.html)
   with XMODEM, XMODEM-1K and YMODEM, built in (no `sz` needed):
   `upload ymodem <file>` sends to U-Boot's `loady` / `loadx`, `rx`, `rb` and
-  most bootloaders, the receiver started before or after. While it runs the
-  link is the upload's: keys and `send` wait, the receiver's answers stay off
-  the screen. ZMODEM and Kermit go through a detach and your own tools.
+  most bootloaders, the receiver started before or after. `download ymodem`
+  receives what `sb` or `sx` sends, into the new `[transfers] dir` or a folder
+  given: names, sizes and dates kept, a whole batch at once, nothing
+  overwritten, a stopped file kept as `.part`. While a transfer runs the link
+  is its own: keys and `send` wait, the protocol's bytes stay off the screen.
+  ZMODEM and Kermit go through a detach and your own tools.
 - A [progress row](https://pierre-mollard.github.io/maxicom/file-transfers.html#the-progress-row)
   over the status bar while a file is sent (`send-file` or `upload`): a
   gauge, the bytes, the rate, the time left, the retries, and a `✕` that

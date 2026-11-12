@@ -3,7 +3,7 @@
 use std::{
     fs::File,
     io::BufReader,
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, Instant, UNIX_EPOCH},
 };
 
@@ -100,7 +100,65 @@ pub fn upload(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     Ok(Action::App(AppAction::StartTransfer(Box::new(transfer))))
 }
 
-/// Why a file can't be sent now: a replay, a link not open, a file being sent already
+/// The protocols `download` takes, as typed: a receiver takes XMODEM-1K's packets too
+pub const DOWNLOAD_PROTOCOLS: &[&str] = &["xmodem", "ymodem"];
+
+/// `download <protocol> [path]` (MAX-162): receives what the device sends with a protocol
+/// (`sb`, `sx`), into `[transfers] dir`, or the folder given. XMODEM sends no name: its file
+/// is the path given when it isn't a folder, else `xmodem_name`
+pub fn download(app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let (protocol, path) = match args {
+        [ArgValue::Enum(protocol)] => (*protocol, None),
+        [ArgValue::Enum(protocol), ArgValue::Path(path)] => (*protocol, Some(path)),
+        _ => unreachable!("download takes a protocol and a path"),
+    };
+    let protocol = match protocol {
+        "xmodem" => Protocol::Xmodem,
+        _ => Protocol::Ymodem,
+    };
+    can_send_file(app)?;
+    // its bytes would break the packets
+    if app.mash().is_some() {
+        return Err("a mash runs (cancel stops it)".to_string());
+    }
+    let transfers = &app.settings().transfers;
+    let xmodem_name = || {
+        chrono::Local::now()
+            .format(&transfers.xmodem_name)
+            .to_string()
+    };
+    let (folder, name) = match path.map(|path| expand_home(path)) {
+        None => (expand_home(&transfers.dir), xmodem_name()),
+        Some(path) if path.is_dir() || path.as_os_str().to_string_lossy().ends_with('/') => {
+            (path, xmodem_name())
+        }
+        Some(path) if protocol == Protocol::Ymodem => {
+            return Err(format!(
+                "{} isn't a folder: YMODEM files come with their names",
+                path.display()
+            ));
+        }
+        Some(path) => {
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned());
+            let folder = path.parent().map(Path::to_path_buf).unwrap_or_default();
+            (folder, name.unwrap_or_else(xmodem_name))
+        }
+    };
+    // said as `.`, not as nothing
+    let folder = if folder.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        folder
+    };
+    // YMODEM's files bring their names
+    let name = (protocol == Protocol::Xmodem).then_some(name);
+    let transfer = FileTransfer::download(protocol, folder, name, Instant::now());
+    Ok(Action::App(AppAction::StartTransfer(Box::new(transfer))))
+}
+
+/// Why a file can't go through now: a replay, a link not open, a file going through already
 fn can_send_file(app: &App) -> Result<(), String> {
     if !app.link_kind().writes() {
         return Err("a replay has no link to send to".to_string());

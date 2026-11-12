@@ -1650,7 +1650,7 @@ fn upload_owns_the_link() {
 }
 
 /// MAX-162: `cancel` during an upload sends the CANs that stop the receiver, and gives the
-/// link back.
+/// link back; for a few seconds, the receiver's ACK or NAK gets them again.
 #[test]
 fn cancel_stops_the_receiver() {
     use crate::transfer::{FileTransfer, modem::Protocol};
@@ -1676,4 +1676,81 @@ fn cancel_stops_the_receiver() {
     assert_eq!(cans, [0x18; 5]);
     assert!(!app.link_busy());
     assert!(toasts(&app).contains(&"Stopped sending fw.bin at 0%".to_string()));
+
+    // a receiver that missed them (lrzsz's rb drops what came with a block's end) ACKs the
+    // block: the CANs again. A `C` in the device's text doesn't
+    peer.write_all(b"C\x06").unwrap();
+    let tx = app.stats.tx();
+    poll_until(&mut app, "CANs again", |app| app.stats.tx() == tx + 5);
+    peer.read_exact(&mut cans).unwrap();
+    assert_eq!(cans, [0x18; 5]);
+    peer.write_all(b"Ctrl-C\r\n").unwrap();
+    poll_until(&mut app, "text shown", |app| {
+        app.terminal_mode
+            .vt100_screen()
+            .contents()
+            .contains("Ctrl-C")
+    });
+    assert_eq!(app.stats.tx(), tx + 5);
+}
+
+/// MAX-162: a YMODEM download over a link. The shell's echo before the first packet shows;
+/// the packets don't; the file lands in the folder under its own name, said by a notice.
+/// How: a thread plays the device, `ModemSender` on the TCP peer's side.
+#[test]
+fn download_writes_the_file() {
+    use crate::transfer::{FileTransfer, modem::Protocol, modem_tx::ModemSender};
+    let (listener, address) = listener();
+    let (mut app, mut peer) = connected(&listener, &address);
+    let folder = std::env::temp_dir().join(format!(
+        "maxicom_test_{}_device_download",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&folder);
+    let content: Vec<u8> = (0..3000u32).map(|i| (i % 251) as u8).collect();
+    let device = {
+        let content = content.clone();
+        thread::spawn(move || {
+            peer.write_all(b"sb fw.bin\r\n").unwrap();
+            peer.set_read_timeout(Some(Duration::from_millis(5)))
+                .unwrap();
+            let mut sender = ModemSender::new(
+                Box::new(std::io::Cursor::new(content.clone())),
+                Protocol::Ymodem,
+                "fw.bin".to_string(),
+                content.len() as u64,
+                11_520.0,
+                Instant::now(),
+            );
+            let mut buffer = [0; 256];
+            while sender.outcome().is_none() {
+                let n = peer.read(&mut buffer).unwrap_or(0);
+                let out = sender.step(&buffer[..n], Instant::now()).unwrap().out;
+                peer.write_all(&out).unwrap();
+            }
+            peer.write_all(b"$ ").unwrap();
+            peer
+        })
+    };
+
+    let transfer = FileTransfer::download(Protocol::Ymodem, folder.clone(), None, Instant::now());
+    app.dispatch(Action::App(AppAction::StartTransfer(Box::new(transfer))));
+    let started = format!(
+        "Receiving with YMODEM into {}: waiting for the sender",
+        folder.display()
+    );
+    assert!(toasts(&app).contains(&started), "{:?}", toasts(&app));
+    poll_until(&mut app, "ended", |app| app.transfer().is_none());
+    let _peer = device.join().unwrap();
+    poll_until(&mut app, "prompt after", |app| {
+        app.terminal_mode.vt100_screen().contents().contains("$")
+    });
+
+    assert_eq!(std::fs::read(folder.join("fw.bin")).unwrap(), content);
+    let received = format!("Received {} (3000 bytes)", folder.join("fw.bin").display());
+    let toasts = toasts(&app);
+    assert!(toasts.contains(&received), "{toasts:?}");
+    let screen = app.terminal_mode.vt100_screen().contents();
+    assert!(screen.starts_with("sb fw.bin\n$"), "{screen:?}");
+    let _ = std::fs::remove_dir_all(&folder);
 }

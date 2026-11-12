@@ -688,7 +688,8 @@ impl Var {
             Self::SendFile => write!(
                 out,
                 "{}",
-                app.transfer().map_or("", |transfer| transfer.name())
+                app.transfer()
+                    .map_or(String::new(), |transfer| transfer.name())
             ),
             Self::SendEta => match app.transfer().and_then(|t| t.eta(Instant::now())) {
                 Some(eta) => write!(out, "{}", clock(eta)),

@@ -274,6 +274,16 @@ The device and line settings used when none are given. See
 Recordings, session backups and their restore, and screenshots. See
 [Capture](capture.md#settings), which lists them with their defaults.
 
+### `[transfers]`
+
+Where `download` puts what it receives. See
+[Downloading](file-transfers.md#downloading).
+
+| Setting | Default | |
+| --- | --- | --- |
+| `dir` | `""` | The folder, when the command names none. Empty: the folder maxicom was started in. `~` is your home folder. |
+| `xmodem_name` | `"xmodem_%Y%m%d_%H%M%S.bin"` | An XMODEM file's name, as it comes with none, in strftime format |
+
 ### `[ui]`
 
 | Setting | Default | |

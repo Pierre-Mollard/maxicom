@@ -861,6 +861,65 @@ fn command_line_upload() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// MAX-162: `download <protocol> [path]` receives into `[transfers] dir`, or the folder
+/// given (existing, or ending with `/`); for XMODEM, another path is the file, else
+/// `xmodem_name` names it. YMODEM refuses a path that isn't a folder.
+#[test]
+fn command_line_download() {
+    use crate::{
+        commands::{ArgValue, build},
+        transfer::modem::Protocol,
+    };
+    let mut app = app();
+    let root = std::env::temp_dir().join(format!("maxicom_test_{}_dl", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    app.settings_mut().transfers.dir = root.clone();
+    let start = |app: &App, args: &[ArgValue]| match build::download(app, args) {
+        Ok(Action::App(AppAction::StartTransfer(transfer))) => Ok(transfer),
+        Ok(other) => panic!("{other:?}"),
+        Err(e) => Err(e),
+    };
+    let path = |path: std::path::PathBuf| ArgValue::Path(path);
+
+    let transfer = start(&app, &[ArgValue::Enum("ymodem")]).unwrap();
+    assert_eq!(transfer.protocol(), Some(Protocol::Ymodem));
+    assert_eq!(transfer.folder(), Some(root.as_path()));
+    assert_eq!(transfer.name(), "");
+
+    let transfer = start(&app, &[ArgValue::Enum("xmodem")]).unwrap();
+    assert!(
+        transfer.name().starts_with("xmodem_"),
+        "{}",
+        transfer.name()
+    );
+    assert!(transfer.name().ends_with(".bin"), "{}", transfer.name());
+
+    let new = root.join("new/");
+    let transfer = start(&app, &[ArgValue::Enum("ymodem"), path(new.clone())]).unwrap();
+    assert_eq!(transfer.folder(), Some(new.as_path()));
+
+    let file = root.join("dump.bin");
+    let transfer = start(&app, &[ArgValue::Enum("xmodem"), path(file.clone())]).unwrap();
+    assert_eq!(
+        (transfer.folder(), transfer.name()),
+        (Some(root.as_path()), "dump.bin".into())
+    );
+    let refused = start(&app, &[ArgValue::Enum("ymodem"), path(file.clone())]).unwrap_err();
+    assert_eq!(
+        refused,
+        format!(
+            "{} isn't a folder: YMODEM files come with their names",
+            file.display()
+        )
+    );
+
+    // the default folder empty: the current directory, said as `.`
+    app.settings_mut().transfers.dir = std::path::PathBuf::new();
+    let transfer = start(&app, &[ArgValue::Enum("ymodem")]).unwrap();
+    assert_eq!(transfer.folder(), Some(std::path::Path::new(".")));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// MAX-12: `baud`, `framing` and `flow` give the port's settings for the loop to apply,
 /// each on the settings the one before left; `dtr`, `rts` and `break` give the line
 /// controls. `rts` refuses with hardware flow control, and all refuse on a TCP link or a

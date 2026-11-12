@@ -28,7 +28,10 @@ use crate::{
         serial::{self, LineControl, LineSettings},
     },
     overlays::{Directory, DirectoryTab, ErrorDialog, LinkForm, Overlay},
-    transfer::FileTransfer,
+    transfer::{
+        FileTransfer,
+        modem::{ACK, CANCEL, NAK},
+    },
 };
 
 /// How long a link's test may take before it's marked unanswered (MAX-181): above the TCP
@@ -543,6 +546,7 @@ impl App {
     /// (the receiver's C, ACK, NAK) is the protocol's, only kept by the raw recordings
     fn receive(&mut self, chunk: &[u8]) {
         if !self.transfer().is_some_and(FileTransfer::takes_rx) {
+            self.recancel(chunk);
             self.feed_rx(chunk);
             return;
         }
@@ -558,6 +562,19 @@ impl App {
             self.record_protocol_rx(protocol);
         }
         self.write_transfer(&step.out);
+    }
+
+    /// A protocol transfer cancelled a moment ago: the other side's ACK or NAK means it missed
+    /// the CANs (`rb` drops what came with a block's end), so they go again
+    fn recancel(&mut self, chunk: &[u8]) {
+        let Some(until) = self.recancel_until else {
+            return;
+        };
+        if Instant::now() >= until {
+            self.recancel_until = None;
+        } else if chunk.iter().any(|&byte| byte == ACK || byte == NAK) {
+            self.write_link(&CANCEL, false);
+        }
     }
 
     /// The transfer's bytes, past the busy check; a failed write ends it

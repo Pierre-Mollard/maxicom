@@ -40,7 +40,7 @@ use crate::{
     notification::{NotificationManager, ToastLevel},
     overlays::{MarkBrowser, Overlay, OverlayResponse, PopupTarget, ScreenshotDialog, SettingKey},
     paths::{create_parent_dirs, expand_home},
-    transfer::{FileTransfer, Step},
+    transfer::{FileTransfer, Step, modem::Protocol},
 };
 
 /// How soon after the window gains focus a press is the one that focused it
@@ -210,6 +210,9 @@ pub struct App {
     /// A write was refused while a protocol transfer owns the link, and said: once per
     /// transfer (MAX-162)
     busy_said: bool,
+    /// After a protocol transfer was cancelled, until when the other side's ACK or NAK gets
+    /// the CANs again (MAX-162)
+    recancel_until: Option<Instant>,
     /// The replay running, while the link is one (MAX-166)
     replay: Option<ReplayRun>,
 }
@@ -341,6 +344,7 @@ impl App {
             },
             transfer: None,
             busy_said: false,
+            recancel_until: None,
             replay: None,
         };
         app.fit_mode_to_link();
@@ -363,9 +367,10 @@ impl App {
         self.transfer.as_ref().is_some_and(FileTransfer::owns_link)
     }
 
-    /// A loop turn of the file being sent, with `rx`, what the link received for a protocol
-    /// (empty otherwise): the bytes to write, and the part of `rx` that is the protocol's.
-    /// The end of the transfer, its failure or a read error ends it with a notice
+    /// A loop turn of the file going through, with `rx`, what the link received for a
+    /// protocol (empty otherwise): the bytes to write, and the part of `rx` that is the
+    /// protocol's. Each file a download completes is said; the end of the transfer, its
+    /// failure or a read / write error ends it with a notice
     pub fn transfer_step(&mut self, rx: &[u8], now: Instant) -> Step {
         let idle = Step {
             out: Vec::new(),
@@ -377,39 +382,52 @@ impl App {
         let step = match transfer.step(rx, now) {
             Ok(step) => step,
             Err(e) => {
-                // a protocol's receiver is told to stop too
+                // a protocol's other side is told to stop too
                 let out = transfer.cancel();
-                self.stop_transfer(&format!("read error: {e}"));
+                let what = if transfer.is_download() {
+                    "write"
+                } else {
+                    "read"
+                };
+                self.stop_transfer(&format!("{what} error: {e}"));
                 return Step { out, ..idle };
             }
         };
-        match transfer.outcome() {
+        let received = transfer.take_received();
+        let outcome = transfer.outcome();
+        for (path, size) in received {
+            self.notify_success(format!("Received {} ({size} bytes)", path.display()));
+        }
+        match outcome {
             None => {}
             Some(Ok(())) => {
                 let Some(transfer) = self.transfer.take() else {
                     return step;
                 };
-                let protocol = transfer.protocol().map(|p| format!(", {}", p.name()));
-                self.notify_success(format!(
-                    "Sent {} ({} bytes{})",
-                    transfer.name(),
-                    transfer.size(),
-                    protocol.unwrap_or_default()
-                ));
+                if transfer.is_download() {
+                    // the files were said as they came; a YMODEM batch can hold none
+                    if transfer.received_count() == 0 {
+                        self.notify_info("Nothing received: the sender sent no file");
+                    }
+                } else {
+                    let protocol = transfer.protocol().map(|p| format!(", {}", p.name()));
+                    self.notify_success(format!(
+                        "Sent {} ({} bytes{})",
+                        transfer.name(),
+                        transfer.size().unwrap_or_default(),
+                        protocol.unwrap_or_default()
+                    ));
+                }
             }
             Some(Err(failure)) => self.stop_transfer(&failure.to_string()),
         }
         step
     }
 
-    /// Ends the file being sent, the link can't take it (`why`)
+    /// Ends the file going through, the link can't take it (`why`)
     pub fn stop_transfer(&mut self, why: &str) {
         if let Some(transfer) = self.transfer.take() {
-            self.notify_error(format!(
-                "Stopped sending {} at {}%: {why}",
-                transfer.name(),
-                transfer.percent()
-            ));
+            self.notify_error(format!("{}: {why}", stopped_text(&transfer)));
         }
     }
 
@@ -504,12 +522,9 @@ impl App {
             let cans = transfer.cancel();
             if !cans.is_empty() {
                 self.write_link(&cans, false);
+                self.recancel_until = Some(Instant::now() + RECANCEL_FOR);
             }
-            stopped.push(format!(
-                "Stopped sending {} at {}%",
-                transfer.name(),
-                transfer.percent()
-            ));
+            stopped.push(stopped_text(&transfer));
         }
         match self.drop_pending_commands() {
             0 => {}
@@ -1544,18 +1559,37 @@ impl App {
                 UpdateEffect::None
             }
             AppAction::StartTransfer(transfer) => {
-                // a protocol waits for its receiver, which the user may start after
-                let protocol = transfer
-                    .protocol()
-                    .map(|protocol| format!(" with {}: waiting for the receiver", protocol.name()));
-                self.notify_info(format!(
-                    "Sending {} ({} bytes){}",
-                    transfer.name(),
-                    transfer.size(),
-                    protocol.unwrap_or_default()
-                ));
+                // a protocol waits for the other side, which the user may start after
+                let protocol = transfer.protocol().map_or("", Protocol::name);
+                let message = match transfer.folder() {
+                    // XMODEM's file is named here, YMODEM's come with their names
+                    Some(folder) => {
+                        let name = transfer.name();
+                        let name = if name.is_empty() {
+                            name
+                        } else {
+                            format!("{name} ")
+                        };
+                        format!(
+                            "Receiving {name}with {protocol} into {}: waiting for the sender",
+                            folder.display()
+                        )
+                    }
+                    None if transfer.protocol().is_some() => format!(
+                        "Sending {} ({} bytes) with {protocol}: waiting for the receiver",
+                        transfer.name(),
+                        transfer.size().unwrap_or_default()
+                    ),
+                    None => format!(
+                        "Sending {} ({} bytes)",
+                        transfer.name(),
+                        transfer.size().unwrap_or_default()
+                    ),
+                };
+                self.notify_info(message);
                 self.transfer = Some(*transfer);
                 self.busy_said = false;
+                self.recancel_until = None;
                 UpdateEffect::None
             }
             AppAction::Reconfigure(line) => UpdateEffect::Reconfigure(line),
@@ -2452,6 +2486,30 @@ impl App {
     pub fn notify_error(&mut self, msg: impl Into<String>) {
         self.notifications
             .push(msg, ToastLevel::Error, std::time::Duration::from_secs(5));
+    }
+}
+
+/// How long after a cancel the other side's ACK or NAK gets the CANs again: lrzsz's `rb`
+/// drops what it read past a good block, so CANs that came with the block's end are lost to
+/// it, and only its next ACK can be answered with them (MAX-162)
+const RECANCEL_FOR: Duration = Duration::from_secs(5);
+
+/// What a stopped transfer says: how far a send got, the partial file a download keeps
+fn stopped_text(transfer: &FileTransfer) -> String {
+    if !transfer.is_download() {
+        return format!(
+            "Stopped sending {} at {}%",
+            transfer.name(),
+            transfer.percent()
+        );
+    }
+    match transfer.partial() {
+        Some(part) => format!(
+            "Stopped receiving {}, kept as {}",
+            transfer.name(),
+            part.display()
+        ),
+        None => "Stopped receiving".to_string(),
     }
 }
 

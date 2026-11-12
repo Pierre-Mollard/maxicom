@@ -399,6 +399,19 @@ pub static COMMANDS: &[CommandSpec] = {
             "Send a file with XMODEM or YMODEM to a receiver (loady, loadx, rx, rb)",
         ),
         CommandSpec::build(
+            "download",
+            &[
+                arg("protocol", ArgKind::Enum(build::DOWNLOAD_PROTOCOLS)),
+                ArgSpec {
+                    name: "path",
+                    kind: ArgKind::Path,
+                    optional: true,
+                },
+            ],
+            build::download,
+            "Receive files sent with XMODEM or YMODEM (sb, sx), into [transfers] dir or a path",
+        ),
+        CommandSpec::build(
             "open",
             &[arg("address", ArgKind::Address)],
             build::open,

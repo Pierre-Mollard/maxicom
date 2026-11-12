@@ -67,10 +67,10 @@ see [Command line](command-line.md).
 
 ### No ZMODEM or Kermit
 
-`upload` sends a file with XMODEM, XMODEM-1K or YMODEM, which covers U-Boot
-and most bootloaders. There is no ZMODEM or Kermit, and no download yet: for
-those, detach the link and run `sz`, `rz` or `kermit` on the port. See
-[File transfers](file-transfers.md#zmodem-and-kermit).
+`upload` and `download` move files with XMODEM, XMODEM-1K or YMODEM, which
+covers U-Boot, most bootloaders and lrzsz's `sb` / `sx`. There is no ZMODEM or
+Kermit: for those, detach the link and run `sz`, `rz` or `kermit` on the port.
+See [File transfers](file-transfers.md#zmodem-and-kermit).
 
 ### No scripting language
 

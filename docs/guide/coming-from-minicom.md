@@ -94,11 +94,12 @@ There is no `-w`. `Ctrl-a w` changes the wrap of line mode only.
 
 ### File transfers
 
-minicom's upload (`Ctrl-a s`) runs `sx`, `sb` or `sz`. maxicom has XMODEM and
-YMODEM built in, with a progress bar: `upload ymodem <file>` from the command
-line (`Ctrl-a :`), where `Ctrl-a s` opens the settings. There is no ZMODEM,
-Kermit or download (minicom's `Ctrl-a r`) yet: detach the link and run `sz` or
-`rz` yourself. See [File transfers](file-transfers.md).
+minicom's upload (`Ctrl-a s`) and download (`Ctrl-a r`) run `sx`, `sb`, `sz`
+and their receivers. maxicom has XMODEM and YMODEM built in, with a progress
+bar: `upload ymodem <file>` and `download ymodem` from the command line
+(`Ctrl-a :`), where `Ctrl-a s` opens the settings. There is no ZMODEM or
+Kermit: detach the link and run `sz` or `rz` yourself. See
+[File transfers](file-transfers.md).
 
 ### No scripts
 

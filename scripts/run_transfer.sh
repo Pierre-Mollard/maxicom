@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Fake receivers for maxicom's `upload` (MAX-162), on tcp://127.0.0.1:PORT (default 4100)
+# Fake devices for maxicom's `upload` and `download` (MAX-162), on tcp://127.0.0.1:PORT
+# (default 4100)
 #   ./scripts/run_transfer.sh ymodem [port]       lrzsz rb: files land in /tmp/maxicom-rcv/
 #   ./scripts/run_transfer.sh xmodem [port]       lrzsz rx, checksum: /tmp/maxicom-rcv/out.bin
 #   ./scripts/run_transfer.sh xmodem-crc [port]   lrzsz rx -c, CRC: /tmp/maxicom-rcv/out.bin
@@ -9,6 +10,9 @@ set -euo pipefail
 #                                                 `loady ${loadaddr}` (or `loadx`), upload, then
 #                                                 `crc32 ${loadaddr} ${filesize}`
 #   ./scripts/run_transfer.sh files               test files in /tmp/maxicom-files/, CRC-32 listed
+#   ./scripts/run_transfer.sh send-ymodem [port]  lrzsz sb sends 3 test files, for `download ymodem`
+#   ./scripts/run_transfer.sh send-xmodem [port]  lrzsz sx sends rand-54321.bin with 1K blocks,
+#                                                 for `download xmodem`
 # Then: maxicom tcp://127.0.0.1:4100 and `upload ymodem /tmp/maxicom-files/rand-100k.bin`,
 # checked with `cmp` (XMODEM pads the last block with 0x1A: `cmp -n <size>`).
 # The fake receivers start a new receiver per connection: detach / attach to send again. rx and
@@ -29,9 +33,15 @@ receive() {
   need socat socat
   need rb lrzsz
   mkdir -p "$RCV"
-  echo "receiver on tcp://127.0.0.1:$PORT, writing to $RCV/ (Ctrl-C stops)"
+  echo "lrzsz on tcp://127.0.0.1:$PORT, in $RCV/ (Ctrl-C stops)"
   # rb / rx talk to maxicom on stdout, their progress goes to this terminal
   socat TCP-LISTEN:"$PORT",bind=127.0.0.1,reuseaddr,fork SYSTEM:"cd $RCV && $1"
+}
+
+# the senders send test files: `files` makes them
+send() {
+  [[ -f "$FILES/rand-54321.bin" ]] || { echo "no test files: run $0 files first" >&2; exit 1; }
+  RCV="$FILES" receive "$1"
 }
 
 case "$MODE" in
@@ -40,6 +50,9 @@ case "$MODE" in
   # would empty out.bin. Each writes its own file, renamed when complete
   xmodem) receive 'rx -vv part-$$.bin && mv part-$$.bin out.bin || rm -f part-$$.bin' ;;
   xmodem-crc) receive 'rx -vv -c part-$$.bin && mv part-$$.bin out.bin || rm -f part-$$.bin' ;;
+  # socat eats quotes: a glob passes the name with spaces
+  send-ymodem) send "sb -vv rand-100k.bin name*spaces.bin rand-129.bin" ;;
+  send-xmodem) send "sx -vv -k rand-54321.bin" ;;
   uboot)
     need qemu-system-aarch64 qemu-system-arm
     [[ -f "$UBOOT" ]] || { echo "missing $UBOOT: sudo apt install u-boot-qemu" >&2; exit 1; }
@@ -65,7 +78,7 @@ for name in sorted(os.listdir(sys.argv[1])):
 EOF
     ;;
   *)
-    sed -n '4,16p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '4,20p' "$0" | sed 's/^# \{0,1\}//'
     exit 1
     ;;
 esac

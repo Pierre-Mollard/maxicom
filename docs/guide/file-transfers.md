@@ -1,15 +1,16 @@
 # File transfers
 
-maxicom sends a file in two ways:
+maxicom moves files in three ways:
 
-| Command | Sends | For |
+| Command | Moves | For |
 | --- | --- | --- |
-| `send-file <path> [line-delay-ms]` | The bytes as they are, paced to the baud rate | A script pasted into a shell, a text file to a console |
-| `upload <protocol> <path>` | The file in XMODEM or YMODEM packets, each one checked and sent again if damaged | A bootloader or a program waiting for a file: U-Boot's `loady` and `loadx`, `rx`, `rb`, many MCU bootloaders |
+| `send-file <path> [line-delay-ms]` | A file to the device, its bytes as they are, paced to the baud rate | A script pasted into a shell, a text file to a console |
+| `upload <protocol> <path>` | A file to the device, in XMODEM or YMODEM packets, each one checked and sent again if damaged | A bootloader or a program waiting for a file: U-Boot's `loady` and `loadx`, `rx`, `rb`, many MCU bootloaders |
+| `download <protocol> [path]` | Files from the device, in XMODEM or YMODEM packets | `sb` or `sx` on a Linux board, a bootloader that dumps memory or logs |
 
-Both run from the [command line](command-line.md) (`Ctrl-a :`). The path
+They run from the [command line](command-line.md) (`Ctrl-a :`). The path
 completes from the disk, `~` is your home folder, and a path with spaces goes
-in quotes. One file is sent at a time.
+in quotes. One transfer runs at a time.
 
 ## Sending a file as it is
 
@@ -120,9 +121,73 @@ The [session backup](capture.md#session-backup) and a
 receiver's answers too. A [text recording](capture.md#text-recordings) keeps
 neither the packets nor the answers: they aren't text.
 
+## Downloading
+
+`download` receives what the device sends with XMODEM or YMODEM, for example
+from lrzsz on a Linux board:
+
+```text
+$ sb logs.tar.gz
+```
+
+```text
+download ymodem
+```
+
+### Where the files go
+
+| Command | Writes |
+| --- | --- |
+| `download ymodem` | The files under their own names, in `[transfers] dir` |
+| `download ymodem ~/dumps/` | The files under their own names, in `~/dumps/` |
+| `download xmodem` | One file, named by `[transfers] xmodem_name`, in `[transfers] dir` |
+| `download xmodem ~/dumps/` | The same, in `~/dumps/` |
+| `download xmodem ~/dumps/flash.bin` | One file, `~/dumps/flash.bin` |
+
+A path is a folder when it exists as one or ends with `/`; a missing folder is
+made. YMODEM refuses a path that isn't a folder, since its files come with
+their names. `[transfers] dir` is empty by default: the folder maxicom was
+started in. See [Settings](settings.md#transfers).
+
+### YMODEM or XMODEM
+
+YMODEM sends each file's name, size and date: the file comes out exactly as it
+was, dated as on the device, and one `download` takes a whole batch
+(`sb a b c`). A name keeps its last part only, so a sender can't choose the
+folder: `../../.bashrc` is written as `.bashrc`.
+
+XMODEM sends neither a name nor a size: the file keeps the padding of its last
+packet, up to 1023 `0x1A` bytes, and the progress row shows the bytes received
+without a percent. Use it only when the device has nothing else.
+
+### Existing files and partial files
+
+A file is written as `<name>.part`, then renamed when complete. A name already
+taken gets a number instead of overwriting anything: `logs.tar.gz.1`,
+`logs.tar.gz.2`.
+
+A download that stops in the middle of a file keeps its `.part`, and the
+notification says where: `Stopped receiving logs.tar.gz, kept as
+/home/me/logs.tar.gz.part: the sender cancelled`.
+
+### Starting the sender
+
+Start the sender on the device first, then `download`. Until the first packet
+comes, maxicom asks for the file with a `C` every 3 seconds, and those go to
+whatever reads them: typed after `download`, a shell prompt would get them. With
+no packet for 60 seconds, the download stops with
+`no packet from the sender: is it sending (sb, sx)?`.
+
+While it runs, the link is the download's, as for an upload, see
+[While it runs](#while-it-runs). The device's text before the first packet,
+like the shell echoing `sb logs.tar.gz`, and after the end shows as usual.
+
+Each file that comes in is said by a notification:
+`Received /home/me/logs.tar.gz (5546432 bytes)`.
+
 ## The progress row
 
-While a file is sent, a row at the bottom of the view shows its progress:
+While a file goes through, a row at the bottom of the view shows its progress:
 
 ```text
  ⇡ kernel.itb YMODEM [█████████░░░░░░░░░░░░░░░░░░░░░]  32%  1.7M/5.3M  11K/s  ETA 5:35  2 retries   ✕
@@ -130,11 +195,11 @@ While a file is sent, a row at the bottom of the view shows its progress:
 
 | Part | Shows |
 | --- | --- |
-| `⇡ kernel.itb` | The file |
-| `YMODEM` | The protocol, for an upload |
-| The gauge and the percent | How much is sent. For an upload, what the receiver acknowledged. |
-| `1.7M/5.3M` | Bytes sent and the file's size |
-| `11K/s`, `ETA 5:35` | The rate so far and the time left at that rate. For an upload, counted from the receiver's first ask. |
+| `⇡ kernel.itb` | The file, `⇡` sent to the device, `⇣` received from it |
+| `YMODEM` | The protocol, for an upload or a download |
+| The gauge and the percent | How much is through. For an upload, what the receiver acknowledged. An XMODEM download has no size, so neither. |
+| `1.7M/5.3M` | Bytes through and the file's size |
+| `11K/s`, `ETA 5:35` | The rate so far and the time left at that rate. For a protocol, counted from the other side's first ask or packet. |
 | `2 retries` | Packets sent again, when there were some |
 | `✕` | A click stops the transfer |
 
@@ -150,8 +215,8 @@ the transfer instead, with `{send_file}`, `{send_percent}`, `{send_rate}` and
 
 ## Stopping a transfer
 
-`cancel`, or a click on the row's `✕`, stops it. An upload also tells the
-receiver to stop. A detach, a lost link or a replay stops it too.
+`cancel`, or a click on the row's `✕`, stops it. An upload or a download also
+tells the other side to stop. A detach, a lost link or a replay stops it too.
 
 ## When an upload fails
 
@@ -168,6 +233,20 @@ The notification says why: `Stopped sending <file> at <n>%: <why>`.
 A receiver that keeps refusing packets often means a line that loses bytes:
 try a lower baud rate, or flow control if both sides have it.
 
+## When a download fails
+
+The notification says why: `Stopped receiving <file>, kept as <part>: <why>`,
+or `Stopped receiving: <why>` before the first file.
+
+| Why | Means |
+| --- | --- |
+| `no packet from the sender: is it sending (sb, sx)?` | Nothing came within 60 seconds |
+| `the sender cancelled` | The sender gave up: Ctrl-C on the device, a timeout on its side |
+| `too many retries` | 10 damaged or missing packets in a row: a noisy line, a wrong baud rate |
+| `a block came out of order` | The two sides lost each other; maxicom told the sender to stop |
+| `the sender stopped answering` | YMODEM: nothing after asking for the data or the next file |
+| `write error: <reason>` | The file couldn't be written: a full disk, a folder you can't write to |
+
 ## ZMODEM and Kermit
 
 maxicom doesn't do ZMODEM or Kermit. To use them, hand the port to another
@@ -176,5 +255,6 @@ program for the time of the transfer:
 1. Detach the link with `Ctrl-a D`, see
    [Detach and attach](links.md#detach-and-attach).
 2. Run the transfer in another terminal, for example
-   `sz kernel.itb < /dev/ttyUSB0 > /dev/ttyUSB0` once `rz` runs on the device.
+   `sz kernel.itb < /dev/ttyUSB0 > /dev/ttyUSB0` once `rz` runs on the device,
+   or `rz < /dev/ttyUSB0 > /dev/ttyUSB0` after `sz` on the device.
 3. `Ctrl-a D` again opens the port, the screen as you left it.

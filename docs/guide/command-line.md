@@ -64,6 +64,7 @@ only.
 | `send-hex <bytes>` | Sends bytes written in hex, without spaces: `send-hex 0d0a` |
 | `send-file <path> [line-delay-ms]` | Sends a file as it is, see below |
 | `upload <xmodem\|xmodem-1k\|ymodem> <path>` | Sends a file to a receiver like U-Boot's `loady`, see below |
+| `download <xmodem\|ymodem> [path]` | Receives files the device sends (`sb`, `sx`), see below |
 
 #### Sending a file
 
@@ -75,7 +76,10 @@ line, for a device without flow control.
 U-Boot's `loady` and `loadx`, `rx`, `rb`. It waits for the receiver to ask,
 started before or after it.
 
-Both show their progress on a row over the status bar, and `cancel` stops
+`download` receives what the device sends with XMODEM or YMODEM, into
+`[transfers] dir` or the folder given.
+
+All show their progress on a row over the status bar, and `cancel` stops
 them. The rest of the line doesn't wait for the file: `send-file a; send b`
 sends `b` first. See [File transfers](file-transfers.md).
 
@@ -106,8 +110,8 @@ The control lines, `break` and these three need a serial port: a TCP link
 ### While the port isn't open
 
 When the port is detached, lost or reconnecting, `send`, `send-file`,
-`upload` and the control lines are refused. `baud`, `framing` and `flow` are
-kept for when it opens.
+`upload`, `download` and the control lines are refused. `baud`, `framing` and
+`flow` are kept for when it opens.
 
 ### Switching links
 

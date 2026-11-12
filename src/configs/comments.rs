@@ -57,6 +57,15 @@ pub const CONFIG_COMMENTS: &[(&str, &str)] = &[
     ("sessions.restore_max_age", "\"0s\": no limit"),
     ("sessions.group_by", "values: month, week, day"),
     ("screenshot", guide!("capture.html#settings")),
+    ("transfers", guide!("file-transfers.html#downloading")),
+    (
+        "transfers.dir",
+        "where download puts its files, empty: the current directory",
+    ),
+    (
+        "transfers.xmodem_name",
+        "strftime: an XMODEM file comes with no name",
+    ),
     ("link", guide!("links.html#default-link")),
     ("link.bits", "5 to 8"),
     ("link.parity", "values: none, even, odd"),

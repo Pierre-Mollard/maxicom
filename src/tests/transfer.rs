@@ -98,5 +98,69 @@ fn modem_cancel() {
     let mut transfer = modem(b"abc", start);
     transfer.step(b"C", start).unwrap();
     assert_eq!(transfer.cancel(), [0x18; 5]);
-    assert_eq!(transfer.outcome(), Some(Err(modem::Failure::Cancelled)));
+    assert_eq!(
+        transfer.outcome(),
+        Some(Err(TransferFailure::Send(SendFailure::Cancelled)))
+    );
+}
+
+/// A download from `ModemSender`, the two passing each other what they wrote: the file in the
+/// folder, the progress counted on the current file.
+fn download_from_sender(protocol: Protocol, content: &[u8], folder: &Path) -> FileTransfer {
+    let start = Instant::now();
+    let mut sender = ModemSender::new(
+        Box::new(io::Cursor::new(content.to_vec())),
+        protocol,
+        "fw.bin".to_string(),
+        content.len() as u64,
+        RATE,
+        start,
+    );
+    let mut transfer = FileTransfer::download(
+        protocol,
+        folder.to_path_buf(),
+        Some("dump.bin".to_string()),
+        start,
+    );
+    assert!(transfer.waiting() && transfer.is_download() && transfer.takes_rx());
+    let mut to_receiver = Vec::new();
+    let mut owned = false;
+    for _ in 0..1000 {
+        let out = transfer.step(&to_receiver, start).unwrap().out;
+        owned |= transfer.owns_link();
+        if transfer.outcome().is_some() {
+            break;
+        }
+        to_receiver = sender.step(&out, start).unwrap().out;
+    }
+    // from its first packet until the end
+    assert!(owned && !transfer.owns_link());
+    transfer
+}
+
+/// YMODEM: the file under its own name, its size known; XMODEM: under the name given, the
+/// padding kept, no size (no percent).
+#[test]
+fn download() {
+    let folder = std::env::temp_dir().join(format!(
+        "maxicom_test_{}_transfer_download",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&folder);
+    let content: Vec<u8> = (0..300u32).map(|i| i as u8).collect();
+
+    let mut transfer = download_from_sender(Protocol::Ymodem, &content, &folder);
+    assert_eq!(transfer.outcome(), Some(Ok(())));
+    assert_eq!(transfer.take_received(), [(folder.join("fw.bin"), 300)]);
+    assert_eq!(std::fs::read(folder.join("fw.bin")).unwrap(), content);
+    assert_eq!(transfer.received_count(), 1);
+    assert_eq!(transfer.folder(), Some(folder.as_path()));
+
+    let mut transfer = download_from_sender(Protocol::Xmodem, &content, &folder);
+    assert_eq!(transfer.outcome(), Some(Ok(())));
+    assert_eq!(transfer.take_received(), [(folder.join("dump.bin"), 384)]);
+    assert_eq!((transfer.size(), transfer.percent()), (None, 0));
+    let written = std::fs::read(folder.join("dump.bin")).unwrap();
+    assert_eq!(written[..300], content[..]);
+    let _ = std::fs::remove_dir_all(&folder);
 }

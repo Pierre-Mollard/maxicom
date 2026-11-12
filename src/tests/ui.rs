@@ -1973,6 +1973,39 @@ fn transfer_row_under_the_search_bar() {
     }
 }
 
+/// MAX-162: a download's row has ⇣ and waits for the sender; XMODEM sends no size, so the
+/// row shows the bytes received, without a gauge or a percent.
+#[test]
+fn transfer_row_download() {
+    use crate::transfer::{FileTransfer, modem::Protocol, modem::packet};
+    let folder =
+        std::env::temp_dir().join(format!("maxicom_test_{}_ui_download", std::process::id()));
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 10);
+    let now = std::time::Instant::now();
+    let transfer = FileTransfer::download(
+        Protocol::Xmodem,
+        folder.clone(),
+        Some("dump.bin".into()),
+        now,
+    );
+    h.app
+        .update(Action::App(AppAction::StartTransfer(Box::new(transfer))));
+    let rows = h.draw();
+    assert!(
+        rows[7].starts_with(" ⇣ dump.bin XMODEM waiting for the sender (sb, sx) "),
+        "{rows:#?}"
+    );
+
+    h.app.transfer_step(&packet(1, &[7; 128], true), now);
+    let rows = h.draw();
+    assert!(rows[7].starts_with(" ⇣ dump.bin XMODEM  128 "), "{rows:#?}");
+    assert!(
+        !rows[7].contains('%') && !rows[7].contains('['),
+        "{rows:#?}"
+    );
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
 #[test]
 fn transfer_clock() {
     use crate::ui::transfer_row::clock;

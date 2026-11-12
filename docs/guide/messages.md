@@ -78,9 +78,11 @@ See [Command line](command-line.md).
 | `the port isn't open (detached or reconnecting)` | A command that needs the open port |
 | `a TCP link has no <settings>, its bridge sets them` | `baud`, `dtr`, `break` and the like on a TCP link |
 | `hardware flow control drives RTS (flow none first)` | `rts` with `flow rtscts` |
-| `a file is being sent already (cancel stops it)` | A second `send-file` or `upload` |
-| `a file transfer is running (cancel stops it)` | `send`, `send-hex` or `mash` during an `upload`. See [While it runs](file-transfers.md#while-it-runs). |
-| `a mash runs (cancel stops it)` | `upload` while a `mash` runs |
+| `a file is being sent already (cancel stops it)` | A second `send-file`, `upload` or `download` |
+| `<path> isn't a folder: YMODEM files come with their names` | `download ymodem` with a file path. See [Where the files go](file-transfers.md#where-the-files-go). |
+| `a file transfer is running (cancel stops it)` | `send`, `send-hex` or `mash` during an `upload` or a `download`. See [While it runs](file-transfers.md#while-it-runs). |
+| `a mash runs (cancel stops it)` | `upload` or `download` while a `mash` runs |
+| `Stopped receiving <file>, kept as <part>: <why>` | A download stopped in a file, its partial file kept. See [When a download fails](file-transfers.md#when-a-download-fails). |
 | `a mash runs already (cancel stops it)` | A second `mash` |
 | `mash: '<text>' didn't come in` | The mash timed out |
 | `Mash stopped: <why>` | A key was typed, the link closed, or a replay started |
