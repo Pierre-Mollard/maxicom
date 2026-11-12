@@ -84,7 +84,11 @@ pub fn render_notifications(
             .border_style(Style::default().fg(border_color))
             .style(toast_style)
             .title(Span::styled(
-                format!(" {} ", toast.level.title()),
+                // a message said again while shown counts (MAX-228)
+                match toast.count {
+                    1 => format!(" {} ", toast.level.title()),
+                    count => format!(" {} ×{count} ", toast.level.title()),
+                },
                 Style::default()
                     .fg(border_color)
                     .add_modifier(Modifier::BOLD),

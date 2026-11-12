@@ -2006,6 +2006,38 @@ fn transfer_row_download() {
     let _ = std::fs::remove_dir_all(&folder);
 }
 
+/// MAX-228: a notification said again while shown counts in its title.
+#[test]
+fn repeated_notification_counts() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 10);
+    h.app.notify_warn("a warning");
+    assert!(has(&h.draw(), "┌ Warning ─"));
+    h.app.notify_warn("a warning");
+    let rows = h.draw();
+    assert!(has(&rows, "┌ Warning ×2 ─"), "{rows:#?}");
+    assert_eq!(
+        rows.iter().filter(|row| row.contains("a warning")).count(),
+        1
+    );
+}
+
+/// MAX-228: a notification's time starts at the first frame that shows it; a screen too
+/// small for notifications leaves it waiting.
+#[test]
+fn notification_time_starts_when_drawn() {
+    let expires = |h: &Harness| h.app.notifications.active_toasts()[0].expires_at;
+    let mut small = Harness::line_mode(LineDisplayMode::Pretty, 20, 5);
+    small.app.notify_error("not seen yet");
+    small.draw();
+    assert_eq!(expires(&small), None);
+
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 10);
+    h.app.notify_info("seen");
+    assert_eq!(expires(&h), None);
+    h.draw();
+    assert!(expires(&h).is_some());
+}
+
 #[test]
 fn transfer_clock() {
     use crate::ui::transfer_row::clock;

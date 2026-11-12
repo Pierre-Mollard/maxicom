@@ -12,6 +12,20 @@ seconds, a line with a file's path stays about 4.
 A warning stays at least 4 seconds and an error at least 6, however short, and
 none stays more than 10. Click one to close it sooner.
 
+The time counts from when the notification first shows: one that can't show
+yet, on a screen too small for notifications, waits for you instead of going
+unseen.
+
+## When many come at once
+
+Four notifications show at most. A new one then takes the place of the oldest
+info or success; a warning goes only when none of those is left, and an error
+only when all four are errors. A burst of messages can't push out an error you
+haven't read.
+
+The same message again while it shows doesn't add a box: its time starts over
+and its title counts it, `Warning ×2`.
+
 ## One box per activity
 
 The messages of a file transfer follow each other in one notification instead

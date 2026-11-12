@@ -1,7 +1,7 @@
 use ratatui::style::Color;
 use std::time::{Duration, Instant};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToastLevel {
     Info,
     Success,
@@ -28,6 +28,15 @@ impl ToastLevel {
         }
     }
 
+    /// How much it matters to read it: a full stack drops the least first (MAX-228)
+    fn rank(self) -> u8 {
+        match self {
+            Self::Info | Self::Success => 0,
+            Self::Warn => 1,
+            Self::Error => 2,
+        }
+    }
+
     pub fn title(&self) -> &'static str {
         match self {
             Self::Info => "Info",
@@ -46,8 +55,27 @@ pub struct Toast {
     pub key: Option<&'static str>,
     pub message: String,
     pub level: ToastLevel,
-    pub expires_at: Instant,
+    /// How long it stays once shown
+    pub duration: Duration,
+    /// When it goes: none until its first frame, so one that doesn't fit yet waits instead of
+    /// expiring unseen (MAX-228)
+    pub expires_at: Option<Instant>,
+    /// How many times it was said while shown: `×N` in its title (MAX-228)
+    pub count: u32,
 }
+
+impl Toast {
+    /// Its time starts over: now when it shows already, else at its first frame
+    fn renew(&mut self, duration: Duration) {
+        self.duration = duration;
+        if self.expires_at.is_some() {
+            self.expires_at = Some(Instant::now() + duration);
+        }
+    }
+}
+
+/// How many toasts are kept at once
+const MAX_TOASTS: usize = 4;
 
 #[derive(Default)]
 pub struct NotificationManager {
@@ -61,7 +89,18 @@ impl NotificationManager {
     }
 
     pub fn push(&mut self, message: impl Into<String>, level: ToastLevel, duration: Duration) {
-        self.push_toast(None, message.into(), level, duration);
+        let message = message.into();
+        // the same again while shown: its time renewed and counted, not a second box
+        // (MAX-228)
+        let same = |toast: &&mut Toast| {
+            toast.key.is_none() && toast.level == level && toast.message == message
+        };
+        if let Some(toast) = self.toasts.iter_mut().find(same) {
+            toast.count += 1;
+            toast.renew(duration);
+            return;
+        }
+        self.push_toast(None, message, level, duration);
     }
 
     /// A toast of one activity (`key`, as `transfer`): it takes the place of the activity's
@@ -77,9 +116,16 @@ impl NotificationManager {
         match self.toasts.iter_mut().find(|toast| toast.key == Some(key)) {
             // same place and id: a click on it still finds it
             Some(toast) => {
-                toast.message = message.into();
+                let message = message.into();
+                // the same message again counts, a new one starts over
+                toast.count = if toast.message == message {
+                    toast.count + 1
+                } else {
+                    1
+                };
+                toast.message = message;
                 toast.level = level;
-                toast.expires_at = Instant::now() + duration;
+                toast.renew(duration);
             }
             None => self.push_toast(Some(key), message.into(), level, duration),
         }
@@ -92,8 +138,13 @@ impl NotificationManager {
         level: ToastLevel,
         duration: Duration,
     ) {
-        if self.toasts.len() >= 4 {
-            self.toasts.remove(0);
+        // full: the oldest of the least important goes, so a burst of infos can't push out
+        // a warning or an error not read yet (MAX-228)
+        if self.toasts.len() >= MAX_TOASTS
+            && let Some(least) = self.toasts.iter().map(|toast| toast.level.rank()).min()
+            && let Some(index) = self.toasts.iter().position(|t| t.level.rank() == least)
+        {
+            self.toasts.remove(index);
         }
         self.next_id += 1;
         self.toasts.push(Toast {
@@ -101,15 +152,27 @@ impl NotificationManager {
             key,
             message,
             level,
-            expires_at: Instant::now() + duration,
+            duration,
+            expires_at: None,
+            count: 1,
         });
     }
 
-    /// Drops expired toasts, returns true if any was removed (screen must be redrawn)
+    /// The toasts `ids` were drawn at `now`: those drawn for the first time start their time
+    pub fn shown(&mut self, ids: impl IntoIterator<Item = u64>, now: Instant) {
+        for id in ids {
+            if let Some(toast) = self.toasts.iter_mut().find(|toast| toast.id == id) {
+                toast.expires_at.get_or_insert(now + toast.duration);
+            }
+        }
+    }
+
+    /// Drops expired toasts, returns true if any was removed (screen must be redrawn). One
+    /// never drawn doesn't expire
     pub fn tick(&mut self) -> bool {
         let now = Instant::now();
         let before_len = self.toasts.len();
-        self.toasts.retain(|toast| toast.expires_at > now);
+        (self.toasts).retain(|toast| toast.expires_at.is_none_or(|at| at > now));
         self.toasts.len() != before_len
     }
 

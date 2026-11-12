@@ -243,6 +243,9 @@ pub fn render(
     }
 
     let toasts = render_notifications(&app.notifications, frame, theme);
+    // their time starts when they're first seen (MAX-228)
+    let ids: Vec<u64> = toasts.iter().map(|(_, id)| *id).collect();
+    app.notifications.shown(ids, std::time::Instant::now());
     app.frame_map_mut().toasts = toasts;
 
     if !layout.warnings.is_empty() {
