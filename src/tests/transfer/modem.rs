@@ -231,6 +231,18 @@ fn ymodem_batch_of_one() {
     assert_eq!(sender.outcome(), Some(Ok(())));
 }
 
+/// With the file's modification time, the YMODEM header has it after the size, in octal.
+#[test]
+fn ymodem_header_with_mtime() {
+    let start = Instant::now();
+    let mut sender = sender(Protocol::Ymodem, &[b'y'; 300], start).with_mtime(0o15071006615);
+    let packet = step(&mut sender, b"C", start);
+    assert_eq!(
+        parse(&packet, true).1,
+        padded_nul(b"fw.bin\x00300 15071006615\x00")
+    );
+}
+
 /// No C after the header's ACK: the receiver stalled.
 #[test]
 fn ymodem_stalled() {

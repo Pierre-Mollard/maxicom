@@ -285,6 +285,7 @@ Recordings, session backups and their restore, and screenshots. See
 | `mouse` | `true` | Mouse support: [Copy mode and mouse](copy-mode-and-mouse.md#mouse) |
 | `middle_click_paste` | `true` | A middle click pastes the last copy, see [Middle-click paste](copy-mode-and-mouse.md#middle-click-paste) |
 | `focus_effects` | `true` | The gray border and cursor while the window isn't focused, see [Cursor](terminal-mode.md#cursor) |
+| `transfer_row` | `true` | The progress row while a file is sent, see [The progress row](file-transfers.md#the-progress-row) |
 | `hide_borders_below` | `[60, 16]` | See below |
 | `hide_scrollbar_below` | `[40, 10]` | See below |
 | `hide_status_bar_below` | `[35, 6]` | See below |

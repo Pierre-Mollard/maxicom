@@ -62,22 +62,22 @@ only.
 | --- | --- |
 | `send <text>` | Sends the text as is, its escapes as bytes: `send AT\r`, `send "hello world\r\n"` |
 | `send-hex <bytes>` | Sends bytes written in hex, without spaces: `send-hex 0d0a` |
-| `send-file <path> [line-delay-ms]` | Sends a file, see below |
+| `send-file <path> [line-delay-ms]` | Sends a file as it is, see below |
+| `upload <xmodem\|xmodem-1k\|ymodem> <path>` | Sends a file to a receiver like U-Boot's `loady`, see below |
 
 #### Sending a file
 
 `send-file` sends the file as is, paced to the baud rate and framing (10
-bits a byte in 8N1, 12 in 8E2). The screen stays live, and the file can be
-any size. The path completes from the disk, and `~` is your home folder.
+bits a byte in 8N1, 12 in 8E2). With a delay, it waits that long after each
+line, for a device without flow control.
 
-With a delay, it waits that long after each line, for a device without flow
-control.
+`upload` sends it with XMODEM or YMODEM, to a receiver that checks each packet:
+U-Boot's `loady` and `loadx`, `rx`, `rb`. It waits for the receiver to ask,
+started before or after it.
 
-The rest of the line doesn't wait for the file: `send-file a; send b` sends
-`b` first.
-
-While it runs, the status bar shows `⇡ name 42%`. A click on it, or
-`cancel`, stops it. A detach or a lost link also stops it.
+Both show their progress on a row over the status bar, and `cancel` stops
+them. The rest of the line doesn't wait for the file: `send-file a; send b`
+sends `b` first. See [File transfers](file-transfers.md).
 
 ### Control lines and break
 
@@ -105,9 +105,9 @@ The control lines, `break` and these three need a serial port: a TCP link
 
 ### While the port isn't open
 
-When the port is detached, lost or reconnecting, `send`, `send-file` and the
-control lines are refused. `baud`, `framing` and `flow` are kept for when it
-opens.
+When the port is detached, lost or reconnecting, `send`, `send-file`,
+`upload` and the control lines are refused. `baud`, `framing` and `flow` are
+kept for when it opens.
 
 ### Switching links
 

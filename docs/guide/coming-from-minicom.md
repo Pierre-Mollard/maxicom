@@ -92,10 +92,17 @@ comments in it are lost. One file can serve several machines. See
 
 There is no `-w`. `Ctrl-a w` changes the wrap of line mode only.
 
-### No file transfers or scripts
+### File transfers
 
-There are no X/Y/ZMODEM or kermit transfers, no shell, no scripts and no
-modem dialing. maxicom never starts another program, and sends only what you
-type, bind to a key or arm. For boot prompts, use
-[triggers](triggers.md) and command lines bound to keys (`dtr`, `send`,
-`break`...), see [Command line](command-line.md).
+minicom's upload (`Ctrl-a s`) runs `sx`, `sb` or `sz`. maxicom has XMODEM and
+YMODEM built in, with a progress bar: `upload ymodem <file>` from the command
+line (`Ctrl-a :`), where `Ctrl-a s` opens the settings. There is no ZMODEM,
+Kermit or download (minicom's `Ctrl-a r`) yet: detach the link and run `sz` or
+`rz` yourself. See [File transfers](file-transfers.md).
+
+### No scripts
+
+There is no shell, no scripts and no modem dialing. maxicom never starts
+another program, and sends only what you type, bind to a key or arm. For boot
+prompts, use [triggers](triggers.md) and command lines bound to keys (`dtr`,
+`send`, `break`...), see [Command line](command-line.md).

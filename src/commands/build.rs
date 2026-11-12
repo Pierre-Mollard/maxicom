@@ -3,7 +3,8 @@
 use std::{
     fs::File,
     io::BufReader,
-    time::{Duration, Instant},
+    path::Path,
+    time::{Duration, Instant, UNIX_EPOCH},
 };
 
 use crate::{
@@ -18,7 +19,7 @@ use crate::{
     },
     overlays::SettingKey,
     paths::expand_home,
-    transfer::FileTransfer,
+    transfer::{FileTransfer, modem::Protocol},
 };
 
 /// `send` and `send-hex`: their bytes, to the link
@@ -47,6 +48,60 @@ pub fn send_file(app: &App, args: &[ArgValue]) -> Result<Action, String> {
         [ArgValue::Path(path), ArgValue::Int(ms)] => (path, *ms as u64),
         _ => unreachable!("send-file takes a path and a delay"),
     };
+    can_send_file(app)?;
+    let (file, name, size) = open_file(path)?;
+    let transfer = FileTransfer::raw(
+        Box::new(BufReader::new(file)),
+        name,
+        size,
+        app.link_config().line.bytes_per_sec(),
+        Duration::from_millis(delay_ms),
+        Instant::now(),
+    );
+    Ok(Action::App(AppAction::StartTransfer(Box::new(transfer))))
+}
+
+/// The protocols `upload` takes, as typed
+pub const UPLOAD_PROTOCOLS: &[&str] = &["xmodem", "xmodem-1k", "ymodem"];
+
+/// `upload <protocol> <path>` (MAX-162): sends the file with a protocol the receiver drives
+/// (`loady`, `loadx`, `rx`, `rb`), started before or after; the chain goes on at once
+pub fn upload(app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let [ArgValue::Enum(protocol), ArgValue::Path(path)] = args else {
+        unreachable!("upload takes a protocol and a path");
+    };
+    let protocol = match *protocol {
+        "xmodem" => Protocol::Xmodem,
+        "xmodem-1k" => Protocol::Xmodem1k,
+        _ => Protocol::Ymodem,
+    };
+    can_send_file(app)?;
+    // its bytes would break the packets
+    if app.mash().is_some() {
+        return Err("a mash runs (cancel stops it)".to_string());
+    }
+    let (file, name, size) = open_file(path)?;
+    let mtime = (file
+        .metadata()
+        .and_then(|metadata| metadata.modified())
+        .ok())
+    .and_then(|time| time.duration_since(UNIX_EPOCH).ok());
+    let mut transfer = FileTransfer::modem(
+        Box::new(BufReader::new(file)),
+        protocol,
+        name,
+        size,
+        app.link_config().line.bytes_per_sec(),
+        Instant::now(),
+    );
+    if let Some(mtime) = mtime {
+        transfer = transfer.with_mtime(mtime.as_secs());
+    }
+    Ok(Action::App(AppAction::StartTransfer(Box::new(transfer))))
+}
+
+/// Why a file can't be sent now: a replay, a link not open, a file being sent already
+fn can_send_file(app: &App) -> Result<(), String> {
     if !app.link_kind().writes() {
         return Err("a replay has no link to send to".to_string());
     }
@@ -54,6 +109,11 @@ pub fn send_file(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     if app.transfer().is_some() {
         return Err("a file is being sent already (cancel stops it)".to_string());
     }
+    Ok(())
+}
+
+/// The file to send, its name and its size; a folder is refused
+fn open_file(path: &Path) -> Result<(File, String, u64), String> {
     let path = expand_home(path);
     let file = File::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let metadata = file
@@ -66,15 +126,7 @@ pub fn send_file(app: &App, args: &[ArgValue]) -> Result<Action, String> {
         || path.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
     );
-    let transfer = FileTransfer::raw(
-        Box::new(BufReader::new(file)),
-        name,
-        metadata.len(),
-        app.link_config().line.bytes_per_sec(),
-        Duration::from_millis(delay_ms),
-        Instant::now(),
-    );
-    Ok(Action::App(AppAction::StartTransfer(Box::new(transfer))))
+    Ok((file, name, metadata.len()))
 }
 
 /// None when the link is a serial port, else why it has no `what` (line settings, control

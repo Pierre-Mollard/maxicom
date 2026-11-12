@@ -1544,10 +1544,15 @@ impl App {
                 UpdateEffect::None
             }
             AppAction::StartTransfer(transfer) => {
+                // a protocol waits for its receiver, which the user may start after
+                let protocol = transfer
+                    .protocol()
+                    .map(|protocol| format!(" with {}: waiting for the receiver", protocol.name()));
                 self.notify_info(format!(
-                    "Sending {} ({} bytes)",
+                    "Sending {} ({} bytes){}",
                     transfer.name(),
-                    transfer.size()
+                    transfer.size(),
+                    protocol.unwrap_or_default()
                 ));
                 self.transfer = Some(*transfer);
                 self.busy_said = false;

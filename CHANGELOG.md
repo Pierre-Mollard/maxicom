@@ -24,9 +24,23 @@ color while you search: move its `search?(...)` before `copy_raw?` and
 Your `highlights.toml` keeps working as it is: the new groups are only in a
 new file. To get them, delete it and maxicom writes the new default, or copy
 the [default](https://pierre-mollard.github.io/maxicom/highlights.html#the-file).
+A `center` status bar template saved in your `settings.toml` keeps its
+`⇡ {send_file} {send_percent}%` block, which the new progress row repeats:
+remove it, or turn the row off with `ui.transfer_row = false`.
 
 ### Added
 
+- [File uploads](https://pierre-mollard.github.io/maxicom/file-transfers.html)
+  with XMODEM, XMODEM-1K and YMODEM, built in (no `sz` needed):
+  `upload ymodem <file>` sends to U-Boot's `loady` / `loadx`, `rx`, `rb` and
+  most bootloaders, the receiver started before or after. While it runs the
+  link is the upload's: keys and `send` wait, the receiver's answers stay off
+  the screen. ZMODEM and Kermit go through a detach and your own tools.
+- A [progress row](https://pierre-mollard.github.io/maxicom/file-transfers.html#the-progress-row)
+  over the status bar while a file is sent (`send-file` or `upload`): a
+  gauge, the bytes, the rate, the time left, the retries, and a `✕` that
+  stops it. `ui.transfer_row` turns it off; the status bar has
+  `{send_rate}` and `{send_eta}`.
 - [Plots](https://pierre-mollard.github.io/maxicom/plots.html): the numbers
   your device prints (`temp=23.4 hum=51`, the Arduino plotter's
   `temp:23.4,hum:51` or bare columns) charted live in the raw side panel's
@@ -83,6 +97,8 @@ the [default](https://pierre-mollard.github.io/maxicom/highlights.html#the-file)
 - The search bar opens empty, the last search dimmed in it: Enter searches it
   again, and Esc keeps it for `n` and `N`. Typing no longer adds to the last
   search.
+- The default status bar no longer shows the file being sent: the new
+  progress row does.
 
 ### Fixed
 

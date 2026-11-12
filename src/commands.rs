@@ -390,6 +390,15 @@ pub static COMMANDS: &[CommandSpec] = {
             "Send a file at the baud rate, waiting after each line",
         ),
         CommandSpec::build(
+            "upload",
+            &[
+                arg("protocol", ArgKind::Enum(build::UPLOAD_PROTOCOLS)),
+                arg("path", ArgKind::Path),
+            ],
+            build::upload,
+            "Send a file with XMODEM or YMODEM to a receiver (loady, loadx, rx, rb)",
+        ),
+        CommandSpec::build(
             "open",
             &[arg("address", ArgKind::Address)],
             build::open,

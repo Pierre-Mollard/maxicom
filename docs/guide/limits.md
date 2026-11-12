@@ -31,9 +31,10 @@ You can turn the answers off, all of them or by group. See
 
 ### It never starts another program
 
-There is no shell escape, no external editor, no helper for file transfers,
-and no command run on an event. To use another program on the port, detach
-the link first (`Ctrl-a D`), see [Detach and attach](links.md#detach-and-attach).
+There is no shell escape, no external editor, no helper program for file
+transfers, and no command run on an event. XMODEM and YMODEM are built in.
+To use another program on the port, detach the link first (`Ctrl-a D`), see
+[Detach and attach](links.md#detach-and-attach).
 
 ### It doesn't retry a failed reattach
 
@@ -64,12 +65,12 @@ see [Command line](command-line.md).
 
 ## Sending
 
-### No file transfer protocols
+### No ZMODEM or Kermit
 
-There is no XMODEM, YMODEM, ZMODEM or Kermit. `send-file` sends a file's
-bytes as they are, paced to the baud rate, with an optional delay after
-each line. That's enough to paste a script into a shell or a bootloader's
-console. See [Sending a file](command-line.md#sending-a-file).
+`upload` sends a file with XMODEM, XMODEM-1K or YMODEM, which covers U-Boot
+and most bootloaders. There is no ZMODEM or Kermit, and no download yet: for
+those, detach the link and run `sz`, `rz` or `kermit` on the port. See
+[File transfers](file-transfers.md#zmodem-and-kermit).
 
 ### No scripting language
 

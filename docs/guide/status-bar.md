@@ -69,7 +69,6 @@ left = '''
 center = '''
 [◎ {trigger_count} ](armed?(fg=warn bold):hide)\
     [⟳ mash ](mashing?(fg=secondary bold):hide click=cancel)\
-    [⇡ {send_file} {send_percent:>3}% ](sending?(fg=secondary bold):hide)\
     [▷ {replay_state} {replay_percent:>3}% ](replaying?(fg=secondary bold):hide prio=5)\
     [∿ {plot} ](plot?(frozen?(fg=warn bold):(fg=secondary)):hide prio=5)\
     [« live ](replaced?(fg=main bold):hide click=toggle-attach)\
@@ -112,7 +111,9 @@ layout = "border"
 | `{scroll_max}` | Total scrollback depth | `500` |
 | `{copy_side}` | The copy cursor's panel, `TXT` or `RAW`, empty out of copy mode | `RAW` |
 | `{cursor_keys}` | The cursor keys mode the remote set, `NOR` or `APP` (application: the arrows send `ESC O A`), empty in line mode | `APP` |
-| `{send_file}` / `{send_percent}` | The file `send-file` sends (empty when none) / how much is sent, 0..100 | `fw.hex` |
+| `{send_file}` / `{send_percent}` | The file `send-file` or `upload` sends (empty when none) / how much is sent, 0..100 | `fw.hex` |
+| `{send_rate}` | Its bytes a second so far, a number: `{send_rate:4h}` writes `11K` | `11520` |
+| `{send_eta}` | The time left at that rate, empty until it's known | `0:05` |
 | `{trigger_count}` | How many triggers are armed | `2` |
 | `{trigger_names}` | The armed triggers' names | `login, u-boot` |
 | `{replay_file}` | The file a replay reads, a group replay's count, empty when none | `boot.raw`, `12 sessions` |
@@ -173,7 +174,7 @@ otherwise. Conditions chain:
 | `line_settings` | `serial` | The link has line settings: a serial port, not a TCP link whose bridge sets them |
 | `add_cr` / `add_lf` | | Add CR / add LF is on |
 | `app_cursor` | `decckm` | Terminal mode, and the remote turned on the application cursor keys (`APP`) |
-| `sending` | `send_file` | A file is being sent |
+| `sending` | `send_file` | A file is being sent (`send-file`, `upload`) |
 | `armed` | `trigger` | A trigger is armed |
 | `mashing` | `mash` | `mash` is running |
 | `replaying` | `replay` | A replay takes the link's place, ended or not |
@@ -266,7 +267,7 @@ A block without `click=` runs what its first variable implies:
 | `{copy_side}` | Switch the copy cursor's panel |
 | `{pan_left}`, `{pan_right}` | Pan left / right |
 | `{pan_offset}`, `{pan_max}` | Back to the left edge |
-| `{send_file}`, `{send_percent}` | Stop sending the file |
+| `{send_file}`, `{send_percent}`, `{send_rate}`, `{send_eta}` | Stop sending the file |
 | `{plot}` | Freeze / unfreeze the plot |
 | `{scroll_pos}`, `{scroll_pos_up}`, `{scroll_percent}`, `{scroll_offset}` | Back to the live output |
 

@@ -795,6 +795,72 @@ fn command_line_send_file() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// MAX-162: `upload <protocol> <path>` starts a protocol transfer, waiting for its receiver,
+/// and the chain goes on at once. Refused with a file being sent already, a mash running, an
+/// unknown protocol; a mash is refused while it runs.
+#[test]
+fn command_line_upload() {
+    use crate::{
+        commands::{ArgValue, build},
+        transfer::modem::Protocol,
+    };
+    let mut app = app();
+    let path = std::env::temp_dir().join(format!("maxicom_test_{}_upload.bin", std::process::id()));
+    std::fs::write(&path, [0x55; 300]).unwrap();
+    let file = path.display().to_string().replace('\\', "/");
+    let run_line = |app: &mut App, line: &str| {
+        app.update(KeyBindingAction::CommandLine.to_action(app));
+        app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
+        app.update(Action::Overlay(DialogAction::Confirm));
+        while let Some(action) = app.next_command_action(Instant::now()) {
+            app.update(action);
+        }
+    };
+    let toasts = |app: &App| -> Vec<String> {
+        let toasts = app.notifications.active_toasts();
+        toasts.iter().map(|toast| toast.message.clone()).collect()
+    };
+    let name = path.file_name().unwrap().to_string_lossy().into_owned();
+
+    for (typed, protocol) in [
+        ("xmodem", Protocol::Xmodem),
+        ("xmodem-1k", Protocol::Xmodem1k),
+        ("ymodem", Protocol::Ymodem),
+    ] {
+        run_line(&mut app, &format!("upload {typed} {file}"));
+        let transfer = app.transfer().unwrap();
+        assert_eq!(transfer.protocol(), Some(protocol));
+        assert!(transfer.waiting());
+        let started = format!(
+            "Sending {name} (300 bytes) with {}: waiting for the receiver",
+            protocol.name()
+        );
+        assert!(toasts(&app).contains(&started), "{:?}", toasts(&app));
+        run_line(&mut app, "cancel");
+    }
+
+    run_line(&mut app, &format!("upload ymodem {file}"));
+    run_line(&mut app, &format!("upload xmodem {file}"));
+    let refused = "upload: a file is being sent already (cancel stops it)".to_string();
+    assert!(toasts(&app).contains(&refused), "{:?}", toasts(&app));
+    run_line(&mut app, "mash a b");
+    let refused = "mash: a file transfer is running (cancel stops it)".to_string();
+    assert!(toasts(&app).contains(&refused), "{:?}", toasts(&app));
+    run_line(&mut app, "cancel");
+
+    // a typed line waits behind a mash: built at once, as a bound key's could be
+    run_line(&mut app, "mash a b");
+    assert!(app.mash().is_some());
+    let args = [ArgValue::Enum("ymodem"), ArgValue::Path(path.clone())];
+    let refused = build::upload(&app, &args).unwrap_err();
+    assert_eq!(refused, "a mash runs (cancel stops it)");
+    run_line(&mut app, "cancel");
+
+    run_line(&mut app, &format!("upload zmodem {file}"));
+    assert!(app.transfer().is_none());
+    let _ = std::fs::remove_file(&path);
+}
+
 /// MAX-12: `baud`, `framing` and `flow` give the port's settings for the loop to apply,
 /// each on the settings the one before left; `dtr`, `rts` and `break` give the line
 /// controls. `rts` refuses with hardware flow control, and all refuse on a TCP link or a

@@ -202,6 +202,8 @@ pub struct ModemSender {
     protocol: Protocol,
     name: String,
     size: u64,
+    /// The file's modification time, seconds since 1970, for the YMODEM header
+    mtime: Option<u64>,
     bytes_per_sec: f64,
     /// CRC-16 blocks, else an 8 bit checksum: the receiver's first answer decides
     crc: bool,
@@ -242,6 +244,7 @@ impl ModemSender {
             protocol,
             name,
             size,
+            mtime: None,
             bytes_per_sec,
             crc: false,
             block: 0,
@@ -254,6 +257,13 @@ impl ModemSender {
                 deadline: now + START_TIMEOUT,
             },
         }
+    }
+
+    /// Sends the file's modification time in the YMODEM header: without it, lrzsz's `rb`
+    /// dates the file it writes with garbage
+    pub fn with_mtime(mut self, mtime: u64) -> Self {
+        self.mtime = Some(mtime);
+        self
     }
 
     pub fn protocol(&self) -> Protocol {
@@ -497,14 +507,18 @@ impl ModemSender {
 
     /// YMODEM block 0: the name, NUL, the size in decimal, NUL padded; all NUL to end the batch
     fn header_packet(&self, end_batch: bool) -> Vec<u8> {
-        // e.g. "fw.bin\0" "131072\0" then NULs. The spec allows more fields after the size
-        // (date, mode), separated by spaces; receivers treat them as optional, so none here.
-        // With the size the receiver cuts the padding off the last block
+        // e.g. "fw.bin\0" "131072 15071006615\0" then NULs: the size in decimal, then the
+        // modification time in octal (seconds since 1970), separated by a space. The spec
+        // allows more fields (mode, serial number) that receivers treat as optional. With the
+        // size the receiver cuts the padding off the last block
         let mut data = Vec::new();
         if !end_batch {
             data.extend_from_slice(self.name.as_bytes());
             data.push(0);
             data.extend_from_slice(self.size.to_string().as_bytes());
+            if let Some(mtime) = self.mtime {
+                data.extend_from_slice(format!(" {mtime:o}").as_bytes());
+            }
             data.push(0);
         }
         // A very long name doesn't fit 128 bytes: the header goes in a 1024 block then

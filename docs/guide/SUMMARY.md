@@ -28,6 +28,7 @@
 - [Plots](plots.md)
 - [Triggers](triggers.md)
 - [Capture](capture.md)
+- [File transfers](file-transfers.md)
 - [Notifications](notifications.md)
 - [Command line](command-line.md)
 

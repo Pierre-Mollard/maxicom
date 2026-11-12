@@ -1,5 +1,3 @@
-// TODO: (MAX-162) remove the allow once the upload command (step 5) starts protocol transfers
-#[allow(dead_code)]
 pub mod modem;
 pub mod raw;
 
@@ -70,8 +68,6 @@ impl FileTransfer {
         }
     }
 
-    // TODO: (MAX-162) remove the allow once the upload command (step 5) calls it
-    #[allow(dead_code)]
     pub fn modem(
         reader: Box<dyn Read + Send>,
         protocol: Protocol,
@@ -87,6 +83,16 @@ impl FileTransfer {
             flowing_since: None,
             mode: Mode::Modem(sender),
         }
+    }
+
+    /// The file's modification time (seconds since 1970) for a protocol that sends it
+    /// (YMODEM's header)
+    pub fn with_mtime(mut self, mtime: u64) -> Self {
+        self.mode = match self.mode {
+            Mode::Modem(sender) => Mode::Modem(sender.with_mtime(mtime)),
+            raw => raw,
+        };
+        self
     }
 
     pub fn name(&self) -> &str {

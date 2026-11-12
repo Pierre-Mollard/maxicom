@@ -59,6 +59,7 @@ test column, or on the shell at startup.
 | `break: <reason>` | The port refused the break | |
 | `The port is detached: it opens with these settings` | New line settings while detached; they apply at the next attach | |
 | Popup "Serial Conf Rejected" | The driver refused the new line settings, and the port kept its old ones. The details name the fields. | Pick settings the adapter supports |
+| `A file transfer is running: cancel stops it` | A key typed during an `upload`, which owns the link; said once per upload | Wait for the end, or `cancel`. See [While it runs](file-transfers.md#while-it-runs). |
 
 ## Commands
 
@@ -77,11 +78,13 @@ See [Command line](command-line.md).
 | `the port isn't open (detached or reconnecting)` | A command that needs the open port |
 | `a TCP link has no <settings>, its bridge sets them` | `baud`, `dtr`, `break` and the like on a TCP link |
 | `hardware flow control drives RTS (flow none first)` | `rts` with `flow rtscts` |
-| `a file is being sent already (cancel stops it)` | A second `send-file` |
+| `a file is being sent already (cancel stops it)` | A second `send-file` or `upload` |
+| `a file transfer is running (cancel stops it)` | `send`, `send-hex` or `mash` during an `upload`. See [While it runs](file-transfers.md#while-it-runs). |
+| `a mash runs (cancel stops it)` | `upload` while a `mash` runs |
 | `a mash runs already (cancel stops it)` | A second `mash` |
 | `mash: '<text>' didn't come in` | The mash timed out |
 | `Mash stopped: <why>` | A key was typed, the link closed, or a replay started |
-| `Stopped sending <file> at <n>%: <why>` | The write failed, the link closed, or a replay started |
+| `Stopped sending <file> at <n>%: <why>` | The write failed, the link closed, a replay started, or an upload failed. See [When an upload fails](file-transfers.md#when-an-upload-fails). |
 | `no trigger named '<name>'`, `triggers.toml has no trigger` | `trigger` names no trigger. See [Triggers](triggers.md). |
 | `no plot named '<name>'`, `plots.toml has no plot` | `plot` names no plot, or the file has none. See [Plots](plots.md). |
 | `No plot shown` | `plot-freeze` with no plot shown |
