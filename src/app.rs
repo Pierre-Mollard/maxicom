@@ -15,7 +15,6 @@ use crate::{
         },
         selection::{ClickCounter, CopySide, LogicalPosition, MouseUnit},
         term_answers::answer_bytes,
-        transfer::FileTransfer,
         triggers::Trigger,
         types::{FocusTarget, FrameAreas, FrameMap, ViewportSize},
     },
@@ -41,6 +40,7 @@ use crate::{
     notification::{NotificationManager, ToastLevel},
     overlays::{MarkBrowser, Overlay, OverlayResponse, PopupTarget, ScreenshotDialog, SettingKey},
     paths::{create_parent_dirs, expand_home},
+    transfer::FileTransfer,
 };
 
 /// How soon after the window gains focus a press is the one that focused it
@@ -59,7 +59,6 @@ pub mod search;
 pub mod selection;
 pub mod term_answers;
 pub mod terminal_mode;
-pub mod transfer;
 pub mod triggers;
 pub mod types;
 

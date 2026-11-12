@@ -934,7 +934,7 @@ fn command_line_sleep() {
 /// How: a chain paused by `sleep`, then a transfer and a paused chain together.
 #[test]
 fn command_line_cancel() {
-    use crate::app::transfer::FileTransfer;
+    use crate::transfer::FileTransfer;
     let mut app = app();
     let queue_line = |app: &mut App, line: &str| {
         app.update(KeyBindingAction::CommandLine.to_action(app));

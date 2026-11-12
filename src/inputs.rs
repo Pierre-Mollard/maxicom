@@ -11,7 +11,6 @@ use crate::{
         mash::Mash,
         search::SearchDirection,
         selection::{CopySide, LogicalPosition, MouseUnit},
-        transfer::FileTransfer,
     },
     capture::ScreenshotFormat,
     commands::Invocation,
@@ -23,6 +22,7 @@ use crate::{
         serial::{LineControl, LineSettings},
     },
     overlays::{Overlay, PopupTarget, SettingKey},
+    transfer::FileTransfer,
 };
 
 pub mod global_dispatchers;

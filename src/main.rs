@@ -37,6 +37,7 @@ mod notification;
 mod overlays;
 mod paths;
 mod terminal;
+mod transfer;
 mod ui;
 
 // 0 -- Success

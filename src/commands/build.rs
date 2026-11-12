@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    app::{App, mash::Mash, transfer::FileTransfer},
+    app::{App, mash::Mash},
     commands::ArgValue,
     configs::{Mode, TextEncoding, links::SavedLink},
     inputs::{Action, AppAction, MarkAction, PendingMark, SearchModeAction},
@@ -18,6 +18,7 @@ use crate::{
     },
     overlays::SettingKey,
     paths::expand_home,
+    transfer::FileTransfer,
 };
 
 /// `send` and `send-hex`: their bytes, to the link

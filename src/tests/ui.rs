@@ -281,10 +281,7 @@ fn plot_title_arrows_and_long_names() {
     h.app.notifications.dismiss_all();
     let rows = h.draw();
     let title = rows.iter().find(|row| row.contains('◀')).unwrap();
-    assert!(
-        title.contains("◀ a-plot-with-a-name-far-t… ▶"),
-        "{title}"
-    );
+    assert!(title.contains("◀ a-plot-with-a-name-far-t… ▶"), "{title}");
     click(&mut h, cell_of(&rows, "▶"));
     assert_eq!(h.app.plot().map(|p| p.name.as_str()), Some("arduino"));
 }
@@ -1860,7 +1857,7 @@ fn command_line_selected_help_below_the_list() {
 /// while it is sent; a click on it stops it.
 #[test]
 fn status_bar_send_progress() {
-    use crate::app::transfer::FileTransfer;
+    use crate::transfer::FileTransfer;
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 10);
     assert!(!has(&h.draw(), "⇡"));
     let transfer = FileTransfer::new(

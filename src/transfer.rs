@@ -1,3 +1,7 @@
+// TODO: (MAX-162) remove the allow once step 2 wires the sender into the transfer
+#[allow(dead_code)]
+pub mod modem;
+
 use std::{
     io::{self, BufRead},
     time::{Duration, Instant},
@@ -117,5 +121,5 @@ impl FileTransfer {
 }
 
 #[cfg(test)]
-#[path = "../tests/app/transfer.rs"]
+#[path = "tests/transfer.rs"]
 mod tests;
