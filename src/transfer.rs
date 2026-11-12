@@ -1,31 +1,43 @@
-// TODO: (MAX-162) remove the allow once step 2 wires the sender into the transfer
+// TODO: (MAX-162) remove the allow once the upload command (step 5) starts protocol transfers
 #[allow(dead_code)]
 pub mod modem;
+pub mod raw;
 
 use std::{
-    io::{self, BufRead},
+    io::{self, BufRead, Read},
+    ops::Range,
     time::{Duration, Instant},
 };
 
-/// The most a chunk carries after a pause (a slow loop turn, the end of a line delay): what the
-/// line drains in this long, so the link's buffers never fill
-const MAX_BURST: Duration = Duration::from_millis(100);
+use modem::{Failure, ModemSender, Protocol};
+use raw::RawSender;
 
-/// A file sent paced (MAX-12): one chunk per loop turn, what the line drains at its rate since
-/// the last one (`LinkConfig::bytes_per_sec`), read from the file as it goes, so the UI stays
-/// live and the file can be any size. With a line delay it waits that long after each `\n`,
-/// for a device without flow control that handles a line at a time
+/// What a transfer `step` gives
+#[derive(Debug, PartialEq, Eq)]
+pub struct Step {
+    /// The bytes to write
+    pub out: Vec<u8>,
+    /// The bytes of `rx` that are the protocol's only, from the receiver's first NAK or C to
+    /// the answer that ended it: before and after, they are the device's output, to show.
+    /// Empty for a raw send
+    pub protocol: Range<usize>,
+}
+
+/// A file being sent, a step per loop turn: as is, paced to the baud rate (`send-file`,
+/// MAX-12), or with a protocol the receiver drives (`upload`, MAX-162). Both share the
+/// progress the UI shows: bytes sent, percent, rate, time left
 pub struct FileTransfer {
-    reader: Box<dyn BufRead + Send>,
     name: String,
     size: u64,
-    sent: u64,
-    bytes_per_sec: f64,
-    line_delay: Duration,
-    /// When the last chunk went, or the start
-    last: Instant,
-    /// The end of the line delay running
-    resume_at: Option<Instant>,
+    /// When the bytes began to flow, where the rate counts from: at once for a raw send, at
+    /// the receiver's first NAK or C for a protocol (not while it waits for `loady`)
+    flowing_since: Option<Instant>,
+    mode: Mode,
+}
+
+enum Mode {
+    Raw { sender: RawSender, done: bool },
+    Modem(ModemSender),
 }
 
 impl std::fmt::Debug for FileTransfer {
@@ -33,13 +45,13 @@ impl std::fmt::Debug for FileTransfer {
         f.debug_struct("FileTransfer")
             .field("name", &self.name)
             .field("size", &self.size)
-            .field("sent", &self.sent)
+            .field("sent", &self.sent())
             .finish_non_exhaustive()
     }
 }
 
 impl FileTransfer {
-    pub fn new(
+    pub fn raw(
         reader: Box<dyn BufRead + Send>,
         name: String,
         size: u64,
@@ -48,14 +60,32 @@ impl FileTransfer {
         now: Instant,
     ) -> Self {
         Self {
-            reader,
             name,
             size,
-            sent: 0,
-            bytes_per_sec,
-            line_delay,
-            last: now,
-            resume_at: None,
+            flowing_since: Some(now),
+            mode: Mode::Raw {
+                sender: RawSender::new(reader, bytes_per_sec, line_delay, now),
+                done: false,
+            },
+        }
+    }
+
+    // TODO: (MAX-162) remove the allow once the upload command (step 5) calls it
+    #[allow(dead_code)]
+    pub fn modem(
+        reader: Box<dyn Read + Send>,
+        protocol: Protocol,
+        name: String,
+        size: u64,
+        bytes_per_sec: f64,
+        now: Instant,
+    ) -> Self {
+        let sender = ModemSender::new(reader, protocol, name.clone(), size, bytes_per_sec, now);
+        Self {
+            name,
+            size,
+            flowing_since: None,
+            mode: Mode::Modem(sender),
         }
     }
 
@@ -67,56 +97,111 @@ impl FileTransfer {
         self.size
     }
 
-    /// How much is sent, in percent; 100 for an empty file
-    pub fn percent(&self) -> u64 {
-        (self.sent * 100).checked_div(self.size).unwrap_or(100)
+    pub fn protocol(&self) -> Option<Protocol> {
+        match &self.mode {
+            Mode::Raw { .. } => None,
+            Mode::Modem(sender) => Some(sender.protocol()),
+        }
     }
 
-    /// The bytes to send now: empty while it isn't time (the line hasn't drained enough, a line
-    /// delay runs), `None` once the file is all sent
-    pub fn next_chunk(&mut self, now: Instant) -> io::Result<Option<Vec<u8>>> {
-        if let Some(resume_at) = self.resume_at {
-            if now < resume_at {
-                return Ok(Some(Vec::new()));
-            }
-            self.resume_at = None;
-            self.last = resume_at;
-        }
-        let elapsed = now.saturating_duration_since(self.last).min(MAX_BURST);
-        let budget = (elapsed.as_secs_f64() * self.bytes_per_sec) as usize;
-        if budget == 0 {
-            return Ok(Some(Vec::new()));
-        }
+    /// Whether the link's RX goes through `step`: a protocol reads the receiver's answers in
+    /// it, a raw send ignores it
+    pub fn takes_rx(&self) -> bool {
+        matches!(self.mode, Mode::Modem(_))
+    }
 
-        let mut chunk = Vec::with_capacity(budget);
-        while chunk.len() < budget {
-            let buf = self.reader.fill_buf()?;
-            if buf.is_empty() {
-                break;
+    /// Whether nothing else may write to the link: a protocol transfer the receiver started,
+    /// until it ends, as any stray byte breaks a packet (MAX-162). A raw send leaves it open
+    pub fn owns_link(&self) -> bool {
+        match &self.mode {
+            Mode::Raw { .. } => false,
+            Mode::Modem(sender) => sender.started() && sender.outcome().is_none(),
+        }
+    }
+
+    /// Whether a protocol transfer still waits for the receiver's first NAK or C
+    pub fn waiting(&self) -> bool {
+        match &self.mode {
+            Mode::Raw { .. } => false,
+            Mode::Modem(sender) => !sender.started() && sender.outcome().is_none(),
+        }
+    }
+
+    /// The packets sent again so far, for a protocol
+    pub fn retries(&self) -> Option<u32> {
+        match &self.mode {
+            Mode::Raw { .. } => None,
+            Mode::Modem(sender) => Some(sender.retries()),
+        }
+    }
+
+    /// The file bytes sent; with a protocol, those the receiver acknowledged
+    pub fn sent(&self) -> u64 {
+        match &self.mode {
+            Mode::Raw { sender, .. } => sender.sent(),
+            Mode::Modem(sender) => sender.sent(),
+        }
+    }
+
+    /// How much is sent, in percent; 100 for an empty file
+    pub fn percent(&self) -> u64 {
+        (self.sent() * 100).checked_div(self.size).unwrap_or(100)
+    }
+
+    /// Bytes a second since the bytes began to flow; none before
+    pub fn rate(&self, now: Instant) -> Option<f64> {
+        let secs = now
+            .saturating_duration_since(self.flowing_since?)
+            .as_secs_f64();
+        (secs > 0.0).then(|| self.sent() as f64 / secs)
+    }
+
+    /// The time left at the rate so far; none until bytes went through
+    pub fn eta(&self, now: Instant) -> Option<Duration> {
+        let rate = self.rate(now).filter(|&rate| rate > 0.0)?;
+        let left = self.size.saturating_sub(self.sent());
+        Some(Duration::from_secs_f64(left as f64 / rate))
+    }
+
+    /// None while it runs; a raw send ends at the end of the file, a protocol when the
+    /// receiver acknowledged it all or something went wrong
+    pub fn outcome(&self) -> Option<Result<(), Failure>> {
+        match &self.mode {
+            Mode::Raw { done, .. } => done.then_some(Ok(())),
+            Mode::Modem(sender) => sender.outcome(),
+        }
+    }
+
+    /// A loop turn: takes `rx`, what the link received (a raw send ignores it), and gives the
+    /// bytes to write now. A read error leaves it running: `cancel` it
+    pub fn step(&mut self, rx: &[u8], now: Instant) -> io::Result<Step> {
+        match &mut self.mode {
+            Mode::Raw { sender, done } => {
+                let out = sender.next_chunk(now)?.unwrap_or_else(|| {
+                    *done = true;
+                    Vec::new()
+                });
+                Ok(Step {
+                    out,
+                    protocol: rx.len()..rx.len(),
+                })
             }
-            let mut part = &buf[..buf.len().min(budget - chunk.len())];
-            let line_end = if self.line_delay.is_zero() {
-                None
-            } else {
-                part.iter().position(|&byte| byte == b'\n')
-            };
-            if let Some(end) = line_end {
-                part = &part[..=end];
-            }
-            chunk.extend_from_slice(part);
-            let taken = part.len();
-            self.reader.consume(taken);
-            if line_end.is_some() {
-                self.resume_at = Some(now + self.line_delay);
-                break;
+            Mode::Modem(sender) => {
+                let step = sender.step(rx, now)?;
+                if sender.started() {
+                    self.flowing_since.get_or_insert(now);
+                }
+                Ok(step)
             }
         }
-        if chunk.is_empty() {
-            return Ok(None);
+    }
+
+    /// Stops it: the bytes that tell the receiver (a protocol's CANs), none for a raw send
+    pub fn cancel(&mut self) -> Vec<u8> {
+        match &mut self.mode {
+            Mode::Raw { .. } => Vec::new(),
+            Mode::Modem(sender) => sender.cancel(),
         }
-        self.sent += chunk.len() as u64;
-        self.last = now;
-        Ok(Some(chunk))
     }
 }
 

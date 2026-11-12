@@ -1562,3 +1562,118 @@ fn group_replay_has_no_controls() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// MAX-162: an XMODEM upload owns the link once the receiver starts. The device's text before
+/// it and after the end is shown; between, the receiver's answers go to the protocol only,
+/// typed keys and `send` are refused (said once). The end gives the link back.
+/// How: a TCP peer plays the receiver: text then C, an ACK per answer, text after the last.
+#[test]
+fn upload_owns_the_link() {
+    use crate::{
+        commands::{ArgValue, build},
+        inputs::LineInputAction,
+        transfer::{FileTransfer, modem::Protocol},
+    };
+    let (listener, address) = listener();
+    let (mut app, mut peer) = connected(&listener, &address);
+    let transfer = FileTransfer::modem(
+        Box::new(std::io::Cursor::new(b"abc".to_vec())),
+        Protocol::Xmodem,
+        "fw.bin".to_string(),
+        3,
+        11_520.0,
+        Instant::now(),
+    );
+    app.dispatch(Action::App(AppAction::StartTransfer(Box::new(transfer))));
+    let mut byte = [0; 1];
+
+    // waiting for the receiver: the user can still type `loady`
+    app.dispatch(Action::TransmitRaw(b"k".to_vec()));
+    peer.read_exact(&mut byte).unwrap();
+    assert_eq!(&byte, b"k");
+
+    peer.write_all(b"ready\r\nC").unwrap();
+    poll_until(&mut app, "started", App::link_busy);
+    let mut packet = [0; 133];
+    peer.read_exact(&mut packet).unwrap();
+    assert_eq!(packet[..6], [0x01, 1, 0xFE, b'a', b'b', b'c']);
+
+    app.dispatch(Action::TransmitRaw(b"k".to_vec()));
+    app.dispatch(Action::TransmitRaw(b"k".to_vec()));
+    let busy = "A file transfer is running: cancel stops it".to_string();
+    assert_eq!(toasts(&app).iter().filter(|t| **t == busy).count(), 1);
+    let send = build::send(&app, &[ArgValue::Bytes(b"x".to_vec())]);
+    assert_eq!(
+        send.unwrap_err(),
+        "a file transfer is running (cancel stops it)"
+    );
+
+    // a line typed with local echo isn't echoed: it stays in the input
+    app.settings.mode = crate::configs::Mode::Line;
+    app.settings.local_echo = true;
+    let echoed = |app: &App| {
+        app.line_mode
+            .history()
+            .iter()
+            .any(|e| e.text.contains("ls"))
+    };
+    app.dispatch(Action::LineInput(LineInputAction::Paste("ls".to_string())));
+    app.dispatch(Action::LineInput(LineInputAction::Submit));
+    app.dispatch(Action::LineInput(LineInputAction::Paste(
+        "ls\n".to_string(),
+    )));
+    app.dispatch(Action::TransmitRaw(b"ls".to_vec()));
+    assert!(!echoed(&app));
+    assert_eq!(app.line_mode.input().value(), "ls");
+    assert_eq!(toasts(&app).iter().filter(|t| **t == busy).count(), 1);
+
+    peer.write_all(&[0x06]).unwrap();
+    poll_until(&mut app, "EOT", |app| app.stats.tx() == 1 + 133 + 1);
+    peer.read_exact(&mut byte).unwrap();
+    assert_eq!(byte, [0x04]);
+    peer.write_all(b"\x06done\r\n").unwrap();
+    poll_until(&mut app, "ended", |app| app.transfer().is_none());
+    poll_until(&mut app, "text after", |app| {
+        app.terminal_mode.vt100_screen().contents().contains("done")
+    });
+
+    let screen = app.terminal_mode.vt100_screen().contents();
+    assert!(
+        screen.contains("ready") && !screen.contains('C'),
+        "{screen}"
+    );
+    assert!(toasts(&app).contains(&"Sent fw.bin (3 bytes, XMODEM)".to_string()));
+
+    app.dispatch(Action::TransmitRaw(b"k".to_vec()));
+    peer.read_exact(&mut byte).unwrap();
+    assert_eq!(&byte, b"k");
+}
+
+/// MAX-162: `cancel` during an upload sends the CANs that stop the receiver, and gives the
+/// link back.
+#[test]
+fn cancel_stops_the_receiver() {
+    use crate::transfer::{FileTransfer, modem::Protocol};
+    let (listener, address) = listener();
+    let (mut app, mut peer) = connected(&listener, &address);
+    let transfer = FileTransfer::modem(
+        Box::new(std::io::Cursor::new(b"abc".to_vec())),
+        Protocol::Xmodem,
+        "fw.bin".to_string(),
+        3,
+        11_520.0,
+        Instant::now(),
+    );
+    app.dispatch(Action::App(AppAction::StartTransfer(Box::new(transfer))));
+    peer.write_all(b"C").unwrap();
+    poll_until(&mut app, "started", App::link_busy);
+    let mut packet = [0; 133];
+    peer.read_exact(&mut packet).unwrap();
+
+    app.dispatch(crate::configs::KeyBindingAction::CancelCommands.to_action(&app));
+    let mut cans = [0; 5];
+    peer.read_exact(&mut cans).unwrap();
+    assert_eq!(cans, [0x18; 5]);
+    assert!(!app.link_busy());
+    assert!(toasts(&app).contains(&"Stopped sending fw.bin at 0%".to_string()));
+}

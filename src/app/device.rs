@@ -28,6 +28,7 @@ use crate::{
         serial::{self, LineControl, LineSettings},
     },
     overlays::{Directory, DirectoryTab, ErrorDialog, LinkForm, Overlay},
+    transfer::FileTransfer,
 };
 
 /// How long a link's test may take before it's marked unanswered (MAX-181): above the TCP
@@ -373,7 +374,12 @@ impl App {
 
             // the replies to the remote's queries, never in a replay (MAX-151)
             let answers = self.take_query_answers();
-            if !answers.is_empty() && self.link_kind().writes() && self.link.is_open() {
+            // none while a protocol transfer owns the link (MAX-162)
+            if !answers.is_empty()
+                && self.link_kind().writes()
+                && self.link.is_open()
+                && !self.link_busy()
+            {
                 self.transmit(&answers);
             }
         }
@@ -442,15 +448,35 @@ impl App {
 
     /// Writes `bytes` to the link, counted and recorded (not in a replay). True when written;
     /// false when the link is closed, lost by this write, or the write failed: said once, not
-    /// per key typed into it (MAX-199)
+    /// per key typed into it (MAX-199). Refused while a protocol transfer owns the link, said
+    /// once too (MAX-162): a key, `send`, a terminal answer would break a packet
     pub fn transmit(&mut self, bytes: &[u8]) -> bool {
+        if self.link_busy() {
+            self.say_link_busy();
+            return false;
+        }
+        self.write_link(bytes, true)
+    }
+
+    /// A write refused while a protocol transfer owns the link, said once per transfer
+    pub fn say_link_busy(&mut self) {
+        if !std::mem::replace(&mut self.busy_said, true) {
+            self.notify_warn("A file transfer is running: cancel stops it");
+        }
+    }
+
+    /// `transmit` without the busy check, for the transfer's own bytes; `record` false keeps
+    /// them out of the text recording (a protocol's packets aren't text)
+    pub fn write_link(&mut self, bytes: &[u8], record: bool) -> bool {
         match self.link.write(bytes) {
             None => false,
             Some(Ok(())) => {
                 self.write_failing = false;
                 if self.link_kind().writes() {
                     self.stats.update_tx(bytes.len());
-                    self.record_tx(bytes);
+                    if record {
+                        self.record_tx(bytes);
+                    }
                 }
                 true
             }
@@ -491,7 +517,7 @@ impl App {
                 Ok(bytes_read) => {
                     turn.rx_received = true;
                     self.stats.update_rx(bytes_read);
-                    self.feed_rx(&buffer[..bytes_read]);
+                    self.receive(&buffer[..bytes_read]);
                     if drain_start.elapsed() >= RX_DRAIN_BUDGET {
                         break;
                     }
@@ -512,20 +538,50 @@ impl App {
         Ok(())
     }
 
-    /// The file `send-file` sends, a chunk per turn paced to the baud rate (MAX-12), and the
-    /// text `mash` sends (MAX-6), on time: the input poll wakes the loop often enough. Both
-    /// stop when the link closes or a write fails
+    /// Live RX: to the views, or through the protocol transfer running (MAX-162). The device's
+    /// output before the receiver starts and after the transfer ends is shown; what is between
+    /// (the receiver's C, ACK, NAK) is the protocol's, only kept by the raw recordings
+    fn receive(&mut self, chunk: &[u8]) {
+        if !self.transfer().is_some_and(FileTransfer::takes_rx) {
+            self.feed_rx(chunk);
+            return;
+        }
+        let step = self.transfer_step(chunk, Instant::now());
+        let (before, rest) = chunk.split_at(step.protocol.start);
+        let (protocol, after) = rest.split_at(step.protocol.len());
+        for part in [before, after] {
+            if !part.is_empty() {
+                self.feed_rx(part);
+            }
+        }
+        if !protocol.is_empty() {
+            self.record_protocol_rx(protocol);
+        }
+        self.write_transfer(&step.out);
+    }
+
+    /// The transfer's bytes, past the busy check; a failed write ends it
+    fn write_transfer(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        let record = !self.transfer().is_some_and(FileTransfer::takes_rx);
+        if self.write_link(bytes, record) {
+            self.link.note_activity();
+        } else {
+            self.stop_transfer("the write failed");
+        }
+    }
+
+    /// The file `send-file` sends, a chunk per turn paced to the baud rate (MAX-12), an
+    /// `upload`'s timeouts (MAX-162), and the text `mash` sends (MAX-6), on time: the input
+    /// poll wakes the loop often enough. Both stop when the link closes or a write fails
     fn send_due(&mut self, turn: &mut LinkTurn) {
         if self.transfer().is_some() {
             if self.link.is_open() {
-                if let Some(chunk) = self.next_transfer_chunk(Instant::now()) {
-                    if self.transmit(&chunk) {
-                        self.link.note_activity();
-                    } else {
-                        self.stop_transfer("the write failed");
-                    }
-                    turn.redraw = true;
-                }
+                let step = self.transfer_step(&[], Instant::now());
+                turn.redraw |= !step.out.is_empty() || self.transfer().is_none();
+                self.write_transfer(&step.out);
             } else {
                 self.stop_transfer("the link closed");
                 turn.redraw = true;

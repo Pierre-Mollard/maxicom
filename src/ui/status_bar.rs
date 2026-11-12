@@ -45,8 +45,10 @@
 //! | `{scroll_max}`      | Maximum total scrollback lines available                | `500`            |
 //! | `{copy_side}`       | Copy cursor panel (`TXT` or `RAW`), empty out of copy  | `RAW`            |
 //! | `{cursor_keys}`     | Cursor keys mode (`NOR`, `APP`), in terminal mode       | `APP`            |
-//! | `{send_file}`       | The file `send-file` sends, empty when none             | `fw.hex`         |
+//! | `{send_file}`       | The file `send-file` or `upload` sends, empty when none | `fw.hex`         |
 //! | `{send_percent}`    | How much of it is sent, in percent                      | `42`             |
+//! | `{send_rate}`       | Its bytes a second so far (`{send_rate:4h}`: `11K`)     | `11520`          |
+//! | `{send_eta}`        | The time left at that rate, empty before                | `0:05`           |
 //! | `{trigger_count}`   | How many triggers (`triggers.toml`) are armed           | `2`              |
 //! | `{trigger_names}`   | The armed triggers by name, empty when none             | `login, u-boot`  |
 //! | `{replay_file}`     | The file the replay reads, a group's count, or empty    | `boot.raw`       |
@@ -65,7 +67,7 @@
 //!   `12K`, `1.2M`), never wider than 4 columns: `{rx_bytes:4h}`
 //!
 //! The numbers are `{baud}`, `{rx_bytes}`, `{tx_bytes}`, `{scroll_percent}`, `{scroll_offset}`,
-//! `{scroll_max}`, `{pan_offset}`, `{pan_max}`, `{send_percent}`, `{trigger_count}`,
+//! `{scroll_max}`, `{pan_offset}`, `{pan_max}`, `{send_percent}`, `{send_rate}`, `{trigger_count}`,
 //! `{replay_percent}`, `{replay_read}` and `{replay_size}`. A longer value is never cut; a
 //! malformed spec stays as written.
 //!
@@ -106,7 +108,7 @@
 //! | `add_cr`                        | —                                          | Add CR is on: a received LF read as CR LF (`add_cr`)     |
 //! | `add_lf`                        | —                                          | Add LF is on: a received CR read as CR LF (`add_lf`)     |
 //! | `line_settings`                 | `serial`                                   | Line settings to show: a serial port, a replayed session |
-//! | `sending`                       | `send_file`                                | A file is being sent (`send-file`)                       |
+//! | `sending`                       | `send_file`                                | A file is being sent (`send-file`, `upload`)             |
 //! | `armed`                         | `trigger`                                  | A trigger is armed, ready to fire (`triggers.toml`)      |
 //! | `mashing`                       | `mash`                                     | `mash` sends its text, waiting for the other one         |
 //! | `replaying`                     | `replay`                                   | A replay takes the link's place, ended or not            |
@@ -155,7 +157,7 @@
 //! | `{pan_left}`, `{pan_right}`                                | `pan-left`, `pan-right`   |
 //! | `{pan_offset}`, `{pan_max}`                                | `pan-home`                |
 //! | `{scroll_pos}` `{scroll_pos_up}` `{scroll_percent}` `{scroll_offset}` | `scroll-to-bottom` |
-//! | `{send_file}`, `{send_percent}`                            | `cancel`                  |
+//! | `{send_file}` `{send_percent}` `{send_rate}` `{send_eta}`  | `cancel`                  |
 //! | `{trigger_count}`, `{trigger_names}`                       | `triggers`                |
 //! | `{plot}`                                                   | `plot-freeze`             |
 //!
@@ -182,6 +184,7 @@
 
 use std::borrow::Cow;
 use std::fmt::Write as _;
+use std::time::Instant;
 
 use unicode_width::UnicodeWidthStr;
 
@@ -203,7 +206,10 @@ use crate::{
         KeyBindingAction, Mode, StatusBarConfig, StatusBarLayout, ThemeConfig, theme::PaletteColors,
     },
     link::LinkKind,
-    ui::common::{pan_left_indicator, pan_right_indicator},
+    ui::{
+        common::{pan_left_indicator, pan_right_indicator},
+        transfer_row::clock,
+    },
 };
 
 pub struct CompiledStatusBar {
@@ -454,6 +460,8 @@ enum Var {
     CursorKeys,
     SendFile,
     SendPercent,
+    SendRate,
+    SendEta,
     TriggerCount,
     TriggerNames,
     ReplayFile,
@@ -487,6 +495,8 @@ impl Var {
             "cursor_keys" => Self::CursorKeys,
             "send_file" => Self::SendFile,
             "send_percent" => Self::SendPercent,
+            "send_rate" => Self::SendRate,
+            "send_eta" => Self::SendEta,
             "trigger_count" => Self::TriggerCount,
             "trigger_names" => Self::TriggerNames,
             "replay_file" => Self::ReplayFile,
@@ -511,7 +521,9 @@ impl Var {
                 KeyBindingAction::ScrollToBottom
             }
             Self::CopySide => return Some(ClickAction::ToggleSide),
-            Self::SendFile | Self::SendPercent => KeyBindingAction::CancelCommands,
+            Self::SendFile | Self::SendPercent | Self::SendRate | Self::SendEta => {
+                KeyBindingAction::CancelCommands
+            }
             Self::TriggerCount | Self::TriggerNames => KeyBindingAction::Triggers,
             Self::Plot => KeyBindingAction::PlotFreeze,
             Self::Port
@@ -542,6 +554,9 @@ impl Var {
             Self::ScrollOffset => scroll.offset_from_bottom as u64,
             Self::ScrollMax => scroll.max_scroll as u64,
             Self::SendPercent => app.transfer().map_or(0, |transfer| transfer.percent()),
+            Self::SendRate => (app.transfer())
+                .and_then(|transfer| transfer.rate(Instant::now()))
+                .map_or(0, |rate| rate as u64),
             Self::TriggerCount => app.armed_triggers().len() as u64,
             Self::ReplayPercent => app.replay().map_or(0, |replay| replay.percent()),
             Self::ReplayRead => app.replay().map_or(0, |replay| replay.progress().0),
@@ -675,6 +690,10 @@ impl Var {
                 "{}",
                 app.transfer().map_or("", |transfer| transfer.name())
             ),
+            Self::SendEta => match app.transfer().and_then(|t| t.eta(Instant::now())) {
+                Some(eta) => write!(out, "{}", clock(eta)),
+                None => Ok(()),
+            },
             Self::TriggerNames => write!(out, "{}", app.armed_triggers().join(", ")),
             Self::ReplayFile if app.link_kind() == LinkKind::Replay => match app.replay_group() {
                 Some(1) => write!(out, "1 session"),
@@ -696,6 +715,7 @@ impl Var {
             | Self::PanOffset
             | Self::PanMax
             | Self::SendPercent
+            | Self::SendRate
             | Self::TriggerCount
             | Self::ReplayPercent
             | Self::ReplayRead

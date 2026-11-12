@@ -751,7 +751,6 @@ impl Default for StatusBarConfig {
             center: block_lines(&[
                 "[◎ {trigger_count} ](armed?(fg=warn bold):hide)",
                 "[⟳ mash ](mashing?(fg=secondary bold):hide click=cancel)",
-                "[⇡ {send_file} {send_percent:>3}% ](sending?(fg=secondary bold):hide)",
                 "[▷ {replay_state} {replay_percent:>3}% ](replaying?(fg=secondary bold):hide prio=5)",
                 "[∿ {plot} ](plot?(frozen?(fg=warn bold):(fg=secondary)):hide prio=5)",
                 "[« live ](replaced?(fg=main bold):hide click=toggle-attach)",
@@ -882,6 +881,9 @@ pub struct UiConfig {
     pub focus_effects: bool,
     /// A middle click pastes the last copy; off, it does nothing (MAX-212)
     pub middle_click_paste: bool,
+    /// A row with the file being sent and its progress over the status bar, while one is sent
+    /// (MAX-162); off, the status bar's `{send_*}` variables can show it
+    pub transfer_row: bool,
     /// Each part hides on a screen narrower or shorter than its `[cols, rows]`, a `0` side
     /// never (MAX-181): the borders first, the status bar last, as minicom always shows its own
     pub hide_borders_below: [u16; 2],
@@ -921,6 +923,7 @@ impl Default for UiConfig {
             mouse: true,
             focus_effects: true,
             middle_click_paste: true,
+            transfer_row: true,
             hide_borders_below: [60, 16],
             hide_scrollbar_below: [40, 10],
             hide_status_bar_below: [35, 6],

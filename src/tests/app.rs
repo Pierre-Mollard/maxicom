@@ -707,7 +707,7 @@ fn mash_on_the_wire() {
 }
 
 /// MAX-12: `send-file` starts a paced transfer and the chain goes on at once; its chunks
-/// come from `next_transfer_chunk` until the end of the file, with a notice. A second
+/// come from `transfer_step` until the end of the file, with a notice. A second
 /// `send-file`, a missing file or a replay refuse; `cancel` stops it.
 /// How: a 300-byte file at 9600 baud (96 bytes per 100 ms at most).
 #[test]
@@ -753,10 +753,11 @@ fn command_line_send_file() {
     let start = Instant::now();
     let mut sent = 0;
     for step in 1..=10 {
-        if let Some(chunk) = app.next_transfer_chunk(start + Duration::from_secs(step)) {
-            assert!(chunk.len() <= 96);
-            sent += chunk.len();
-        }
+        let chunk = app
+            .transfer_step(&[], start + Duration::from_secs(step))
+            .out;
+        assert!(chunk.len() <= 96);
+        sent += chunk.len();
     }
     assert_eq!(sent, 300);
     assert!(app.transfer().is_none());
@@ -767,7 +768,7 @@ fn command_line_send_file() {
     );
 
     run_line(&mut app, &format!("send-file {file}"));
-    app.next_transfer_chunk(start + Duration::from_secs(1));
+    app.transfer_step(&[], start + Duration::from_secs(1));
     run_line(&mut app, "cancel");
     assert!(app.transfer().is_none());
     assert!(
@@ -961,7 +962,7 @@ fn command_line_cancel() {
     let send = app.next_command_action(Instant::now()).unwrap();
     assert!(matches!(app.update(send), UpdateEffect::Transmit(b) if b == b"b"));
 
-    let transfer = FileTransfer::new(
+    let transfer = FileTransfer::raw(
         Box::new(std::io::Cursor::new(vec![b'x'; 10])),
         "fw.bin".to_string(),
         10,

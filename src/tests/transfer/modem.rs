@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use super::*;
 
 /// 115200 baud in 8N1

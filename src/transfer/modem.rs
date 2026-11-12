@@ -80,9 +80,10 @@
 use std::{
     fmt,
     io::{self, Read},
-    ops::Range,
     time::{Duration, Instant},
 };
+
+use super::Step;
 
 const SOH: u8 = 0x01; // start 128  byte block
 const STX: u8 = 0x02; // start 1024 byte block
@@ -131,6 +132,16 @@ pub enum Failure {
     Cancelled,
 }
 
+impl Protocol {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Xmodem => "XMODEM",
+            Self::Xmodem1k => "XMODEM-1K",
+            Self::Ymodem => "YMODEM",
+        }
+    }
+}
+
 impl fmt::Display for Failure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
@@ -141,16 +152,6 @@ impl fmt::Display for Failure {
             Self::Cancelled => "cancelled",
         })
     }
-}
-
-/// What a `step` gives
-#[derive(Debug, PartialEq, Eq)]
-pub struct Step {
-    /// The bytes to write
-    pub out: Vec<u8>,
-    /// The bytes of `rx` that are the protocol's only, from the receiver's first NAK or C to
-    /// the answer that ended it: before and after, they are the device's output, to show
-    pub protocol: Range<usize>,
 }
 
 /// What the sender waits for next
@@ -253,6 +254,10 @@ impl ModemSender {
                 deadline: now + START_TIMEOUT,
             },
         }
+    }
+
+    pub fn protocol(&self) -> Protocol {
+        self.protocol
     }
 
     pub fn sent(&self) -> u64 {

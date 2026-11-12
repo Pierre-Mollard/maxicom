@@ -40,7 +40,7 @@ use crate::{
     notification::{NotificationManager, ToastLevel},
     overlays::{MarkBrowser, Overlay, OverlayResponse, PopupTarget, ScreenshotDialog, SettingKey},
     paths::{create_parent_dirs, expand_home},
-    transfer::FileTransfer,
+    transfer::{FileTransfer, Step},
 };
 
 /// How soon after the window gains focus a press is the one that focused it
@@ -205,8 +205,11 @@ pub struct App {
     /// The last frame's size, for the parts a small screen hides (MAX-136, MAX-181)
     screen_size: Option<(u16, u16)>,
     pub stats: Stats,
-    /// The file `send-file` sends, a chunk per loop turn (MAX-12)
+    /// The file `send-file` or `upload` sends, a step per loop turn (MAX-12, MAX-162)
     transfer: Option<FileTransfer>,
+    /// A write was refused while a protocol transfer owns the link, and said: once per
+    /// transfer (MAX-162)
+    busy_said: bool,
     /// The replay running, while the link is one (MAX-166)
     replay: Option<ReplayRun>,
 }
@@ -337,6 +340,7 @@ impl App {
                 sent_bytes: 0,
             },
             transfer: None,
+            busy_said: false,
             replay: None,
         };
         app.fit_mode_to_link();
@@ -344,32 +348,58 @@ impl App {
         app
     }
 
-    /// The file `send-file` sends (MAX-12)
+    /// The file `send-file` or `upload` sends (MAX-12, MAX-162)
     pub fn transfer(&self) -> Option<&FileTransfer> {
         self.transfer.as_ref()
     }
 
-    /// The next chunk of the file being sent, for the loop to write; none while it isn't time.
-    /// The end of the file, or a read error, ends the transfer with a notice
-    pub fn next_transfer_chunk(&mut self, now: Instant) -> Option<Vec<u8>> {
-        let transfer = self.transfer.as_mut()?;
-        match transfer.next_chunk(now) {
-            Ok(Some(chunk)) if chunk.is_empty() => None,
-            Ok(Some(chunk)) => Some(chunk),
-            Ok(None) => {
-                let transfer = self.transfer.take()?;
-                self.notify_success(format!(
-                    "Sent {} ({} bytes)",
-                    transfer.name(),
-                    transfer.size()
-                ));
-                None
-            }
+    /// The progress row shows while a file is sent, unless `ui.transfer_row` is off (MAX-162)
+    pub fn show_transfer_row(&self) -> bool {
+        self.transfer.is_some() && self.settings.ui.transfer_row
+    }
+
+    /// Whether a protocol transfer owns the link: nothing else may write to it (MAX-162)
+    pub fn link_busy(&self) -> bool {
+        self.transfer.as_ref().is_some_and(FileTransfer::owns_link)
+    }
+
+    /// A loop turn of the file being sent, with `rx`, what the link received for a protocol
+    /// (empty otherwise): the bytes to write, and the part of `rx` that is the protocol's.
+    /// The end of the transfer, its failure or a read error ends it with a notice
+    pub fn transfer_step(&mut self, rx: &[u8], now: Instant) -> Step {
+        let idle = Step {
+            out: Vec::new(),
+            protocol: rx.len()..rx.len(),
+        };
+        let Some(transfer) = self.transfer.as_mut() else {
+            return idle;
+        };
+        let step = match transfer.step(rx, now) {
+            Ok(step) => step,
             Err(e) => {
+                // a protocol's receiver is told to stop too
+                let out = transfer.cancel();
                 self.stop_transfer(&format!("read error: {e}"));
-                None
+                return Step { out, ..idle };
             }
+        };
+        match transfer.outcome() {
+            None => {}
+            Some(Ok(())) => {
+                let Some(transfer) = self.transfer.take() else {
+                    return step;
+                };
+                let protocol = transfer.protocol().map(|p| format!(", {}", p.name()));
+                self.notify_success(format!(
+                    "Sent {} ({} bytes{})",
+                    transfer.name(),
+                    transfer.size(),
+                    protocol.unwrap_or_default()
+                ));
+            }
+            Some(Err(failure)) => self.stop_transfer(&failure.to_string()),
         }
+        step
     }
 
     /// Ends the file being sent, the link can't take it (`why`)
@@ -469,7 +499,12 @@ impl App {
         if self.mash.take().is_some() {
             stopped.push("Stopped mashing".to_string());
         }
-        if let Some(transfer) = self.transfer.take() {
+        if let Some(mut transfer) = self.transfer.take() {
+            // a protocol's receiver is told to stop too
+            let cans = transfer.cancel();
+            if !cans.is_empty() {
+                self.write_link(&cans, false);
+            }
             stopped.push(format!(
                 "Stopped sending {} at {}%",
                 transfer.name(),
@@ -844,13 +879,26 @@ impl App {
         match action {
             Action::App(action) => self.update_action_app(action),
             Action::TransmitRaw(bytes) => {
-                if self.settings.local_echo && self.settings.mode == Mode::Line {
+                // refused while a protocol transfer owns the link: not echoed (MAX-162)
+                if self.settings.local_echo && self.settings.mode == Mode::Line && !self.link_busy()
+                {
                     let text = String::from_utf8_lossy(&bytes).into_owned();
                     self.line_mode.push_history(text);
                 }
                 UpdateEffect::Transmit(bytes)
             }
             Action::LineInput(action) => {
+                // while a protocol transfer owns the link, a line isn't sent: it stays in the
+                // input, not echoed (MAX-162)
+                let sends = match &action {
+                    LineInputAction::Submit => true,
+                    LineInputAction::Paste(text) => text.contains(['\r', '\n']),
+                    _ => false,
+                };
+                if sends && self.link_busy() {
+                    self.say_link_busy();
+                    return UpdateEffect::None;
+                }
                 // a click in the input leaves the history for it (MAX-113), a right-click
                 // paste too (MAX-144)
                 if let LineInputAction::ClickAt(_) | LineInputAction::Paste(_) = action {
@@ -865,7 +913,8 @@ impl App {
                 let effect = self
                     .line_mode
                     .update_action_lineinput(&self.settings, action);
-                if is_interrupt && matches!(effect, UpdateEffect::Transmit(_)) {
+                if is_interrupt && matches!(effect, UpdateEffect::Transmit(_)) && !self.link_busy()
+                {
                     self.notify_info("^C sent");
                 }
                 effect
@@ -1501,6 +1550,7 @@ impl App {
                     transfer.size()
                 ));
                 self.transfer = Some(*transfer);
+                self.busy_said = false;
                 UpdateEffect::None
             }
             AppAction::Reconfigure(line) => UpdateEffect::Reconfigure(line),
@@ -2302,12 +2352,14 @@ impl App {
     /// The search bar on a row of its own under the view, taken from it (MAX-218): it goes
     /// right under the history, in its bottom border when it has one free of the status bar.
     /// Without borders it would cover the view's last row, the cursor or a match on it; in
-    /// terminal mode the `border` status bar has the history's border
+    /// terminal mode the `border` status bar has the history's border. The transfer row takes
+    /// the history's last row: the search bar's row is over it (MAX-162)
     pub fn search_bar_row(&self) -> bool {
         let status_in_history_border = self.settings.mode == Mode::Terminal
             && self.show_status_bar()
             && self.status_bar_layout() == StatusBarLayout::Border;
-        self.is_search_bar_shown() && (!self.show_borders() || status_in_history_border)
+        self.is_search_bar_shown()
+            && (!self.show_borders() || status_in_history_border || self.show_transfer_row())
     }
 
     #[inline]

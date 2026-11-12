@@ -9,6 +9,7 @@ pub mod popups;
 pub mod raw_side;
 pub mod status_bar;
 pub mod terminal;
+pub mod transfer_row;
 
 use ratatui::{
     Frame,
@@ -53,6 +54,7 @@ use crate::{
         },
         status_bar::{CompiledStatusBar, render_status_bar},
         terminal::{draw_mark_letters, render_timestamp_gutter, render_vt100_terminal},
+        transfer_row::render_transfer_row,
     },
 };
 
@@ -193,6 +195,11 @@ pub fn render(
 
     if let Some(prompt_rect) = layout.prompt_area {
         render_input_prompt(app, frame, prompt_rect, theme);
+    }
+
+    if let Some(transfer_rect) = layout.transfer_area {
+        let targets = render_transfer_row(app, frame, transfer_rect, theme);
+        app.frame_map_mut().click_targets.extend(targets);
     }
 
     if let Some(status_rect) = layout.status_bar_area {

@@ -33,6 +33,9 @@ pub fn send(app: &App, args: &[ArgValue]) -> Result<Action, String> {
         return Err("a replay has no link to send to".to_string());
     }
     link_open(app)?;
+    if app.link_busy() {
+        return Err(TRANSFER_RUNNING.to_string());
+    }
     Ok(Action::TransmitRaw(bytes.clone()))
 }
 
@@ -63,7 +66,7 @@ pub fn send_file(app: &App, args: &[ArgValue]) -> Result<Action, String> {
         || path.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
     );
-    let transfer = FileTransfer::new(
+    let transfer = FileTransfer::raw(
         Box::new(BufReader::new(file)),
         name,
         metadata.len(),
@@ -167,6 +170,9 @@ pub fn pause_commands(_app: &App, args: &[ArgValue]) -> Result<Action, String> {
 }
 
 /// None when the link is open, else that it isn't: detached, lost, still opening
+/// Why `send` and `mash` refuse while a protocol transfer owns the link (MAX-162)
+const TRANSFER_RUNNING: &str = "a file transfer is running (cancel stops it)";
+
 fn link_open(app: &App) -> Result<(), String> {
     if app.is_link_open() {
         Ok(())
@@ -388,6 +394,10 @@ pub fn mash(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     link_open(app)?;
     if app.mash().is_some() {
         return Err("a mash runs already (cancel stops it)".to_string());
+    }
+    // its bytes would break the packets once the receiver starts
+    if app.transfer().is_some_and(FileTransfer::takes_rx) {
+        return Err(TRANSFER_RUNNING.to_string());
     }
     let mash = Mash::new(text.clone(), until, every, timeout, Instant::now())
         .ok_or_else(|| "nothing to wait for".to_string())?;

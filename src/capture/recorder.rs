@@ -378,6 +378,15 @@ impl Recorder {
         self.flush_if_due();
     }
 
+    /// RX that isn't text, to the raw streams only: a transfer protocol's answers (MAX-162)
+    pub fn record_raw_rx(&mut self, bytes: &[u8]) {
+        let now = Local::now();
+        for writer in self.writers() {
+            writer.record_raw(bytes, now);
+        }
+        self.flush_if_due();
+    }
+
     fn write_rx_line(&mut self, lines: &mut RxLineSplitter, encoding: TextEncoding) {
         let timestamp = lines.take_timestamp();
         if self.writes_text() {

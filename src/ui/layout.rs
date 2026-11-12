@@ -39,6 +39,8 @@ pub struct ScreenLayout {
     pub raw_split_area: Option<Rect>,
     pub timestamp_gutter: Option<Rect>,
     pub prompt_area: Option<Rect>,
+    /// The file transfer's progress row, while one runs (MAX-162)
+    pub transfer_area: Option<Rect>,
     pub status_bar_area: Option<Rect>,
     pub focus_target: FocusTarget,
     pub warnings: Vec<LayoutWarning>,
@@ -136,6 +138,27 @@ impl ScreenLayout {
             monitor_outer
         };
 
+        // the transfer's progress row: the view's last row, its whole width, so nothing else
+        // moves; the search bar goes on its own row over it (MAX-162)
+        let (inner_monitor, transfer_area) = if app.show_transfer_row() && inner_monitor.height > 1
+        {
+            let height = inner_monitor.height - 1;
+            let row = Rect {
+                y: inner_monitor.y + height,
+                height: 1,
+                ..inner_monitor
+            };
+            (
+                Rect {
+                    height,
+                    ..inner_monitor
+                },
+                Some(row),
+            )
+        } else {
+            (inner_monitor, None)
+        };
+
         let (gutter_area, remaining_after_gutter) = match input_mode {
             Mode::Terminal if app.settings().show_timestamps => {
                 let ts_width = app.settings().timestamp_width() as u16;
@@ -215,11 +238,12 @@ impl ScreenLayout {
 
         let (content_area, scrollbar_area) = if show_scrollbar {
             if show_borders {
+                // in the right border, along the view (not the transfer row)
                 let sb_area = Rect {
                     x: monitor_outer.x + monitor_outer.width.saturating_sub(1),
-                    y: monitor_outer.y + 1,
+                    y: inner_monitor.y,
                     width: 1,
-                    height: monitor_outer.height.saturating_sub(2),
+                    height: inner_monitor.height,
                 };
                 (main_stream_area, Some(sb_area))
             } else {
@@ -250,6 +274,7 @@ impl ScreenLayout {
             raw_split_area: side_area.map(|_| remaining_after_gutter),
             timestamp_gutter: gutter_area,
             prompt_area,
+            transfer_area,
             status_bar_area,
             focus_target,
             warnings,

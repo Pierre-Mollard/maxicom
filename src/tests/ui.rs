@@ -1853,29 +1853,133 @@ fn command_line_selected_help_below_the_list() {
     assert_eq!(first(&h.draw()), before);
 }
 
-/// MAX-12: the default status bar shows the file `send-file` sends and its progress, only
-/// while it is sent; a click on it stops it.
-#[test]
-fn status_bar_send_progress() {
-    use crate::transfer::FileTransfer;
-    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 10);
-    assert!(!has(&h.draw(), "⇡"));
-    let transfer = FileTransfer::new(
-        Box::new(std::io::Cursor::new(vec![b'x'; 10])),
+fn raw_transfer(size: usize) -> crate::transfer::FileTransfer {
+    crate::transfer::FileTransfer::raw(
+        Box::new(std::io::Cursor::new(vec![b'x'; size])),
         "fw.bin".to_string(),
-        10,
+        size as u64,
         960.0,
         std::time::Duration::ZERO,
         std::time::Instant::now(),
-    );
-    h.app
-        .update(Action::App(AppAction::StartTransfer(Box::new(transfer))));
+    )
+}
+
+fn modem_transfer(size: usize) -> crate::transfer::FileTransfer {
+    crate::transfer::FileTransfer::modem(
+        Box::new(std::io::Cursor::new(vec![b'x'; size])),
+        crate::transfer::modem::Protocol::Xmodem,
+        "fw.bin".to_string(),
+        size as u64,
+        960.0,
+        std::time::Instant::now(),
+    )
+}
+
+/// MAX-162: the file being sent shows on the view's last row, only while it is sent, with a
+/// gauge, the percent and the bytes: the prompt and the status bar under it don't move. The
+/// default status bar doesn't show it (MAX-12 did); a click on the row's ✕ stops it.
+#[test]
+fn transfer_row_progress() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 10);
+    let before = h.draw();
+    assert!(!has(&before, "⇡"));
+    h.app.update(Action::App(AppAction::StartTransfer(Box::new(
+        raw_transfer(300),
+    ))));
     let rows = h.draw();
-    assert!(has(&rows, "⇡ fw.bin   0%"), "{rows:#?}");
-    // not the "Sending fw.bin" notice
-    click(&mut h, cell_of(&rows, "⇡ fw.bin"));
+    assert_eq!(rows[8..], before[8..]);
+    assert!(rows[7].starts_with(" ⇡ fw.bin [░"), "{rows:#?}");
+    assert!(
+        rows[7].contains("]   0%  0/300 ") && rows[7].ends_with(" ✕ "),
+        "{rows:#?}"
+    );
+    assert_eq!(rows.iter().filter(|row| row.contains('⇡')).count(), 1);
+
+    let later = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    assert_eq!(h.app.transfer_step(&[], later).out.len(), 96);
+    let rows = h.draw();
+    assert!(
+        rows[7].contains("[█████████░") && rows[7].contains("]  32%  96/300 "),
+        "{rows:#?}"
+    );
+
+    click(&mut h, cell_of(&rows, "✕"));
     assert!(h.app.transfer().is_none());
     assert!(!has(&h.draw(), "⇡"));
+}
+
+/// MAX-162: a protocol transfer names its protocol and says it waits for the receiver until
+/// its first NAK or C; on a narrow row the bytes go before the protocol and the gauge.
+#[test]
+fn transfer_row_protocol_and_narrow() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 10);
+    h.app.update(Action::App(AppAction::StartTransfer(Box::new(
+        modem_transfer(300),
+    ))));
+    let rows = h.draw();
+    assert!(
+        rows[7].starts_with(" ⇡ fw.bin XMODEM waiting for the receiver (C or NAK) "),
+        "{rows:#?}"
+    );
+
+    h.app.transfer_step(b"C", std::time::Instant::now());
+    let rows = h.draw();
+    assert!(rows[7].starts_with(" ⇡ fw.bin XMODEM [░"), "{rows:#?}");
+    assert!(rows[7].contains(" 0/300 "), "{rows:#?}");
+
+    h.terminal.backend_mut().resize(40, 10);
+    let rows = h.draw();
+    assert!(rows[7].starts_with(" ⇡ fw.bin XMODEM [░"), "{rows:#?}");
+    assert!(!rows[7].contains("/300"), "{rows:#?}");
+    assert!(rows[7].ends_with(" ✕ "), "{rows:#?}");
+}
+
+/// MAX-162: `ui.transfer_row` off hides the row: the status bar's `{send_*}` variables can
+/// show the transfer instead.
+#[test]
+fn transfer_row_off() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 10);
+    h.app.settings_mut().ui.transfer_row = false;
+    h.app.update(Action::App(AppAction::StartTransfer(Box::new(
+        raw_transfer(300),
+    ))));
+    assert!(!has(&h.draw(), "⇡"));
+}
+
+/// MAX-162: a search during a transfer goes on its own row over the transfer row, with
+/// borders too (its usual place is the history's bottom border, right under the view): from
+/// the bottom, the status bar, the transfer row, the search bar. The status bar stays put.
+#[test]
+fn transfer_row_under_the_search_bar() {
+    for borders in [false, true] {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 12);
+        h.app.settings_mut().ui.show_borders = borders;
+        // an empty history draws no search bar
+        h.feed(b"a\nb\n");
+        let before = h.draw();
+        h.app.update(Action::App(AppAction::StartTransfer(Box::new(
+            raw_transfer(300),
+        ))));
+        h.app
+            .update(KeyBindingAction::EnterSearch.to_action(&h.app));
+        let rows = h.draw();
+        let row_of = |text: &str| cell_of(&rows, text).1;
+        let (search, transfer) = (row_of("(0/0)"), row_of("⇡ fw.bin"));
+        assert_eq!(search + 1, transfer, "{rows:#?}");
+        // the status bar on its row, or in the prompt's border: where it was
+        let status = row_of("115200 8N1");
+        assert_eq!(status, cell_of(&before, "115200 8N1").1, "{rows:#?}");
+        assert!(transfer < status, "{rows:#?}");
+    }
+}
+
+#[test]
+fn transfer_clock() {
+    use crate::ui::transfer_row::clock;
+    use std::time::Duration;
+    assert_eq!(clock(Duration::from_secs(5)), "0:05");
+    assert_eq!(clock(Duration::from_secs(65)), "1:05");
+    assert_eq!(clock(Duration::from_secs(3725)), "1:02:05");
 }
 
 /// A text input popup types the keys that are not Esc, Enter, Tab or modified, so they

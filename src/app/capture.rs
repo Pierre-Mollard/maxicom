@@ -402,6 +402,12 @@ impl App {
         }
     }
 
+    /// The receiver's answers during a protocol transfer (MAX-162): kept by the raw streams,
+    /// not text lines
+    pub fn record_protocol_rx(&mut self, bytes: &[u8]) {
+        self.recorder.record_raw_rx(bytes);
+    }
+
     /// Records what was sent to the text streams, in line mode only: in terminal mode the keys
     /// go one by one and the remote echoes them, so the received text has them (MAX-147)
     pub fn record_tx(&mut self, bytes: &[u8]) {
