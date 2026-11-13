@@ -116,7 +116,7 @@ pub fn raw_view_to_display_mode(view: RawSideView) -> LineDisplayMode {
     }
 }
 
-/// The raw side panel's share of the split, in percent
+/// A side panel's share of the split, in percent
 pub const SPLIT_PERCENT_MIN: u16 = 10;
 pub const SPLIT_PERCENT_MAX: u16 = 85;
 
@@ -134,6 +134,24 @@ impl Default for RawSideConfig {
             view: RawSideView::Off,
             orientation: RawSideOrientation::Right,
             split_percent: 40,
+        }
+    }
+}
+
+/// Where the plot panel sits (MAX-230): its own place, not the raw panel's, since a time series
+/// reads along its X axis and a wide panel at the bottom shows more of it
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PlotSideConfig {
+    pub orientation: RawSideOrientation,
+    pub split_percent: u16,
+}
+
+impl Default for PlotSideConfig {
+    fn default() -> Self {
+        Self {
+            orientation: RawSideOrientation::Bottom,
+            split_percent: 35,
         }
     }
 }
@@ -1000,6 +1018,7 @@ pub struct SettingsConfig {
     pub link: LinkDefaults,
     pub ui: UiConfig,
     pub raw_side: RawSideConfig,
+    pub plot_side: PlotSideConfig,
     pub command_line: CommandLineConfig,
 
     // cache
@@ -1036,6 +1055,7 @@ impl Default for SettingsConfig {
             link: LinkDefaults::default(),
             ui: UiConfig::default(),
             raw_side: RawSideConfig::default(),
+            plot_side: PlotSideConfig::default(),
             command_line: CommandLineConfig::default(),
             timestamp_width: 0,
         };
@@ -1113,12 +1133,17 @@ impl SettingsConfig {
             });
         }
 
-        if !(SPLIT_PERCENT_MIN..=SPLIT_PERCENT_MAX).contains(&self.raw_side.split_percent) {
-            return Err(ConfigValidationError::InvalidGenericField {
-                name: "raw_side.split_percent".to_owned(),
-                min: SPLIT_PERCENT_MIN as _,
-                max: SPLIT_PERCENT_MAX as _,
-            });
+        for (percent, name) in [
+            (self.raw_side.split_percent, "raw_side.split_percent"),
+            (self.plot_side.split_percent, "plot_side.split_percent"),
+        ] {
+            if !(SPLIT_PERCENT_MIN..=SPLIT_PERCENT_MAX).contains(&percent) {
+                return Err(ConfigValidationError::InvalidGenericField {
+                    name: name.to_owned(),
+                    min: SPLIT_PERCENT_MIN as _,
+                    max: SPLIT_PERCENT_MAX as _,
+                });
+            }
         }
 
         if let Err(err) = StrftimeItems::new(&self.timestamp_format).parse() {

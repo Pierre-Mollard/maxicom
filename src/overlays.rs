@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use crossterm::event::KeyCode;
 
 use crate::{
+    app::types::SidePanel,
     capture::{CaptureDevice, Session, Stream},
     commands::Invocation,
     configs::links::SavedLink,
@@ -132,6 +133,7 @@ pub enum OverlayResponse {
     },
     Quit,
     Run(KeyBindingAction),
+    ClosePanel(SidePanel),
     QueueCommands {
         line: String,
         invocations: Vec<Invocation>,

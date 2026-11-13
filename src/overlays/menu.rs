@@ -1,4 +1,5 @@
 use crate::{
+    app::types::SidePanel,
     configs::{KeyBindingAction, Mode},
     inputs::DialogAction,
     link::LinkKind,
@@ -15,12 +16,14 @@ pub struct ActionMenu {
     pub selected: usize,
 }
 
-/// What a row of the menu runs: a keymap action, or a mark on the history line it was opened
-/// on, none when it was opened off the history (MAX-164)
+/// What a row of the menu runs: a keymap action, a mark on the history line it was opened
+/// on, none when it was opened off the history (MAX-164), or the side panel it was opened on
+/// closed (MAX-230)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuRun {
     Action(KeyBindingAction),
     AddMark(Option<usize>),
+    ClosePanel(SidePanel),
 }
 
 impl ActionMenu {
@@ -88,6 +91,18 @@ impl ActionMenu {
         self
     }
 
+    /// Opened on a side panel, its "Close" row first (MAX-230)
+    pub fn with_close(mut self, panel: Option<SidePanel>) -> Self {
+        let label = match panel {
+            Some(SidePanel::Raw) => "Close raw panel",
+            Some(SidePanel::Plot) => "Close plot",
+            None => return self,
+        };
+        self.items
+            .insert(0, (label, MenuRun::ClosePanel(panel.unwrap())));
+        self
+    }
+
     pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
         let last = self.items.len().saturating_sub(1);
         match action {
@@ -107,6 +122,7 @@ impl ActionMenu {
         match self.items.get(idx) {
             Some(&(_, MenuRun::Action(action))) => OverlayResponse::Run(action),
             Some(&(_, MenuRun::AddMark(line))) => OverlayResponse::AddMark(line),
+            Some(&(_, MenuRun::ClosePanel(panel))) => OverlayResponse::ClosePanel(panel),
             None => OverlayResponse::Handled,
         }
     }

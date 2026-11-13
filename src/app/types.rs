@@ -176,11 +176,27 @@ impl ViewportSize {
     }
 }
 
-/// Where the last frame drew the history and the raw side panel, for the mouse (MAX-113)
+/// Where the last frame drew the history, the raw side panel (MAX-113) and the plot
+/// (MAX-230), for the mouse
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FrameAreas {
     pub content: Rect,
     pub raw_side: Option<Rect>,
+    pub plot: Option<Rect>,
+}
+
+impl FrameAreas {
+    /// The side panel drawn under a screen cell
+    pub fn panel_at(&self, x: u16, y: u16) -> Option<SidePanel> {
+        let at = ratatui::layout::Position::new(x, y);
+        if self.raw_side.is_some_and(|area| area.contains(at)) {
+            Some(SidePanel::Raw)
+        } else if self.plot.is_some_and(|area| area.contains(at)) {
+            Some(SidePanel::Plot)
+        } else {
+            None
+        }
+    }
 }
 
 /// What the last frame showed where, for mouse clicks (MAX-113): per screen row of the history
@@ -206,7 +222,8 @@ pub struct FrameMap {
     pub command_line: Option<PromptMap>,
     /// The history's scrollbar, as drawn
     pub scrollbar: Option<ScrollbarMap>,
-    pub side_handle: Option<SideHandle>,
+    /// The side panels' borders, the raw panel's and the plot's (MAX-230)
+    pub side_handles: Vec<SideHandle>,
     /// The status bar blocks, border buttons and search bar hints a click runs, in drawing
     /// order (MAX-125, MAX-128)
     pub click_targets: Vec<ClickTarget>,
@@ -214,33 +231,36 @@ pub struct FrameMap {
     pub toasts: Vec<(Rect, u64)>,
 }
 
-/// The raw side panel's border, as drawn (MAX-189): a drag on it resizes the panel, its share
-/// of `split` taken from the pointer
+/// A panel beside the history: the raw bytes or the plot, both shown when in different places
+/// (MAX-230)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidePanel {
+    Raw,
+    Plot,
+}
+
+/// A side panel's border, as drawn (MAX-189): a drag on it resizes the panel, its share of
+/// `split` taken from the pointer
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SideHandle {
+    pub panel: SidePanel,
     pub area: Rect,
     pub split: Rect,
     pub orientation: RawSideOrientation,
 }
 
 impl SideHandle {
-    pub fn new(panel: Rect, split: Rect, orientation: RawSideOrientation) -> Self {
+    pub fn new(side: SidePanel, panel: Rect, split: Rect, orientation: RawSideOrientation) -> Self {
         let area = match orientation {
             RawSideOrientation::Right => Rect::new(panel.x, panel.y, 1, panel.height),
             RawSideOrientation::Bottom => Rect::new(panel.x, panel.y, panel.width, 1),
         };
         Self {
+            panel: side,
             area: area.intersection(panel),
             split,
             orientation,
         }
-    }
-
-    /// Its cells when `(x, y)` is on it
-    pub fn at(&self, x: u16, y: u16) -> Option<Rect> {
-        self.area
-            .contains(ratatui::layout::Position::new(x, y))
-            .then_some(self.area)
     }
 
     /// The panel's share of the split, in percent, with its border under the pointer
@@ -277,6 +297,8 @@ pub enum ClickAction {
     Search(KeyBindingSearchAction),
     /// A hint of the search bar kept in copy mode (MAX-215)
     Copy(KeyBindingCopyAction),
+    /// The plot panel's `✕` (MAX-230)
+    ClosePlot,
 }
 
 /// The history's scrollbar as drawn (MAX-142): its column, `▲` on top and `▼` at the bottom
@@ -397,7 +419,7 @@ impl FrameMap {
         self.search_query = None;
         self.command_line = None;
         self.scrollbar = None;
-        self.side_handle = None;
+        self.side_handles.clear();
         self.click_targets.clear();
         self.toasts.clear();
     }
@@ -448,7 +470,24 @@ impl FrameMap {
         self.click_target_at(x, y)
             .map(|target| target.area)
             .or_else(|| self.scrollbar?.part_at(x, y))
-            .or_else(|| self.side_handle?.at(x, y))
+            .or_else(|| self.side_handle_at(x, y).map(|handle| handle.area))
+    }
+
+    /// The side panel border under a cell
+    pub fn side_handle_at(&self, x: u16, y: u16) -> Option<SideHandle> {
+        let at = ratatui::layout::Position::new(x, y);
+        self.side_handles
+            .iter()
+            .find(|handle| handle.area.contains(at))
+            .copied()
+    }
+
+    /// The side panel's border, as drawn
+    pub fn side_handle(&self, panel: SidePanel) -> Option<SideHandle> {
+        self.side_handles
+            .iter()
+            .find(|handle| handle.panel == panel)
+            .copied()
     }
 
     /// The TX input column (counted from the text's start, scroll included) under a cell

@@ -296,8 +296,8 @@ commands with arguments (`send`, `open`, `baud`, `replay`...).
 | `toggle-triggers` | Arm / disarm the triggers | — |
 | `triggers` | Open the triggers | `Ctrl-a T` |
 | `plot-freeze` | Freeze / unfreeze the plot, its data still collected | `Ctrl-a G` |
-| `plot-next` | Show the next plot of plots.toml, off after the last | — |
-| `plot-prev` | Show the previous plot of plots.toml, off before the first | — |
+| `plot-next` | Show the next plot of plots.toml, the first after the last | — |
+| `plot-prev` | Show the previous plot of plots.toml, the last before the first | — |
 | `dismiss-notification` | Close the top notification | `Ctrl-a n` |
 | `dismiss-notifications` | Close all the notifications | `Ctrl-a N` |
 | `marks` | Open the marks: a letter jumps to its mark | `Ctrl-a '` |

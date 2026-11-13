@@ -21,7 +21,7 @@ use ratatui::{
 use crate::{
     app::{
         App,
-        types::{ClickAction, ClickTarget, FrameAreas, SideHandle, ViewportSize},
+        types::{ClickAction, ClickTarget, FrameAreas, SideHandle, SidePanel, ViewportSize},
     },
     configs::{KeyBindingAction, KeywordHighlight, Mode, ThemeConfig},
     overlays::{Overlay, PopupTarget},
@@ -89,12 +89,27 @@ pub fn render(
     app.set_frame_areas(FrameAreas {
         content: layout.content_area,
         raw_side: layout.raw_side_area,
+        plot: layout.plot_area,
     });
     app.frame_map_mut().clear();
-    let side_area = layout.raw_side_area.or(layout.plot_area);
-    if let (Some(panel), Some(split)) = (side_area, layout.raw_split_area) {
-        let orientation = app.settings().raw_side.orientation;
-        app.frame_map_mut().side_handle = Some(SideHandle::new(panel, split, orientation));
+    let settings = app.settings();
+    let sides = [
+        (
+            SidePanel::Raw,
+            layout.raw_side_area.zip(layout.raw_split_area),
+            settings.raw_side.orientation,
+        ),
+        (
+            SidePanel::Plot,
+            layout.plot_area.zip(layout.plot_split_area),
+            settings.plot_side.orientation,
+        ),
+    ];
+    for (side, areas, orientation) in sides {
+        if let Some((panel, split)) = areas {
+            let handle = SideHandle::new(side, panel, split, orientation);
+            app.frame_map_mut().side_handles.push(handle);
+        }
     }
     app.update_viewport(ViewportSize::new(
         layout.content_area.width,
@@ -191,6 +206,24 @@ pub fn render(
     if let Some(plot_area) = layout.plot_area {
         let targets = render_plot_panel(app, frame, plot_area, theme);
         app.frame_map_mut().click_targets.extend(targets);
+        if let Some(raw_area) = layout.raw_side_area {
+            join_side_borders(frame.buffer_mut(), raw_area, plot_area);
+        }
+    }
+
+    // the side panels' borders meet the app's (MAX-230)
+    if app.show_borders() {
+        let settings = app.settings();
+        let panels = [
+            (layout.raw_side_area, settings.raw_side.orientation),
+            (layout.plot_area, settings.plot_side.orientation),
+        ];
+        for (area, orientation) in panels {
+            if let Some(area) = area {
+                let (outer, scrollbar) = (layout.monitor_outer, layout.scrollbar_area);
+                join_panel_to_frame(frame.buffer_mut(), outer, area, orientation, scrollbar);
+            }
+        }
     }
 
     if let Some(prompt_rect) = layout.prompt_area {
@@ -235,7 +268,7 @@ pub fn render(
             map.click_target_at(x, y)
                 .and_then(|target| Some((target.area, target.hover?)))
                 .or_else(|| Some((map.scrollbar?.part_at(x, y)?, *theme.ui.hover)))
-                .or_else(|| Some((map.side_handle?.at(x, y)?, *theme.ui.hover)))
+                .or_else(|| Some((map.side_handle_at(x, y)?.area, *theme.ui.hover)))
         };
         if let Some((area, style)) = hovered {
             frame.buffer_mut().set_style(area, style);
@@ -332,6 +365,63 @@ fn render_active_overlay(
     map.popup = Some(area);
     map.popup_targets = targets;
     map.command_line = command_line_prompt;
+}
+
+/// A side panel's border meets the app's where it reaches it: `├` `┤` at the ends of a
+/// bottom panel's, `┬` `┴` of a right panel's (MAX-230). A title, a button or the scrollbar
+/// over that cell is left alone.
+fn join_panel_to_frame(
+    buf: &mut ratatui::buffer::Buffer,
+    outer: Rect,
+    panel: Rect,
+    orientation: crate::configs::settings::RawSideOrientation,
+    scrollbar: Option<Rect>,
+) {
+    use crate::configs::settings::RawSideOrientation;
+    let (right, bottom) = (
+        outer.right().saturating_sub(1),
+        outer.bottom().saturating_sub(1),
+    );
+    let joints = match orientation {
+        RawSideOrientation::Bottom => [
+            (panel.x == outer.x + 1, (outer.x, panel.y), "│", "├"),
+            (panel.right() == right, (right, panel.y), "│", "┤"),
+        ],
+        RawSideOrientation::Right => [
+            (panel.y == outer.y + 1, (panel.x, outer.y), "─", "┬"),
+            (panel.bottom() == bottom, (panel.x, bottom), "─", "┴"),
+        ],
+    };
+    let on_scrollbar =
+        |(x, y)| scrollbar.is_some_and(|bar| bar.contains(ratatui::layout::Position::new(x, y)));
+    for (reaches, at, line, joint) in joints {
+        if !reaches || on_scrollbar(at) {
+            continue;
+        }
+        if let Some(cell) = buf.cell_mut(at)
+            && cell.symbol() == line
+        {
+            cell.set_symbol(joint);
+        }
+    }
+}
+
+/// The raw panel's border ends on the plot's separator: `┴` where a right raw panel's meets a
+/// bottom plot's, `┤` where a bottom raw panel's meets a right plot's (MAX-230). A title over
+/// that cell is left alone.
+fn join_side_borders(buf: &mut ratatui::buffer::Buffer, raw: Rect, plot: Rect) {
+    let (at, line, joint) = if plot.y == raw.bottom() {
+        ((raw.x, plot.y), "─", "┴")
+    } else if plot.x == raw.right() {
+        ((plot.x, raw.y), "│", "┤")
+    } else {
+        return;
+    };
+    if let Some(cell) = buf.cell_mut(at)
+        && cell.symbol() == line
+    {
+        cell.set_symbol(joint);
+    }
 }
 
 #[cfg(test)]

@@ -377,6 +377,15 @@ See [Raw side panel](raw-side-panel.md#size-and-position).
 | `orientation` | `"right"` | `right` or `bottom` |
 | `split_percent` | `40` | 10 to 85 |
 
+### `[plot_side]`
+
+Where a plot shows. See [Plots](plots.md#size-and-position).
+
+| Setting | Default | |
+| --- | --- | --- |
+| `orientation` | `"bottom"` | `bottom` or `right` |
+| `split_percent` | `35` | 10 to 85 |
+
 ### `[command_line]`
 
 See [Command line](command-line.md#look).

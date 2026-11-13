@@ -5,7 +5,8 @@ they are the bytes as they came off the wire, so it reveals what the
 decoding and the colors hide: a stray `\r`, a `0x00`, a framing problem. In
 terminal mode it shows less, see [In terminal mode](#in-terminal-mode).
 
-A [plot](plots.md) takes the panel's place while one is shown.
+A [plot](plots.md) shows at the bottom, under this panel; set to the same side,
+it takes the panel's place while one is shown.
 
 ![Line mode with the raw side panel in hex: each line next to its bytes](images/raw-side-panel.png)
 
@@ -20,7 +21,8 @@ A [plot](plots.md) takes the panel's place while one is shown.
 | `octal` | Octal |
 | `binary` | Bits |
 
-`-H` at startup opens it in hex.
+`-H` at startup opens it in hex. A right click on the panel offers Close raw
+panel, which turns it off.
 
 ## Reading it
 
@@ -87,3 +89,5 @@ To resize it while maxicom runs:
 - the actions `side-grow` / `side-shrink` do it by 1 %, for a key you bind.
 
 The new size lasts until you quit; `config.toml` keeps its value.
+
+A [plot](plots.md#size-and-position) has its own place and size, `[plot_side]`.

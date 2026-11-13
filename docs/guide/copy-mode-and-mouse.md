@@ -120,6 +120,9 @@ Scrolled up or in copy mode, it also has Add mark, which marks the line
 clicked; and while there are marks, Marks…, which opens the marks popup. See
 [Marks](marks.md).
 
+On the [raw side panel](raw-side-panel.md) or a [plot](plots.md), it starts
+with Close raw panel or Close plot, which hides that panel.
+
 ### Right-click paste
 
 Over the place where you type, a right click pastes the last copy instead of

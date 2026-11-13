@@ -109,11 +109,12 @@ pub fn render_settings_popup(
                 SettingKey::TextEncoding,
                 row("X", "Rx Encoding", encoding_str),
             ),
+            // the side panels' rows together (MAX-230)
+            (SettingKey::Mouse, row("U", "Mouse", mouse_str)),
             (
                 SettingKey::DisplayRaw,
                 row("B", "Byte Inspect", raw_display_str),
             ),
-            (SettingKey::Mouse, row("U", "Mouse", mouse_str)),
             (SettingKey::Plot, row("V", "Plot", &plot_str)),
         ],
     );

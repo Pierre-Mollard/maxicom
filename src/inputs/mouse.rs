@@ -157,7 +157,8 @@ fn open_menu(event: MouseEvent, app: &App) -> Action {
     let add = (app.is_copy_mode_active() || !app.scroll_status().is_bottom())
         .then(|| (app.frame_map().text_position(at.0, at.1, false)).map(|pos| pos.line_idx));
     let menu = ActionMenu::new(at, app.settings().mode, app.link_kind(), recording)
-        .with_marks(add, !app.marks().is_empty());
+        .with_marks(add, !app.marks().is_empty())
+        .with_close(app.frame_areas().panel_at(at.0, at.1));
     Action::App(AppAction::OpenOverlay(Overlay::ActionMenu(menu)))
 }
 
@@ -242,6 +243,7 @@ fn handle_left_button(event: MouseEvent, app: &App) -> Action {
                 ClickAction::ToggleSide => Action::CopyMode(CopyModeAction::ToggleSide),
                 ClickAction::Search(action) => action.to_action(),
                 ClickAction::Copy(action) => action.to_action(),
+                ClickAction::ClosePlot => Action::App(AppAction::ShowPlot(None)),
             };
         }
         InputContext::Overlay | InputContext::Prefix => return Action::Ignore,
@@ -269,7 +271,7 @@ fn handle_left_button(event: MouseEvent, app: &App) -> Action {
         return scrollbar(ScrollbarAction::Press(y - bar.area.y));
     }
 
-    // the raw side panel's border, from a press on it to the release (MAX-189)
+    // a side panel's border, from a press on it to the release (MAX-189)
     let side_handle = |action| Action::App(AppAction::SideHandle(action));
     if app.is_side_handle_held() {
         match event.kind {
@@ -278,12 +280,8 @@ fn handle_left_button(event: MouseEvent, app: &App) -> Action {
             _ => {}
         }
     }
-    if is_press
-        && map
-            .side_handle
-            .is_some_and(|handle| handle.at(x, y).is_some())
-    {
-        return side_handle(SideHandleAction::Press);
+    if is_press && let Some(handle) = map.side_handle_at(x, y) {
+        return side_handle(SideHandleAction::Press(handle.panel));
     }
 
     match event.kind {

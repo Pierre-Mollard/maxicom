@@ -60,13 +60,18 @@ remove it, or turn the row off with `ui.transfer_row = false`.
   `{send_rate}` and `{send_eta}`.
 - [Plots](https://pierre-mollard.github.io/maxicom/plots.html): the numbers
   your device prints (`temp=23.4 hum=51`, the Arduino plotter's
-  `temp:23.4,hum:51` or bare columns) charted live in the raw side panel's
-  place, with a legend, autoscale and a time or sample window. The plots are
-  defined in the new `plots.toml`, which comes with four examples. `Ctrl-a g`
+  `temp:23.4,hum:51` or bare columns) charted live in a panel at the bottom
+  by default (`[plot_side]`), with the raw side panel if it's on, with a
+  legend, autoscale and a time or sample window. The plots are defined in
+  the new `plots.toml`, which comes with four examples. `Ctrl-a g`
   (`plot`) goes from one to the next, `Ctrl-a G` (`plot-freeze`) freezes the
   chart while the data goes on, and `--plot <name>` or `plot = "<name>"` in
   `config.toml` shows one at startup. The status bar shows `∿ <name>`
-  (`{plot}`), and the settings popup has a `V` row.
+  (`{plot}`), and the settings popup has a `V` row. The panel has its own
+  [place and size](https://pierre-mollard.github.io/maxicom/plots.html#size-and-position),
+  `[plot_side]`, and a `✕` and a right-click "Close plot" to hide it.
+- A right click on the raw side panel offers "Close raw panel", first in the
+  menu.
 - [Highlight groups](https://pierre-mollard.github.io/maxicom/highlights.html#the-file):
   a table with a `words` list gives all of them one style, as
   `[errors] words = ["ERROR", "FAIL"]`. `ignore_case` and `whole_word` set
@@ -127,11 +132,17 @@ remove it, or turn the row off with `ui.transfer_row = false`.
   errors, a message said again counts in its title (`×2`), the time starts
   when a notification first shows, and a `cancel` says `Cancelled: …` where a
   failure says `Stopped …: why`.
+- The settings popup lists Mouse before Byte Inspect, so the raw side
+  panel's row and the plot's sit together.
+- The raw side panel's border joins the window's border (`┬` `┴` on the
+  right, `├` at the bottom).
 
 ### Fixed
 
 - In terminal mode, the raw side panel can be panned during a search: it no
   longer comes back to the match on every frame.
+- Without borders, the history's scrollbar is in the history's last column:
+  it no longer covers the raw side panel's.
 - Leaving copy mode gives back the pan you had when you entered it, instead
   of leaving the view panned where the cursor took it.
 - The pan arrows of the history's bottom border no longer draw over the

@@ -4,10 +4,11 @@ A plot charts the numbers your device prints, live, next to the text. If
 your firmware prints `temp=23.4 hum=51` every second, a plot draws `temp`
 and `hum` as two lines, with their last, lowest and highest values.
 
-![A heater's PID loop: the log on the left, the setpoint, the temperature and the heater output charted on the right](images/plots.png)
+![A heater's PID loop: the log on top, the setpoint, the temperature and the heater output charted under it](images/plots.png)
 
-The plot takes the [raw side panel](raw-side-panel.md)'s place: the side
-shows the bytes or a plot, not both. It only reads what comes in. It never
+The plot shows in a panel of its own, at the bottom by default, so it can
+sit with the [raw side panel](raw-side-panel.md) on the right. It only reads
+what comes in. It never
 sends anything, and it doesn't change the history, the recordings or the
 session backups.
 
@@ -20,12 +21,14 @@ has four, described in [The default plots](#the-default-plots).
 | --- | --- |
 | `Ctrl-a g`, `plot` | Shows the next plot, in the file's order; off after the last |
 | `plot <name>` | Shows that plot. The names complete. |
-| `plot off` | Hides the plot, the raw side panel comes back |
-| `plot-next` / `plot-prev` | The next / previous plot; off past the ends (no key by default) |
+| `plot off` | Hides the plot |
+| `plot-next` / `plot-prev` | The next / previous plot, from the last back to the first; never off (no key by default) |
 | `V` in the settings popup | The next plot, as `Ctrl-a g` |
 
-A click on the `◀` or `▶` around the plot's name, at the top of the panel,
-shows the previous or next plot.
+The plot's name is on the panel's first row, under the line that separates
+it from the rest. A click on the `◀` or `▶` around it shows the previous or
+next plot, and a click on the `✕` at the row's right end closes the plot, as
+Close plot does in the [right-click menu](copy-mode-and-mouse.md#right-click-menu).
 
 To start with a plot shown, give its name:
 
@@ -118,16 +121,27 @@ the second column only.
 | A duration: `"30s"`, `"2m"` | Time. The chart shows the last 30 s, each point at the time its line arrived. |
 | A number: `500` | Samples. The chart shows the last 500 lines that gave a number, as the Arduino plotter does. |
 
-The axis is labelled from `-30s` (or `-500`) to `now`. A window not full yet
+The axis is labelled from `-30s` (or `-500 samples`) to `now`, with the
+window's middle (`-15s`) when the panel is wide enough. A window not full yet
 fills from the right.
 
 In a replay, the time is the time the replay plays the line at.
 
 ## The Y axis
 
-Without `min` and `max`, the Y axis fits the values shown. With both, it is
-fixed. With only one, that side is fixed and the other fits the values. A
-flat line gets a little room around it.
+Without `min` and `max`, the Y axis fits the values shown, with a little
+room past them so the curves don't run along the edges; it doesn't go past 0
+when the values stay on one side of it. With both, it is fixed. With only
+one, that side is fixed and the other fits the values. A flat line gets a
+little room around it.
+
+The labels are round values (`0`, `25`, `50`…), more of them on a taller
+panel.
+
+All the series share one Y axis. Series of very different scales squash
+each other: a temperature between 20 and 25 next to a load from 0 to 100
+looks flat. Give the plot a `min` and `max` that suit the series you watch
+most, or split them into two plots, each with its own `keys`.
 
 ## The chart
 
@@ -135,18 +149,18 @@ Each series is a line in braille dots, in its color: its own from `colors`,
 else the next one of the theme's link colors. The [colors](theme.md#colors)
 are written as in the theme.
 
-The legend, in the top left corner, shows each series with its last value
-shown, its lowest `↓` and its highest `↑`. It hides when the panel is too
-small for it.
+The legend, in the top left corner, shows each series in its color with its
+last value shown, its lowest `↓` and its highest `↑`, a line each. The curves
+stay visible around it. It hides when the panel is too small for it.
 
 Before a number comes in, the panel says which format it waits for.
 
 ## Freezing the chart
 
 `Ctrl-a G` (`plot-freeze`) freezes the chart, to read it while the data
-goes on. `frozen` shows after the plot's name. The plot still collects what
-comes in: `Ctrl-a G` again jumps back to now, with everything received in
-between.
+goes on. `frozen` shows after the plot's name and its buttons. The plot
+still collects what comes in: `Ctrl-a G` again jumps back to now, with
+everything received in between.
 
 ## When the plot starts over
 
@@ -162,12 +176,28 @@ What it reads:
 
 ## Size and position
 
-The plot uses the raw side panel's `split_percent` and `orientation`, its
-border drag and its resize keys. See
-[Size and position](raw-side-panel.md#size-and-position).
+The plot has its own place, apart from the raw side panel's: a chart reads
+along its time axis, so it sits at the bottom, across the whole width. With
+the raw side panel on the right, both show: the bytes beside the text, the
+plot under both. Set to the same side, the plot takes the raw side panel's
+place while it's shown.
+
+| Setting in `[plot_side]` | Default | Does |
+| --- | --- | --- |
+| `orientation` | `"bottom"` | Where it sits: `bottom` or `right` |
+| `split_percent` | `35` | The share of the room it takes, 10 to 85 |
+
+Drag the plot's border to resize it, as the raw side panel's. While a plot is
+shown, the resize keys of
+[Size and position](raw-side-panel.md#size-and-position) resize the plot,
+and the raw side panel keeps its size.
+
+The history's scrollbar stays beside the history: above a plot at the
+bottom, and in the history's last column next to a plot on the right.
 
 The panel needs 50 columns on the right, or 12 rows at the bottom. When the
-room is short, a notice says so and the panel is hidden.
+room is short, a notice says so and the panel is hidden. With both shown, the
+raw side panel goes first.
 
 ## In the status bar
 

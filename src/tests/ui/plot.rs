@@ -80,3 +80,102 @@ fn waiting_hints() {
         "Waiting for key:value or bare numbers in lines with 'PID'"
     );
 }
+
+/// MAX-230: about one Y label every 4 rows, 3 to 5 of them, 2 on a very short chart.
+#[test]
+fn y_label_counts() {
+    let counts: Vec<usize> = [0, 3, 4, 8, 11, 12, 15, 16, 40]
+        .into_iter()
+        .map(y_label_count)
+        .collect();
+    assert_eq!(counts, [2, 2, 3, 3, 3, 4, 4, 5, 5]);
+}
+
+/// MAX-230: the Y labels sit on round values inside the axis' bounds, at most as many as
+/// asked: bounds already on a step are labels, below 1 and negative values too, and a flat
+/// or broken range gives its two ends.
+#[test]
+fn y_tick_values() {
+    let cases: [([f64; 2], usize, &[f64]); 8] = [
+        ([0.0, 52.5], 3, &[0.0, 20.0, 40.0]),
+        ([0.0, 52.5], 5, &[0.0, 20.0, 40.0]),
+        ([0.0, 1.0], 3, &[0.0, 0.5, 1.0]),
+        ([0.0, 100.0], 5, &[0.0, 25.0, 50.0, 75.0, 100.0]),
+        ([14.45, 25.55], 3, &[15.0, 20.0, 25.0]),
+        ([-11.0, 11.0], 3, &[-10.0, 0.0, 10.0]),
+        ([0.0, 0.042], 4, &[0.0, 0.02, 0.04]),
+        ([1012.97, 1013.63], 4, &[1013.0, 1013.2, 1013.4, 1013.6]),
+    ];
+    for (bounds, count, want) in cases {
+        let got = y_ticks(bounds, count);
+        assert!(got.len() <= count, "{bounds:?} {count}: {got:?}");
+        let close =
+            got.len() == want.len() && got.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-9);
+        assert!(close, "{bounds:?} {count}: {got:?}, not {want:?}");
+    }
+    assert_eq!(y_ticks([5.0, 5.0], 3), [5.0, 5.0]);
+}
+
+/// MAX-230: a value's row: the low bound on the graph's bottom row, the high one on its
+/// top row, in between rounded to the nearest row, past the bounds kept on the graph.
+#[test]
+fn value_rows() {
+    let graph = Rect::new(4, 10, 20, 9);
+    let rows: Vec<u16> = [0.0, 50.0, 100.0, 12.5, 26.0, -5.0, 120.0]
+        .into_iter()
+        .map(|value| value_row(value, [0.0, 100.0], graph))
+        .collect();
+    assert_eq!(rows, [18, 14, 10, 17, 16, 18, 10]);
+}
+
+/// MAX-230: the compact legend in the top left corner of the curves' room: a blank row as
+/// wide as the first entry, then a row per entry, each a blank column, the entry and a
+/// space wide; none when it doesn't fit (the widest row, or a row per entry and the blank
+/// one), or with no series.
+#[test]
+fn legend_rows_layout() {
+    let graph = Rect::new(5, 3, 20, 5);
+    let entries = |names: &[&str]| -> Vec<(String, Color)> {
+        names
+            .iter()
+            .map(|name| (name.to_string(), Color::Red))
+            .collect()
+    };
+    assert_eq!(
+        legend_rows(graph, &entries(&["temp 20", "hum 51 ↓40"])),
+        Some(vec![
+            Rect::new(5, 3, 9, 1),
+            Rect::new(5, 4, 9, 1),
+            Rect::new(5, 5, 12, 1),
+        ])
+    );
+    assert!(legend_rows(graph, &entries(&["x".repeat(18).as_str()])).is_some());
+    assert!(legend_rows(graph, &entries(&["x".repeat(19).as_str()])).is_none());
+    assert!(legend_rows(graph, &entries(&["a", "b", "c", "d"])).is_some());
+    assert!(legend_rows(graph, &entries(&["a", "b", "c", "d", "e"])).is_none());
+    assert_eq!(legend_rows(graph, &[]), None);
+}
+
+/// MAX-230: the X labels: the window, `samples` after a count when it fits in its share of
+/// the width, the window's middle from 40 columns on, then `now`.
+#[test]
+fn x_label_sets() {
+    use std::time::Duration;
+    let time = PlotWindow::Time(Duration::from_secs(30));
+    let samples = PlotWindow::Samples(500);
+    let cases: [(PlotWindow, u16, &[&str]); 6] = [
+        (time, 90, &["-30s", "-15s", "now"]),
+        (time, 39, &["-30s", "now"]),
+        (
+            PlotWindow::Time(Duration::from_secs(300)),
+            60,
+            &["-5m", "-2m 30s", "now"],
+        ),
+        (samples, 90, &["-500 samples", "-250", "now"]),
+        (samples, 30, &["-500 samples", "now"]),
+        (samples, 20, &["-500", "now"]),
+    ];
+    for (window, width, want) in cases {
+        assert_eq!(x_labels(window, width), want, "{window:?} {width}");
+    }
+}

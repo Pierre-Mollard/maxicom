@@ -207,10 +207,15 @@ fn raw_panel_and_hex_view_show_received_bytes() {
     );
 }
 
-/// A harness showing the plot `key-value` with the raw view in Hex, fed `rx` live
+/// A harness showing the plot `key-value` with the raw view in Hex, fed `rx` live, the plot
+/// on the right at 40 %, the raw panel's place the MAX-222 tests were written for
 fn plot_harness(w: u16, h: u16, rx: &[u8]) -> Harness {
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, w, h);
     h.app.settings_mut().raw_side.view = RawSideView::Hex;
+    h.app.settings_mut().plot_side = crate::configs::settings::PlotSideConfig {
+        orientation: crate::configs::settings::RawSideOrientation::Right,
+        split_percent: 40,
+    };
     h.app.set_plots(crate::configs::PlotsConfig::default());
     h.app.show_plot(Some("key-value"));
     h.app.feed_rx(rx);
@@ -240,12 +245,12 @@ fn plot_in_the_side_panel() {
     assert!(rows.iter().any(|row| row.chars().any(braille)), "{screen}");
     assert!(!screen.contains("74 65 6D"), "{screen}");
     assert_eq!(h.app.frame_areas().raw_side, None);
-    assert!(h.app.frame_map().side_handle.is_some());
+    assert!(h.app.frame_map().side_handle(SidePanel::Plot).is_some());
 
     h.app.settings_mut().raw_side.view = RawSideView::Off;
     let screen = h.draw().join("\n");
     assert!(screen.contains("temp 25 ↓20 ↑25"), "{screen}");
-    assert!(h.app.frame_map().side_handle.is_some());
+    assert!(h.app.frame_map().side_handle(SidePanel::Plot).is_some());
 
     h.app.settings_mut().raw_side.view = RawSideView::Hex;
     h.app.show_plot(None);
@@ -256,9 +261,9 @@ fn plot_in_the_side_panel() {
 }
 
 /// MAX-222: a click on the title's `▶` shows the next plot, on its `◀` the previous one; a
-/// name too long for the panel is cut with `…`, the arrows kept.
-/// How: `key-value` shown, `▶`, `◀`, `◀` (off: the hex panel back); then a plot with a
-/// long name.
+/// name too long for the panel is cut with `…`, the buttons kept. MAX-230: `◀` on the first
+/// plot goes to the last, never off; `✕` closes the plot (the hex panel back).
+/// How: `key-value` shown, `▶`, `◀`, `◀`, `✕`; then a plot with a long name.
 #[test]
 fn plot_title_arrows_and_long_names() {
     let mut h = plot_harness(80, 16, b"");
@@ -266,12 +271,18 @@ fn plot_title_arrows_and_long_names() {
     click(&mut h, cell_of(&rows, "▶"));
     assert_eq!(h.app.plot().map(|p| p.name.as_str()), Some("arduino"));
     let rows = h.draw();
-    assert!(has(&rows, "◀ arduino ▶"), "{rows:#?}");
+    assert!(has(&rows, "  ◀ arduino ▶ "), "{rows:#?}");
     click(&mut h, cell_of(&rows, "◀"));
     assert_eq!(h.app.plot().map(|p| p.name.as_str()), Some("key-value"));
     let rows = h.draw();
     click(&mut h, cell_of(&rows, "◀"));
+    assert_eq!(h.app.plot().map(|p| p.name.as_str()), Some("tagged"));
+    let rows = h.draw();
+    click(&mut h, cell_of(&rows, "✕"));
     assert!(h.app.plot().is_none());
+    h.app.notifications.dismiss_all();
+    let rows = h.draw();
+    assert!(!has(&rows, "✕"), "{rows:#?}");
 
     let long = "a-plot-with-a-name-far-too-long-for-the-side-panel";
     let mut plots = crate::configs::PlotsConfig::default();
@@ -281,38 +292,58 @@ fn plot_title_arrows_and_long_names() {
     h.app.notifications.dismiss_all();
     let rows = h.draw();
     let title = rows.iter().find(|row| row.contains('◀')).unwrap();
-    assert!(title.contains("◀ a-plot-with-a-name-far-t… ▶"), "{title}");
+    assert!(
+        title.ends_with("  ◀ a-plot-with-a-name-fa… ▶ ✕ "),
+        "{title}"
+    );
     click(&mut h, cell_of(&rows, "▶"));
     assert_eq!(h.app.plot().map(|p| p.name.as_str()), Some("arduino"));
 }
 
-/// MAX-222: frozen, the panel's title says so after the plot's name.
+/// MAX-222: frozen, the panel's title says so after the plot's name and its buttons.
 #[test]
 fn plot_frozen_title() {
     let mut h = plot_harness(80, 16, b"temp=20\n");
     h.app.toggle_plot_freeze();
     h.app.notifications.dismiss_all();
     let screen = h.draw().join("\n");
-    assert!(screen.contains(" ◀ key-value ▶ frozen "), "{screen}");
+    assert!(screen.contains("│  ◀ key-value ▶ frozen "), "{screen}");
     assert!(screen.contains("temp 20 "), "{screen}");
 }
 
-/// MAX-222: before a number comes in, the panel says the format it waits for; at the
-/// bottom, its title is in the panel's top border.
+/// MAX-222: before a number comes in, the panel says the format it waits for. MAX-230: at
+/// the bottom, the panel's top border is a plain separator and the title is on the row
+/// under it; the hint is in the middle of the curves' room, between the Y axis and the
+/// right edge, the title row and the X axis.
 #[test]
 fn plot_waiting_at_the_bottom() {
     let mut h = plot_harness(60, 30, b"boot\n");
-    h.app.settings_mut().raw_side.orientation =
+    h.app.settings_mut().plot_side.orientation =
         crate::configs::settings::RawSideOrientation::Bottom;
     let rows = h.draw();
+    let at = |text: &str| rows.iter().position(|row| row.contains(text)).unwrap();
+    let title = at("  ◀ key-value ▶ ");
+    assert!(rows[title].ends_with("✕ "), "{rows:#?}");
     assert!(
-        rows.iter().any(|row| row.starts_with(" ◀ key-value ▶ ──")),
+        rows[title - 1].chars().all(|c| c == '─' || c == '┴'),
         "{rows:#?}"
     );
-    assert!(
-        rows.iter().any(|row| row.contains("Waiting for key=value")),
-        "{rows:#?}"
-    );
+    // the curves' room: right of the Y axis' `│` to the X axis' end, above its `└`
+    let axis = at("└");
+    let left = rows[axis].chars().position(|c| c == '└').unwrap() + 1;
+    let right = rows[axis]
+        .chars()
+        .collect::<Vec<_>>()
+        .iter()
+        .rposition(|c| *c == '─')
+        .unwrap()
+        + 1;
+    let (top, bottom) = (title + 1, axis);
+    let hint = at("Waiting for key=value");
+    let start = rows[hint].chars().position(|c| c == 'W').unwrap();
+    let end = start + "Waiting for key=value".len();
+    assert_eq!(hint, top + (bottom - top) / 2, "{rows:#?}");
+    assert!((start + end).abs_diff(left + right) <= 1, "{rows:#?}");
 }
 
 /// MAX-222: a side too small for the panel warns as for the raw panel, and the plot isn't
@@ -337,6 +368,639 @@ fn plot_side_too_small() {
         "{effect:?}"
     );
     assert!(!h.draw().join("\n").contains("key-value"));
+}
+
+/// MAX-230 step 0: where the raw side panel and the scrollbar sit, locked before the plot
+/// gets its own placement: right and bottom, borders on and off, in line and terminal mode.
+/// The raw panel must stay there whatever the plot does.
+/// How: a 100x30 screen, the raw view in Hex at the default 40 % split, no plot; the
+/// layout's rects compared whole.
+#[test]
+fn raw_side_layout_locked() {
+    use crate::configs::settings::RawSideOrientation::{self, Bottom, Right};
+    use ratatui::layout::Rect;
+    let r = Rect::new;
+    // content, scrollbar, raw side, split
+    type Rects = (Rect, Option<Rect>, Option<Rect>, Option<Rect>);
+    let layout = |mode: Mode, orientation: RawSideOrientation, borders: bool| -> Rects {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 100, 30, |s| {
+            s.mode = mode;
+            s.raw_side.view = RawSideView::Hex;
+            s.raw_side.orientation = orientation;
+            s.ui.show_borders = borders;
+        });
+        let l = ScreenLayout::compute(r(0, 0, 100, 30), &h.app);
+        assert_eq!(l.plot_area, None);
+        // the drawn frame agrees with the computed one
+        h.draw();
+        assert_eq!(h.app.frame_areas().raw_side, l.raw_side_area);
+        (
+            l.content_area,
+            l.scrollbar_area,
+            l.raw_side_area,
+            l.raw_split_area,
+        )
+    };
+
+    // borders on: the scrollbar in the app's right border, along the whole split
+    for (mode, orientation, want) in [
+        (
+            Mode::Line,
+            Right,
+            (
+                r(1, 1, 59, 25),
+                Some(r(99, 1, 1, 25)),
+                Some(r(60, 1, 39, 25)),
+            ),
+        ),
+        (
+            Mode::Line,
+            Bottom,
+            (
+                r(1, 1, 98, 15),
+                Some(r(99, 1, 1, 25)),
+                Some(r(1, 16, 98, 10)),
+            ),
+        ),
+        (
+            Mode::Terminal,
+            Right,
+            (
+                r(1, 1, 59, 28),
+                Some(r(99, 1, 1, 28)),
+                Some(r(60, 1, 39, 28)),
+            ),
+        ),
+        (
+            Mode::Terminal,
+            Bottom,
+            (
+                r(1, 1, 98, 17),
+                Some(r(99, 1, 1, 28)),
+                Some(r(1, 18, 98, 11)),
+            ),
+        ),
+    ] {
+        let (content, scrollbar, side) = want;
+        let split = Some(r(1, 1, 98, scrollbar.unwrap().height));
+        assert_eq!(
+            layout(mode, orientation, true),
+            (content, scrollbar, side, split),
+            "{mode:?} {orientation:?}"
+        );
+    }
+
+    // borders off: the scrollbar in the history's last column, along the history's rows,
+    // never over the raw panel (MAX-230 step 4)
+    for (mode, orientation, want) in [
+        (
+            Mode::Line,
+            Right,
+            (
+                r(0, 0, 59, 28),
+                Some(r(59, 0, 1, 28)),
+                Some(r(60, 0, 40, 28)),
+            ),
+        ),
+        (
+            Mode::Line,
+            Bottom,
+            (
+                r(0, 0, 99, 17),
+                Some(r(99, 0, 1, 17)),
+                Some(r(0, 17, 100, 11)),
+            ),
+        ),
+        (
+            Mode::Terminal,
+            Right,
+            (
+                r(0, 0, 59, 29),
+                Some(r(59, 0, 1, 29)),
+                Some(r(60, 0, 40, 29)),
+            ),
+        ),
+        (
+            Mode::Terminal,
+            Bottom,
+            (
+                r(0, 0, 99, 17),
+                Some(r(99, 0, 1, 17)),
+                Some(r(0, 17, 100, 12)),
+            ),
+        ),
+    ] {
+        let (content, scrollbar, side) = want;
+        let rows = if mode == Mode::Line { 28 } else { 29 };
+        let split = Some(r(0, 0, 100, rows));
+        assert_eq!(
+            layout(mode, orientation, false),
+            (content, scrollbar, side, split),
+            "{mode:?} {orientation:?}"
+        );
+    }
+}
+
+/// MAX-230: a plot sits in its own place, `[plot_side]` (at the bottom on 35 % by default),
+/// whatever `[raw_side]` says; the drag handle follows it and a drag sets the plot's split
+/// only. With the plot off, the raw panel is back in its place. A bottom plot too short
+/// warns with the bottom's 12 rows.
+/// How: 100x30 line mode, the raw view off and `[raw_side]` on the right at 40 %; the
+/// default plot place, then the plot on the right at 30 %, a drag, the plot off with the
+/// raw view in Hex, a short screen.
+#[test]
+fn plot_in_its_own_place() {
+    use crate::configs::settings::RawSideOrientation::{Bottom, Right};
+    use ratatui::layout::Rect;
+    let r = Rect::new;
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 30);
+    h.app.set_plots(crate::configs::PlotsConfig::default());
+    h.app.show_plot(Some("key-value"));
+    h.app.notifications.dismiss_all();
+    let areas = |h: &mut Harness| {
+        let l = ScreenLayout::compute(r(0, 0, 100, 30), &h.app);
+        h.draw();
+        (l.content_area, l.plot_area, l.raw_side_area)
+    };
+
+    // the bottom, the whole width, 35 % of the 28 rows
+    assert_eq!(
+        areas(&mut h),
+        (r(0, 0, 99, 18), Some(r(0, 18, 100, 10)), None)
+    );
+    let handle = h.app.frame_map().side_handle(SidePanel::Plot).unwrap();
+    assert_eq!(
+        (handle.orientation, handle.area),
+        (Bottom, r(0, 18, 100, 1))
+    );
+    let rows = h.draw();
+    assert!(rows[18].starts_with("────"), "{rows:#?}");
+    assert!(rows[19].starts_with("  ◀ key-value ▶ "), "{rows:#?}");
+    assert!(rows[19].ends_with("✕ "), "{rows:#?}");
+
+    h.app.settings_mut().plot_side.orientation = Right;
+    h.app.settings_mut().plot_side.split_percent = 30;
+    assert_eq!(
+        areas(&mut h),
+        (r(0, 0, 69, 28), Some(r(70, 0, 30, 28)), None)
+    );
+    let handle = h.app.frame_map().side_handle(SidePanel::Plot).unwrap();
+    assert_eq!((handle.orientation, handle.area.x), (Right, 70));
+
+    // a drag of the border to column 50 gives the plot half the room, the raw panel keeps 40
+    mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), (70, 5));
+    mouse_do(&mut h, MouseEventKind::Drag(MouseButton::Left), (50, 5));
+    mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), (50, 5));
+    let s = h.app.settings();
+    assert_eq!(
+        (s.plot_side.split_percent, s.raw_side.split_percent),
+        (50, 40)
+    );
+
+    h.app.show_plot(None);
+    h.app.settings_mut().raw_side.view = RawSideView::Hex;
+    assert_eq!(
+        areas(&mut h),
+        (r(0, 0, 59, 28), None, Some(r(60, 0, 40, 28)))
+    );
+
+    // too short for a bottom plot: 11 rows of view
+    h.app.show_plot(Some("key-value"));
+    h.app.settings_mut().raw_side.view = RawSideView::Off;
+    h.app.settings_mut().plot_side.orientation = Bottom;
+    let l = ScreenLayout::compute(r(0, 0, 100, 13), &h.app);
+    assert_eq!(l.plot_area, None);
+    assert!(
+        matches!(
+            l.warnings[..],
+            [LayoutWarning::SidePanelTooSmall {
+                panel: SidePanel::Plot,
+                required: 12,
+                actual: 11,
+                orientation: Bottom
+            }]
+        ),
+        "{:?}",
+        l.warnings
+    );
+}
+
+/// MAX-230: the raw panel and a plot show at once when in different places. With the
+/// defaults, the plot spans the whole width at the bottom and the raw panel sits beside the
+/// history above it, its border ending on the plot's separator with `┴`; swapped (raw at the
+/// bottom, plot on the right) the joint is `┤`. Each border drags its own panel. In the same
+/// place the plot has it. Too narrow for the raw panel, the plot stays and the notice names
+/// the raw panel.
+/// How: 100x30 line mode, the raw view in Hex, the `key-value` plot fed two lines; the
+/// defaults, two drags, the swap, both on the right, a 45-column screen.
+#[test]
+fn raw_and_plot_both_shown() {
+    use crate::configs::settings::RawSideOrientation::{Bottom, Right};
+    use ratatui::layout::Rect;
+    let r = Rect::new;
+    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 100, 30, |s| {
+        s.raw_side.view = RawSideView::Hex;
+    });
+    h.app.set_plots(crate::configs::PlotsConfig::default());
+    h.app.show_plot(Some("key-value"));
+    h.app.feed_rx(b"temp=20\ntemp=25\n");
+    h.app.notifications.dismiss_all();
+    let areas = |h: &App| {
+        let l = ScreenLayout::compute(r(0, 0, 100, 30), h);
+        (l.content_area, l.raw_side_area, l.plot_area)
+    };
+
+    assert_eq!(
+        areas(&h.app),
+        (
+            r(0, 0, 59, 18),
+            Some(r(60, 0, 40, 18)),
+            Some(r(0, 18, 100, 10))
+        )
+    );
+    let rows = h.draw();
+    assert!(
+        rows[0].ends_with("│74 65 6D 70 3D 32 30 0A                "),
+        "{rows:#?}"
+    );
+    assert!(has(&rows, "temp 25 ↓20 ↑25"), "{rows:#?}");
+    assert_eq!(rows[17].chars().nth(60), Some('│'), "{rows:#?}");
+    assert_eq!(rows[18].chars().nth(60), Some('┴'), "{rows:#?}");
+    assert!(rows[19].starts_with("  ◀ key-value ▶ "), "{rows:#?}");
+    assert!(rows[19].ends_with("✕ "), "{rows:#?}");
+
+    // each border its own split: the raw one to column 50, the plot's to row 14
+    let map = h.app.frame_map();
+    let raw = map.side_handle(SidePanel::Raw).unwrap();
+    let plot = map.side_handle(SidePanel::Plot).unwrap();
+    assert_eq!((raw.area, plot.area), (r(60, 0, 1, 18), r(0, 18, 100, 1)));
+    for (from, to) in [((60, 5), (50, 5)), ((5, 18), (5, 14))] {
+        mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), from);
+        mouse_do(&mut h, MouseEventKind::Drag(MouseButton::Left), to);
+        mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), to);
+        h.draw();
+    }
+    let splits = |h: &Harness| {
+        let s = h.app.settings();
+        (s.raw_side.split_percent, s.plot_side.split_percent)
+    };
+    assert_eq!(splits(&h), (50, 50));
+
+    h.app.settings_mut().raw_side.split_percent = 40;
+    h.app.settings_mut().plot_side.split_percent = 35;
+    h.app.settings_mut().raw_side.orientation = Bottom;
+    h.app.settings_mut().plot_side.orientation = Right;
+    assert_eq!(
+        areas(&h.app),
+        (
+            r(0, 0, 64, 17),
+            Some(r(0, 17, 65, 11)),
+            Some(r(65, 0, 35, 28))
+        )
+    );
+    let rows = h.draw();
+    assert_eq!(rows[17].chars().nth(65), Some('┤'), "{rows:#?}");
+    assert!(rows[18].starts_with("74 65 6D 70 3D 32 30 0A"), "{rows:#?}");
+
+    // the same place: the plot has it
+    h.app.settings_mut().raw_side.orientation = Right;
+    assert_eq!(
+        areas(&h.app),
+        (r(0, 0, 64, 28), None, Some(r(65, 0, 35, 28)))
+    );
+
+    // too narrow for the raw panel (50 columns): the bottom plot stays
+    h.app.settings_mut().plot_side.orientation = Bottom;
+    let l = ScreenLayout::compute(r(0, 0, 45, 30), &h.app);
+    assert_eq!(
+        (l.raw_side_area, l.plot_area),
+        (None, Some(r(0, 18, 45, 10)))
+    );
+    assert!(
+        matches!(
+            l.warnings[..],
+            [LayoutWarning::SidePanelTooSmall {
+                panel: SidePanel::Raw,
+                required: 50,
+                actual: 45,
+                orientation: Right
+            }]
+        ),
+        "{:?}",
+        l.warnings
+    );
+}
+
+/// MAX-230: with a plot, the scrollbar runs beside the history and never along the plot, in
+/// line and terminal mode: borders on, in the app's right border above a bottom plot (the
+/// border along the plot plain, its separator joined with `├` `┤`), in the history's last
+/// column beside a right plot (the separator joined with `┬` `┴`); borders off, in the
+/// history's last column. It still scrolls the history at its new place.
+/// How: 60 lines on 100x30, the raw view off, the `key-value` plot at the bottom then on the
+/// right; borders on then off; `▲` and `▼` clicked.
+#[test]
+fn scrollbar_beside_the_history_with_a_plot() {
+    use crate::configs::settings::RawSideOrientation::{self, Bottom, Right};
+    use ratatui::layout::Rect;
+    let r = Rect::new;
+    // borders, the plot's place, then the scrollbar and the plot in line and terminal mode
+    type Case = (bool, RawSideOrientation, [(Rect, Rect); 2]);
+    let cases: [Case; 4] = [
+        (
+            true,
+            Bottom,
+            [
+                (r(99, 1, 1, 16), r(1, 17, 98, 9)),
+                (r(99, 1, 1, 18), r(1, 19, 98, 10)),
+            ],
+        ),
+        (
+            true,
+            Right,
+            [
+                (r(64, 1, 1, 25), r(65, 1, 34, 25)),
+                (r(64, 1, 1, 28), r(65, 1, 34, 28)),
+            ],
+        ),
+        (
+            false,
+            Bottom,
+            [
+                (r(99, 0, 1, 18), r(0, 18, 100, 10)),
+                (r(99, 0, 1, 19), r(0, 19, 100, 10)),
+            ],
+        ),
+        (
+            false,
+            Right,
+            [
+                (r(64, 0, 1, 28), r(65, 0, 35, 28)),
+                (r(64, 0, 1, 29), r(65, 0, 35, 29)),
+            ],
+        ),
+    ];
+    for (borders, orientation, want) in cases {
+        for (mode, (bar, plot)) in [Mode::Line, Mode::Terminal].into_iter().zip(want) {
+            let case = format!("{mode:?} borders {borders} {orientation:?}");
+            let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 100, 30, |s| {
+                s.mode = mode;
+                s.ui.show_borders = borders;
+                s.plot_side.orientation = orientation;
+            });
+            h.app.set_plots(crate::configs::PlotsConfig::default());
+            h.app.show_plot(Some("key-value"));
+            for i in 0..60 {
+                h.app.feed_rx(format!("line {i:02}\r\n").as_bytes());
+            }
+            h.app.notifications.dismiss_all();
+            let l = ScreenLayout::compute(r(0, 0, 100, 30), &h.app);
+            assert_eq!(
+                (l.scrollbar_area, l.plot_area),
+                (Some(bar), Some(plot)),
+                "{case}"
+            );
+            assert_eq!(bar.intersection(plot).area(), 0, "{case}");
+            if !borders || orientation == Right {
+                assert_eq!(bar.x, l.content_area.right(), "{case}");
+            }
+
+            let rows = h.draw();
+            assert_eq!(
+                h.app.frame_map().scrollbar.map(|b| b.area),
+                Some(bar),
+                "{case}"
+            );
+            let cell = |x: u16, y: u16| rows[y as usize].chars().nth(x as usize).unwrap();
+            if borders && orientation == Bottom {
+                assert_eq!(cell(99, plot.y + 3), '│', "{case}\n{rows:#?}");
+                let joints = (cell(0, plot.y), cell(99, plot.y));
+                assert_eq!(joints, ('├', '┤'), "{case}\n{rows:#?}");
+            }
+            if borders && orientation == Right {
+                assert_eq!(cell(plot.x, 0), '┬', "{case}\n{rows:#?}");
+            }
+
+            let offset = |h: &mut Harness| {
+                h.draw();
+                h.app.scroll_status().offset_from_bottom
+            };
+            click(&mut h, (bar.x, bar.y));
+            assert_eq!(offset(&mut h), 1, "{case} ▲");
+            click(&mut h, (bar.x, bar.bottom() - 1));
+            assert_eq!(offset(&mut h), 0, "{case} ▼");
+        }
+    }
+}
+
+/// MAX-230: the raw panel's border meets the app's as the plot's does, where it reaches it:
+/// on the right `┬` in the top border and `┴` in the bottom one, at the bottom `├` on the
+/// left; the scrollbar in the right border keeps its track. Above a bottom plot, a right raw
+/// panel's border ends on the plot's separator (`┴`), the app's bottom border left plain.
+/// How: 100x30, borders on, the raw view in Hex, line then terminal mode: on the right, at
+/// the bottom, then on the right with the plot at the bottom.
+#[test]
+fn raw_panel_joins_the_frame() {
+    use crate::configs::settings::RawSideOrientation::{Bottom, Right};
+    use ratatui::layout::Rect;
+    for mode in [Mode::Line, Mode::Terminal] {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 100, 30, |s| {
+            s.mode = mode;
+            s.ui.show_borders = true;
+            s.raw_side.view = RawSideView::Hex;
+        });
+        // the rows drawn, the raw panel and the app border's last row
+        let frame = |h: &mut Harness| {
+            let l = ScreenLayout::compute(Rect::new(0, 0, 100, 30), &h.app);
+            let bottom = l.monitor_outer.bottom() - 1;
+            (h.draw(), l.raw_side_area.unwrap(), bottom)
+        };
+        let at = |rows: &[String], x: u16, y: u16| rows[y as usize].chars().nth(x as usize);
+
+        let (rows, raw, bottom) = frame(&mut h);
+        assert_eq!(at(&rows, raw.x, 0), Some('┬'), "{mode:?}\n{rows:#?}");
+        // terminal mode's status bar is in that border
+        if mode == Mode::Line {
+            assert_eq!(at(&rows, raw.x, bottom), Some('┴'), "{mode:?}\n{rows:#?}");
+        }
+
+        h.app.settings_mut().raw_side.orientation = Bottom;
+        let (rows, raw, _) = frame(&mut h);
+        let ends = (at(&rows, 0, raw.y), at(&rows, 99, raw.y));
+        assert_eq!(ends, (Some('├'), Some('│')), "{mode:?}\n{rows:#?}");
+
+        h.app.settings_mut().raw_side.orientation = Right;
+        h.app.set_plots(crate::configs::PlotsConfig::default());
+        h.app.show_plot(Some("key-value"));
+        h.app.notifications.dismiss_all();
+        let (rows, raw, bottom) = frame(&mut h);
+        assert_eq!(at(&rows, raw.x, 0), Some('┬'), "{mode:?}\n{rows:#?}");
+        assert_eq!(
+            at(&rows, raw.x, raw.bottom()),
+            Some('┴'),
+            "{mode:?}\n{rows:#?}"
+        );
+        if mode == Mode::Line {
+            assert_eq!(at(&rows, raw.x, bottom), Some('─'), "{mode:?}\n{rows:#?}");
+        }
+    }
+}
+
+/// MAX-230: the chart keeps an empty column on each side, so the newest points and `now`
+/// don't touch the app's edge, and as much room right of the curves as the padding and the
+/// labels take left of the axis; the Y labels are round values right aligned against the axis,
+/// more of them on a taller chart, the autoscaled axis a bit past the values. The X labels
+/// start at the axis' corner, with the window's middle on a wide chart only.
+/// How: `temp` 15-25 and `load` 0-98 fed, borders on: the plot at the bottom of 100x30 (5
+/// chart rows: 0, 50, 100), then on the right of 120x30 (22 rows: every 25).
+#[test]
+fn plot_padding_and_y_labels() {
+    use crate::configs::settings::RawSideOrientation::{self, Bottom, Right};
+    use ratatui::layout::Rect;
+    let cases: [(RawSideOrientation, u16, &[&str]); 2] = [
+        (Bottom, 100, &["100", "50", "0"]),
+        (Right, 120, &["100", "75", "50", "25", "0"]),
+    ];
+    for (orientation, width, labels) in cases {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, width, 30, |s| {
+            s.ui.show_borders = true;
+            s.plot_side.orientation = orientation;
+        });
+        h.app.set_plots(crate::configs::PlotsConfig::default());
+        h.app.show_plot(Some("key-value"));
+        for i in 0..20 {
+            let line = format!("temp={} load={}\n", 15 + i % 11, (i * 7) % 100);
+            h.app.feed_rx(line.as_bytes());
+        }
+        h.app.notifications.dismiss_all();
+        let plot = ScreenLayout::compute(Rect::new(0, 0, width, 30), &h.app)
+            .plot_area
+            .unwrap();
+        let rows = h.draw();
+        let text = |y: u16, from: u16, to: u16| -> String {
+            let row = &rows[y as usize];
+            row.chars()
+                .skip(from as usize)
+                .take((to - from) as usize)
+                .collect()
+        };
+        // the chart's rows: under the separator (bottom) and the title row
+        let first = plot.y + if orientation == Bottom { 2 } else { 1 };
+        // the panel's inside (right of its border on the right): its first and last columns
+        // are the padding
+        let left = plot.x + u16::from(orientation == Right);
+        let right = plot.right() - 1;
+
+        // a blank column each side of the chart
+        for y in first..plot.bottom() {
+            assert_eq!(
+                text(y, right, right + 1),
+                " ",
+                "{orientation:?} row {y}\n{rows:#?}"
+            );
+            assert_eq!(
+                text(y, left, left + 1),
+                " ",
+                "{orientation:?} row {y}\n{rows:#?}"
+            );
+        }
+        let last = plot.bottom() - 1;
+        assert!(
+            text(last, left, right).trim_end().ends_with("now"),
+            "{rows:#?}"
+        );
+
+        // the labels, right aligned against the Y axis' column
+        let axis = left
+            + 1
+            + rows[(last - 1) as usize]
+                .chars()
+                .skip((left + 1) as usize)
+                .position(|c| c == '└')
+                .unwrap() as u16;
+        // the curves centered: from the X axis' end to the panel's edge as wide as from the
+        // panel's edge to the Y axis line, which reads as part of the chart
+        let x_axis: Vec<char> = rows[(last - 1) as usize].chars().collect();
+        let end = x_axis.iter().rposition(|c| *c == '─').unwrap() as u16;
+        assert_eq!(right - end, axis - left, "{orientation:?}\n{rows:#?}");
+
+        // the X labels: the window from the axis' corner on, its middle, now
+        let x_labels = text(last, axis, right);
+        assert!(x_labels.starts_with("-30s"), "{x_labels:?}\n{rows:#?}");
+        // the right panel is too narrow for the middle one
+        let middle = x_labels.contains(" -15s ");
+        assert_eq!(middle, orientation == Bottom, "{x_labels:?}\n{rows:#?}");
+
+        let found: Vec<String> = (first..last - 1)
+            .map(|y| text(y, left + 1, axis))
+            .filter(|label| !label.trim().is_empty())
+            .collect();
+        let trimmed: Vec<&str> = found.iter().map(|label| label.trim()).collect();
+        assert_eq!(trimmed, labels, "{orientation:?}\n{rows:#?}");
+        for label in &found {
+            assert!(
+                !label.ends_with(' '),
+                "{label:?} not right aligned\n{rows:#?}"
+            );
+        }
+    }
+}
+
+/// MAX-230: the compact legend: no box, a row per series in the top left corner of the
+/// curves, after a blank row and a blank column next to the Y axis; the cells under each
+/// row are cleared (no braille dot under or around the text, where ratatui's box left the
+/// curves), only as wide as that row, so the curves show on the right of each.
+/// How: the `arduino` plot (a 500 samples window) on 100x30, `temp` at 100 then 0 and `hum`
+/// at 50 then 100, so the oldest points run along the top left, under the legend.
+#[test]
+fn plot_compact_legend() {
+    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 100, 30, |s| {
+        s.ui.show_borders = true;
+    });
+    h.app.set_plots(crate::configs::PlotsConfig::default());
+    h.app.show_plot(Some("arduino"));
+    for i in 0..500 {
+        let temp = if i < 250 { 100 } else { 0 };
+        h.app
+            .feed_rx(format!("temp:{temp},hum:{}\n", 100 - temp / 2).as_bytes());
+    }
+    h.app.notifications.dismiss_all();
+    let rows = h.draw();
+    let braille = |c: char| ('\u{2801}'..='\u{28FF}').contains(&c);
+    let chars = |y: usize| rows[y].chars().collect::<Vec<_>>();
+
+    let temp = rows
+        .iter()
+        .position(|row| row.contains("temp 0 ↓0 ↑100"))
+        .unwrap();
+    let hum = temp + 1;
+    let line = chars(temp);
+    let text = line.iter().position(|c| *c == 't').unwrap();
+    // the Y axis, a blank column, the text
+    assert_eq!((line[text - 2], line[text - 1]), ('│', ' '), "{rows:#?}");
+    let entry =
+        |y: usize, width: usize| -> String { chars(y)[text..text + width].iter().collect() };
+    assert_eq!(entry(hum, 16), "hum 100 ↓50 ↑100", "{rows:#?}");
+
+    // the blank row over the first entry, then the entries: cleared under them and a
+    // space after them
+    for (y, width) in [(temp - 1, 14), (temp, 14), (hum, 16)] {
+        let cleared: String = chars(y)[text - 1..=text + width].iter().collect();
+        assert!(
+            !cleared.chars().any(braille),
+            "row {y}: {cleared:?}\n{rows:#?}"
+        );
+    }
+    assert_eq!(chars(temp - 1)[text - 2], '│', "{rows:#?}");
+    // the curves pass right of the rows: `temp` at 100 on the blank row and around the
+    // entries, `hum` at 50 next to `temp`'s shorter entry
+    assert!(
+        chars(temp - 1)[text + 15..].iter().copied().any(braille),
+        "{rows:#?}"
+    );
+    assert!(
+        chars(hum)[text + 17..].iter().copied().any(braille),
+        "{rows:#?}"
+    );
 }
 
 /// The rows `prefix_place` marks: a line, a wrapped row and the partial RX line (MAX-163).
@@ -1526,7 +2190,8 @@ fn settings_scroll_on_a_short_screen() {
 /// Newlines on the left, Line Mode and Terminal Mode on the right, Files under both; a
 /// click on a right-column row toggles its setting, `N` cycles what Enter sends. A
 /// narrower screen has one column, scrolled. Each value is padded to the longest one, so
-/// the popup keeps its width as they change (the mode, `Line` or `Terminal`).
+/// the popup keeps its width as they change (the mode, `Line` or `Terminal`). MAX-230: the
+/// raw panel's and the plot's rows sit together, after Mouse.
 /// How: the popup at 80x24, a click on Query Answers, `N` three times, `M`; then at 60x24.
 #[test]
 fn settings_in_two_columns() {
@@ -1542,7 +2207,7 @@ fn settings_in_two_columns() {
     for row in [
         "General                           Line Mode",
         "[M] Input Mode    : Line          [W] Line Wrap     : Word-Wrap",
-        "[U] Mouse         : ON            Terminal Mode",
+        "[B] Byte Inspect  : Off           Terminal Mode",
         "[V] Plot          : off           [S] Size Mode     : Grow Only",
         "                                  [A] Query Answers : ON",
         "Newlines",
@@ -1553,6 +2218,10 @@ fn settings_in_two_columns() {
         assert!(has(&rows, row), "{row}: {rows:#?}");
     }
     assert!(!has(&rows, "▼"), "{rows:#?}");
+    // Mouse, then the side panels' rows together (MAX-230)
+    let row_of = |text| rows.iter().position(|row| row.contains(text)).unwrap();
+    let order = [row_of("[U] Mouse"), row_of("[B] Byte"), row_of("[V] Plot")];
+    assert_eq!(order, [order[0], order[0] + 1, order[0] + 2], "{rows:#?}");
 
     let answers = h.app.settings().terminal_mode.answer_queries;
     click(&mut h, cell_of(&rows, "Query Answers"));
@@ -4859,7 +5528,7 @@ fn side_handle_drag_resizes_the_raw_panel() {
     let drag = |h: &mut Harness, at| {
         mouse_do(h, MouseEventKind::Drag(MouseButton::Left), at);
         h.draw();
-        h.app.frame_map().side_handle.unwrap().area
+        h.app.frame_map().side_handle(SidePanel::Raw).unwrap().area
     };
 
     for mode in [Mode::Line, Mode::Terminal] {
@@ -4868,7 +5537,11 @@ fn side_handle_drag_resizes_the_raw_panel() {
             s.raw_side.view = RawSideView::Hex;
         });
         h.draw();
-        let handle = h.app.frame_map().side_handle.expect("a handle");
+        let handle = h
+            .app
+            .frame_map()
+            .side_handle(SidePanel::Raw)
+            .expect("a handle");
         let (x, y) = (handle.area.x, handle.area.y + 3);
         assert_eq!(handle.area.width, 1, "{mode:?}");
         press(&mut h, (x, y));
@@ -4894,7 +5567,7 @@ fn side_handle_drag_resizes_the_raw_panel() {
         s.raw_side.orientation = RawSideOrientation::Bottom;
     });
     h.draw();
-    let handle = h.app.frame_map().side_handle.unwrap().area;
+    let handle = h.app.frame_map().side_handle(SidePanel::Raw).unwrap().area;
     assert_eq!(handle.height, 1);
     let (x, y) = (handle.x + 5, handle.y);
     press(&mut h, (x, y));
@@ -4904,7 +5577,7 @@ fn side_handle_drag_resizes_the_raw_panel() {
     assert!(!h.app.is_side_handle_held());
 
     // the hover
-    let area = h.app.frame_map().side_handle.unwrap().area;
+    let area = h.app.frame_map().side_handle(SidePanel::Raw).unwrap().area;
     mouse_do(&mut h, MouseEventKind::Moved, (area.x + 2, area.y));
     h.draw();
     let buffer = h.terminal.backend().buffer();
@@ -5503,6 +6176,63 @@ fn right_click_menu() {
     assert_eq!((area.right(), area.bottom()), (80, 24));
     click(&mut h, cell_of(&rows, "Quit…"));
     assert!(matches!(h.app.overlay(), Some(Overlay::ConfirmQuit)));
+}
+
+/// MAX-230: a right click on a side panel puts its "Close" row first in the menu, selected:
+/// "Close raw panel" turns the raw view off, "Close plot" the plot; on the history the menu
+/// starts with Help, as before. In line and terminal mode.
+/// How: the raw panel on the right and the plot at the bottom of 100x30; right clicks on
+/// the history, the raw panel (Enter), the plot (a click on the row).
+#[test]
+fn right_click_closes_a_panel() {
+    for mode in [Mode::Line, Mode::Terminal] {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 100, 30, |s| {
+            s.mode = mode;
+            s.raw_side.view = RawSideView::Hex;
+        });
+        h.app.set_plots(crate::configs::PlotsConfig::default());
+        h.app.show_plot(Some("key-value"));
+        h.app.notifications.dismiss_all();
+        h.draw();
+        let areas = h.app.frame_areas();
+        let (raw, plot) = (areas.raw_side.unwrap(), areas.plot.unwrap());
+        let right_click = |h: &mut Harness, at| {
+            mouse_do(h, MouseEventKind::Down(MouseButton::Right), at);
+            h.draw()
+        };
+        // the selected row, the menu's first
+        let selected = |rows: &[String]| {
+            rows.iter()
+                .find(|row| row.contains("│▶ "))
+                .cloned()
+                .unwrap_or_default()
+        };
+
+        let rows = right_click(&mut h, (5, 3));
+        assert!(selected(&rows).contains("│▶ Help"), "{mode:?}\n{rows:#?}");
+        assert!(!has(&rows, "Close"), "{mode:?}\n{rows:#?}");
+        h.app.close_overlay();
+
+        let on_raw = (raw.x + 5, raw.y + 2);
+        let rows = right_click(&mut h, on_raw);
+        assert!(
+            selected(&rows).contains("▶ Close raw panel"),
+            "{mode:?}\n{rows:#?}"
+        );
+        h.app.update(Action::Overlay(DialogAction::Confirm));
+        assert_eq!(h.app.settings().raw_side.view, RawSideView::Off, "{mode:?}");
+        assert!(h.app.plot().is_some(), "{mode:?}");
+        h.draw();
+
+        let on_plot = (plot.x + 20, plot.y + 3);
+        let rows = right_click(&mut h, on_plot);
+        assert!(
+            selected(&rows).contains("▶ Close plot"),
+            "{mode:?}\n{rows:#?}"
+        );
+        click(&mut h, cell_of(&rows, "Close plot"));
+        assert!(h.app.plot().is_none(), "{mode:?}");
+    }
 }
 
 /// MAX-132: in terminal mode the menu has "Terminal size", which opens the resize popup on

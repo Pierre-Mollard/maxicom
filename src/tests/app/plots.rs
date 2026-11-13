@@ -364,6 +364,8 @@ fn visible_and_stats() {
 
 /// Autoscale on the values shown, every series; `min` / `max` over it, a fixed side the
 /// values are all past gets a unit range, a flat line a range around it, nothing 0 to 1.
+/// MAX-230: an autoscaled side gets 5 % of the range as headroom, not past 0 when the values
+/// don't cross it.
 #[test]
 fn y_bounds() {
     let mut plot = Plot::new("kv".to_string(), &PlotDef::default());
@@ -376,13 +378,13 @@ fn y_bounds() {
     assert_eq!(data(&plot, None, None), [18.0, 22.0]);
     plot.feed_line("a=0", secs(2.0));
     plot.feed_line("b=50", secs(3.0));
-    assert_eq!(data(&plot, None, None), [0.0, 50.0]);
+    assert_eq!(data(&plot, None, None), [0.0, 52.5]);
     assert_eq!(
         plot.data().y_bounds(2.5, None, None),
         [50.0 - 5.0, 50.0 + 5.0]
     );
     assert_eq!(data(&plot, Some(-10.0), Some(100.0)), [-10.0, 100.0]);
-    assert_eq!(data(&plot, Some(10.0), None), [10.0, 50.0]);
+    assert_eq!(data(&plot, Some(10.0), None), [10.0, 52.0]);
     assert_eq!(data(&plot, None, Some(30.0)), [0.0, 30.0]);
     assert_eq!(data(&plot, Some(60.0), None), [60.0, 61.0]);
     assert_eq!(data(&plot, None, Some(-1.0)), [-2.0, -1.0]);
@@ -390,6 +392,19 @@ fn y_bounds() {
     let mut flat = Plot::new("kv".to_string(), &PlotDef::default());
     flat.feed_line("a=0", secs(1.0));
     assert_eq!(flat.data().y_bounds(0.0, None, None), [-1.0, 1.0]);
+
+    // across 0 both sides move; all at or under 0, the top stays at 0
+    for (lines, want) in [
+        (["a=-10", "a=10"], [-11.0, 11.0]),
+        (["a=-10", "a=0"], [-10.5, 0.0]),
+        (["a=-20", "a=-10"], [-20.5, -9.5]),
+    ] {
+        let mut plot = Plot::new("kv".to_string(), &PlotDef::default());
+        for line in lines {
+            plot.feed_line(line, secs(1.0));
+        }
+        assert_eq!(plot.data().y_bounds(0.0, None, None), want, "{lines:?}");
+    }
 }
 
 /// Frozen, the chart shows the series as they were at the time it froze, while the live ones
@@ -650,8 +665,9 @@ mod app {
     /// MAX-222: `plot-freeze` (`Ctrl-a G`) freezes the plot shown and gives it back live,
     /// each said; with no plot shown it says so. A device switch, as a replay's start, ends
     /// the freeze. `Ctrl-a g` goes to the next plot as `plot` alone does; `plot-next` and
-    /// `plot-prev` step both ways, off past the ends. The settings popup's `V` goes to the
-    /// next one; its `g` is the popups' Home, not a plot key.
+    /// `plot-prev` step both ways, wrapping around, never off (MAX-230). The settings popup's
+    /// `V` goes to the next one, off after the last, as `plot`; its `g` is the popups' Home,
+    /// not a plot key.
     /// How: the commands, then the default keys, then the popup's keys typed.
     #[test]
     fn plot_freeze_and_keys() {
@@ -691,14 +707,17 @@ mod app {
         prefix_key(&mut app, 'g');
         assert_eq!(shown(&app), Some("arduino"));
 
+        // MAX-230: the arrows wrap around, never off; from off, the first or the last
         run(&mut app, "plot-prev");
         assert_eq!(shown(&app), Some("key-value"));
         run(&mut app, "plot-prev");
-        assert_eq!(shown(&app), None);
-        run(&mut app, "plot-prev");
         assert_eq!(shown(&app), Some("tagged"));
         run(&mut app, "plot-next");
-        assert_eq!(shown(&app), None);
+        assert_eq!(shown(&app), Some("key-value"));
+        run(&mut app, "plot off");
+        run(&mut app, "plot-prev");
+        assert_eq!(shown(&app), Some("tagged"));
+        run(&mut app, "plot off");
         run(&mut app, "plot-next");
         assert_eq!(shown(&app), Some("key-value"));
 
@@ -719,26 +738,44 @@ mod app {
         assert_eq!(shown(&app), Some("sensors"));
         assert!(matches!(app.overlay(), Some(Overlay::Settings(_))));
 
+        // the popup's row goes as `plot`: off after the last
+        typed(&mut app, 'V');
+        assert_eq!(shown(&app), Some("tagged"));
+        typed(&mut app, 'V');
+        assert_eq!(shown(&app), None);
+
         app.set_plots(PlotsConfig { plots: Vec::new() });
         run(&mut app, "plot-next");
+        assert_eq!(last_toast(&app), "plots.toml has no plot");
+        typed(&mut app, 'V');
         assert_eq!(last_toast(&app), "plots.toml has no plot");
     }
 
     /// MAX-222: the side resize keys warn that there's no side panel only when neither the
-    /// raw view nor a plot shows one.
+    /// raw view nor a plot shows one. MAX-230: with a plot shown they resize the plot's
+    /// split, the raw panel's is left as it was, and the other way round.
     #[test]
     fn resize_side_with_a_plot() {
         let mut app = app();
         let resize = |app: &mut App| app.update(Action::App(AppAction::ResizeSidePanel(5)));
+        let splits = |app: &App| {
+            let s = app.settings();
+            (s.raw_side.split_percent, s.plot_side.split_percent)
+        };
         resize(&mut app);
         assert_eq!(last_toast(&app), "SideView is Off");
+        let (raw, plot) = splits(&app);
 
         run(&mut app, "plot key-value");
         let before = toasts(&app).len();
-        let percent = app.settings().raw_side.split_percent;
         resize(&mut app);
         assert_eq!(toasts(&app).len(), before);
-        assert_eq!(app.settings().raw_side.split_percent, percent + 5);
+        assert_eq!(splits(&app), (raw, plot + 5));
+
+        run(&mut app, "plot off");
+        app.settings_mut().raw_side.view = crate::configs::RawSideView::Hex;
+        app.update(Action::App(AppAction::ResizeSidePanel(-5)));
+        assert_eq!(splits(&app), (raw - 5, plot + 5));
     }
 
     /// MAX-222: `plot` in config.toml (or `--plot` over it) shows that plot at start; a name

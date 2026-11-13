@@ -23,7 +23,7 @@ pub const CONFIG_COMMENTS: &[(&str, &str)] = &[
             "\n\nPut a file elsewhere by adding, at the top of this file, theme_path,",
             "\nkeybindings_path, highlights_path, triggers_path, links_path or plots_path:",
             "\ntheme_path = \"~/maxicom/dark.toml\"",
-            "\n\nStart with a plot of plots.toml in the raw side panel's place: plot = \"<name>\"",
+            "\n\nStart with a plot of plots.toml shown: plot = \"<name>\"",
         ),
     ),
     ("encoding", "values: utf8, ascii, cp437, latin1"),
@@ -88,6 +88,9 @@ pub const CONFIG_COMMENTS: &[(&str, &str)] = &[
     ("raw_side.view", "values: off, hex, octal, binary"),
     ("raw_side.orientation", "values: right, bottom"),
     ("raw_side.split_percent", "10 to 85"),
+    ("plot_side", guide!("plots.html#size-and-position")),
+    ("plot_side.orientation", "values: right, bottom"),
+    ("plot_side.split_percent", "10 to 85"),
     ("command_line", guide!("command-line.html")),
     ("command_line.layout", "values: popup, status_bar"),
 ];

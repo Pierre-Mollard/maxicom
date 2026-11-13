@@ -20,6 +20,9 @@ use crate::{
 /// or a huge count stops there
 pub const MAX_POINTS: usize = 50_000;
 
+/// The share of the values' range an autoscaled Y axis adds past them (MAX-230)
+const HEADROOM: f64 = 0.05;
+
 /// The longest line read: the rest of a longer one is skipped up to its end of line
 pub const MAX_LINE: usize = 4096;
 
@@ -375,21 +378,33 @@ impl PlotData {
     }
 
     /// The Y axis: `min` and `max` when set, else the lowest and highest values from `from`
-    /// on. A fixed side with the values all past it, or a flat line, gets a range around it;
-    /// no value at all, 0 to 1
+    /// on, with 5 % of headroom so the curves don't run along the edges (MAX-230), not past 0
+    /// when the values don't cross it. A fixed side with the values all past it, or a flat
+    /// line, gets a range around it; no value at all, 0 to 1
     pub fn y_bounds(&self, from: f64, min: Option<f64>, max: Option<f64>) -> [f64; 2] {
         let values = (self.series.iter()).flat_map(|series| series.visible(from).map(|(_, y)| y));
         let seen = values.fold(None, |range: Option<(f64, f64)>, y| match range {
             None => Some((y, y)),
             Some((lo, hi)) => Some((lo.min(y), hi.max(y))),
         });
+        let below = |lo: f64, pad: f64| match lo >= 0.0 {
+            true => (lo - pad).max(0.0),
+            false => lo - pad,
+        };
+        let above = |hi: f64, pad: f64| match hi <= 0.0 {
+            true => (hi + pad).min(0.0),
+            false => hi + pad,
+        };
         match (min, max, seen) {
             (Some(lo), Some(hi), _) => [lo, hi],
-            (Some(lo), None, Some((_, hi))) if hi > lo => [lo, hi],
+            (Some(lo), None, Some((_, hi))) if hi > lo => [lo, above(hi, (hi - lo) * HEADROOM)],
             (Some(lo), None, _) => [lo, lo + 1.0],
-            (None, Some(hi), Some((lo, _))) if lo < hi => [lo, hi],
+            (None, Some(hi), Some((lo, _))) if lo < hi => [below(lo, (hi - lo) * HEADROOM), hi],
             (None, Some(hi), _) => [hi - 1.0, hi],
-            (None, None, Some((lo, hi))) if lo < hi => [lo, hi],
+            (None, None, Some((lo, hi))) if lo < hi => {
+                let pad = (hi - lo) * HEADROOM;
+                [below(lo, pad), above(hi, pad)]
+            }
             (None, None, Some((value, _))) => {
                 let pad = if value == 0.0 {
                     1.0
@@ -527,29 +542,26 @@ impl App {
         }
     }
 
-    /// The plot before the one shown, off before the first, the last from off
-    pub fn prev_plot(&self) -> Option<&str> {
-        let mut names = self.plots.plots.iter().rev().map(|(name, _)| name.as_str());
-        match &self.plot {
-            None => names.next(),
-            Some(plot) => names.skip_while(|name| *name != plot.name).nth(1),
-        }
-    }
-
-    /// `plot-next` / `plot-prev`, the settings popup's row and the panel's arrows: the next
-    /// or previous plot, off past the ends
+    /// `plot-next` / `plot-prev` and the panel's arrows: the next or previous plot, from the
+    /// last back to the first and the other way, never off (MAX-230): the panel's `✕`,
+    /// `plot off` and `plot` turn it off
     pub fn step_plot(&mut self, forward: bool) {
-        if self.plots.plots.is_empty() {
+        let names = &self.plots.plots;
+        if names.is_empty() {
             self.notify_warn("plots.toml has no plot");
             return;
         }
-        let name = if forward {
-            self.next_plot()
-        } else {
-            self.prev_plot()
+        let shown = (self.plot.as_ref())
+            .and_then(|plot| names.iter().position(|(name, _)| *name == plot.name));
+        let count = names.len();
+        let index = match (shown, forward) {
+            (None, true) => 0,
+            (None, false) => count - 1,
+            (Some(at), true) => (at + 1) % count,
+            (Some(at), false) => (at + count - 1) % count,
         };
-        let name = name.map(String::from);
-        self.show_plot(name.as_deref());
+        let name = names[index].0.clone();
+        self.show_plot(Some(&name));
     }
 
     /// The time on the plot's clock: since it was shown or last cleared

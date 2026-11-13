@@ -128,6 +128,7 @@ See [Command line](command-line.md).
 | Message | Means | To do |
 | --- | --- | --- |
 | `Terminal window too small (<c>x<r>). Minimum is 30x8` | The window is under 30 columns or 8 rows | Make it bigger |
+| `Raw side panel hidden: …`, `Plot hidden: …` | The room left is under 50 columns for a panel on the right, 12 rows at the bottom; with both shown, the raw side panel goes first | Make the window bigger, or shrink the other panel |
 | `Line wrap: line mode only` | `Ctrl-a w` in terminal mode, where the screen always wraps | See [Terminal mode](terminal-mode.md#screen-size) |
-| `Raw SideView is Off` | Resizing the side panel while it's hidden | `Ctrl-a B` shows it |
+| `SideView is Off` | Resizing the side panel with neither the raw side panel nor a plot shown | `Ctrl-a B` or `Ctrl-a g` shows one |
 | `Clipboard error: <reason>` | The copy couldn't be sent to your terminal | See [Troubleshooting](troubleshooting.md#a-copy-doesnt-reach-the-clipboard) |

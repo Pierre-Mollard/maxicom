@@ -238,7 +238,7 @@ or the one named. The names complete. See [Triggers](triggers.md).
 
 | Command | Does |
 | --- | --- |
-| `plot <name>` | Shows that plot in the side panel. The names complete. |
+| `plot <name>` | Shows that plot. The names complete. |
 | `plot off` | Hides it |
 | `plot` | Shows the next plot, off after the last |
 | `plot-freeze` | Freezes the chart, or gives it back live |

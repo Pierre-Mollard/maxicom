@@ -318,12 +318,12 @@ pub static COMMANDS: &[CommandSpec] = {
         CommandSpec::action(
             "plot-next",
             A::PlotNext,
-            "Show the next plot of plots.toml, off after the last",
+            "Show the next plot of plots.toml, the first after the last",
         ),
         CommandSpec::action(
             "plot-prev",
             A::PlotPrev,
-            "Show the previous plot of plots.toml, off before the first",
+            "Show the previous plot of plots.toml, the last before the first",
         ),
         CommandSpec::action(
             "dismiss-notification",

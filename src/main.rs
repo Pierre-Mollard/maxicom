@@ -15,7 +15,7 @@ use crossterm::{
 use ratatui::DefaultTerminal;
 
 use crate::{
-    app::{App, UpdateEffect, selection::copy_via_osc52, triggers::Trigger},
+    app::{App, UpdateEffect, selection::copy_via_osc52, triggers::Trigger, types::SidePanel},
     args::{ParseOutcome, parse_args, print_help, print_version},
     configs::{
         AppConfig, ConfigsError, KeyResolver, KeywordHighlight, LinksConfig, PlotsConfig,
@@ -458,13 +458,18 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     if !last_layout_warnings.contains(warn) {
                         let msg = match warn {
                             LayoutWarning::SidePanelTooSmall {
+                                panel,
                                 required,
                                 actual,
                                 orientation,
                             } => {
+                                let name = match panel {
+                                    SidePanel::Raw => "Raw side panel",
+                                    SidePanel::Plot => "Plot",
+                                };
                                 format!(
-                                    "Side panel hidden: requires at least {} {:?}, but screen has only {}",
-                                    required, orientation, actual
+                                    "{} hidden: requires at least {} {:?}, but screen has only {}",
+                                    name, required, orientation, actual
                                 )
                             }
                             LayoutWarning::WindowTooSmall {

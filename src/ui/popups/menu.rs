@@ -28,8 +28,9 @@ pub fn render_action_menu(
         .iter()
         .map(|&(_, run)| match run {
             MenuRun::Action(action) => resolver.action_keys(action).into_iter().next(),
-            // the `mark` key waits for a letter: not this row's
-            MenuRun::AddMark(_) => None,
+            // the `mark` key waits for a letter: not this row's; no key closes a panel, its
+            // keys cycle through the views or the plots
+            MenuRun::AddMark(_) | MenuRun::ClosePanel(_) => None,
         })
         .map(|key| key.map(|key| caret(&key)).unwrap_or_default())
         .collect();

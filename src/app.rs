@@ -16,7 +16,7 @@ use crate::{
         selection::{ClickCounter, CopySide, LogicalPosition, MouseUnit},
         term_answers::answer_bytes,
         triggers::Trigger,
-        types::{FocusTarget, FrameAreas, FrameMap, ViewportSize},
+        types::{FocusTarget, FrameAreas, FrameMap, SidePanel, ViewportSize},
     },
     capture::{
         CaptureDevice, CaptureLine, Recorder, RecordingWriter, ScreenshotFormat, Session, Stream,
@@ -152,7 +152,7 @@ pub struct App {
     drag_hold: Option<(u16, u16)>,
     last_drag_scroll: Option<Instant>,
     scrollbar_hold: Option<ScrollbarHold>,
-    side_handle_held: bool,
+    side_handle_held: Option<SidePanel>,
     /// When a held scrollbar arrow scrolls again
     scrollbar_repeat_at: Option<Instant>,
     /// The action and cells of the click target the left button holds (MAX-143), and when it
@@ -309,7 +309,7 @@ impl App {
             drag_hold: None,
             last_drag_scroll: None,
             scrollbar_hold: None,
-            side_handle_held: false,
+            side_handle_held: None,
             scrollbar_repeat_at: None,
             click_hold: None,
             click_repeat_at: None,
@@ -1022,6 +1022,10 @@ impl App {
                             self.update_mark(MarkAction::Jump(letter));
                             UpdateEffect::None
                         }
+                        OverlayResponse::ClosePanel(panel) => {
+                            self.close_panel(panel);
+                            UpdateEffect::None
+                        }
                         // the menu's "Add mark": on the line clicked, else where a mark goes
                         OverlayResponse::AddMark(line) => {
                             self.update_mark(match line {
@@ -1420,25 +1424,27 @@ impl App {
         }
     }
 
-    /// The left button is on the raw side panel's border, from its press to its release
-    /// (MAX-189)
+    /// The left button is on a side panel's border, from its press to its release (MAX-189)
     pub fn is_side_handle_held(&self) -> bool {
-        self.side_handle_held
+        self.side_handle_held.is_some()
     }
 
-    /// The left button on the raw side panel's border, as the last frame drew it (MAX-189): a
-    /// drag puts the border under the pointer, in the config's range
+    /// The left button on a side panel's border, as the last frame drew it (MAX-189): a drag
+    /// puts the border under the pointer, in the config's range, that panel's only (MAX-230)
     fn side_handle(&mut self, action: SideHandleAction) {
         match action {
-            SideHandleAction::Press => self.side_handle_held = self.frame_map.side_handle.is_some(),
+            SideHandleAction::Press(panel) => {
+                self.side_handle_held = self.frame_map.side_handle(panel).map(|_| panel);
+            }
             SideHandleAction::Drag(x, y) => {
-                if let Some(handle) = self.frame_map.side_handle {
-                    self.settings.raw_side.split_percent = handle
+                let held = self.side_handle_held;
+                if let Some(handle) = held.and_then(|panel| self.frame_map.side_handle(panel)) {
+                    *self.split_percent_mut(handle.panel) = handle
                         .percent_at(x, y)
                         .clamp(SPLIT_PERCENT_MIN, SPLIT_PERCENT_MAX);
                 }
             }
-            SideHandleAction::Release => self.side_handle_held = false,
+            SideHandleAction::Release => self.side_handle_held = None,
         }
     }
 
@@ -1774,9 +1780,34 @@ impl App {
         if self.settings.raw_side.view == RawSideView::Off && self.plot.is_none() {
             self.notify_warn("SideView is Off");
         }
-        let percent = self.settings.raw_side.split_percent as i16 + by;
-        self.settings.raw_side.split_percent =
-            (percent.max(0) as u16).clamp(SPLIT_PERCENT_MIN, SPLIT_PERCENT_MAX);
+        // the plot's while one is shown, the raw panel's otherwise (MAX-230)
+        let panel = match self.plot {
+            Some(_) => SidePanel::Plot,
+            None => SidePanel::Raw,
+        };
+        let split = self.split_percent_mut(panel);
+        *split = ((*split as i16 + by).max(0) as u16).clamp(SPLIT_PERCENT_MIN, SPLIT_PERCENT_MAX);
+    }
+
+    /// The right-click menu's "Close": the raw view off, as `Ctrl-a B` says it, or the plot
+    /// off (MAX-230)
+    fn close_panel(&mut self, panel: SidePanel) {
+        match panel {
+            SidePanel::Raw => {
+                self.settings.raw_side.view = RawSideView::Off;
+                let view = self.settings.raw_side.view.as_str();
+                self.notify_info(format!("Raw SideView is {view}"));
+            }
+            SidePanel::Plot => self.show_plot(None),
+        }
+    }
+
+    /// A side panel's share of its split, in the settings (MAX-230)
+    fn split_percent_mut(&mut self, panel: SidePanel) -> &mut u16 {
+        match panel {
+            SidePanel::Raw => &mut self.settings.raw_side.split_percent,
+            SidePanel::Plot => &mut self.settings.plot_side.split_percent,
+        }
     }
 
     fn update_side_view(&mut self, action: SideViewAction) -> UpdateEffect {
@@ -2256,7 +2287,14 @@ impl App {
                 self.notify_info(format!("Line Enter sends {eol}"));
             }
             // the next plot of plots.toml, off after the last, as `plot` alone (MAX-222)
-            SettingKey::Plot => self.step_plot(true),
+            // as `plot`: the next one, off after the last
+            SettingKey::Plot if self.plots.plots.is_empty() => {
+                self.notify_warn("plots.toml has no plot");
+            }
+            SettingKey::Plot => {
+                let name = self.next_plot().map(String::from);
+                self.show_plot(name.as_deref());
+            }
             SettingKey::DisplayRaw => {
                 self.settings.raw_side.view.toggle();
                 self.notify_info(format!(

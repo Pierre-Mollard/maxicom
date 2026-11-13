@@ -11,6 +11,7 @@ use crate::{
         mash::Mash,
         search::SearchDirection,
         selection::{CopySide, LogicalPosition, MouseUnit},
+        types::SidePanel,
     },
     capture::ScreenshotFormat,
     commands::Invocation,
@@ -133,11 +134,11 @@ pub enum ScrollbarAction {
     Release,
 }
 
-/// The left button on the raw side panel's border (MAX-189): the press, a drag held from it
-/// to a cell, the release
+/// The left button on a side panel's border (MAX-189): the press on that panel's, a drag held
+/// from it to a cell, the release
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SideHandleAction {
-    Press,
+    Press(SidePanel),
     Drag(u16, u16),
     Release,
 }

@@ -7,7 +7,10 @@ use ratatui::{
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
-    app::{App, types::FocusTarget},
+    app::{
+        App,
+        types::{FocusTarget, SidePanel},
+    },
     configs::{
         Mode, RawSideView, SettingsConfig, StatusBarLayout, ThemeConfig, WrapMode,
         settings::{PrefixWrapBehavior, RawSideOrientation, SPLIT_PERCENT_MAX, SPLIT_PERCENT_MIN},
@@ -17,6 +20,7 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LayoutWarning {
     SidePanelTooSmall {
+        panel: SidePanel,
         required: u16,
         actual: u16,
         orientation: RawSideOrientation,
@@ -34,9 +38,12 @@ pub struct ScreenLayout {
     pub content_area: Rect,
     pub scrollbar_area: Option<Rect>,
     pub raw_side_area: Option<Rect>,
-    /// The side area when a plot is shown: it takes the raw panel's place (MAX-222)
+    /// The plot panel (MAX-222), in its own place (MAX-230)
     pub plot_area: Option<Rect>,
+    /// What the raw panel splits with the history, while it's shown
     pub raw_split_area: Option<Rect>,
+    /// What the plot splits with the rest, while it's shown (MAX-230)
+    pub plot_split_area: Option<Rect>,
     pub timestamp_gutter: Option<Rect>,
     pub prompt_area: Option<Rect>,
     /// The file transfer's progress row, while one runs (MAX-162)
@@ -159,73 +166,53 @@ impl ScreenLayout {
             (inner_monitor, None)
         };
 
+        // the plot first, over the whole view: at the bottom it runs under the timestamps and
+        // the raw panel too, which stay beside the history above it (MAX-230)
+        let plot_side = app.settings().plot_side;
+        let (beside_plot, plot_area) = match app.plot() {
+            Some(_) => split_side(
+                inner_monitor,
+                SidePanel::Plot,
+                plot_side.orientation,
+                plot_side.split_percent,
+                &mut warnings,
+            ),
+            None => (inner_monitor, None),
+        };
+        let plot_split_area = plot_area.map(|_| inner_monitor);
+
         let (gutter_area, remaining_after_gutter) = match input_mode {
             Mode::Terminal if app.settings().show_timestamps => {
                 let ts_width = app.settings().timestamp_width() as u16;
 
-                let gutter_w = ts_width.saturating_add(1).min(inner_monitor.width);
+                let gutter_w = ts_width.saturating_add(1).min(beside_plot.width);
                 let chunks = Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([Constraint::Length(gutter_w), Constraint::Min(0)])
-                    .split(inner_monitor);
+                    .split(beside_plot);
                 (Some(chunks[0]), chunks[1])
             }
-            _ => (None, inner_monitor),
+            _ => (None, beside_plot),
         };
 
-        let side_shown = app.settings().raw_side.view != RawSideView::Off || app.plot().is_some();
-        let (main_stream_area, side_area) = if side_shown {
-            let inspector_percent = app
-                .settings()
-                .raw_side
-                .split_percent
-                .clamp(SPLIT_PERCENT_MIN, SPLIT_PERCENT_MAX);
-            let main_percent = 100 - inspector_percent;
-            let orientation = match app.settings().raw_side.orientation {
-                RawSideOrientation::Right => Direction::Horizontal,
-                RawSideOrientation::Bottom => Direction::Vertical,
-            };
-            let (is_sufficiently_large, required, actual) = match orientation {
-                Direction::Horizontal => {
-                    let req = 50;
-                    (
-                        remaining_after_gutter.width >= req,
-                        req,
-                        remaining_after_gutter.width,
-                    )
-                }
-                Direction::Vertical => {
-                    let req = 12;
-                    (
-                        remaining_after_gutter.height >= req,
-                        req,
-                        remaining_after_gutter.height,
-                    )
-                }
-            };
-
-            if is_sufficiently_large {
-                let chunks = Layout::default()
-                    .direction(orientation)
-                    .constraints([
-                        Constraint::Percentage(main_percent),
-                        Constraint::Percentage(inspector_percent),
-                    ])
-                    .split(remaining_after_gutter);
-
-                (chunks[0], Some(chunks[1]))
+        // then the raw panel beside the history; in the plot's place, the plot has it
+        let raw_side = app.settings().raw_side;
+        let in_plot_place = app.plot().is_some() && raw_side.orientation == plot_side.orientation;
+        let (main_stream_area, raw_side_area) =
+            if raw_side.view != RawSideView::Off && !in_plot_place {
+                split_side(
+                    remaining_after_gutter,
+                    SidePanel::Raw,
+                    raw_side.orientation,
+                    raw_side.split_percent,
+                    &mut warnings,
+                )
             } else {
-                warnings.push(LayoutWarning::SidePanelTooSmall {
-                    required,
-                    actual,
-                    orientation: app.settings().raw_side.orientation,
-                });
                 (remaining_after_gutter, None)
-            }
-        } else {
-            (remaining_after_gutter, None)
-        };
+            };
 
+        // the history with the search bar's row, what the scrollbar runs along
+        let history = main_stream_area;
         // the search bar's row, under the history and over a bottom side panel (MAX-218)
         let main_stream_area = if app.search_bar_row() {
             Rect {
@@ -236,28 +223,29 @@ impl ScreenLayout {
             main_stream_area
         };
 
+        // the scrollbar scrolls the history, so it runs beside it, never along a plot (MAX-230)
+        let plot_on_right =
+            plot_area.is_some() && plot_side.orientation == RawSideOrientation::Right;
         let (content_area, scrollbar_area) = if show_scrollbar {
-            if show_borders {
-                // in the right border, along the view (not the transfer row)
+            if show_borders && !plot_on_right {
+                // in the right border, along the view (not the transfer row) or above a plot
                 let sb_area = Rect {
                     x: monitor_outer.x + monitor_outer.width.saturating_sub(1),
-                    y: inner_monitor.y,
+                    y: beside_plot.y,
                     width: 1,
-                    height: inner_monitor.height,
+                    height: beside_plot.height,
                 };
                 (main_stream_area, Some(sb_area))
             } else {
+                // in the history's last column, so never over a side panel
                 let content = Rect {
-                    x: main_stream_area.x,
-                    y: main_stream_area.y,
                     width: main_stream_area.width.saturating_sub(1),
-                    height: main_stream_area.height,
+                    ..main_stream_area
                 };
                 let sb = Rect {
-                    x: remaining_after_gutter.x + remaining_after_gutter.width.saturating_sub(1),
-                    y: remaining_after_gutter.y,
+                    x: history.x + history.width.saturating_sub(1),
                     width: 1,
-                    height: remaining_after_gutter.height,
+                    ..history
                 };
                 (content, Some(sb))
             }
@@ -269,9 +257,10 @@ impl ScreenLayout {
             monitor_outer,
             content_area,
             scrollbar_area,
-            raw_side_area: side_area.filter(|_| app.plot().is_none()),
-            plot_area: side_area.filter(|_| app.plot().is_some()),
-            raw_split_area: side_area.map(|_| remaining_after_gutter),
+            raw_side_area,
+            plot_area,
+            raw_split_area: raw_side_area.map(|_| remaining_after_gutter),
+            plot_split_area,
             timestamp_gutter: gutter_area,
             prompt_area,
             transfer_area,
@@ -280,6 +269,39 @@ impl ScreenLayout {
             warnings,
         }
     }
+}
+
+/// `area` split for a side panel at `orientation`, the panel taking `percent` of it: the rest
+/// and the panel, or the whole area and a warning when it's too small for one
+fn split_side(
+    area: Rect,
+    panel: SidePanel,
+    orientation: RawSideOrientation,
+    percent: u16,
+    warnings: &mut Vec<LayoutWarning>,
+) -> (Rect, Option<Rect>) {
+    let percent = percent.clamp(SPLIT_PERCENT_MIN, SPLIT_PERCENT_MAX);
+    let (direction, required, actual) = match orientation {
+        RawSideOrientation::Right => (Direction::Horizontal, 50, area.width),
+        RawSideOrientation::Bottom => (Direction::Vertical, 12, area.height),
+    };
+    if actual < required {
+        warnings.push(LayoutWarning::SidePanelTooSmall {
+            panel,
+            required,
+            actual,
+            orientation,
+        });
+        return (area, None);
+    }
+    let chunks = Layout::default()
+        .direction(direction)
+        .constraints([
+            Constraint::Percentage(100 - percent),
+            Constraint::Percentage(percent),
+        ])
+        .split(area);
+    (chunks[0], Some(chunks[1]))
 }
 
 #[derive(Debug, Clone)]

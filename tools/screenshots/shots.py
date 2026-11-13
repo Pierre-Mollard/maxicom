@@ -653,8 +653,9 @@ SCENARIOS = {
         restore=True, fixtures=restore_session),
     "plots": lambda: scenario(
         "plots", [Pty(pid_feed(), 0.02)], [fed(0.8)],
-        config={("raw_side", "split_percent"): "55"}, links=esp_link, plots=PLOTS,
-        args=["esp32", "--plot", "pid"], size=(130, ROWS), braille=True),
+        config={("plot_side", "split_percent"): "50"},
+        links=esp_link, plots=PLOTS,
+        args=["esp32", "--plot", "pid"], size=(110, 32), braille=True),
 }
 
 if __name__ == "__main__":

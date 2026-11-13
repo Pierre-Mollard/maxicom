@@ -37,6 +37,37 @@ fn link_defaults_from_toml() {
     }
 }
 
+/// MAX-230: `[plot_side]` reads apart from `[raw_side]`, at the bottom on 35 % by default,
+/// and its split out of 10..=85 fails the check as the raw panel's does.
+#[test]
+fn plot_side_from_toml() {
+    use crate::configs::settings::{PlotSideConfig, RawSideOrientation};
+    let settings: SettingsConfig =
+        toml::from_str("[raw_side]\norientation = \"bottom\"\n[plot_side]\nsplit_percent = 50")
+            .unwrap();
+    assert_eq!(settings.raw_side.orientation, RawSideOrientation::Bottom);
+    assert_eq!(
+        settings.plot_side,
+        PlotSideConfig {
+            orientation: RawSideOrientation::Bottom,
+            split_percent: 50,
+        }
+    );
+    let settings: SettingsConfig = toml::from_str("[plot_side]\norientation = \"right\"").unwrap();
+    assert_eq!(settings.plot_side.orientation, RawSideOrientation::Right);
+    assert_eq!(settings.plot_side.split_percent, 35);
+
+    for (percent, ok) in [(9, false), (10, true), (85, true), (86, false)] {
+        let mut settings = SettingsConfig::default();
+        settings.plot_side.split_percent = percent;
+        let result = settings.validate().map_err(|err| err.to_string());
+        assert_eq!(result.is_ok(), ok, "{percent}: {result:?}");
+        if let Err(err) = result {
+            assert!(err.starts_with("plot_side.split_percent"), "{err}");
+        }
+    }
+}
+
 /// MAX-151: the answer settings are on by default, groups by name; `colors` is no group
 #[test]
 fn answer_settings_parse() {
