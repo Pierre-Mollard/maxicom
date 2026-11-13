@@ -650,6 +650,8 @@ impl App {
     /// link. A session backup (`session`) decodes with its own encoding, a plain file with the
     /// live link's
     pub fn start_replay(&mut self, path: PathBuf, session: Option<&CaptureDevice>) {
+        // the line being received ends with its link, not in the replay's bytes
+        self.recorder.end_line(self.settings.encoding);
         self.stop_transfer("a replay took the link's place");
         self.stop_mash("a replay took the link's place");
         let (line_mode, terminal_mode, stats) = self.clear_screen();
@@ -743,6 +745,8 @@ impl App {
             self.set_replay_ended(true);
             return false;
         };
+        // the replay's line being cut ends with it, in its own encoding
+        self.recorder.end_line(self.settings.encoding);
         self.replay = None;
         self.clear_plot();
         self.link.set_config(replaced.link_config);

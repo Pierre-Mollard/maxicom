@@ -187,6 +187,16 @@ impl Recorder {
         if let Some(session) = &session {
             refuse_backup_file(&folder_file(folder, "raw"), &session.raw_path)?;
         }
+        // nor after another recording's: its times would point into the bytes before them
+        if ["log", "raw", "times"]
+            .iter()
+            .any(|ext| folder_file(folder, ext).exists())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "a full recording with this name already exists",
+            ));
+        }
         let started = session.as_ref().map_or_else(Local::now, |s| s.started);
         let mut full = RecordingWriter::create(folder, source.device.as_ref(), text, started)?;
         if let Some(session) = session {
@@ -278,20 +288,28 @@ impl Recorder {
 
     /// The session backup out of the recorder, flushed, which records nothing until it is set
     /// back with `set_session` (MAX-166). Its files stay open, and its lock with them, so no
-    /// pruning removes it. The line being cut is dropped at both ends, so a line never mixes
-    /// the live bytes and the replayed ones
+    /// pruning removes it. The line being cut goes on: `end_line` first when the bytes will
+    /// come from elsewhere
     pub fn take_session(&mut self) -> Option<RecordingWriter> {
         let mut session = self.session.take();
         if let Some(session) = &mut session {
             session.flush();
         }
-        self.lines = RxLineSplitter::default();
         session
     }
 
     pub fn set_session(&mut self, session: Option<RecordingWriter>) {
         self.session = session;
-        self.lines = RxLineSplitter::default();
+    }
+
+    /// The line being cut written as it is to the text files, and the next one started: the
+    /// bytes come from elsewhere from here (a replay starts or ends, another device), so a line
+    /// never mixes two sources and none is dropped
+    pub fn end_line(&mut self, encoding: TextEncoding) {
+        let mut lines = std::mem::take(&mut self.lines);
+        if lines.line().iter().any(|&b| !matches!(b, b'\r' | b'\n')) {
+            self.write_rx_line(&mut lines, encoding);
+        }
     }
 
     /// Stops the recording, if one runs

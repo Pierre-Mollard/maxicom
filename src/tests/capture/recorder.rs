@@ -198,9 +198,11 @@ fn session_records_apart_and_a_recording_can_start_with_it() {
 }
 
 /// MAX-166: a paused session backup records nothing, a user recording still does, and the
-/// session backup goes on in the same files once resumed; the line cut at the pause is dropped.
-/// How: "a\n" and half a line received, the session backup paused, a text recording started,
-/// "b\n" received, the session backup resumed, "c\n" received, then the files read back.
+/// session backup goes on in the same files once resumed. The line cut at the pause is ended
+/// there, as the app does when a replay starts or stops, not dropped.
+/// How: "a\n" and half a line received, the line ended and the session backup paused, a text
+/// recording started, "b\n" received, the session backup resumed, "c\n" received, then the
+/// files read back.
 #[test]
 fn paused_session_records_nothing() {
     let dir = temp_dir("session_paused");
@@ -214,11 +216,13 @@ fn paused_session_records_nothing() {
         )
         .unwrap();
     record(&mut recorder, b"a\nhal");
+    recorder.end_line(TextEncoding::Utf8);
     let session = recorder.take_session();
     assert!(session.is_some() && !recorder.has_session());
     let path = dir.join("mine.log");
     recorder.start_text(&path, true, source("port")).unwrap();
     record(&mut recorder, b"b\n");
+    recorder.end_line(TextEncoding::Utf8);
     recorder.set_session(session);
     assert!(recorder.has_session());
     record(&mut recorder, b"c\n");
@@ -232,7 +236,7 @@ fn paused_session_records_nothing() {
             .unwrap();
         fs::read(entry).unwrap()
     };
-    assert_eq!(read("_port.log"), b"a\nc\n");
+    assert_eq!(read("_port.log"), b"a\nhal\nc\n");
     assert_eq!(read("_port.raw"), b"a\nhalc\n");
     let _ = fs::remove_dir_all(&dir);
 }
@@ -418,4 +422,71 @@ fn recording_creates_missing_folders() {
     let raw = data_path(Stream::Full, &path);
     assert_eq!(stop_and_read(&mut recorder, Stream::Full, &raw), b"x");
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// A full recording never starts in a folder that already holds one: appended to, its times
+/// would point into the old bytes (counted from 0 again) and its meta would say the new start.
+/// The recording already there stays as it was.
+/// How: a full recording of "first\n", stopped, then another one under the same name.
+#[test]
+fn full_recording_refuses_an_existing_name() {
+    let mut recorder = Recorder::default();
+    let raw = start(&mut recorder, Stream::Full, "same_name");
+    let folder = raw.parent().unwrap().to_path_buf();
+    record(&mut recorder, b"first\n");
+    recorder.stop();
+
+    let again = recorder.start_full(&folder, false, source("port"), &CaptureFormat::default());
+    let err = again.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::AlreadyExists, "{err}");
+    assert_eq!(recorder.recording(), None);
+    record(&mut recorder, b"second\n");
+    assert_eq!(stop_and_read(&mut recorder, Stream::Full, &raw), b"first\n");
+}
+
+/// A session backup restarted on the same link (new line settings) doesn't cut the line
+/// being received: the recording gets it whole.
+/// How: a text recording, "hal" received, the session backup ended and started again, then
+/// "f\n".
+#[test]
+fn session_restart_keeps_the_line() {
+    let dir = temp_dir("session_restart_line");
+    let limits = SessionLimits::keep(20);
+    let format = CaptureFormat::default();
+    let mut recorder = Recorder::default();
+    recorder
+        .start_session(&dir, &device("port"), &format, limits)
+        .unwrap();
+    let path = start(&mut recorder, Stream::Text, "restart_line");
+    record(&mut recorder, b"hal");
+    drop(recorder.take_session());
+    recorder
+        .start_session(&dir, &device("port"), &format, limits)
+        .unwrap();
+    record(&mut recorder, b"f\n");
+    assert_eq!(stop_and_read(&mut recorder, Stream::Text, &path), b"half\n");
+    drop(recorder);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// `end_line` writes the line being cut as a line of its own, once, and the next bytes start
+/// a new one; with nothing pending, or only a line end, it writes nothing.
+/// How: "hal" then `end_line` twice, "x\r" then `end_line` (a CR alone is held, not ended),
+/// "\r" then `end_line`, then "b\n".
+#[test]
+fn end_line_writes_the_cut_line() {
+    let mut recorder = Recorder::default();
+    let path = start(&mut recorder, Stream::Text, "end_line");
+    record(&mut recorder, b"hal");
+    recorder.end_line(TextEncoding::Utf8);
+    recorder.end_line(TextEncoding::Utf8);
+    record(&mut recorder, b"x\r");
+    recorder.end_line(TextEncoding::Utf8);
+    record(&mut recorder, b"\r");
+    recorder.end_line(TextEncoding::Utf8);
+    record(&mut recorder, b"b\n");
+    assert_eq!(
+        stop_and_read(&mut recorder, Stream::Text, &path),
+        b"hal\nx\nb\n"
+    );
 }

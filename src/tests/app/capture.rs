@@ -714,3 +714,31 @@ fn pruning_is_told_in_a_toast() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A line cut by a replay starting or stopping ends there in the text recording, before the
+/// device marker, instead of being dropped or joined to the other source's bytes.
+/// How: a text recording, "hal" received live, a replay started, "rep" received from it, the
+/// replay stopped, then "live\r\n".
+#[test]
+fn text_recording_ends_the_line_cut_by_a_replay() {
+    let dir = crate::capture::tests::temp_dir("text_cut_by_replay");
+    let path = dir.join("rec.log");
+    let mut app = app();
+    app.settings.capture.timestamp = false;
+    app.start_capture(&dir.join("rec"), Stream::Text, false);
+    app.feed_rx(b"hal");
+    let session = crate::capture::tests::device("/dev/ttyUSB1");
+    app.start_replay(dir.join("old.raw"), Some(&session));
+    app.feed_rx(b"rep");
+    assert!(app.stop_replay());
+    app.feed_rx(b"live\r\n");
+    app.recorder.stop();
+
+    let text = std::fs::read_to_string(&path).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 5, "{lines:#?}");
+    assert_eq!([lines[0], lines[2], lines[4]], ["hal", "rep", "live"]);
+    assert!(lines[1].starts_with("── device: old.raw"), "{lines:#?}");
+    assert!(lines[3].starts_with("── device: "), "{lines:#?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

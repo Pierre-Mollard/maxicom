@@ -68,6 +68,7 @@ impl App {
     /// The device switched to starts as at start on it (MAX-187): a clean screen, its last
     /// session restored, then its own session backup
     pub fn switch_session(&mut self) {
+        self.recorder.end_line(self.settings.encoding);
         self.clear_screen();
         self.restored_session = None;
         let dir = self.sessions_dir.clone();
