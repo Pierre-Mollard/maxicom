@@ -22,6 +22,7 @@ use crate::{
         RawSideView, SettingsConfig, ThemeConfig,
     },
     link::{Address, ByteSource, LinkConfig, LinkError},
+    notification::ToastLevel,
     overlays::{ErrorDialog, Overlay},
     ui::{PostRenderEffect, layout::LayoutWarning, render, status_bar::CompiledStatusBar},
 };
@@ -496,14 +497,20 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Copies `text` and says so: the copy of `what` with the text itself, else its char count
+/// Copies `text` and says so: the copy of `what` with the text itself, else its char count;
+/// copies one after the other say it in one box (MAX-234)
 fn execute_clipboard_copy(app: &mut App, text: &str, what: Option<&str>) {
     if let Err(e) = copy_via_osc52(text) {
-        app.notify_error(format!("Clipboard error: {e}"));
+        app.notify_keyed("copy", ToastLevel::Error, format!("Clipboard error: {e}"));
     } else if let Some(what) = what {
-        app.notify_success(format!("Copied the {what}: {text}"));
+        app.notify_keyed(
+            "copy",
+            ToastLevel::Success,
+            format!("Copied the {what}: {text}"),
+        );
     } else {
         let count = text.chars().count();
-        app.notify_success(format!("Copied {count} chars to clipboard"));
+        let msg = format!("Copied {count} chars to clipboard");
+        app.notify_keyed("copy", ToastLevel::Success, msg);
     }
 }

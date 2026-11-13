@@ -14,6 +14,7 @@ use crate::{
         PlotsConfig, TextEncoding,
         plots::{MAX_SERIES, PlotDef, PlotWindow},
     },
+    notification::ToastLevel,
 };
 
 /// The most points a series keeps, whatever its window: a long time window on a fast device
@@ -477,7 +478,8 @@ impl App {
                 None => {
                     let name = plot.name.clone();
                     self.plot = None;
-                    self.notify_warn(format!("Plot {name} is gone from plots.toml: plot off"));
+                    let msg = format!("Plot {name} is gone from plots.toml: plot off");
+                    self.notify_plot(ToastLevel::Warn, msg);
                 }
                 Some(def) if def != plot.def() => {
                     self.plot = Some(Plot::new(plot.name.clone(), def));
@@ -507,7 +509,8 @@ impl App {
         if self.plots.get(&name).is_some() {
             self.show_plot(Some(&name));
         } else {
-            self.notify_warn(format!("No plot named '{name}' in plots.toml: plot off"));
+            let msg = format!("No plot named '{name}' in plots.toml: plot off");
+            self.notify_plot(ToastLevel::Warn, msg);
         }
     }
 
@@ -516,7 +519,7 @@ impl App {
     pub fn show_plot(&mut self, name: Option<&str>) {
         let Some(name) = name else {
             if self.plot.take().is_some() {
-                self.notify_info("Plot off");
+                self.notify_plot(ToastLevel::Info, "Plot off");
             }
             return;
         };
@@ -524,12 +527,19 @@ impl App {
             return;
         }
         let Some(def) = self.plots.get(name) else {
-            self.notify_warn(format!("No plot named '{name}' in plots.toml"));
+            let msg = format!("No plot named '{name}' in plots.toml");
+            self.notify_plot(ToastLevel::Warn, msg);
             return;
         };
         self.plot = Some(Plot::new(name.to_string(), def));
         self.plot_started = Instant::now();
-        self.notify_info(format!("Plot {name}"));
+        self.notify_plot(ToastLevel::Info, format!("Plot {name}"));
+    }
+
+    /// The plot's toast: showing, switching, freezing and closing it follow each other in one
+    /// box (MAX-234)
+    pub fn notify_plot(&mut self, level: ToastLevel, msg: impl Into<String>) {
+        self.notify_keyed("plot", level, msg);
     }
 
     /// The plot after the one shown in the file's order, off after the last: what `plot`
@@ -548,7 +558,7 @@ impl App {
     pub fn step_plot(&mut self, forward: bool) {
         let names = &self.plots.plots;
         if names.is_empty() {
-            self.notify_warn("plots.toml has no plot");
+            self.notify_plot(ToastLevel::Warn, "plots.toml has no plot");
             return;
         }
         let shown = (self.plot.as_ref())
@@ -574,17 +584,14 @@ impl App {
     pub fn toggle_plot_freeze(&mut self) {
         let at = self.plot_clock();
         let Some(plot) = &mut self.plot else {
-            self.notify_warn("No plot shown");
+            self.notify_plot(ToastLevel::Warn, "No plot shown");
             return;
         };
         let frozen = !plot.is_frozen();
         plot.freeze(frozen.then_some(at));
         let name = plot.name.clone();
-        self.notify_info(if frozen {
-            format!("Plot {name} frozen")
-        } else {
-            format!("Plot {name} live")
-        });
+        let state = if frozen { "frozen" } else { "live" };
+        self.notify_plot(ToastLevel::Info, format!("Plot {name} {state}"));
     }
 
     /// RX bytes for the plot shown, at the time they came in on its clock

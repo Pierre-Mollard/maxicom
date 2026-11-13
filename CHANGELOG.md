@@ -132,6 +132,9 @@ remove it, or turn the row off with `ui.transfer_row = false`.
   errors, a message said again counts in its title (`×2`), the time starts
   when a notification first shows, and a `cancel` says `Cancelled: …` where a
   failure says `Stopped …: why`.
+- Cycling a setting (the raw side panel's view, the encoding, Add CR...) or
+  the plot, or copying again, updates one notification instead of adding one
+  per press.
 - The settings popup lists Mouse before Byte Inspect, so the raw side
   panel's row and the plot's sit together.
 - The raw side panel's border joins the window's border (`┬` `┴` on the

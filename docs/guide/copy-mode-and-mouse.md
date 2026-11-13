@@ -121,7 +121,8 @@ clicked; and while there are marks, Marks…, which opens the marks popup. See
 [Marks](marks.md).
 
 On the [raw side panel](raw-side-panel.md) or a [plot](plots.md), it starts
-with Close raw panel or Close plot, which hides that panel.
+with Close raw panel or Close plot, which hides that panel, and has no mode
+switch.
 
 ### Right-click paste
 

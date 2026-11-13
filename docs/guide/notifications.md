@@ -34,6 +34,15 @@ link's do the same: connecting then connected, lost then reconnected, detached
 then attached. Each new message takes the box's place and starts its time
 again.
 
+What you go through one press at a time works the same way, so cycling
+doesn't stack a box per press:
+
+- the copies: the last one says what was copied;
+- the [plot](plots.md): shown, switched, frozen, off;
+- each setting you cycle (the raw side panel's view, the encoding, the display
+  mode, Add CR...): its box shows its last value. Two different settings still
+  show two boxes.
+
 ## Your own notifications
 
 The `notify` command shows one of yours, at the level you choose:

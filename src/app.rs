@@ -25,7 +25,7 @@ use crate::{
     configs::{
         DualBufferMode, KeyBindingAction, KeyResolver, LinksConfig, Mode, PlotsConfig, RawSideView,
         SettingsConfig, StatusBarLayout, TextEncoding, WrapMode,
-        settings::{PrefixPlace, PrefixWrapBehavior, SPLIT_PERCENT_MAX, SPLIT_PERCENT_MIN},
+        settings::{PrefixPlace, PrefixWrapBehavior, SPLIT_PERCENT_MAX, SPLIT_PERCENT_MIN, on_off},
     },
     inputs::{
         Action, AppAction, ClickHoldAction, CopyModeAction, HistoryAction, LineInputAction,
@@ -1673,7 +1673,11 @@ impl App {
             }
             AppAction::SetEncoding(encoding) => {
                 self.settings.encoding = encoding;
-                self.notify_info(format!("Rx Text Encoding is {}", encoding.as_str()));
+                let encoding = encoding.as_str();
+                self.notify_setting(
+                    "setting:encoding",
+                    format!("Rx Text Encoding is {encoding}"),
+                );
                 UpdateEffect::None
             }
             AppAction::SaveScreenshot(name) => {
@@ -1796,7 +1800,7 @@ impl App {
             SidePanel::Raw => {
                 self.settings.raw_side.view = RawSideView::Off;
                 let view = self.settings.raw_side.view.as_str();
-                self.notify_info(format!("Raw SideView is {view}"));
+                self.notify_setting("setting:raw", format!("Raw SideView is {view}"));
             }
             SidePanel::Plot => self.show_plot(None),
         }
@@ -2224,10 +2228,11 @@ impl App {
             }
             SettingKey::TextEncoding => {
                 self.settings.encoding.toggle();
-                self.notify_info(format!(
-                    "Rx Text Encoding is {}",
-                    self.settings.encoding.as_str()
-                ));
+                let encoding = self.settings.encoding.as_str();
+                self.notify_setting(
+                    "setting:encoding",
+                    format!("Rx Text Encoding is {encoding}"),
+                );
             }
             SettingKey::IdentWrap => {
                 self.settings.line_mode.wrap_indent = match self.settings.line_mode.wrap_indent {
@@ -2245,51 +2250,47 @@ impl App {
             }
             SettingKey::DisplayMode => {
                 self.settings.line_mode.display_mode.toggle();
-                self.notify_info(format!(
-                    "Display Mode is {}",
-                    self.settings.line_mode.display_mode.as_str()
-                ));
+                let mode = self.settings.line_mode.display_mode.as_str();
+                self.notify_setting("setting:display", format!("Display Mode is {mode}"));
             }
             SettingKey::Mouse => {
                 self.settings.ui.mouse = !self.settings.ui.mouse;
-                let state = if self.settings.ui.mouse { "ON" } else { "OFF" };
-                self.notify_info(format!("Mouse capture {state}"));
+                let state = on_off(self.settings.ui.mouse);
+                self.notify_setting("setting:mouse", format!("Mouse capture {state}"));
             }
             SettingKey::DimensionMode => {
                 self.settings.terminal_mode.dimension_mode.toggle();
                 self.update_viewport(self.viewport);
-                self.notify_info(format!(
-                    "Terminal Size Mode is {}",
-                    self.settings.terminal_mode.dimension_mode.as_str()
-                ));
+                let mode = self.settings.terminal_mode.dimension_mode.as_str();
+                self.notify_setting("setting:size", format!("Terminal Size Mode is {mode}"));
             }
             SettingKey::AnswerQueries => {
                 let terminal = &mut self.settings.terminal_mode;
                 terminal.answer_queries = !terminal.answer_queries;
-                let state = if terminal.answer_queries { "ON" } else { "OFF" };
-                self.notify_info(format!("Query answers {state}"));
+                let state = on_off(terminal.answer_queries);
+                self.notify_setting("setting:answers", format!("Query answers {state}"));
             }
             // the bytes received from now on, what's shown stays as it came (MAX-181)
             SettingKey::AddCr => {
                 self.settings.add_cr = !self.settings.add_cr;
-                let state = if self.settings.add_cr { "ON" } else { "OFF" };
-                self.notify_info(format!("Add CR {state}"));
+                let state = on_off(self.settings.add_cr);
+                self.notify_setting("setting:add-cr", format!("Add CR {state}"));
             }
             SettingKey::AddLf => {
                 self.settings.add_lf = !self.settings.add_lf;
-                let state = if self.settings.add_lf { "ON" } else { "OFF" };
-                self.notify_info(format!("Add LF {state}"));
+                let state = on_off(self.settings.add_lf);
+                self.notify_setting("setting:add-lf", format!("Add LF {state}"));
             }
             // what Enter sends in line mode (MAX-184)
             SettingKey::TxEol => {
                 self.settings.line_mode.tx_eol.toggle();
                 let eol = self.settings.line_mode.tx_eol.as_str();
-                self.notify_info(format!("Line Enter sends {eol}"));
+                self.notify_setting("setting:enter", format!("Line Enter sends {eol}"));
             }
             // the next plot of plots.toml, off after the last, as `plot` alone (MAX-222)
             // as `plot`: the next one, off after the last
             SettingKey::Plot if self.plots.plots.is_empty() => {
-                self.notify_warn("plots.toml has no plot");
+                self.notify_plot(ToastLevel::Warn, "plots.toml has no plot");
             }
             SettingKey::Plot => {
                 let name = self.next_plot().map(String::from);
@@ -2297,10 +2298,8 @@ impl App {
             }
             SettingKey::DisplayRaw => {
                 self.settings.raw_side.view.toggle();
-                self.notify_info(format!(
-                    "Raw SideView is {}",
-                    self.settings.raw_side.view.as_str()
-                ));
+                let view = self.settings.raw_side.view.as_str();
+                self.notify_setting("setting:raw", format!("Raw SideView is {view}"));
             }
         }
     }
@@ -2564,20 +2563,28 @@ impl App {
         self.notifications.push(msg, level, duration);
     }
 
-    /// A file transfer's toast: its messages follow each other in one box (MAX-228)
-    pub fn notify_transfer(&mut self, level: ToastLevel, msg: impl Into<String>) {
+    /// A toast in the box of `key`: it takes the place of the box's last message, its time
+    /// renewed, so what follows on from it, or is cycled through, shows in one box (MAX-234)
+    pub fn notify_keyed(&mut self, key: &'static str, level: ToastLevel, msg: impl Into<String>) {
         let msg = msg.into();
         let duration = toast_duration(level, &msg);
-        self.notifications
-            .push_keyed("transfer", msg, level, duration);
+        self.notifications.push_keyed(key, msg, level, duration);
+    }
+
+    /// A file transfer's toast: its messages follow each other in one box (MAX-228)
+    pub fn notify_transfer(&mut self, level: ToastLevel, msg: impl Into<String>) {
+        self.notify_keyed("transfer", level, msg);
     }
 
     /// The link's toast, the same way: connecting then connected, lost then reconnected,
     /// detached then attached (MAX-228)
     pub fn notify_link(&mut self, level: ToastLevel, msg: impl Into<String>) {
-        let msg = msg.into();
-        let duration = toast_duration(level, &msg);
-        self.notifications.push_keyed("link", msg, level, duration);
+        self.notify_keyed("link", level, msg);
+    }
+
+    /// A setting's toast: cycling it shows one box with its last value (MAX-234)
+    fn notify_setting(&mut self, key: &'static str, msg: impl Into<String>) {
+        self.notify_keyed(key, ToastLevel::Info, msg);
     }
 }
 

@@ -91,13 +91,16 @@ impl ActionMenu {
         self
     }
 
-    /// Opened on a side panel, its "Close" row first (MAX-230)
+    /// Opened on a side panel, its "Close" row first (MAX-230), and no mode switch: that one
+    /// is about the history and the prompt (MAX-235)
     pub fn with_close(mut self, panel: Option<SidePanel>) -> Self {
         let label = match panel {
             Some(SidePanel::Raw) => "Close raw panel",
             Some(SidePanel::Plot) => "Close plot",
             None => return self,
         };
+        let switch = MenuRun::Action(KeyBindingAction::SKInputMode);
+        self.items.retain(|&(_, run)| run != switch);
         self.items
             .insert(0, (label, MenuRun::ClosePanel(panel.unwrap())));
         self

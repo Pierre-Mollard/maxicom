@@ -2191,7 +2191,8 @@ fn settings_scroll_on_a_short_screen() {
 /// click on a right-column row toggles its setting, `N` cycles what Enter sends. A
 /// narrower screen has one column, scrolled. Each value is padded to the longest one, so
 /// the popup keeps its width as they change (the mode, `Line` or `Terminal`). MAX-230: the
-/// raw panel's and the plot's rows sit together, after Mouse.
+/// raw panel's and the plot's rows sit together, after Mouse. MAX-235: the values read the
+/// same way, words in Title Case, switches `On` / `Off`, acronyms in capitals.
 /// How: the popup at 80x24, a click on Query Answers, `N` three times, `M`; then at 60x24.
 #[test]
 fn settings_in_two_columns() {
@@ -2208,8 +2209,8 @@ fn settings_in_two_columns() {
         "General                           Line Mode",
         "[M] Input Mode    : Line          [W] Line Wrap     : Word-Wrap",
         "[B] Byte Inspect  : Off           Terminal Mode",
-        "[V] Plot          : off           [S] Size Mode     : Grow Only",
-        "                                  [A] Query Answers : ON",
+        "[V] Plot          : Off           [S] Size Mode     : Grow Only",
+        "                                  [A] Query Answers : On",
         "Newlines",
         "[N] Line Enter    : LF",
         "Files",
@@ -2218,6 +2219,19 @@ fn settings_in_two_columns() {
         assert!(has(&rows, row), "{row}: {rows:#?}");
     }
     assert!(!has(&rows, "▼"), "{rows:#?}");
+    // MAX-235: every value in Title Case or an acronym (UTF8, LF), switches On / Off
+    for row in &rows {
+        for value in row.split(" : ").skip(1) {
+            let value = value.split_whitespace().next().unwrap_or("");
+            let acronym = ["UTF8", "ASCII", "CP437", "LF", "CR", "CRLF"].contains(&value);
+            let title = value.chars().next().is_some_and(char::is_uppercase)
+                && !value.chars().skip(1).all(|c| c.is_uppercase());
+            assert!(
+                acronym || title || value.starts_with('~'),
+                "{value:?} in {row:?}"
+            );
+        }
+    }
     // Mouse, then the side panels' rows together (MAX-230)
     let row_of = |text| rows.iter().position(|row| row.contains(text)).unwrap();
     let order = [row_of("[U] Mouse"), row_of("[B] Byte"), row_of("[V] Plot")];
@@ -6180,7 +6194,8 @@ fn right_click_menu() {
 
 /// MAX-230: a right click on a side panel puts its "Close" row first in the menu, selected:
 /// "Close raw panel" turns the raw view off, "Close plot" the plot; on the history the menu
-/// starts with Help, as before. In line and terminal mode.
+/// starts with Help, as before. MAX-235: the mode switch is on the history's menu only, not
+/// on a panel's. In line and terminal mode.
 /// How: the raw panel on the right and the plot at the bottom of 100x30; right clicks on
 /// the history, the raw panel (Enter), the plot (a click on the row).
 #[test]
@@ -6211,6 +6226,7 @@ fn right_click_closes_a_panel() {
         let rows = right_click(&mut h, (5, 3));
         assert!(selected(&rows).contains("│▶ Help"), "{mode:?}\n{rows:#?}");
         assert!(!has(&rows, "Close"), "{mode:?}\n{rows:#?}");
+        assert!(has(&rows, "Switch to "), "{mode:?}\n{rows:#?}");
         h.app.close_overlay();
 
         let on_raw = (raw.x + 5, raw.y + 2);
@@ -6219,6 +6235,7 @@ fn right_click_closes_a_panel() {
             selected(&rows).contains("▶ Close raw panel"),
             "{mode:?}\n{rows:#?}"
         );
+        assert!(!has(&rows, "Switch to "), "{mode:?}\n{rows:#?}");
         h.app.update(Action::Overlay(DialogAction::Confirm));
         assert_eq!(h.app.settings().raw_side.view, RawSideView::Off, "{mode:?}");
         assert!(h.app.plot().is_some(), "{mode:?}");
@@ -6230,6 +6247,7 @@ fn right_click_closes_a_panel() {
             selected(&rows).contains("▶ Close plot"),
             "{mode:?}\n{rows:#?}"
         );
+        assert!(!has(&rows, "Switch to "), "{mode:?}\n{rows:#?}");
         click(&mut h, cell_of(&rows, "Close plot"));
         assert!(h.app.plot().is_none(), "{mode:?}");
     }

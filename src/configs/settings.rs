@@ -116,6 +116,11 @@ pub fn raw_view_to_display_mode(view: RawSideView) -> LineDisplayMode {
     }
 }
 
+/// A switch's value as the settings popup and its notices show it (MAX-235)
+pub const fn on_off(on: bool) -> &'static str {
+    if on { "On" } else { "Off" }
+}
+
 /// A side panel's share of the split, in percent
 pub const SPLIT_PERCENT_MIN: u16 = 10;
 pub const SPLIT_PERCENT_MAX: u16 = 85;
@@ -238,7 +243,7 @@ impl TextEncoding {
             Self::Utf8 => "UTF8",
             Self::Ascii => "ASCII",
             Self::Cp437 => "CP437",
-            Self::Latin1 => "LATIN1",
+            Self::Latin1 => "Latin1",
         }
     }
 

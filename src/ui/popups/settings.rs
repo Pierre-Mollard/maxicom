@@ -9,8 +9,9 @@ use ratatui::{
 use crate::{
     app::App,
     configs::{
-        AppConfig, PrefixWrapBehavior, ThemeConfig, keybindings::KeyBindingDialogAction,
-        settings::PrefixPlace,
+        AppConfig, PrefixWrapBehavior, ThemeConfig,
+        keybindings::KeyBindingDialogAction,
+        settings::{PrefixPlace, on_off},
     },
     overlays::{PopupTarget, SettingKey, SettingsDialog},
     paths::shorten_home,
@@ -47,22 +48,15 @@ pub fn render_settings_popup(
         PrefixPlace::Border => "Border",
         PrefixPlace::None => "None",
     };
-    let echo_str = if app.settings().local_echo {
-        "ON"
-    } else {
-        "OFF"
-    };
-    let timestamp_str = if app.settings().show_timestamps {
-        "ON"
-    } else {
-        "OFF"
-    };
+    // words in Title Case, switches On / Off, acronyms as they are written (MAX-235)
+    let echo_str = on_off(app.settings().local_echo);
+    let timestamp_str = on_off(app.settings().show_timestamps);
     let encoding_str = app.settings().encoding.as_str();
     let display_mode_str = app.settings().line_mode.display_mode.as_str();
     let raw_display_str = app.settings().raw_side.view.as_str();
     let dimension_str = app.settings().terminal_mode.dimension_mode.as_str();
 
-    let plot_str = app.plot().map_or("off".to_string(), |plot| {
+    let plot_str = app.plot().map_or("Off".to_string(), |plot| {
         crate::ui::plot::shorten(&plot.name, VALUE_WIDTH)
     });
     let row = |key: &'static str, label: &'static str, value: &str| {
@@ -80,13 +74,8 @@ pub fn render_settings_popup(
         ])
     };
 
-    let mouse_str = if app.settings().ui.mouse { "ON" } else { "OFF" };
-    let answers_str = if app.settings().terminal_mode.answer_queries {
-        "ON"
-    } else {
-        "OFF"
-    };
-    let on_off = |on: bool| if on { "ON" } else { "OFF" };
+    let mouse_str = on_off(app.settings().ui.mouse);
+    let answers_str = on_off(app.settings().terminal_mode.answer_queries);
     let add_cr_str = on_off(app.settings().add_cr);
     let add_lf_str = on_off(app.settings().add_lf);
     let tx_eol_str = app.settings().line_mode.tx_eol.as_str();

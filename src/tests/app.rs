@@ -1557,10 +1557,10 @@ fn add_cr_and_add_lf_on_the_screen() {
     };
     assert_eq!(screen(None, b"a\nb").0, "a\n b");
     let on = screen(Some(SettingKey::AddCr), b"a\nb");
-    assert_eq!(on, ("a\nb".to_string(), vec!["Add CR ON".to_string()]));
+    assert_eq!(on, ("a\nb".to_string(), vec!["Add CR On".to_string()]));
     assert_eq!(screen(None, b"c\rd").0, "d");
     let on = screen(Some(SettingKey::AddLf), b"c\rd");
-    assert_eq!(on, ("c\nd".to_string(), vec!["Add LF ON".to_string()]));
+    assert_eq!(on, ("c\nd".to_string(), vec!["Add LF On".to_string()]));
 
     let mut app = app();
     for (line, on) in [("set add-cr on", true), ("set add-cr off", false)] {
@@ -1597,7 +1597,45 @@ fn mouse_toggle_flips_the_setting() {
     assert!(app.settings.ui.mouse);
     app.toggle_setting(SettingKey::Mouse);
     assert!(!app.settings.ui.mouse);
-    assert_eq!(toasts(&app), ["Mouse capture OFF"]);
+    assert_eq!(toasts(&app), ["Mouse capture Off"]);
+}
+
+/// MAX-234: a setting cycled shows one box with its last value, two settings two boxes; the
+/// plot's show, switch, freeze and off follow each other in one box; a "Close raw panel"
+/// goes in the raw view's box.
+/// How: the raw view cycled 4 times, then the encoding; the plots stepped and frozen.
+#[test]
+fn cycling_shows_one_box() {
+    let mut app = app();
+    for _ in 0..4 {
+        app.toggle_setting(SettingKey::DisplayRaw);
+    }
+    assert_eq!(toasts(&app), ["Raw SideView is Off"]);
+    app.toggle_setting(SettingKey::DisplayRaw);
+    app.toggle_setting(SettingKey::TextEncoding);
+    assert_eq!(
+        toasts(&app),
+        ["Raw SideView is Hex", "Rx Text Encoding is ASCII"]
+    );
+    app.update(Action::App(AppAction::OpenOverlay(Overlay::ActionMenu(
+        crate::overlays::ActionMenu::new((0, 0), Mode::Line, crate::link::LinkKind::Serial, false)
+            .with_close(Some(crate::app::types::SidePanel::Raw)),
+    ))));
+    app.update(Action::Overlay(DialogAction::Confirm));
+    assert_eq!(
+        toasts(&app),
+        ["Raw SideView is Off", "Rx Text Encoding is ASCII"]
+    );
+
+    app.notifications.dismiss_all();
+    app.set_plots(crate::configs::PlotsConfig::default());
+    for _ in 0..3 {
+        app.step_plot(true);
+    }
+    app.toggle_plot_freeze();
+    assert_eq!(toasts(&app), ["Plot sensors frozen"]);
+    app.show_plot(None);
+    assert_eq!(toasts(&app), ["Plot off"]);
 }
 
 /// MAX-147: a screenshot action takes the screen at once, then opens its dialog prefilled

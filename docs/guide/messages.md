@@ -12,8 +12,8 @@ Messages show up in three places:
   They stay the time to read them, errors at least 6 seconds, see
   [How long they stay](notifications.md#how-long-they-stay).
 
-A toggle also says its new state in a notification, like `Add CR ON` or
-`Display Mode is hex`. Those aren't listed here.
+A toggle also says its new state in a notification, like `Add CR On` or
+`Display Mode is Hex`. Those aren't listed here.
 
 ## At startup, on the shell
 
