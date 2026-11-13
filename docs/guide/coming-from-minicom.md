@@ -65,7 +65,7 @@ defaults back. Note that `c` and `C` (Shift-c) are two different keys, see
 | `-H, --displayhex`    | the raw side panel in hex            |
 | `-R, --remotecharset` | utf8, ascii, cp437 or latin1         |
 | `-v, --version`       | the same                             |
-| `minicom esp32`       | `maxicom esp32`, a saved link        |
+| `minicom board`       | `maxicom board`, a saved link        |
 | `minirc.dfl`          | `[link]` in `config.toml`            |
 | `~/.dialdir`          | `links.toml` in the config folder    |
 

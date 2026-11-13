@@ -272,7 +272,7 @@ fn parse_args_from(
             "--write-config" => return Ok(ParseOutcome::WriteConfig),
             // already handled by `reset_config`, before the settings loaded (MAX-231)
             "--reset-config" => {}
-            // a saved link's name, or the device without `--device`: `maxicom esp32`,
+            // a saved link's name, or the device without `--device`: `maxicom board`,
             // `maxicom /dev/ttyUSB0`, `maxicom tcp://host:port`
             word if !word.starts_with('-') => given = Some(Given::Word(word.to_string())),
 

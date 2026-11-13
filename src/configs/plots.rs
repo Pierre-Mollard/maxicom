@@ -144,13 +144,13 @@ impl<'de> Deserialize<'de> for PlotsConfig {
 
 impl Default for PlotsConfig {
     /// Four demos, each showing other fields: every `key=value` pair on a time axis, the
-    /// Arduino IDE plotter's format (`name:value` or bare numbers) on the last 500 samples,
+    /// serial plotter format (`name:value` or bare numbers) on the last 500 samples,
     /// two named series on a fixed range with their colors, and the lines tagged `[plot]`
     fn default() -> Self {
         let plots = vec![
             ("key-value".to_string(), PlotDef::default()),
             (
-                "arduino".to_string(),
+                "serial-plotter".to_string(),
                 PlotDef {
                     separator: ":".to_string(),
                     columns: true,

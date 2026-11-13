@@ -323,8 +323,8 @@ fn plot_option() {
     };
     assert_eq!(plot(&[]), Ok(None));
     assert_eq!(
-        plot(&["--plot", "arduino"]),
-        Ok(Some("arduino".to_string()))
+        plot(&["--plot", "serial-plotter"]),
+        Ok(Some("serial-plotter".to_string()))
     );
     assert_eq!(plot(&["--plot=pid"]), Ok(Some("pid".to_string())));
     assert_eq!(

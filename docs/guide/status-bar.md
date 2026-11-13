@@ -97,7 +97,7 @@ layout = "border"
 | Variable | Value | Example |
 | --- | --- | --- |
 | `{mode}` | `TERM` or `LINE`, `COPY` while copy mode is on, `SRCH` while you type a search, `MARK` while a mark waits for its letter | `TERM` |
-| `{port}` | Device address, a saved link's name, or the device and count of a [group replay](capture.md#replaying-a-group) | `/dev/ttyUSB0`, `tcp://192.168.1.50:4000`, `esp32`, `ttyUSB0 · 12 sessions` |
+| `{port}` | Device address, a saved link's name, or the device and count of a [group replay](capture.md#replaying-a-group) | `/dev/ttyUSB0`, `tcp://192.168.1.50:4000`, `board`, `ttyUSB0 · 12 sessions` |
 | `{baud}` | Baud rate; `raw` for a raw TCP link | `115200` |
 | `{framing}` | Serial framing; `TCP` for a TCP link | `8N1` |
 | `{rx_bytes}` / `{tx_bytes}` | Received / transmitted bytes count | `1024` |

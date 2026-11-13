@@ -59,7 +59,7 @@ remove it, or turn the row off with `ui.transfer_row = false`.
   stops it. `ui.transfer_row` turns it off; the status bar has
   `{send_rate}` and `{send_eta}`.
 - [Plots](https://pierre-mollard.github.io/maxicom/plots.html): the numbers
-  your device prints (`temp=23.4 hum=51`, the Arduino plotter's
+  your device prints (`temp=23.4 hum=51`, the serial plotter format
   `temp:23.4,hum:51` or bare columns) charted live in a panel at the bottom
   by default (`[plot_side]`), with the raw side panel if it's on, with a
   legend, autoscale and a time or sample window. The plots are defined in
@@ -77,6 +77,11 @@ remove it, or turn the row off with `ui.transfer_row = false`.
   `[errors] words = ["ERROR", "FAIL"]`. `ignore_case` and `whole_word` set
   how a group or a word matches, and the entries apply in the file's order,
   a later one drawn over an earlier one.
+- [Whole-line highlights](https://pierre-mollard.github.io/maxicom/highlights.html#whole-lines):
+  a table with `line_start = ["ERROR:", "[E]"]` in place of `words` colors
+  every line that starts with one of them, on all its rows, for logs that
+  begin with their level. The words are drawn over the colored line. The
+  default file only shows an example in its header comment.
 
 - [Search backward](https://pierre-mollard.github.io/maxicom/search.html#starting-a-search)
   with `Ctrl-a ?` (`enter-search-backward`): from the live view, the newest
@@ -142,6 +147,13 @@ remove it, or turn the row off with `ui.transfer_row = false`.
 
 ### Fixed
 
+- Highlights are matched in each received line instead of each row of the
+  screen: a word wrapped over two rows is lit on both, a word cut by the
+  pan is lit on its visible part, and the part of a longer word left at an
+  edge (`ERROR` of `NOERROR`) no longer lights up. In terminal mode the rows
+  the device wrapped are joined. In line mode, search matches and the copy
+  selection show over a highlight's background, and the time column is no
+  longer matched.
 - In terminal mode, the raw side panel can be panned during a search: it no
   longer comes back to the match on every frame.
 - Without borders, the history's scrollbar is in the history's last column:

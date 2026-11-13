@@ -275,7 +275,7 @@ impl App {
     }
 
     /// The link in use as the notices and the link's popups name it: a saved one by its name,
-    /// its address after it so the device stays findable (`esp32 (/dev/ttyUSB0)`)
+    /// its address after it so the device stays findable (`board (/dev/ttyUSB0)`)
     pub fn link_label(&self) -> String {
         let address = &self.link.config().address;
         match self.link_name() {

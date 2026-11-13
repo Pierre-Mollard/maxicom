@@ -24,11 +24,11 @@ folder.
 
 `maxicom --config <file>` reads the settings from that file instead of
 `config.toml`, for this run. It's handy for a setup per board or per use:
-one file for an ESP32 at 115200 with the triggers armed, another for logs
+one file for a board at 115200 with the triggers armed, another for logs
 in line mode.
 
 ```bash
-maxicom --config ~/maxicom/esp32.toml
+maxicom --config ~/maxicom/board.toml
 ```
 
 The other files still come from the config folder, unless the file's own

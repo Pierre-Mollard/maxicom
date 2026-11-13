@@ -26,6 +26,7 @@ struct Harness {
     theme: ThemeConfig,
     status_bar: CompiledStatusBar,
     terminal: Terminal<TestBackend>,
+    highlights: Vec<KeywordHighlight>,
 }
 
 impl Harness {
@@ -73,6 +74,7 @@ impl Harness {
             theme,
             status_bar,
             terminal,
+            highlights: Vec::new(),
         }
     }
 
@@ -96,10 +98,11 @@ impl Harness {
             theme,
             status_bar,
             terminal,
+            highlights,
         } = self;
         terminal
             .draw(|frame| {
-                render(app, theme, frame, &[], status_bar);
+                render(app, theme, frame, highlights, status_bar);
             })
             .unwrap();
         let buffer = terminal.backend().buffer();
@@ -269,9 +272,12 @@ fn plot_title_arrows_and_long_names() {
     let mut h = plot_harness(80, 16, b"");
     let rows = h.draw();
     click(&mut h, cell_of(&rows, "▶"));
-    assert_eq!(h.app.plot().map(|p| p.name.as_str()), Some("arduino"));
+    assert_eq!(
+        h.app.plot().map(|p| p.name.as_str()),
+        Some("serial-plotter")
+    );
     let rows = h.draw();
-    assert!(has(&rows, "  ◀ arduino ▶ "), "{rows:#?}");
+    assert!(has(&rows, "  ◀ serial-plotter ▶ "), "{rows:#?}");
     click(&mut h, cell_of(&rows, "◀"));
     assert_eq!(h.app.plot().map(|p| p.name.as_str()), Some("key-value"));
     let rows = h.draw();
@@ -297,7 +303,10 @@ fn plot_title_arrows_and_long_names() {
         "{title}"
     );
     click(&mut h, cell_of(&rows, "▶"));
-    assert_eq!(h.app.plot().map(|p| p.name.as_str()), Some("arduino"));
+    assert_eq!(
+        h.app.plot().map(|p| p.name.as_str()),
+        Some("serial-plotter")
+    );
 }
 
 /// MAX-222: frozen, the panel's title says so after the plot's name and its buttons.
@@ -357,6 +366,7 @@ fn plot_side_too_small() {
         theme,
         status_bar,
         terminal,
+        ..
     } = &mut h;
     let mut effect = PostRenderEffect::None;
     terminal
@@ -949,7 +959,7 @@ fn plot_padding_and_y_labels() {
 /// curves, after a blank row and a blank column next to the Y axis; the cells under each
 /// row are cleared (no braille dot under or around the text, where ratatui's box left the
 /// curves), only as wide as that row, so the curves show on the right of each.
-/// How: the `arduino` plot (a 500 samples window) on 100x30, `temp` at 100 then 0 and `hum`
+/// How: the `serial-plotter` plot (a 500 samples window) on 100x30, `temp` at 100 then 0 and `hum`
 /// at 50 then 100, so the oldest points run along the top left, under the legend.
 #[test]
 fn plot_compact_legend() {
@@ -957,7 +967,7 @@ fn plot_compact_legend() {
         s.ui.show_borders = true;
     });
     h.app.set_plots(crate::configs::PlotsConfig::default());
-    h.app.show_plot(Some("arduino"));
+    h.app.show_plot(Some("serial-plotter"));
     for i in 0..500 {
         let temp = if i < 250 { 100 } else { 0 };
         h.app
@@ -9261,4 +9271,383 @@ fn search_bar_hints_stay_while_typing() {
             "{borders} {rows:#?}"
         );
     }
+}
+
+/// A `w` columns wide screen in Pretty `mode`, with the rules of `highlights_toml`
+fn highlight_harness(
+    mode: Mode,
+    w: u16,
+    highlights_toml: &str,
+    tweak: impl FnOnce(&mut SettingsConfig),
+) -> Harness {
+    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, w, 12, |s| {
+        s.mode = mode;
+        tweak(s);
+    });
+    let config: crate::configs::HighlightConfig = toml::from_str(highlights_toml).unwrap();
+    h.highlights = config.compile_rules();
+    h
+}
+
+/// `text` (CRLF ended) drawn in `mode` with the rules of `highlights_toml`, 80 columns wide
+fn highlighted(mode: Mode, highlights_toml: &str, text: &str) -> (Harness, Vec<String>) {
+    let mut h = highlight_harness(mode, 80, highlights_toml, |_| {});
+    let bytes = format!("{text}\r\n");
+    match mode {
+        Mode::Line => h.feed(bytes.as_bytes()),
+        Mode::Terminal => h
+            .app
+            .terminal_mode
+            .process_rx(TextEncoding::Utf8, bytes.as_bytes()),
+    }
+    let rows = h.draw();
+    (h, rows)
+}
+
+/// The cells of `text` on screen (its first place, single-width chars)
+fn cells_of<'a>(h: &'a Harness, rows: &[String], text: &str) -> Vec<&'a ratatui::buffer::Cell> {
+    let (x, y) = cell_of(rows, text);
+    let buffer = h.terminal.backend().buffer();
+    (0..text.chars().count() as u16)
+        .map(|i| &buffer[(x + i, y)])
+        .collect()
+}
+
+/// Which chars of `text` on screen have `fg`: `#` for those, `.` for the others
+fn lit_in(h: &Harness, rows: &[String], text: &str, fg: ratatui::style::Color) -> String {
+    cells_of(h, rows, text)
+        .iter()
+        .map(|cell| if cell.fg == fg { '#' } else { '.' })
+        .collect()
+}
+
+const MODES: [Mode; 2] = [Mode::Line, Mode::Terminal];
+
+/// MAX-229 step 0: groups light their words in a drawn frame, in both modes: as written (case
+/// kept, inside other words too) by default, any case and whole words only with the flags.
+/// How: an `errors` group without flags and an `ok` group with both, over one line.
+#[test]
+fn highlight_groups_in_a_frame() {
+    use ratatui::style::Color;
+    let toml = r#"
+[errors]
+words = ["ERROR"]
+fg = "Red"
+
+[ok]
+words = ["ok"]
+ignore_case = true
+whole_word = true
+fg = "Green"
+"#;
+    let text = "ERRORS error OK token ok_x 0OK ok.";
+    for mode in MODES {
+        let (h, rows) = highlighted(mode, toml, text);
+        assert_eq!(
+            lit_in(&h, &rows, text, Color::Red),
+            "#####.............................",
+            "{mode:?}"
+        );
+        assert_eq!(
+            lit_in(&h, &rows, text, Color::Green),
+            ".............##................##.",
+            "{mode:?}"
+        );
+    }
+}
+
+/// MAX-229 step 0: where two rules cover the same text, the later one in the file is drawn
+/// over the earlier one, in both modes.
+/// How: `FAIL` red then `FAILED` green over "FAILED", then the other order.
+#[test]
+fn later_highlight_over_earlier_in_a_frame() {
+    use ratatui::style::Color;
+    let fail_first = "FAIL = \"Red\"\nFAILED = \"Green\"\n";
+    let failed_first = "FAILED = \"Green\"\nFAIL = \"Red\"\n";
+    for mode in MODES {
+        let (h, rows) = highlighted(mode, fail_first, "x FAILED");
+        assert_eq!(lit_in(&h, &rows, "FAILED", Color::Green), "######");
+        let (h, rows) = highlighted(mode, failed_first, "x FAILED");
+        assert_eq!(lit_in(&h, &rows, "FAILED", Color::Red), "####..");
+        assert_eq!(lit_in(&h, &rows, "FAILED", Color::Green), "....##");
+    }
+}
+
+/// MAX-229 step 0: a rule only sets what it has: a fg-only bold rule keeps the background the
+/// device sent and adds bold to the received style, in both modes.
+/// How: "OK" on a blue background (ESC[44m), underlined (ESC[4m), drawn without rules and
+/// with `OK` green and bold.
+#[test]
+fn highlight_keeps_what_the_rule_does_not_set() {
+    use ratatui::style::{Color, Modifier};
+    let text = "x \x1b[44;4mOK\x1b[0m y";
+    for mode in MODES {
+        let (plain, rows) = highlighted(mode, "", text);
+        let received = cells_of(&plain, &rows, "OK")[0].clone();
+        assert_ne!(received.bg, Color::Reset, "{mode:?}");
+        assert!(received.modifier.contains(Modifier::UNDERLINED), "{mode:?}");
+
+        let (h, rows) = highlighted(mode, "[OK]\nfg = \"Green\"\nbold = true\n", text);
+        for cell in cells_of(&h, &rows, "OK") {
+            assert_eq!((cell.fg, cell.bg), (Color::Green, received.bg), "{mode:?}");
+            assert_eq!(
+                cell.modifier,
+                received.modifier | Modifier::BOLD,
+                "{mode:?}"
+            );
+        }
+    }
+}
+
+const ERROR_RED: &str = "[errors]\nwords = [\"ERROR\"]\nwhole_word = true\nfg = \"Red\"\n";
+
+/// MAX-229 step 1: a word split by the wrap is lit on both rows (the rows were matched one by
+/// one: neither part was).
+/// How: "connect ERROR here" in char wrap, on a view that breaks it after "ERR".
+#[test]
+fn highlight_across_the_wrap() {
+    use ratatui::style::Color;
+    // "│ " + 11 columns + the scrollbar
+    let mut h = highlight_harness(Mode::Line, 14, ERROR_RED, |s| {
+        s.line_mode.wrap_mode = crate::configs::WrapMode::Char;
+    });
+    h.feed(b"connect ERROR here\r\n");
+    let rows = h.draw();
+    assert_eq!(lit_in(&h, &rows, "connect ERR", Color::Red), "........###");
+    assert_eq!(lit_in(&h, &rows, "OR here", Color::Red), "##.....");
+}
+
+/// MAX-229 step 1: the pan's cuts don't change what is lit: the visible part of a word cut by
+/// an edge is lit, the visible part of a longer word looking like it isn't.
+/// How: truncate wrap, panned right by 7 (the "│ " prefix and 5 chars): "abc ERROR x" shows
+/// "RROR x" (lit), "aaaNOERROR x" shows "ERROR x" (not lit); a line ending in "ERRORS" just
+/// past the right edge shows "ERROR" (not lit).
+#[test]
+fn highlight_cut_by_the_pan() {
+    use ratatui::style::Color;
+    let mut h = highlight_harness(Mode::Line, 40, ERROR_RED, |s| {
+        s.line_mode.wrap_mode = crate::configs::WrapMode::Truncate;
+    });
+    h.feed(b"abc ERROR x\r\naaaNOERROR x\r\n");
+    h.feed(format!("{}\r\n", "z".repeat(200)).as_bytes());
+    let rows = h.draw();
+    let z_row = rows.iter().find(|row| row.contains('z')).unwrap();
+    // the text columns, the prefix's included
+    let text_width = z_row.chars().filter(|&c| c == 'z').count() + 2;
+    // "ERRORS" with its last letter right past the edge once panned
+    h.feed(format!("{}ERRORS\r\n", "y".repeat(text_width)).as_bytes());
+    h.scroll(HistoryAction::PanRight(7));
+    let rows = h.draw();
+    assert_eq!(lit_in(&h, &rows, "RROR x", Color::Red), "####..");
+    assert_eq!(lit_in(&h, &rows, "ERROR x", Color::Red), ".......");
+    assert_eq!(lit_in(&h, &rows, "yERROR", Color::Red), "......");
+}
+
+/// MAX-229 step 1: search matches and the selection are drawn over a highlight's background,
+/// and the time column and the prefix are not matched.
+/// How: "ERROR" white on red, search "RR": the match in the search style; then the line
+/// selected: in the selection's. Timestamps shown as the literal "ERROR", prefix "ERROR ",
+/// a "│" bar between them.
+#[test]
+fn highlight_under_search_and_selection() {
+    use ratatui::style::Color;
+    let toml = "[ERROR]\nfg = \"White\"\nbg = \"Red\"\n";
+    let mut h = highlight_harness(Mode::Line, 80, toml, |s| {
+        s.show_timestamps = true;
+        s.timestamp_format = "ERROR".to_string();
+        s.refresh_timestamp_width();
+        s.line_mode.inset_prefix.line = "ERROR ".to_string();
+    });
+    h.feed(b"x ERROR y\r\n");
+    let rows = h.draw();
+    let bgs = |h: &Harness, rows: &[String]| -> Vec<Color> {
+        cells_of(h, rows, "ERROR│ERROR x ERROR")
+            .iter()
+            .map(|cell| cell.bg)
+            .collect()
+    };
+    let plain = bgs(&h, &rows);
+    assert!(plain[..14].iter().all(|&bg| bg != Color::Red), "{plain:?}");
+    assert!(plain[14..].iter().all(|&bg| bg == Color::Red), "{plain:?}");
+
+    search(&mut h, "RR");
+    let rows = h.draw();
+    let found = h_theme().search.search_match_active.bg.unwrap();
+    assert_eq!(
+        &bgs(&h, &rows)[14..],
+        [Color::Red, found, found, Color::Red, Color::Red]
+    );
+    h.app.update(Action::Search(SearchModeAction::Cancel));
+
+    h.app.update(Action::CopyMode(CopyModeAction::Enter));
+    h.app.update(Action::CopyMode(CopyModeAction::SelectLine));
+    let rows = h.draw();
+    let selected = h_theme().ui.selection.bg.unwrap();
+    assert!(bgs(&h, &rows)[14..].iter().all(|&bg| bg == selected));
+}
+
+/// MAX-229 step 1: the line still being received is lit too.
+/// How: a line, then "x ERROR" with no line end yet.
+#[test]
+fn highlight_in_the_partial_line() {
+    use ratatui::style::Color;
+    let mut h = highlight_harness(Mode::Line, 40, ERROR_RED, |_| {});
+    h.feed(b"first\r\nx ERROR");
+    let rows = h.draw();
+    assert_eq!(lit_in(&h, &rows, "x ERROR", Color::Red), "..#####");
+}
+
+/// A terminal screen 80 wide with `ERROR_RED`, the grid `cols` wide (kept: a resize clears
+/// vt100's wrap marks), `bytes` received
+fn terminal_highlighted(cols: u16, bytes: &[u8]) -> Harness {
+    let mut h = highlight_harness(Mode::Terminal, 80, ERROR_RED, |s| {
+        s.terminal_mode.cols = cols;
+        s.terminal_mode.dimension_mode = crate::configs::settings::TerminalDimensionMode::FixedCols;
+    });
+    h.app.terminal_mode.process_rx(TextEncoding::Utf8, bytes);
+    h
+}
+
+/// MAX-229 step 2: a word the remote's wrap split over two grid rows is lit on both; a full
+/// row ended by the remote (CRLF) isn't joined to the next one.
+/// How: a 20 columns grid. "a"x16 " ERROR here" wraps after "ERR"; "b"x16 " ERR" fills its row
+/// then CRLF, "OR there" comes next.
+#[test]
+fn terminal_highlight_across_the_wrap() {
+    use ratatui::style::Color;
+    let mut h = terminal_highlighted(
+        20,
+        format!(
+            "{} ERROR here\r\n{} ERR\r\nOR there\r\n",
+            "a".repeat(16),
+            "b".repeat(16)
+        )
+        .as_bytes(),
+    );
+    let rows = h.draw();
+    assert_eq!(lit_in(&h, &rows, "a ERR", Color::Red), "..###");
+    assert_eq!(lit_in(&h, &rows, "OR here", Color::Red), "##.....");
+    assert_eq!(lit_in(&h, &rows, "b ERR", Color::Red), ".....");
+    assert_eq!(lit_in(&h, &rows, "OR there", Color::Red), "........");
+}
+
+/// MAX-229 step 2: the pan's cuts don't change what is lit, in terminal mode.
+/// How: a 120 columns grid panned right by 5: "abc ERROR x" shows "RROR x" (lit),
+/// "aaaNOERROR x" shows "ERROR x" (not lit); a row with "ERRORS" just past the right edge
+/// shows "ERROR" (not lit).
+#[test]
+fn terminal_highlight_cut_by_the_pan() {
+    use ratatui::style::Color;
+    let mut h = terminal_highlighted(120, b"abc ERROR x\r\naaaNOERROR x\r\n");
+    h.app.terminal_mode.process_rx(
+        TextEncoding::Utf8,
+        format!("{}\r\n", "z".repeat(100)).as_bytes(),
+    );
+    let rows = h.draw();
+    let view_width = rows.iter().find(|row| row.contains('z')).unwrap();
+    let view_width = view_width.chars().filter(|&c| c == 'z').count();
+    let line = format!("{}ERRORS\r\n", "y".repeat(view_width));
+    h.app
+        .terminal_mode
+        .process_rx(TextEncoding::Utf8, line.as_bytes());
+    h.scroll(HistoryAction::PanRight(5));
+    let rows = h.draw();
+    assert_eq!(lit_in(&h, &rows, "RROR x", Color::Red), "####..");
+    assert_eq!(lit_in(&h, &rows, "ERROR x", Color::Red), ".......");
+    assert_eq!(lit_in(&h, &rows, "yERROR", Color::Red), "......");
+}
+
+/// MAX-229 step 2: wide chars take two cells: a match after them lands on its own cells, and a
+/// matched wide char is lit on its first cell (the second isn't drawn: the glyph covers it).
+/// How: "中文 ERROR" with `ERROR` red and `文` yellow.
+#[test]
+fn terminal_highlight_after_wide_chars() {
+    use ratatui::style::Color;
+    let mut h = terminal_highlighted(80, "中文 ERROR\r\n".as_bytes());
+    h.highlights.push(KeywordHighlight {
+        pattern: "文".to_string(),
+        style: ratatui::style::Style::default().fg(Color::Yellow),
+        ignore_case: false,
+        whole_word: false,
+        line_start: false,
+    });
+    let rows = h.draw();
+    // a wide char's second cell shows as a space
+    assert_eq!(lit_in(&h, &rows, "中 文  ERROR", Color::Red), ".....#####");
+    assert_eq!(
+        lit_in(&h, &rows, "中 文  ERROR", Color::Yellow),
+        "..#......."
+    );
+}
+
+const ESP_ERROR: &str = "[esp-error]\nline_start = [\"E (\"]\nfg = \"Red\"\n";
+
+/// MAX-229 step 3: in line mode, a line starting with the prefix is lit on every row it wraps
+/// to, the time column left alone; the next line isn't. The device's own colors are under the
+/// rule, and their escape codes don't hide the prefix.
+/// How: timestamps on, 20 columns, word wrap: a red-coded ESP error line over two rows, then a
+/// plain line.
+#[test]
+fn line_start_in_line_mode() {
+    use ratatui::style::Color;
+    let mut h = highlight_harness(Mode::Line, 30, ESP_ERROR, |s| {
+        s.show_timestamps = true;
+        s.timestamp_format = "[T]".to_string();
+        s.refresh_timestamp_width();
+    });
+    h.feed(b"\x1b[0;32mE (12) wifi: connect failed\x1b[0m\r\nE no\r\n");
+    let rows = h.draw();
+    assert_eq!(
+        lit_in(&h, &rows, "[T]││ E (12) wifi: connect", Color::Red),
+        "......####################"
+    );
+    assert_eq!(lit_in(&h, &rows, "failed", Color::Red), "######");
+    assert_eq!(lit_in(&h, &rows, "E no", Color::Red), "....");
+}
+
+/// MAX-229 step 3: the line still being received is lit once the prefix has come.
+/// How: "E (" then "1) up", no line end.
+#[test]
+fn line_start_in_the_partial_line() {
+    use ratatui::style::Color;
+    let mut h = highlight_harness(Mode::Line, 40, ESP_ERROR, |_| {});
+    h.feed(b"first\r\nE ");
+    let rows = h.draw();
+    assert_eq!(lit_in(&h, &rows, "…E", Color::Red), "..");
+    h.feed(b"(1) up");
+    let rows = h.draw();
+    assert_eq!(lit_in(&h, &rows, "…E (1) up", Color::Red), ".########");
+}
+
+/// MAX-229 step 3: in terminal mode, a line starting with the prefix at column 0 is lit on
+/// all the rows the remote wrapped it to, whatever the pan; the next line isn't.
+/// How: a 20 columns grid with a wrapped ESP error line and a plain line; then a 120 columns
+/// grid panned right by 5.
+#[test]
+fn line_start_in_terminal_mode() {
+    use ratatui::style::Color;
+    let mut h = highlight_harness(Mode::Terminal, 80, ESP_ERROR, |s| {
+        s.terminal_mode.cols = 20;
+        s.terminal_mode.dimension_mode = crate::configs::settings::TerminalDimensionMode::FixedCols;
+    });
+    let bytes = b"\x1b[32mE (12) wifi: connect failed\x1b[0m\r\nnext E (\r\n";
+    h.app.terminal_mode.process_rx(TextEncoding::Utf8, bytes);
+    let rows = h.draw();
+    let first_row = "E (12) wifi: connect";
+    assert_eq!(lit_in(&h, &rows, first_row, Color::Red), "#".repeat(20));
+    assert_eq!(lit_in(&h, &rows, " failed", Color::Red), "#######");
+    assert_eq!(lit_in(&h, &rows, "next E (", Color::Red), "........");
+
+    let mut h = highlight_harness(Mode::Terminal, 80, ESP_ERROR, |s| {
+        s.terminal_mode.cols = 120;
+    });
+    let line = format!("E (1) {}\r\n", "x".repeat(100));
+    h.app
+        .terminal_mode
+        .process_rx(TextEncoding::Utf8, line.as_bytes());
+    h.draw();
+    h.scroll(HistoryAction::PanRight(5));
+    let rows = h.draw();
+    // the prefix is out of view: the row starts on the space before the x
+    assert_eq!(lit_in(&h, &rows, " xxx", Color::Red), "####");
 }

@@ -32,8 +32,8 @@ use crate::{
     ui::{
         PostRenderEffect,
         common::{
-            apply_keyword_highlights, apply_selection_to_spans, border_style_for,
-            draw_scrollbar_marks, prompt_view, render_search_bar,
+            apply_selection_to_spans, border_style_for, draw_scrollbar_marks, highlight_spans,
+            prompt_view, render_search_bar,
         },
         data_display::{format_entry_content, format_line_content},
         layout::{
@@ -50,8 +50,8 @@ use crate::{
 pub fn history_entry_to_line(
     entry: &LogEntry,
     settings: &SettingsConfig,
-    line_matches: &[(usize, &SearchMatch)],
-    active_match_idx: usize,
+    highlights: &[KeywordHighlight],
+    line_matches: &[(bool, &SearchMatch)],
     selection_range: Option<(usize, usize, Style)>,
     theme: &ThemeConfig,
     cached_prefix: &str,
@@ -77,14 +77,16 @@ pub fn history_entry_to_line(
         theme.line_mode.line_prefix,
     ));
 
-    let mut content_spans = format_entry_content(entry, display_mode, theme);
+    // highlights first: the search matches and the selection are drawn over them (MAX-229)
+    let mut content_spans =
+        highlight_spans(format_entry_content(entry, display_mode, theme), highlights);
 
     if !line_matches.is_empty() {
         let normal_style = *theme.search.search_match;
         let active_style = *theme.search.search_match_active;
 
-        for &(global_idx, m) in line_matches {
-            let style = if global_idx == active_match_idx {
+        for &(is_active, m) in line_matches {
+            let style = if is_active {
                 active_style
             } else {
                 normal_style
@@ -252,13 +254,14 @@ pub fn render_monitor(
     let line_prefix_cached = app.settings().line_prefixes().line.to_string();
     let lay_out_entry = |global_idx: usize| {
         let entry = &app.line_mode.history()[global_idx];
-        let line_matches: Vec<(usize, &SearchMatch)> = if is_search_active {
+        // each match with whether it is the current one
+        let line_matches: Vec<(bool, &SearchMatch)> = if is_search_active {
             let start = search.matches.partition_point(|m| m.line_idx < global_idx);
             let end = search.matches.partition_point(|m| m.line_idx <= global_idx);
             search.matches[start..end]
                 .iter()
                 .enumerate()
-                .map(|(offset, m)| (start + offset, m))
+                .map(|(offset, m)| (start + offset == active_match_idx, m))
                 .collect()
         } else {
             Vec::new()
@@ -285,8 +288,8 @@ pub fn render_monitor(
         let line = history_entry_to_line(
             entry,
             app.settings(),
+            highlights,
             &line_matches,
-            active_match_idx,
             sel_range,
             theme,
             &line_prefix_cached,
@@ -442,7 +445,10 @@ pub fn render_monitor(
             let partial_prefix = app.settings().line_prefixes().partial.to_string();
             let partial_prefix_style = *theme.line_mode.line_partial_prefix;
             partial_spans.push(Span::styled(partial_prefix, partial_prefix_style));
-            partial_spans.extend(format_line_content(&partial_raw, display_mode, theme));
+            partial_spans.extend(highlight_spans(
+                format_line_content(&partial_raw, display_mode, theme),
+                highlights,
+            ));
             let partial_line = Line::from(partial_spans);
             window.push_back(prepare_view_layout(
                 vec![partial_line],
@@ -867,8 +873,6 @@ pub fn render_monitor(
             }
         }
     }
-
-    apply_keyword_highlights(frame.buffer_mut(), content_area, highlights);
 
     if app.line_mode.copy_state().active {
         let copy_state = app.line_mode.copy_state();

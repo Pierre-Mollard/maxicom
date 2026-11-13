@@ -11,7 +11,7 @@ fn separator(separator: &str) -> PlotDef {
     }
 }
 
-fn arduino() -> PlotDef {
+fn serial_plotter() -> PlotDef {
     PlotDef {
         separator: ":".to_string(),
         columns: true,
@@ -156,8 +156,8 @@ fn line_contains() {
 }
 
 #[test]
-fn arduino_lines() {
-    let parser = parser(arduino());
+fn serial_plotter_lines() {
+    let parser = parser(serial_plotter());
     assert_eq!(
         parser.parse("temp:23.4,hum:51"),
         [("temp", 23.4), ("hum", 51.0)]
@@ -178,7 +178,7 @@ fn arduino_lines() {
 /// line of numbers gives nothing.
 #[test]
 fn bare_columns_need_numbers_only() {
-    let parser_on = parser(arduino());
+    let parser_on = parser(serial_plotter());
     assert_eq!(parser_on.parse("23.4C 51"), []);
     assert_eq!(parser_on.parse("t 1 2"), []);
     assert_eq!(parser_on.parse("1 0x1F"), []);
@@ -188,14 +188,14 @@ fn bare_columns_need_numbers_only() {
 #[test]
 fn bare_columns_capped_and_picked() {
     let line = "1 2 3 4 5 6 7 8 9 10";
-    let parser_all = parser(arduino());
+    let parser_all = parser(serial_plotter());
     let all = parser_all.parse(line);
     assert_eq!(all.len(), MAX_SERIES);
     assert_eq!(all.last(), Some(&("8", 8.0)));
 
     let picked = parser(PlotDef {
         keys: vec!["2".to_string()],
-        ..arduino()
+        ..serial_plotter()
     });
     assert_eq!(picked.parse(line), [("2", 2.0)]);
 }
@@ -276,10 +276,10 @@ fn time_window() {
 #[test]
 fn count_window() {
     let mut plot = Plot::new(
-        "arduino".to_string(),
+        "serial-plotter".to_string(),
         &PlotDef {
             window: PlotWindow::Samples(3),
-            ..arduino()
+            ..serial_plotter()
         },
     );
     plot.feed_line("1 10", Duration::ZERO);
@@ -314,7 +314,7 @@ fn points_capped() {
         "big".to_string(),
         &PlotDef {
             window: PlotWindow::Samples(MAX_POINTS * 2),
-            ..arduino()
+            ..serial_plotter()
         },
     );
     for i in 0..MAX_POINTS + 5 {
@@ -334,7 +334,7 @@ fn x_bounds() {
     plot.feed_line("a=1", secs(40.0));
     assert_eq!(plot.data().x_bounds(secs(45.0)), [15.0, 45.0]);
 
-    let mut plot = Plot::new("arduino".to_string(), &arduino());
+    let mut plot = Plot::new("serial-plotter".to_string(), &serial_plotter());
     assert_eq!(plot.data().x_bounds(secs(5.0)), [-500.0, 0.0]);
     plot.feed_line("1", Duration::ZERO);
     plot.feed_line("2", Duration::ZERO);
@@ -498,7 +498,7 @@ mod app {
         overlays::Overlay,
     };
 
-    /// An open app with the default plots, `key-value` and `arduino`
+    /// An open app with the default plots, `key-value` and `serial-plotter`
     fn app() -> App {
         let mut app = crate::app::tests::app();
         app.set_plots(PlotsConfig::default());
@@ -564,11 +564,11 @@ mod app {
     #[test]
     fn plot_command() {
         let mut app = app();
-        run(&mut app, "plot arduino");
-        assert_eq!(shown(&app), Some("arduino"));
-        assert_eq!(last_toast(&app), "Plot arduino");
+        run(&mut app, "plot serial-plotter");
+        assert_eq!(shown(&app), Some("serial-plotter"));
+        assert_eq!(last_toast(&app), "Plot serial-plotter");
         app.feed_rx(b"1 2\n");
-        run(&mut app, "plot arduino");
+        run(&mut app, "plot serial-plotter");
         assert_eq!(last_of(&app, "2"), Some(2.0));
 
         run(&mut app, "plot off");
@@ -578,19 +578,19 @@ mod app {
         run(&mut app, "plot");
         assert_eq!(shown(&app), Some("key-value"));
         run(&mut app, "plot");
-        assert_eq!(shown(&app), Some("arduino"));
+        assert_eq!(shown(&app), Some("serial-plotter"));
         assert_eq!(last_of(&app, "2"), None);
         run(&mut app, "plot; plot");
         assert_eq!(shown(&app), Some("tagged"));
         run(&mut app, "plot");
         assert_eq!(shown(&app), None);
 
-        run(&mut app, "plot arduino; plot nope; plot off");
+        run(&mut app, "plot serial-plotter; plot nope; plot off");
         assert_eq!(
             last_toast(&app),
             "plot: no plot named 'nope' (1 more not run)"
         );
-        assert_eq!(shown(&app), Some("arduino"));
+        assert_eq!(shown(&app), Some("serial-plotter"));
 
         app.update(KeyBindingAction::CommandLine.to_action(&app));
         let complete = |app: &mut App, line: &str| {
@@ -603,7 +603,7 @@ mod app {
         };
         assert_eq!(
             complete(&mut app, "plot "),
-            ["key-value", "arduino", "sensors", "tagged", "off"]
+            ["key-value", "serial-plotter", "sensors", "tagged", "off"]
         );
         app.update(Action::Overlay(DialogAction::Close));
 
@@ -705,7 +705,7 @@ mod app {
         prefix_key(&mut app, 'G');
         assert!(app.plot().unwrap().is_frozen());
         prefix_key(&mut app, 'g');
-        assert_eq!(shown(&app), Some("arduino"));
+        assert_eq!(shown(&app), Some("serial-plotter"));
 
         // MAX-230: the arrows wrap around, never off; from off, the first or the last
         run(&mut app, "plot-prev");
@@ -733,7 +733,7 @@ mod app {
         typed(&mut app, 'g');
         assert_eq!(shown(&app), Some("key-value"));
         typed(&mut app, 'v');
-        assert_eq!(shown(&app), Some("arduino"));
+        assert_eq!(shown(&app), Some("serial-plotter"));
         typed(&mut app, 'V');
         assert_eq!(shown(&app), Some("sensors"));
         assert!(matches!(app.overlay(), Some(Overlay::Settings(_))));
@@ -786,9 +786,9 @@ mod app {
         app.show_start_plot();
         assert_eq!(shown(&app), None);
 
-        app.settings_mut().plot = Some("arduino".to_string());
+        app.settings_mut().plot = Some("serial-plotter".to_string());
         app.show_start_plot();
-        assert_eq!(shown(&app), Some("arduino"));
+        assert_eq!(shown(&app), Some("serial-plotter"));
 
         let mut app = self::app();
         app.settings_mut().plot = Some("nope".to_string());

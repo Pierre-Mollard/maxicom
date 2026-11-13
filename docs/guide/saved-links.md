@@ -1,7 +1,7 @@
 # Saved links
 
 A saved link gives a name to a device and its line settings, so you can open
-it with `maxicom esp32` instead of typing the port and the baud rate. It can
+it with `maxicom board` instead of typing the port and the baud rate. It can
 point to a serial port or to a [TCP link](tcp-links.md).
 
 Saved links show in the Saved links tab of the [directory](directory.md).
@@ -13,7 +13,7 @@ on the first save. `links_path` in `config.toml` moves it elsewhere.
 
 ```toml
 [[link]]
-name = "esp32"
+name = "board"
 hosts = ["laptop"]           # the machines it's for; none: every one
 address = "/dev/ttyUSB0"
 color = "#ff8800"            # none: one of the palette's, by its port
@@ -74,7 +74,7 @@ When saved from the app:
 - a TCP link is for every machine.
 
 Two links can share a name as long as no machine sees both. So
-`maxicom esp32` can open `/dev/ttyUSB0` on one machine and `COM3` on
+`maxicom board` can open `/dev/ttyUSB0` on one machine and `COM3` on
 another.
 
 ## How a saved link shows
@@ -83,7 +83,7 @@ maxicom calls a saved link by its name:
 
 - in the status bar (`{port}`);
 - in the notices and the link's popups, with the address after it:
-  `esp32 (/dev/ttyUSB0)`.
+  `board (/dev/ttyUSB0)`.
 
 ## Its color
 

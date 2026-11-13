@@ -145,6 +145,11 @@ pub const HIGHLIGHTS_COMMENTS: &[(&str, &str)] = &[
             "\nA table with words = [...] gives them all its style; ignore_case and whole_word",
             "\nset how they match. Later entries are drawn over earlier ones.",
             "\nQuote a word with spaces or symbols. Ctrl-a r reloads this file.",
+            "\n\nline_start = [...] in place of words colors the whole lines that start with",
+            "\none of them, the words drawn over. For logs that put the level first:",
+            "\n[error-lines]",
+            "\nline_start = [\"ERROR:\", \"[E]\"]",
+            "\nfg = \"Red\"",
         ),
     ),
     ("INFO", "a word on its own: its color"),
@@ -190,15 +195,15 @@ pub const PLOTS_COMMENTS: &[(&str, &str)] = &[
     ),
     ("key-value.window", "a duration: the X axis is time"),
     (
-        "arduino",
-        "the Arduino IDE serial plotter's format: temp:23.4,hum:51 or 23.4 51",
+        "serial-plotter",
+        "the serial plotter format: temp:23.4,hum:51 or 23.4 51",
     ),
     (
-        "arduino.columns",
+        "serial-plotter.columns",
         "a line of bare numbers: series 1, 2, 3...",
     ),
     (
-        "arduino.window",
+        "serial-plotter.window",
         "a number: the last samples of each series",
     ),
     (

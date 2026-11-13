@@ -43,8 +43,8 @@ See [TCP links](tcp-links.md).
 ### A saved link
 
 ```bash
-maxicom esp32
-maxicom esp32 -b 9600    # the options win over the saved settings
+maxicom board
+maxicom board -b 9600    # the options win over the saved settings
 ```
 
 The link opens with its saved line settings, and options you give override
@@ -86,7 +86,7 @@ Open the [directory](directory.md) with `Ctrl-a d` and pick another port or
 saved link, or use `open` from the [command line](command-line.md):
 
 ```text
-open esp32
+open board
 open /dev/ttyUSB1
 open tcp://192.168.1.50:4000
 ```

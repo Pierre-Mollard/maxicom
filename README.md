@@ -15,8 +15,8 @@ It opens a serial port or a device over TCP, on Linux, macOS and Windows.
   programs, and a line mode for logs, with timestamps and an input box
 - Scrollback, search, copy mode with vi keys, mouse selection
 - A raw side panel with the bytes in hex, octal or binary
-- Live plots of the numbers your device prints (`temp=23.4`, the Arduino
-  plotter's format), next to the text
+- Live plots of the numbers your device prints (`temp=23.4`, the serial
+  plotter format), next to the text
 - Every session backed up and restored at the next launch; recordings and
   replays
 - Saved links and a dialing directory, TCP links (ser2net, ESP32 bridges,

@@ -19,13 +19,79 @@ use crate::{
     },
     terminal::{MaxicomCursor, MaxicomTerminal, vt100_size},
     ui::{
-        common::{apply_keyword_highlights, draw_scrollbar_marks, render_search_bar},
+        common::{draw_scrollbar_marks, keyword_matches, render_search_bar},
         raw_side::{
             CharHighlight, format_raw_bytes_with_highlights, raw_panel_layout,
             render_raw_panel_widget,
         },
     },
 };
+
+/// Colors the rules' matches in the grid rows drawn in `area`, panned by `pan` (columns, rows).
+/// Each row is matched as part of its line: the rows the remote wrapped joined, read over the
+/// grid's whole width, so neither the wrap nor the pan cuts a word (MAX-229). A line wrapped
+/// from above the grid's window (scrolled back) can only be read from the window's first row
+fn highlight_grid(
+    buf: &mut Buffer,
+    area: Rect,
+    screen: &vt100::Screen,
+    (pan_x, pan_y): (u16, u16),
+    highlights: &[KeywordHighlight],
+) {
+    if highlights.iter().all(|hl| hl.pattern.is_empty()) {
+        return;
+    }
+    let (grid_rows, cols) = vt100_size(screen);
+    let shown_end = grid_rows.min(pan_y.saturating_add(area.height));
+    // the first line shown can start above the view
+    let mut row = pan_y;
+    while row > 0 && screen.row_wrapped(row - 1) {
+        row -= 1;
+    }
+    let mut text = String::new();
+    // each cell's text start in `text`, its grid row and column (a wide char's second cell
+    // isn't drawn: its first cell's style covers both)
+    let mut cells: Vec<(usize, u16, u16)> = Vec::new();
+    while row < shown_end {
+        text.clear();
+        cells.clear();
+        loop {
+            for col in 0..cols {
+                let Some(cell) = screen.cell(row, col) else {
+                    continue;
+                };
+                if cell.is_wide_continuation() {
+                    continue;
+                }
+                cells.push((text.len(), row, col));
+                text.push_str(if cell.has_contents() {
+                    cell.contents()
+                } else {
+                    " "
+                });
+            }
+            let wrapped = screen.row_wrapped(row);
+            row += 1;
+            if !wrapped || row >= grid_rows {
+                break;
+            }
+        }
+
+        for hl in highlights.iter().filter(|hl| !hl.pattern.is_empty()) {
+            for (start, end) in keyword_matches(&text, hl) {
+                let first = cells.partition_point(|cell| cell.0 < start);
+                let last = cells.partition_point(|cell| cell.0 < end);
+                for &(_, row, col) in &cells[first..last] {
+                    let y = row.checked_sub(pan_y).filter(|&y| y < area.height);
+                    let x = col.checked_sub(pan_x).filter(|&x| x < area.width);
+                    if let (Some(x), Some(y)) = (x, y) {
+                        buf[(area.x + x, area.y + y)].set_style(hl.style);
+                    }
+                }
+            }
+        }
+    }
+}
 
 pub fn render_vt100_terminal(
     app: &mut App,
@@ -67,7 +133,12 @@ pub fn render_vt100_terminal(
         .filling_char_style(*theme.terminal.term_outside);
 
     frame.render_widget(term_widget, content_area);
-    apply_keyword_highlights(frame.buffer_mut(), content_area, highlights);
+    let pan = (
+        app.terminal_mode.pan_offset_x() as u16,
+        app.terminal_mode.pan_offset_y() as u16,
+    );
+    let screen = app.terminal_mode.vt100_screen();
+    highlight_grid(frame.buffer_mut(), content_area, screen, pan, highlights);
 
     let (grid_rows, cols) = app.terminal_mode.get_vt100_size();
     let max_sb = app.terminal_mode.get_max_scrollback();

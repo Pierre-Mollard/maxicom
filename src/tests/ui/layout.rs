@@ -293,7 +293,7 @@ fn word_wrap_golden_rows() {
             chrono::TimeZone::with_ymd_and_hms(&chrono::Local, 2026, 10, 24, 12, 34, 56).unwrap();
         let entry = LogEntry::received(TextEncoding::Utf8.decode(wire), wire, Some(time));
         let prefix = settings.line_prefixes().line.to_string();
-        let line = history_entry_to_line(&entry, &settings, &[], 0, None, &theme, &prefix);
+        let line = history_entry_to_line(&entry, &settings, &[], &[], None, &theme, &prefix);
         rows_of(&prepare_view_layout(vec![line], &settings, &theme, width))
     };
     use LineDisplayMode::{Binary, Hex, Octal, Pretty};
@@ -383,7 +383,7 @@ fn byte_mode_rows_match_the_word_wrap() {
                         Some(chrono::Local::now()),
                     );
                     let line =
-                        history_entry_to_line(&entry, &settings, &[], 0, None, &theme, &prefix);
+                        history_entry_to_line(&entry, &settings, &[], &[], None, &theme, &prefix);
                     for width in 4..=90 {
                         let Some(rows) = byte_mode_rows(len, digits, width, gutter, indent_width)
                         else {

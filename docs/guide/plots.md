@@ -96,8 +96,8 @@ spaces or tabs, gives a series per column, named `1`, `2`, `3`...:
 `23.4, 51` or `23.4 51`. A unit isn't allowed there: the line is then read
 as pairs instead.
 
-This is the format of the Arduino IDE's serial plotter, which also takes
-`temp:23.4,hum:51`: the default `arduino` plot reads both.
+This is the format of serial plotters, which also take `temp:23.4,hum:51`:
+the default `serial-plotter` plot reads both.
 
 ### Only some lines
 
@@ -119,7 +119,7 @@ the second column only.
 | `window` | The X axis |
 | --- | --- |
 | A duration: `"30s"`, `"2m"` | Time. The chart shows the last 30 s, each point at the time its line arrived. |
-| A number: `500` | Samples. The chart shows the last 500 lines that gave a number, as the Arduino plotter does. |
+| A number: `500` | Samples. The chart shows the last 500 lines that gave a number, as serial plotters do. |
 
 The axis is labelled from `-30s` (or `-500 samples`) to `now`, with the
 window's middle (`-15s`) when the panel is wide enough. A window not full yet
@@ -215,7 +215,7 @@ In your own [status bar](status-bar.md) template:
 | Plot | Reads | Shows the fields |
 | --- | --- | --- |
 | `key-value` | Every `key=value` pair of every line, over 30 s | `separator`, a duration `window` |
-| `arduino` | `temp:23.4,hum:51` or bare `23.4 51`, the last 500 samples | `columns`, a number `window` |
+| `serial-plotter` | `temp:23.4,hum:51` or bare `23.4 51`, the last 500 samples | `columns`, a number `window` |
 | `sensors` | `temp` and `hum` only, from 0 to 100, over 5 minutes | `keys`, `min` / `max`, `colors` |
 | `tagged` | Only the lines with `[plot]`, such as `[plot] err=-1.5 out=40` | `line_contains` |
 

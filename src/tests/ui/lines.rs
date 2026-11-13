@@ -14,7 +14,7 @@ fn settings() -> SettingsConfig {
 fn spans(entry: &LogEntry, settings: &SettingsConfig) -> Vec<(String, Style)> {
     let theme = ThemeConfig::default();
     let prefix = settings.line_prefixes().line.to_string();
-    history_entry_to_line(entry, settings, &[], 0, None, &theme, &prefix)
+    history_entry_to_line(entry, settings, &[], &[], None, &theme, &prefix)
         .spans
         .into_iter()
         .map(|span| (span.content.into_owned(), span.style))

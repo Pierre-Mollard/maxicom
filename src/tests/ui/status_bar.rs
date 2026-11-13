@@ -522,7 +522,7 @@ fn armed_triggers() {
 /// MAX-222: the default center shows the plot shown, `{plot}`, in the secondary color, in
 /// the warning one while frozen (`frozen`), hidden without a plot (`plot`); a click on the
 /// name freezes it.
-/// How: no plot, `arduino` shown, frozen, then off.
+/// How: no plot, `serial-plotter` shown, frozen, then off.
 #[test]
 fn plot_shown_and_frozen() {
     let mut a = app(Mode::Terminal);
@@ -532,18 +532,21 @@ fn plot_shown_and_frozen() {
     assert!(render(&center, &a).is_empty());
     assert_eq!(render("{plot}", &a), [plain("")]);
 
-    a.show_plot(Some("arduino"));
+    a.show_plot(Some("serial-plotter"));
     let secondary = format!("Some({:?})", theme.palette.secondary);
     assert_eq!(
         render(&center, &a),
-        [span("∿ arduino ", &secondary, BG, "NONE")]
+        [span("∿ serial-plotter ", &secondary, BG, "NONE")]
     );
-    assert_eq!(render("{plot}", &a), [plain("arduino")]);
+    assert_eq!(render("{plot}", &a), [plain("serial-plotter")]);
     assert_eq!(render("[x](frozen?bold:hide)", &a), Vec::<String>::new());
 
     a.update(Action::App(AppAction::TogglePlotFreeze));
     let warn = format!("Some({:?})", theme.palette.text_warn);
-    assert_eq!(render(&center, &a), [span("∿ arduino ", &warn, BG, "BOLD")]);
+    assert_eq!(
+        render(&center, &a),
+        [span("∿ serial-plotter ", &warn, BG, "BOLD")]
+    );
 
     a.show_plot(None);
     assert!(render(&center, &a).is_empty());

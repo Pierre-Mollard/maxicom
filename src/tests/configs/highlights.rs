@@ -150,3 +150,62 @@ bg = "Red"
         "{written}"
     );
 }
+
+const ESP_LINES: &str = r#"
+[errors]
+words = ["ERROR"]
+fg = "Red"
+
+[esp-error]
+line_start = ["E ("]
+fg = "Red"
+
+[esp-other]
+line_start = ["W (", "i ("]
+ignore_case = true
+fg = "Yellow"
+"#;
+
+/// MAX-229: a `line_start` entry gives one line rule per prefix, with its style and
+/// `ignore_case`; line rules come first, in the file's order, so the words are drawn over them.
+/// How: a word group, then two line entries.
+#[test]
+fn line_start_entries_compile_first() {
+    let rules = rules(ESP_LINES);
+    let patterns: Vec<_> = rules.iter().map(|r| r.pattern.as_str()).collect();
+    assert_eq!(patterns, ["E (", "W (", "i (", "ERROR"]);
+    let lines: Vec<_> = rules.iter().map(|r| r.line_start).collect();
+    assert_eq!(lines, [true, true, true, false]);
+    assert!(!rules[0].ignore_case && rules[1].ignore_case && rules[2].ignore_case);
+    assert_eq!(rules[1].style.fg, Some(Color::Yellow));
+}
+
+/// MAX-229: an entry with `line_start` can't have `words` too, nor `whole_word`; the error says
+/// which.
+/// How: one entry of each.
+#[test]
+fn line_start_refuses_words_and_whole_word() {
+    let both = "[x]\nwords = [\"a\"]\nline_start = [\"E (\"]\nfg = \"Red\"\n";
+    let err = toml::from_str::<HighlightConfig>(both).unwrap_err();
+    assert!(err.to_string().contains("not both"), "{err}");
+    let whole = "[x]\nline_start = [\"E (\"]\nwhole_word = true\nfg = \"Red\"\n";
+    let err = toml::from_str::<HighlightConfig>(whole).unwrap_err();
+    assert!(err.to_string().contains("whole_word"), "{err}");
+}
+
+/// MAX-229: written back (`--write-config`), `line_start` entries stay tables in their place.
+/// How: the ESP file read, written, read again.
+#[test]
+fn line_start_round_trips() {
+    let config: HighlightConfig = toml::from_str(ESP_LINES).unwrap();
+    let written = toml::to_string_pretty(&config).unwrap();
+    let again: HighlightConfig = toml::from_str(&written).unwrap();
+    assert_eq!(again, config);
+    let names: Vec<_> = again
+        .entries
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+    assert_eq!(names, ["errors", "esp-error", "esp-other"]);
+    assert!(written.contains("line_start = [\"E (\"]"), "{written}");
+}

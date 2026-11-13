@@ -119,7 +119,7 @@ When the port is detached, lost or reconnecting, `send`, `send-file`,
 [directory](directory.md). See [Switching links](links.md#switching-links).
 
 ```text
-open esp32                      # a saved link, with its line settings
+open board                      # a saved link, with its line settings
 open /dev/ttyUSB1               # another port, current line settings kept
 open tcp://192.168.1.50:4000    # a TCP link
 open file://boot.raw            # a replay

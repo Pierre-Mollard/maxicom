@@ -7,7 +7,7 @@ commands and anything line-based.
 `Ctrl-a m` switches to line mode and back. To start in it, set
 `mode = "line"` in `config.toml`.
 
-![Line mode: an ESP32 boot log with timestamps, and a line being typed in the input box](images/line-mode.png)
+![Line mode: a boot log with timestamps, and a line being typed in the input box](images/line-mode.png)
 
 ## Sending a line
 

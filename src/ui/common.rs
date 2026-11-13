@@ -389,53 +389,23 @@ pub fn border_style_for(
     }
 }
 
-pub fn apply_keyword_highlights(buf: &mut Buffer, area: Rect, highlights: &[KeywordHighlight]) {
-    if highlights.is_empty() {
-        return;
-    }
-
-    for row in area.top()..area.bottom() {
-        let mut line_str = String::with_capacity(area.width as usize);
-        for col in area.left()..area.right() {
-            line_str.push_str(buf[(col, row)].symbol());
-        }
-
-        for hl in highlights {
-            if hl.pattern.is_empty() {
-                continue;
-            }
-
-            for (byte_offset, byte_end) in keyword_matches(&line_str, hl) {
-                let start_char_col = line_str[..byte_offset].chars().count();
-                let match_len_chars = line_str[byte_offset..byte_end].chars().count();
-
-                for char_offset in 0..match_len_chars {
-                    let col = area.left() + (start_char_col + char_offset) as u16;
-                    if col >= area.right() {
-                        break;
-                    }
-
-                    let cell = &mut buf[(col, row)];
-                    if let Some(fg) = hl.style.fg {
-                        cell.set_fg(fg);
-                    }
-                    if let Some(bg) = hl.style.bg {
-                        cell.set_bg(bg);
-                    }
-                    cell.set_style(cell.style().add_modifier(hl.style.add_modifier));
-                }
-            }
-        }
-    }
-}
-
 /// The start and end bytes of `hl`'s matches in `line`: as written, or in any case; with
-/// `whole_word`, only those with no letter, digit or `_` against them (MAX-216)
-fn keyword_matches<'a>(
+/// `whole_word`, only those with no letter, digit or `_` against them (MAX-216). A `line_start`
+/// rule matches the whole line, its trailing blanks left out, when it starts with the prefix
+/// (MAX-229)
+pub fn keyword_matches<'a>(
     line: &'a str,
     hl: &'a KeywordHighlight,
 ) -> impl Iterator<Item = (usize, usize)> + 'a {
-    let found: Box<dyn Iterator<Item = (usize, usize)>> = if hl.ignore_case {
+    let found: Box<dyn Iterator<Item = (usize, usize)>> = if hl.line_start {
+        let same =
+            |c: char, p: char| c == p || (hl.ignore_case && c.to_lowercase().eq(p.to_lowercase()));
+        let mut chars = line.chars();
+        let starts = (hl.pattern.chars()).all(|p| chars.next().is_some_and(|c| same(c, p)));
+        let prefix_end = line.len() - chars.as_str().len();
+        let end = line.trim_end().len().max(prefix_end);
+        Box::new(starts.then_some((0, end)).into_iter())
+    } else if hl.ignore_case {
         find_case_insensitive_iter(line, &hl.pattern)
     } else {
         let len = hl.pattern.len();
@@ -452,11 +422,51 @@ fn keyword_matches<'a>(
     })
 }
 
+/// `spans` with the rules' matches styled in, the spans' text matched as one line: each
+/// match gets what its rule sets over the received style, later rules over earlier ones
+/// (MAX-229)
+pub fn highlight_spans(
+    mut spans: Vec<Span<'static>>,
+    highlights: &[KeywordHighlight],
+) -> Vec<Span<'static>> {
+    if highlights.is_empty() {
+        return spans;
+    }
+    let text: String = spans.iter().map(|span| span.content.as_ref()).collect();
+    for hl in highlights {
+        if hl.pattern.is_empty() {
+            continue;
+        }
+        let matches: Vec<(usize, usize)> = keyword_matches(&text, hl).collect();
+        // matches come in order: chars counted from the previous one
+        let (mut byte, mut at) = (0, 0);
+        for (start, end) in matches {
+            at += text[byte..start].chars().count();
+            byte = start;
+            let len = text[start..end].chars().count();
+            if len > 0 {
+                spans = restyle_spans(spans, at, at + len - 1, |style| style.patch(hl.style));
+            }
+        }
+    }
+    spans
+}
+
 pub fn apply_selection_to_spans(
     spans: Vec<Span<'static>>,
     sel_start: usize,
     sel_end: usize,
     selection_style: Style,
+) -> Vec<Span<'static>> {
+    restyle_spans(spans, sel_start, sel_end, |_| selection_style)
+}
+
+/// `spans` with the chars `sel_start..=sel_end` in `restyle` of their style
+fn restyle_spans(
+    spans: Vec<Span<'static>>,
+    sel_start: usize,
+    sel_end: usize,
+    restyle: impl Fn(Style) -> Style,
 ) -> Vec<Span<'static>> {
     if sel_start > sel_end {
         return spans;
@@ -483,7 +493,7 @@ pub fn apply_selection_to_spans(
         }
 
         if span_start >= sel_start && span_end <= sel_end {
-            out.push(Span::styled(span.content, selection_style));
+            out.push(Span::styled(span.content, restyle(span.style)));
             continue;
         }
 
@@ -500,7 +510,7 @@ pub fn apply_selection_to_spans(
 
         if local_start < local_end {
             let selected: String = span_chars[local_start..local_end].iter().collect();
-            out.push(Span::styled(selected, selection_style));
+            out.push(Span::styled(selected, restyle(span.style)));
         }
 
         if local_end < span_len {

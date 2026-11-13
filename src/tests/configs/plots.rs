@@ -6,7 +6,7 @@ fn load(toml: &str) -> Result<PlotsConfig, String> {
     Ok(config)
 }
 
-/// MAX-222: the default file round-trips and checks: `key-value` on 30 s, `arduino` with
+/// MAX-222: the default file round-trips and checks: `key-value` on 30 s, `serial-plotter` with
 /// `:`, bare columns and 500 samples, `sensors` with its keys, range and colors, `tagged`
 /// with `line_contains`, in this order.
 #[test]
@@ -15,11 +15,11 @@ fn default_plots() {
     let config = load(&text).unwrap();
     assert_eq!(config, PlotsConfig::default());
     let names: Vec<_> = config.plots.iter().map(|(name, _)| name.as_str()).collect();
-    assert_eq!(names, ["key-value", "arduino", "sensors", "tagged"]);
-    let arduino = &config.plots[1].1;
-    assert_eq!(arduino.separator, ":");
-    assert!(arduino.columns);
-    assert_eq!(arduino.window, PlotWindow::Samples(500));
+    assert_eq!(names, ["key-value", "serial-plotter", "sensors", "tagged"]);
+    let serial_plotter = &config.plots[1].1;
+    assert_eq!(serial_plotter.separator, ":");
+    assert!(serial_plotter.columns);
+    assert_eq!(serial_plotter.window, PlotWindow::Samples(500));
     assert_eq!(
         config.plots[0].1.window,
         PlotWindow::Time(Duration::from_secs(30))
@@ -48,7 +48,9 @@ fn default_file_text() {
         "{text}"
     );
     assert!(
-        text.contains("[arduino]\nseparator = \":\"\ncolumns = true # a line of bare numbers"),
+        text.contains(
+            "[serial-plotter]\nseparator = \":\"\ncolumns = true # a line of bare numbers"
+        ),
         "{text}"
     );
     assert!(text.contains("window = 500 # a number"), "{text}");

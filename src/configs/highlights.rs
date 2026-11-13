@@ -18,11 +18,13 @@ pub struct HighlightConfig {
 }
 
 /// One entry of the file: a group of `words` with one style (MAX-216), or a single word, its
-/// key, as released: `WORD = "Green"` or a `[WORD]` style table
+/// key, as released: `WORD = "Green"` or a `[WORD]` style table; or the prefixes of the lines
+/// it styles whole, `line_start` (MAX-229)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(from = "EntryDef", into = "EntryDef")]
+#[serde(try_from = "EntryDef", into = "EntryDef")]
 pub struct HighlightEntry {
     pub words: Option<Vec<String>>,
+    pub line_start: Option<Vec<String>>,
     pub ignore_case: bool,
     pub whole_word: bool,
     pub style: ConfigStyle,
@@ -37,6 +39,7 @@ impl HighlightEntry {
     pub fn styled(style: Style) -> Self {
         Self {
             words: None,
+            line_start: None,
             ignore_case: false,
             whole_word: false,
             style: style.into(),
@@ -55,6 +58,8 @@ enum EntryDef {
 struct EntryTable {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     words: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    line_start: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     ignore_case: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -63,27 +68,43 @@ struct EntryTable {
     style: StyleTable,
 }
 
-impl From<EntryDef> for HighlightEntry {
-    fn from(def: EntryDef) -> Self {
-        match def {
-            EntryDef::Color(fg) => Self::color(fg),
-            EntryDef::Table(table) => Self {
-                words: table.words,
-                ignore_case: table.ignore_case,
-                whole_word: table.whole_word,
-                style: table.style.into(),
-            },
+impl TryFrom<EntryDef> for HighlightEntry {
+    type Error = &'static str;
+
+    fn try_from(def: EntryDef) -> Result<Self, Self::Error> {
+        let table = match def {
+            EntryDef::Color(fg) => return Ok(Self::color(fg)),
+            EntryDef::Table(table) => table,
+        };
+        if table.line_start.is_some() {
+            if table.words.is_some() {
+                return Err("an entry has `words` or `line_start`, not both");
+            }
+            if table.whole_word {
+                return Err("`whole_word` doesn't go with `line_start`");
+            }
         }
+        Ok(Self {
+            words: table.words,
+            line_start: table.line_start,
+            ignore_case: table.ignore_case,
+            whole_word: table.whole_word,
+            style: table.style.into(),
+        })
     }
 }
 
 impl From<HighlightEntry> for EntryDef {
     fn from(entry: HighlightEntry) -> Self {
-        let single = entry.words.is_none() && !entry.ignore_case && !entry.whole_word;
+        let single = entry.words.is_none()
+            && entry.line_start.is_none()
+            && !entry.ignore_case
+            && !entry.whole_word;
         match entry.style.fg {
             Some(fg) if single && entry.style.is_fg_only() => Self::Color(fg),
             _ => Self::Table(EntryTable {
                 words: entry.words,
+                line_start: entry.line_start,
                 ignore_case: entry.ignore_case,
                 whole_word: entry.whole_word,
                 style: entry.style.into(),
@@ -136,6 +157,7 @@ impl Default for HighlightConfig {
     fn default() -> Self {
         let group = |words: &[&str], style: Style| HighlightEntry {
             words: Some(words.iter().map(|word| word.to_string()).collect()),
+            line_start: None,
             ignore_case: true,
             whole_word: true,
             style: style.into(),
@@ -165,7 +187,7 @@ impl Default for HighlightConfig {
             (
                 "ok".to_string(),
                 group(
-                    &["OK", "ESP_OK", "SUCCESS", "PASS", "PASSED"],
+                    &["OK", "SUCCESS", "PASS", "PASSED"],
                     Style::default().fg(Color::Green),
                 ),
             ),
@@ -178,30 +200,39 @@ impl Default for HighlightConfig {
     }
 }
 
-/// A word to color, from an entry: its group's style and matching flags (MAX-216)
+/// A word to color, from an entry: its group's style and matching flags (MAX-216); or, with
+/// `line_start`, the prefix of the lines to color whole (MAX-229)
 #[derive(Debug, Clone)]
 pub struct KeywordHighlight {
     pub pattern: String,
     pub style: Style,
     pub ignore_case: bool,
     pub whole_word: bool,
+    pub line_start: bool,
 }
 
 impl HighlightConfig {
-    /// One rule per word, in the file's order; an entry without `words` is its key
+    /// One rule per word or line prefix, in the file's order, the line rules first so words are
+    /// drawn over the lines; an entry without `words` or `line_start` is its key
     pub fn compile_rules(&self) -> Vec<KeywordHighlight> {
-        self.entries
-            .iter()
-            .flat_map(|(key, entry)| {
-                let words = entry.words.clone().unwrap_or_else(|| vec![key.clone()]);
-                words.into_iter().map(|pattern| KeywordHighlight {
-                    pattern,
-                    style: entry.style.to_style(),
-                    ignore_case: entry.ignore_case,
-                    whole_word: entry.whole_word,
+        let rules = |line_rules: bool| {
+            self.entries
+                .iter()
+                .filter(move |(_, entry)| entry.line_start.is_some() == line_rules)
+                .flat_map(|(key, entry)| {
+                    let patterns = (entry.line_start.clone())
+                        .or_else(|| entry.words.clone())
+                        .unwrap_or_else(|| vec![key.clone()]);
+                    patterns.into_iter().map(|pattern| KeywordHighlight {
+                        pattern,
+                        style: entry.style.to_style(),
+                        ignore_case: entry.ignore_case,
+                        whole_word: entry.whole_word,
+                        line_start: entry.line_start.is_some(),
+                    })
                 })
-            })
-            .collect()
+        };
+        rules(true).chain(rules(false)).collect()
     }
 
     pub fn load_or_create_default<P: AsRef<Path>>(path: P) -> Result<Self, HighlightError> {
