@@ -10,7 +10,11 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::App,
-    configs::{KeyPattern, LineDisplayMode, ThemeConfig, keybindings::KeyBindingDialogAction},
+    commands,
+    configs::{
+        KeyBindingAction, KeyPattern, LineDisplayMode, ThemeConfig,
+        keybindings::KeyBindingDialogAction,
+    },
     overlays::{MarkBrowser, PopupTarget},
     ui::{
         common::popup_area,
@@ -168,10 +172,8 @@ fn cut_spans(spans: Vec<Span<'static>>, width: usize) -> Vec<Span<'static>> {
 
 /// What the popup says with no mark: the key that adds one, as bound
 fn empty_text(app: &App) -> String {
-    let resolver = &app.key_resolver;
-    let key = (resolver.prefix_commands.iter())
-        .find(|(_, line)| line.text == "mark")
-        .map(|(key, _)| format!("{} {key}", resolver.prefix));
+    let mark = commands::find_by_name("mark").map(KeyBindingAction::Command);
+    let key = mark.and_then(|mark| app.key_resolver.action_keys(mark).into_iter().next());
     match key {
         Some(key) => format!("No mark yet: {key} then a letter marks a line"),
         None => "No mark yet: the mark command marks a line".to_string(),

@@ -2,13 +2,14 @@
 use crate::{
     app::{App, search::SearchDirection},
     capture::ScreenshotFormat,
+    commands::Invocation,
     configs::{
         AppConfig, KeyBindingAction, KeyBindingCopyAction, KeyBindingLineAction,
         KeyBindingSearchAction, KeyBindingTerminalAction, keybindings::KeyBindingDialogAction,
     },
     inputs::{
         Action, AppAction, CopyModeAction, DialogAction, HistoryAction, LineInputAction,
-        MarkAction, SearchModeAction, SideViewAction, TerminalAction,
+        MarkAction, PendingMark, SearchModeAction, SideViewAction, TerminalAction,
     },
     link::serial,
     overlays::{
@@ -137,6 +138,13 @@ impl KeyBindingAction {
                     TriggerBrowser::new(names, path),
                 )))
             }
+            KeyBindingAction::Command(spec) => {
+                let invocation = Invocation {
+                    spec,
+                    args: Vec::new(),
+                };
+                Action::App(AppAction::QueueCommands(vec![invocation]))
+            }
             KeyBindingAction::CommandLine => {
                 let history = app.command_history().iter().cloned().collect();
                 let triggers = app.triggers().iter().map(|t| t.name.clone()).collect();
@@ -216,6 +224,7 @@ impl KeyBindingCopyAction {
             Self::ScrollDown => Action::History(HistoryAction::ScrollDown(1)),
             Self::ScrollPageUp => Action::History(HistoryAction::ScrollUpPage),
             Self::ScrollPageDown => Action::History(HistoryAction::ScrollDownPage),
+            Self::Mark => Action::App(AppAction::Mark(MarkAction::Await(PendingMark::Add))),
             Self::Marks => Action::App(AppAction::OpenMarks),
             Self::PrevMark => Action::App(AppAction::Mark(MarkAction::Adjacent(false))),
             Self::NextMark => Action::App(AppAction::Mark(MarkAction::Adjacent(true))),

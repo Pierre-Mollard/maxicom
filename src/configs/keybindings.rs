@@ -8,7 +8,7 @@ use std::{
 };
 
 use crate::{
-    commands::{self, CommandError, Invocation, Target},
+    commands::{self, CommandError, CommandSpec, Invocation, Target},
     configs::comments::{KEYMAP_COMMENTS, with_comments},
 };
 
@@ -85,17 +85,23 @@ pub enum KeyBindingAction {
     PlotFreeze,
     PlotNext,
     PlotPrev,
+    /// A command of the registry run without arguments (MAX-239)
+    Command(&'static CommandSpec),
 }
 
 impl FromStr for KeyBindingAction {
     type Err = UnknownActionError;
 
-    /// An action's name is its command's in the registry (MAX-12)
+    /// An action's name is its command's in the registry (MAX-12), a command that runs
+    /// without arguments included (MAX-239)
     fn from_str(name: &str) -> Result<Self, Self::Err> {
-        // the commands with arguments aren't keymap actions
-        match commands::find_by_name(name).map(|spec| spec.target) {
-            Some(Target::Action(action)) => Ok(action),
-            _ => Err(UnknownActionError(name.to_string())),
+        match commands::find_by_name(name) {
+            Some(spec) => match spec.target {
+                Target::Action(action) => Ok(action),
+                Target::Build(_) if spec.runs_bare() => Ok(Self::Command(spec)),
+                Target::Build(_) => Err(UnknownActionError(name.to_string())),
+            },
+            None => Err(UnknownActionError(name.to_string())),
         }
     }
 }
@@ -108,6 +114,11 @@ impl std::fmt::Display for KeyBindingAction {
 }
 
 impl KeyBindingAction {
+    /// What the action does, its command's help (MAX-239)
+    pub fn help(self) -> &'static str {
+        commands::find_by_action(self).map_or("", |spec| spec.help)
+    }
+
     pub fn is_navigation(self) -> bool {
         matches!(
             self,
@@ -190,6 +201,23 @@ impl std::fmt::Display for KeyBindingLineAction {
     }
 }
 
+impl KeyBindingLineAction {
+    /// What the action does, for the help (MAX-239)
+    pub fn help(self) -> &'static str {
+        match self {
+            Self::Submit => "Send the line",
+            Self::HistoryPrev => "The line sent before",
+            Self::HistoryNext => "The line sent after",
+            Self::AutoResizeRemoteLine => "Send the view's width to the device",
+            Self::ClearLine => "Clear the input",
+            Self::Interrupt => "Send Ctrl-c (0x03)",
+            Self::PageUp => "Scroll the history up one page",
+            Self::PageDown => "Scroll the history down one page",
+            Self::Quit => "Quit maxicom",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyBindingTerminalAction {
     AutoResizeRemote,
@@ -218,6 +246,17 @@ impl std::fmt::Display for KeyBindingTerminalAction {
             Self::Quit => "quit",
         };
         write!(f, "{s}")
+    }
+}
+
+impl KeyBindingTerminalAction {
+    /// What the action does, for the help (MAX-239)
+    pub fn help(self) -> &'static str {
+        match self {
+            Self::AutoResizeRemote => "Send the emulator's size to the device",
+            Self::AutoResizeEmulator => "Resize the emulator to the view",
+            Self::Quit => "Quit maxicom",
+        }
     }
 }
 
@@ -264,6 +303,21 @@ impl std::fmt::Display for KeyBindingSearchAction {
     }
 }
 
+impl KeyBindingSearchAction {
+    /// What the action does, for the help (MAX-239)
+    pub fn help(self) -> &'static str {
+        match self {
+            Self::Next => "Next match",
+            Self::Previous => "Previous match",
+            Self::Cancel => "Close the bar, back where the search started",
+            Self::Confirm => "Close the bar, the cursor on the match",
+            Self::Kind => "Search text or bytes",
+            Self::HistoryPrev => "The search run before",
+            Self::HistoryNext => "The search run after",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyBindingCopyAction {
     Up,
@@ -284,6 +338,7 @@ pub enum KeyBindingCopyAction {
     ScrollDown,
     ScrollPageUp,
     ScrollPageDown,
+    Mark,
     Marks,
     PrevMark,
     NextMark,
@@ -296,6 +351,42 @@ pub enum KeyBindingCopyAction {
 }
 
 impl KeyBindingCopyAction {
+    /// What the action does, for the help (MAX-239)
+    pub fn help(self) -> &'static str {
+        match self {
+            Self::Up => "Cursor up",
+            Self::Down => "Cursor down",
+            Self::Left => "Cursor left",
+            Self::Right => "Cursor right",
+            Self::PageUp => "Cursor up one page",
+            Self::PageDown => "Cursor down one page",
+            Self::StartOfLine => "Cursor to the line start",
+            Self::EndOfLine => "Cursor to the line end",
+            Self::Select => "Start a selection",
+            Self::SelectLine => "Select whole lines",
+            Self::Yank => "Copy and leave",
+            Self::YankSideInspector => "Copy the bytes as the raw panel shows them",
+            Self::ToggleSide => "Cursor to the raw panel and back",
+            Self::Exit => "Leave copy mode",
+            Self::ScrollUp => "Scroll the view up a line",
+            Self::ScrollDown => "Scroll the view down a line",
+            Self::ScrollPageUp => "Scroll the view up a page",
+            Self::ScrollPageDown => "Scroll the view down a page",
+            Self::Mark => {
+                "Mark the cursor's line, waits for its letter (Enter: the first free one)"
+            }
+            Self::Marks => "Open the marks",
+            Self::PrevMark => "Cursor to the mark above",
+            Self::NextMark => "Cursor to the mark below",
+            Self::Search => "Search from the cursor, forward",
+            Self::SearchBackward => "Search from the cursor, backward",
+            Self::SearchNext => "Next match of the last search, in its direction",
+            Self::SearchPrev => "Next match of the last search, the other way",
+            Self::SearchWord => "Search the word under the cursor, forward",
+            Self::SearchWordBackward => "Search the word under the cursor, backward",
+        }
+    }
+
     /// Moves the view only, not the copy cursor (MAX-143)
     pub fn is_scroll(self) -> bool {
         matches!(
@@ -328,6 +419,7 @@ impl std::str::FromStr for KeyBindingCopyAction {
             "scroll-down" => Ok(Self::ScrollDown),
             "scroll-page-up" => Ok(Self::ScrollPageUp),
             "scroll-page-down" => Ok(Self::ScrollPageDown),
+            "mark" => Ok(Self::Mark),
             "marks" => Ok(Self::Marks),
             "prev-mark" => Ok(Self::PrevMark),
             "next-mark" => Ok(Self::NextMark),
@@ -363,6 +455,7 @@ impl std::fmt::Display for KeyBindingCopyAction {
             Self::ScrollDown => "scroll-down",
             Self::ScrollPageUp => "scroll-page-up",
             Self::ScrollPageDown => "scroll-page-down",
+            Self::Mark => "mark",
             Self::Marks => "marks",
             Self::PrevMark => "prev-mark",
             Self::NextMark => "next-mark",
@@ -436,6 +529,24 @@ impl std::fmt::Display for KeyBindingDialogAction {
 }
 
 impl KeyBindingDialogAction {
+    /// What the action does, for the help (MAX-239)
+    pub fn help(self) -> &'static str {
+        match self {
+            Self::Close => "Close the popup",
+            Self::Confirm => "Apply, open",
+            Self::NavUp => "Move up",
+            Self::NavDown => "Move down",
+            Self::NavLeft => "Change a value, switch a tab",
+            Self::NavRight => "Change a value, switch a tab",
+            Self::CycleNext => "Next field or value",
+            Self::CyclePrev => "Previous field or value",
+            Self::PageUp => "Up one page",
+            Self::PageDown => "Down one page",
+            Self::Home => "To the first",
+            Self::End => "To the last",
+        }
+    }
+
     /// The actions a text input popup takes from its keys, the others edit the field (MAX-155)
     pub fn is_text_input_action(self) -> bool {
         matches!(
@@ -727,6 +838,12 @@ impl std::fmt::Display for KeyPattern {
 pub struct BoundLine {
     pub text: String,
     pub invocations: Vec<Invocation>,
+}
+
+impl std::fmt::Display for BoundLine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.text)
+    }
 }
 
 pub struct KeyResolver {
@@ -1195,7 +1312,7 @@ impl Default for KeyBindingsConfig {
             "("         => KeyBindingCopyAction::PrevMark,
             ")"         => KeyBindingCopyAction::NextMark,
             "'"         => KeyBindingCopyAction::Marks,
-            ","         => "mark", // waits for the letter
+            ","         => KeyBindingCopyAction::Mark,
             "/"         => KeyBindingCopyAction::Search,
             "?"         => KeyBindingCopyAction::SearchBackward,
             "n"         => KeyBindingCopyAction::SearchNext,

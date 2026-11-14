@@ -2939,23 +2939,24 @@ fn help_lists_the_commands() {
     let row_of = |rows: &[String], text: &str| rows.iter().position(|row| row.contains(text));
     let f5 = row_of(&rows, "F5 ").expect("F5");
     assert!(rows[f5].contains("-> send-hex 03"), "{rows:#?}");
-    // the letters in order, a shifted one after its plain one: `g` the next plot (MAX-222),
-    // `L` back to live, then `U`, the u-boot trigger; then the symbols (the marks', MAX-164);
-    // the copy mode keys last
-    assert_eq!(row_of(&rows, "Ctrl-a + f "), Some(f5 + 1), "{rows:#?}");
-    assert_eq!(row_of(&rows, "Ctrl-a + g "), Some(f5 + 2), "{rows:#?}");
-    assert!(rows[f5 + 2].contains("-> plot"), "{rows:#?}");
+    // the letters in order; the keys running one command without arguments (`f`, `g`, `L`,
+    // `,`) are actions, in the prefix tab, and copy mode has its own `mark` (MAX-239)
     let pulse = row_of(&rows, "Ctrl-a + h ");
-    assert_eq!(pulse, Some(f5 + 3), "{rows:#?}");
+    assert_eq!(pulse, Some(f5 + 1), "{rows:#?}");
     assert!(
-        rows[f5 + 3].contains("-> dtr off; sleep 100; dtr on"),
+        rows[f5 + 1].contains("-> dtr off; sleep 100; dtr on"),
         "{rows:#?}"
     );
-    assert_eq!(row_of(&rows, "Ctrl-a + L "), Some(f5 + 4), "{rows:#?}");
-    assert_eq!(row_of(&rows, "Ctrl-a + U "), Some(f5 + 5), "{rows:#?}");
-    assert_eq!(row_of(&rows, "Ctrl-a + , "), Some(f5 + 6), "{rows:#?}");
-    assert!(rows[f5 + 6].contains("-> mark"), "{rows:#?}");
-    assert_eq!(row_of(&rows, "copy mode , "), Some(f5 + 7), "{rows:#?}");
+    assert_eq!(row_of(&rows, "Ctrl-a + U "), Some(f5 + 2), "{rows:#?}");
+    for key in [
+        "Ctrl-a + f ",
+        "Ctrl-a + g ",
+        "Ctrl-a + L ",
+        "Ctrl-a + , ",
+        "copy mode ",
+    ] {
+        assert_eq!(row_of(&rows, key), None, "{key}: {rows:#?}");
+    }
     assert!(has(&rows, "on the command line (Ctrl-a :)"), "{rows:#?}");
 
     // scrolled down until `text` shows with the row under it
@@ -2981,12 +2982,12 @@ fn help_lists_the_commands() {
     assert!(cancel.contains("and queued commands "), "{cancel}");
 }
 
-/// MAX-12: the help popup takes four fifths of the screen, 74 columns at least, and no
-/// more than its whole tab bar needs (75 columns) inside the borders and the padding:
-/// every tab fits from 99 columns, no arrow; at 80 the last ones hide behind `▶`.
+/// MAX-12: the help popup takes four fifths of the screen, 74 columns at least; MAX-239:
+/// 100 at most, room for the actions' help. Every tab fits from 99 columns, no arrow; at 80
+/// the last ones hide behind `▶`.
 #[test]
 fn help_popup_widens() {
-    for (width, popup, arrow) in [(200, 79, false), (99, 79, false), (80, 74, true)] {
+    for (width, popup, arrow) in [(200, 100, false), (99, 79, false), (80, 74, true)] {
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, width, 24);
         h.app
             .update(Action::App(AppAction::OpenOverlay(Overlay::Help(
@@ -3052,6 +3053,125 @@ fn help_prefix_actions_align() {
     columns.sort_unstable();
     columns.dedup();
     assert_eq!(columns.len(), 1, "{rows:#?}");
+}
+
+/// MAX-239: every help tab lists its keys as `key -> name  help`. The keys bound to a command
+/// without its arguments (`mark`, `break`, `plot`, `replay-stop`) are actions, in the prefix
+/// tab, copy mode's `,` its own `mark`; the commands tab keeps the lines. A help too long for the popup is cut with `…`.
+/// How: the default keymap on a wide screen, each tab in turn, paged down to its end; then
+/// the prefix tab on 80 columns.
+#[test]
+fn help_tabs_list_keys_and_names() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 130, 24);
+    h.app
+        .update(Action::App(AppAction::OpenOverlay(Overlay::Help(
+            HelpDialog::new(),
+        ))));
+    let mut tabs = Vec::new();
+    for _ in crate::overlays::HelpCategory::ALL {
+        // the popup knows how far it scrolls once drawn
+        let mut rows = h.draw();
+        for _ in 0..12 {
+            h.app.update(Action::Overlay(DialogAction::PageDown));
+            rows.extend(h.draw());
+        }
+        tabs.push(rows);
+        h.app.update(Action::Overlay(DialogAction::CycleNext));
+    }
+    let [
+        prefix,
+        direct,
+        commands,
+        copy,
+        search,
+        line,
+        terminal,
+        dialog,
+    ] = &tabs[..]
+    else {
+        unreachable!("eight tabs");
+    };
+    let bound = |rows: &[String], key: &str, name: &str| {
+        rows.iter()
+            .any(|row| row.contains(&format!(" {key} ")) && row.contains(&format!("-> {name}")))
+    };
+    let described = |rows: &[String], key: &str, help: &str| {
+        rows.iter().any(|row| {
+            row.contains(&format!(" {key} "))
+                && row.trim_end_matches([' ', '│', '█', '▼']).ends_with(help)
+        })
+    };
+    for (rows, key, help) in [
+        (prefix, "Ctrl-a + e", "Toggle local echo"),
+        (
+            prefix,
+            "Ctrl-a + f",
+            "Hold the line in break, 250 ms by default",
+        ),
+        (direct, "Ctrl-q", "Quit maxicom"),
+        (copy, "k", "Cursor up"),
+        (
+            copy,
+            ",",
+            "Mark the cursor's line, waits for its letter (Ente…",
+        ),
+        (copy, "Ctrl-y", "Scroll the view up a line"),
+        (search, "Ctrl-n", "Next match"),
+        (line, "Enter", "Send the line"),
+        (terminal, "Alt-r", "Send the emulator's size to the device"),
+        (dialog, "Esc", "Close the popup"),
+    ] {
+        assert!(described(rows, key, help), "{key}: {rows:#?}");
+    }
+    for (key, name) in [
+        ("Ctrl-a + e", "toggle-local-echo"),
+        ("Ctrl-a + '", "marks"),
+        ("Ctrl-a + G", "plot-freeze"),
+        ("Ctrl-a + ,", "mark"),
+        ("Ctrl-a + f", "break"),
+        ("Ctrl-a + g", "plot"),
+        ("Ctrl-a + L", "replay-stop"),
+    ] {
+        assert!(bound(prefix, key, name), "{key}: {prefix:#?}");
+    }
+    assert!(!has(prefix, " Ctrl-a + h "), "{prefix:#?}");
+    assert!(bound(direct, "Ctrl-q", "quit"), "{direct:#?}");
+    for (key, name) in [
+        ("Ctrl-a + h", "dtr off; sleep 100; dtr on"),
+        ("Ctrl-a + U", "trigger toggle u-boot"),
+    ] {
+        assert!(bound(commands, key, name), "{key}: {commands:#?}");
+    }
+    for key in [
+        "Ctrl-a + ,",
+        "Ctrl-a + f",
+        "Ctrl-a + g",
+        "Ctrl-a + L",
+        "copy mode ,",
+    ] {
+        assert!(!has(commands, &format!(" {key} ")), "{key}: {commands:#?}");
+    }
+    assert!(bound(copy, "k", "up"), "{copy:#?}");
+    assert!(bound(copy, ",", "mark"), "{copy:#?}");
+    assert!(bound(search, "Ctrl-n", "next"), "{search:#?}");
+    assert!(bound(line, "Enter", "submit"), "{line:#?}");
+    assert!(
+        bound(terminal, "Alt-r", "auto-resize-remote"),
+        "{terminal:#?}"
+    );
+    assert!(bound(dialog, "Esc", "close"), "{dialog:#?}");
+
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+    h.app
+        .update(Action::App(AppAction::OpenOverlay(Overlay::Help(
+            HelpDialog::new(),
+        ))));
+    let rows = h.draw();
+    let directory = rows
+        .iter()
+        .find(|row| row.contains(" Ctrl-a + d "))
+        .unwrap();
+    assert!(directory.contains("Open the director…│"), "{directory}");
 }
 
 /// Rows inside the popup frame (between its top and bottom borders), without the borders

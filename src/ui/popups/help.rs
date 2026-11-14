@@ -26,9 +26,8 @@ use crate::{
 /// The help popup's width at least, else four fifths of the screen's: room around it stays
 const HELP_WIDTH: u16 = 74;
 
-/// Columns the help popup takes around its tab bar at most: the borders and the padding,
-/// which with the tabs' own spaces leave two blank columns on each side
-const TABS_MARGIN: u16 = 4;
+/// The help popup's width at most: room for a key, its action and the action's help (MAX-239)
+const HELP_MAX_WIDTH: u16 = 100;
 
 pub fn render_help_popup(
     app: &App,
@@ -38,8 +37,7 @@ pub fn render_help_popup(
     targets: &mut Vec<(Rect, PopupTarget)>,
 ) -> Rect {
     let width = (u32::from(frame.area().width) * 4 / 5) as u16;
-    // no wider than the whole tab bar needs
-    let width = width.min(tabs_span(&tab_widths()) + TABS_MARGIN);
+    let width = width.min(HELP_MAX_WIDTH);
     let area = popup_area(frame.area(), width.max(HELP_WIDTH), 20);
     frame.render_widget(Clear, area);
 
@@ -78,6 +76,8 @@ pub fn render_help_popup(
 
     let prefix_str = format!("{}", app.key_resolver.prefix);
     let mut lines = Vec::new();
+    // the text stays clear of the scrollbar's column, whether it shows or not
+    let room = usize::from(content_area.width.saturating_sub(1));
 
     match dialog.category {
         HelpCategory::Prefix => {
@@ -89,39 +89,21 @@ pub fn render_help_popup(
             )));
             lines.push(Line::from(""));
 
-            let mut sorted_keys: Vec<_> = app.key_resolver.prefix_actions.iter().collect();
-            sorted_keys.sort_by_key(|(k, _)| k.help_order());
             // the longest key sets the column, so `Shift-Right` doesn't push its action (MAX-155)
-            let key_width = sorted_keys
-                .iter()
-                .map(|(k, _)| format!("{k}").width())
-                .max()
-                .unwrap_or(0)
-                .max(10);
-
-            for (pattern, action) in sorted_keys {
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!(" {prefix_str} + {:<key_width$} ", format!("{pattern}")),
-                        Style::default().fg(theme.palette.secondary),
-                    ),
-                    Span::raw(format!("-> {}", action)),
-                ]));
-            }
+            let rows = key_rows(&app.key_resolver.prefix_actions, |action| action.help())
+                .into_iter()
+                .map(|row| KeyRow {
+                    key: format!("{prefix_str} + {}", row.key),
+                    ..row
+                })
+                .collect::<Vec<_>>();
+            let widths = column_widths(&rows, 0);
+            lines.extend(rows.iter().map(|row| row.line(widths, room, theme)));
         }
         HelpCategory::Direct => {
-            let mut sorted_keys: Vec<_> = app.key_resolver.direct_actions.iter().collect();
-            sorted_keys.sort_by_key(|(k, _)| k.help_order());
-
-            for (pattern, action) in sorted_keys {
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!(" {:<18} ", format!("{pattern}")),
-                        Style::default().fg(theme.palette.secondary),
-                    ),
-                    Span::raw(format!("-> {}", action)),
-                ]));
-            }
+            let rows = key_rows(&app.key_resolver.direct_actions, |action| action.help());
+            let widths = column_widths(&rows, 18);
+            lines.extend(rows.iter().map(|row| row.line(widths, room, theme)));
         }
         HelpCategory::Commands => {
             let resolver = &app.key_resolver;
@@ -201,39 +183,41 @@ pub fn render_help_popup(
         }
         HelpCategory::CopyMode => {
             let resolver = &app.key_resolver;
-            let mut moves: Vec<_> = resolver.copy_actions.iter().collect();
-            moves.sort_by_key(|(k, _)| k.help_order());
-            let (scrolls, moves): (Vec<_>, Vec<_>) = moves
-                .into_iter()
-                .partition(|(_, action)| action.is_scroll());
-            // the copy keys running a command line, the marks' (MAX-164)
-            let mut bound: Vec<_> = resolver.copy_commands.iter().collect();
-            bound.sort_by_key(|(k, _)| k.help_order());
-            // the direct scroll and pan keys a copy key doesn't take reach copy mode (MAX-143)
-            let mut direct: Vec<_> = resolver
-                .direct_actions
+            let (scrolls, moves): (Vec<_>, Vec<_>) = resolver
+                .copy_actions
                 .iter()
-                .filter(|(k, action)| {
+                .partition(|(_, action)| action.is_scroll());
+            let moves = key_rows(moves, |action| action.help());
+            // the copy keys running a command line: one command alone has its help
+            let bound = key_rows(
+                &resolver.copy_commands,
+                |line| match &line.invocations[..] {
+                    [invocation] => invocation.spec.help,
+                    _ => "",
+                },
+            );
+            let scrolls = key_rows(scrolls, |action| action.help());
+            // the direct scroll and pan keys a copy key doesn't take reach copy mode (MAX-143)
+            let direct = key_rows(
+                resolver.direct_actions.iter().filter(|(k, action)| {
                     action.is_navigation() && !resolver.copy_actions.contains_key(k)
-                })
-                .collect();
-            direct.sort_by_key(|(k, _)| k.help_order());
+                }),
+                |action| action.help(),
+            );
 
-            let key_line = |pattern: String, action: String| {
-                Line::from(vec![
-                    Span::styled(
-                        format!(" {pattern:<18} "),
-                        Style::default().fg(theme.palette.secondary),
-                    ),
-                    Span::raw(format!("-> {action}")),
-                ])
+            let all: Vec<_> = [&moves, &bound, &scrolls, &direct]
+                .into_iter()
+                .flatten()
+                .cloned()
+                .collect();
+            let widths = column_widths(&all, 18);
+            let rows = |rows: &[KeyRow]| -> Vec<Line<'static>> {
+                rows.iter()
+                    .map(|row| row.line(widths, room, theme))
+                    .collect()
             };
-            for (pattern, action) in moves {
-                lines.push(key_line(format!("{pattern}"), format!("{action}")));
-            }
-            for (pattern, line) in bound {
-                lines.push(key_line(format!("{pattern}"), line.text.clone()));
-            }
+            lines.extend(rows(&moves));
+            lines.extend(rows(&bound));
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 " Scrolling moves the view, the cursor stays:",
@@ -241,68 +225,28 @@ pub fn render_help_popup(
                     .fg(theme.palette.main)
                     .add_modifier(Modifier::BOLD),
             )));
-            for (pattern, action) in scrolls {
-                lines.push(key_line(format!("{pattern}"), format!("{action}")));
-            }
-            for (pattern, action) in direct {
-                lines.push(key_line(format!("{pattern}"), format!("{action}")));
-            }
+            lines.extend(rows(&scrolls));
+            lines.extend(rows(&direct));
         }
         HelpCategory::Search => {
-            let mut sorted_keys: Vec<_> = app.key_resolver.search_actions.iter().collect();
-            sorted_keys.sort_by_key(|(k, _)| k.help_order());
-
-            for (pattern, action) in sorted_keys {
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!(" {:<18} ", format!("{pattern}")),
-                        Style::default().fg(theme.palette.secondary),
-                    ),
-                    Span::raw(format!("-> {}", action)),
-                ]));
-            }
+            let rows = key_rows(&app.key_resolver.search_actions, |action| action.help());
+            let widths = column_widths(&rows, 18);
+            lines.extend(rows.iter().map(|row| row.line(widths, room, theme)));
         }
         HelpCategory::LineMode => {
-            let mut sorted_keys: Vec<_> = app.key_resolver.line_actions.iter().collect();
-            sorted_keys.sort_by_key(|(k, _)| k.help_order());
-
-            for (pattern, action) in sorted_keys {
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!(" {:<18} ", format!("{pattern}")),
-                        Style::default().fg(theme.palette.secondary),
-                    ),
-                    Span::raw(format!("-> {}", action)),
-                ]));
-            }
+            let rows = key_rows(&app.key_resolver.line_actions, |action| action.help());
+            let widths = column_widths(&rows, 18);
+            lines.extend(rows.iter().map(|row| row.line(widths, room, theme)));
         }
         HelpCategory::TerminalMode => {
-            let mut sorted_keys: Vec<_> = app.key_resolver.terminal_actions.iter().collect();
-            sorted_keys.sort_by_key(|(k, _)| k.help_order());
-
-            for (pattern, action) in sorted_keys {
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!(" {:<18} ", format!("{pattern}")),
-                        Style::default().fg(theme.palette.secondary),
-                    ),
-                    Span::raw(format!("-> {}", action)),
-                ]));
-            }
+            let rows = key_rows(&app.key_resolver.terminal_actions, |action| action.help());
+            let widths = column_widths(&rows, 18);
+            lines.extend(rows.iter().map(|row| row.line(widths, room, theme)));
         }
         HelpCategory::Dialog => {
-            let mut sorted_keys: Vec<_> = app.key_resolver.dialog_actions.iter().collect();
-            sorted_keys.sort_by_key(|(k, _)| k.help_order());
-
-            for (pattern, action) in sorted_keys {
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!(" {:<18} ", format!("{pattern}")),
-                        Style::default().fg(theme.palette.secondary),
-                    ),
-                    Span::raw(format!("-> {}", action)),
-                ]));
-            }
+            let rows = key_rows(&app.key_resolver.dialog_actions, |action| action.help());
+            let widths = column_widths(&rows, 18);
+            lines.extend(rows.iter().map(|row| row.line(widths, room, theme)));
         }
     }
 
@@ -331,6 +275,73 @@ pub fn render_help_popup(
         render_scrollbar(frame, content_area, scroll, theme);
     }
     area
+}
+
+/// One key of a tab: the key, the name of what it runs, and that one's help (MAX-239)
+#[derive(Clone)]
+struct KeyRow {
+    key: String,
+    name: String,
+    help: &'static str,
+}
+
+impl KeyRow {
+    /// ` key -> name  help`, the key and the name padded to `widths`, the help dimmed and cut
+    /// with `…` past `room` columns
+    fn line(
+        &self,
+        (key_width, name_width): (usize, usize),
+        room: usize,
+        theme: &ThemeConfig,
+    ) -> Line<'static> {
+        let key = Span::styled(
+            format!(" {:<key_width$} ", self.key),
+            Style::default().fg(theme.palette.secondary),
+        );
+        if self.help.is_empty() {
+            return Line::from(vec![key, Span::raw(format!("-> {}", self.name))]);
+        }
+        let name = Span::raw(format!("-> {:<name_width$}  ", self.name));
+        let left = room.saturating_sub(key.width() + name.width());
+        let help = if self.help.width() <= left {
+            self.help.to_string()
+        } else {
+            let mut cut = String::new();
+            for c in self.help.chars() {
+                if cut.width() + c.to_string().width() + 1 > left {
+                    break;
+                }
+                cut.push(c);
+            }
+            format!("{}…", cut.trim_end())
+        };
+        let help = Span::styled(help, Style::default().fg(theme.palette.text_muted));
+        Line::from(vec![key, name, help])
+    }
+}
+
+/// The rows of `bindings` in the help's key order, the help of each from `help`
+fn key_rows<'a, A: std::fmt::Display + 'a>(
+    bindings: impl IntoIterator<Item = (&'a KeyPattern, &'a A)>,
+    help: impl Fn(&A) -> &'static str,
+) -> Vec<KeyRow> {
+    let mut bindings: Vec<_> = bindings.into_iter().collect();
+    bindings.sort_by_key(|(key, _)| key.help_order());
+    bindings
+        .into_iter()
+        .map(|(key, action)| KeyRow {
+            key: key.to_string(),
+            name: action.to_string(),
+            help: help(action),
+        })
+        .collect()
+}
+
+/// The widths of the key column, `min_key` at least, and of the name column
+fn column_widths(rows: &[KeyRow], min_key: usize) -> (usize, usize) {
+    let key = rows.iter().map(|row| row.key.width()).max().unwrap_or(0);
+    let name = rows.iter().map(|row| row.name.width()).max().unwrap_or(0);
+    (key.max(min_key), name)
 }
 
 /// The keys in the bottom border, and where each is for the mouse: the dialog's, and `c`

@@ -77,6 +77,12 @@ impl PartialEq for CommandSpec {
 
 impl Eq for CommandSpec {}
 
+impl std::hash::Hash for CommandSpec {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::ptr::hash(self, state);
+    }
+}
+
 impl CommandSpec {
     const fn action(name: &'static str, action: KeyBindingAction, help: &'static str) -> Self {
         Self {
@@ -99,6 +105,12 @@ impl CommandSpec {
             help,
             target: Target::Build(build),
         }
+    }
+
+    /// Runs without arguments: none, or all optional. Such a command is a keymap action too
+    /// (MAX-239)
+    pub fn runs_bare(&self) -> bool {
+        self.args.iter().all(|arg| arg.optional)
     }
 
     /// The name and its arguments, `<required>` and `[optional]`, for the help
@@ -656,6 +668,9 @@ pub fn find_by_name(name: &str) -> Option<&'static CommandSpec> {
 }
 
 pub fn find_by_action(action: KeyBindingAction) -> Option<&'static CommandSpec> {
+    if let KeyBindingAction::Command(spec) = action {
+        return Some(spec);
+    }
     COMMANDS
         .iter()
         .find(|spec| matches!(spec.target, Target::Action(a) if a == action))

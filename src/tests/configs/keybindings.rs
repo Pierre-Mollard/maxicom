@@ -270,8 +270,8 @@ fn bound_command_lines() {
         KeyBindingAction::ToggleAttach
     );
     assert!(!resolver.prefix_commands.contains_key(&key("D")));
-    // the default ones
-    assert_eq!(resolver.prefix_commands[&key("f")].invocations.len(), 1);
+    // the default ones: `break` alone is an action (MAX-239)
+    assert_eq!(resolver.prefix_actions[&key("f")].to_string(), "break");
     assert_eq!(resolver.prefix_commands[&key("h")].invocations.len(), 3);
     assert_eq!(
         resolver.shadowed_keys(),
@@ -292,6 +292,205 @@ fn bound_command_lines() {
         "in [prefix_actions]: f7: baud: bad argument 1: 10 is out of 50..=4000000"
     );
     assert_eq!(error(" ; "), "in [prefix_actions]: unknown action ' ; '");
+}
+
+/// MAX-239: a keymap action name is a registry command run by a `KeyBindingAction`, and
+/// back; so is a command built from its arguments that runs without any (`replay-stop`) or
+/// whose arguments are all optional (`mark`, `plot`, `break`). One that needs an argument
+/// isn't an action.
+/// How: every command of the registry.
+#[test]
+fn keymap_actions_are_the_action_commands() {
+    use crate::commands::{COMMANDS, Target};
+    for spec in COMMANDS {
+        let parsed = spec.name.parse::<KeyBindingAction>();
+        match spec.target {
+            Target::Action(action) => {
+                assert_eq!(parsed.unwrap(), action, "{}", spec.name);
+                assert_eq!(action.to_string(), spec.name);
+            }
+            Target::Build(_) if spec.runs_bare() => {
+                let action = parsed.unwrap();
+                assert_eq!(action, KeyBindingAction::Command(spec));
+                assert_eq!(action.to_string(), spec.name);
+            }
+            Target::Build(_) => assert!(parsed.is_err(), "{}", spec.name),
+        }
+    }
+    let bare: Vec<_> = (COMMANDS.iter())
+        .filter(|spec| matches!(spec.target, Target::Build(_)) && spec.runs_bare())
+        .map(|spec| spec.name)
+        .collect();
+    assert_eq!(
+        bare,
+        [
+            "mark",
+            "jump-mark",
+            "link-save",
+            "session-name",
+            "replay-stop",
+            "replay-pause",
+            "replay-resume",
+            "replay-restart",
+            "break",
+            "plot"
+        ]
+    );
+}
+
+/// MAX-239: a command that runs without arguments, bound bare, is an action; with its
+/// arguments it stays a command line, which keeps them, in `[copy_mode]` too.
+/// How: `mark`, `plot`, `break`, `replay-stop` and `session-name` bare and with an argument,
+/// on prefix keys and in copy mode.
+#[test]
+fn optional_argument_commands_bound_bare_are_actions() {
+    let mut config = KeyBindingsConfig::default();
+    for (key, line) in [
+        ("f1", "mark"),
+        ("f2", "mark a"),
+        ("f3", "plot off"),
+        ("f4", "break 100"),
+        ("f5", "replay-stop"),
+        ("f6", "session-name"),
+        ("f7", "session-name boot"),
+    ] {
+        config.prefix_actions.insert(key.into(), line.into());
+    }
+    config.copy_mode.insert("x".into(), "mark a".into());
+    let resolver = KeyResolver::try_new(&config).unwrap();
+    let key = |name: &str| name.parse::<KeyPattern>().unwrap();
+    let line = |lines: &std::collections::HashMap<KeyPattern, BoundLine>, name: &str| {
+        let line = &lines[&key(name)];
+        assert_eq!(line.invocations.len(), 1, "{name}");
+        let invocation = &line.invocations[0];
+        (invocation.spec.name, invocation.args.len())
+    };
+    let action = |name: &str| {
+        assert!(!resolver.prefix_commands.contains_key(&key(name)), "{name}");
+        resolver.prefix_actions[&key(name)].to_string()
+    };
+    let prefix = &resolver.prefix_commands;
+    assert_eq!(action("f1"), "mark");
+    assert_eq!(line(prefix, "f2"), ("mark", 1));
+    assert_eq!(line(prefix, "f3"), ("plot", 1));
+    assert_eq!(line(prefix, "f4"), ("break", 1));
+    assert_eq!(action("f5"), "replay-stop");
+    assert_eq!(action("f6"), "session-name");
+    assert_eq!(line(prefix, "f7"), ("session-name", 1));
+    assert_eq!(line(&resolver.copy_commands, "x"), ("mark", 1));
+    // `mark` alone is copy mode's own action
+    assert_eq!(resolver.copy_actions[&key(",")], KeyBindingCopyAction::Mark);
+    for name in ["f2", "f3", "f4", "f7"] {
+        assert!(!resolver.prefix_actions.contains_key(&key(name)), "{name}");
+    }
+    // the default bare ones
+    for (name, command) in [
+        (",", "mark"),
+        ("f", "break"),
+        ("g", "plot"),
+        ("L", "replay-stop"),
+    ] {
+        assert_eq!(action(name), command);
+    }
+}
+
+/// MAX-239: every action of every keymap section has a help for the help popup: a global
+/// action its command's, the others their own.
+/// How: every command of the registry, and every name of the other sections.
+#[test]
+fn every_action_has_a_help() {
+    for spec in crate::commands::COMMANDS {
+        if let Ok(action) = spec.name.parse::<KeyBindingAction>() {
+            assert_eq!(action.help(), spec.help, "{}", spec.name);
+            assert!(!action.help().is_empty(), "{}", spec.name);
+        }
+    }
+    fn helps<A: FromStr + Copy>(names: &[&str], help: fn(A) -> &'static str) {
+        for name in names {
+            let action = name.parse::<A>().ok().expect(name);
+            assert!(!help(action).is_empty(), "{name}");
+        }
+    }
+    helps::<KeyBindingLineAction>(
+        &[
+            "submit",
+            "history-prev",
+            "history-next",
+            "auto-resize-remote-line",
+            "clear-line",
+            "interrupt",
+            "page-up",
+            "page-down",
+            "quit",
+        ],
+        KeyBindingLineAction::help,
+    );
+    helps::<KeyBindingTerminalAction>(
+        &["auto-resize-remote", "auto-resize-emulator", "quit"],
+        KeyBindingTerminalAction::help,
+    );
+    helps::<KeyBindingSearchAction>(
+        &[
+            "next",
+            "previous",
+            "cancel",
+            "confirm",
+            "search-kind",
+            "history-prev",
+            "history-next",
+        ],
+        KeyBindingSearchAction::help,
+    );
+    helps::<KeyBindingCopyAction>(
+        &[
+            "up",
+            "down",
+            "left",
+            "right",
+            "page-up",
+            "page-down",
+            "start-of-line",
+            "end-of-line",
+            "select",
+            "select-line",
+            "yank",
+            "yank-side-inspector",
+            "toggle-side",
+            "exit",
+            "scroll-up",
+            "scroll-down",
+            "scroll-page-up",
+            "scroll-page-down",
+            "mark",
+            "marks",
+            "prev-mark",
+            "next-mark",
+            "search",
+            "search-backward",
+            "search-next",
+            "search-prev",
+            "search-word",
+            "search-word-backward",
+        ],
+        KeyBindingCopyAction::help,
+    );
+    helps::<KeyBindingDialogAction>(
+        &[
+            "close",
+            "confirm",
+            "up",
+            "down",
+            "left",
+            "right",
+            "cycle-next",
+            "cycle-prev",
+            "page-up",
+            "page-down",
+            "home",
+            "end",
+        ],
+        KeyBindingDialogAction::help,
+    );
 }
 
 /// Keys a text input popup still sends to `[dialog_actions]`: the others are typed.

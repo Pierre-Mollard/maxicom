@@ -125,6 +125,7 @@ fn action_index(action: KeyBindingAction) -> usize {
         A::PlotFreeze => 57,
         A::PlotNext => 58,
         A::PlotPrev => 59,
+        A::Command(spec) => unreachable!("{} is a built command", spec.name),
     }
 }
 

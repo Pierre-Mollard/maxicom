@@ -82,6 +82,36 @@ fn bound_lines_run_where_global_keys_do() {
     ));
 }
 
+/// MAX-239 step 1: the default keys bound to a command without its arguments run it as the
+/// command line does, its refusal shown the same way.
+/// How: `Ctrl-a L` (`replay-stop`) and `Ctrl-a f` (`break`) on a link that isn't a replay
+/// nor open, then `Ctrl-a ,` (`mark`) waiting for its letter.
+#[test]
+fn bare_command_keys_run_the_command() {
+    let mut app = app();
+    let now = std::time::Instant::now();
+    let press = |app: &mut App, c: char| {
+        app.update(Action::App(AppAction::SetPrefix(true)));
+        let action = handle_event(plain(KeyCode::Char(c)), app);
+        app.update(action);
+        while let Some(action) = app.next_command_action(now) {
+            app.update(action);
+        }
+        let toasts = app.notifications.active_toasts();
+        toasts.last().map(|toast| toast.message.clone())
+    };
+    assert_eq!(
+        press(&mut app, 'L').as_deref(),
+        Some("replay-stop: no replay runs")
+    );
+    assert_eq!(
+        press(&mut app, 'f').as_deref(),
+        Some("break: the port isn't open (detached or reconnecting)")
+    );
+    press(&mut app, ',');
+    assert!(app.pending_mark().is_some());
+}
+
 /// MAX-215: `/` in copy mode opens the search, which then takes the keys: `y` edits the
 /// query instead of yanking, Esc closes the bar and copy mode takes the keys again.
 #[test]
@@ -380,7 +410,7 @@ fn default_keymap_per_context() {
             "( => App(Mark(Adjacent(false)))",
             ") => App(Mark(Adjacent(true)))",
             "* => Search(Word(Forward))",
-            ", => run mark",
+            ", => App(Mark(Await(Add)))",
             "/ => Search(Start(Forward))",
             "0 => CopyMode(StartOfLine)",
             "? => Search(Start(Backward))",
