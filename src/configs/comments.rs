@@ -133,6 +133,10 @@ pub const KEYMAP_COMMENTS: &[(&str, &str)] = &[
     ("search_mode", "While the search bar is open"),
     ("copy_mode", "In copy mode"),
     ("dialog_actions", "In the popups"),
+    (
+        "commands",
+        "Command lines under a name: run = the line, help = what the help shows.\nA key or the command line runs one by its name",
+    ),
 ];
 
 pub const HIGHLIGHTS_COMMENTS: &[(&str, &str)] = &[

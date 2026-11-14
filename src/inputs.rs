@@ -396,8 +396,8 @@ pub fn handle_event(event: Event, app: &App) -> Action {
 
             if let Some(prefix_action_binding) = resolver.prefix_actions.get(&pattern) {
                 return prefix_action_binding.to_action(app);
-            } else if let Some(line) = resolver.prefix_commands.get(&pattern) {
-                return Action::App(AppAction::QueueCommands(line.invocations.clone()));
+            } else if let Some(command) = resolver.prefix_commands.get(&pattern) {
+                return Action::App(AppAction::QueueCommands(command.invocations.clone()));
             } else {
                 return Action::App(AppAction::SetPrefix(false));
             }
@@ -414,13 +414,16 @@ pub fn handle_event(event: Event, app: &App) -> Action {
         InputContext::CopyMode => {
             if let Some(copy_action_binding) = resolver.copy_actions.get(&pattern) {
                 copy_action_binding.to_action()
-            } else if let Some(line) = resolver.copy_commands.get(&pattern) {
-                Action::App(AppAction::QueueCommands(line.invocations.clone()))
+            } else if let Some(command) = resolver.copy_commands.get(&pattern) {
+                Action::App(AppAction::QueueCommands(command.invocations.clone()))
             } else if let Some(action_binding) = resolver.direct_actions.get(&pattern)
                 && action_binding.is_navigation()
             {
                 // the direct scroll and pan keys move the view, the cursor stays (MAX-143)
                 action_binding.to_action(app)
+            } else if let Some(command) = resolver.direct_commands.get(&pattern) {
+                // a direct named command runs in copy mode too (MAX-239)
+                Action::App(AppAction::QueueCommands(command.invocations.clone()))
             } else {
                 Action::CopyMode(CopyModeAction::HandleKey(key_event))
             }
@@ -428,10 +431,12 @@ pub fn handle_event(event: Event, app: &App) -> Action {
         InputContext::LineInput => {
             if let Some(action_binding) = resolver.direct_actions.get(&pattern) {
                 action_binding.to_action(app)
-            } else if let Some(line) = resolver.direct_commands.get(&pattern) {
-                Action::App(AppAction::QueueCommands(line.invocations.clone()))
+            } else if let Some(command) = resolver.direct_commands.get(&pattern) {
+                Action::App(AppAction::QueueCommands(command.invocations.clone()))
             } else if let Some(line_action_binding) = resolver.line_actions.get(&pattern) {
                 line_action_binding.to_action()
+            } else if let Some(command) = resolver.line_commands.get(&pattern) {
+                Action::App(AppAction::QueueCommands(command.invocations.clone()))
             } else {
                 Action::LineInput(LineInputAction::HandleKey(key_event))
             }
@@ -439,10 +444,12 @@ pub fn handle_event(event: Event, app: &App) -> Action {
         InputContext::Terminal => {
             if let Some(action_binding) = resolver.direct_actions.get(&pattern) {
                 action_binding.to_action(app)
-            } else if let Some(line) = resolver.direct_commands.get(&pattern) {
-                Action::App(AppAction::QueueCommands(line.invocations.clone()))
+            } else if let Some(command) = resolver.direct_commands.get(&pattern) {
+                Action::App(AppAction::QueueCommands(command.invocations.clone()))
             } else if let Some(term_action_binding) = resolver.terminal_actions.get(&pattern) {
                 term_action_binding.to_action()
+            } else if let Some(command) = resolver.terminal_commands.get(&pattern) {
+                Action::App(AppAction::QueueCommands(command.invocations.clone()))
             } else {
                 Action::Terminal(TerminalAction::Key(key_event))
             }

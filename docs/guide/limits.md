@@ -60,8 +60,8 @@ maxicom. To reach a device behind SSH, forward a port with `ssh -L`. See
 ### No modem dialing
 
 The directory opens ports and saved links. It doesn't dial phone numbers or
-send modem init strings. A command line bound to a key can send any string,
-see [Command line](command-line.md).
+send modem init strings. A [named command](keybindings.md#named-commands) on
+a key can send any string, see [Command line](command-line.md).
 
 ## Sending
 

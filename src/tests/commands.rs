@@ -207,15 +207,15 @@ fn line_command_arguments() {
         assert!(parse(line).is_err(), "{line}");
     }
     assert_eq!(
-        values(&complete("baud 1", &[], &[], &[], &[])),
+        values(&complete("baud 1", &[], &[], &[], &[], &[])),
         ["19200", "115200"]
     );
     assert_eq!(
-        values(&complete("flow ", &[], &[], &[], &[])),
+        values(&complete("flow ", &[], &[], &[], &[], &[])),
         ["none", "hw", "sw"]
     );
     assert_eq!(
-        values(&complete("dtr o", &[], &[], &[], &[])),
+        values(&complete("dtr o", &[], &[], &[], &[], &[])),
         ["on", "off"]
     );
 }
@@ -230,19 +230,19 @@ fn trigger_names() {
         "login".to_string(),
     ];
     assert_eq!(
-        values(&complete("trigger t", &names, &[], &[], &[])),
+        values(&complete("trigger t", &names, &[], &[], &[], &[])),
         ["toggle"]
     );
     assert_eq!(
-        values(&complete("trigger on u", &names, &[], &[], &[])),
+        values(&complete("trigger on u", &names, &[], &[], &[], &[])),
         ["u-boot", "uart\\ menu"]
     );
     assert_eq!(
-        values(&complete("trigger off ", &names, &[], &[], &[])).len(),
+        values(&complete("trigger off ", &names, &[], &[], &[], &[])).len(),
         3
     );
     assert!(
-        complete("trigger on ", &[], &[], &[], &[])
+        complete("trigger on ", &[], &[], &[], &[], &[])
             .candidates
             .is_empty()
     );
@@ -384,9 +384,43 @@ fn values(completion: &Completion) -> Vec<&str> {
         .collect()
 }
 
+/// MAX-239: the named commands of `[commands]` complete among the built-in ones, sorted with
+/// them, their help or else their line with them; `parse_with` runs one as its line.
+#[test]
+fn named_commands_complete_and_parse() {
+    let named = |name: &str, run: &str, help: &str| NamedCommand {
+        name: name.to_string(),
+        run: run.to_string(),
+        help: help.to_string(),
+        invocations: parse(run).unwrap(),
+    };
+    let named = [
+        named("board-reset", "dtr off; dtr on", "Reset the board"),
+        named("bye", "quit", ""),
+    ];
+    let completion = complete("b", &[], &[], &[], &[], &named);
+    assert_eq!(values(&completion), ["baud", "board-reset", "break", "bye"]);
+    let help = |value: &str| {
+        let candidate = completion.candidates.iter().find(|c| c.value == value);
+        candidate.unwrap().help.clone()
+    };
+    assert_eq!(help("board-reset"), "Reset the board");
+    assert_eq!(help("bye"), "quit");
+
+    let names = |line: &str| -> Vec<&str> {
+        let invocations = parse_with(line, &named).unwrap();
+        invocations.iter().map(|i| i.spec.name).collect()
+    };
+    assert_eq!(names("board-reset; bye"), ["dtr", "dtr", "quit"]);
+    assert_eq!(
+        parse("bye"),
+        Err(CommandError::UnknownCommand("bye".to_string()))
+    );
+}
+
 #[test]
 fn complete_command_names() {
-    let complete = |line| complete(line, &[], &[], &[], &[]);
+    let complete = |line| complete(line, &[], &[], &[], &[], &[]);
     let all = complete("");
     assert_eq!(all.start, 0);
     assert_eq!(all.candidates.len(), COMMANDS.len());
@@ -417,7 +451,7 @@ fn complete_command_names() {
 
 #[test]
 fn complete_argument_values() {
-    let complete = |line| complete_in(&TEST_COMMANDS, line, &[], &[], &[], &[]);
+    let complete = |line| complete_in(&TEST_COMMANDS, line, &[], &[], &[], &[], &[]);
     assert_eq!(values(&complete("test 1 ")), ["on", "off"]);
     assert_eq!(values(&complete("test  1   o")), ["on", "off"]);
     let flow = complete("quit; test 1 on h");
@@ -448,7 +482,7 @@ fn complete_paths() {
     let folder = format!("{}/", dir.display()).replace('\\', "/");
     let complete = |typed: &str| {
         let line = format!("test 1 on none x {folder}{typed}");
-        let completion = complete_in(&TEST_COMMANDS, &line, &[], &[], &[], &[]);
+        let completion = complete_in(&TEST_COMMANDS, &line, &[], &[], &[], &[], &[]);
         assert_eq!(completion.start, 17);
         completion
             .candidates
@@ -465,7 +499,7 @@ fn complete_paths() {
     let line = format!("test 1 on none x {folder}my\\ file.bin");
     // the escaped name is whole, and the argument is the name
     assert!(
-        complete_in(&TEST_COMMANDS, &line, &[], &[], &[], &[])
+        complete_in(&TEST_COMMANDS, &line, &[], &[], &[], &[], &[])
             .candidates
             .is_empty()
     );
@@ -499,7 +533,7 @@ fn open_takes_an_address() {
     }
 
     let ports = ["/dev/ttyUSB0".to_string(), "COM3".to_string()];
-    let complete = |line: &str| complete(line, &[], &[], &ports, &[]);
+    let complete = |line: &str| complete(line, &[], &[], &ports, &[], &[]);
     assert_eq!(
         values(&complete("open ")),
         ["tcp://", "file://", "/dev/ttyUSB0", "COM3"]
@@ -509,7 +543,7 @@ fn open_takes_an_address() {
     assert!(complete("open tcp://192.").candidates.is_empty());
     // MAX-185: this machine's saved links first, escaped; `link-delete` takes them only
     let names = ["esp32".to_string(), "router console".to_string()];
-    let saved = |line: &str| super::complete(line, &[], &names, &ports, &[]);
+    let saved = |line: &str| super::complete(line, &[], &names, &ports, &[], &[]);
     assert_eq!(
         values(&saved("open ")),
         [

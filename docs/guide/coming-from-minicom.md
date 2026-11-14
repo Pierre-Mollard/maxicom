@@ -105,5 +105,5 @@ Kermit: detach the link and run `sz` or `rz` yourself. See
 
 There is no shell, no scripts and no modem dialing. maxicom never starts
 another program, and sends only what you type, bind to a key or arm. For boot
-prompts, use [triggers](triggers.md) and command lines bound to keys (`dtr`,
+prompts, use [triggers](triggers.md) and named commands on keys (`dtr`,
 `send`, `break`...), see [Command line](command-line.md).

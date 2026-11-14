@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{collections::HashMap, ops::Range};
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use unicode_width::UnicodeWidthStr;
@@ -15,7 +15,10 @@ use ratatui::{
 use crate::{
     app::App,
     commands::COMMANDS,
-    configs::{KeyBindingAction, KeyPattern, ThemeConfig, keybindings::KeyBindingDialogAction},
+    configs::{
+        KeyBindingAction, KeyPattern, ThemeConfig,
+        keybindings::{BoundCommand, KeyBindingDialogAction},
+    },
     overlays::{HelpCategory, HelpDialog, PopupTarget},
     ui::{
         common::popup_area,
@@ -90,18 +93,28 @@ pub fn render_help_popup(
             lines.push(Line::from(""));
 
             // the longest key sets the column, so `Shift-Right` doesn't push its action (MAX-155)
-            let rows = key_rows(&app.key_resolver.prefix_actions, |action| action.help())
-                .into_iter()
-                .map(|row| KeyRow {
-                    key: format!("{prefix_str} + {}", row.key),
-                    ..row
-                })
-                .collect::<Vec<_>>();
+            let resolver = &app.key_resolver;
+            let rows = with_named(
+                &resolver.prefix_actions,
+                |a| a.help(),
+                &resolver.prefix_commands,
+            )
+            .into_iter()
+            .map(|row| KeyRow {
+                key: format!("{prefix_str} + {}", row.key),
+                ..row
+            })
+            .collect::<Vec<_>>();
             let widths = column_widths(&rows, 0);
             lines.extend(rows.iter().map(|row| row.line(widths, room, theme)));
         }
         HelpCategory::Direct => {
-            let rows = key_rows(&app.key_resolver.direct_actions, |action| action.help());
+            let resolver = &app.key_resolver;
+            let rows = with_named(
+                &resolver.direct_actions,
+                |a| a.help(),
+                &resolver.direct_commands,
+            );
             let widths = column_widths(&rows, 18);
             lines.extend(rows.iter().map(|row| row.line(widths, room, theme)));
         }
@@ -113,37 +126,28 @@ pub fn render_help_popup(
             let key_style = Style::default().fg(theme.palette.secondary);
             let help_style = Style::default().fg(theme.palette.text_muted);
 
-            // the keys bound to a command line (MAX-12), the direct ones first
-            let mut direct: Vec<_> = resolver.direct_commands.iter().collect();
-            direct.sort_by_key(|(k, _)| k.help_order());
-            let mut prefixed: Vec<_> = resolver.prefix_commands.iter().collect();
-            prefixed.sort_by_key(|(k, _)| k.help_order());
-            let mut in_copy: Vec<_> = resolver.copy_commands.iter().collect();
-            in_copy.sort_by_key(|(k, _)| k.help_order());
-            let bound: Vec<_> = (direct.into_iter())
-                .map(|(key, line)| (format!("{key}"), line))
-                .chain(
-                    prefixed
-                        .into_iter()
-                        .map(|(key, line)| (format!("{prefix_str} + {key}"), line)),
-                )
-                .chain(
-                    in_copy
-                        .into_iter()
-                        .map(|(key, line)| (format!("copy mode {key}"), line)),
-                )
-                .collect();
-            if !bound.is_empty() {
+            // the named commands of `[commands]` (MAX-239): the name and the line it runs,
+            // its help under them, as the commands with arguments
+            if !resolver.commands.is_empty() {
                 lines.push(Line::from(Span::styled(
-                    " Keys running a command line:",
+                    " Named commands, [commands] in keymap.toml:",
                     header_style,
                 )));
-                let key_width = bound.iter().map(|(key, _)| key.width()).max().unwrap_or(0);
-                for (key, line) in bound {
+                let name_width = (resolver.commands.iter())
+                    .map(|command| command.name.width())
+                    .max()
+                    .unwrap_or(0);
+                for command in &resolver.commands {
                     lines.push(Line::from(vec![
-                        Span::styled(format!(" {key:<key_width$} "), key_style),
-                        Span::raw(format!("-> {}", line.text)),
+                        Span::styled(format!(" {:<name_width$} ", command.name), key_style),
+                        Span::raw(command.run.clone()),
                     ]));
+                    if !command.help.is_empty() {
+                        lines.push(Line::from(Span::styled(
+                            format!("     {}", command.help),
+                            help_style,
+                        )));
+                    }
                 }
                 lines.push(Line::from(""));
             }
@@ -187,22 +191,23 @@ pub fn render_help_popup(
                 .copy_actions
                 .iter()
                 .partition(|(_, action)| action.is_scroll());
-            let moves = key_rows(moves, |action| action.help());
-            // the copy keys running a command line: one command alone has its help
-            let bound = key_rows(
-                &resolver.copy_commands,
-                |line| match &line.invocations[..] {
-                    [invocation] => invocation.spec.help,
-                    _ => "",
-                },
-            );
-            let scrolls = key_rows(scrolls, |action| action.help());
+            let moves = key_rows(moves, |action| action.help().to_string());
+            // the copy keys running a named command, and the direct ones no copy key takes
+            // (MAX-239)
+            let taken = |key: &KeyPattern| {
+                resolver.copy_actions.contains_key(key) || resolver.copy_commands.contains_key(key)
+            };
+            let direct_named = (resolver.direct_commands.iter()).filter(|(key, _)| !taken(key));
+            let mut bound = key_rows(&resolver.copy_commands, |command| command.help.clone());
+            bound.extend(key_rows(direct_named, |command| command.help.clone()));
+            let scrolls = key_rows(scrolls, |action| action.help().to_string());
             // the direct scroll and pan keys a copy key doesn't take reach copy mode (MAX-143)
             let direct = key_rows(
-                resolver.direct_actions.iter().filter(|(k, action)| {
-                    action.is_navigation() && !resolver.copy_actions.contains_key(k)
-                }),
-                |action| action.help(),
+                resolver
+                    .direct_actions
+                    .iter()
+                    .filter(|(k, action)| action.is_navigation() && !taken(k)),
+                |action| action.help().to_string(),
             );
 
             let all: Vec<_> = [&moves, &bound, &scrolls, &direct]
@@ -229,22 +234,33 @@ pub fn render_help_popup(
             lines.extend(rows(&direct));
         }
         HelpCategory::Search => {
-            let rows = key_rows(&app.key_resolver.search_actions, |action| action.help());
+            let rows = key_rows(&app.key_resolver.search_actions, |action| {
+                action.help().to_string()
+            });
             let widths = column_widths(&rows, 18);
             lines.extend(rows.iter().map(|row| row.line(widths, room, theme)));
         }
         HelpCategory::LineMode => {
-            let rows = key_rows(&app.key_resolver.line_actions, |action| action.help());
+            let resolver = &app.key_resolver;
+            let rows = with_named(
+                &resolver.line_actions,
+                |a| a.help(),
+                &resolver.line_commands,
+            );
             let widths = column_widths(&rows, 18);
             lines.extend(rows.iter().map(|row| row.line(widths, room, theme)));
         }
         HelpCategory::TerminalMode => {
-            let rows = key_rows(&app.key_resolver.terminal_actions, |action| action.help());
+            let resolver = &app.key_resolver;
+            let commands = &resolver.terminal_commands;
+            let rows = with_named(&resolver.terminal_actions, |a| a.help(), commands);
             let widths = column_widths(&rows, 18);
             lines.extend(rows.iter().map(|row| row.line(widths, room, theme)));
         }
         HelpCategory::Dialog => {
-            let rows = key_rows(&app.key_resolver.dialog_actions, |action| action.help());
+            let rows = key_rows(&app.key_resolver.dialog_actions, |action| {
+                action.help().to_string()
+            });
             let widths = column_widths(&rows, 18);
             lines.extend(rows.iter().map(|row| row.line(widths, room, theme)));
         }
@@ -282,7 +298,8 @@ pub fn render_help_popup(
 struct KeyRow {
     key: String,
     name: String,
-    help: &'static str,
+    help: String,
+    order: (u8, u8, u32, bool),
 }
 
 impl KeyRow {
@@ -304,7 +321,7 @@ impl KeyRow {
         let name = Span::raw(format!("-> {:<name_width$}  ", self.name));
         let left = room.saturating_sub(key.width() + name.width());
         let help = if self.help.width() <= left {
-            self.help.to_string()
+            self.help.clone()
         } else {
             let mut cut = String::new();
             for c in self.help.chars() {
@@ -323,18 +340,31 @@ impl KeyRow {
 /// The rows of `bindings` in the help's key order, the help of each from `help`
 fn key_rows<'a, A: std::fmt::Display + 'a>(
     bindings: impl IntoIterator<Item = (&'a KeyPattern, &'a A)>,
-    help: impl Fn(&A) -> &'static str,
+    help: impl Fn(&A) -> String,
 ) -> Vec<KeyRow> {
-    let mut bindings: Vec<_> = bindings.into_iter().collect();
-    bindings.sort_by_key(|(key, _)| key.help_order());
-    bindings
-        .into_iter()
+    let mut rows: Vec<_> = (bindings.into_iter())
         .map(|(key, action)| KeyRow {
             key: key.to_string(),
             name: action.to_string(),
             help: help(action),
+            order: key.help_order(),
         })
-        .collect()
+        .collect();
+    rows.sort_by_key(|row| row.order);
+    rows
+}
+
+/// The rows of a section's actions and of its keys running a named command (MAX-239), in
+/// the help's key order
+fn with_named<A: std::fmt::Display>(
+    actions: &HashMap<KeyPattern, A>,
+    help: impl Fn(&A) -> &'static str,
+    commands: &HashMap<KeyPattern, BoundCommand>,
+) -> Vec<KeyRow> {
+    let mut rows = key_rows(actions, |action| help(action).to_string());
+    rows.extend(key_rows(commands, |command| command.help.clone()));
+    rows.sort_by_key(|row| row.order);
+    rows
 }
 
 /// The widths of the key column, `min_key` at least, and of the name column

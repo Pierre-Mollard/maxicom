@@ -150,7 +150,8 @@ impl KeyBindingAction {
                 let triggers = app.triggers().iter().map(|t| t.name.clone()).collect();
                 let command_line = CommandLine::new(history, triggers, serial::port_names())
                     .with_link_names(app.saved_names())
-                    .with_plot_names(app.plots().names());
+                    .with_plot_names(app.plots().names())
+                    .with_named_commands(app.key_resolver.commands.clone());
                 Action::App(AppAction::OpenOverlay(Overlay::CommandLine(Box::new(
                     command_line,
                 ))))

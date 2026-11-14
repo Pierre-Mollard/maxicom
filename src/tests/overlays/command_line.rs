@@ -234,7 +234,7 @@ fn take_a_folder() {
         start: 2,
         candidates: vec![commands::Candidate {
             value: "logs/".to_string(),
-            help: "",
+            help: String::new(),
         }],
     };
     command_line.handle_action(DialogAction::CycleNext);

@@ -172,6 +172,8 @@ pub enum CommandError {
         command: &'static str,
         reason: String,
     },
+    /// A named command of `[commands]` given arguments (MAX-239)
+    NamedWithArguments(String),
 }
 
 impl std::fmt::Display for CommandError {
@@ -193,6 +195,7 @@ impl std::fmt::Display for CommandError {
                 reason,
             } => write!(f, "{command}: bad argument {index}: {reason}"),
             Self::Failed { command, reason } => write!(f, "{command}: {reason}"),
+            Self::NamedWithArguments(name) => write!(f, "{name} takes no argument"),
         }
     }
 }
@@ -676,11 +679,32 @@ pub fn find_by_action(action: KeyBindingAction) -> Option<&'static CommandSpec> 
         .find(|spec| matches!(spec.target, Target::Action(a) if a == action))
 }
 
+/// A command line saved under a name in `[commands]` of `keymap.toml` (MAX-239), a command
+/// of its own without arguments: its line is parsed when the keymap loads
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamedCommand {
+    pub name: String,
+    pub run: String,
+    pub help: String,
+    pub invocations: Vec<Invocation>,
+}
+
+impl NamedCommand {
+    /// Its help, else its line
+    pub fn description(&self) -> &str {
+        if self.help.is_empty() {
+            &self.run
+        } else {
+            &self.help
+        }
+    }
+}
+
 /// A value to complete a word with, and its help line (a command's, none for a value)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
     pub value: String,
-    pub help: &'static str,
+    pub help: String,
 }
 
 /// What completes the word before the cursor: where the word starts in the line (in bytes), and
@@ -695,13 +719,15 @@ pub struct Completion {
 /// names (sorted) for a command's first word, else the values of the argument it is. None for
 /// a word already whole, nor for one with a quote or an escape. `link_names` are this
 /// machine's saved links (MAX-185), first for an address; `ports` the serial ports the system
-/// lists, for an address; `plot_names` the plots of `plots.toml` (MAX-222)
+/// lists, for an address; `plot_names` the plots of `plots.toml` (MAX-222); `named` the
+/// commands of `[commands]`, among the command names (MAX-239)
 pub fn complete(
     before_cursor: &str,
     trigger_names: &[String],
     link_names: &[String],
     ports: &[String],
     plot_names: &[String],
+    named: &[NamedCommand],
 ) -> Completion {
     complete_in(
         COMMANDS,
@@ -710,6 +736,7 @@ pub fn complete(
         link_names,
         ports,
         plot_names,
+        named,
     )
 }
 
@@ -720,6 +747,7 @@ fn complete_in(
     link_names: &[String],
     ports: &[String],
     plot_names: &[String],
+    named: &[NamedCommand],
 ) -> Completion {
     let Some(word) = last_word(line) else {
         return Completion::default();
@@ -727,18 +755,20 @@ fn complete_in(
     let prefix = &line[word.start..];
     let mut candidates: Vec<Candidate> = match word.command {
         None => {
-            let mut specs: Vec<_> = commands
-                .iter()
-                .filter(|spec| spec.name.starts_with(prefix))
+            let builtin = commands.iter().map(|spec| Candidate {
+                value: spec.name.to_string(),
+                help: spec.help.to_string(),
+            });
+            let named = named.iter().map(|command| Candidate {
+                value: command.name.clone(),
+                help: command.description().to_string(),
+            });
+            let mut candidates: Vec<_> = builtin
+                .chain(named)
+                .filter(|candidate| candidate.value.starts_with(prefix))
                 .collect();
-            specs.sort_unstable_by_key(|spec| spec.name);
-            specs
-                .into_iter()
-                .map(|spec| Candidate {
-                    value: spec.name.to_string(),
-                    help: spec.help,
-                })
-                .collect()
+            candidates.sort_unstable_by(|a, b| a.value.cmp(&b.value));
+            candidates
         }
         Some(name) => commands
             .iter()
@@ -768,7 +798,10 @@ fn complete_in(
             })
             .unwrap_or_default()
             .into_iter()
-            .map(|value| Candidate { value, help: "" })
+            .map(|value| Candidate {
+                value,
+                help: String::new(),
+            })
             .collect(),
     };
     if let [only] = &candidates[..]
@@ -926,10 +959,26 @@ fn last_word(line: &str) -> Option<LastWord<'_>> {
 
 /// Parses a command line: commands chained with `;`, each checked against the registry
 pub fn parse(line: &str) -> Result<Vec<Invocation>, CommandError> {
-    tokenizer::split(line, is_path_word)?
-        .iter()
-        .map(|words| invocation(words))
-        .collect()
+    parse_with(line, &[])
+}
+
+/// The same, a command of `named` (`[commands]`, MAX-239) run as its line's commands
+pub fn parse_with(line: &str, named: &[NamedCommand]) -> Result<Vec<Invocation>, CommandError> {
+    let mut invocations = Vec::new();
+    for words in tokenizer::split(line, is_path_word)? {
+        match invocation(&words) {
+            Err(CommandError::UnknownCommand(name)) => {
+                let command = (named.iter().find(|command| command.name == name))
+                    .ok_or(CommandError::UnknownCommand(name))?;
+                if words.len() > 1 {
+                    return Err(CommandError::NamedWithArguments(command.name.clone()));
+                }
+                invocations.extend(command.invocations.iter().cloned());
+            }
+            other => invocations.push(other?),
+        }
+    }
+    Ok(invocations)
 }
 
 /// The next word of a command, after `words`, is a path or an address: its `\` stays as is

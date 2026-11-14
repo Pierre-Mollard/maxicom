@@ -153,7 +153,7 @@ isn't written. A click on a setting does the same.
 
 A key flips its setting, so you need to know where it stands. The `set`
 command gives the value you want instead, and does nothing when the setting
-is already so. That suits a [key bound to a command line](command-line.md#binding-a-command-line-to-a-key):
+is already so. That suits a [named command](keybindings.md#named-commands) on a key:
 
 ```text
 set local-echo on

@@ -7,6 +7,30 @@ Every key of maxicom is defined in `keymap.toml`, in the config folder (see
 - `Ctrl-a r` applies a change without quitting.
 - Deleting the file brings back the defaults at the next start.
 
+## Actions and commands
+
+A key runs an action or a command, and the two don't behave the same way.
+
+An **action** is what a key does in its mode, and it happens at once:
+`toggle-local-echo`, copy mode's `up`, the search bar's `next`. Copy mode,
+the search bar, line mode, terminal mode and the popups each have actions of
+their own.
+
+A **command** is what you type on the [command line](command-line.md). It
+can take arguments, like `send AT\r` or `baud 9600`, and it waits its turn:
+it runs after a line still running, in order, and `cancel` stops it.
+
+The two meet in a few places:
+
+- Every action of `[prefix_actions]` and `[direct_actions]` is also a
+  command, so you can type it on the command line. There it waits its turn
+  like any other command.
+- A command that runs without arguments, like `break`, `plot` or `mark`, can
+  go on a key as it is. The help lists it with the actions, but it still runs
+  as a command: `Ctrl-a f` pressed during a `sleep 5000` waits for it to end.
+- A [named command](#named-commands) gives a name to a command line, so that
+  a key can run it.
+
 ## The file
 
 ```toml
@@ -14,11 +38,13 @@ prefix = "ctrl-a"
 
 [prefix_actions]      # after the prefix: Ctrl-a, then the key
 d = "directory"
-F6 = "dtr off; rts on; sleep 100; dtr on; rts off; sleep 50; dtr off"
+F6 = "bootloader"
 
 [direct_actions]      # without the prefix, in both modes
 ctrl-q = "quit"
-F5 = "send-hex 03"
+
+[commands]            # command lines under a name
+bootloader = { run = "dtr off; rts on; sleep 100; dtr on; rts off; sleep 50; dtr off", help = "Into the bootloader" }
 ```
 
 ### The prefix
@@ -49,15 +75,21 @@ Quote the keys TOML doesn't accept bare: `"/" = "enter-search"`,
 
 ### What a key does
 
-A value is an action name, from the [list below](#actions). In
-`[prefix_actions]`, `[direct_actions]` and `[copy_mode]`, it can also be a
-command line:
+A value is a name: an action of its section, from the lists below, or a
+[named command](#named-commands). In `[prefix_actions]` and
+`[direct_actions]`, a command that runs without arguments works too, like
+`break` or `plot` (see [Actions](#actions)).
+
+A command line doesn't go on a key. Give it a name in `[commands]`, then bind
+the name:
 
 ```toml
-h = "dtr off; sleep 100; dtr on"
-```
+[prefix_actions]
+h = "board-reset"
 
-See [Binding a command line to a key](command-line.md#binding-a-command-line-to-a-key).
+[commands]
+board-reset = { run = "dtr off; sleep 100; dtr on", help = "Pulse DTR, which resets most boards" }
+```
 
 ### Changing a section
 
@@ -76,6 +108,12 @@ A key or an action that doesn't parse stops the file from loading, naming
 the culprit. At startup maxicom doesn't start; on a reload, the keymap in
 use stays.
 
+A command line on a key is an error too, and the message says where it goes:
+
+```text
+in [prefix_actions]: h: a command line goes in [commands] under a name, then bind the name
+```
+
 ## Sections
 
 | Section | When |
@@ -87,12 +125,80 @@ use stays.
 | `[copy_mode]` | In copy mode |
 | `[search_mode]` | While the search bar is open |
 | `[dialog_actions]` | In the popups |
+| `[commands]` | Not keys: the [named commands](#named-commands) the keys run |
 
 The keys of `[prefix_actions]` and `[direct_actions]` do nothing in copy mode
-and search.
+and search. A `[direct_actions]` key bound to a named command is the
+exception: it runs in copy mode too, unless a `[copy_mode]` key takes it.
 
 Some popups have keys of their own on top of `[dialog_actions]`, like the
 directory's `n`, `e` and `s`. Those are fixed, and each chapter lists them.
+
+## Named commands
+
+`[commands]` gives a name to a command line. A key runs it by its name, and
+so does the command line: type `board-reset` there, with its help shown in
+the completion.
+
+```toml
+[commands]
+board-reset = { run = "dtr off; sleep 100; dtr on", help = "Pulse DTR, which resets most boards" }
+u-boot-toggle = { run = "trigger toggle u-boot", help = "Arm / disarm the u-boot trigger" }
+```
+
+These two are the defaults, on `Ctrl-a h` and `Ctrl-a U`.
+
+| Key | |
+| --- | --- |
+| `run` | The command line: commands chained with `;`, as on the [command line](command-line.md) |
+| `help` | What the help and the completion show. Optional: without it, they show the line. |
+
+A named command runs like a line you type. It waits its turn behind a line
+still running, and it doesn't go in the command line's history.
+
+The help's Commands tab lists the named commands with the line each one
+runs.
+
+### Binding a named command
+
+A named command goes on a key of `[prefix_actions]`, `[direct_actions]`,
+`[line_mode]`, `[terminal_mode]` or `[copy_mode]`:
+
+```toml
+[direct_actions]
+F5 = "ctrl-c"
+
+[line_mode]
+F6 = "ctrl-c"
+
+[commands]
+ctrl-c = { run = "send-hex 03", help = "Send Ctrl-c" }
+```
+
+- A key of `[line_mode]`, `[terminal_mode]` or `[copy_mode]` runs it in that
+  mode only.
+- A `[direct_actions]` key runs it in both modes, and in copy mode too,
+  unless a `[copy_mode]` key takes the same key.
+- The search bar and the popups don't take named commands: there, the keys
+  type text.
+
+The help lists the key in its section's tab, with the command's help.
+
+### What a named command can be
+
+A named command that breaks one of these rules stops the file from loading,
+naming it:
+
+- Its name is one word: letters, digits, `-` and `_`.
+- No built-in command and no action has its name.
+- Its line parses, and runs something.
+- It runs built-in commands only, not another named command.
+- It takes no arguments: a key bound to `board-reset 3` is a command line,
+  refused.
+
+Like the other sections, a `[commands]` you write replaces the default one.
+[`maxicom --write-config`](settings.md#updating-the-files) adds the default
+commands your file lacks.
 
 ## Default keys
 
@@ -103,7 +209,7 @@ directory's `n`, `e` and `s`. Those are fixed, and each chapter lists them.
 | `Ctrl-a $` | `pan-end` | Pan to the line end |
 | `Ctrl-a '` | `marks` | Open the marks |
 | `Ctrl-a (` / `Ctrl-a )` | `prev-mark` / `next-mark` | Go to the mark above / below |
-| `Ctrl-a ,` | `mark` | A command line: mark a line, waits for its letter |
+| `Ctrl-a ,` | `mark` | Mark a line, waits for its letter |
 | `Ctrl-a /` | `enter-search` | Search the history |
 | `Ctrl-a 0` | `pan-home` | Pan to the line start |
 | `Ctrl-a :` | `command-line` | Open the command line |
@@ -121,7 +227,7 @@ directory's `n`, `e` and `s`. Those are fixed, and each chapter lists them.
 | `Ctrl-a N` | `dismiss-notifications` | Close all the notifications |
 | `Ctrl-a O` | `toggle-text-encoding` | Cycle the text encoding |
 | `Ctrl-a T` | `triggers` | Open the triggers |
-| `Ctrl-a U` | `trigger toggle u-boot` | A command line |
+| `Ctrl-a U` | `u-boot-toggle` | A named command: arm / disarm the `u-boot` trigger |
 | `Ctrl-a W` | `resize-dialog` | Set the terminal size |
 | `Ctrl-a [`, `Ctrl-a b` | `enter-copy-mode` | Enter copy mode |
 | `Ctrl-a a` | `toggle-add-lf` | Read a received CR as CR LF |
@@ -130,8 +236,8 @@ directory's `n`, `e` and `s`. Those are fixed, and each chapter lists them.
 | `Ctrl-a Down` | `scroll-down` | Scroll down one line |
 | `Ctrl-a e` | `toggle-local-echo` | Toggle local echo |
 | `Ctrl-a f` | `break` | Hold the line in break, 250 ms by default |
-| `Ctrl-a g` | `plot` | A command line: the next plot, off after the last |
-| `Ctrl-a h` | `dtr off; sleep 100; dtr on` | A command line |
+| `Ctrl-a g` | `plot` | Show the next plot, off after the last |
+| `Ctrl-a h` | `board-reset` | A named command: pulse DTR, which resets most boards |
 | `Ctrl-a j` | `sessions` | Open the session backups |
 | `Ctrl-a k` | `screenshot-bytes` | Screenshot the terminal with its colors |
 | `Ctrl-a l` | `record` | Start / stop recording (text or full) |
@@ -198,7 +304,7 @@ are built in: see [Line mode](line-mode.md#editing-the-line).
 | `Tab` | `toggle-side` | Cursor to the raw panel and back |
 | `Ctrl-y` / `Ctrl-e` | `scroll-up` / `scroll-down` | Scroll the view a line |
 | `PageUp` / `PageDown` | `page-up` / `page-down` | A page |
-| `,` | `mark` | A command line: mark the cursor's line, waits for its letter |
+| `,` | `mark` | Mark the cursor's line, waits for its letter |
 | `'` | `marks` | Open the marks |
 | `(` / `)` | `prev-mark` / `next-mark` | Cursor to the mark above / below |
 | `/` / `?` | `search` / `search-backward` | Search from the cursor, forward / backward |
@@ -240,6 +346,12 @@ Shift-Tab act; the other keys edit the text. See [Popups](popups.md).
 The actions you can bind in `[prefix_actions]` and `[direct_actions]`. Each
 one is also a command of the [command line](command-line.md), which adds
 commands with arguments (`send`, `open`, `baud`, `replay`...).
+
+The commands that run without arguments go on these keys too: `mark`,
+`jump-mark`, `break`, `plot`, `link-save`, `session-name`, `replay-stop`,
+`replay-pause`, `replay-resume` and `replay-restart`. Each one does what it
+does on the command line with no arguments, and waits its turn like a
+command: see [Actions and commands](#actions-and-commands).
 
 | Action | | Default key |
 | --- | --- | --- |

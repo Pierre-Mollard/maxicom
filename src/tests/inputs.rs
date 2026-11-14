@@ -29,19 +29,32 @@ fn plain(code: KeyCode) -> Event {
     key(code, KeyModifiers::NONE)
 }
 
-/// MAX-12: a key bound to a command line queues it after the prefix, and as a direct key in
-/// line input and terminal mode; in copy mode and search it does nothing of its own, as
-/// any global key but navigation.
-/// How: F6 after the prefix, F5 direct, in each context.
+/// MAX-12 then MAX-239: a key bound to a named command queues its line after the prefix, as
+/// a direct key in line input, terminal and copy mode, and from its own mode's section; in the
+/// search bar it does nothing of its own. A copy mode key wins over a direct one.
+/// How: F6 after the prefix, F5 direct, F7 in line mode and terminal mode, F8 direct but
+/// taken in copy mode, in each context.
 #[test]
-fn bound_lines_run_where_global_keys_do() {
+fn named_commands_run_where_bound() {
+    use crate::configs::keybindings::NamedCommandConfig;
+    let named = |run: &str| NamedCommandConfig {
+        run: run.to_string(),
+        help: String::new(),
+    };
     let mut config = KeyBindingsConfig::default();
     config
-        .prefix_actions
-        .insert("f6".into(), "help; settings".into());
+        .commands
+        .insert("both".into(), named("help; settings"));
     config
-        .direct_actions
-        .insert("f5".into(), "send-hex 03".into());
+        .commands
+        .insert("ctrl-c".into(), named("send-hex 03"));
+    config.commands.insert("bell".into(), named("send-hex 07"));
+    config.prefix_actions.insert("f6".into(), "both".into());
+    config.direct_actions.insert("f5".into(), "ctrl-c".into());
+    config.direct_actions.insert("f8".into(), "ctrl-c".into());
+    config.line_mode.insert("f7".into(), "bell".into());
+    config.terminal_mode.insert("f7".into(), "ctrl-c".into());
+    config.copy_mode.insert("f8".into(), "bell".into());
     let mut settings = SettingsConfig::default();
     settings.mode = Mode::Line;
     let mut app = App::new(
@@ -52,32 +65,40 @@ fn bound_lines_run_where_global_keys_do() {
     let commands = |action: Action| match action {
         Action::App(AppAction::QueueCommands(invocations)) => invocations
             .iter()
-            .map(|invocation| invocation.spec.name)
+            .map(|invocation| match &invocation.args[..] {
+                [crate::commands::ArgValue::Bytes(bytes)] => {
+                    format!("{} {bytes:02x?}", invocation.spec.name)
+                }
+                _ => invocation.spec.name.to_string(),
+            })
             .collect::<Vec<_>>(),
         other => panic!("{other:?}"),
     };
-    let f5 = || plain(KeyCode::F(5));
+    let f = |n| plain(KeyCode::F(n));
 
-    assert_eq!(commands(handle_event(f5(), &app)), ["send-hex"]);
+    assert_eq!(commands(handle_event(f(5), &app)), ["send-hex [03]"]);
+    assert_eq!(commands(handle_event(f(7), &app)), ["send-hex [07]"]);
     app.update(Action::App(AppAction::SetPrefix(true)));
-    let f6 = handle_event(plain(KeyCode::F(6)), &app);
-    assert_eq!(commands(f6), ["help", "settings"]);
+    assert_eq!(commands(handle_event(f(6), &app)), ["help", "settings"]);
     app.update(Action::App(AppAction::SetPrefix(false)));
 
     app.update(Action::App(AppAction::ToggleSetting(SettingKey::Mode)));
-    assert_eq!(commands(handle_event(f5(), &app)), ["send-hex"]);
+    assert_eq!(commands(handle_event(f(5), &app)), ["send-hex [03]"]);
+    assert_eq!(commands(handle_event(f(7), &app)), ["send-hex [03]"]);
 
     app.update(Action::Search(SearchModeAction::Start(
         SearchDirection::Forward,
     )));
     assert!(matches!(
-        handle_event(f5(), &app),
+        handle_event(f(5), &app),
         Action::Search(SearchModeAction::HandleKey(_))
     ));
     app.update(Action::Search(SearchModeAction::Cancel));
     app.update(Action::CopyMode(CopyModeAction::Enter));
+    assert_eq!(commands(handle_event(f(5), &app)), ["send-hex [03]"]);
+    assert_eq!(commands(handle_event(f(8), &app)), ["send-hex [07]"]);
     assert!(matches!(
-        handle_event(f5(), &app),
+        handle_event(f(7), &app),
         Action::CopyMode(CopyModeAction::HandleKey(_))
     ));
 }

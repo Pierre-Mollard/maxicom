@@ -21,8 +21,8 @@ It opens a serial port or a device over TCP, on Linux, macOS and Windows.
   replays
 - Saved links and a dialing directory, TCP links (ser2net, ESP32 bridges,
   QEMU), port locks shared with minicom and picocom
-- A command line (`send`, `dtr`, `break`, `mash`...), keys bound to command
-  lines, triggers that answer boot prompts
+- A command line (`send`, `dtr`, `break`, `mash`...), named command lines on
+  keys, triggers that answer boot prompts
 - minicom's keys and options: `maxicom -D /dev/ttyUSB0 -b 115200`, then
   `Ctrl-a z` for the help
 - Keys, colors and the status bar all configurable

@@ -232,22 +232,29 @@ fn render_completion_list(
         let mut spans = vec![Span::styled(value, style)];
         if !candidate.help.is_empty() && room > 0 {
             spans.push(Span::raw("  "));
-            spans.push(Span::styled(cut(candidate.help, room), help_style));
+            spans.push(Span::styled(cut(&candidate.help, room), help_style));
         }
         lines.push(Line::from(spans));
     }
     let listed = lines.len();
 
-    // the selected command's usage and help, wrapped; none for a value
+    // the selected command's usage and help, wrapped; none for a value. A named command
+    // (MAX-239) has no arguments: its name is its usage
     let detail = selected
         .map(|i| &candidates[i])
         .filter(|candidate| !candidate.help.is_empty())
-        .and_then(|candidate| find_by_name(&candidate.value).map(|spec| (spec, candidate.help)));
-    if let Some((spec, help)) = detail {
+        .map(|candidate| {
+            let usage = find_by_name(&candidate.value).map(|spec| spec.usage());
+            (
+                usage.unwrap_or_else(|| candidate.value.clone()),
+                candidate.help.clone(),
+            )
+        });
+    if let Some((usage, help)) = &detail {
         lines.push(Line::from(""));
-        let usage = Style::default().fg(theme.palette.main);
-        lines.push(Line::styled(cut(&spec.usage(), width), usage));
-        let help = Line::styled(help, Style::default().fg(theme.palette.text));
+        let style = Style::default().fg(theme.palette.main);
+        lines.push(Line::styled(cut(usage, width), style));
+        let help = Line::styled(help.clone(), Style::default().fg(theme.palette.text));
         let rows = wrap_line_by_words(help, width.max(1), 0, 0).into_iter();
         lines.extend(rows.map(|row| Line::from(row.spans)));
     }

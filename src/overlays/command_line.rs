@@ -4,7 +4,7 @@ use crossterm::event::KeyCode;
 use tui_input::{Input, InputRequest};
 
 use crate::{
-    commands::{self, Completion},
+    commands::{self, Completion, NamedCommand},
     inputs::{DialogAction, click_input_at, dispatch_input_key, paste_into_input},
     overlays::{OverlayResponse, PopupTarget},
     ui::popups::command_line::COMPLETION_ROWS,
@@ -41,6 +41,8 @@ pub struct CommandLine {
     ports: Vec<String>,
     /// The plots of `plots.toml`, to complete `plot`'s (MAX-222)
     plot_names: Vec<String>,
+    /// The commands of `[commands]` in `keymap.toml`, run and completed by name (MAX-239)
+    named: Vec<NamedCommand>,
 }
 
 impl CommandLine {
@@ -62,6 +64,11 @@ impl CommandLine {
 
     pub fn with_plot_names(mut self, plot_names: Vec<String>) -> Self {
         self.plot_names = plot_names;
+        self
+    }
+
+    pub fn with_named_commands(mut self, named: Vec<NamedCommand>) -> Self {
+        self.named = named;
         self
     }
 
@@ -104,6 +111,7 @@ impl CommandLine {
                 &self.link_names,
                 &self.ports,
                 &self.plot_names,
+                &self.named,
             )
         } else {
             Completion::default()
@@ -201,7 +209,7 @@ impl CommandLine {
     pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
         match action {
             DialogAction::Close => OverlayResponse::Close,
-            DialogAction::Confirm => match commands::parse(self.input.value()) {
+            DialogAction::Confirm => match commands::parse_with(self.input.value(), &self.named) {
                 Ok(invocations) if invocations.is_empty() => OverlayResponse::Close,
                 Ok(invocations) => OverlayResponse::QueueCommands {
                     line: self.input.value().to_string(),

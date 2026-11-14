@@ -2915,20 +2915,14 @@ fn lost_popup_says_its_reason() {
     assert!(!has(&rows, "failed to read"), "{rows:#?}");
 }
 
-/// MAX-12: the help's third tab lists the keys bound to a command line, the direct ones
-/// first, then every command: those with arguments with their help under them, then the
-/// others, one a row.
-/// How: the default keymap (break and the DTR pulse after the prefix, the marks' keys after
-/// the prefix and in copy mode) and `send-hex 03` on F5, the tab reached two forward from
-/// the first.
+/// MAX-12: the help's third tab lists every command: those with arguments with their help
+/// under them, then the others, one a row. MAX-239: the named commands of `[commands]` come
+/// first, each with the line it runs and its help under them; no key is listed there, a key
+/// bound to a named command is in its own tab.
+/// How: the default keymap, the tab reached two forward from the first.
 #[test]
 fn help_lists_the_commands() {
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 60);
-    let mut config = KeyBindingsConfig::default();
-    config
-        .direct_actions
-        .insert("f5".to_string(), "send-hex 03".to_string());
-    h.app.key_resolver = KeyResolver::try_new(&config).unwrap();
     h.app
         .update(Action::App(AppAction::OpenOverlay(Overlay::Help(
             HelpDialog::new(),
@@ -2937,26 +2931,18 @@ fn help_lists_the_commands() {
     h.app.update(Action::Overlay(DialogAction::CycleNext));
     let rows = h.draw();
     let row_of = |rows: &[String], text: &str| rows.iter().position(|row| row.contains(text));
-    let f5 = row_of(&rows, "F5 ").expect("F5");
-    assert!(rows[f5].contains("-> send-hex 03"), "{rows:#?}");
-    // the letters in order; the keys running one command without arguments (`f`, `g`, `L`,
-    // `,`) are actions, in the prefix tab, and copy mode has its own `mark` (MAX-239)
-    let pulse = row_of(&rows, "Ctrl-a + h ");
-    assert_eq!(pulse, Some(f5 + 1), "{rows:#?}");
-    assert!(
-        rows[f5 + 1].contains("-> dtr off; sleep 100; dtr on"),
-        "{rows:#?}"
-    );
-    assert_eq!(row_of(&rows, "Ctrl-a + U "), Some(f5 + 2), "{rows:#?}");
-    for key in [
-        "Ctrl-a + f ",
-        "Ctrl-a + g ",
-        "Ctrl-a + L ",
-        "Ctrl-a + , ",
-        "copy mode ",
-    ] {
-        assert_eq!(row_of(&rows, key), None, "{key}: {rows:#?}");
+    let named = row_of(&rows, "Named commands, [commands] in keymap.toml:").expect("named");
+    let expected = [
+        " board-reset   dtr off; sleep 100; dtr on",
+        "     Pulse DTR, which resets most boards",
+        " u-boot-toggle trigger toggle u-boot",
+        "     Arm / disarm the u-boot trigger",
+    ];
+    for (i, text) in expected.into_iter().enumerate() {
+        assert!(rows[named + 1 + i].contains(text), "{text}: {rows:#?}");
     }
+    assert!(!has(&rows, "Ctrl-a + "), "{rows:#?}");
+    assert!(!has(&rows, "copy mode "), "{rows:#?}");
     assert!(has(&rows, "on the command line (Ctrl-a :)"), "{rows:#?}");
 
     // scrolled down until `text` shows with the row under it
@@ -3056,8 +3042,9 @@ fn help_prefix_actions_align() {
 }
 
 /// MAX-239: every help tab lists its keys as `key -> name  help`. The keys bound to a command
-/// without its arguments (`mark`, `break`, `plot`, `replay-stop`) are actions, in the prefix
-/// tab, copy mode's `,` its own `mark`; the commands tab keeps the lines. A help too long for the popup is cut with `…`.
+/// without its arguments (`mark`, `break`, `plot`, `replay-stop`) are actions, and the keys
+/// bound to a named command (`board-reset`, `u-boot-toggle`) are in their own tab too; the
+/// commands tab lists no key. A help too long for the popup is cut with `…`.
 /// How: the default keymap on a wide screen, each tab in turn, paged down to its end; then
 /// the prefix tab on 80 columns.
 #[test]
@@ -3108,6 +3095,7 @@ fn help_tabs_list_keys_and_names() {
             "Ctrl-a + f",
             "Hold the line in break, 250 ms by default",
         ),
+        (prefix, "Ctrl-a + h", "Pulse DTR, which resets most boards"),
         (direct, "Ctrl-q", "Quit maxicom"),
         (copy, "k", "Cursor up"),
         (
@@ -3131,18 +3119,15 @@ fn help_tabs_list_keys_and_names() {
         ("Ctrl-a + f", "break"),
         ("Ctrl-a + g", "plot"),
         ("Ctrl-a + L", "replay-stop"),
+        ("Ctrl-a + h", "board-reset"),
+        ("Ctrl-a + U", "u-boot-toggle"),
     ] {
         assert!(bound(prefix, key, name), "{key}: {prefix:#?}");
     }
-    assert!(!has(prefix, " Ctrl-a + h "), "{prefix:#?}");
     assert!(bound(direct, "Ctrl-q", "quit"), "{direct:#?}");
-    for (key, name) in [
-        ("Ctrl-a + h", "dtr off; sleep 100; dtr on"),
-        ("Ctrl-a + U", "trigger toggle u-boot"),
-    ] {
-        assert!(bound(commands, key, name), "{key}: {commands:#?}");
-    }
     for key in [
+        "Ctrl-a + h",
+        "Ctrl-a + U",
         "Ctrl-a + ,",
         "Ctrl-a + f",
         "Ctrl-a + g",
@@ -3172,6 +3157,57 @@ fn help_tabs_list_keys_and_names() {
         .find(|row| row.contains(" Ctrl-a + d "))
         .unwrap();
     assert!(directory.contains("Open the director…│"), "{directory}");
+}
+
+/// MAX-239: a key bound to a named command shows in its section's tab with the command's
+/// help, its line without one; a direct one shows in the copy mode tab too, unless a copy
+/// key takes it.
+/// How: `bell` in line mode, `ctrl-c` direct on F5 and F8, F8 taken in copy mode; the line,
+/// terminal and copy tabs on a wide screen.
+#[test]
+fn help_lists_named_keys_in_their_tab() {
+    use crate::configs::keybindings::NamedCommandConfig;
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 130, 40);
+    let mut config = KeyBindingsConfig::default();
+    let named = |run: &str, help: &str| NamedCommandConfig {
+        run: run.to_string(),
+        help: help.to_string(),
+    };
+    config
+        .commands
+        .insert("ctrl-c".into(), named("send-hex 03", "Send Ctrl-c"));
+    config
+        .commands
+        .insert("bell".into(), named("send-hex 07", ""));
+    config.direct_actions.insert("f5".into(), "ctrl-c".into());
+    config.direct_actions.insert("f8".into(), "ctrl-c".into());
+    config.line_mode.insert("f7".into(), "bell".into());
+    config.terminal_mode.insert("f7".into(), "ctrl-c".into());
+    config.copy_mode.insert("f8".into(), "bell".into());
+    h.app.key_resolver = KeyResolver::try_new(&config).unwrap();
+    h.app
+        .update(Action::App(AppAction::OpenOverlay(Overlay::Help(
+            HelpDialog::new(),
+        ))));
+    let mut tabs = Vec::new();
+    for _ in crate::overlays::HelpCategory::ALL {
+        h.draw();
+        h.app.update(Action::Overlay(DialogAction::End));
+        tabs.push(h.draw());
+        h.app.update(Action::Overlay(DialogAction::CycleNext));
+    }
+    let row = |rows: &[String], key: &str| -> String {
+        let row = rows.iter().find(|row| row.contains(&format!(" {key} ")));
+        row.cloned().unwrap_or_default()
+    };
+    let (direct, copy, line, terminal) = (&tabs[1], &tabs[3], &tabs[5], &tabs[6]);
+    assert!(row(direct, "F5").contains("-> ctrl-c"), "{direct:#?}");
+    assert!(row(direct, "F5").contains("Send Ctrl-c"), "{direct:#?}");
+    assert!(row(line, "F7").contains("-> bell"), "{line:#?}");
+    assert!(row(line, "F7").contains("send-hex 07"), "{line:#?}");
+    assert!(row(terminal, "F7").contains("-> ctrl-c"), "{terminal:#?}");
+    assert!(row(copy, "F5").contains("-> ctrl-c"), "{copy:#?}");
+    assert!(row(copy, "F8").contains("-> bell"), "{copy:#?}");
 }
 
 /// Rows inside the popup frame (between its top and bottom borders), without the borders

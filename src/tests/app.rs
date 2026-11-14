@@ -96,6 +96,47 @@ fn command_line_runs_its_chain_in_order() {
     assert_eq!(toast.message, "unknown command 'nope'");
 }
 
+/// MAX-239: a named command of `[commands]` runs from the command line as its line, alone or
+/// in a chain; given arguments it runs nothing and says why.
+/// How: `twice` toggling local echo twice then detaching.
+#[test]
+fn command_line_runs_a_named_command() {
+    use crate::configs::keybindings::NamedCommandConfig;
+    let mut config = KeyBindingsConfig::default();
+    let twice = NamedCommandConfig {
+        run: "toggle-local-echo; toggle-local-echo".to_string(),
+        help: String::new(),
+    };
+    config.commands.insert("twice".into(), twice);
+    let mut app = app();
+    app.key_resolver = KeyResolver::try_new(&config).unwrap();
+    let run_line = |app: &mut App, line: &str| {
+        app.update(KeyBindingAction::CommandLine.to_action(app));
+        app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
+        app.update(Action::Overlay(DialogAction::Confirm));
+        let mut effects = Vec::new();
+        while let Some(action) = app.next_command_action(Instant::now()) {
+            effects.push(app.update(action));
+        }
+        effects
+    };
+    let echo = app.settings.local_echo;
+    let effects = run_line(&mut app, "twice; toggle-attach");
+    assert!(matches!(
+        effects[..],
+        [
+            UpdateEffect::None,
+            UpdateEffect::None,
+            UpdateEffect::ToggleAttach
+        ]
+    ));
+    assert_eq!(app.settings.local_echo, echo);
+
+    assert!(run_line(&mut app, "twice now").is_empty());
+    let toast = app.notifications.active_toasts().last().unwrap();
+    assert_eq!(toast.message, "twice takes no argument");
+}
+
 /// MAX-185: a `links.toml` that doesn't load is said, the app running without its links;
 /// one that loads says nothing.
 /// How: an error then links set.

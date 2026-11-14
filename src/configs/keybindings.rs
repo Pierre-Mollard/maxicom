@@ -1,14 +1,14 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, btree_map},
     fs,
     path::{Path, PathBuf},
     str::FromStr,
 };
 
 use crate::{
-    commands::{self, CommandError, CommandSpec, Invocation, Target},
+    commands::{self, CommandError, CommandSpec, Invocation, NamedCommand, Target},
     configs::comments::{KEYMAP_COMMENTS, with_comments},
 };
 
@@ -832,17 +832,18 @@ impl std::fmt::Display for KeyPattern {
     }
 }
 
-/// A command line bound to a key in `[prefix_actions]` or `[direct_actions]` (MAX-12): its
-/// text as written, parsed when the keymap loads
+/// A key bound to a named command of `[commands]` (MAX-239): its name, what it runs and its
+/// description
 #[derive(Debug, Clone)]
-pub struct BoundLine {
-    pub text: String,
+pub struct BoundCommand {
+    pub name: String,
     pub invocations: Vec<Invocation>,
+    pub help: String,
 }
 
-impl std::fmt::Display for BoundLine {
+impl std::fmt::Display for BoundCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.text)
+        write!(f, "{}", self.name)
     }
 }
 
@@ -850,14 +851,18 @@ pub struct KeyResolver {
     pub prefix: KeyPattern,
     pub prefix_actions: HashMap<KeyPattern, KeyBindingAction>,
     pub direct_actions: HashMap<KeyPattern, KeyBindingAction>,
-    pub prefix_commands: HashMap<KeyPattern, BoundLine>,
-    pub direct_commands: HashMap<KeyPattern, BoundLine>,
+    pub prefix_commands: HashMap<KeyPattern, BoundCommand>,
+    pub direct_commands: HashMap<KeyPattern, BoundCommand>,
     pub line_actions: HashMap<KeyPattern, KeyBindingLineAction>,
+    pub line_commands: HashMap<KeyPattern, BoundCommand>,
     pub terminal_actions: HashMap<KeyPattern, KeyBindingTerminalAction>,
+    pub terminal_commands: HashMap<KeyPattern, BoundCommand>,
     pub search_actions: HashMap<KeyPattern, KeyBindingSearchAction>,
     pub copy_actions: HashMap<KeyPattern, KeyBindingCopyAction>,
-    pub copy_commands: HashMap<KeyPattern, BoundLine>,
+    pub copy_commands: HashMap<KeyPattern, BoundCommand>,
     pub dialog_actions: HashMap<KeyPattern, KeyBindingDialogAction>,
+    /// `[commands]`, by name (MAX-239)
+    pub commands: Vec<NamedCommand>,
 }
 
 #[derive(Debug)]
@@ -871,11 +876,10 @@ pub enum KeymapError {
         section: &'static str,
         action: String,
     },
-    BadCommandLine {
-        section: &'static str,
-        key: String,
-        error: CommandError,
-    },
+    /// A command line on a key: it goes in `[commands]` under a name (MAX-239)
+    LineOnKey { section: &'static str, key: String },
+    /// A named command of `[commands]` that can't be (MAX-239)
+    BadNamedCommand { name: String, reason: String },
 }
 
 impl std::fmt::Display for KeymapError {
@@ -891,61 +895,57 @@ impl std::fmt::Display for KeymapError {
             KeymapError::InvalidAction { section, action } => {
                 write!(f, "in [{section}]: unknown action '{action}'")
             }
-            KeymapError::BadCommandLine {
-                section,
-                key,
-                error,
-            } => write!(f, "in [{section}]: {key}: {error}"),
+            KeymapError::LineOnKey { section, key } => write!(
+                f,
+                "in [{section}]: {key}: a command line goes in [commands] under a name, then bind the name"
+            ),
+            KeymapError::BadNamedCommand { name, reason } => {
+                write!(f, "in [commands]: {name}: {reason}")
+            }
         }
     }
 }
 
 impl std::error::Error for KeymapError {}
 
-/// A section's keys to their action, and to their command line
-type SectionWithLines<A> = (HashMap<KeyPattern, A>, HashMap<KeyPattern, BoundLine>);
+/// A section's keys to their action, and to their named command
+type SectionWithCommands<A> = (HashMap<KeyPattern, A>, HashMap<KeyPattern, BoundCommand>);
 
-/// A global section's keys, to an action name or else to a command line (MAX-12). A value
-/// neither is an error naming its key: an unknown action, the line's parse error
-/// A section whose keys take an action of the section, or else a command line: the global
-/// ones and `[copy_mode]` (MAX-164)
-fn section_with_lines<A: std::str::FromStr>(
+/// A section whose keys take an action of the section, or else a named command of
+/// `[commands]` (MAX-239): the global ones, `[line_mode]`, `[terminal_mode]` and `[copy_mode]`.
+/// A value neither is an error naming its key, a command line one saying where it goes
+fn section_with_commands<A: std::str::FromStr>(
     section: &'static str,
     entries: &BTreeMap<String, String>,
-) -> Result<SectionWithLines<A>, KeymapError> {
+    named: &[NamedCommand],
+) -> Result<SectionWithCommands<A>, KeymapError> {
     let mut actions = HashMap::new();
-    let mut lines = HashMap::new();
+    let mut commands = HashMap::new();
     for (key, value) in entries {
         let pattern = key.parse().map_err(|reason| KeymapError::InvalidKey {
             section,
             key: key.clone(),
             reason,
         })?;
+        let value = value.trim();
         if let Ok(action) = value.parse() {
             actions.insert(pattern, action);
-            continue;
-        }
-        match commands::parse(value) {
-            Ok(invocations) if !invocations.is_empty() => {
-                let text = value.trim().to_string();
-                lines.insert(pattern, BoundLine { text, invocations });
-            }
-            Ok(_) => {
-                return Err(KeymapError::InvalidAction {
-                    section,
-                    action: value.clone(),
-                });
-            }
-            Err(error) => {
-                return Err(KeymapError::BadCommandLine {
-                    section,
-                    key: key.clone(),
-                    error,
-                });
-            }
+        } else if let Some(command) = named.iter().find(|command| command.name == value) {
+            let bound = BoundCommand {
+                name: command.name.clone(),
+                invocations: command.invocations.clone(),
+                help: command.description().to_string(),
+            };
+            commands.insert(pattern, bound);
+        } else if value.contains(|c: char| c.is_whitespace() || c == ';') {
+            let key = key.clone();
+            return Err(KeymapError::LineOnKey { section, key });
+        } else {
+            let action = value.to_string();
+            return Err(KeymapError::InvalidAction { section, action });
         }
     }
-    Ok((actions, lines))
+    Ok((actions, commands))
 }
 
 /// The keys bound to `action` in a fixed order (the map's changes between runs): plain keys
@@ -996,11 +996,10 @@ impl KeyResolver {
     /// The keys bound in `[line_mode]` or `[terminal_mode]` that never get there, because the
     /// prefix or `[direct_actions]` take them first (MAX-155), for a warning
     pub fn shadowed_keys(&self) -> Vec<String> {
-        let mode_keys = (self.line_actions.keys().map(|key| ("line_mode", key))).chain(
-            self.terminal_actions
-                .keys()
-                .map(|key| ("terminal_mode", key)),
-        );
+        let line_keys = (self.line_actions.keys()).chain(self.line_commands.keys());
+        let terminal_keys = (self.terminal_actions.keys()).chain(self.terminal_commands.keys());
+        let mode_keys = (line_keys.map(|key| ("line_mode", key)))
+            .chain(terminal_keys.map(|key| ("terminal_mode", key)));
         let direct_keys = (self.direct_actions.keys())
             .chain(self.direct_commands.keys())
             .map(|key| ("direct_actions", key));
@@ -1033,40 +1032,15 @@ impl KeyResolver {
                 reason: err,
             })?;
 
+        let commands = named_commands(&config.commands)?;
         let (prefix_actions, prefix_commands) =
-            section_with_lines("prefix_actions", &config.prefix_actions)?;
+            section_with_commands("prefix_actions", &config.prefix_actions, &commands)?;
         let (direct_actions, direct_commands) =
-            section_with_lines("direct_actions", &config.direct_actions)?;
-
-        let mut line_actions = HashMap::new();
-        for (k, action_str) in &config.line_mode {
-            let pat = k.parse().map_err(|err| KeymapError::InvalidKey {
-                section: "line_mode",
-                key: k.clone(),
-                reason: err,
-            })?;
-            let act: KeyBindingLineAction =
-                action_str.parse().map_err(|_| KeymapError::InvalidAction {
-                    section: "line_mode",
-                    action: action_str.clone(),
-                })?;
-            line_actions.insert(pat, act);
-        }
-
-        let mut terminal_actions = HashMap::new();
-        for (k, action_str) in &config.terminal_mode {
-            let pat = k.parse().map_err(|err| KeymapError::InvalidKey {
-                section: "terminal_mode",
-                key: k.clone(),
-                reason: err,
-            })?;
-            let act: KeyBindingTerminalAction =
-                action_str.parse().map_err(|_| KeymapError::InvalidAction {
-                    section: "terminal_mode",
-                    action: action_str.clone(),
-                })?;
-            terminal_actions.insert(pat, act);
-        }
+            section_with_commands("direct_actions", &config.direct_actions, &commands)?;
+        let (line_actions, line_commands) =
+            section_with_commands("line_mode", &config.line_mode, &commands)?;
+        let (terminal_actions, terminal_commands) =
+            section_with_commands("terminal_mode", &config.terminal_mode, &commands)?;
 
         let mut search_actions = HashMap::new();
         for (k, action_str) in &config.search_mode {
@@ -1083,7 +1057,8 @@ impl KeyResolver {
             search_actions.insert(pat, act);
         }
 
-        let (copy_actions, copy_commands) = section_with_lines("copy_mode", &config.copy_mode)?;
+        let (copy_actions, copy_commands) =
+            section_with_commands("copy_mode", &config.copy_mode, &commands)?;
 
         let mut dialog_actions = HashMap::new();
         for (k, action_str) in &config.dialog_actions {
@@ -1107,13 +1082,67 @@ impl KeyResolver {
             prefix_commands,
             direct_commands,
             line_actions,
+            line_commands,
             terminal_actions,
+            terminal_commands,
             search_actions,
             copy_actions,
             copy_commands,
             dialog_actions,
+            commands,
         })
     }
+}
+
+/// An action of a mode section is named `name`: a named command named so would be ambiguous
+/// there (MAX-239)
+fn is_mode_action(name: &str) -> bool {
+    name.parse::<KeyBindingLineAction>().is_ok()
+        || name.parse::<KeyBindingTerminalAction>().is_ok()
+        || name.parse::<KeyBindingSearchAction>().is_ok()
+        || name.parse::<KeyBindingCopyAction>().is_ok()
+        || name.parse::<KeyBindingDialogAction>().is_ok()
+}
+
+/// `[commands]` checked (MAX-239): a name is one word that no built-in command nor any action
+/// of a section has, its line parses, and it runs built-in commands only: a named command
+/// running another one would need a check for loops
+fn named_commands(
+    config: &BTreeMap<String, NamedCommandConfig>,
+) -> Result<Vec<NamedCommand>, KeymapError> {
+    let mut named = Vec::new();
+    for (name, entry) in config {
+        let refuse = |reason: String| KeymapError::BadNamedCommand {
+            name: name.clone(),
+            reason,
+        };
+        let word = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+        if name.is_empty() || !name.chars().all(word) {
+            return Err(refuse("a name takes letters, digits, - and _".to_string()));
+        }
+        if commands::find_by_name(name).is_some() {
+            return Err(refuse("a built-in command has this name".to_string()));
+        }
+        if is_mode_action(name) {
+            return Err(refuse("an action has this name".to_string()));
+        }
+        let invocations = commands::parse(&entry.run).map_err(|error| match error {
+            CommandError::UnknownCommand(other) if config.contains_key(&other) => {
+                refuse(format!("runs '{other}': a named command can't run another"))
+            }
+            error => refuse(error.to_string()),
+        })?;
+        if invocations.is_empty() {
+            return Err(refuse("nothing to run".to_string()));
+        }
+        named.push(NamedCommand {
+            name: name.clone(),
+            run: entry.run.trim().to_string(),
+            help: entry.help.clone(),
+            invocations,
+        });
+    }
+    Ok(named)
 }
 
 macro_rules! default_bindings {
@@ -1138,6 +1167,15 @@ pub struct KeyBindingsConfig {
     pub search_mode: BTreeMap<String, String>,
     pub copy_mode: BTreeMap<String, String>,
     pub dialog_actions: BTreeMap<String, String>,
+    pub commands: BTreeMap<String, NamedCommandConfig>,
+}
+
+/// A command line of `[commands]` under its name, its help shown with it (MAX-239)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NamedCommandConfig {
+    pub run: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub help: String,
 }
 
 impl KeyBindingsConfig {
@@ -1183,6 +1221,12 @@ impl KeyBindingsConfig {
                     section.insert(key.clone(), action.clone());
                     added.push(format!("{name}: {key} = {action}"));
                 }
+            }
+        }
+        for (name, command) in defaults.commands {
+            if let btree_map::Entry::Vacant(entry) = self.commands.entry(name) {
+                added.push(format!("commands: {} = {}", entry.key(), command.run));
+                entry.insert(command);
             }
         }
         added
@@ -1251,8 +1295,8 @@ impl Default for KeyBindingsConfig {
             "'"     => KeyBindingAction::Marks,
             ","     => "mark", // waits for the letter
             "f"     => "break", // a break like minicom's
-            "h"     => "dtr off; sleep 100; dtr on", // DTR pulse which resets most boards
-            "U"     => "trigger toggle u-boot", // the default triggers.toml's
+            "h"     => "board-reset",
+            "U"     => "u-boot-toggle",
             "L"     => "replay-stop", // back to the live link, as the session browser's L
             "g"     => "plot", // the next plot of plots.toml, off after the last
             "G"     => KeyBindingAction::PlotFreeze,
@@ -1347,6 +1391,20 @@ impl Default for KeyBindingsConfig {
             "G"         => KeyBindingDialogAction::End,
         };
 
+        let board_reset = NamedCommandConfig {
+            run: "dtr off; sleep 100; dtr on".to_string(),
+            help: "Pulse DTR, which resets most boards".to_string(),
+        };
+        // the default triggers.toml's
+        let u_boot = NamedCommandConfig {
+            run: "trigger toggle u-boot".to_string(),
+            help: "Arm / disarm the u-boot trigger".to_string(),
+        };
+        let commands = BTreeMap::from([
+            ("board-reset".to_string(), board_reset),
+            ("u-boot-toggle".to_string(), u_boot),
+        ]);
+
         Self {
             prefix: "ctrl-a".to_string(),
             direct_actions,
@@ -1356,6 +1414,7 @@ impl Default for KeyBindingsConfig {
             search_mode,
             copy_mode,
             dialog_actions,
+            commands,
         }
     }
 }

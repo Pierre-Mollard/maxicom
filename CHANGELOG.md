@@ -8,6 +8,37 @@ you says so in an "Upgrading" section.
 
 ## [Unreleased]
 
+### Upgrading
+
+A key of your `keymap.toml` can't run a command line any more: maxicom
+doesn't start, and the message names the key. Give the line a name in the new
+`[commands]` section, then bind the name, as in
+[Named commands](https://pierre-mollard.github.io/maxicom/keybindings.html#named-commands).
+The default `Ctrl-a h` and `Ctrl-a U` lines are now the named commands
+`board-reset` and `u-boot-toggle`: write `h = "board-reset"` and
+`U = "u-boot-toggle"`. Once the file loads,
+[`maxicom --write-config`](https://pierre-mollard.github.io/maxicom/settings.html#updating-the-files)
+adds the default `[commands]` to it.
+
+### Added
+
+- [Named commands](https://pierre-mollard.github.io/maxicom/keybindings.html#named-commands):
+  `[commands]` in `keymap.toml` gives a command line a name and a help. A key
+  runs it by its name, in both modes, line mode, terminal mode and copy mode,
+  and so does the command line, where the name completes with its help.
+- The help lists every key with what its action does, dimmed, in every tab,
+  and the named commands with the line each one runs.
+- The commands that run without arguments (`mark`, `plot`, `break`,
+  `replay-stop`...) go on a key like an action, and the help lists them with
+  the actions.
+
+### Changed
+
+- A key binds a name only: an action or a named command (see Upgrading).
+- In copy mode, `,` is copy mode's own `mark` action: it marks at once instead
+  of waiting behind a line still running.
+- The help popup grows up to 100 columns, for the actions' descriptions.
+
 ## [0.1.2] - 2026-11-14
 
 ### Upgrading

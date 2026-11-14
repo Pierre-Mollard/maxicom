@@ -5,7 +5,9 @@ Esc closes the prompt.
 
 Every action of the [keybindings](keybindings.md#actions) is a command
 (`toggle-local-echo`, `record`...), and the command line adds commands that
-take arguments (`send`, `open`, `baud`...). Several commands chain with `;`:
+take arguments (`send`, `open`, `baud`...). Unlike a key's action, a command
+waits its turn: see [Actions and commands](keybindings.md#actions-and-commands).
+Several commands chain with `;`:
 
 ```text
 dtr off; sleep 100; dtr on
@@ -252,8 +254,9 @@ See [Plots](plots.md).
 | `notify <info\|success\|warn\|error> <text>` | Shows a notification of yours: `notify warn "power-cycle the board"` |
 
 It follows the rules of maxicom's own: see [Notifications](notifications.md).
-It sends nothing to the device, so a [trigger](triggers.md) or a key bound to
-a command line can use it to tell you something, like a boot that failed.
+It sends nothing to the device, so a [trigger](triggers.md) or a
+[named command](keybindings.md#named-commands) can use it to tell you
+something, like a boot that failed.
 
 ### Marks
 
@@ -270,47 +273,50 @@ See [Marks](marks.md).
 A command the link can't do, like anything that sends during a replay, stops
 the line there and shows the error.
 
-## Binding a command line to a key
+## Running a line from a key
 
-In `keymap.toml`, a key in `[prefix_actions]`, `[direct_actions]` or
-`[copy_mode]` can take a command line instead of an action name, like
-tmux's `bind`.
+A key doesn't take a command line: give the line a name in `[commands]` of
+`keymap.toml`, then bind the name. The name works on the command line too.
 
-For example, put an ESP32 in its bootloader with one key, the way esptool
-does it, and send Ctrl-c as a byte with another:
+For example, put a board in its bootloader with one key, and send Ctrl-c as a
+byte with another:
 
 ```toml
 [prefix_actions]
-F6 = "dtr off; rts on; sleep 100; dtr on; rts off; sleep 50; dtr off"
+F6 = "bootloader"
 
 [direct_actions]
-F5 = "send-hex 03"
+F5 = "ctrl-c"
+
+[commands]
+bootloader = { run = "dtr off; rts on; sleep 100; dtr on; rts off; sleep 50; dtr off", help = "Into the bootloader" }
+ctrl-c = { run = "send-hex 03", help = "Send Ctrl-c" }
 ```
 
 The key runs its line as if you typed it:
 
 - it runs after a line still waiting, unless it starts with `cancel`;
-- it doesn't go in the history;
-- a `[prefix_actions]` or `[direct_actions]` key does nothing in copy mode
-  and search, like the other keys of these sections;
-- a `[copy_mode]` key runs its line in copy mode: `x = "send-hex 03"` there
-  sends Ctrl-c while you copy.
+- it doesn't go in the history.
 
-A line that doesn't parse stops the keymap from loading, naming its key. A
-reload keeps the keymap in use.
+Which keys take a named command, and the rules a name follows, are in
+[Named commands](keybindings.md#named-commands).
 
-### The default bound lines
+### The default keys running a command
 
-| Key | Line | Does |
+| Key | Runs | Does |
 | --- | --- | --- |
 | `Ctrl-a f` | `break` | Sends a break |
 | `Ctrl-a g` | `plot` | Shows the next plot |
-| `Ctrl-a h` | `dtr off; sleep 100; dtr on` | Pulses DTR, which resets most boards |
+| `Ctrl-a h` | `board-reset`: `dtr off; sleep 100; dtr on` | Pulses DTR, which resets most boards |
 | `Ctrl-a L` | `replay-stop` | Goes back to the live link from a replay |
-| `Ctrl-a U` | `trigger toggle u-boot` | Toggles the `u-boot` trigger |
-| `Ctrl-a ,`, `,` in copy mode | `mark` | Marks a line, waiting for its letter |
+| `Ctrl-a U` | `u-boot-toggle`: `trigger toggle u-boot` | Toggles the `u-boot` trigger |
+| `Ctrl-a ,` | `mark` | Marks a line, waiting for its letter |
 
-The help's Commands tab lists every command and the keys bound to a line.
+`,` in copy mode is copy mode's own `mark` action: it marks the cursor's
+line at once.
+
+The help's Commands tab lists every command, and the named commands with the
+line each one runs.
 
 ## Look
 

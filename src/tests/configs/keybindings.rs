@@ -246,33 +246,40 @@ fn action_names() {
     assert!("".parse::<KeyBindingAction>().is_err());
 }
 
-/// MAX-12: `[prefix_actions]` and `[direct_actions]` take a command line where an action
-/// name goes, parsed when the keymap loads; an action name stays an action. A value that
-/// is neither fails the load, naming its key. A mode key under a direct line is warned.
-/// How: the ESP32 reset into the bootloader on F6, `send-hex` on F5, the default break and
-/// DTR pulse, then typos.
+/// MAX-239: a key takes a name: an action of its section, else a named command of
+/// `[commands]`. A command line on a key fails the load, saying where it goes; a word that is
+/// neither is an unknown action. A mode key under a direct one is warned (MAX-12).
+/// How: the ESP32 reset into the bootloader named and bound on F6 and F5, the default keys,
+/// then lines and typos.
 #[test]
-fn bound_command_lines() {
+fn keys_bind_names_only() {
     let mut config = KeyBindingsConfig::default();
     let esp32 = "dtr off; rts on; sleep 100; dtr on; rts off; sleep 50; dtr off";
-    config.prefix_actions.insert("f6".into(), esp32.into());
+    config
+        .commands
+        .insert("bootloader".into(), named(esp32, ""));
+    config
+        .prefix_actions
+        .insert("f6".into(), "bootloader".into());
     config
         .direct_actions
-        .insert("f5".into(), " send-hex 03 ".into());
+        .insert("f5".into(), " bootloader ".into());
     config.line_mode.insert("f5".into(), "submit".into());
     let resolver = KeyResolver::try_new(&config).unwrap();
     let key = |name: &str| name.parse::<KeyPattern>().unwrap();
     let f6 = &resolver.prefix_commands[&key("f6")];
-    assert_eq!((f6.text.as_str(), f6.invocations.len()), (esp32, 7));
-    assert_eq!(resolver.direct_commands[&key("f5")].text, "send-hex 03");
+    assert_eq!((f6.name.as_str(), f6.invocations.len()), ("bootloader", 7));
+    assert_eq!(f6.help, esp32);
+    assert_eq!(resolver.direct_commands[&key("f5")].name, "bootloader");
     assert_eq!(
         resolver.prefix_actions[&key("D")],
         KeyBindingAction::ToggleAttach
     );
     assert!(!resolver.prefix_commands.contains_key(&key("D")));
-    // the default ones: `break` alone is an action (MAX-239)
+    // the default ones: `break` alone is an action, `h` and `U` named commands
     assert_eq!(resolver.prefix_actions[&key("f")].to_string(), "break");
-    assert_eq!(resolver.prefix_commands[&key("h")].invocations.len(), 3);
+    assert_eq!(resolver.prefix_commands[&key("h")].name, "board-reset");
+    assert_eq!(resolver.prefix_commands[&key("U")].name, "u-boot-toggle");
     assert_eq!(
         resolver.shadowed_keys(),
         ["F5 in [line_mode] (taken by [direct_actions])"]
@@ -283,15 +290,15 @@ fn bound_command_lines() {
         config.prefix_actions.insert("f7".into(), value.into());
         KeyResolver::try_new(&config).err().unwrap().to_string()
     };
+    let line = "in [prefix_actions]: f7: a command line goes in [commands] under a name, then bind the name";
+    for value in ["send-hex 03", "dtr off; dtr on", "board-reset 3", " ; "] {
+        assert_eq!(error(value), line, "{value}");
+    }
+    assert_eq!(error("rst"), "in [prefix_actions]: unknown action 'rst'");
     assert_eq!(
-        error("rst on"),
-        "in [prefix_actions]: f7: unknown command 'rst'"
+        error("trigger"),
+        "in [prefix_actions]: unknown action 'trigger'"
     );
-    assert_eq!(
-        error("baud 10"),
-        "in [prefix_actions]: f7: baud: bad argument 1: 10 is out of 50..=4000000"
-    );
-    assert_eq!(error(" ; "), "in [prefix_actions]: unknown action ' ; '");
 }
 
 /// MAX-239: a keymap action name is a registry command run by a `KeyBindingAction`, and
@@ -338,51 +345,31 @@ fn keymap_actions_are_the_action_commands() {
     );
 }
 
-/// MAX-239: a command that runs without arguments, bound bare, is an action; with its
-/// arguments it stays a command line, which keeps them, in `[copy_mode]` too.
-/// How: `mark`, `plot`, `break`, `replay-stop` and `session-name` bare and with an argument,
-/// on prefix keys and in copy mode.
+/// MAX-239: a command that runs without arguments, bound bare, is an action. With its
+/// arguments it is a command line, which a key doesn't take: a named command does.
+/// How: `mark`, `replay-stop` and `session-name` bare on prefix keys, the defaults, then
+/// `mark`, `plot`, `break` and `session-name` with an argument.
 #[test]
 fn optional_argument_commands_bound_bare_are_actions() {
     let mut config = KeyBindingsConfig::default();
-    for (key, line) in [
+    for (key, name) in [
         ("f1", "mark"),
-        ("f2", "mark a"),
-        ("f3", "plot off"),
-        ("f4", "break 100"),
         ("f5", "replay-stop"),
         ("f6", "session-name"),
-        ("f7", "session-name boot"),
     ] {
-        config.prefix_actions.insert(key.into(), line.into());
+        config.prefix_actions.insert(key.into(), name.into());
     }
-    config.copy_mode.insert("x".into(), "mark a".into());
     let resolver = KeyResolver::try_new(&config).unwrap();
     let key = |name: &str| name.parse::<KeyPattern>().unwrap();
-    let line = |lines: &std::collections::HashMap<KeyPattern, BoundLine>, name: &str| {
-        let line = &lines[&key(name)];
-        assert_eq!(line.invocations.len(), 1, "{name}");
-        let invocation = &line.invocations[0];
-        (invocation.spec.name, invocation.args.len())
-    };
     let action = |name: &str| {
         assert!(!resolver.prefix_commands.contains_key(&key(name)), "{name}");
         resolver.prefix_actions[&key(name)].to_string()
     };
-    let prefix = &resolver.prefix_commands;
     assert_eq!(action("f1"), "mark");
-    assert_eq!(line(prefix, "f2"), ("mark", 1));
-    assert_eq!(line(prefix, "f3"), ("plot", 1));
-    assert_eq!(line(prefix, "f4"), ("break", 1));
     assert_eq!(action("f5"), "replay-stop");
     assert_eq!(action("f6"), "session-name");
-    assert_eq!(line(prefix, "f7"), ("session-name", 1));
-    assert_eq!(line(&resolver.copy_commands, "x"), ("mark", 1));
     // `mark` alone is copy mode's own action
     assert_eq!(resolver.copy_actions[&key(",")], KeyBindingCopyAction::Mark);
-    for name in ["f2", "f3", "f4", "f7"] {
-        assert!(!resolver.prefix_actions.contains_key(&key(name)), "{name}");
-    }
     // the default bare ones
     for (name, command) in [
         (",", "mark"),
@@ -391,6 +378,13 @@ fn optional_argument_commands_bound_bare_are_actions() {
         ("L", "replay-stop"),
     ] {
         assert_eq!(action(name), command);
+    }
+
+    for line in ["mark a", "plot off", "break 100", "session-name boot"] {
+        let mut config = KeyBindingsConfig::default();
+        config.prefix_actions.insert("f2".into(), line.into());
+        let error = KeyResolver::try_new(&config).err().unwrap();
+        assert!(matches!(error, KeymapError::LineOnKey { .. }), "{line}");
     }
 }
 
@@ -490,6 +484,117 @@ fn every_action_has_a_help() {
             "end",
         ],
         KeyBindingDialogAction::help,
+    );
+}
+
+fn named(run: &str, help: &str) -> NamedCommandConfig {
+    NamedCommandConfig {
+        run: run.to_string(),
+        help: help.to_string(),
+    }
+}
+
+/// MAX-239: `[commands]` names command lines. A key bound to a name runs its line and has its
+/// help, or its line without one, in every section but the search bar and the popups. The
+/// default `Ctrl-a h` runs `board-reset`, `Ctrl-a U` `u-boot-toggle`.
+/// How: `boot` with a help and `ping` without, bound in each section.
+#[test]
+fn named_commands_bound_to_keys() {
+    let mut config = KeyBindingsConfig::default();
+    config.commands.insert(
+        "boot".into(),
+        named("dtr off; rts on", "Into the bootloader"),
+    );
+    config
+        .commands
+        .insert("ping".into(), named(" send AT ", ""));
+    config.prefix_actions.insert("f6".into(), "boot".into());
+    config.direct_actions.insert("f8".into(), "ping".into());
+    config.line_mode.insert("f9".into(), "ping".into());
+    config.terminal_mode.insert("f9".into(), "boot".into());
+    config.copy_mode.insert("x".into(), "boot".into());
+    let resolver = KeyResolver::try_new(&config).unwrap();
+    let key = |name: &str| name.parse::<KeyPattern>().unwrap();
+    let names = |command: &BoundCommand| -> Vec<&str> {
+        command.invocations.iter().map(|i| i.spec.name).collect()
+    };
+
+    let f6 = &resolver.prefix_commands[&key("f6")];
+    assert_eq!(names(f6), ["dtr", "rts"]);
+    assert_eq!(f6.help, "Into the bootloader");
+    let f8 = &resolver.direct_commands[&key("f8")];
+    assert_eq!((names(f8), f8.help.as_str()), (vec!["send"], "send AT"));
+    assert_eq!(resolver.line_commands[&key("f9")].name, "ping");
+    assert_eq!(resolver.terminal_commands[&key("f9")].name, "boot");
+    assert_eq!(
+        resolver.copy_commands[&key("x")].help,
+        "Into the bootloader"
+    );
+
+    let commands: Vec<_> = resolver.commands.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(commands, ["board-reset", "boot", "ping", "u-boot-toggle"]);
+    let h = &resolver.prefix_commands[&key("h")];
+    assert_eq!(names(h), ["dtr", "sleep", "dtr"]);
+    assert_eq!(h.help, "Pulse DTR, which resets most boards");
+    let u = &resolver.prefix_commands[&key("U")];
+    assert_eq!(names(u), ["trigger"]);
+}
+
+/// MAX-239: a `[commands]` entry that can't be stops the keymap from loading, naming it: a
+/// name that isn't one word or that a built-in command or a mode's action has, a line that
+/// doesn't parse or is empty, a named command running another.
+#[test]
+fn named_command_errors() {
+    let error = |name: &str, run: &str| {
+        let mut config = KeyBindingsConfig::default();
+        config.commands.insert("inner".into(), named("break", ""));
+        config.commands.insert(name.into(), named(run, ""));
+        KeyResolver::try_new(&config).err().unwrap().to_string()
+    };
+    assert_eq!(
+        error("my reset", "break"),
+        "in [commands]: my reset: a name takes letters, digits, - and _"
+    );
+    assert_eq!(
+        error("break", "break 100"),
+        "in [commands]: break: a built-in command has this name"
+    );
+    for action in ["select", "up", "submit", "close"] {
+        assert_eq!(
+            error(action, "break"),
+            format!("in [commands]: {action}: an action has this name")
+        );
+    }
+    assert_eq!(
+        error("x", "rst on"),
+        "in [commands]: x: unknown command 'rst'"
+    );
+    assert_eq!(error("x", " ; "), "in [commands]: x: nothing to run");
+    assert_eq!(
+        error("x", "break; inner"),
+        "in [commands]: x: runs 'inner': a named command can't run another"
+    );
+}
+
+/// MAX-239: a keymap without `[commands]` gets the default ones; one with its own keeps
+/// them, the default ones it lacks added as new defaults (`--write-config`).
+#[test]
+fn named_command_defaults() {
+    let config: KeyBindingsConfig = toml::from_str("prefix = \"ctrl-a\"").unwrap();
+    assert!(config.commands.contains_key("board-reset"));
+
+    let mut config: KeyBindingsConfig =
+        toml::from_str("[commands]\nboot = { run = \"break\" }").unwrap();
+    assert_eq!(config.commands.keys().collect::<Vec<_>>(), ["boot"]);
+    assert_eq!(config.commands["boot"].help, "");
+    let added = config.add_new_defaults();
+    assert!(
+        added.contains(&"commands: board-reset = dtr off; sleep 100; dtr on".to_string()),
+        "{added:?}"
+    );
+    assert_eq!(
+        config.commands.keys().collect::<Vec<_>>(),
+        ["board-reset", "boot", "u-boot-toggle"]
     );
 }
 
