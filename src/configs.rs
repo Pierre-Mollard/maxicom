@@ -13,6 +13,9 @@ pub mod highlights;
 pub mod keybindings;
 pub mod links;
 pub mod plots;
+// TODO: (MAX-240) remove the allow at step 3, where a link's profiles are layered
+#[allow(dead_code)]
+pub mod profiles;
 pub mod settings;
 pub mod style;
 pub mod theme;
