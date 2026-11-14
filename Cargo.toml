@@ -1,6 +1,6 @@
 [package]
 name = "maxicom"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["Pierre Mollard <pierre.mollard@proton.me>"]
@@ -23,6 +23,7 @@ include = [
 [profile.profiling]
 inherits = "release"
 debug = true
+strip = false
 
 [profile.release]
 opt-level = 3

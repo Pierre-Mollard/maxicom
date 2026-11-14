@@ -8,6 +8,8 @@ you says so in an "Upgrading" section.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-14
+
 ### Upgrading
 
 Run [`maxicom --write-config`](https://pierre-mollard.github.io/maxicom/settings.html#updating-the-files)
@@ -153,7 +155,8 @@ remove it, or turn the row off with `ui.transfer_row = false`.
   edge (`ERROR` of `NOERROR`) no longer lights up. In terminal mode the rows
   the device wrapped are joined. In line mode, search matches and the copy
   selection show over a highlight's background, and the time column is no
-  longer matched.
+  longer matched. In both modes a line ends at its last character: a rule
+  ending in a space doesn't match the blank end of a terminal row.
 - In terminal mode, the raw side panel can be panned during a search: it no
   longer comes back to the match on every frame.
 - Without borders, the history's scrollbar is in the history's last column:
@@ -326,6 +329,7 @@ The first release. Everything below is described in the
   [status bar](https://pierre-mollard.github.io/maxicom/status-bar.html),
   reloaded while it runs (`Ctrl-a r`).
 
-[Unreleased]: https://github.com/Pierre-Mollard/maxicom/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/Pierre-Mollard/maxicom/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/Pierre-Mollard/maxicom/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Pierre-Mollard/maxicom/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Pierre-Mollard/maxicom/releases/tag/v0.1.0
