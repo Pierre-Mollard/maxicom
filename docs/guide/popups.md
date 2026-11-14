@@ -19,8 +19,8 @@ keys a popup adds.
 | `Enter` | Apply, open, confirm |
 | `Esc` `q` | Close |
 
-These are the `[dialog_actions]` of `keymap.toml`, so you can change them
-there. See [Keybindings](keybindings.md#dialog_actions).
+These are the `[dialog]` of `keymap.toml`, so you can change them
+there. See [Keybindings](keybindings.md#dialog).
 
 ## Text fields
 

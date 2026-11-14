@@ -120,22 +120,64 @@ pub const KEYMAP_COMMENTS: &[(&str, &str)] = &[
             guide!("keybindings.html#actions"),
         ),
     ),
-    ("prefix_actions", "After the prefix, in both modes"),
     (
-        "direct_actions",
-        "Without the prefix, in both modes: these keys never reach the device",
+        "prefixed",
+        concat!(
+            "After the prefix, in both modes. A key takes an action, a command that runs\n",
+            "without arguments (break, plot...) or a named command of [commands]",
+        ),
     ),
-    ("line_mode", "In line mode, while typing in the input box"),
+    (
+        "direct",
+        concat!(
+            "Without the prefix, in both modes: these keys never reach the device.\n",
+            "A key takes an action, a command that runs without arguments or a named\n",
+            "command, which runs in copy mode too",
+        ),
+    ),
+    (
+        "line_mode",
+        concat!(
+            "In line mode, while typing in the input box. A key takes a line mode action\n",
+            "or a named command, not the actions and commands of [prefixed] and [direct]",
+        ),
+    ),
     (
         "terminal_mode",
-        "In terminal mode, before the key goes to the device",
+        concat!(
+            "In terminal mode, before the key goes to the device. A key takes a terminal\n",
+            "mode action or a named command, not the actions and commands of [prefixed]",
+        ),
     ),
-    ("search_mode", "While the search bar is open"),
-    ("copy_mode", "In copy mode"),
-    ("dialog_actions", "In the popups"),
+    (
+        "search_mode",
+        concat!(
+            "While the search bar is open. A key takes a search bar action only: the\n",
+            "other keys type the search",
+        ),
+    ),
+    (
+        "copy_mode",
+        concat!(
+            "In copy mode. A key takes a copy mode action or a named command, not the\n",
+            "actions and commands of [prefixed] and [direct]",
+        ),
+    ),
+    (
+        "dialog",
+        "In the popups. A key takes a popup action only: in a text field, the other\nkeys type",
+    ),
     (
         "commands",
-        "Command lines under a name: run = the line, help = what the help shows.\nA key or the command line runs one by its name",
+        concat!(
+            "Command lines under a name, run by a key bound to the name or typed on the\n",
+            "command line: ",
+            guide!("keybindings.html#named-commands"),
+            "\nname = { run = \"commands; chained; with ;\", help = \"what the help shows\" }",
+            "\nhelp is optional. A name is one word (letters, digits, - and _) that no",
+            "\ncommand nor action has. A line runs commands, not other named ones.",
+            "\nThe default commands stay: one here with the same name takes its place",
+        ),
     ),
 ];
 
@@ -243,10 +285,64 @@ fn multi_line_string_end(value: &str) -> Option<&'static str> {
     (!closed).then_some(quote)
 }
 
+/// The sections whose tables are written inline, one a line: `[commands]` (MAX-239)
+const INLINE_SECTIONS: &[&str] = &["commands"];
+
+/// `text` with the tables of the `INLINE_SECTIONS` written inline under their section's
+/// header: `[commands.ping]` and its keys become `ping = { run = "send AT" }` under
+/// `[commands]`
+fn inline_tables(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut lines = text.lines().peekable();
+    let mut open = None;
+    while let Some(line) = lines.next() {
+        let table = (line
+            .strip_prefix('[')
+            .and_then(|name| name.strip_suffix(']')))
+        .and_then(|name| name.split_once('.'))
+        .filter(|(section, _)| INLINE_SECTIONS.contains(section));
+        let Some((section, name)) = table else {
+            if open.take().is_some() && !line.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        };
+        if open != Some(section) {
+            out.push_str(&format!("[{section}]\n"));
+            open = Some(section);
+        }
+        let mut pairs = Vec::new();
+        while let Some(line) = lines.next_if(|line| !line.is_empty() && !line.starts_with('[')) {
+            let mut pair = line.to_string();
+            if let Some(end) = line
+                .split_once(" = ")
+                .and_then(|(_, v)| multi_line_string_end(v))
+            {
+                for line in lines.by_ref() {
+                    pair.push('\n');
+                    pair.push_str(line);
+                    if line.ends_with(end) {
+                        break;
+                    }
+                }
+            }
+            pairs.push(pair);
+        }
+        out.push_str(&format!("{name} = {{ {} }}\n", pairs.join(", ")));
+        // the blank line between two tables of the section
+        while lines.next_if(|line| line.is_empty()).is_some() {}
+    }
+    out
+}
+
 /// `text`, a TOML file as `toml::to_string_pretty` writes it, with the comments of `comments`,
 /// and each array on one line so that it can take its comment. A multi-line string can't: its
-/// comment goes above it, and its lines are left alone
+/// comment goes above it, and its lines are left alone. The tables of `[commands]` are
+/// written inline, one a line (MAX-239)
 pub fn with_comments(text: &str, comments: &[(&str, &str)]) -> String {
+    let text = &inline_tables(text);
     let comment = |path: &str| comments.iter().find(|(key, _)| *key == path).map(|c| c.1);
     let mut out = String::with_capacity(text.len());
     if let Some(header) = comment("") {

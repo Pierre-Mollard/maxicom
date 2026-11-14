@@ -1,5 +1,159 @@
 use super::*;
 
+/// A temporary folder with a settings file pointing every other file into it, so a test
+/// never reads nor writes the real config folder
+pub struct Folder(PathBuf);
+
+impl Folder {
+    pub fn new(test: &str, settings: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("maxicom-{test}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let mut text = String::new();
+        for (key, file) in [
+            ("theme_path", "theme.toml"),
+            ("keybindings_path", "keymap.toml"),
+            ("highlights_path", "highlights.toml"),
+            ("triggers_path", "triggers.toml"),
+            ("links_path", "links.toml"),
+            ("plots_path", "plots.toml"),
+        ] {
+            text += &format!("{key} = {:?}\n", dir.join(file).display().to_string());
+        }
+        fs::write(dir.join("config.toml"), text + settings).unwrap();
+        Self(dir)
+    }
+
+    pub fn path(&self, file: &str) -> PathBuf {
+        self.0.join(file)
+    }
+
+    pub fn read(&self, file: &str) -> String {
+        fs::read_to_string(self.path(file)).unwrap()
+    }
+
+    pub fn write(&self, file: &str, text: &str) {
+        fs::write(self.path(file), text).unwrap();
+    }
+
+    pub fn load(&self) -> Result<AppConfig, ConfigsError> {
+        AppConfig::load_or_create_default(self.path("config.toml"))
+    }
+}
+
+impl Drop for Folder {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// MAX-240 step 1: each config file loads from the path its setting gives, as written.
+/// How: one change in each file of a folder, loaded.
+#[test]
+fn app_config_loads_each_file_from_its_path() {
+    let folder = Folder::new("app-config-files", "rx_buffer_size = 1024\n");
+    folder.write(
+        "keymap.toml",
+        concat!(
+            "prefix = \"ctrl-b\"\n",
+            "[prefixed]\nq = \"quit\"\nh = \"ping\"\n",
+            "[commands]\nping = { run = \"send AT\" }\n",
+        ),
+    );
+    folder.write("highlights.toml", "READY = \"Green\"\n");
+    folder.write(
+        "triggers.toml",
+        "[login]\nmatch = \"login: \"\nrun = 'send root\\r'\n",
+    );
+    folder.write("plots.toml", "[temp]\nseparator = \"=\"\n");
+    folder.write(
+        "links.toml",
+        "[[link]]\nname = \"board\"\naddress = \"/dev/ttyUSB0\"\n",
+    );
+
+    let config = folder.load().unwrap();
+    assert_eq!(config.settings.rx_buffer_size, 1024);
+    assert_eq!(config.keybindings.prefix, "ctrl-b");
+    assert_eq!(config.keybindings.prefix_actions.len(), 2);
+    assert_eq!(config.keybindings.commands["ping"].run, "send AT");
+    let words: Vec<_> = config
+        .highlights
+        .entries
+        .iter()
+        .map(|(w, _)| w.as_str())
+        .collect();
+    assert_eq!(words, ["READY"]);
+    let triggers: Vec<_> = config.triggers.rules.keys().map(String::as_str).collect();
+    assert_eq!(triggers, ["login"]);
+    assert_eq!(config.plots.names(), ["temp"]);
+    let links = config.links.unwrap();
+    assert_eq!(links.links[0].name, "board");
+    assert!(config.warnings.is_empty(), "{:?}", config.warnings);
+}
+
+/// MAX-239: a keymap section under its old name, or a misspelled key of a named command,
+/// is said in a warning naming the keymap file, instead of being skipped without a word.
+/// How: `[prefix_actions]` and `[commands]` with `hepl`.
+#[test]
+fn keymap_unknown_keys_warned() {
+    let folder = Folder::new("keymap-unknown", "");
+    folder.write(
+        "keymap.toml",
+        "[prefix_actions]\nq = \"quit\"\n[commands]\nping = { run = \"send AT\", hepl = \"\" }\n",
+    );
+    let config = folder.load().unwrap();
+    assert_eq!(
+        config.warnings,
+        ["Unknown keys in keymap.toml: commands.ping.hepl, prefix_actions"]
+    );
+}
+
+/// MAX-240 step 1: a file that isn't there is written with its defaults, which load; the
+/// links file isn't written, and no links load.
+/// How: a folder with only the settings file.
+#[test]
+fn app_config_writes_the_missing_files() {
+    let folder = Folder::new("app-config-missing", "");
+    let config = folder.load().unwrap();
+    for file in [
+        "theme.toml",
+        "keymap.toml",
+        "highlights.toml",
+        "triggers.toml",
+        "plots.toml",
+    ] {
+        assert!(folder.path(file).exists(), "{file}");
+    }
+    assert!(!folder.path("links.toml").exists());
+    assert_eq!(config.keybindings, KeyBindingsConfig::default());
+    assert_eq!(config.plots, PlotsConfig::default());
+    assert_eq!(config.links.unwrap().links, []);
+}
+
+/// MAX-240 step 1: a file that doesn't load stops the whole config, its error naming it; a
+/// `links.toml` that doesn't load doesn't, its error kept to be said in the app.
+/// How: a bad trigger, then a bad key, then a bad link.
+#[test]
+fn app_config_error_names_the_file() {
+    let folder = Folder::new("app-config-error", "");
+    folder.write(
+        "triggers.toml",
+        "[login]\nmatch = \"login: \"\nrun = \"rst\"\n",
+    );
+    let error = folder.load().err().unwrap().to_string();
+    assert!(error.contains("triggers.toml"), "{error}");
+
+    folder.write("triggers.toml", "");
+    folder.write("keymap.toml", "[prefixed]\nh = \"nope\"\n");
+    let error = folder.load().err().unwrap().to_string();
+    assert!(error.contains("keymap.toml"), "{error}");
+    assert!(error.contains("unknown action 'nope'"), "{error}");
+
+    folder.write("keymap.toml", "");
+    folder.write("links.toml", "[[link]]\nname = 3\n");
+    assert!(folder.load().unwrap().links.is_err());
+}
+
 /// MAX-163: the config folder comes first, then only the files a `*_path` setting puts
 /// out of it, in the theme, keymap, highlights, triggers, links order.
 /// How: the default settings, then a theme elsewhere, a keymap set inside the folder,
@@ -96,6 +250,9 @@ fn unknown_keys_none_in_generated_files() {
     let text = toml::to_string_pretty(&ThemeConfig::default()).unwrap();
     let text = comments::with_comments(&text, comments::THEME_COMMENTS);
     assert!(unknown_keys::<ThemeConfig>(&text).is_empty());
+    let text = toml::to_string_pretty(&KeyBindingsConfig::default()).unwrap();
+    let text = comments::with_comments(&text, comments::KEYMAP_COMMENTS);
+    assert!(unknown_keys::<KeyBindingsConfig>(&text).is_empty());
 
     assert!(unknown_keys::<SettingsConfig>("mdoe = ").is_empty());
     assert!(unknown_keys::<SettingsConfig>("mdoe = 1\nmode = \"zzz\"\n").is_empty());

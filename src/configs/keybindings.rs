@@ -994,7 +994,7 @@ impl KeyResolver {
     }
 
     /// The keys bound in `[line_mode]` or `[terminal_mode]` that never get there, because the
-    /// prefix or `[direct_actions]` take them first (MAX-155), for a warning
+    /// prefix or `[direct]` take them first (MAX-155), for a warning
     pub fn shadowed_keys(&self) -> Vec<String> {
         let line_keys = (self.line_actions.keys()).chain(self.line_commands.keys());
         let terminal_keys = (self.terminal_actions.keys()).chain(self.terminal_commands.keys());
@@ -1002,7 +1002,7 @@ impl KeyResolver {
             .chain(terminal_keys.map(|key| ("terminal_mode", key)));
         let direct_keys = (self.direct_actions.keys())
             .chain(self.direct_commands.keys())
-            .map(|key| ("direct_actions", key));
+            .map(|key| ("direct", key));
         let mut shadowed: Vec<String> = mode_keys
             .chain(direct_keys)
             .filter_map(|(section, key)| {
@@ -1010,8 +1010,8 @@ impl KeyResolver {
                     self.direct_actions.contains_key(key) || self.direct_commands.contains_key(key);
                 let by = if *key == self.prefix {
                     "the prefix"
-                } else if section != "direct_actions" && is_direct {
-                    "[direct_actions]"
+                } else if section != "direct" && is_direct {
+                    "[direct]"
                 } else {
                     return None;
                 };
@@ -1032,11 +1032,15 @@ impl KeyResolver {
                 reason: err,
             })?;
 
-        let commands = named_commands(&config.commands)?;
+        // the default named commands stay under the file's, which win by name: the default
+        // keys run them, whatever `[commands]` the file has
+        let mut commands = KeyBindingsConfig::default().commands;
+        commands.extend(config.commands.clone());
+        let commands = named_commands(&commands)?;
         let (prefix_actions, prefix_commands) =
-            section_with_commands("prefix_actions", &config.prefix_actions, &commands)?;
+            section_with_commands("prefixed", &config.prefix_actions, &commands)?;
         let (direct_actions, direct_commands) =
-            section_with_commands("direct_actions", &config.direct_actions, &commands)?;
+            section_with_commands("direct", &config.direct_actions, &commands)?;
         let (line_actions, line_commands) =
             section_with_commands("line_mode", &config.line_mode, &commands)?;
         let (terminal_actions, terminal_commands) =
@@ -1063,13 +1067,13 @@ impl KeyResolver {
         let mut dialog_actions = HashMap::new();
         for (k, action_str) in &config.dialog_actions {
             let pat = k.parse().map_err(|err| KeymapError::InvalidKey {
-                section: "dialog_actions",
+                section: "dialog",
                 key: k.clone(),
                 reason: err,
             })?;
             let act: KeyBindingDialogAction =
                 action_str.parse().map_err(|_| KeymapError::InvalidAction {
-                    section: "dialog_actions",
+                    section: "dialog",
                     action: action_str.clone(),
                 })?;
             dialog_actions.insert(pat, act);
@@ -1160,12 +1164,16 @@ macro_rules! default_bindings {
 pub struct KeyBindingsConfig {
     pub prefix: String,
 
+    /// The sections are named after the help's tabs (MAX-239): `prefix` is the key itself
+    #[serde(rename = "direct")]
     pub direct_actions: BTreeMap<String, String>,
+    #[serde(rename = "prefixed")]
     pub prefix_actions: BTreeMap<String, String>,
     pub line_mode: BTreeMap<String, String>,
     pub terminal_mode: BTreeMap<String, String>,
     pub search_mode: BTreeMap<String, String>,
     pub copy_mode: BTreeMap<String, String>,
+    #[serde(rename = "dialog")]
     pub dialog_actions: BTreeMap<String, String>,
     pub commands: BTreeMap<String, NamedCommandConfig>,
 }
@@ -1187,13 +1195,9 @@ impl KeyBindingsConfig {
         let defaults = Self::default();
         let mut added = Vec::new();
         for (name, section, default) in [
+            ("direct", &mut self.direct_actions, &defaults.direct_actions),
             (
-                "direct_actions",
-                &mut self.direct_actions,
-                &defaults.direct_actions,
-            ),
-            (
-                "prefix_actions",
+                "prefixed",
                 &mut self.prefix_actions,
                 &defaults.prefix_actions,
             ),
@@ -1205,11 +1209,7 @@ impl KeyBindingsConfig {
             ),
             ("search_mode", &mut self.search_mode, &defaults.search_mode),
             ("copy_mode", &mut self.copy_mode, &defaults.copy_mode),
-            (
-                "dialog_actions",
-                &mut self.dialog_actions,
-                &defaults.dialog_actions,
-            ),
+            ("dialog", &mut self.dialog_actions, &defaults.dialog_actions),
         ] {
             let keys: Vec<KeyPattern> = (section.keys())
                 .filter_map(|key| key.parse().ok())
@@ -1400,9 +1400,24 @@ impl Default for KeyBindingsConfig {
             run: "trigger toggle u-boot".to_string(),
             help: "Arm / disarm the u-boot trigger".to_string(),
         };
+        let send = |hex: &str, help: &str| NamedCommandConfig {
+            run: format!("send-hex {hex}"),
+            help: help.to_string(),
+        };
         let commands = BTreeMap::from([
             ("board-reset".to_string(), board_reset),
             ("u-boot-toggle".to_string(), u_boot),
+            (
+                "ctrl-c".to_string(),
+                send("03", "Send Ctrl-c, which stops the program running"),
+            ),
+            (
+                "ctrl-d".to_string(),
+                send(
+                    "04",
+                    "Send Ctrl-d: the end of the input, or a shell's logout",
+                ),
+            ),
         ]);
 
         Self {

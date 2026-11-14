@@ -2036,7 +2036,7 @@ fn select_line_key_highlights_whole_lines() {
     assert_eq!(bg_at(&h, (x + 3, y)), selection);
 }
 
-/// Rows of a frame drawn with `overlay` open and the `[dialog_actions]` of `keymap`
+/// Rows of a frame drawn with `overlay` open and the `[dialog]` of `keymap`
 /// (the default ones when empty)
 fn popup_rows(overlay: Overlay, keymap: &[(&str, &str)]) -> Vec<String> {
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
@@ -2935,6 +2935,10 @@ fn help_lists_the_commands() {
     let expected = [
         " board-reset   dtr off; sleep 100; dtr on",
         "     Pulse DTR, which resets most boards",
+        " ctrl-c        send-hex 03",
+        "     Send Ctrl-c, which stops the program running",
+        " ctrl-d        send-hex 04",
+        "     Send Ctrl-d: the end of the input, or a shell's logout",
         " u-boot-toggle trigger toggle u-boot",
         "     Arm / disarm the u-boot trigger",
     ];

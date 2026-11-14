@@ -22,7 +22,7 @@ it runs after a line still running, in order, and `cancel` stops it.
 
 The two meet in a few places:
 
-- Every action of `[prefix_actions]` and `[direct_actions]` is also a
+- Every action of `[prefixed]` and `[direct]` is also a
   command, so you can type it on the command line. There it waits its turn
   like any other command.
 - A command that runs without arguments, like `break`, `plot` or `mark`, can
@@ -36,11 +36,11 @@ The two meet in a few places:
 ```toml
 prefix = "ctrl-a"
 
-[prefix_actions]      # after the prefix: Ctrl-a, then the key
+[prefixed]      # after the prefix: Ctrl-a, then the key
 d = "directory"
 F6 = "bootloader"
 
-[direct_actions]      # without the prefix, in both modes
+[direct]      # without the prefix, in both modes
 ctrl-q = "quit"
 
 [commands]            # command lines under a name
@@ -76,15 +76,15 @@ Quote the keys TOML doesn't accept bare: `"/" = "enter-search"`,
 ### What a key does
 
 A value is a name: an action of its section, from the lists below, or a
-[named command](#named-commands). In `[prefix_actions]` and
-`[direct_actions]`, a command that runs without arguments works too, like
+[named command](#named-commands). In `[prefixed]` and
+`[direct]`, a command that runs without arguments works too, like
 `break` or `plot` (see [Actions](#actions)).
 
 A command line doesn't go on a key. Give it a name in `[commands]`, then bind
 the name:
 
 ```toml
-[prefix_actions]
+[prefixed]
 h = "board-reset"
 
 [commands]
@@ -96,7 +96,7 @@ board-reset = { run = "dtr off; sleep 100; dtr on", help = "Pulse DTR, which res
 A section you write in the file replaces the default section entirely. A
 section you leave out keeps its defaults.
 
-So to add one key to `[prefix_actions]`, copy the whole section from the
+So to add one key to `[prefixed]`, copy the whole section from the
 default file and add your line to it.
 
 A section in your file also doesn't get the default keys of a later version.
@@ -111,27 +111,37 @@ use stays.
 A command line on a key is an error too, and the message says where it goes:
 
 ```text
-in [prefix_actions]: h: a command line goes in [commands] under a name, then bind the name
+in [prefixed]: h: a command line goes in [commands] under a name, then bind the name
 ```
 
 ## Sections
 
-| Section | When |
-| --- | --- |
-| `[prefix_actions]` | After the prefix, in both modes |
-| `[direct_actions]` | Without the prefix, in both modes: these keys never reach the device |
-| `[line_mode]` | In line mode, while typing in the input box |
-| `[terminal_mode]` | In terminal mode, before the key goes to the device |
-| `[copy_mode]` | In copy mode |
-| `[search_mode]` | While the search bar is open |
-| `[dialog_actions]` | In the popups |
-| `[commands]` | Not keys: the [named commands](#named-commands) the keys run |
+| Section | When | A key takes |
+| --- | --- | --- |
+| `[prefixed]` | After the prefix, in both modes | An [action](#actions), a command that runs without arguments, a named command |
+| `[direct]` | Without the prefix, in both modes: these keys never reach the device | The same |
+| `[line_mode]` | In line mode, while typing in the input box | A [line mode action](#line_mode), a named command |
+| `[terminal_mode]` | In terminal mode, before the key goes to the device | A [terminal mode action](#terminal_mode), a named command |
+| `[copy_mode]` | In copy mode | A [copy mode action](#copy_mode), a named command |
+| `[search_mode]` | While the search bar is open | A [search bar action](#search_mode) only |
+| `[dialog]` | In the popups | A [popup action](#dialog) only |
+| `[commands]` | Not keys: the [named commands](#named-commands) the keys run | |
 
-The keys of `[prefix_actions]` and `[direct_actions]` do nothing in copy mode
-and search. A `[direct_actions]` key bound to a named command is the
-exception: it runs in copy mode too, unless a `[copy_mode]` key takes it.
+The mode sections don't take the actions and commands of `[prefixed]` and
+`[direct]`: give one a name in `[commands]` to put it on a mode key. In the
+search bar and the popups, the other keys type text, so only their own
+actions go there.
 
-Some popups have keys of their own on top of `[dialog_actions]`, like the
+The keys of `[prefixed]` and `[direct]` do nothing in copy mode and search. A
+`[direct]` key bound to a named command is the exception: it runs in copy
+mode too, unless a `[copy_mode]` key takes it.
+
+The sections are named after the help's tabs. Up to 0.1.2, `[prefixed]`,
+`[direct]` and `[dialog]` were `[prefix_actions]`, `[direct_actions]` and
+`[dialog_actions]`: a file still using these names gets a warning, and its
+keys aren't read.
+
+Some popups have keys of their own on top of `[dialog]`, like the
 directory's `n`, `e` and `s`. Those are fixed, and each chapter lists them.
 
 ## Named commands
@@ -143,10 +153,14 @@ the completion.
 ```toml
 [commands]
 board-reset = { run = "dtr off; sleep 100; dtr on", help = "Pulse DTR, which resets most boards" }
+ctrl-c = { run = "send-hex 03", help = "Send Ctrl-c, which stops the program running" }
+ctrl-d = { run = "send-hex 04", help = "Send Ctrl-d: the end of the input, or a shell's logout" }
 u-boot-toggle = { run = "trigger toggle u-boot", help = "Arm / disarm the u-boot trigger" }
 ```
 
-These two are the defaults, on `Ctrl-a h` and `Ctrl-a U`.
+These four are the defaults. `board-reset` is on `Ctrl-a h` and
+`u-boot-toggle` on `Ctrl-a U`; `ctrl-c` and `ctrl-d` have no key, ready to
+bind or to type.
 
 | Key | |
 | --- | --- |
@@ -161,23 +175,20 @@ runs.
 
 ### Binding a named command
 
-A named command goes on a key of `[prefix_actions]`, `[direct_actions]`,
+A named command goes on a key of `[prefixed]`, `[direct]`,
 `[line_mode]`, `[terminal_mode]` or `[copy_mode]`:
 
 ```toml
-[direct_actions]
+[direct]
 F5 = "ctrl-c"
 
 [line_mode]
-F6 = "ctrl-c"
-
-[commands]
-ctrl-c = { run = "send-hex 03", help = "Send Ctrl-c" }
+F6 = "ctrl-d"
 ```
 
 - A key of `[line_mode]`, `[terminal_mode]` or `[copy_mode]` runs it in that
   mode only.
-- A `[direct_actions]` key runs it in both modes, and in copy mode too,
+- A `[direct]` key runs it in both modes, and in copy mode too,
   unless a `[copy_mode]` key takes the same key.
 - The search bar and the popups don't take named commands: there, the keys
   type text.
@@ -196,13 +207,14 @@ naming it:
 - It takes no arguments: a key bound to `board-reset 3` is a command line,
   refused.
 
-Like the other sections, a `[commands]` you write replaces the default one.
-[`maxicom --write-config`](settings.md#updating-the-files) adds the default
-commands your file lacks.
+Unlike the other sections, a `[commands]` you write doesn't replace the
+default one: the default commands stay, and one of yours with the same name
+takes its place. So the default keys keep working when you add commands of
+your own.
 
 ## Default keys
 
-### `[prefix_actions]`
+### `[prefixed]`
 
 | Key | Action | |
 | --- | --- | --- |
@@ -261,7 +273,7 @@ commands your file lacks.
 
 `Ctrl-a Ctrl-a` sends `Ctrl-a` to the device.
 
-### `[direct_actions]`
+### `[direct]`
 
 | Key | Action | |
 | --- | --- | --- |
@@ -326,7 +338,7 @@ The vi motions (`w`, `b`, `gg`, `G`, `iw`...) are built in: see
 | `Tab` | `search-kind` | Text or bytes |
 | `Up` / `Down` | `history-prev` / `history-next` | Walk the searches run before |
 
-### `[dialog_actions]`
+### `[dialog]`
 
 | Key | Action | |
 | --- | --- | --- |
@@ -343,7 +355,7 @@ Shift-Tab act; the other keys edit the text. See [Popups](popups.md).
 
 ## Actions
 
-The actions you can bind in `[prefix_actions]` and `[direct_actions]`. Each
+The actions you can bind in `[prefixed]` and `[direct]`. Each
 one is also a command of the [command line](command-line.md), which adds
 commands with arguments (`send`, `open`, `baud`, `replay`...).
 

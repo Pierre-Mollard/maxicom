@@ -282,10 +282,10 @@ For example, put a board in its bootloader with one key, and send Ctrl-c as a
 byte with another:
 
 ```toml
-[prefix_actions]
+[prefixed]
 F6 = "bootloader"
 
-[direct_actions]
+[direct]
 F5 = "ctrl-c"
 
 [commands]

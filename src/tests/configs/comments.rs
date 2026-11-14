@@ -297,3 +297,32 @@ fn theme_header_style_loads() {
     assert_eq!(inline, table);
     assert_ne!(inline, ThemeConfig::default());
 }
+
+/// MAX-239: the tables of `[commands]` are written inline under one `[commands]` header,
+/// with the section's comment above it, and read back the same; another section's tables,
+/// and the sections around, stay as they are.
+/// How: two named commands, a multi-line help, between two other sections.
+#[test]
+fn commands_written_inline() {
+    let text = concat!(
+        "prefix = \"ctrl-a\"\n\n",
+        "[commands.ping]\nrun = \"send AT\"\n\n",
+        "[commands.two]\nrun = \"break\"\nhelp = \"\"\"\nfirst\nsecond\"\"\"\n\n",
+        "[other.table]\nkey = 1\n",
+    );
+    let comments = [("commands", "named lines")];
+    let out = with_comments(text, &comments);
+    assert_eq!(
+        out,
+        concat!(
+            "prefix = \"ctrl-a\"\n\n\n",
+            "# named lines\n[commands]\n",
+            "ping = { run = \"send AT\" }\n",
+            "two = { run = \"break\", help = \"\"\"\nfirst\nsecond\"\"\" }\n\n\n",
+            "[other.table]\nkey = 1\n",
+        ),
+        "{out}"
+    );
+    let read = |text: &str| text.parse::<toml::Table>().unwrap();
+    assert_eq!(read(&out), read(text));
+}

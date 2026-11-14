@@ -107,7 +107,7 @@ fn clear_history_default_key() {
     assert_eq!(action, KeyBindingAction::Clear);
 }
 
-/// MAX-155: a key bound in a mode section is reported when the prefix or `[direct_actions]`
+/// MAX-155: a key bound in a mode section is reported when the prefix or `[direct]`
 /// take it first; the default keymap has none.
 #[test]
 fn shadowed_keys() {
@@ -127,9 +127,9 @@ fn shadowed_keys() {
     assert_eq!(
         resolver.shadowed_keys(),
         [
-            "Alt-x in [line_mode] (taken by [direct_actions])",
-            "Alt-x in [terminal_mode] (taken by [direct_actions])",
-            "Ctrl-a in [direct_actions] (taken by the prefix)",
+            "Alt-x in [line_mode] (taken by [direct])",
+            "Alt-x in [terminal_mode] (taken by [direct])",
+            "Ctrl-a in [direct] (taken by the prefix)",
             "Ctrl-a in [terminal_mode] (taken by the prefix)",
         ]
     );
@@ -282,7 +282,7 @@ fn keys_bind_names_only() {
     assert_eq!(resolver.prefix_commands[&key("U")].name, "u-boot-toggle");
     assert_eq!(
         resolver.shadowed_keys(),
-        ["F5 in [line_mode] (taken by [direct_actions])"]
+        ["F5 in [line_mode] (taken by [direct])"]
     );
 
     let error = |value: &str| {
@@ -290,15 +290,13 @@ fn keys_bind_names_only() {
         config.prefix_actions.insert("f7".into(), value.into());
         KeyResolver::try_new(&config).err().unwrap().to_string()
     };
-    let line = "in [prefix_actions]: f7: a command line goes in [commands] under a name, then bind the name";
+    let line =
+        "in [prefixed]: f7: a command line goes in [commands] under a name, then bind the name";
     for value in ["send-hex 03", "dtr off; dtr on", "board-reset 3", " ; "] {
         assert_eq!(error(value), line, "{value}");
     }
-    assert_eq!(error("rst"), "in [prefix_actions]: unknown action 'rst'");
-    assert_eq!(
-        error("trigger"),
-        "in [prefix_actions]: unknown action 'trigger'"
-    );
+    assert_eq!(error("rst"), "in [prefixed]: unknown action 'rst'");
+    assert_eq!(error("trigger"), "in [prefixed]: unknown action 'trigger'");
 }
 
 /// MAX-239: a keymap action name is a registry command run by a `KeyBindingAction`, and
@@ -532,7 +530,17 @@ fn named_commands_bound_to_keys() {
     );
 
     let commands: Vec<_> = resolver.commands.iter().map(|c| c.name.as_str()).collect();
-    assert_eq!(commands, ["board-reset", "boot", "ping", "u-boot-toggle"]);
+    assert_eq!(
+        commands,
+        [
+            "board-reset",
+            "boot",
+            "ctrl-c",
+            "ctrl-d",
+            "ping",
+            "u-boot-toggle"
+        ]
+    );
     let h = &resolver.prefix_commands[&key("h")];
     assert_eq!(names(h), ["dtr", "sleep", "dtr"]);
     assert_eq!(h.help, "Pulse DTR, which resets most boards");
@@ -576,6 +584,30 @@ fn named_command_errors() {
     );
 }
 
+/// MAX-239: a `[commands]` of the file doesn't replace the default named commands: they stay
+/// for the default keys, and one of the file's with the same name takes the default's place.
+/// How: a file with only `ping` and its own `board-reset`, the default `[prefixed]`.
+#[test]
+fn named_commands_merge_over_the_defaults() {
+    let config: KeyBindingsConfig = toml::from_str(concat!(
+        "[commands]\n",
+        "ping = { run = \"send AT\" }\n",
+        "board-reset = { run = \"rts on; rts off\" }\n",
+    ))
+    .unwrap();
+    let resolver = KeyResolver::try_new(&config).unwrap();
+    let names: Vec<_> = resolver.commands.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["board-reset", "ctrl-c", "ctrl-d", "ping", "u-boot-toggle"]
+    );
+    let key = |name: &str| name.parse::<KeyPattern>().unwrap();
+    let h = &resolver.prefix_commands[&key("h")];
+    let names: Vec<_> = h.invocations.iter().map(|i| i.spec.name).collect();
+    assert_eq!(names, ["rts", "rts"]);
+    assert_eq!(resolver.prefix_commands[&key("U")].name, "u-boot-toggle");
+}
+
 /// MAX-239: a keymap without `[commands]` gets the default ones; one with its own keeps
 /// them, the default ones it lacks added as new defaults (`--write-config`).
 #[test]
@@ -594,11 +626,11 @@ fn named_command_defaults() {
     );
     assert_eq!(
         config.commands.keys().collect::<Vec<_>>(),
-        ["board-reset", "boot", "u-boot-toggle"]
+        ["board-reset", "boot", "ctrl-c", "ctrl-d", "u-boot-toggle"]
     );
 }
 
-/// Keys a text input popup still sends to `[dialog_actions]`: the others are typed.
+/// Keys a text input popup still sends to `[dialog]`: the others are typed.
 #[test]
 fn modal_keys() {
     for key in ["esc", "enter", "tab", "backtab", "ctrl-n", "alt-x"] {

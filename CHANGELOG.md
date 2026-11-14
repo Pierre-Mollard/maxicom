@@ -10,15 +10,23 @@ you says so in an "Upgrading" section.
 
 ### Upgrading
 
-A key of your `keymap.toml` can't run a command line any more: maxicom
-doesn't start, and the message names the key. Give the line a name in the new
-`[commands]` section, then bind the name, as in
+Three sections of your `keymap.toml` are renamed, after the help's tabs:
+`[prefix_actions]` is now `[prefixed]`, `[direct_actions]` is `[direct]` and
+`[dialog_actions]` is `[dialog]`. Rename them in your file: under the old
+names, their keys aren't read, and maxicom says so in a warning.
+
+A key can't run a command line any more: maxicom doesn't start, and the
+message names the key. Give the line a name in the new `[commands]` section,
+then bind the name, as in
 [Named commands](https://pierre-mollard.github.io/maxicom/keybindings.html#named-commands).
 The default `Ctrl-a h` and `Ctrl-a U` lines are now the named commands
 `board-reset` and `u-boot-toggle`: write `h = "board-reset"` and
-`U = "u-boot-toggle"`. Once the file loads,
-[`maxicom --write-config`](https://pierre-mollard.github.io/maxicom/settings.html#updating-the-files)
-adds the default `[commands]` to it.
+`U = "u-boot-toggle"`.
+
+Do both before
+[`maxicom --write-config`](https://pierre-mollard.github.io/maxicom/settings.html#updating-the-files):
+it needs the file to load, and it drops the sections under the old names
+(the old file stays next to it, as `.bak`).
 
 ### Added
 
@@ -26,6 +34,8 @@ adds the default `[commands]` to it.
   `[commands]` in `keymap.toml` gives a command line a name and a help. A key
   runs it by its name, in both modes, line mode, terminal mode and copy mode,
   and so does the command line, where the name completes with its help.
+  The defaults: `board-reset` (`Ctrl-a h`), `u-boot-toggle` (`Ctrl-a U`),
+  and `ctrl-c` and `ctrl-d`, with no key.
 - The help lists every key with what its action does, dimmed, in every tab,
   and the named commands with the line each one runs.
 - The commands that run without arguments (`mark`, `plot`, `break`,
@@ -35,6 +45,10 @@ adds the default `[commands]` to it.
 ### Changed
 
 - A key binds a name only: an action or a named command (see Upgrading).
+- `keymap.toml`'s sections `[prefix_actions]`, `[direct_actions]` and
+  `[dialog_actions]` are renamed `[prefixed]`, `[direct]` and `[dialog]`, and
+  each one's comment says what its keys take. An unknown key in the file is
+  now warned about, like in `config.toml`.
 - In copy mode, `,` is copy mode's own `mark` action: it marks at once instead
   of waiting behind a line still running.
 - The help popup grows up to 100 columns, for the actions' descriptions.

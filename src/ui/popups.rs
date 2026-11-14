@@ -152,7 +152,7 @@ impl Hints<'_> {
     }
 }
 
-/// Hints like `Enter Apply · Esc Cancel` from the user's `[dialog_actions]` (MAX-73).
+/// Hints like `Enter Apply · Esc Cancel` from the user's `[dialog]` (MAX-73).
 /// Each action shows its first key, so hints fit the narrow popups; a hint with no key bound is
 /// left out. A text input popup types every key that is not modal (see
 /// `KeyPattern::is_modal`), so only modal keys are shown there. A click on a key runs its

@@ -223,7 +223,7 @@ fn global_keys_unchanged_outside_search() {
     assert!(matches!(quit, Action::App(AppAction::Quit)));
 }
 
-/// A text input popup gets its `[dialog_actions]` only from modal keys, the others are
+/// A text input popup gets its `[dialog]` only from modal keys, the others are
 /// typed; other popups get them from every key.
 #[test]
 fn text_input_popups_type_non_modal_keys() {

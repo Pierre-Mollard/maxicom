@@ -3,46 +3,10 @@
 use super::*;
 use crate::configs::{KeyBindingsConfig, SettingsConfig};
 
-/// A temporary folder with a settings file pointing every other file into it
-struct Folder(PathBuf);
+use crate::configs::tests::Folder;
 
-impl Folder {
-    fn new(test: &str, settings: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!("maxicom-{test}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let mut text = String::new();
-        for (key, file) in [
-            ("theme_path", "theme.toml"),
-            ("keybindings_path", "keymap.toml"),
-            ("highlights_path", "highlights.toml"),
-            ("triggers_path", "triggers.toml"),
-            ("links_path", "links.toml"),
-            ("plots_path", "plots.toml"),
-        ] {
-            text += &format!("{key} = {:?}\n", dir.join(file).display().to_string());
-        }
-        fs::write(dir.join("config.toml"), text + settings).unwrap();
-        Self(dir)
-    }
-
-    fn path(&self, file: &str) -> PathBuf {
-        self.0.join(file)
-    }
-
-    fn read(&self, file: &str) -> String {
-        fs::read_to_string(self.path(file)).unwrap()
-    }
-
-    fn update(&self) -> Result<Vec<String>, String> {
-        update_files(&self.path("config.toml"))
-    }
-}
-
-impl Drop for Folder {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
+fn update(folder: &Folder) -> Result<Vec<String>, String> {
+    update_files(&folder.path("config.toml"))
 }
 
 /// MAX-209: an old settings file keeps its values, gets the keys it lacks and the comments, and
@@ -53,7 +17,7 @@ fn update_keeps_values_and_adds_keys_and_comments() {
     let folder = Folder::new("update-values", "mdoe = \"line\"\nrx_buffer_size = 1024\n");
     let old = folder.read("config.toml");
 
-    let report = folder.update().unwrap().join("\n");
+    let report = update(&folder).unwrap().join("\n");
     assert!(report.contains("unknown keys dropped: mdoe"), "{report}");
 
     let new = folder.read("config.toml");
@@ -79,10 +43,10 @@ fn update_keeps_values_and_adds_keys_and_comments() {
 fn update_twice_changes_nothing() {
     let folder = Folder::new("update-twice", "rx_buffer_size = 1024\n");
     let old = folder.read("config.toml");
-    folder.update().unwrap();
+    update(&folder).unwrap();
     let new = folder.read("config.toml");
 
-    let report = folder.update().unwrap();
+    let report = update(&folder).unwrap();
     assert_eq!(
         report
             .iter()
@@ -103,7 +67,7 @@ fn update_stops_on_a_file_that_doesnt_load() {
     fs::write(folder.path("theme.toml"), "[palette\n").unwrap();
     let old = folder.read("config.toml");
 
-    assert!(folder.update().is_err());
+    assert!(update(&folder).is_err());
     assert_eq!(folder.read("config.toml"), old);
     assert!(!folder.path("config.toml.bak").exists());
     assert_eq!(folder.read("theme.toml"), "[palette\n");
@@ -130,7 +94,7 @@ fn update_adds_new_default_keys() {
     )
     .unwrap();
 
-    let report = folder.update().unwrap().join("\n");
+    let report = update(&folder).unwrap().join("\n");
     assert!(report.contains("new keys added: "), "{report}");
 
     let new: KeyBindingsConfig = toml::from_str(&folder.read("keymap.toml")).unwrap();

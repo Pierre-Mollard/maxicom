@@ -123,6 +123,7 @@ impl AppConfig {
             unknown_keys_warning::<SettingsConfig>(path),
             unknown_keys_warning::<ThemeConfig>(&theme_path),
             unknown_keys_warning::<PlotsConfig>(&plots_path),
+            unknown_keys_warning::<KeyBindingsConfig>(&keybindings_path),
         ];
 
         Ok(AppConfig {
