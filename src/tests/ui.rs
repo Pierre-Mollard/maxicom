@@ -9651,3 +9651,140 @@ fn line_start_in_terminal_mode() {
     // the prefix is out of view: the row starts on the space before the x
     assert_eq!(lit_in(&h, &rows, " xxx", Color::Red), "####");
 }
+
+/// MAX-237 step 1: highlights are drawn on every entry the view shows, whatever counted its
+/// height first: entries counted outside the window (then scrolled to) and entries counted
+/// again after a resize, in word and char wrap.
+/// How: 40 wrapping lines with an "ERROR" each, fed at once, drawn at the bottom, resized
+/// from 30 to 24 columns, then scrolled to the top.
+#[test]
+fn highlights_on_entries_counted_before_drawn() {
+    use crate::configs::WrapMode;
+    use ratatui::style::Color;
+    for wrap_mode in [WrapMode::Word, WrapMode::Char] {
+        let mut h = highlight_harness(Mode::Line, 30, ERROR_RED, |s| {
+            s.line_mode.wrap_mode = wrap_mode;
+        });
+        for n in 0..40 {
+            let line = format!("line {n:02} ERROR and a tail long enough to wrap\r\n");
+            h.feed(line.as_bytes());
+        }
+        let rows = h.draw();
+        assert_eq!(
+            lit_in(&h, &rows, "39 ERROR", Color::Red),
+            "...#####",
+            "{wrap_mode:?}"
+        );
+
+        h.terminal.backend_mut().resize(24, 12);
+        let rows = h.draw();
+        assert_eq!(
+            lit_in(&h, &rows, "39 ERROR", Color::Red),
+            "...#####",
+            "{wrap_mode:?}"
+        );
+
+        h.scroll(HistoryAction::ScrollToTop);
+        let rows = h.draw();
+        for n in ["00", "01"] {
+            assert_eq!(
+                lit_in(&h, &rows, &format!("{n} ERROR"), Color::Red),
+                "...#####",
+                "{wrap_mode:?} {rows:#?}"
+            );
+        }
+    }
+}
+
+/// MAX-237 step 1: highlights never change the layout: with and without rules, the same
+/// history draws the same text at every scroll position (so the same entry heights and scroll
+/// status), before and after a resize, in word and char wrap.
+/// How: rules on words, a whole line (`line_start`), any case and a background, over lines
+/// with device colors, wide chars and words cut by the wrap; both harnesses paged from the
+/// bottom to the top at 37 columns, then at 26.
+#[test]
+fn highlights_leave_heights_unchanged() {
+    use crate::configs::WrapMode;
+    let toml = r#"
+[errors]
+words = ["ERROR", "fail"]
+ignore_case = true
+fg = "Red"
+bg = "Blue"
+
+[esp-error]
+line_start = ["E ("]
+fg = "Yellow"
+
+"wrap point" = "Green"
+"#;
+    let lines = [
+        "E (12) wifi: connect \x1b[31mfailed\x1b[0m after three tries, ERROR 5",
+        "short",
+        "a wrap point inside a long sentence that keeps going, error and FAIL in it",
+        "wide 漢字漢字漢字 ERROR 漢字漢字漢字漢字 then ascii text to the end",
+        "nospacesatallERRORnospacesatallERRORnospacesatallERRORnospaces",
+        "\x1b[44mE (1) colored from the start, a wrap point\x1b[0m and more words here",
+    ];
+    for wrap_mode in [WrapMode::Word, WrapMode::Char] {
+        let build = |toml: &str| {
+            let mut h = highlight_harness(Mode::Line, 37, toml, |s| {
+                s.line_mode.wrap_mode = wrap_mode;
+            });
+            for round in 0..5 {
+                for line in lines {
+                    h.feed(format!("{round} {line}\r\n").as_bytes());
+                }
+            }
+            h
+        };
+        let mut plain = build("");
+        let mut lit = build(toml);
+        for width in [37, 26] {
+            plain.terminal.backend_mut().resize(width, 12);
+            lit.terminal.backend_mut().resize(width, 12);
+            plain.scroll(HistoryAction::ScrollToBottom);
+            lit.scroll(HistoryAction::ScrollToBottom);
+            let mut pages = 0;
+            loop {
+                let (plain_rows, lit_rows) = (plain.draw(), lit.draw());
+                assert_eq!(plain_rows, lit_rows, "{wrap_mode:?} {width} cols");
+                assert_eq!(
+                    plain.app.scroll_status(),
+                    lit.app.scroll_status(),
+                    "{wrap_mode:?} {width} cols"
+                );
+                if plain.app.scroll_status().is_top() {
+                    break;
+                }
+                plain.scroll(HistoryAction::ScrollUpPage);
+                lit.scroll(HistoryAction::ScrollUpPage);
+                pages += 1;
+                assert!(pages < 100, "never reached the top");
+            }
+            assert!(pages > 3, "{wrap_mode:?} {width} cols: {pages} pages");
+        }
+    }
+}
+
+/// MAX-237 step 4: a line's blank end isn't part of its text, in both modes: a rule ending in
+/// a space matches before a char, not before the end of the line; the same with a char that
+/// isn't ASCII before the match (the terminal looks its cells up then).
+/// How: `OK ` over "x OK" and "OK y", then over "é OK" and "é OK y".
+#[test]
+fn highlight_stops_at_the_line_end() {
+    use ratatui::style::Color;
+    let toml = "\"OK \" = \"Green\"\n";
+    for mode in MODES {
+        for lead in ["x", "é"] {
+            let (h, rows) = highlighted(mode, toml, &format!("{lead} OK"));
+            assert_eq!(lit_in(&h, &rows, " OK", Color::Green), "...", "{mode:?}");
+            let (h, rows) = highlighted(mode, toml, &format!("{lead} OK y"));
+            assert_eq!(
+                lit_in(&h, &rows, " OK y", Color::Green),
+                ".###.",
+                "{mode:?} {lead}"
+            );
+        }
+    }
+}

@@ -157,3 +157,71 @@ fn line_rule_ignoring_case_under_words() {
     let case_kept = [line_rule("i (", Color::Yellow, false)];
     assert_eq!(marks(&lit("I (5)", &case_kept), Color::Yellow), ".....");
 }
+
+/// MAX-237 step 3: overlapping matches of several rules, over a line made of several styled
+/// spans, give each char its received style with every rule covering it patched over it, in
+/// rule order; the text and the chars outside the matches are left as received.
+/// How: "abcERROR-ok-xy" in four spans (plain, red background, underlined, plain), and four
+/// rules: `ERROR-ok` blue background, `ROR` green bold, `ok` yellow in any case, `R` magenta
+/// (matching three times); the styles checked against the same rules applied char by char.
+#[test]
+fn overlapping_rules_over_several_spans() {
+    use ratatui::style::Modifier;
+    let spans = vec![
+        Span::raw("ab"),
+        Span::styled("cERRO", Style::default().bg(Color::Red)),
+        Span::styled("R-ok", Style::default().add_modifier(Modifier::UNDERLINED)),
+        Span::raw("-xy"),
+    ];
+    let received: Vec<Style> = spans
+        .iter()
+        .flat_map(|span| span.content.chars().map(|_| span.style))
+        .collect();
+    let rules = [
+        KeywordHighlight {
+            style: Style::default().bg(Color::Blue),
+            ..rule("ERROR-ok", Color::Reset)
+        },
+        KeywordHighlight {
+            style: Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+            ..rule("ROR", Color::Reset)
+        },
+        rule_with("OK", Color::Yellow, true, false),
+        rule("R", Color::Magenta),
+    ];
+    // which rules cover each char of "abcERROR-ok-xy"
+    let covering: [&[usize]; 14] = [
+        &[],
+        &[],
+        &[],
+        &[0],
+        &[0, 3],
+        &[0, 1, 3],
+        &[0, 1],
+        &[0, 1, 3],
+        &[0],
+        &[0, 2],
+        &[0, 2],
+        &[],
+        &[],
+        &[],
+    ];
+    let expected: Vec<Style> = (0..14)
+        .map(|i| {
+            covering[i]
+                .iter()
+                .fold(received[i], |style, &r| style.patch(rules[r].style))
+        })
+        .collect();
+
+    let out = highlight_spans(spans, &rules);
+    let text: String = out.iter().map(|span| span.content.as_ref()).collect();
+    assert_eq!(text, "abcERROR-ok-xy");
+    let styles: Vec<Style> = out
+        .iter()
+        .flat_map(|span| span.content.chars().map(|_| span.style))
+        .collect();
+    assert_eq!(styles, expected);
+}

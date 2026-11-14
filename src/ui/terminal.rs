@@ -30,7 +30,9 @@ use crate::{
 /// Colors the rules' matches in the grid rows drawn in `area`, panned by `pan` (columns, rows).
 /// Each row is matched as part of its line: the rows the remote wrapped joined, read over the
 /// grid's whole width, so neither the wrap nor the pan cuts a word (MAX-229). A line wrapped
-/// from above the grid's window (scrolled back) can only be read from the window's first row
+/// from above the grid's window (scrolled back) can only be read from the window's first row.
+/// A line on one row is read from vt100's row text, without its blank end, and its cells only
+/// looked up when a rule matched (MAX-237: a lookup per cell was most of the frame's cost)
 fn highlight_grid(
     buf: &mut Buffer,
     area: Rect,
@@ -48,47 +50,104 @@ fn highlight_grid(
     while row > 0 && screen.row_wrapped(row - 1) {
         row -= 1;
     }
-    let mut text = String::new();
-    // each cell's text start in `text`, its grid row and column (a wide char's second cell
-    // isn't drawn: its first cell's style covers both)
+    let mut row_texts = screen.rows(0, cols).skip(usize::from(row));
+    let mut joined = String::new();
+    // each cell's text start in the line's text, its grid row and column
     let mut cells: Vec<(usize, u16, u16)> = Vec::new();
     while row < shown_end {
-        text.clear();
+        let first_row = row;
+        let mut row_text = row_texts.next().unwrap_or_default();
         cells.clear();
-        loop {
-            for col in 0..cols {
-                let Some(cell) = screen.cell(row, col) else {
-                    continue;
-                };
-                if cell.is_wide_continuation() {
-                    continue;
+        // a line the remote wrapped: its rows read cell by cell, the blank end of each but the
+        // last one included (they are part of the line)
+        if screen.row_wrapped(row) && row + 1 < grid_rows {
+            joined.clear();
+            loop {
+                let wrapped = screen.row_wrapped(row) && row + 1 < grid_rows;
+                push_row_cells(screen, row, cols, wrapped, &mut joined, &mut cells);
+                row += 1;
+                if !wrapped {
+                    break;
                 }
-                cells.push((text.len(), row, col));
-                text.push_str(if cell.has_contents() {
-                    cell.contents()
-                } else {
-                    " "
-                });
+                row_texts.next();
             }
-            let wrapped = screen.row_wrapped(row);
+            std::mem::swap(&mut row_text, &mut joined);
+        } else {
             row += 1;
-            if !wrapped || row >= grid_rows {
-                break;
-            }
         }
+        if row_text.is_empty() {
+            continue;
+        }
+        // one row of ASCII: one byte per cell, a match's bytes are its columns
+        let by_column = cells.is_empty() && row_text.is_ascii();
+        let mut set_style = |row: u16, col: u16, style: Style| {
+            let y = row.checked_sub(pan_y).filter(|&y| y < area.height);
+            let x = col.checked_sub(pan_x).filter(|&x| x < area.width);
+            if let (Some(x), Some(y)) = (x, y) {
+                buf[(area.x + x, area.y + y)].set_style(style);
+            }
+        };
 
         for hl in highlights.iter().filter(|hl| !hl.pattern.is_empty()) {
-            for (start, end) in keyword_matches(&text, hl) {
+            for (start, end) in keyword_matches(&row_text, hl) {
+                if by_column {
+                    for col in start..end {
+                        set_style(first_row, col as u16, hl.style);
+                    }
+                    continue;
+                }
+                if cells.is_empty() {
+                    joined.clear();
+                    push_row_cells(screen, first_row, cols, false, &mut joined, &mut cells);
+                    debug_assert_eq!(joined, row_text);
+                }
                 let first = cells.partition_point(|cell| cell.0 < start);
                 let last = cells.partition_point(|cell| cell.0 < end);
                 for &(_, row, col) in &cells[first..last] {
-                    let y = row.checked_sub(pan_y).filter(|&y| y < area.height);
-                    let x = col.checked_sub(pan_x).filter(|&x| x < area.width);
-                    if let (Some(x), Some(y)) = (x, y) {
-                        buf[(area.x + x, area.y + y)].set_style(hl.style);
-                    }
+                    set_style(row, col, hl.style);
                 }
             }
+        }
+    }
+}
+
+/// Appends grid row `row`'s text to `text` as vt100's row text has it (an empty cell before a
+/// char as a space, a wide char's second cell left out: its first cell's style covers both),
+/// and each of those cells' text start, row and column to `cells`; with `to_end`, the empty
+/// cells at the end too
+fn push_row_cells(
+    screen: &vt100::Screen,
+    row: u16,
+    cols: u16,
+    to_end: bool,
+    text: &mut String,
+    cells: &mut Vec<(usize, u16, u16)>,
+) {
+    let mut blanks_from = None;
+    let mut prev_was_wide = false;
+    for col in 0..cols {
+        let Some(cell) = screen.cell(row, col) else {
+            continue;
+        };
+        if std::mem::take(&mut prev_was_wide) {
+            continue;
+        }
+        prev_was_wide = cell.is_wide();
+        if !cell.has_contents() {
+            blanks_from.get_or_insert(col);
+            continue;
+        }
+        for blank in blanks_from.take().unwrap_or(col)..col {
+            cells.push((text.len(), row, blank));
+            text.push(' ');
+        }
+        cells.push((text.len(), row, col));
+        text.push_str(cell.contents());
+    }
+    if to_end && let Some(from) = blanks_from {
+        for blank in from..cols {
+            cells.push((text.len(), row, blank));
+            text.push(' ');
         }
     }
 }

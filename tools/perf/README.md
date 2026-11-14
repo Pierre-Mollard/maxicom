@@ -98,6 +98,8 @@ python3 -I tools/perf/perf.py --wip --against v0.1.2 --only flood-line,steady-li
 | `idle-line`, `idle-terminal` | maxicom (both), minicom (terminal) | Started, nothing received, 10 s: CPU %, RSS |
 | `steady-line`, `steady-terminal` | maxicom (both), minicom (terminal) | Log lines at 115200 baud (11.5 KB/s) for 10 s: CPU %, RSS |
 | `flood-line`, `flood-terminal` | maxicom (both), minicom (terminal) | 10 MB of log lines written as fast as the program reads them: MB/s until it's quiet again (drawing included), CPU seconds per MB, RSS and peak after |
+| `flood-line-small`, `flood-terminal-small` | maxicom | The same with v0.1.0's history sizes (line mode 1000 lines, terminal mode 2500 rows): what the bigger histories cost |
+| `flood-line-only` | maxicom | `flood-line` with `dual_mode_buffering = "active_only"`: without the terminal scrollback line mode fills too |
 | `memory-line`, `memory-terminal` | maxicom (both), minicom (terminal) | 250,000 log lines, enough to fill both default histories: RSS at start, after, and the peak |
 | `memory-line-only` | maxicom | The same in line mode with `dual_mode_buffering = "active_only"`: line mode's history alone |
 | `ansi-line`, `ansi-terminal` | maxicom (both), minicom (terminal) | 8.7 MB of log lines with each word in its own color, as fast as read: MB/s, CPU s per MB |

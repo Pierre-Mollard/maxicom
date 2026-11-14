@@ -510,6 +510,8 @@ RAW_PANEL = {("raw_side", "view"): '"hex"'}
 # the default plot: every key=value pair, here the lines' n= and t=
 PLOT = {(None, "plot"): '"key-value"'}
 HIGHLIGHTS = {"highlights.toml": many_highlights()}
+# v0.1.0's history sizes, raised in v0.1.1 (MAX-237: is that what halved the floods?)
+SMALL_HISTORY = {("line_mode", "history_size"): "1000", ("terminal_mode", "history_size"): "2500"}
 
 
 def flood_10mb(check=None):
@@ -526,6 +528,13 @@ SCENARIOS = [
              "10 MB of log lines as fast as read: MB/s, CPU s per MB, memory", LINE),
     Scenario("flood-terminal", BOTH, flood_10mb(),
              "10 MB of log lines as fast as read: MB/s, CPU s per MB, memory", TERMINAL),
+    Scenario("flood-line-small", MAXICOM, flood_10mb(),
+             "flood-line with v0.1.0's history sizes (1000 lines, 2500 terminal rows)",
+             {**LINE, **SMALL_HISTORY}),
+    Scenario("flood-terminal-small", MAXICOM, flood_10mb(),
+             "flood-terminal with v0.1.0's history sizes", {**TERMINAL, **SMALL_HISTORY}),
+    Scenario("flood-line-only", MAXICOM, flood_10mb(),
+             "flood-line with line mode's history alone (active_only)", LINE_ONLY),
     Scenario("memory-line", MAXICOM, memory,
              "250k log lines, both histories full: RSS at start, after, peak", LINE),
     Scenario("memory-line-only", MAXICOM, memory,

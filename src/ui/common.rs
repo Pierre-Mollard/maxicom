@@ -424,32 +424,86 @@ pub fn keyword_matches<'a>(
 
 /// `spans` with the rules' matches styled in, the spans' text matched as one line: each
 /// match gets what its rule sets over the received style, later rules over earlier ones
-/// (MAX-229)
+/// (MAX-229). The spans are cut once, at every match's start and end (MAX-237)
 pub fn highlight_spans(
-    mut spans: Vec<Span<'static>>,
+    spans: Vec<Span<'static>>,
     highlights: &[KeywordHighlight],
 ) -> Vec<Span<'static>> {
     if highlights.is_empty() {
         return spans;
     }
     let text: String = spans.iter().map(|span| span.content.as_ref()).collect();
+    // every match as chars `start..end` with its rule's style, in rule order
+    let mut matches: Vec<(usize, usize, Style)> = Vec::new();
     for hl in highlights {
         if hl.pattern.is_empty() {
             continue;
         }
-        let matches: Vec<(usize, usize)> = keyword_matches(&text, hl).collect();
-        // matches come in order: chars counted from the previous one
+        // a rule's matches come in order: chars counted from the previous one
         let (mut byte, mut at) = (0, 0);
-        for (start, end) in matches {
+        for (start, end) in keyword_matches(&text, hl) {
             at += text[byte..start].chars().count();
             byte = start;
             let len = text[start..end].chars().count();
             if len > 0 {
-                spans = restyle_spans(spans, at, at + len - 1, |style| style.patch(hl.style));
+                matches.push((at, at + len, hl.style));
             }
         }
     }
-    spans
+    if matches.is_empty() {
+        return spans;
+    }
+    let mut cuts: Vec<usize> = matches
+        .iter()
+        .flat_map(|&(start, end, _)| [start, end])
+        .collect();
+    cuts.sort_unstable();
+    cuts.dedup();
+
+    let mut out = Vec::with_capacity(spans.len() + cuts.len());
+    let mut span_start = 0;
+    for span in spans {
+        let span_end = span_start + span.content.chars().count();
+        let touched = matches
+            .iter()
+            .any(|&(start, end, _)| start < span_end && end > span_start);
+        if span_end == span_start || !touched {
+            out.push(span);
+            span_start = span_end;
+            continue;
+        }
+        // the span in pieces between the cuts inside it, each with the matches covering it
+        // patched over the received style, later rules over earlier ones
+        let content = span.content.as_ref();
+        // the byte offset of each char in the span, and of its end; `next` is the next one's char
+        let mut offsets = content
+            .char_indices()
+            .map(|(at, _)| at)
+            .chain([content.len()]);
+        let mut next = 0;
+        let mut piece = (span_start, 0);
+        let ends = cuts
+            .iter()
+            .copied()
+            .filter(|&cut| cut > span_start && cut < span_end)
+            .chain([span_end]);
+        for piece_end in ends {
+            let local_end = piece_end - span_start;
+            let piece_byte_end = offsets.nth(local_end - next).unwrap_or(content.len());
+            next = local_end + 1;
+            let style = matches
+                .iter()
+                .filter(|&&(start, end, _)| start <= piece.0 && end >= piece_end)
+                .fold(span.style, |style, &(_, _, patch)| style.patch(patch));
+            out.push(Span::styled(
+                content[piece.1..piece_byte_end].to_string(),
+                style,
+            ));
+            piece = (piece_end, piece_byte_end);
+        }
+        span_start = span_end;
+    }
+    out
 }
 
 pub fn apply_selection_to_spans(

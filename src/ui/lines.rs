@@ -249,13 +249,15 @@ pub fn render_monitor(
     // matches and selection range) and wraps it to the view width. The result has one visual
     // row per wrapped sub-line, so its `visual_lines.len()` is the entry's height on screen.
     // Laying out entries one at a time is what lets the window stop as soon as it has enough
-    // rows; `PreparedLayout::concat` then joins them as if they had been laid out together
+    // rows; `PreparedLayout::concat` then joins them as if they had been laid out together.
+    // Without `styled`, only for its height: no highlights, search matches or selection, which
+    // only restyle (MAX-237: the highlights of every received line cost more than the frame)
     let search = app.line_mode.search();
     let line_prefix_cached = app.settings().line_prefixes().line.to_string();
-    let lay_out_entry = |global_idx: usize| {
+    let lay_out_entry = |global_idx: usize, styled: bool| {
         let entry = &app.line_mode.history()[global_idx];
         // each match with whether it is the current one
-        let line_matches: Vec<(bool, &SearchMatch)> = if is_search_active {
+        let line_matches: Vec<(bool, &SearchMatch)> = if styled && is_search_active {
             let start = search.matches.partition_point(|m| m.line_idx < global_idx);
             let end = search.matches.partition_point(|m| m.line_idx <= global_idx);
             search.matches[start..end]
@@ -267,7 +269,7 @@ pub fn render_monitor(
             Vec::new()
         };
 
-        let sel_range = copy_range.and_then(|(start, end)| {
+        let sel_range = copy_range.filter(|_| styled).and_then(|(start, end)| {
             if global_idx < start.line_idx || global_idx > end.line_idx {
                 None
             } else {
@@ -288,7 +290,7 @@ pub fn render_monitor(
         let line = history_entry_to_line(
             entry,
             app.settings(),
-            highlights,
+            if styled { highlights } else { &[] },
             &line_matches,
             sel_range,
             theme,
@@ -329,7 +331,7 @@ pub fn render_monitor(
 
     // every entry laid out for the window gives its height for free (#5d)
     let mut lay_out_and_count = |global_idx: usize| {
-        let entry = lay_out_entry(global_idx);
+        let entry = lay_out_entry(global_idx, true);
         row_heights[global_idx] = entry.visual_lines.len() as u32;
         entry
     };
@@ -415,7 +417,7 @@ pub fn render_monitor(
         };
         // the counts leave out the gap rows the layout puts before the text
         let counted = counted.map(|rows| rows + app.settings().line_mode.entry_spacing);
-        *height = counted.unwrap_or_else(|| lay_out_entry(idx).visual_lines.len()) as u32;
+        *height = counted.unwrap_or_else(|| lay_out_entry(idx, false).visual_lines.len()) as u32;
     }
 
     // The partial RX line (received but not ended yet) is drawn after the last entry, so only
