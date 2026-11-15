@@ -205,3 +205,78 @@ fn sysfs_port_details() {
     assert_eq!(sysfs_details(&root, "/dev/ttyUSB7"), None);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `SerialDevice::open` once the last open's flock on `path` is gone: another test's child
+/// may hold a copy of its fd a moment, until it execs (as in `open_takes_a_flock`)
+#[cfg(target_os = "linux")]
+fn open_when_free(path: &str, line: &LineSettings) -> Result<SerialDevice, LinkError> {
+    use crate::link::lock::lock_holder;
+    use std::time::Instant;
+    let start = Instant::now();
+    while lock_holder(path, "/proc/locks").is_some() {
+        assert!(start.elapsed() < Duration::from_secs(2), "flock kept");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    SerialDevice::open(path, line)
+}
+
+/// MAX-9 step 0: the open makes no DTR or RTS call, and leaves `HUPCL` as the port had
+/// it, so a close drops both lines at once (or neither): the open and the close never
+/// move one line alone, which is what resets a board with an auto-reset circuit.
+/// How: a pty, which refuses the modem lines: its open works, a DTR call fails; opened
+/// once with `HUPCL` set and once cleared, read while open and after the close.
+#[cfg(target_os = "linux")]
+#[test]
+fn open_makes_no_line_call_and_keeps_hupcl() {
+    let pty = crate::app::tests::Pty::open();
+    let hupcl = || pty.termios().c_cflag & libc::HUPCL != 0;
+    let line = LineSettings::default();
+    for on in [true, false] {
+        pty.set_hupcl(on);
+        let mut port = open_when_free(&pty.path, &line).unwrap();
+        assert!(
+            port.control(LineControl::Dtr(true)).is_err(),
+            "a pty took DTR"
+        );
+        assert_eq!(hupcl(), on, "HUPCL changed by the open");
+        drop(port);
+        assert_eq!(hupcl(), on, "HUPCL changed by the close");
+    }
+}
+
+/// MAX-9: `keep`, `on` and `off` read in any case; another word says what's expected.
+#[test]
+fn line_levels_parse() {
+    assert_eq!("keep".parse(), Ok(LineLevel::Keep));
+    assert_eq!("ON".parse(), Ok(LineLevel::On));
+    assert_eq!("off".parse(), Ok(LineLevel::Off));
+    let err = "high".parse::<LineLevel>().unwrap_err();
+    assert!(err.ends_with("expected keep, on, or off"), "{err}");
+}
+
+/// MAX-9: DTR or RTS set to `on` or `off` is set by the open, which fails when the port
+/// refuses it; RTS under hardware flow control is the driver's, not set.
+/// How: a pty, which refuses the modem lines: `dtr = on` and `rts = off` fail its open,
+/// `rts = on` with RTS/CTS opens.
+#[cfg(target_os = "linux")]
+#[test]
+fn open_sets_the_levels_asked() {
+    let pty = crate::app::tests::Pty::open();
+    let open = |line: LineSettings| open_when_free(&pty.path, &line);
+    let refused = |line: LineSettings| matches!(open(line), Err(LinkError::ControlFailed(_)));
+    let keep = LineSettings::default();
+    assert!(refused(LineSettings {
+        dtr: LineLevel::On,
+        ..keep
+    }));
+    assert!(refused(LineSettings {
+        rts: LineLevel::Off,
+        ..keep
+    }));
+    let flow = LineSettings {
+        flow_control: FlowControl::RtsCts,
+        rts: LineLevel::On,
+        ..keep
+    };
+    assert!(open(flow).is_ok(), "RTS set under RTS/CTS");
+}

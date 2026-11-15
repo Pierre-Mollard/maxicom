@@ -272,7 +272,9 @@ fn built_in_profiles_written_with_the_folder() {
 /// MAX-240 step 4: the built-in profiles load without a warning and lay over the default
 /// config: `esp32`'s RTS reset in place of the DTR one on the same key, its bootloader on
 /// `H`, its log level lines and its armed crash trigger; `arduino`'s serial plotter plot.
-/// How: the default files, each profile laid over them.
+/// MAX-9: `esp32`'s `on_open` is commented out, and runs `board-reset` once uncommented.
+/// How: the default files, each profile laid over them; `esp32`'s text with `on_open`
+/// uncommented.
 #[test]
 fn built_in_profiles_lay_over_the_defaults() {
     let folder = Folder::new("profile-built-in-lay", "");
@@ -286,7 +288,7 @@ fn built_in_profiles_lay_over_the_defaults() {
     let keymap = &esp32.keybindings;
     assert_eq!(keymap.prefix_actions["h"], "board-reset");
     assert_eq!(keymap.prefix_actions["H"], "bootloader");
-    assert!(keymap.commands["board-reset"].run.starts_with("rts on"));
+    assert!(keymap.commands["board-reset"].run.starts_with("dtr off; rts on"));
     assert!(keymap.commands.contains_key("usb-bootloader"));
     let resolver = KeyResolver::try_new(keymap).unwrap();
     let key = |name: &str| name.parse::<KeyPattern>().unwrap();
@@ -295,11 +297,19 @@ fn built_in_profiles_lay_over_the_defaults() {
         .map(|(name, _)| name.as_str())
         .filter(|name| name.starts_with("esp-"))
         .collect();
-    assert_eq!(lines, ["esp-error", "esp-warning", "esp-debug"]);
+    assert_eq!(lines, ["esp-error", "esp-warning", "esp-info", "esp-debug"]);
     esp32.highlights.compile_rules();
     let panic = &esp32.triggers.rules["esp-panic"];
     assert!(panic.armed && panic.silent && panic.rearm);
     esp32.triggers.compile().unwrap();
+    assert_eq!(load(&folder, "esp32").unwrap().file.on_open, None);
+    let (_, text) = BUILT_IN.iter().find(|(name, _)| *name == "esp32").unwrap();
+    let uncommented = text.replace("# on_open = ", "on_open = ");
+    let file: ProfileFile = toml::from_str(&uncommented).unwrap();
+    let line = file.on_open.unwrap();
+    let invocations = crate::commands::parse_with(&line, &resolver.commands).unwrap();
+    let names: Vec<_> = invocations.iter().map(|i| i.spec.name).collect();
+    assert_eq!(names, ["dtr", "rts", "sleep", "rts"]);
 
     let arduino = with_profiles(&config, &dir, &["arduino".to_string()]).unwrap();
     assert_eq!(arduino.plots.names().last().unwrap(), "serial-plotter");

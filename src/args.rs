@@ -4,7 +4,7 @@ use crate::{
     configs::{LinkDefaults, TextEncoding, links::SavedLink},
     link::{
         Address, LinkKind,
-        serial::{CharSize, FlowControl, LineSettings, Parity, StopBits},
+        serial::{CharSize, FlowControl, LineLevel, LineSettings, Parity, StopBits},
     },
 };
 
@@ -131,6 +131,8 @@ const VALUE_OPTIONS: &[(&str, &str)] = &[
     ("", "--stop-bits"),
     ("", "--parity"),
     ("", "--flow"),
+    ("", "--dtr"),
+    ("", "--rts"),
     ("", "--config"),
     ("", "--plot"),
     ("", "--profile"),
@@ -173,6 +175,8 @@ fn parse_args_from(
     let mut stop_bits = None;
     let mut parity = None;
     let mut flow = None;
+    let mut dtr = None;
+    let mut rts = None;
     let mut replay_delay = Duration::ZERO;
     let mut restore: Option<bool> = None;
     let mut capture_file: Option<PathBuf> = None;
@@ -247,6 +251,16 @@ fn parse_args_from(
                 let val = args.next().ok_or(ParseError::MissingValue("--flow"))?;
                 flow = Some(val.parse::<FlowControl>().map_err(ParseError::BadFormat)?);
             }
+            "--dtr" => {
+                line_options.push("--dtr");
+                let val = args.next().ok_or(ParseError::MissingValue("--dtr"))?;
+                dtr = Some(val.parse::<LineLevel>().map_err(ParseError::BadFormat)?);
+            }
+            "--rts" => {
+                line_options.push("--rts");
+                let val = args.next().ok_or(ParseError::MissingValue("--rts"))?;
+                rts = Some(val.parse::<LineLevel>().map_err(ParseError::BadFormat)?);
+            }
             "--capturefile" | "-C" => {
                 let path = args
                     .next()
@@ -309,6 +323,8 @@ fn parse_args_from(
     line.framing.stop_bits = stop_bits.unwrap_or(line.framing.stop_bits);
     line.framing.parity = parity.unwrap_or(line.framing.parity);
     line.flow_control = flow.unwrap_or(line.flow_control);
+    line.dtr = dtr.unwrap_or(line.dtr);
+    line.rts = rts.unwrap_or(line.rts);
     if address
         .as_ref()
         .is_some_and(|address| address.kind() == LinkKind::Tcp)
@@ -372,6 +388,8 @@ Options:
       --stop-bits <1|2>    Stop bits [default: 1]
       --parity <n|e|o>     Parity: none, even, odd [default: none]
       --flow <none|hw|sw>  Flow control: none, rtscts (hw), xonxoff (sw) [default: none]
+      --dtr <keep|on|off>  DTR set on open, keep: as the OS puts it [default: keep]
+      --rts <keep|on|off>  RTS set on open, keep: as the OS puts it [default: keep]
 
   -r, --replay <PATH>      A recording in place of a device (its folder, .raw or
                            .meta), same as file://PATH

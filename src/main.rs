@@ -388,6 +388,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             lay_profiles(&mut app, &global, &mut highlight_rules, profiles);
             needs_redraw = true;
         }
+        // once the link's stack is laid, so it's that stack's (MAX-9)
+        app.run_on_open();
 
         // the input poll is the loop's only idle wait: none while RX flows, otherwise until the
         // next frame is due (if one is pending) or IDLE_WAIT. Then drain what is already pending

@@ -10,7 +10,7 @@ fn link_defaults_from_toml() {
     let parse = |toml: &str| toml::from_str::<LinkDefaults>(toml).unwrap();
     let link = parse(
         "device = \"COM7\"\nbaud = 9600\nbits = 7\nparity = \"even\"\n\
-             stop_bits = 2\nflow = \"rtscts\"",
+             stop_bits = 2\nflow = \"rtscts\"\ndtr = \"on\"\nrts = \"off\"",
     );
     assert_eq!(link.device(), Some("COM7"));
     let line = link.line();
@@ -18,6 +18,7 @@ fn link_defaults_from_toml() {
         (line.baud, line.framing.to_string(), line.flow_control),
         (9600, "7E2".to_string(), FlowControl::RtsCts)
     );
+    assert_eq!((line.dtr, line.rts), (LineLevel::On, LineLevel::Off));
     let empty = parse("");
     assert_eq!(empty, LinkDefaults::default());
     assert_eq!(empty.device(), None);

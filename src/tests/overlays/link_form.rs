@@ -1,5 +1,5 @@
 use super::*;
-use crate::link::serial::{FlowControl, Parity};
+use crate::link::serial::{FlowControl, LineLevel, Parity};
 use crossterm::event::KeyEvent;
 
 fn key(code: KeyCode) -> DialogAction {
@@ -22,8 +22,8 @@ fn saved(response: OverlayResponse) -> (SavedLink, Option<SavedLink>) {
 /// MAX-185: a new link starts with `[link]`'s line; Tab and Down go through the fields, Up
 /// and Shift-Tab back, round; Left, Right and Space cycle a line value; Enter gives the
 /// link with all its line settings. MAX-240: the profiles are typed comma separated, in
-/// stack order, the empty names left out. A baud that isn't a number or an empty name says
-/// so.
+/// stack order, the empty names left out. MAX-9: DTR and RTS cycle keep, on, off. A baud
+/// that isn't a number or an empty name says so.
 /// How: a link for one machine, each field typed or cycled, then Enter; then a bad baud,
 /// then no name.
 #[test]
@@ -57,9 +57,15 @@ fn new_link() {
     form.handle_action(key(KeyCode::Right));
     assert_eq!(form.field, LinkFormField::Flow);
     form.handle_action(key(KeyCode::Down));
+    form.handle_action(key(KeyCode::Right));
+    assert_eq!(form.field, LinkFormField::Dtr);
+    form.handle_action(key(KeyCode::Down));
+    form.handle_action(key(KeyCode::Left));
+    assert_eq!(form.field, LinkFormField::Rts);
+    form.handle_action(key(KeyCode::Down));
     assert_eq!(form.field, LinkFormField::Name);
     form.handle_action(key(KeyCode::Up));
-    assert_eq!(form.field, LinkFormField::Flow);
+    assert_eq!(form.field, LinkFormField::Rts);
 
     let (link, replaces) = saved(form.handle_action(DialogAction::Confirm));
     assert!(replaces.is_none());
@@ -74,6 +80,8 @@ fn new_link() {
         parity: Some(Parity::Even),
         stop_bits: Some(1),
         flow: Some(FlowControl::RtsCts),
+        dtr: Some(LineLevel::On),
+        rts: Some(LineLevel::Off),
     };
     assert_eq!(link, expected);
 

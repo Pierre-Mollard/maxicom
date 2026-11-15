@@ -187,6 +187,10 @@ pub struct App {
     profiles: Vec<String>,
     opening_profiles: Option<Vec<String>>,
     profiles_due: Option<Vec<String>>,
+    /// The stack's `on_open` line, the later profile's (MAX-9), and whether a link opened
+    /// since, for the loop to run it once the stack is laid
+    on_open: Option<String>,
+    on_open_due: bool,
     /// Where the profiles are: next to the config file, another folder in the tests
     profiles_dir: PathBuf,
     /// The text `mash` sends until another comes in (MAX-6)
@@ -340,6 +344,8 @@ impl App {
             profiles: Vec::new(),
             opening_profiles: None,
             profiles_due: None,
+            on_open: None,
+            on_open_due: false,
             profiles_dir: AppConfig::profiles_dir(),
             mash: None,
             plots: PlotsConfig::default(),

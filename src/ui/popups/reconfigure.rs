@@ -57,6 +57,16 @@ pub fn render_reconfigure_popup(
             "Flow Ctrl",
             format!("< {:?} >", dialog.line.flow_control),
         ),
+        (
+            LineSettingField::Dtr,
+            "DTR on open",
+            format!("< {:?} >", dialog.line.dtr),
+        ),
+        (
+            LineSettingField::Rts,
+            "RTS on open",
+            format!("< {:?} >", dialog.line.rts),
+        ),
     ];
 
     // each field with the width of its `< value >`

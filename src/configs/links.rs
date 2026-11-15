@@ -10,7 +10,7 @@ use crate::{
     configs::LinkDefaults,
     link::{
         Address, LinkConfig, LinkKind,
-        serial::{FlowControl, LineSettings, Parity},
+        serial::{FlowControl, LineLevel, LineSettings, Parity},
     },
     paths::create_parent_dirs,
 };
@@ -52,6 +52,10 @@ pub struct SavedLink {
     pub stop_bits: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flow: Option<FlowControl>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dtr: Option<LineLevel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rts: Option<LineLevel>,
 }
 
 impl SavedLink {
@@ -85,6 +89,8 @@ impl SavedLink {
             parity: Some(line.framing.parity),
             stop_bits: digit(stop_bits),
             flow: Some(line.flow_control),
+            dtr: Some(line.dtr),
+            rts: Some(line.rts),
             ..self
         }
     }
@@ -112,6 +118,8 @@ impl SavedLink {
             parity: self.parity.unwrap_or(defaults.parity),
             stop_bits: self.stop_bits.unwrap_or(defaults.stop_bits),
             flow: self.flow.unwrap_or(defaults.flow),
+            dtr: self.dtr.unwrap_or(defaults.dtr),
+            rts: self.rts.unwrap_or(defaults.rts),
         }
     }
 
@@ -121,6 +129,8 @@ impl SavedLink {
             || self.parity.is_some()
             || self.stop_bits.is_some()
             || self.flow.is_some()
+            || self.dtr.is_some()
+            || self.rts.is_some()
     }
 
     /// A name, hosts that aren't empty, an address that parses, line fields in range and none

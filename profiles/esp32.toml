@@ -11,13 +11,19 @@
 
 description = "ESP32 boards (ESP-IDF): log levels in color, reset and bootloader keys"
 enabled = true # false: off, the links naming it open without it
+# A command line run once the link opens, at start, on an attach and on an
+# open, not on a reopen after a lost port. Uncomment to reset the board on
+# connect, as idf.py monitor does: a whole boot log after each attach
+# on_open = "board-reset"
 
 [prefixed]
 h = "board-reset" # the default key, now the RTS reset below
 H = "bootloader"
 
 [commands]
-board-reset = { run = "rts on; sleep 100; rts off", help = "Reset through RTS (EN), the app runs" }
+# EN is pulled low while RTS is on and DTR off: DTR goes off first, as an open
+# leaves both on (Linux, macOS), and esptool's reset counts on its connect
+board-reset = { run = "dtr off; rts on; sleep 100; rts off", help = "Reset through RTS (EN), the app runs" }
 bootloader = { run = "dtr off; rts on; sleep 100; dtr on; rts off; sleep 50; dtr off", help = "Reset into the ROM bootloader, to flash" }
 # the chips with a native USB-Serial/JTAG port (ESP32-S3, C3, C6...)
 usb-bootloader = { run = "rts off; dtr off; sleep 100; dtr on; rts off; sleep 100; rts on; dtr off; rts on; sleep 100; dtr off; rts off", help = "Into the bootloader through the native USB port" }
@@ -30,6 +36,10 @@ fg = "Red"
 [highlights.esp-warning]
 line_start = ["W ("]
 fg = "Yellow"
+
+[highlights.esp-info]
+line_start = ["I ("]
+fg = "Blue"
 
 [highlights.esp-debug]
 line_start = ["D (", "V ("]

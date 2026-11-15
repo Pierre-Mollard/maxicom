@@ -22,6 +22,8 @@ fn format_round_trips() {
             parity = "none"
             stop_bits = 1
             flow = "none"
+            dtr = "keep"
+            rts = "off"
 
             [[link]]
             name = "esp32"
@@ -45,6 +47,8 @@ fn format_round_trips() {
         ]
     );
     assert_eq!(config.links[0].flow, Some(FlowControl::None));
+    assert_eq!(config.links[0].dtr, Some(LineLevel::Keep));
+    assert_eq!(config.links[0].rts, Some(LineLevel::Off));
     assert_eq!(config.links[1].baud, None);
 
     let written = toml::to_string(&config).unwrap();
@@ -116,6 +120,10 @@ fn bad_links() {
         "link #1 'a': a TCP link has no line settings: its bridge sets the line"
     );
     assert_eq!(
+        one("name = 'a'\naddress = 'tcp://h:1'\ndtr = 'on'"),
+        "link #1 'a': a TCP link has no line settings: its bridge sets the line"
+    );
+    assert_eq!(
         one("name = 'a'\naddress = 'COM3'\nbits = 9"),
         "link #1 'a': bits is not a value between 5 and 8"
     );
@@ -167,6 +175,7 @@ fn saved_from_a_config() {
     };
     serial.line.baud = 9600;
     serial.line.framing = "7E2".parse().unwrap();
+    serial.line.rts = LineLevel::Off;
     let link = SavedLink::from_config("esp32".into(), &serial, Some("laptop"));
     let expected = SavedLink {
         name: "esp32".into(),
@@ -179,6 +188,8 @@ fn saved_from_a_config() {
         parity: Some(Parity::Even),
         stop_bits: Some(2),
         flow: Some(FlowControl::None),
+        dtr: Some(LineLevel::Keep),
+        rts: Some(LineLevel::Off),
     };
     assert_eq!(link, expected);
     assert_eq!(link.over(&LinkDefaults::default()).line(), serial.line);

@@ -17,6 +17,8 @@ pub enum LineSettingField {
     Parity,
     StopBits,
     FlowControl,
+    Dtr,
+    Rts,
 }
 
 impl LineSettingField {
@@ -26,6 +28,8 @@ impl LineSettingField {
         Self::Parity,
         Self::StopBits,
         Self::FlowControl,
+        Self::Dtr,
+        Self::Rts,
     ];
 
     pub fn prev(&self) -> Self {
@@ -109,6 +113,8 @@ impl LineSettingsDialog {
                     FlowControl::XonXoff => FlowControl::None,
                 };
             }
+            LineSettingField::Dtr => self.line.dtr = self.line.dtr.next(),
+            LineSettingField::Rts => self.line.rts = self.line.rts.next(),
         }
     }
 
@@ -147,6 +153,8 @@ impl LineSettingsDialog {
                     FlowControl::XonXoff => FlowControl::RtsCts,
                 };
             }
+            LineSettingField::Dtr => self.line.dtr = self.line.dtr.prev(),
+            LineSettingField::Rts => self.line.rts = self.line.rts.prev(),
         }
     }
 

@@ -21,10 +21,12 @@ pub enum LinkFormField {
     Parity,
     StopBits,
     Flow,
+    Dtr,
+    Rts,
 }
 
 impl LinkFormField {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 12] = [
         Self::Name,
         Self::Address,
         Self::Hosts,
@@ -35,6 +37,8 @@ impl LinkFormField {
         Self::Parity,
         Self::StopBits,
         Self::Flow,
+        Self::Dtr,
+        Self::Rts,
     ];
 
     /// The line setting a field cycles through, for the ones that cycle
@@ -44,6 +48,8 @@ impl LinkFormField {
             Self::Parity => Some(LineSettingField::Parity),
             Self::StopBits => Some(LineSettingField::StopBits),
             Self::Flow => Some(LineSettingField::FlowControl),
+            Self::Dtr => Some(LineSettingField::Dtr),
+            Self::Rts => Some(LineSettingField::Rts),
             _ => None,
         }
     }

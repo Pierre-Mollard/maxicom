@@ -1,7 +1,8 @@
 //! Profiles (MAX-240): a file of settings laid over the global config while a link uses it,
 //! `profiles/<name>.toml`. It holds a description, keys and named commands in the sections of
 //! `keymap.toml`, and highlights, triggers and plots under `[highlights]`, `[triggers]` and
-//! `[plots]` in the formats of their files; all optional. No line settings: those are the
+//! `[plots]` in the formats of their files, and `on_open`, a command line run once the link
+//! opens (MAX-9); all optional. No line settings: those are the
 //! saved link's. A board's or a project's knowledge lives in profiles, never in the code. A
 //! stack of profiles is laid in order over the global config, a later one winning, and
 //! rebuilt from the global config on each change, never patched
@@ -27,6 +28,7 @@ use super::{
 pub struct ProfileFile {
     pub description: String,
     pub enabled: bool,
+    pub on_open: Option<String>,
     pub prefixed: BTreeMap<String, String>,
     pub direct: BTreeMap<String, String>,
     pub line_mode: BTreeMap<String, String>,
@@ -46,6 +48,7 @@ impl Default for ProfileFile {
         Self {
             description: String::new(),
             enabled: true,
+            on_open: None,
             prefixed: BTreeMap::new(),
             direct: BTreeMap::new(),
             line_mode: BTreeMap::new(),

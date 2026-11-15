@@ -71,6 +71,8 @@ pub const CONFIG_COMMENTS: &[(&str, &str)] = &[
     ("link.parity", "values: none, even, odd"),
     ("link.stop_bits", "1 or 2"),
     ("link.flow", "values: none, rtscts, xonxoff"),
+    ("link.dtr", "values: keep, on, off"),
+    ("link.rts", "values: keep, on, off"),
     ("ui", guide!("settings.html#ui")),
     ("ui.hide_borders_below", "[cols, rows], 0 turns a side off"),
     (

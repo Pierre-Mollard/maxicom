@@ -273,7 +273,38 @@ impl App {
 
     /// The stack laid at start: the link's, then `--profile`'s (MAX-240)
     pub fn set_profiles(&mut self, profiles: Vec<String>) {
+        self.on_open = self.on_open_of(&profiles);
         self.profiles = profiles;
+    }
+
+    /// The `on_open` of the stack `profiles`, the later one that has it and is on (MAX-9),
+    /// read with the stack: a profile that doesn't read has none
+    fn on_open_of(&self, profiles: &[String]) -> Option<String> {
+        (profiles.iter().rev())
+            .filter_map(|name| self.profile(name).ok())
+            .filter(|profile| profile.file.enabled)
+            .find_map(|profile| profile.file.on_open)
+    }
+
+    /// The stack's `on_open` line once a link opened (MAX-9): at start, on an attach and on an
+    /// open, not on a reopen after a lost port (a board's native USB port drops on its reset,
+    /// it would loop), nor on a replay. Before the commands waiting, the rest of an `open`
+    /// line; a line that doesn't parse said
+    pub fn run_on_open(&mut self) {
+        if !std::mem::take(&mut self.on_open_due) {
+            return;
+        }
+        let Some(line) = self.on_open.clone() else {
+            return;
+        };
+        match crate::commands::parse_with(&line, &self.key_resolver.commands) {
+            Ok(invocations) => {
+                for invocation in invocations.into_iter().rev() {
+                    self.pending_commands.push_front(invocation);
+                }
+            }
+            Err(err) => self.notify_warn(format!("on_open: {err}")),
+        }
     }
 
     /// The stack of the link just opened, when it isn't the one laid, for the loop to lay it
@@ -403,6 +434,7 @@ impl App {
         triggers: Vec<Trigger>,
         plots: PlotsConfig,
     ) {
+        self.on_open = self.on_open_of(&profiles);
         self.profiles = profiles;
         self.key_resolver = key_resolver;
         self.prefix_active = false;
@@ -789,6 +821,9 @@ impl App {
         if let Some(holder) = self.link.shared_with() {
             self.notify_warn(format!("{label} is open in {holder} too"));
         }
+        if !matches!(why, OpenFor::Retry) {
+            self.on_open_due = true;
+        }
         match why {
             OpenFor::Start => {
                 self.notify_link(ToastLevel::Success, format!("Connected to {label}"))
@@ -996,8 +1031,14 @@ impl App {
 
     /// New line settings: a port that refuses them stops the command line chain, the dialog
     /// says why (MAX-12)
+    /// New line settings; DTR and RTS changed on an open port wait for its next open (MAX-9)
     fn reconfigure_link(&mut self, line: LineSettings) {
+        let old = self.link_config().line;
+        let levels_changed = (old.dtr, old.rts) != (line.dtr, line.rts);
         match self.link.reconfigure(line) {
+            Reconfigured::Applied if levels_changed => {
+                self.notify_info("DTR and RTS levels are set at the next open");
+            }
             Reconfigured::Applied | Reconfigured::Ignored => {}
             Reconfigured::Kept => {
                 self.notify_info("The port is detached: it opens with these settings");

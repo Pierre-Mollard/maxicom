@@ -78,7 +78,7 @@ fn address_of(args: &[&str]) -> Result<String, String> {
 /// MAX-181: the line settings default to 115200 8N1 with no flow control, the options set
 /// them in their short and long forms, minicom's names (`-D, --device`, `-b, --baudrate`)
 /// in place of `-p, --port` and `--baud`, and a missing or bad value, an unknown option
-/// and `-h` stop the run.
+/// and `-h` stop the run. MAX-9: DTR and RTS `keep` by default, `--dtr` / `--rts` set them.
 /// How: no option, every line option, the device in both forms, then the refused ones.
 #[test]
 fn line_options() {
@@ -108,6 +108,9 @@ fn line_options() {
         (line.baud, line.framing.to_string(), line.flow_control),
         (9600, "7E2".to_string(), FlowControl::RtsCts)
     );
+    assert_eq!((line.dtr, line.rts), (LineLevel::Keep, LineLevel::Keep));
+    let line = run(&["--dtr", "on", "--rts=off"]);
+    assert_eq!((line.dtr, line.rts), (LineLevel::On, LineLevel::Off));
     assert_eq!(run(&["--baudrate", "57600"]).baud, 57600);
     assert_eq!(address_of(&["--device", "COM3"]).unwrap(), "COM3");
     assert_eq!(address_of(&["-D", "COM3"]).unwrap(), "COM3");
@@ -117,6 +120,8 @@ fn line_options() {
         &["-b", "fast"],
         &["--bits", "9"],
         &["--flow", "x"],
+        &["--dtr", "high"],
+        &["--rts"],
     ] {
         assert!(address_of(args).is_err(), "{args:?}");
     }
@@ -157,6 +162,7 @@ fn link_defaults_under_the_options() {
         parity: Parity::Even,
         stop_bits: 2,
         flow: FlowControl::RtsCts,
+        ..LinkDefaults::default()
     };
     assert_eq!(parse_over(&saved, &[]), run("COM7", 9600, "7E2"));
     assert_eq!(
@@ -422,7 +428,12 @@ fn replay_forms() {
 #[test]
 fn tcp_link_refuses_line_options() {
     let tcp = "tcp://192.168.1.50:4000";
-    for option in [&["-b", "9600"][..], &["--parity", "e"], &["--flow", "hw"]] {
+    for option in [
+        &["-b", "9600"][..],
+        &["--parity", "e"],
+        &["--flow", "hw"],
+        &["--dtr", "on"],
+    ] {
         let args = [&[tcp][..], option].concat();
         let err = address_of(&args).unwrap_err();
         assert!(err.contains("doesn't apply to a TCP link"), "{err}");

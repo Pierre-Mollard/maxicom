@@ -2063,3 +2063,141 @@ fn profiles_popup_toggles_and_moves() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// MAX-9 step 0: a serial link with no line setting opens at start and again on an attach
+/// with no DTR or RTS call and no command run after the open: the board sees only what
+/// the OS does on an open. A reconnect after a port loss opens through the same
+/// `SerialDevice::open`.
+/// How: a pty as the port, which refuses the modem lines (a line call would fail the open
+/// or leave a notice); the flock waited out before the attach, as in `open_takes_a_flock`.
+#[cfg(target_os = "linux")]
+#[test]
+fn serial_open_and_attach_touch_no_line() {
+    use crate::{app::tests::Pty, link::lock::lock_holder};
+    let pty = Pty::open();
+    let mut app = app_on(&pty.path);
+    let quiet = |app: &mut App| {
+        assert!(app.next_command_action(Instant::now()).is_none());
+        let lines = toasts(app);
+        let line_call = |t: &String| t.starts_with("DTR") || t.starts_with("RTS");
+        assert!(!lines.iter().any(line_call), "{lines:?}");
+    };
+    app.start_link(None);
+    poll_until(&mut app, "opened", |app| app.link.is_open());
+    quiet(&mut app);
+
+    app.dispatch(Action::App(AppAction::ToggleAttach));
+    assert!(!app.link.is_open());
+    let start = Instant::now();
+    while lock_holder(&pty.path, "/proc/locks").is_some() {
+        assert!(start.elapsed() < Duration::from_secs(2), "flock kept");
+        thread::sleep(Duration::from_millis(5));
+    }
+    app.dispatch(Action::App(AppAction::ToggleAttach));
+    poll_until(&mut app, "attached", |app| app.link.is_open());
+    assert!(toasts(&app).contains(&format!("Reconnected to {}", pty.path)));
+    quiet(&mut app);
+}
+
+/// MAX-9: DTR or RTS changed on an open port (the line popup, a saved line) waits for the
+/// next open, said with a notice, the port's lines untouched; a change without them says
+/// nothing of it. The link keeps the new levels for that open.
+/// How: a pty as the port, which refuses the modem lines: set now, the reconfigure would
+/// fail with its error popup; `dtr = on`, then a baud alone.
+#[cfg(target_os = "linux")]
+#[test]
+fn levels_changed_on_an_open_port_wait_for_the_next_open() {
+    use crate::{app::tests::Pty, link::serial::LineLevel};
+    let pty = Pty::open();
+    let mut app = app_on(&pty.path);
+    app.start_link(None);
+    poll_until(&mut app, "opened", |app| app.link.is_open());
+    let next_open = "DTR and RTS levels are set at the next open".to_string();
+
+    let line = LineSettings {
+        dtr: LineLevel::On,
+        ..app.link_config().line
+    };
+    app.dispatch(Action::App(AppAction::Reconfigure(line)));
+    assert!(app.overlay().is_none(), "{:?}", app.overlay());
+    assert!(toasts(&app).contains(&next_open));
+    assert_eq!(app.link_config().line.dtr, LineLevel::On);
+
+    app.notifications.dismiss_all();
+    let line = LineSettings {
+        baud: 9600,
+        ..app.link_config().line
+    };
+    app.dispatch(Action::App(AppAction::Reconfigure(line)));
+    assert!(!toasts(&app).contains(&next_open));
+}
+
+/// MAX-9: the stack's `on_open` runs once the link opened, at start and on an attach, before
+/// the commands waiting; not again until the next open, not on a reopen after a lost link.
+/// The later profile that has one wins, an off profile's is left out, and a stack laid
+/// later brings its own; a line that doesn't parse is said.
+/// How: `on_open` lines of `send` in a temp profiles folder, a TCP link; the loop's
+/// `run_on_open` called after each poll, the queued commands taken one by one.
+#[test]
+fn on_open_runs_once_after_an_open() {
+    let dir = crate::capture::tests::temp_dir("on_open");
+    std::fs::create_dir_all(&dir).unwrap();
+    let write = |name: &str, text: &str| {
+        std::fs::write(dir.join(format!("{name}.toml")), text).unwrap();
+    };
+    write("first", "on_open = 'send first'");
+    write("later", "on_open = 'send later'");
+    write("off", "enabled = false\non_open = 'send off'");
+    write("plain", "");
+    write("bad", "on_open = 'nope'");
+    let stack = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+    let sent = |app: &mut App| {
+        app.run_on_open();
+        let mut sent = Vec::new();
+        while let Some(action) = app.next_command_action(Instant::now()) {
+            if let UpdateEffect::Transmit(bytes) = app.update(action) {
+                sent.push(String::from_utf8(bytes).unwrap());
+            }
+        }
+        sent
+    };
+
+    let (listener, address) = listener();
+    let mut app = app_on(&address);
+    app.profiles_dir = dir.clone();
+    app.set_profiles(stack(&["first", "later", "off", "plain"]));
+    app.start_link(None);
+    let (peer, _) = listener.accept().unwrap();
+    poll_until(&mut app, "connected", |app| app.link.is_open());
+    let waiting = crate::commands::parse("send waiting").unwrap();
+    app.update(Action::App(AppAction::QueueCommands(waiting)));
+    assert_eq!(sent(&mut app), ["later", "waiting"]);
+    assert!(sent(&mut app).is_empty(), "once");
+
+    drop(peer);
+    poll_until(&mut app, "lost", |app| !app.link.is_open());
+    poll_until(&mut app, "reconnected", |app| app.link.is_open());
+    let _peer = listener.accept().unwrap();
+    assert!(sent(&mut app).is_empty(), "not on a reopen");
+
+    app.dispatch(Action::App(AppAction::ToggleAttach));
+    app.dispatch(Action::App(AppAction::ToggleAttach));
+    let _peer = listener.accept().unwrap();
+    poll_until(&mut app, "attached", |app| app.link.is_open());
+    let lay = |app: &mut App, names: &[&str]| {
+        let keys = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
+        let plots = crate::configs::PlotsConfig::default();
+        app.apply_profiles(stack(names), keys, Vec::new(), plots);
+    };
+    lay(&mut app, &["first"]);
+    assert_eq!(sent(&mut app), ["first"]);
+
+    lay(&mut app, &["bad"]);
+    app.dispatch(Action::App(AppAction::ToggleAttach));
+    app.dispatch(Action::App(AppAction::ToggleAttach));
+    let _peer = listener.accept().unwrap();
+    poll_until(&mut app, "attached again", |app| app.link.is_open());
+    assert!(sent(&mut app).is_empty());
+    let said = toasts(&app);
+    assert!(said.iter().any(|t| t.starts_with("on_open: ")), "{said:?}");
+}

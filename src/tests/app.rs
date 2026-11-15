@@ -583,6 +583,31 @@ impl Pty {
         }
     }
 
+    /// The port side's termios, read through the device side (a pty's master reads its
+    /// slave's), so it works while maxicom holds the port with `TIOCEXCL`
+    pub fn termios(&self) -> libc::termios {
+        use std::os::fd::AsRawFd;
+        let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+        assert_eq!(
+            unsafe { libc::tcgetattr(self.device.as_raw_fd(), &mut termios) },
+            0
+        );
+        termios
+    }
+
+    /// Sets or clears the port side's `HUPCL`, as `stty hupcl` / `stty -hupcl` would
+    pub fn set_hupcl(&self, on: bool) {
+        use std::os::fd::AsRawFd;
+        let mut termios = self.termios();
+        if on {
+            termios.c_cflag |= libc::HUPCL;
+        } else {
+            termios.c_cflag &= !libc::HUPCL;
+        }
+        let fd = self.device.as_raw_fd();
+        assert_eq!(unsafe { libc::tcsetattr(fd, libc::TCSANOW, &termios) }, 0);
+    }
+
     /// What came out of the port, `len` bytes, waiting `within` at most: what is there
     /// already with no wait
     fn received(&mut self, len: usize, within: Duration) -> Vec<u8> {
@@ -2382,4 +2407,21 @@ fn trigger_runs_notify() {
         ToastLevel::Info,
     );
     assert_eq!(shown(&app), [notice, panicked]);
+}
+
+/// MAX-9 step 0: lines holding code addresses (a backtrace, a register dump) are history
+/// lines as any other, one entry per received line and nothing added after them, live or
+/// replayed.
+/// How: an ESP32 panic's register and backtrace lines, and a Cortex-M one with Thumb
+/// addresses, fed to the app.
+#[test]
+fn address_lines_add_no_line() {
+    let mut app = app();
+    let wire = "Guru Meditation Error: Core  0 panic'ed (LoadProhibited)\r\n\
+                PC      : 0x400d1234  PS      : 0x00060630  A0      : 0x800d5678\r\n\
+                Backtrace: 0x400d1234:0x3ffb1230 0x400d5678:0x3ffb1250\r\n\
+                HardFault: PC=0x08001235 LR=0x080004a1\r\n";
+    app.feed_rx(wire.as_bytes());
+    let lines: Vec<_> = wire.split("\r\n").filter(|l| !l.is_empty()).collect();
+    assert_eq!(texts(&app), lines);
 }

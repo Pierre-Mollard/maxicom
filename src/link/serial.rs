@@ -241,12 +241,64 @@ impl FromStr for Framing {
     }
 }
 
-/// What maxicom sets on a serial port: its baud rate, framing and flow control (MAX-168)
+/// What an open does to DTR or RTS (MAX-9): `keep` leaves the line as the OS put it, `on` and
+/// `off` set it right after
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LineLevel {
+    #[default]
+    Keep,
+    On,
+    Off,
+}
+
+impl LineLevel {
+    /// The next one in a popup: keep, on, off, round
+    pub fn next(self) -> Self {
+        match self {
+            Self::Keep => Self::On,
+            Self::On => Self::Off,
+            Self::Off => Self::Keep,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        self.next().next()
+    }
+
+    /// The level to set, none for `keep`
+    pub fn level(self) -> Option<bool> {
+        match self {
+            Self::Keep => None,
+            Self::On => Some(true),
+            Self::Off => Some(false),
+        }
+    }
+}
+
+impl FromStr for LineLevel {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "keep" => Ok(Self::Keep),
+            "on" => Ok(Self::On),
+            "off" => Ok(Self::Off),
+            _ => Err(format!(
+                "invalid line level '{s}': expected keep, on, or off"
+            )),
+        }
+    }
+}
+
+/// What maxicom sets on a serial port: its baud rate, framing and flow control (MAX-168), and
+/// DTR and RTS on open (MAX-9)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LineSettings {
     pub baud: u32,
     pub framing: Framing,
     pub flow_control: FlowControl,
+    pub dtr: LineLevel,
+    pub rts: LineLevel,
 }
 
 impl LineSettings {
@@ -256,13 +308,15 @@ impl LineSettings {
     }
 }
 
-/// 115200 8N1, no flow control
+/// 115200 8N1, no flow control, DTR and RTS as the OS puts them
 impl Default for LineSettings {
     fn default() -> Self {
         Self {
             baud: 115_200,
             framing: Framing::default(),
             flow_control: FlowControl::None,
+            dtr: LineLevel::Keep,
+            rts: LineLevel::Keep,
         }
     }
 }
@@ -428,7 +482,54 @@ impl SerialDevice {
             _uucp: UucpLock::take(device),
         };
         dev.reconfigure(line)?;
+        dev.set_levels(line)?;
         Ok(dev)
+    }
+
+    /// DTR and RTS as `line` asks after an open (MAX-9), no call when both are `keep`; RTS left
+    /// to the driver under hardware flow control. One line moved alone can reset a board (an
+    /// auto-reset circuit pulls its reset pin while RTS is on and DTR off): on Unix both change
+    /// in one `TIOCMSET`; on Windows, which sets them one by one, RTS goes off before DTR
+    /// moves and on after. The open itself leaves both on (Unix) or off (Windows, `serial2`)
+    fn set_levels(&mut self, line: &LineSettings) -> Result<(), LinkError> {
+        let dtr = line.dtr.level();
+        let rts = (line.rts.level()).filter(|_| line.flow_control != FlowControl::RtsCts);
+        if dtr.is_none() && rts.is_none() {
+            return Ok(());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            let fd = self.port.as_raw_fd();
+            let failed = || LinkError::ControlFailed(std::io::Error::last_os_error());
+            let mut bits: libc::c_int = 0;
+            if unsafe { libc::ioctl(fd, libc::TIOCMGET as _, &mut bits) } < 0 {
+                return Err(failed());
+            }
+            for (level, bit) in [(dtr, libc::TIOCM_DTR), (rts, libc::TIOCM_RTS)] {
+                match level {
+                    Some(true) => bits |= bit,
+                    Some(false) => bits &= !bit,
+                    None => {}
+                }
+            }
+            if unsafe { libc::ioctl(fd, libc::TIOCMSET as _, &bits) } < 0 {
+                return Err(failed());
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            if rts == Some(false) {
+                self.port.set_rts(false).map_err(LinkError::ControlFailed)?;
+            }
+            if let Some(on) = dtr {
+                self.port.set_dtr(on).map_err(LinkError::ControlFailed)?;
+            }
+            if rts == Some(true) {
+                self.port.set_rts(true).map_err(LinkError::ControlFailed)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn reconfigure(&mut self, line: &LineSettings) -> Result<(), LinkError> {

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     capture::{DEFAULT_GROUP_BY, GroupLevel, SessionLimits},
     configs::comments::{CONFIG_COMMENTS, with_comments},
-    link::serial::{FlowControl, Framing, LineSettings, Parity},
+    link::serial::{FlowControl, Framing, LineLevel, LineSettings, Parity},
 };
 
 pub const DEFAULT_INACTIVITY_DETACH: Duration = Duration::from_secs(4 * 3600);
@@ -856,9 +856,11 @@ pub struct LinkDefaults {
     pub parity: Parity,
     pub stop_bits: u8,
     pub flow: FlowControl,
+    pub dtr: LineLevel,
+    pub rts: LineLevel,
 }
 
-/// No device, 115200 8N1, no flow control
+/// No device, 115200 8N1, no flow control, DTR and RTS as the OS puts them
 impl Default for LinkDefaults {
     fn default() -> Self {
         Self {
@@ -868,6 +870,8 @@ impl Default for LinkDefaults {
             parity: Parity::None,
             stop_bits: 1,
             flow: FlowControl::None,
+            dtr: LineLevel::Keep,
+            rts: LineLevel::Keep,
         }
     }
 }
@@ -889,6 +893,8 @@ impl LinkDefaults {
             baud: self.baud,
             framing,
             flow_control: self.flow,
+            dtr: self.dtr,
+            rts: self.rts,
         }
     }
 

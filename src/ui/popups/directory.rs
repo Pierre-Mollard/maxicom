@@ -470,6 +470,8 @@ pub fn render_link_form_popup(
         LinkFormField::Parity => format!("< {:?} >", line.framing.parity),
         LinkFormField::StopBits => format!("< {stop_bits} >"),
         LinkFormField::Flow => format!("< {:?} >", line.flow_control),
+        LinkFormField::Dtr => format!("< {:?} >", line.dtr),
+        LinkFormField::Rts => format!("< {:?} >", line.rts),
     };
     let label = |field| match field {
         LinkFormField::Name => "Name",
@@ -482,6 +484,8 @@ pub fn render_link_form_popup(
         LinkFormField::Parity => "Parity",
         LinkFormField::StopBits => "Stop bits",
         LinkFormField::Flow => "Flow ctrl",
+        LinkFormField::Dtr => "DTR",
+        LinkFormField::Rts => "RTS",
     };
     let title = if form.editing.is_some() {
         "Edit link"
@@ -513,6 +517,9 @@ pub fn render_link_form_popup(
         }
         if field == LinkFormField::Color {
             spans.extend(color_sample(form, theme));
+        }
+        if matches!(field, LinkFormField::Dtr | LinkFormField::Rts) {
+            spans.push(Span::styled(" on open", muted));
         }
         text.push(Line::from(spans));
     }
