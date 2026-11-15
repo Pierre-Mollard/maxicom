@@ -10014,3 +10014,48 @@ fn profiles_popup() {
     let effect = key(&mut h, 'h');
     assert!(matches!(effect, UpdateEffect::LayProfiles(ref stack) if stack == &["proj"]));
 }
+
+/// The commands tab cuts a line longer than the popup with `…` in its last column, the
+/// scrollbar's column left free: a named command's line, and an action's help.
+/// How: a named command with a long line, at 80 columns, the tab drawn and scrolled to the end.
+#[test]
+fn help_commands_cut_with_an_ellipsis() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 30);
+    let mut config = KeyBindingsConfig::default();
+    let long = "send 'a very long line that goes on and on past the edge of the popup'";
+    config.commands.insert(
+        "long".to_string(),
+        crate::configs::keybindings::NamedCommandConfig {
+            run: long.to_string(),
+            help: String::new(),
+        },
+    );
+    h.app.key_resolver = KeyResolver::try_new(&config).unwrap();
+    h.app
+        .update(Action::App(AppAction::OpenOverlay(Overlay::Help(
+            HelpDialog::new(),
+        ))));
+    h.app.update(Action::Overlay(DialogAction::CycleNext));
+    h.app.update(Action::Overlay(DialogAction::CycleNext));
+    let rows = h.draw();
+    let row = rows
+        .iter()
+        .find(|row| row.contains(" long "))
+        .expect("long");
+    assert!(
+        row.contains("on and on past the") && row.contains("…│"),
+        "{row}"
+    );
+    assert!(!row.contains("popup'"), "{row}");
+
+    h.app.update(Action::Overlay(DialogAction::End));
+    let rows = h.draw();
+    let row = rows
+        .iter()
+        .find(|row| row.contains(" plot-prev "))
+        .expect("plot-prev");
+    assert!(
+        row.contains('…') && !row.contains("before the first"),
+        "{row}"
+    );
+}

@@ -22,7 +22,7 @@ use crate::{
     overlays::{HelpCategory, HelpDialog, PopupTarget},
     ui::{
         common::popup_area,
-        popups::{Hints, hint_spans, popup_block, render_scrollbar},
+        popups::{Hints, cut, hint_spans, popup_block, render_scrollbar},
     },
 };
 
@@ -125,12 +125,14 @@ pub fn render_help_popup(
                 .add_modifier(Modifier::BOLD);
             let key_style = Style::default().fg(theme.palette.secondary);
             let help_style = Style::default().fg(theme.palette.text_muted);
+            // a line longer than the popup ends with `…`, after `used` columns of it
+            let fit = |text: &str, used: usize| cut(text, room.saturating_sub(used));
 
             // the named commands of `[commands]` (MAX-239): the name and the line it runs,
             // its help under them, as the commands with arguments
             if !resolver.commands.is_empty() {
                 lines.push(Line::from(Span::styled(
-                    " Named commands, [commands] in keymap.toml:",
+                    fit(" Named commands, [commands] in keymap.toml:", 0),
                     header_style,
                 )));
                 let name_width = (resolver.commands.iter())
@@ -138,13 +140,15 @@ pub fn render_help_popup(
                     .max()
                     .unwrap_or(0);
                 for command in &resolver.commands {
+                    let name = fit(&format!(" {:<name_width$} ", command.name), 0);
+                    let run = fit(&command.run, name.width());
                     lines.push(Line::from(vec![
-                        Span::styled(format!(" {:<name_width$} ", command.name), key_style),
-                        Span::raw(command.run.clone()),
+                        Span::styled(name, key_style),
+                        Span::raw(run),
                     ]));
                     if !command.help.is_empty() {
                         lines.push(Line::from(Span::styled(
-                            format!("     {}", command.help),
+                            fit(&format!("     {}", command.help), 0),
                             help_style,
                         )));
                     }
@@ -158,16 +162,16 @@ pub fn render_help_popup(
                 Some(key) => format!(" Commands, on the command line ({key}), `;` between them:"),
                 None => " Commands, `;` between them:".to_string(),
             };
-            lines.push(Line::from(Span::styled(header, header_style)));
+            lines.push(Line::from(Span::styled(fit(&header, 0), header_style)));
             let (with_args, actions): (Vec<_>, Vec<_>) =
                 COMMANDS.iter().partition(|spec| !spec.args.is_empty());
             for spec in with_args {
                 lines.push(Line::from(Span::styled(
-                    format!(" {}", spec.usage()),
+                    fit(&format!(" {}", spec.usage()), 0),
                     key_style,
                 )));
                 lines.push(Line::from(Span::styled(
-                    format!("     {}", spec.help),
+                    fit(&format!("     {}", spec.help), 0),
                     help_style,
                 )));
             }
@@ -179,9 +183,11 @@ pub fn render_help_popup(
                 .max()
                 .unwrap_or(0);
             for spec in actions {
+                let name = fit(&format!(" {:<name_width$} ", spec.name), 0);
+                let help = fit(spec.help, name.width());
                 lines.push(Line::from(vec![
-                    Span::styled(format!(" {:<name_width$} ", spec.name), key_style),
-                    Span::styled(spec.help, help_style),
+                    Span::styled(name, key_style),
+                    Span::styled(help, help_style),
                 ]));
             }
         }

@@ -112,11 +112,11 @@ fn update_adds_new_default_keys() {
 fn update_writes_missing_built_in_profiles() {
     let folder = Folder::new("update-profiles", "");
     folder.load().unwrap();
-    fs::remove_file(folder.path("profiles/arduino.toml")).unwrap();
+    fs::remove_file(folder.path("profiles").join("arduino.toml")).unwrap();
     folder.write("profiles/esp32.toml", "description = \"mine\"\n");
 
     let report = update(&folder).unwrap();
-    let arduino = folder.path("profiles/arduino.toml");
+    let arduino = folder.path("profiles").join("arduino.toml");
     assert_eq!(
         report.last().unwrap(),
         &format!("{}: created", arduino.display())
@@ -129,20 +129,22 @@ fn update_writes_missing_built_in_profiles() {
 }
 
 /// The files of a reset, in `folder`, in `reset_targets`' order: the six config files, then
-/// the built-in profiles (MAX-240)
+/// the built-in profiles (MAX-240), joined as the app joins them (`\` on Windows)
 fn reset_paths(folder: &Folder) -> Vec<PathBuf> {
-    [
+    let files = [
         "config.toml",
         "theme.toml",
         "keymap.toml",
         "highlights.toml",
         "triggers.toml",
         "plots.toml",
-        "profiles/arduino.toml",
-        "profiles/esp32.toml",
-    ]
-    .map(|file| folder.path(file))
-    .to_vec()
+    ];
+    let profiles = ["arduino.toml", "esp32.toml"].map(|file| folder.path("profiles").join(file));
+    files
+        .map(|file| folder.path(file))
+        .into_iter()
+        .chain(profiles)
+        .collect()
 }
 
 /// MAX-231: `--reset-config` writes each file back to its defaults and comments, without
@@ -158,12 +160,12 @@ fn reset_puts_back_the_defaults() {
     fs::write(folder.path("links.toml"), "# my links\n").unwrap();
     fs::create_dir_all(folder.path("profiles")).unwrap();
     fs::write(
-        folder.path("profiles/esp32.toml"),
+        folder.path("profiles").join("esp32.toml"),
         "description = \"mine\"\n",
     )
     .unwrap();
     fs::write(
-        folder.path("profiles/proj.toml"),
+        folder.path("profiles").join("proj.toml"),
         "description = \"proj\"\n",
     )
     .unwrap();
@@ -185,8 +187,8 @@ fn reset_puts_back_the_defaults() {
     assert_eq!(folder.read("config.toml.bak"), broken);
     assert_eq!(folder.read("links.toml"), "# my links\n");
     let (arduino, esp32) = (
-        folder.path("profiles/arduino.toml"),
-        folder.path("profiles/esp32.toml"),
+        folder.path("profiles").join("arduino.toml"),
+        folder.path("profiles").join("esp32.toml"),
     );
     assert_eq!(report[6], format!("{}: created", arduino.display()));
     let esp32 = esp32.display().to_string();
