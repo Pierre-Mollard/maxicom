@@ -218,10 +218,10 @@ In your own [status bar](status-bar.md) template:
 | `sensors` | `temp` and `hum` only, from 0 to 100, over 5 minutes | `keys`, `min` / `max`, `colors` |
 | `tagged` | Only the lines with `[plot]`, such as `[plot] err=-1.5 out=40` | `line_contains` |
 
-The `arduino` profile, in the `profiles` folder next to `config.toml`, adds
-`serial-plotter` to them: `temp:23.4,hum:51` or bare `23.4 51`, the last 500
-samples, with `columns` and a number `window`. A link gets it with
-`profiles = ["arduino"]` in `links.toml`.
+The `arduino` [profile](profiles.md), in the `profiles` folder next to
+`config.toml`, adds `serial-plotter` to them: `temp:23.4,hum:51` or bare
+`23.4 51`, the last 500 samples, with `columns` and a number `window`. A link
+gets it with `profiles = ["arduino"]` in `links.toml`.
 
 A quick way to plot from your own firmware is to print a tagged line:
 

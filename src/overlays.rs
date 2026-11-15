@@ -21,6 +21,7 @@ pub use link_form::{LinkForm, LinkFormField};
 pub use marks::{MarkBrowser, MarkRow};
 pub use menu::{ActionMenu, MenuRun};
 pub use misc::{ErrorDialog, FilePathDialog, ScreenshotDialog};
+pub use profiles::ProfileBrowser;
 pub use reconfigure::{LineSettingField, LineSettingsDialog};
 pub use resize::{ResizeDialog, ResizeField};
 pub use sessions::SessionBrowser;
@@ -34,6 +35,7 @@ pub mod link_form;
 pub mod marks;
 pub mod menu;
 pub mod misc;
+pub mod profiles;
 pub mod reconfigure;
 pub mod resize;
 pub mod sessions;
@@ -58,6 +60,7 @@ pub enum Overlay {
     Sessions(Box<SessionBrowser>),
     CommandLine(Box<CommandLine>),
     Triggers(TriggerBrowser),
+    Profiles(ProfileBrowser),
     Marks(MarkBrowser),
     Directory(Directory),
     LinkForm(Box<LinkForm>),
@@ -95,6 +98,11 @@ pub enum PopupTarget {
     TriggerToggle,
     TriggerToggleAll,
     TriggerCopyPath,
+    ProfileRow(usize),
+    ProfileToggle,
+    /// Up the stack (`true`), or down
+    ProfileMove(bool),
+    ProfileCopyPath,
     MarkRow(usize),
     MarkJump,
     MarkDelete,
@@ -155,6 +163,15 @@ pub enum OverlayResponse {
         what: String,
     },
     ToggleTrigger(Option<String>),
+    ToggleProfile(String),
+    SetProfile {
+        name: String,
+        on: bool,
+    },
+    MoveProfile {
+        name: String,
+        up: bool,
+    },
     Open(Address),
     OpenLink(LinkConfig),
     NameLink(Option<Address>),
@@ -219,6 +236,7 @@ impl Overlay {
             Overlay::Sessions(browser) => browser.handle_action(action),
             Overlay::CommandLine(command_line) => command_line.handle_action(action),
             Overlay::Triggers(browser) => browser.handle_action(action),
+            Overlay::Profiles(browser) => browser.handle_action(action),
             Overlay::Marks(browser) => browser.handle_action(action),
             Overlay::Directory(directory) => directory.handle_action(action),
             Overlay::LinkForm(form) => form.handle_action(action),

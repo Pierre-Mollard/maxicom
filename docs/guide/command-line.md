@@ -247,6 +247,18 @@ or the one named. The names complete. See [Triggers](triggers.md).
 
 See [Plots](plots.md).
 
+### Profiles
+
+| Command | Does |
+| --- | --- |
+| `profile load <name>` | Lays the profile over the config, on top of the link's. The names complete. |
+| `profile unload <name>` | Takes it off |
+| `profile` | Says the profiles laid |
+
+A profile loaded this way lasts until the link changes: it isn't saved in
+`links.toml`. The session's backup remembers it, so its replay lays it too.
+See [Profiles](profiles.md).
+
 ### Notifications
 
 | Command | Does |

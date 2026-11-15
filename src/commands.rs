@@ -31,6 +31,7 @@ pub enum ArgKind {
     Trigger,
     Link,
     Plot,
+    Profile,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -325,6 +326,7 @@ pub static COMMANDS: &[CommandSpec] = {
             "Arm / disarm the triggers",
         ),
         CommandSpec::action("triggers", A::Triggers, "Open the triggers"),
+        CommandSpec::action("profiles", A::Profiles, "Open the profiles"),
         CommandSpec::action(
             "plot-freeze",
             A::PlotFreeze,
@@ -658,6 +660,23 @@ pub static COMMANDS: &[CommandSpec] = {
             "Show a plot of plots.toml by name, off, or the next one",
         ),
         CommandSpec::build(
+            "profile",
+            &[
+                ArgSpec {
+                    name: "action",
+                    kind: ArgKind::Enum(&["load", "unload"]),
+                    optional: true,
+                },
+                ArgSpec {
+                    name: "name",
+                    kind: ArgKind::Profile,
+                    optional: true,
+                },
+            ],
+            build::profile,
+            "Lay a profile over the config, take one off, or alone show them",
+        ),
+        CommandSpec::build(
             "flow",
             &[arg("flow", ArgKind::Enum(&["none", "hw", "sw"]))],
             build::flow,
@@ -715,40 +734,36 @@ pub struct Completion {
     pub candidates: Vec<Candidate>,
 }
 
-/// The completion of the last word of `before_cursor`, the line up to the cursor: the command
-/// names (sorted) for a command's first word, else the values of the argument it is. None for
-/// a word already whole, nor for one with a quote or an escape. `link_names` are this
-/// machine's saved links (MAX-185), first for an address; `ports` the serial ports the system
-/// lists, for an address; `plot_names` the plots of `plots.toml` (MAX-222); `named` the
+/// The names a completion offers: the triggers (MAX-6), this machine's saved links, first for
+/// an address (MAX-185), the serial ports the system lists, for an address, the plots of
+/// `plots.toml` (MAX-222), the profiles that are on and the ones laid (MAX-240), and the
 /// commands of `[commands]`, among the command names (MAX-239)
-pub fn complete(
-    before_cursor: &str,
-    trigger_names: &[String],
-    link_names: &[String],
-    ports: &[String],
-    plot_names: &[String],
-    named: &[NamedCommand],
-) -> Completion {
-    complete_in(
-        COMMANDS,
-        before_cursor,
-        trigger_names,
-        link_names,
-        ports,
-        plot_names,
-        named,
-    )
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Names<'a> {
+    pub triggers: &'a [String],
+    pub links: &'a [String],
+    pub ports: &'a [String],
+    pub plots: &'a [String],
+    pub profiles: &'a [String],
+    pub named: &'a [NamedCommand],
 }
 
-fn complete_in(
-    commands: &'static [CommandSpec],
-    line: &str,
-    trigger_names: &[String],
-    link_names: &[String],
-    ports: &[String],
-    plot_names: &[String],
-    named: &[NamedCommand],
-) -> Completion {
+/// The completion of the last word of `before_cursor`, the line up to the cursor: the command
+/// names (sorted) for a command's first word, else the values of the argument it is, from
+/// `names`. None for a word already whole, nor for one with a quote or an escape
+pub fn complete(before_cursor: &str, names: &Names) -> Completion {
+    complete_in(COMMANDS, before_cursor, names)
+}
+
+fn complete_in(commands: &'static [CommandSpec], line: &str, names: &Names) -> Completion {
+    let Names {
+        triggers: trigger_names,
+        links: link_names,
+        ports,
+        plots: plot_names,
+        profiles: profile_names,
+        named,
+    } = *names;
     let Some(word) = last_word(line) else {
         return Completion::default();
     };
@@ -778,6 +793,10 @@ fn complete_in(
                 ArgKind::Path => path_candidates(prefix),
                 ArgKind::Address => address_candidates(prefix, link_names, ports),
                 ArgKind::Trigger => (trigger_names.iter())
+                    .map(|name| escape_word(name))
+                    .filter(|name| name.starts_with(prefix))
+                    .collect(),
+                ArgKind::Profile => (profile_names.iter())
                     .map(|name| escape_word(name))
                     .filter(|name| name.starts_with(prefix))
                     .collect(),
@@ -1066,7 +1085,7 @@ impl ArgKind {
                 .find(|value| **value == text)
                 .map(|value| ArgValue::Enum(value))
                 .ok_or_else(|| format!("'{text}' is not one of {}", values.join(", "))),
-            Self::String | Self::Trigger | Self::Link | Self::Plot => {
+            Self::String | Self::Trigger | Self::Link | Self::Plot | Self::Profile => {
                 Ok(ArgValue::String(text.to_string()))
             }
             Self::Path => Ok(ArgValue::Path(PathBuf::from(text))),
@@ -1091,7 +1110,8 @@ impl ArgKind {
             | Self::Bytes
             | Self::Trigger
             | Self::Link
-            | Self::Plot => &[],
+            | Self::Plot
+            | Self::Profile => &[],
         };
         values
             .iter()

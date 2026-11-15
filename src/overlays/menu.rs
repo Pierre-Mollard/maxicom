@@ -62,6 +62,7 @@ impl ActionMenu {
         items.extend([
             ("Sessions…", KeyBindingAction::Sessions),
             ("Triggers…", KeyBindingAction::Triggers),
+            ("Profiles…", KeyBindingAction::Profiles),
             ("Clear", KeyBindingAction::Clear),
             ("Clear history", KeyBindingAction::ClearHistory),
             (attach, KeyBindingAction::ToggleAttach),

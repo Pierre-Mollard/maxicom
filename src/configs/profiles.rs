@@ -140,6 +140,60 @@ pub const BUILT_IN: [(&str, &str); 2] = [
     ("esp32", include_str!("../../profiles/esp32.toml")),
 ];
 
+/// A profile of the folder as the profiles popup lists it: its name, its description, and
+/// whether it's on; `error` why its file doesn't read, when it doesn't
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listed {
+    pub name: String,
+    pub description: String,
+    pub enabled: bool,
+    pub error: Option<String>,
+}
+
+/// The profiles of the folder `dir`, its `.toml` files sorted by name, read but not checked
+/// past their syntax; none when the folder isn't there
+pub fn list(dir: &Path) -> Vec<Listed> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut listed: Vec<Listed> = entries
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            (path.extension()? == "toml").then_some(())?;
+            let name = path.file_stem()?.to_str()?.to_string();
+            let file = fs::read_to_string(&path).map_err(|err| err.to_string());
+            let file = file.and_then(|text| {
+                toml::from_str::<ProfileFile>(&text).map_err(|err| err.message().to_string())
+            });
+            Some(match file {
+                Ok(file) => Listed {
+                    name,
+                    description: file.description,
+                    enabled: file.enabled,
+                    error: None,
+                },
+                Err(err) => Listed {
+                    name,
+                    description: String::new(),
+                    enabled: true,
+                    error: Some(err),
+                },
+            })
+        })
+        .collect();
+    listed.sort_by(|a, b| a.name.cmp(&b.name));
+    listed
+}
+
+/// The profiles of the folder `dir` that are on, by name, sorted: what `profile load`
+/// completes. A file that doesn't read is listed, so loading it says why
+pub fn on_names(dir: &Path) -> Vec<String> {
+    (list(dir).into_iter())
+        .filter(|listed| listed.enabled)
+        .map(|listed| listed.name)
+        .collect()
+}
+
 /// The built-in profiles written in the folder `dir` when it doesn't exist yet, as the
 /// other config files are on a first start: once there, a profile deleted stays deleted
 pub fn write_folder(dir: &Path) -> std::io::Result<()> {

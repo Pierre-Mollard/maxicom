@@ -27,6 +27,7 @@
 - [Raw side panel](raw-side-panel.md)
 - [Plots](plots.md)
 - [Triggers](triggers.md)
+- [Profiles](profiles.md)
 - [Capture](capture.md)
 - [File transfers](file-transfers.md)
 - [Notifications](notifications.md)

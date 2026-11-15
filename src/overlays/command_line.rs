@@ -39,8 +39,10 @@ pub struct CommandLine {
     trigger_names: Vec<String>,
     link_names: Vec<String>,
     ports: Vec<String>,
-    /// The plots of `plots.toml`, to complete `plot`'s (MAX-222)
+    /// The plots of `plots.toml`, to complete `plot`'s (MAX-222), and the profiles, to
+    /// complete `profile`'s (MAX-240)
     plot_names: Vec<String>,
+    profile_names: Vec<String>,
     /// The commands of `[commands]` in `keymap.toml`, run and completed by name (MAX-239)
     named: Vec<NamedCommand>,
 }
@@ -64,6 +66,11 @@ impl CommandLine {
 
     pub fn with_plot_names(mut self, plot_names: Vec<String>) -> Self {
         self.plot_names = plot_names;
+        self
+    }
+
+    pub fn with_profile_names(mut self, profile_names: Vec<String>) -> Self {
+        self.profile_names = profile_names;
         self
     }
 
@@ -105,14 +112,15 @@ impl CommandLine {
     fn refresh(&mut self) {
         let before_cursor = &self.input.value()[..self.cursor_byte()];
         self.completion = if self.listed {
-            commands::complete(
-                before_cursor,
-                &self.trigger_names,
-                &self.link_names,
-                &self.ports,
-                &self.plot_names,
-                &self.named,
-            )
+            let names = commands::Names {
+                triggers: &self.trigger_names,
+                links: &self.link_names,
+                ports: &self.ports,
+                plots: &self.plot_names,
+                profiles: &self.profile_names,
+                named: &self.named,
+            };
+            commands::complete(before_cursor, &names)
         } else {
             Completion::default()
         };

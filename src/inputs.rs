@@ -91,6 +91,8 @@ pub enum AppAction {
     ArmTriggers { on: bool, name: Option<String> },
     ShowPlot(Option<String>),
     TogglePlotFreeze,
+    ShowProfiles,
+    LayProfiles(Vec<String>),
     StepPlot(bool),
     DismissToast(Option<u64>),
     DismissToasts,

@@ -238,6 +238,7 @@ your own.
 | `Ctrl-a M` | `toggle-mouse` | Toggle mouse support |
 | `Ctrl-a N` | `dismiss-notifications` | Close all the notifications |
 | `Ctrl-a O` | `toggle-text-encoding` | Cycle the text encoding |
+| `Ctrl-a P` | `profiles` | Open the profiles |
 | `Ctrl-a T` | `triggers` | Open the triggers |
 | `Ctrl-a U` | `u-boot-toggle` | A named command: arm / disarm the `u-boot` trigger |
 | `Ctrl-a W` | `resize-dialog` | Set the terminal size |
@@ -360,8 +361,8 @@ one is also a command of the [command line](command-line.md), which adds
 commands with arguments (`send`, `open`, `baud`, `replay`...).
 
 The commands that run without arguments go on these keys too: `mark`,
-`jump-mark`, `break`, `plot`, `link-save`, `session-name`, `replay-stop`,
-`replay-pause`, `replay-resume` and `replay-restart`. Each one does what it
+`jump-mark`, `break`, `plot`, `profile`, `link-save`, `session-name`,
+`replay-stop`, `replay-pause`, `replay-resume` and `replay-restart`. Each one does what it
 does on the command line with no arguments, and waits its turn like a
 command: see [Actions and commands](#actions-and-commands).
 
@@ -419,6 +420,7 @@ command: see [Actions and commands](#actions-and-commands).
 | `cancel` | Stop the file transfer and queued commands | — |
 | `toggle-triggers` | Arm / disarm the triggers | — |
 | `triggers` | Open the triggers | `Ctrl-a T` |
+| `profiles` | Open the profiles | `Ctrl-a P` |
 | `plot-freeze` | Freeze / unfreeze the plot, its data still collected | `Ctrl-a G` |
 | `plot-next` | Show the next plot of plots.toml, the first after the last | — |
 | `plot-prev` | Show the previous plot of plots.toml, the last before the first | — |

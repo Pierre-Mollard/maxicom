@@ -138,6 +138,10 @@ its chapter, and in [CHANGELOG.md](CHANGELOG.md) under Unreleased.
   user types, binds to a key, or arms as a trigger, and the answers to the
   queries the device itself sends. It can't know whether a shell, a
   bootloader or a binary upload is listening.
+- **The code never names a board, a chip or a vendor.** `src/` holds generic
+  mechanisms (named commands, triggers, highlights, plots, DTR / RTS); what a
+  board needs goes in a profile in `profiles/`. The code never branches on a
+  profile's name. Tests and hardware facts can name boards.
 - **Visibility is private or `pub`.** No `pub(crate)` or `pub(super)`: a
   child module already sees its parent's private items.
 

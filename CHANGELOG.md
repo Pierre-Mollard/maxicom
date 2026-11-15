@@ -10,6 +10,9 @@ you says so in an "Upgrading" section.
 
 ### Upgrading
 
+Run [`maxicom --write-config`](https://pierre-mollard.github.io/maxicom/settings.html#updating-the-files)
+to get `Ctrl-a P`, the new profiles popup, in your `keymap.toml`.
+
 Three sections of your `keymap.toml` are renamed, after the help's tabs:
 `[prefix_actions]` is now `[prefixed]`, `[direct_actions]` is `[direct]` and
 `[dialog_actions]` is `[dialog]`. Rename them in your file: under the old
@@ -45,8 +48,11 @@ it needs the file to load, and it drops the sections under the old names
   named commands, highlights, triggers and plots while a link uses it. A saved
   link names its profiles in `links.toml` or in the link form, and
   `--profile` gives them to any link; several stack, the later one winning.
-  `{profiles}` shows them in the status bar, and a session's replay uses the
-  profiles it was recorded with.
+  `profile load` and `profile unload` lay one or take it off while running,
+  `profile` says them, and the profiles popup (`Ctrl-a P`) lists them all to
+  add, take off or reorder. See
+  [Profiles](https://pierre-mollard.github.io/maxicom/profiles.html). `{profiles}` shows them in the status bar, and a
+  session's replay uses the profiles it was recorded with.
 - Two profiles come with maxicom, written with the `profiles` folder:
   `esp32` (ESP-IDF log levels in color, an RTS reset on `Ctrl-a h`, the
   bootloader on `Ctrl-a H`, a crash notice) and `arduino` (the serial plotter

@@ -46,6 +46,7 @@ use crate::{
             marks::render_marks_popup,
             menu::render_action_menu,
             notifications::render_notifications,
+            profiles::render_profiles_popup,
             reconfigure::render_reconfigure_popup,
             resize::render_resize_popup,
             sessions::render_sessions_popup,
@@ -257,6 +258,7 @@ pub fn render(
                             | PopupTarget::SessionRow(_)
                             | PopupTarget::MarkRow(_)
                             | PopupTarget::TriggerRow(_)
+                            | PopupTarget::ProfileRow(_)
                     );
                     if is_row {
                         let plain = ratatui::style::Style::default().fg(theme.palette.text);
@@ -337,6 +339,9 @@ fn render_active_overlay(
         }
         Some(Overlay::Triggers(browser)) => {
             render_triggers_popup(app, browser, frame, theme, &mut targets)
+        }
+        Some(Overlay::Profiles(browser)) => {
+            render_profiles_popup(app, browser, frame, theme, &mut targets)
         }
         Some(Overlay::Marks(browser)) => {
             render_marks_popup(app, browser, frame, theme, &mut targets)

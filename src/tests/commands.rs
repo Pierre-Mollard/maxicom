@@ -125,6 +125,7 @@ fn action_index(action: KeyBindingAction) -> usize {
         A::PlotFreeze => 57,
         A::PlotNext => 58,
         A::PlotPrev => 59,
+        A::Profiles => 60,
         A::Command(spec) => unreachable!("{} is a built command", spec.name),
     }
 }
@@ -145,7 +146,7 @@ fn every_action_has_one_command() {
         })
         .collect();
     indexes.sort_unstable();
-    assert_eq!(indexes, (0..60).collect::<Vec<_>>());
+    assert_eq!(indexes, (0..61).collect::<Vec<_>>());
 }
 
 /// The help writes a required argument in angle brackets, an optional one in square ones
@@ -207,17 +208,14 @@ fn line_command_arguments() {
         assert!(parse(line).is_err(), "{line}");
     }
     assert_eq!(
-        values(&complete("baud 1", &[], &[], &[], &[], &[])),
+        values(&complete("baud 1", &Names::default())),
         ["19200", "115200"]
     );
     assert_eq!(
-        values(&complete("flow ", &[], &[], &[], &[], &[])),
+        values(&complete("flow ", &Names::default())),
         ["none", "hw", "sw"]
     );
-    assert_eq!(
-        values(&complete("dtr o", &[], &[], &[], &[], &[])),
-        ["on", "off"]
-    );
+    assert_eq!(values(&complete("dtr o", &Names::default())), ["on", "off"]);
 }
 
 /// MAX-6: `trigger` takes on, off or toggle, then a trigger's name, completed from the
@@ -230,19 +228,38 @@ fn trigger_names() {
         "login".to_string(),
     ];
     assert_eq!(
-        values(&complete("trigger t", &names, &[], &[], &[], &[])),
+        values(&complete(
+            "trigger t",
+            &Names {
+                triggers: &names,
+                ..Names::default()
+            }
+        )),
         ["toggle"]
     );
     assert_eq!(
-        values(&complete("trigger on u", &names, &[], &[], &[], &[])),
+        values(&complete(
+            "trigger on u",
+            &Names {
+                triggers: &names,
+                ..Names::default()
+            }
+        )),
         ["u-boot", "uart\\ menu"]
     );
     assert_eq!(
-        values(&complete("trigger off ", &names, &[], &[], &[], &[])).len(),
+        values(&complete(
+            "trigger off ",
+            &Names {
+                triggers: &names,
+                ..Names::default()
+            }
+        ))
+        .len(),
         3
     );
     assert!(
-        complete("trigger on ", &[], &[], &[], &[], &[])
+        complete("trigger on ", &Names::default())
             .candidates
             .is_empty()
     );
@@ -398,7 +415,13 @@ fn named_commands_complete_and_parse() {
         named("board-reset", "dtr off; dtr on", "Reset the board"),
         named("bye", "quit", ""),
     ];
-    let completion = complete("b", &[], &[], &[], &[], &named);
+    let completion = complete(
+        "b",
+        &Names {
+            named: &named,
+            ..Names::default()
+        },
+    );
     assert_eq!(values(&completion), ["baud", "board-reset", "break", "bye"]);
     let help = |value: &str| {
         let candidate = completion.candidates.iter().find(|c| c.value == value);
@@ -420,7 +443,7 @@ fn named_commands_complete_and_parse() {
 
 #[test]
 fn complete_command_names() {
-    let complete = |line| complete(line, &[], &[], &[], &[], &[]);
+    let complete = |line| complete(line, &Names::default());
     let all = complete("");
     assert_eq!(all.start, 0);
     assert_eq!(all.candidates.len(), COMMANDS.len());
@@ -451,7 +474,7 @@ fn complete_command_names() {
 
 #[test]
 fn complete_argument_values() {
-    let complete = |line| complete_in(&TEST_COMMANDS, line, &[], &[], &[], &[], &[]);
+    let complete = |line| complete_in(&TEST_COMMANDS, line, &Names::default());
     assert_eq!(values(&complete("test 1 ")), ["on", "off"]);
     assert_eq!(values(&complete("test  1   o")), ["on", "off"]);
     let flow = complete("quit; test 1 on h");
@@ -482,7 +505,7 @@ fn complete_paths() {
     let folder = format!("{}/", dir.display()).replace('\\', "/");
     let complete = |typed: &str| {
         let line = format!("test 1 on none x {folder}{typed}");
-        let completion = complete_in(&TEST_COMMANDS, &line, &[], &[], &[], &[], &[]);
+        let completion = complete_in(&TEST_COMMANDS, &line, &Names::default());
         assert_eq!(completion.start, 17);
         completion
             .candidates
@@ -499,7 +522,7 @@ fn complete_paths() {
     let line = format!("test 1 on none x {folder}my\\ file.bin");
     // the escaped name is whole, and the argument is the name
     assert!(
-        complete_in(&TEST_COMMANDS, &line, &[], &[], &[], &[], &[])
+        complete_in(&TEST_COMMANDS, &line, &Names::default())
             .candidates
             .is_empty()
     );
@@ -533,7 +556,15 @@ fn open_takes_an_address() {
     }
 
     let ports = ["/dev/ttyUSB0".to_string(), "COM3".to_string()];
-    let complete = |line: &str| complete(line, &[], &[], &ports, &[], &[]);
+    let complete = |line: &str| {
+        complete(
+            line,
+            &Names {
+                ports: &ports,
+                ..Names::default()
+            },
+        )
+    };
     assert_eq!(
         values(&complete("open ")),
         ["tcp://", "file://", "/dev/ttyUSB0", "COM3"]
@@ -543,7 +574,16 @@ fn open_takes_an_address() {
     assert!(complete("open tcp://192.").candidates.is_empty());
     // MAX-185: this machine's saved links first, escaped; `link-delete` takes them only
     let names = ["esp32".to_string(), "router console".to_string()];
-    let saved = |line: &str| super::complete(line, &[], &names, &ports, &[], &[]);
+    let saved = |line: &str| {
+        super::complete(
+            line,
+            &Names {
+                links: &names,
+                ports: &ports,
+                ..Names::default()
+            },
+        )
+    };
     assert_eq!(
         values(&saved("open ")),
         [
@@ -624,4 +664,23 @@ fn windows_paths_keep_backslashes() {
         parse(r"send C:\Users").unwrap_err(),
         CommandError::BadEscape(r"\U".into())
     );
+}
+
+/// MAX-240: `profile` completes its action, then the profiles given.
+/// How: the action's word, then a name's start.
+#[test]
+fn complete_profiles() {
+    let names = ["board".to_string(), "proj".to_string()];
+    let complete = |line| {
+        complete(
+            line,
+            &Names {
+                profiles: &names,
+                ..Names::default()
+            },
+        )
+    };
+    assert_eq!(values(&complete("profile ")), ["load", "unload"]);
+    assert_eq!(values(&complete("profile load b")), ["board"]);
+    assert_eq!(values(&complete("profile unload ")), ["board", "proj"]);
 }

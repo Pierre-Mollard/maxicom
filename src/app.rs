@@ -276,6 +276,8 @@ pub enum UpdateEffect {
     },
     ToggleAttach,
     ReloadConfig,
+    /// The profile stack for the loop to lay at once, `profile load` / `unload`'s (MAX-240)
+    LayProfiles(Vec<String>),
     Quit,
 }
 
@@ -1063,6 +1065,42 @@ impl App {
                             self.toggle_triggers(name.as_deref());
                             UpdateEffect::None
                         }
+                        // laid at once by the loop, the popup staying on the new stack
+                        OverlayResponse::ToggleProfile(name) => {
+                            self.overlay = Some(overlay);
+                            match self.toggled_profile(&name) {
+                                Ok(stack) => UpdateEffect::LayProfiles(stack),
+                                Err(message) => {
+                                    self.notify_warn(message);
+                                    UpdateEffect::None
+                                }
+                            }
+                        }
+                        // nothing when it's laid or off already
+                        OverlayResponse::SetProfile { name, on } => {
+                            self.overlay = Some(overlay);
+                            let laid = self.profiles.contains(&name);
+                            let toggled = (laid != on).then(|| self.toggled_profile(&name));
+                            match toggled {
+                                None => UpdateEffect::None,
+                                Some(Ok(stack)) => UpdateEffect::LayProfiles(stack),
+                                Some(Err(message)) => {
+                                    self.notify_warn(message);
+                                    UpdateEffect::None
+                                }
+                            }
+                        }
+                        OverlayResponse::MoveProfile { name, up } => {
+                            self.overlay = Some(overlay);
+                            match self.moved_profile(&name, up) {
+                                Ok(Some(stack)) => UpdateEffect::LayProfiles(stack),
+                                Ok(None) => UpdateEffect::None,
+                                Err(message) => {
+                                    self.notify_warn(message);
+                                    UpdateEffect::None
+                                }
+                            }
+                        }
                         OverlayResponse::TestLinks => {
                             self.overlay = Some(overlay);
                             self.test_links();
@@ -1723,6 +1761,11 @@ impl App {
                 self.show_plot(name.as_deref());
                 UpdateEffect::None
             }
+            AppAction::ShowProfiles => {
+                self.say_profiles();
+                UpdateEffect::None
+            }
+            AppAction::LayProfiles(profiles) => UpdateEffect::LayProfiles(profiles),
             AppAction::TogglePlotFreeze => {
                 self.toggle_plot_freeze();
                 UpdateEffect::None

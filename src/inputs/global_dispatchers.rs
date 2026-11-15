@@ -13,8 +13,8 @@ use crate::{
     },
     link::serial,
     overlays::{
-        CommandLine, HelpDialog, LineSettingsDialog, Overlay, ResizeDialog, SettingKey,
-        SettingsDialog, TriggerBrowser,
+        CommandLine, HelpDialog, LineSettingsDialog, Overlay, ProfileBrowser, ResizeDialog,
+        SettingKey, SettingsDialog, TriggerBrowser,
     },
 };
 
@@ -131,6 +131,9 @@ impl KeyBindingAction {
                 let directory = app.directory(serial::port_names());
                 Action::App(AppAction::OpenOverlay(Overlay::Directory(directory)))
             }
+            KeyBindingAction::Profiles => Action::App(AppAction::OpenOverlay(Overlay::Profiles(
+                ProfileBrowser::new(app.profile_rows(), app.profiles_dir().to_path_buf()),
+            ))),
             KeyBindingAction::Triggers => {
                 let names = app.triggers().iter().map(|t| t.name.clone()).collect();
                 let path = AppConfig::active_triggers_path(app.settings());
@@ -151,6 +154,7 @@ impl KeyBindingAction {
                 let command_line = CommandLine::new(history, triggers, serial::port_names())
                     .with_link_names(app.saved_names())
                     .with_plot_names(app.plots().names())
+                    .with_profile_names(app.profile_names())
                     .with_named_commands(app.key_resolver.commands.clone());
                 Action::App(AppAction::OpenOverlay(Overlay::CommandLine(Box::new(
                     command_line,

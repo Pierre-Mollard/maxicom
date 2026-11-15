@@ -385,6 +385,7 @@ fn default_keymap_per_context() {
             "M => App(ToggleSetting(Mouse))",
             "N => App(DismissToasts)",
             "O => App(ToggleSetting(TextEncoding))",
+            "P => open Profiles",
             "PageDown => History(ScrollDownPage)",
             "PageUp => History(ScrollUpPage)",
             "Right => History(PanRight(1))",

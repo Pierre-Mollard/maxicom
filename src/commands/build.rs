@@ -578,6 +578,30 @@ pub fn plot(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     Ok(Action::App(AppAction::ShowPlot(name)))
 }
 
+/// `profile [load|unload <name>]` (MAX-240): a profile laid over the config on top of the
+/// stack, or one taken off it, for the session; alone, the stack said. Refused: a profile
+/// laid already or not laid, one that isn't there, is off or doesn't read
+pub fn profile(app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let (action, name) = match args {
+        [] => return Ok(Action::App(AppAction::ShowProfiles)),
+        [ArgValue::Enum(action), ArgValue::String(name)] => (*action, name),
+        [ArgValue::Enum(action)] => return Err(format!("{action} takes a profile's name")),
+        _ => unreachable!("profile takes load or unload, then a name"),
+    };
+    let laid = app.profiles().iter().any(|own| own == name);
+    let mut stack = app.profiles().to_vec();
+    match action {
+        "load" if laid => return Err(format!("'{name}' is laid already")),
+        "load" => {
+            app.check_profile(name)?;
+            stack.push(name.clone());
+        }
+        _ if !laid => return Err(format!("'{name}' isn't laid")),
+        _ => stack.retain(|own| own != name),
+    }
+    Ok(Action::App(AppAction::LayProfiles(stack)))
+}
+
 /// `screenshot <name>`: the terminal saved at once, without the dialog
 pub fn screenshot(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     let [ArgValue::Path(name)] = args else {

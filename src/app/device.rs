@@ -282,6 +282,95 @@ impl App {
         self.profiles_due.take()
     }
 
+    /// The profile `name` of the profiles folder, as it reads (MAX-240)
+    pub fn profile(&self, name: &str) -> Result<profiles::Profile, profiles::ProfileError> {
+        profiles::Profile::load(&self.profiles_dir, name)
+    }
+
+    /// The folder the profiles are read from (MAX-240)
+    pub fn profiles_dir(&self) -> &std::path::Path {
+        &self.profiles_dir
+    }
+
+    /// The profiles popup's rows: the folder's, then the ones laid that have no file, so
+    /// they can be taken off (MAX-240)
+    pub fn profile_rows(&self) -> Vec<profiles::Listed> {
+        let mut rows = profiles::list(&self.profiles_dir);
+        let gone: Vec<_> = (self.profiles.iter())
+            .filter(|name| rows.iter().all(|row| row.name != **name))
+            .map(|name| profiles::Listed {
+                name: name.clone(),
+                description: String::new(),
+                enabled: true,
+                error: Some("no file".to_string()),
+            })
+            .collect();
+        rows.extend(gone);
+        rows
+    }
+
+    /// The profiles to complete: the folder's that are on, then the ones laid, each once
+    pub fn profile_names(&self) -> Vec<String> {
+        let mut names = profiles::on_names(&self.profiles_dir);
+        let laid = self.profiles.iter().filter(|name| !names.contains(name));
+        names.extend(laid.cloned().collect::<Vec<_>>());
+        names
+    }
+
+    /// Why the profile `name` can't be laid: no file, a file that doesn't read, or off
+    /// (MAX-240)
+    pub fn check_profile(&self, name: &str) -> Result<(), String> {
+        let profile = self.profile(name).map_err(|err| err.to_string())?;
+        if !profile.file.enabled {
+            return Err(format!("'{name}' is off (enabled = false in its file)"));
+        }
+        Ok(())
+    }
+
+    /// The stack with `name` taken off when it's laid, else on top; refused, with the reason,
+    /// for one that can't be laid (MAX-240)
+    pub fn toggled_profile(&self, name: &str) -> Result<Vec<String>, String> {
+        let mut stack = self.profiles.clone();
+        if stack.iter().any(|own| own == name) {
+            stack.retain(|own| own != name);
+        } else {
+            self.check_profile(name)?;
+            stack.push(name.to_string());
+        }
+        Ok(stack)
+    }
+
+    /// The stack with `name` one place up (`up`, later, over more of the others) or down
+    /// (MAX-240); none at the end it goes to, refused for one that isn't laid
+    pub fn moved_profile(&self, name: &str, up: bool) -> Result<Option<Vec<String>>, String> {
+        let Some(place) = self.profiles.iter().position(|own| own == name) else {
+            return Err(format!("'{name}' isn't laid: lay it first"));
+        };
+        let other = if up {
+            place + 1
+        } else {
+            match place.checked_sub(1) {
+                Some(other) => other,
+                None => return Ok(None),
+            }
+        };
+        if other >= self.profiles.len() {
+            return Ok(None);
+        }
+        let mut stack = self.profiles.clone();
+        stack.swap(place, other);
+        Ok(Some(stack))
+    }
+
+    /// The stack laid, said in its notice box (MAX-240)
+    pub fn say_profiles(&mut self) {
+        let message = match self.profiles.as_slice() {
+            [] => "No profile laid".to_string(),
+            profiles => format!("Profiles: {}", profiles.join(", ")),
+        };
+        self.notify_keyed("profiles", ToastLevel::Info, message);
+    }
+
     /// `profiles` for the loop to lay, none when they're the ones laid
     pub fn set_profiles_due(&mut self, profiles: Vec<String>) {
         self.profiles_due = (profiles != self.profiles).then_some(profiles);

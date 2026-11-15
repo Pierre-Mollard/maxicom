@@ -17,6 +17,7 @@ name = "board"
 hosts = ["laptop"]           # the machines it's for; none: every one
 address = "/dev/ttyUSB0"
 color = "#ff8800"            # none: one of the palette's, by its port
+profiles = ["board"]         # added to the config while it's open
 baud = 115200                # the line fields left out are [link]'s
 bits = 8
 parity = "none"
@@ -29,6 +30,8 @@ address = "tcp://192.168.1.50:4000"  # no line: the bridge sets it
 ```
 
 Line settings you leave out take the values of `[link]` in `config.toml`.
+`profiles` lists the [profiles](profiles.md) the link brings while it's
+open, in order.
 
 ## Editing in the app
 

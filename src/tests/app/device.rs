@@ -1930,3 +1930,136 @@ fn download_writes_the_file() {
     assert!(screen.starts_with("sb fw.bin\n$"), "{screen:?}");
     let _ = std::fs::remove_dir_all(&folder);
 }
+
+/// MAX-240 step 5: `profile load` lays a profile on top of the stack and `profile unload` takes
+/// one off, as a stack for the loop to lay at once; `profile` alone says the stack. Refused,
+/// with the reason: a profile laid already, one not laid, one with no file, one that's off, a
+/// name missing. The names to complete are the folder's profiles that are on.
+/// How: a folder with `board`, `proj` and `off` (enabled = false); each line through the
+/// command line, the stack laid as the loop would.
+#[test]
+fn profile_load_and_unload() {
+    use crate::{configs::KeyBindingAction, inputs::DialogAction};
+    let dir = crate::capture::tests::temp_dir("profile_command");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("board.toml"), "").unwrap();
+    std::fs::write(dir.join("proj.toml"), "").unwrap();
+    std::fs::write(dir.join("off.toml"), "enabled = false\n").unwrap();
+    let mut app = app_on("/dev/ttyUSB0");
+    app.profiles_dir = dir.clone();
+    let run = |app: &mut App, line: &str| {
+        app.dispatch(KeyBindingAction::CommandLine.to_action(app));
+        app.dispatch(Action::Overlay(DialogAction::Paste(line.to_string())));
+        let mut effects = vec![app.dispatch(Action::Overlay(DialogAction::Confirm))];
+        while let Some(action) = app.next_command_action(Instant::now()) {
+            effects.push(app.dispatch(action));
+        }
+        effects.into_iter().find_map(|effect| match effect {
+            UpdateEffect::LayProfiles(stack) => Some(stack),
+            _ => None,
+        })
+    };
+    let lay = |app: &mut App, stack: Vec<String>| {
+        let keys = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
+        let plots = crate::configs::PlotsConfig::default();
+        app.apply_profiles(stack, keys, Vec::new(), plots);
+    };
+    let last = |app: &App| toasts(app).last().cloned().unwrap();
+    let stack = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+    assert_eq!(app.profile_names(), stack(&["board", "proj"]));
+
+    assert_eq!(run(&mut app, "profile"), None);
+    assert_eq!(last(&app), "No profile laid");
+    let laid = run(&mut app, "profile load board").unwrap();
+    assert_eq!(laid, stack(&["board"]));
+    lay(&mut app, laid);
+    let laid = run(&mut app, "profile load proj").unwrap();
+    assert_eq!(laid, stack(&["board", "proj"]));
+    lay(&mut app, laid);
+    run(&mut app, "profile");
+    assert_eq!(last(&app), "Profiles: board, proj");
+
+    for (line, error) in [
+        ("profile load board", "'board' is laid already".to_string()),
+        ("profile unload off", "'off' isn't laid".to_string()),
+        (
+            "profile load off",
+            "'off' is off (enabled = false in its file)".to_string(),
+        ),
+        (
+            "profile load nope",
+            format!(
+                "profile 'nope' ({}): no such file",
+                dir.join("nope.toml").display()
+            ),
+        ),
+        ("profile load", "load takes a profile's name".to_string()),
+    ] {
+        assert_eq!(run(&mut app, line), None, "{line}");
+        assert_eq!(last(&app), format!("profile: {error}"), "{line}");
+    }
+
+    let laid = run(&mut app, "profile unload board").unwrap();
+    assert_eq!(laid, stack(&["proj"]));
+    lay(&mut app, laid);
+    assert_eq!(run(&mut app, "profile unload proj"), Some(Vec::new()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-240 step 6: the profiles popup's changes: a toggle lays a profile on top or takes a
+/// laid one off, even one whose file is gone, and refuses an off one; a move swaps it with
+/// its neighbour up (later, winning more) or down, nothing at the end, refused for one not
+/// laid. Its rows: the folder's, sorted, then the laid ones with no file.
+/// How: a folder with `board`, `proj` and `off`, `gone` laid without a file.
+#[test]
+fn profiles_popup_toggles_and_moves() {
+    let dir = crate::capture::tests::temp_dir("profiles_popup");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("board.toml"), "description = \"A board\"\n").unwrap();
+    std::fs::write(dir.join("proj.toml"), "").unwrap();
+    std::fs::write(dir.join("off.toml"), "enabled = false\n").unwrap();
+    let mut app = app_on("/dev/ttyUSB0");
+    app.profiles_dir = dir.clone();
+    let stack = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+    app.set_profiles(stack(&["gone", "board"]));
+
+    let rows: Vec<_> = app
+        .profile_rows()
+        .into_iter()
+        .map(|row| (row.name, row.error))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("board".to_string(), None),
+            ("off".to_string(), None),
+            ("proj".to_string(), None),
+            ("gone".to_string(), Some("no file".to_string())),
+        ]
+    );
+    assert_eq!(
+        app.toggled_profile("proj"),
+        Ok(stack(&["gone", "board", "proj"]))
+    );
+    assert_eq!(app.toggled_profile("gone"), Ok(stack(&["board"])));
+    assert_eq!(
+        app.toggled_profile("off"),
+        Err("'off' is off (enabled = false in its file)".to_string())
+    );
+
+    assert_eq!(
+        app.moved_profile("gone", true),
+        Ok(Some(stack(&["board", "gone"])))
+    );
+    assert_eq!(app.moved_profile("gone", false), Ok(None));
+    assert_eq!(app.moved_profile("board", true), Ok(None));
+    assert_eq!(
+        app.moved_profile("board", false),
+        Ok(Some(stack(&["board", "gone"])))
+    );
+    assert_eq!(
+        app.moved_profile("proj", true),
+        Err("'proj' isn't laid: lay it first".to_string())
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

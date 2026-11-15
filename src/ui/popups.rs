@@ -22,6 +22,7 @@ pub mod help;
 pub mod marks;
 pub mod menu;
 pub mod notifications;
+pub mod profiles;
 pub mod reconfigure;
 pub mod resize;
 pub mod sessions;

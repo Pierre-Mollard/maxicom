@@ -333,3 +333,21 @@ fn off_profile_left_out() {
     let warning = "Profile 'off' is off (enabled = false in its file): not laid";
     assert_eq!(laid.warnings.last().map(String::as_str), Some(warning));
 }
+
+/// MAX-240 step 5: the profiles `profile load` completes: the folder's `.toml` files that are
+/// on, sorted; one that doesn't read is listed, so loading it says why; an off one isn't.
+/// How: on, off, broken and a file that isn't a profile, then a folder that isn't there.
+#[test]
+fn on_names_lists_the_profiles_that_are_on() {
+    let folder = Folder::new("profile-names", "");
+    write(&folder, "zeta", "");
+    write(&folder, "alpha", "description = \"a\"\n");
+    write(&folder, "off", "enabled = false\n");
+    write(&folder, "broken", "enabled = = \n");
+    fs::write(folder.path("profiles/notes.txt"), "").unwrap();
+    assert_eq!(
+        on_names(&folder.path("profiles")),
+        ["alpha", "broken", "zeta"]
+    );
+    assert!(on_names(&folder.path("nowhere")).is_empty());
+}

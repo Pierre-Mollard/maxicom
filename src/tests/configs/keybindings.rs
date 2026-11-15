@@ -301,8 +301,8 @@ fn keys_bind_names_only() {
 
 /// MAX-239: a keymap action name is a registry command run by a `KeyBindingAction`, and
 /// back; so is a command built from its arguments that runs without any (`replay-stop`) or
-/// whose arguments are all optional (`mark`, `plot`, `break`). One that needs an argument
-/// isn't an action.
+/// whose arguments are all optional (`mark`, `plot`, `break`, `profile`). One that needs an
+/// argument isn't an action.
 /// How: every command of the registry.
 #[test]
 fn keymap_actions_are_the_action_commands() {
@@ -338,7 +338,8 @@ fn keymap_actions_are_the_action_commands() {
             "replay-resume",
             "replay-restart",
             "break",
-            "plot"
+            "plot",
+            "profile",
         ]
     );
 }

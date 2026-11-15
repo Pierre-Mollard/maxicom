@@ -2968,8 +2968,8 @@ fn help_lists_the_commands() {
     // the last command, whole: the scrollbar keeps its own column
     h.app.update(Action::Overlay(DialogAction::End));
     let rows = h.draw();
-    let cancel = &rows[row_of(&rows, " cancel ").expect("cancel")];
-    assert!(cancel.contains("and queued commands "), "{cancel}");
+    let last = &rows[row_of(&rows, " next-mark ").expect("next-mark")];
+    assert!(last.contains("Go to the mark below "), "{last}");
 }
 
 /// MAX-12: the help popup takes four fifths of the screen, 74 columns at least; MAX-239:
@@ -3034,7 +3034,7 @@ fn help_prefix_actions_align() {
             HelpDialog::new(),
         ))));
     let mut rows = h.draw();
-    for _ in 0..8 {
+    for _ in 0..10 {
         h.app.update(Action::Overlay(DialogAction::PageDown));
         rows.extend(h.draw());
     }
@@ -9947,4 +9947,70 @@ fn highlight_stops_at_the_line_end() {
             );
         }
     }
+}
+
+/// MAX-240: the profiles popup: the folder on top, a row per profile sorted by name, the laid
+/// ones with their place in the stack and `◉`, the others `○`, each with its description; an
+/// off one says so, one that doesn't read says why; the note on the stack under the rows, the
+/// buttons in the border. `K` typed reaches the popup: on a profile that isn't laid, it says so.
+/// `l` (Right) on a laid profile does nothing, `h` (Left) takes it off, which the loop lays.
+/// How: four rows, `proj` then `board` laid, drawn; then `K` on `arduino`, `l` and `h` on
+/// `board`.
+#[test]
+fn profiles_popup() {
+    use crate::{configs::profiles::Listed, overlays::ProfileBrowser};
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 24);
+    let row = |name: &str, description: &str, enabled, error: Option<&str>| Listed {
+        name: name.to_string(),
+        description: description.to_string(),
+        enabled,
+        error: error.map(str::to_string),
+    };
+    let rows = vec![
+        row("arduino", "Arduino boards", true, None),
+        row("board", "My board", true, None),
+        row("broken", "", true, Some("expected `=`")),
+        row("old", "An old one", false, None),
+        row("proj", "", true, None),
+    ];
+    h.app
+        .set_profiles(vec!["proj".to_string(), "board".to_string()]);
+    let browser = ProfileBrowser::new(rows, std::path::PathBuf::from("/conf/profiles"));
+    h.app
+        .update(Action::App(AppAction::OpenOverlay(Overlay::Profiles(
+            browser,
+        ))));
+    let rows = h.draw();
+    for text in [
+        "Folder  /conf/profiles",
+        "   ○ arduino  Arduino boards",
+        " 2 ◉ board    My board",
+        "   ○ broken   doesn't read: expected `=`",
+        "   ○ old      off (enabled = false) An old one",
+        " 1 ◉ proj",
+        "Laid in order: the higher number wins a clash",
+        "Lay / take off",
+        "K Move up",
+        "J Move down",
+        "Copy path",
+    ] {
+        assert!(has(&rows, text), "{text}: {rows:#?}");
+    }
+
+    key_do(
+        &mut h,
+        crossterm::event::KeyCode::Char('K'),
+        KeyModifiers::SHIFT,
+    );
+    assert!(matches!(h.app.overlay(), Some(Overlay::Profiles(_))));
+    let toasts = h.app.notifications.active_toasts();
+    let last = toasts.last().map(|toast| toast.message.as_str());
+    assert_eq!(last, Some("'arduino' isn't laid: lay it first"));
+
+    let key =
+        |h: &mut Harness, c| key_do(h, crossterm::event::KeyCode::Char(c), KeyModifiers::NONE);
+    key(&mut h, 'j');
+    assert!(matches!(key(&mut h, 'l'), UpdateEffect::None));
+    let effect = key(&mut h, 'h');
+    assert!(matches!(effect, UpdateEffect::LayProfiles(ref stack) if stack == &["proj"]));
 }

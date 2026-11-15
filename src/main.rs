@@ -385,22 +385,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         // a link opened at runtime with another stack: laid over the config in use, its
         // files not read again (MAX-240)
         if let Some(profiles) = app.take_profiles_due() {
-            match with_profiles(&global, &AppConfig::profiles_dir(), &profiles) {
-                Ok(laid) => {
-                    let known = global.warnings.len();
-                    let config = RuntimeConfig::new(laid);
-                    highlight_rules = config.highlight_rules;
-                    let (keys, triggers) = (config.key_resolver, config.triggers);
-                    app.apply_profiles(profiles, keys, triggers, config.plots);
-                    let warnings = config.warnings.into_iter().skip(known);
-                    warnings.for_each(|w| app.notify_warn(w));
-                }
-                // the stack in use stays
-                Err(err) => app.open_overlay(Overlay::Error(
-                    ErrorDialog::new("Profiles Not Applied", "The link's profiles didn't load")
-                        .with_details(err),
-                )),
-            }
+            lay_profiles(&mut app, &global, &mut highlight_rules, profiles);
             needs_redraw = true;
         }
 
@@ -447,6 +432,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     }
                     UpdateEffect::CopyToClipboardAs { text, what } => {
                         execute_clipboard_copy(&mut app, &text, Some(&what));
+                    }
+                    // `profile load` / `unload`, at once: the next command of the line sees it
+                    UpdateEffect::LayProfiles(profiles) => {
+                        let laid = lay_profiles(&mut app, &global, &mut highlight_rules, profiles);
+                        if laid {
+                            app.say_profiles();
+                        }
                     }
                     UpdateEffect::ReloadConfig => {
                         match load_runtime_config(&config_path, app.profiles()) {
@@ -556,6 +548,36 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
 /// Copies `text` and says so: the copy of `what` with the text itself, else its char count;
 /// copies one after the other say it in one box (MAX-234)
+/// `profiles` laid over the config files `global`, which aren't read again (MAX-240): the
+/// parts a profile changes given to the app, the highlight rules here, and the profiles'
+/// warnings said. True when laid; when one doesn't load, its error in a dialog and the stack
+/// in use stays
+fn lay_profiles(
+    app: &mut App,
+    global: &AppConfig,
+    highlight_rules: &mut Vec<KeywordHighlight>,
+    profiles: Vec<String>,
+) -> bool {
+    match with_profiles(global, &AppConfig::profiles_dir(), &profiles) {
+        Ok(laid) => {
+            let known = global.warnings.len();
+            let config = RuntimeConfig::new(laid);
+            *highlight_rules = config.highlight_rules;
+            let (keys, triggers) = (config.key_resolver, config.triggers);
+            app.apply_profiles(profiles, keys, triggers, config.plots);
+            let warnings = config.warnings.into_iter().skip(known);
+            warnings.for_each(|w| app.notify_warn(w));
+            true
+        }
+        Err(err) => {
+            app.open_overlay(Overlay::Error(
+                ErrorDialog::new("Profiles Not Applied", "A profile didn't load").with_details(err),
+            ));
+            false
+        }
+    }
+}
+
 fn execute_clipboard_copy(app: &mut App, text: &str, what: Option<&str>) {
     if let Err(e) = copy_via_osc52(text) {
         app.notify_keyed("copy", ToastLevel::Error, format!("Clipboard error: {e}"));
