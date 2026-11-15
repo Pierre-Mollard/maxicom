@@ -46,7 +46,7 @@ fn rule_fields() {
     assert!(menu.is_armed() && !menu.rearm);
     assert_eq!(menu.invocations.len(), 3);
     let mut menu = menu.clone();
-    assert!(menu.fires(b"\x1b[7mBoot menu\x1b[0m"));
+    assert!(menu.fires(b"\x1b[7mBoot menu\x1b[0m").is_some());
 }
 
 /// A bad rule fails the load, naming it; so does a field that isn't one.
@@ -68,4 +68,13 @@ fn bad_rules() {
     );
     let typo = compile("[r]\nmatch = 'x'\nrun = 'send x'\nrearn = true\n").unwrap_err();
     assert!(typo.contains("unknown field `rearn`"), "{typo}");
+    // MAX-220: a mark is one letter, a to z
+    for mark in ["C", "ab", "", "1"] {
+        let rule = format!("{}mark = '{mark}'\n", rule("x", "send x"));
+        let err = compile(&rule).unwrap_err();
+        assert_eq!(
+            err,
+            format!("[r]: mark: '{mark}' isn't a letter from a to z")
+        );
+    }
 }

@@ -33,6 +33,9 @@ pub struct TriggerRule {
     /// No notice of its own when it fires: its `run` can say something (`notify`, MAX-228)
     #[serde(default)]
     pub silent: bool,
+    /// The mark letter put on the line the text ended on (MAX-220)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mark: Option<String>,
 }
 
 impl Default for TriggersConfig {
@@ -44,6 +47,7 @@ impl Default for TriggersConfig {
             rearm,
             armed: false,
             silent,
+            mark: None,
         };
         let rules = BTreeMap::from([
             (
@@ -87,6 +91,21 @@ impl TriggersConfig {
                 if invocations.is_empty() {
                     return Err(error(TriggerErrorKind::EmptyRun));
                 }
+                let mark = match rule
+                    .mark
+                    .as_deref()
+                    .map(|mark| mark.chars().collect::<Vec<_>>())
+                {
+                    None => None,
+                    Some(letter) => match letter[..] {
+                        [letter] if letter.is_ascii_lowercase() => Some(letter),
+                        _ => {
+                            return Err(error(TriggerErrorKind::BadMark(
+                                rule.mark.clone().unwrap_or_default(),
+                            )));
+                        }
+                    },
+                };
                 Ok(Trigger::new(
                     name.clone(),
                     rule.text.clone(),
@@ -96,7 +115,8 @@ impl TriggersConfig {
                     rule.rearm,
                     rule.armed,
                 )
-                .with_silent(rule.silent))
+                .with_silent(rule.silent)
+                .with_mark(mark))
             })
             .collect()
     }
@@ -163,6 +183,7 @@ pub enum TriggerErrorKind {
     BadMatch(CommandError),
     EmptyRun,
     BadRun(CommandError),
+    BadMark(String),
 }
 
 impl std::fmt::Display for TriggerError {
@@ -173,6 +194,9 @@ impl std::fmt::Display for TriggerError {
             TriggerErrorKind::BadMatch(err) => write!(f, "[{rule}]: match: {err}"),
             TriggerErrorKind::EmptyRun => write!(f, "[{rule}]: run is empty"),
             TriggerErrorKind::BadRun(err) => write!(f, "[{rule}]: run: {err}"),
+            TriggerErrorKind::BadMark(mark) => {
+                write!(f, "[{rule}]: mark: '{mark}' isn't a letter from a to z")
+            }
         }
     }
 }

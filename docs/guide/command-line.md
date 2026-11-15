@@ -234,7 +234,8 @@ dtr off; rts on; rts off; mash ' ' '=> '
 ### Triggers
 
 `trigger on|off|toggle [name]` arms, disarms or toggles all the triggers,
-or the one named. The names complete. See [Triggers](triggers.md).
+or the one named. `trigger reset [name]` sets their counts back to zero. The
+names complete. See [Triggers](triggers.md).
 
 ### Plots
 

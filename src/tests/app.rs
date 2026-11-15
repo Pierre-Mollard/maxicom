@@ -391,6 +391,175 @@ fn triggers_fire_on_live_bytes() {
     assert!(effects(&mut app).is_empty());
 }
 
+/// MAX-220 step 0: a trigger's command line runs once the whole chunk its text ended in is
+/// fed, and `mark` in it marks where the command marks: the last complete line of a live
+/// view, not the line that matched. A crash line followed by more lines in the same chunk
+/// isn't the one marked; one still arriving isn't a line yet, the one before is marked.
+/// How: line mode, a rearmed `mark c` trigger on `panic`; one chunk with the panic line and
+/// a line after it, then a chunk ending inside another panic line.
+#[test]
+fn trigger_mark_command_marks_the_last_line() {
+    let config: crate::configs::TriggersConfig = toml::from_str(
+        r#"
+            [crash]
+            match = "panic"
+            run = "mark c"
+            armed = true
+            rearm = true
+            "#,
+    )
+    .unwrap();
+    let mut app = app();
+    app.settings.mode = Mode::Line;
+    app.set_triggers(config.compile().unwrap());
+    let fed = |app: &mut App, bytes: &[u8]| {
+        app.feed_rx(bytes);
+        while let Some(action) = app.next_command_action(Instant::now()) {
+            app.update(action);
+        }
+    };
+
+    fed(&mut app, b"boot\r\npanic here\r\nreboot\r\n");
+    assert_eq!(texts(&app), ["boot", "panic here", "reboot"]);
+    assert_eq!(app.line_mode.marks().get('c'), Some(2), "the line after");
+
+    fed(&mut app, b"up\r\npanic again");
+    assert_eq!(app.line_mode.marks().get('c'), Some(3), "the line before");
+    assert_eq!(app.line_mode.partial_rx(), b"panic again");
+}
+
+/// MAX-220: a trigger's `mark` goes on the line its text ended on, in each mode fed: not a
+/// later line of the same chunk; a line still arriving is marked as the entry it becomes;
+/// a text cut between two chunks marks its line; a rearmed trigger moves its letter to the
+/// latest match. With only the mode shown fed, only its marks; a replay marks nothing.
+/// How: a rearmed `crash` trigger marking `c` on `panic`; chunks in line mode with both modes
+/// fed, read through each mode's marks popup rows; then terminal mode alone; then a replay.
+#[test]
+fn trigger_marks_its_line() {
+    use crate::configs::settings::DualBufferMode;
+    let config: crate::configs::TriggersConfig = toml::from_str(
+        r#"
+            [crash]
+            match = "panic"
+            run = "notify error crashed"
+            mark = "c"
+            armed = true
+            rearm = true
+            silent = true
+            "#,
+    )
+    .unwrap();
+    let mut app = app();
+    app.settings.mode = Mode::Line;
+    app.set_triggers(config.compile().unwrap());
+    assert_eq!(app.triggers()[0].mark, Some('c'));
+    let marked = |app: &mut App| {
+        let line = app.line_mode.mark_rows().into_iter().map(|row| row.text);
+        let terminal = app.terminal_mode.mark_rows().into_iter();
+        let terminal = terminal.map(|row| row.text.trim_end().to_string());
+        (line.collect::<Vec<_>>(), terminal.collect::<Vec<_>>())
+    };
+    let both = |text: &str| (vec![text.to_string()], vec![text.to_string()]);
+
+    app.feed_rx(b"boot\r\npanic here\r\nreboot\r\n");
+    assert_eq!(app.line_mode.marks().get('c'), Some(1));
+    assert_eq!(marked(&mut app), both("panic here"));
+
+    app.feed_rx(b"up\r\npanic again");
+    assert_eq!(
+        app.line_mode.marks().get('c'),
+        Some(4),
+        "the entry it becomes"
+    );
+    app.feed_rx(b" and again\r\n");
+    assert_eq!(marked(&mut app), both("panic again and again"));
+
+    app.feed_rx(b"x\r\npa");
+    app.feed_rx(b"nic cut\r\nafter\r\n");
+    assert_eq!(marked(&mut app), both("panic cut"));
+
+    app.settings.mode = Mode::Terminal;
+    app.settings.dual_mode_buffering = DualBufferMode::ActiveOnly;
+    app.feed_rx(b"panic terminal\r\nmore\r\n");
+    assert_eq!(
+        marked(&mut app),
+        (
+            vec!["panic cut".to_string()],
+            vec!["panic terminal".to_string()]
+        )
+    );
+
+    app.link
+        .set_address("file:///tmp/capture.raw".parse::<Address>().unwrap());
+    app.feed_rx(b"panic replayed\r\n");
+    assert_eq!(marked(&mut app).1, ["panic terminal"]);
+}
+
+/// MAX-220: each trigger counts its fires, a silent one too, not while disarmed;
+/// `trigger reset` sets one's count or all back to zero with a notice, a name that isn't
+/// one refused. A reload keeps the counts of the triggers of the same name; a switch to
+/// another device resets them.
+/// How: the default triggers armed (`login`, `panic` silent, `u-boot` one shot), their texts
+/// fed; command lines; a reload; then `switch_session`.
+#[test]
+fn trigger_counts() {
+    let mut app = app();
+    let reload = |app: &mut App| {
+        let config = crate::configs::TriggersConfig::default();
+        app.set_triggers(config.compile().unwrap());
+    };
+    reload(&mut app);
+    let run = |app: &mut App, line: &str| {
+        let invocations = crate::commands::parse(line).unwrap();
+        app.update(Action::App(AppAction::QueueCommands(invocations)));
+        while let Some(action) = app.next_command_action(Instant::now()) {
+            app.update(action);
+        }
+        let toasts = app.notifications.active_toasts();
+        toasts.last().unwrap().message.clone()
+    };
+    let hits = |app: &App| -> Vec<(String, u32)> {
+        let triggers = app.triggers().iter();
+        triggers.map(|t| (t.name.clone(), t.hits)).collect()
+    };
+    let counts = |login, panic, uboot| {
+        vec![
+            ("login".to_string(), login),
+            ("panic".to_string(), panic),
+            ("u-boot".to_string(), uboot),
+        ]
+    };
+
+    app.feed_rx(b"login: Kernel panic");
+    assert_eq!(hits(&app), counts(0, 0, 0), "disarmed");
+    run(&mut app, "trigger on");
+    for _ in 0..2 {
+        app.feed_rx(b"login: Kernel panic\r\nHit any key to stop autoboot");
+    }
+    assert_eq!(hits(&app), counts(2, 2, 1), "u-boot one shot");
+
+    assert_eq!(
+        run(&mut app, "trigger reset panic"),
+        "Trigger panic: count reset"
+    );
+    assert_eq!(hits(&app), counts(2, 0, 1));
+    assert_eq!(
+        run(&mut app, "trigger reset nope"),
+        "trigger: no trigger named 'nope'"
+    );
+
+    reload(&mut app);
+    assert_eq!(hits(&app), counts(2, 0, 1), "kept across a reload");
+    assert_eq!(run(&mut app, "trigger reset"), "Trigger counts reset");
+    assert_eq!(hits(&app), counts(0, 0, 0));
+
+    run(&mut app, "trigger on");
+    app.feed_rx(b"login: ");
+    assert_eq!(hits(&app), counts(1, 0, 0));
+    app.switch_session();
+    assert_eq!(hits(&app), counts(0, 0, 0), "reset by a device switch");
+}
+
 /// MAX-6: the toggle arms every trigger when none is armed, else disarms them all; the
 /// `trigger` command arms, disarms or toggles all or one by name, refuses a name that
 /// isn't one, and each change says what is armed. With no trigger at all, both say so.

@@ -536,13 +536,13 @@ pub fn mash(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     Ok(Action::App(AppAction::StartMash(Box::new(mash))))
 }
 
-/// `trigger on|off|toggle [name]` (MAX-6): all the triggers, or the one named. Toggled, all
-/// of them are armed when none is, else disarmed
+/// `trigger on|off|toggle|reset [name]` (MAX-6): all the triggers, or the one named. Toggled,
+/// all of them are armed when none is, else disarmed; reset, their counts (MAX-220)
 pub fn trigger(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     let (state, name) = match args {
         [ArgValue::Enum(state)] => (*state, None),
         [ArgValue::Enum(state), ArgValue::String(name)] => (*state, Some(name.clone())),
-        _ => unreachable!("trigger takes on, off or toggle, then a name"),
+        _ => unreachable!("trigger takes on, off, toggle or reset, then a name"),
     };
     let triggers = app.triggers();
     if triggers.is_empty() {
@@ -550,15 +550,18 @@ pub fn trigger(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     }
     let named =
         (triggers.iter()).filter(|trigger| name.as_ref().is_none_or(|n| *n == trigger.name));
+    if let Some(name) = &name
+        && named.clone().count() == 0
+    {
+        return Err(format!("no trigger named '{name}'"));
+    }
     let on = match state {
+        "reset" => return Ok(Action::App(AppAction::ResetTriggers(name))),
         "on" => true,
         "off" => false,
         _ => !named.clone().any(|trigger| trigger.is_armed()),
     };
-    match &name {
-        Some(name) if named.count() == 0 => Err(format!("no trigger named '{name}'")),
-        _ => Ok(Action::App(AppAction::ArmTriggers { on, name })),
-    }
+    Ok(Action::App(AppAction::ArmTriggers { on, name }))
 }
 
 /// `plot [name]` (MAX-222): the plot named, `off`, or alone the next one in the file's order,

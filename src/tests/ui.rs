@@ -4537,6 +4537,52 @@ fn trigger_browser_keys() {
     assert_eq!(press(Char('h'), none).0, ["u-boot"]);
 }
 
+/// MAX-220: a trigger's count at the end of its row once it fired, none before; the selected
+/// one's mark and count in its config, `none` and `never` before.
+/// How: a marking rearmed trigger and a plain one, the popup drawn, the first fed three times.
+#[test]
+fn trigger_browser_shows_marks_and_counts() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 30);
+    let config: crate::configs::TriggersConfig = toml::from_str(
+        "[crash]\nmatch = 'panic'\nrun = 'notify error crashed'\nmark = 'c'\narmed = true\n\
+         rearm = true\n[plain]\nmatch = 'x'\nrun = 'send y'\n",
+    )
+    .unwrap();
+    h.app.set_triggers(config.compile().unwrap());
+    h.app.update(KeyBindingAction::Triggers.to_action(&h.app));
+    let rows = h.draw();
+    assert!(has(&rows, "Mark   'c on the line matched"), "{rows:#?}");
+    assert!(has(&rows, "Fired  never"), "{rows:#?}");
+    let row = |rows: &[String], name: &str| {
+        let row = rows.iter().find(|row| row.contains(&format!("◎ {name}")));
+        row.or_else(|| rows.iter().find(|row| row.contains(&format!("○ {name}"))))
+            .unwrap()
+            .clone()
+    };
+    assert!(
+        row(&rows, "crash").contains("◎ crash  State"),
+        "no count yet"
+    );
+
+    for _ in 0..3 {
+        h.app.feed_rx(b"panic\r\n");
+    }
+    let rows = h.draw();
+    // the list two columns wider for the count, the other row padded to it
+    assert!(
+        row(&rows, "crash").contains("◎ crash 3  State"),
+        "{rows:#?}"
+    );
+    assert!(
+        row(&rows, "plain").contains("○ plain    Match"),
+        "{rows:#?}"
+    );
+    assert!(has(&rows, "Fired  3 times"), "{rows:#?}");
+    h.app.update(Action::Overlay(DialogAction::Down));
+    let rows = h.draw();
+    assert!(has(&rows, "Mark   none"), "{rows:#?}");
+}
+
 /// MAX-167: the trigger browser is as big as its text and buttons, every trigger's config
 /// in it: it doesn't change with the selection, and a longer rule widens it; the screen's
 /// size at most. MAX-183: a name longer than 20 columns is cut in the list.
@@ -4577,8 +4623,9 @@ fn trigger_browser_fits_its_text() {
             .position(|row| row.contains('└'))
             .unwrap();
     let height = bottom - top + 1;
-    // the config and its title, no padding on top (MAX-183)
-    assert_eq!(height, 4 + 1 + 2 + 3);
+    // the config (6 rows with the mark and the count, MAX-220) and its title, no padding on
+    // top (MAX-183)
+    assert_eq!(height, 6 + 1 + 2 + 3);
     h.app.update(Action::Overlay(DialogAction::Down));
     assert_eq!(popup_width(&mut h), width);
 

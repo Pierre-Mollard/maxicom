@@ -146,16 +146,25 @@ pub fn render_triggers_popup(
     area
 }
 
-/// A row of the list: the mark, a space and the name, `NAME_WIDTH` at most
+/// A row of the list: the mark, a space and the name, `NAME_WIDTH` at most, then its count
+/// once it fired
 fn list_width(trigger: &Trigger) -> u16 {
-    (2 + trigger.name.width().min(NAME_WIDTH)) as u16
+    (2 + trigger.name.width().min(NAME_WIDTH) + count_width(trigger)) as u16
+}
+
+/// The count at the end of a row, a space before it, none until it fired (MAX-220)
+fn count_width(trigger: &Trigger) -> usize {
+    match trigger.hits {
+        0 => 0,
+        hits => 1 + hits.to_string().len(),
+    }
 }
 
 /// A name in the list at most: a longer one is cut, in full over the selected one's config
 const NAME_WIDTH: usize = 20;
 
 /// The rows of the config
-const FIELDS: usize = 4;
+const FIELDS: usize = 6;
 
 /// A trigger's config: each field's name padded, its value and style. Armed in the status
 /// bar's color, the text matched and the line run in the settings' colors
@@ -167,6 +176,15 @@ fn config(trigger: &Trigger, theme: &ThemeConfig) -> [(&'static str, String, Sty
         ("armed", warn.add_modifier(Modifier::BOLD))
     } else {
         ("disarmed", muted)
+    };
+    let (mark, mark_style) = match trigger.mark {
+        Some(letter) => (format!("'{letter} on the line matched"), plain),
+        None => ("none".to_string(), muted),
+    };
+    let (fired, fired_style) = match trigger.hits {
+        0 => ("never".to_string(), muted),
+        1 => ("once".to_string(), plain),
+        hits => (format!("{hits} times"), plain),
     };
     let fires = match (trigger.rearm, trigger.silent) {
         (true, false) => "each time, it stays armed",
@@ -187,12 +205,14 @@ fn config(trigger: &Trigger, theme: &ThemeConfig) -> [(&'static str, String, Sty
             Style::default().fg(theme.palette.main),
         ),
         ("Fires  ", fires.to_string(), plain),
+        ("Mark   ", mark, mark_style),
+        ("Fired  ", fired, fired_style),
     ]
 }
 
 /// The list's title, then one row per trigger from the one that keeps the selection in view:
-/// `◎` armed, `○` not, a long name cut, the selected one's bar as wide as the list. Each row
-/// is a click target
+/// `◎` armed, `○` not, a long name cut, its count at the end once it fired (MAX-220), the
+/// selected one's bar as wide as the list. Each row is a click target
 fn render_list(
     app: &App,
     browser: &TriggerBrowser,
@@ -223,14 +243,21 @@ fn render_list(
             };
             let row_area = Rect::new(area.x, area.y + (idx - first) as u16, area.width, 1);
             targets.push((row_area, PopupTarget::TriggerRow(idx)));
-            // cut to the list's width, narrower than `NAME_WIDTH` on a narrow screen
-            let name = cut(&trigger.name, (area.width as usize).saturating_sub(2));
-            let pad = (area.width as usize).saturating_sub(2 + name.width());
+            // cut to the list's width, narrower than `NAME_WIDTH` on a narrow screen, the
+            // count kept at the end
+            let count = match trigger.hits {
+                0 => String::new(),
+                hits => format!(" {hits}"),
+            };
+            let room = (area.width as usize).saturating_sub(2 + count.width());
+            let name = cut(&trigger.name, room);
+            let pad = room.saturating_sub(name.width());
             Line::from(vec![
                 Span::styled(mark, style.fg(color)),
                 Span::styled(" ", style),
                 Span::styled(name, style),
                 Span::styled(" ".repeat(pad), style),
+                Span::styled(count, style.fg(theme.palette.secondary)),
             ])
         })
         .collect();

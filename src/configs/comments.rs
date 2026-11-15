@@ -219,6 +219,7 @@ pub const TRIGGERS_COMMENTS: &[(&str, &str)] = &[(
         "\nmatch: the text to wait for; run: the command line to run",
         "\nrearm: stay armed after firing; armed: armed at startup",
         "\nsilent: no notice when it fires, its run can notify",
+        "\nmark = \"c\": that mark (a to z) on the line the text ended on",
     ),
 )];
 

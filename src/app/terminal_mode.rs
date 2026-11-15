@@ -382,6 +382,12 @@ impl TerminalMode {
         self.marks.set(letter, row).then_some(row)
     }
 
+    /// Puts mark `letter` on the cursor's row, where the bytes are being received (MAX-220)
+    pub fn mark_cursor_row(&mut self, letter: char) {
+        let row = self.max_content_scrollback + self.vt100_screen().cursor_position().0 as usize;
+        self.marks.set(letter, row);
+    }
+
     /// Puts mark `letter` on world row `row`, none when there's no such row (MAX-164)
     pub fn add_mark_at(&mut self, letter: char, row: usize) -> Option<usize> {
         let exists = row < self.max_content_scrollback + self.get_vt100_size().0 as usize;

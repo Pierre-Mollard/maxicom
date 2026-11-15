@@ -45,9 +45,44 @@ fg = "Blue"
 line_start = ["D (", "V ("]
 fg = "DarkGray"
 
+# ESP-IDF's crash messages: a notice each, the line marked c, so Ctrl-a ' then
+# c (or jump-mark c) goes to the last crash; the triggers popup counts them
 [triggers.esp-panic]
 match = "Guru Meditation Error"
 run = 'notify error "the board crashed"'
+mark = "c"
+rearm = true
+armed = true
+silent = true
+
+[triggers.esp-abort]
+match = "abort() was called"
+run = 'notify error "abort() was called"'
+mark = "c"
+rearm = true
+armed = true
+silent = true
+
+[triggers.esp-stack-overflow]
+match = "A stack overflow in task"
+run = 'notify error "a task overflowed its stack"'
+mark = "c"
+rearm = true
+armed = true
+silent = true
+
+[triggers.esp-task-watchdog]
+match = "Task watchdog got triggered"
+run = 'notify error "the task watchdog fired"'
+mark = "c"
+rearm = true
+armed = true
+silent = true
+
+[triggers.esp-brownout]
+match = "Brownout detector was triggered"
+run = 'notify warn "brownout: the supply voltage dropped"'
+mark = "c"
 rearm = true
 armed = true
 silent = true

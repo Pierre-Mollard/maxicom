@@ -89,6 +89,7 @@ pub enum AppAction {
     QueueCommands(Vec<Invocation>),
     ToggleTriggers,
     ArmTriggers { on: bool, name: Option<String> },
+    ResetTriggers(Option<String>),
     ShowPlot(Option<String>),
     TogglePlotFreeze,
     ShowProfiles,

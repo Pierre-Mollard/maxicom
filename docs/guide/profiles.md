@@ -178,7 +178,7 @@ When maxicom creates the `profiles` folder, it writes two profiles in it:
 
 | Profile | Holds |
 | --- | --- |
-| `esp32` | ESP-IDF's log lines colored by level (`E` red, `W` yellow, `D` and `V` dimmed), `Ctrl-a h` resetting the board through RTS, `Ctrl-a H` starting its bootloader, a `usb-bootloader` command for the chips with a native USB port, and a notice when the board crashes |
+| `esp32` | ESP-IDF's log lines colored by level (`E` red, `W` yellow, `D` and `V` dimmed), `Ctrl-a h` resetting the board through RTS, `Ctrl-a H` starting its bootloader, a `usb-bootloader` command for the chips with a native USB port, and on each crash (a panic, `abort()`, a stack overflow, the task watchdog, a brownout) a notice and mark `c` on its line |
 | `arduino` | The `serial-plotter` plot: `temp:23.4,hum:51` or bare numbers, as the Arduino IDE's serial plotter reads them |
 
 They're plain files: read them, edit them, or copy one to start your own.

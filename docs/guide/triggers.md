@@ -34,6 +34,7 @@ silent = true
 | `rearm` | `true` keeps the trigger armed after it fires |
 | `armed` | `true` arms it at startup |
 | `silent` | `true` fires it without its notice, see [Raising a notification](#raising-a-notification) |
+| `mark` | A [mark](marks.md) letter, `a` to `z`, put on the line the text came in on, see [Marking the line](#marking-the-line) |
 
 `triggers_path` in `config.toml` points to another file.
 
@@ -52,6 +53,31 @@ silent = true
 
 `silent = true` leaves the trigger's own notice out, so the error is the only
 notification. Arm it with `Ctrl-a T`, `trigger on panic`, or `armed = true`.
+
+### Marking the line
+
+`mark = "c"` puts mark `c` on the line the text came in on, so you can go
+back to it later: `Ctrl-a '` then `c`, or `jump-mark c`. Each time the trigger
+fires, the mark moves to the new line, so with `rearm` it's always the last
+one.
+
+```toml
+[panic]
+match = "Kernel panic"
+run = 'notify error "the board panicked"'
+mark = "c"
+rearm = true
+silent = true
+```
+
+The mark goes on the line where the text ends, even when more lines came in
+the same read. A line still arriving gets it too: the
+[marks popup](marks.md#the-marks-popup) lists it once the line is complete.
+Both views get the mark when both receive the data, so it's there in line
+mode and in terminal mode.
+
+Running `mark c` from `run` isn't the same: it marks where the `mark`
+command does, the last complete line, which may already be a later one.
 
 ## How matching works
 
@@ -72,11 +98,22 @@ Triggers start disarmed unless they have `armed = true`.
 When one fires, a notice says so, `Trigger u-boot: send ' '`, unless it has
 `silent = true`.
 
+## Counting
+
+Each trigger counts how many times it fired, silent ones too. The
+[trigger browser](#the-trigger-browser) shows the count at the end of its
+row, and on the side as `Fired`.
+
+The counts keep going when the link reconnects, on an attach, and when the
+file or a profile is loaded again. They start again from zero when you
+switch to another device. `trigger reset` sets them back to zero, or
+`trigger reset <name>` one of them.
+
 ## The trigger browser
 
 `Ctrl-a T` (or Triggers in the right-click menu) lists the triggers with
-their state, `◎` armed and `○` disarmed. The selected trigger's rule shows
-on the side.
+their state, `◎` armed and `○` disarmed, and how many times each fired. The
+selected trigger's rule shows on the side, with its mark and its count.
 
 ![The trigger browser: login armed, the selected u-boot rule on the side](images/triggers.png)
 
@@ -97,6 +134,7 @@ On top of the [popup keys](popups.md):
 | `Ctrl-a U` | Toggles `u-boot` |
 | `toggle-triggers` | Toggles them all (no key by default) |
 | `trigger on\|off\|toggle [name]` | Arms, disarms or toggles all, or the one named |
+| `trigger reset [name]` | Sets the counts back to zero, or the one named's |
 
 Since `trigger` is a command, one key can arm a trigger and reset the board:
 

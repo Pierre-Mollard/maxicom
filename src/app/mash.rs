@@ -64,7 +64,7 @@ impl Mash {
 
     /// Whether the text waited for ends in these received bytes
     pub fn until_seen(&mut self, chunk: &[u8]) -> bool {
-        self.until.feed(chunk)
+        self.until.feed(chunk).is_some()
     }
 }
 

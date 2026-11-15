@@ -273,6 +273,7 @@ fn built_in_profiles_written_with_the_folder() {
 /// config: `esp32`'s RTS reset in place of the DTR one on the same key, its bootloader on
 /// `H`, its log level lines and its armed crash trigger; `arduino`'s serial plotter plot.
 /// MAX-9: `esp32`'s `on_open` is commented out, and runs `board-reset` once uncommented.
+/// MAX-220: its crash triggers, armed, silent, rearmed, each marking `c`.
 /// How: the default files, each profile laid over them; `esp32`'s text with `on_open`
 /// uncommented.
 #[test]
@@ -303,8 +304,24 @@ fn built_in_profiles_lay_over_the_defaults() {
         .collect();
     assert_eq!(lines, ["esp-error", "esp-warning", "esp-info", "esp-debug"]);
     esp32.highlights.compile_rules();
-    let panic = &esp32.triggers.rules["esp-panic"];
-    assert!(panic.armed && panic.silent && panic.rearm);
+    let crashes: Vec<_> = (esp32.triggers.rules.iter())
+        .filter(|(name, _)| name.starts_with("esp-"))
+        .map(|(name, rule)| {
+            assert!(rule.armed && rule.silent && rule.rearm, "{name}");
+            assert_eq!(rule.mark.as_deref(), Some("c"), "{name}");
+            name.as_str()
+        })
+        .collect();
+    assert_eq!(
+        crashes,
+        [
+            "esp-abort",
+            "esp-brownout",
+            "esp-panic",
+            "esp-stack-overflow",
+            "esp-task-watchdog"
+        ]
+    );
     esp32.triggers.compile().unwrap();
     assert_eq!(load(&folder, "esp32").unwrap().file.on_open, None);
     let (_, text) = BUILT_IN.iter().find(|(name, _)| *name == "esp32").unwrap();

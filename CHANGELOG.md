@@ -59,6 +59,14 @@ it needs the file to load, and it drops the sections under the old names
   plot). Delete one you don't want: it stays deleted. `--write-config` writes
   a missing one again, `--reset-config` writes them back. `enabled = false`
   in a profile turns it off without deleting it.
+- A trigger's `mark = "c"` puts that mark on the line its text came in on, so
+  `Ctrl-a '` then `c` goes back to it. See
+  [Marking the line](https://pierre-mollard.github.io/maxicom/triggers.html#marking-the-line).
+- Each trigger counts how many times it fired: the trigger browser shows it,
+  `trigger reset [name]` sets it back to zero, and a switch to another device
+  starts it again.
+- The `esp32` profile notices and marks `c` on a panic, `abort()`, a stack
+  overflow, the task watchdog and a brownout.
 
 ### Changed
 

@@ -68,6 +68,10 @@ impl App {
     /// The device switched to starts as at start on it (MAX-187): a clean screen, its last
     /// session restored, then its own session backup
     pub fn switch_session(&mut self) {
+        // another board's crashes aren't this one's (MAX-220)
+        for trigger in &mut self.triggers {
+            trigger.hits = 0;
+        }
         self.recorder.end_line(self.settings.encoding);
         self.clear_screen();
         self.restored_session = None;

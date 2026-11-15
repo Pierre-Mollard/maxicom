@@ -1207,8 +1207,9 @@ impl App {
         if self.hold_rx(chunk) {
             return;
         }
-        self.feed(chunk, true);
-        self.fire_triggers(chunk);
+        let fired = self.match_triggers(chunk);
+        self.feed_marking(chunk, &fired);
+        self.run_fired(&fired);
         self.watch_mash(chunk);
     }
 
@@ -1254,7 +1255,13 @@ impl App {
     }
 
     /// The rules of `triggers.toml`, at startup and on a reload (MAX-6)
-    pub fn set_triggers(&mut self, triggers: Vec<Trigger>) {
+    /// The triggers of the config and its profiles, each keeping the count of the one of the
+    /// same name it replaces (MAX-220): a reload or a profile lay doesn't reset them
+    pub fn set_triggers(&mut self, mut triggers: Vec<Trigger>) {
+        for trigger in &mut triggers {
+            let old = self.triggers.iter().find(|old| old.name == trigger.name);
+            trigger.hits = old.map_or(0, |old| old.hits);
+        }
         self.triggers = triggers;
     }
 
@@ -1298,6 +1305,19 @@ impl App {
         }
     }
 
+    /// The counts of the triggers back to zero, or the one named's, with a notice (MAX-220)
+    fn reset_trigger_hits(&mut self, name: Option<&str>) {
+        for trigger in &mut self.triggers {
+            if name.is_none_or(|name| name == trigger.name) {
+                trigger.hits = 0;
+            }
+        }
+        match name {
+            Some(name) => self.notify_info(format!("Trigger {name}: count reset")),
+            None => self.notify_info("Trigger counts reset"),
+        }
+    }
+
     /// The names of the armed triggers
     pub fn armed_triggers(&self) -> Vec<&str> {
         (self.triggers.iter())
@@ -1306,25 +1326,69 @@ impl App {
             .collect()
     }
 
-    /// The armed triggers whose text ends in these live bytes run their command line, queued
-    /// as a typed one, with a notice (MAX-6). A replay's bytes never fire one, nor what a
-    /// restore or the restore question held back (fed apart)
-    fn fire_triggers(&mut self, chunk: &[u8]) {
+    /// The armed triggers whose text ends in these live bytes, with where it ends in them
+    /// (MAX-6). A replay's bytes never fire one, nor what a restore or the restore question
+    /// held back (fed apart)
+    fn match_triggers(&mut self, chunk: &[u8]) -> Vec<(usize, usize)> {
         if !self.link_kind().writes() {
-            return;
+            return Vec::new();
         }
-        for i in 0..self.triggers.len() {
-            if self.triggers[i].fires(chunk) {
-                let trigger = &self.triggers[i];
-                let notice = format!("Trigger {}: {}", trigger.name, trigger.run);
-                let invocations = trigger.invocations.clone();
-                // a silent one leaves it to its command line (`notify`, MAX-228)
-                if !trigger.silent {
-                    self.notify_info(notice);
-                }
-                self.queue_commands(invocations);
+        (self.triggers.iter_mut().enumerate())
+            .filter_map(|(i, trigger)| Some((i, trigger.fires(chunk)?)))
+            .collect()
+    }
+
+    /// Feeds `chunk`, cut where a `fired` trigger with a mark has its text end, to put the
+    /// mark on the line being received there (MAX-220)
+    fn feed_marking(&mut self, chunk: &[u8], fired: &[(usize, usize)]) {
+        let mut marks: Vec<(usize, char)> = (fired.iter())
+            .filter_map(|&(i, end)| Some((end, self.triggers[i].mark?)))
+            .collect();
+        marks.sort_by_key(|&(end, _)| end);
+        let mut from = 0;
+        for (end, letter) in marks {
+            if end > from {
+                self.feed(&chunk[from..end], true);
+                from = end;
             }
+            self.mark_receiving(letter);
         }
+        if from < chunk.len() || from == 0 {
+            self.feed(&chunk[from..], true);
+        }
+    }
+
+    /// Mark `letter` on the line being received, in each mode fed (MAX-220)
+    fn mark_receiving(&mut self, letter: char) {
+        let (feed_line, feed_terminal) = self.fed_modes();
+        if feed_line {
+            self.line_mode.mark_receiving(letter);
+        }
+        if feed_terminal {
+            self.terminal_mode.mark_cursor_row(letter);
+        }
+    }
+
+    /// The `fired` triggers run their command line, queued as a typed one, with a notice
+    /// (MAX-6), once their chunk is fed
+    fn run_fired(&mut self, fired: &[(usize, usize)]) {
+        for &(i, _) in fired {
+            let trigger = &self.triggers[i];
+            let notice = format!("Trigger {}: {}", trigger.name, trigger.run);
+            let invocations = trigger.invocations.clone();
+            // a silent one leaves it to its command line (`notify`, MAX-228)
+            if !trigger.silent {
+                self.notify_info(notice);
+            }
+            self.queue_commands(invocations);
+        }
+    }
+
+    /// Which modes the received bytes go to: the one shown, both with `always_both`
+    fn fed_modes(&self) -> (bool, bool) {
+        let both = self.settings.dual_mode_buffering == DualBufferMode::AlwaysBoth;
+        let mode = self.settings.mode;
+        (both || mode == Mode::Line, both || mode == Mode::Terminal)
     }
 
     /// Feeds both modes. The remote's queries are answered when `live` (not held while the
@@ -1339,11 +1403,8 @@ impl App {
         self.recorder
             .record_rx(settings.add_lf, settings.encoding, timestamp_format, chunk);
 
-        let feed_line = settings.dual_mode_buffering == DualBufferMode::AlwaysBoth
-            || settings.mode == Mode::Line;
-        let feed_terminal = settings.dual_mode_buffering == DualBufferMode::AlwaysBoth
-            || settings.mode == Mode::Terminal;
-
+        let (feed_line, feed_terminal) = self.fed_modes();
+        let settings = &self.settings;
         if feed_line {
             self.line_mode
                 .feed_rx(settings.add_lf, settings.encoding, chunk);
@@ -1761,6 +1822,10 @@ impl App {
             }
             AppAction::ArmTriggers { on, name } => {
                 self.arm_triggers(on, name.as_deref());
+                UpdateEffect::None
+            }
+            AppAction::ResetTriggers(name) => {
+                self.reset_trigger_hits(name.as_deref());
                 UpdateEffect::None
             }
             AppAction::ShowPlot(name) => {

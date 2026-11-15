@@ -18,6 +18,10 @@ pub struct Trigger {
     pub invocations: Vec<Invocation>,
     pub rearm: bool,
     pub silent: bool,
+    /// The mark put on the line the text ended on (MAX-220)
+    pub mark: Option<char>,
+    /// How many times it fired, since it was loaded or reset (MAX-220)
+    pub hits: u32,
     armed: bool,
     matcher: StreamMatcher,
 }
@@ -39,6 +43,8 @@ impl Trigger {
             invocations,
             rearm,
             silent: false,
+            mark: None,
+            hits: 0,
             armed,
             matcher,
         }
@@ -46,6 +52,11 @@ impl Trigger {
 
     pub fn with_silent(mut self, silent: bool) -> Self {
         self.silent = silent;
+        self
+    }
+
+    pub fn with_mark(mut self, mark: Option<char>) -> Self {
+        self.mark = mark;
         self
     }
 
@@ -61,16 +72,19 @@ impl Trigger {
         self.armed = on;
     }
 
-    /// Whether it fires on this chunk; a disarmed one doesn't look at it
-    pub fn fires(&mut self, chunk: &[u8]) -> bool {
-        if !self.armed || !self.matcher.feed(chunk) {
-            return false;
+    /// Where in this chunk its text ends when it fires on it, past the text's last byte,
+    /// counted; a disarmed one doesn't look at it
+    pub fn fires(&mut self, chunk: &[u8]) -> Option<usize> {
+        if !self.armed {
+            return None;
         }
+        let end = self.matcher.feed(chunk)?;
+        self.hits = self.hits.saturating_add(1);
         if !self.rearm {
             self.armed = false;
             self.matcher.reset();
         }
-        true
+        Some(end)
     }
 }
 
@@ -96,12 +110,17 @@ impl StreamMatcher {
         })
     }
 
-    /// Whether the text ends in this chunk: once however many times it does
-    pub fn feed(&mut self, chunk: &[u8]) -> bool {
-        let keep = self.finder.needle().len() - 1;
-        // across the cut: the tail and the start of the chunk, short of a whole text
+    /// Where the text ends in this chunk, past its last byte: its first end, once however
+    /// many times it does
+    pub fn feed(&mut self, chunk: &[u8]) -> Option<usize> {
+        let len = self.finder.needle().len();
+        let keep = len - 1;
+        // across the cut: the tail and the start of the chunk, short of a whole text, so a
+        // text found there ends in the chunk
+        let seen = self.tail.len();
         self.tail.extend_from_slice(&chunk[..chunk.len().min(keep)]);
-        let found = self.finder.find(&self.tail).is_some() || self.finder.find(chunk).is_some();
+        let found = (self.finder.find(&self.tail).map(|at| at + len - seen))
+            .or_else(|| self.finder.find(chunk).map(|at| at + len));
         if chunk.len() >= keep {
             self.tail.clear();
             self.tail.extend_from_slice(&chunk[chunk.len() - keep..]);

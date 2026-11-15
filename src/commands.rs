@@ -639,7 +639,7 @@ pub static COMMANDS: &[CommandSpec] = {
         CommandSpec::build(
             "trigger",
             &[
-                arg("state", ArgKind::Enum(&["on", "off", "toggle"])),
+                arg("state", ArgKind::Enum(&["on", "off", "toggle", "reset"])),
                 ArgSpec {
                     name: "name",
                     kind: ArgKind::Trigger,
@@ -647,7 +647,7 @@ pub static COMMANDS: &[CommandSpec] = {
                 },
             ],
             build::trigger,
-            "Arm, disarm or toggle the triggers, or the one named",
+            "Arm, disarm or toggle the triggers, or reset their counts; or the one named's",
         ),
         CommandSpec::build(
             "plot",

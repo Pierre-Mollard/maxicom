@@ -11,25 +11,30 @@ fn empty_text() {
     assert!(StreamMatcher::new(b"").is_none());
 }
 
-/// Found in the chunk where it ends, cut anywhere: each cut of the line in two, then one
-/// byte a chunk.
+/// Found in the chunk where it ends, cut anywhere, with where it ends in it (MAX-220): each
+/// cut of the line in two, then one byte a chunk.
 #[test]
 fn cut_across_chunks() {
     let line = b"\r\nU-Boot 2024.01\r\nHit any key to stop autoboot:  3 ";
     for cut in 0..=line.len() {
         let mut matcher = matcher();
         let (first, second) = line.split_at(cut);
-        let ends_in_first = cut >= line.len() - 5;
-        assert_eq!(matcher.feed(first), ends_in_first, "cut at {cut}");
-        assert_eq!(matcher.feed(second), !ends_in_first, "cut at {cut}");
+        // past the text's last byte, in the chunk where it ends
+        let end = line.len() - 5;
+        let (in_first, in_second) = if cut >= end {
+            (Some(end), None)
+        } else {
+            (None, Some(end - cut))
+        };
+        assert_eq!(matcher.feed(first), in_first, "cut at {cut}");
+        assert_eq!(matcher.feed(second), in_second, "cut at {cut}");
     }
 
     let mut matcher = matcher();
-    let found: Vec<usize> = (line.iter().enumerate())
-        .filter(|(_, byte)| matcher.feed(&[**byte]))
-        .map(|(i, _)| i)
+    let found: Vec<(usize, usize)> = (line.iter().enumerate())
+        .filter_map(|(i, byte)| Some((i, matcher.feed(&[*byte])?)))
         .collect();
-    assert_eq!(found, [line.len() - 6]);
+    assert_eq!(found, [(line.len() - 6, 1)]);
 }
 
 /// U-Boot's countdown: the digit redrawn with `\b` after the text, then the text cut
@@ -37,12 +42,16 @@ fn cut_across_chunks() {
 #[test]
 fn countdown_redraws() {
     let mut matcher = matcher();
-    assert!(matcher.feed(b"Hit any key to stop autoboot:  3"));
+    assert!(matcher.feed(b"Hit any key to stop autoboot:  3").is_some());
     for redraw in [b"\x08\x08\x08  2", b"\x08\x08\x08  1", b"\x08\x08\x08  0"] {
-        assert!(!matcher.feed(redraw));
+        assert!(matcher.feed(redraw).is_none());
     }
     // a `\b` inside the text isn't the text
-    assert!(!matcher.feed(b"\r\nHit any key to stop auto\x08boot"));
+    assert!(
+        matcher
+            .feed(b"\r\nHit any key to stop auto\x08boot")
+            .is_none()
+    );
 }
 
 /// Once per appearance: the same chunk twice in it is one match; it matches again when it
@@ -50,20 +59,20 @@ fn countdown_redraws() {
 #[test]
 fn again_after_new_output() {
     let mut matcher = StreamMatcher::new(b"=> ").unwrap();
-    assert!(matcher.feed(b"=> => "));
-    assert!(!matcher.feed(b"printenv\r\n"));
-    assert!(matcher.feed(b"bootdelay=3\r\n=> "));
-    assert!(matcher.feed(b"=> "));
-    assert!(!matcher.feed(b""));
+    assert!(matcher.feed(b"=> => ").is_some());
+    assert!(matcher.feed(b"printenv\r\n").is_none());
+    assert!(matcher.feed(b"bootdelay=3\r\n=> ").is_some());
+    assert!(matcher.feed(b"=> ").is_some());
+    assert!(matcher.feed(b"").is_none());
 }
 
 /// A one-byte text keeps no tail.
 #[test]
 fn one_byte() {
     let mut matcher = StreamMatcher::new(b"#").unwrap();
-    assert!(!matcher.feed(b"root@board:~"));
-    assert!(matcher.feed(b"# "));
-    assert!(!matcher.feed(b" "));
+    assert!(matcher.feed(b"root@board:~").is_none());
+    assert!(matcher.feed(b"# ").is_some());
+    assert!(matcher.feed(b" ").is_none());
 }
 
 fn trigger(rearm: bool, armed: bool) -> Trigger {
@@ -85,16 +94,16 @@ fn trigger(rearm: bool, armed: bool) -> Trigger {
 fn one_shot_or_rearmed() {
     let line = b"Hit any key to stop autoboot:  3";
     let mut disarmed = trigger(false, false);
-    assert!(!disarmed.fires(line));
+    assert!(disarmed.fires(line).is_none());
 
     let mut once = trigger(false, true);
-    assert!(once.fires(line));
+    assert!(once.fires(line).is_some());
     assert!(!once.is_armed());
-    assert!(!once.fires(line));
+    assert!(once.fires(line).is_none());
 
     let mut rearmed = trigger(true, true);
-    assert!(rearmed.fires(line));
-    assert!(rearmed.fires(line));
+    assert!(rearmed.fires(line).is_some());
+    assert!(rearmed.fires(line).is_some());
     assert!(rearmed.is_armed());
 }
 
@@ -102,22 +111,22 @@ fn one_shot_or_rearmed() {
 #[test]
 fn armed_again() {
     let mut uboot = trigger(false, true);
-    assert!(!uboot.fires(b"Hit any key"));
+    assert!(uboot.fires(b"Hit any key").is_none());
     uboot.arm(false);
     uboot.arm(true);
-    assert!(!uboot.fires(b" to stop autoboot"));
+    assert!(uboot.fires(b" to stop autoboot").is_none());
     // arming an armed one keeps what it saw
-    assert!(!uboot.fires(b"Hit any key"));
+    assert!(uboot.fires(b"Hit any key").is_none());
     uboot.arm(true);
-    assert!(uboot.fires(b" to stop autoboot"));
+    assert!(uboot.fires(b" to stop autoboot").is_some());
 }
 
 /// After a reset, a text half seen before doesn't complete.
 #[test]
 fn reset() {
     let mut matcher = matcher();
-    assert!(!matcher.feed(b"Hit any key"));
+    assert!(matcher.feed(b"Hit any key").is_none());
     matcher.reset();
-    assert!(!matcher.feed(b" to stop autoboot"));
-    assert!(matcher.feed(b"Hit any key to stop autoboot"));
+    assert!(matcher.feed(b" to stop autoboot").is_none());
+    assert!(matcher.feed(b"Hit any key to stop autoboot").is_some());
 }

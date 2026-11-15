@@ -289,6 +289,20 @@ impl LineMode {
         self.middle_line.unwrap_or(last).min(last)
     }
 
+    /// Puts mark `letter` on the line being received (MAX-220): the entry the partial line
+    /// becomes once complete, else the last one
+    pub fn mark_receiving(&mut self, letter: char) {
+        let len = self.local_history.len();
+        let line = if self.partial_rx().is_empty() {
+            len.checked_sub(1)
+        } else {
+            Some(len)
+        };
+        if let Some(line) = line {
+            self.marks.set(letter, line);
+        }
+    }
+
     /// Puts mark `letter` on entry `line`, none when there's no such entry (MAX-164)
     pub fn add_mark_at(&mut self, letter: char, line: usize) -> Option<usize> {
         let exists = line < self.local_history.len();
