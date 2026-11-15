@@ -85,8 +85,8 @@
 //! | `mark`                          | `mark_pending`                             | A mark key waits for its letter (`mark`, `jump-mark`)    |
 //! | `rec`                           | `logging`                                  | File recording / capture session is active               |
 //! | `session`                       | `backup`                                   | The session backup runs (not in the default layout)      |
-//! | `line`                          | `linemode`                                 | Line Input mode is active                                |
-//! | `term`                          | `terminal`                                 | Direct Terminal mode is active                           |
+//! | `line`                          | `linemode`                                 | Line mode, whatever has the keys (prefix, copy, a popup) |
+//! | `term`                          | `terminal`                                 | Terminal mode, whatever has the keys                     |
 //! | `copy`                          | `copymode`                                 | Copy / Backlog Scrollback mode is active                 |
 //! | `copy_raw`                      | `raw_cursor`                               | Copy mode cursor is in the raw side panel                |
 //! | `search`                        | —                                          | Search mode is active                                    |
@@ -852,8 +852,9 @@ impl Cond {
             }
             Self::CopyRaw => app.copy_side() == Some(CopySide::Raw),
             Self::Search => ctx == InputContext::Search || app.is_search_active(),
-            Self::Line => ctx == InputContext::LineInput,
-            Self::Term => ctx == InputContext::Terminal,
+            // the display mode: the prefix, copy mode or a popup taking the keys keep it
+            Self::Line => app.settings().mode == Mode::Line,
+            Self::Term => app.settings().mode == Mode::Terminal,
             Self::Overlay => ctx == InputContext::Overlay || app.overlay().is_some(),
             Self::Rec => app.recording().is_some(),
             Self::Session => app.has_session(),

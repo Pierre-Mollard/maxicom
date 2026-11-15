@@ -288,7 +288,11 @@ fn built_in_profiles_lay_over_the_defaults() {
     let keymap = &esp32.keybindings;
     assert_eq!(keymap.prefix_actions["h"], "board-reset");
     assert_eq!(keymap.prefix_actions["H"], "bootloader");
-    assert!(keymap.commands["board-reset"].run.starts_with("dtr off; rts on"));
+    assert!(
+        keymap.commands["board-reset"]
+            .run
+            .starts_with("dtr off; rts on")
+    );
     assert!(keymap.commands.contains_key("usb-bootloader"));
     let resolver = KeyResolver::try_new(keymap).unwrap();
     let key = |name: &str| name.parse::<KeyPattern>().unwrap();

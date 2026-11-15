@@ -106,6 +106,40 @@ fn cursor_keys_variable_and_condition() {
     assert_eq!(render(&d.left, &l).last().unwrap(), &plain("8N1"));
 }
 
+/// `line` and `term` are the display mode, kept while the prefix, copy mode or a popup has
+/// the keys: the default bar's cursor keys mode stays in terminal mode. Regression: `term`
+/// was the input context, so `NOR` hid while the prefix was active.
+/// How: the default left template and both conditions in terminal mode with the prefix
+/// active, then in copy mode; line mode with the prefix.
+#[test]
+fn line_and_term_are_the_display_mode() {
+    let d = StatusBarConfig::default();
+    let conditions = "[t](term?bold:hide)[l](line?bold:hide)";
+    let mut t = app(Mode::Terminal);
+    t.update(Action::App(AppAction::SetPrefix(true)));
+    assert_eq!(
+        render(&d.left, &t).last().unwrap(),
+        &span(" NOR", MUTED, BG, "NONE")
+    );
+    assert_eq!(
+        render(conditions, &t),
+        [span("t", "Some(White)", BG, "BOLD")]
+    );
+    t.update(Action::App(AppAction::SetPrefix(false)));
+    t.update(Action::CopyMode(CopyModeAction::Enter));
+    assert_eq!(
+        render(&d.left, &t).last().unwrap(),
+        &span(" NOR", MUTED, BG, "NONE")
+    );
+
+    let mut l = app(Mode::Line);
+    l.update(Action::App(AppAction::SetPrefix(true)));
+    assert_eq!(
+        render(conditions, &l),
+        [span("l", "Some(White)", BG, "BOLD")]
+    );
+}
+
 /// MAX-156: a TCP link has no line settings: `{baud}` is `raw` and `{framing}` the link
 /// kind, in the same places and styles; `line_settings` can hide them.
 /// How: the default left template with a `tcp://` port, a padded baud, the condition.
@@ -625,13 +659,12 @@ fn style_words() {
 }
 
 /// Nested ternaries resolve, a ternary without `:` is ignored (base style).
-/// How: `term` is false while the prefix is active, so the outer false branch wins.
+/// How: `line` is false in terminal mode, so the outer false branch wins.
 #[test]
 fn ternaries() {
-    let mut a = app(Mode::Terminal);
-    a.update(Action::App(AppAction::SetPrefix(true)));
+    let a = app(Mode::Terminal);
     assert_eq!(
-        render("[x](term?(copy?red:green):blue) [y](line?red)", &a),
+        render("[x](line?(copy?red:green):blue) [y](line?red)", &a),
         [span("x", "Some(Blue)", BG, "NONE"), plain(" "), plain("y")]
     );
     let a = app(Mode::Terminal);

@@ -67,7 +67,7 @@ left = '''
     [ |](term?muted:hide prio=4)\
     [ {cursor_keys}](term?muted:hide prio=4)'''
 center = '''
-[◎ {trigger_count} ](armed?(fg=warn bold):hide)\
+[◎ {trigger_count} ](armed?primary:hide)\
     [⟳ mash ](mashing?(fg=secondary bold):hide click=cancel)\
     [▷ {replay_state} {replay_percent:>3}% ](replaying?(fg=secondary bold):hide prio=5)\
     [∿ {plot} ](plot?(frozen?(fg=warn bold):(fg=secondary)):hide prio=5)\
