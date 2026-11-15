@@ -121,6 +121,7 @@ layout = "border"
 | `{replay_percent}` | How much of the file it read, 0..100 | `42` |
 | `{replay_read}` / `{replay_size}` | Bytes read / the file's size | `4096` |
 | `{plot}` | The [plot](plots.md) shown, empty when none | `pid` |
+| `{profiles}` | The link's profiles, in the order they're laid, empty when none | `board, proj` |
 
 The default bar doesn't show `{copy_side}`: in copy mode the mode badge reads
 `COPY`, and its color tells the panel instead. To show it, add this block
@@ -181,6 +182,7 @@ otherwise. Conditions chain:
 | `replaced` | `live_behind` | That replay holds a live link's place, which `toggle-attach` (the default bar's `« live`) goes back to |
 | `plot` | `plotting` | A [plot](plots.md) is shown |
 | `frozen` | `plot_frozen` | The plot's chart is frozen |
+| `profiles` | `profile` | The link has profiles |
 | `is_live` | `live`, `is_bottom`, `bottom`, `bot` | Following the live output |
 | `is_top` | `top` | Scrolled to the top |
 | `is_scrolled` | `scrolled`, `paused` | Scrolled up into the history |
@@ -242,8 +244,8 @@ Give a block `prio=N` to say how important it is, `1` being the most
 important. When the bar is too narrow, it tries, in order:
 
 1. the compact forms: `{port}` as `ttyUSB0` (a saved link keeps its name),
-   byte counts as `1.2K`, the pan as `◀3`, `{trigger_names}` as the first
-   name and how many more;
+   byte counts as `1.2K`, the pan as `◀3`, `{trigger_names}` and
+   `{profiles}` as the first name and how many more;
 2. dropping the blocks with the highest `prio`, then the next highest, and
    so on;
 3. dropping the center part;

@@ -1669,7 +1669,7 @@ fn cycling_shows_one_box() {
     );
 
     app.notifications.dismiss_all();
-    app.set_plots(crate::configs::PlotsConfig::default());
+    app.set_plots(crate::configs::plots::tests::demo_plots());
     for _ in 0..3 {
         app.step_plot(true);
     }
@@ -1853,7 +1853,7 @@ fn replay_reads_the_meta_file_beside() {
 
     // the recording's folder is enough (MAX-175)
     let mut app = self::app();
-    app.open_replay(dir.join("rec"), Duration::ZERO, None)
+    app.open_replay(dir.join("rec"), Duration::ZERO, None, &[])
         .unwrap();
     let replayed = crate::link::Address::Replay(dir.join("rec/rec.raw"));
     assert_eq!(app.link_config().address, replayed);
@@ -1865,7 +1865,7 @@ fn replay_reads_the_meta_file_beside() {
     assert_eq!(meta.device.encoding, TextEncoding::Cp437);
     assert_eq!(meta.device.line, Some(CaptureLine::of(&line)));
 
-    app.open_replay(plain, Duration::ZERO, None).unwrap();
+    app.open_replay(plain, Duration::ZERO, None, &[]).unwrap();
     assert_eq!(app.recorded_line(), None);
     record_full_meta(&mut app, &dir.join("plain_during"), false);
     assert!(dir.join("plain_during/plain_during.raw").exists());

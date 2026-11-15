@@ -645,6 +645,89 @@ fn replay_reads_ends_and_gives_the_link_back() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// MAX-240 step 3d: the session backup's meta says the profile stack laid, written again
+/// when it changes, none written when there's none.
+/// How: a TCP link with a session backup, `board` and `proj` laid, then `board` alone, then
+/// none; the meta read after each.
+#[test]
+fn session_meta_keeps_the_profiles() {
+    use crate::capture::{RecordingMeta, list_sessions};
+    let dir = crate::capture::tests::temp_dir("meta_profiles");
+    let (listener, address) = listener();
+    let (mut app, _peer) = connected(&listener, &address);
+    app.start_session(Some(dir.clone()));
+    let meta_profiles = |app: &mut App| {
+        app.follow_device();
+        let sessions = list_sessions(&dir).unwrap();
+        let raw = sessions[0].raw_path().unwrap();
+        let meta = RecordingMeta::path_of(raw);
+        (
+            RecordingMeta::read(&meta).unwrap().profiles,
+            std::fs::read_to_string(meta).unwrap(),
+        )
+    };
+    let stack = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+
+    app.set_profiles(stack(&["board", "proj"]));
+    assert_eq!(meta_profiles(&mut app).0, stack(&["board", "proj"]));
+    app.set_profiles(stack(&["board"]));
+    assert_eq!(meta_profiles(&mut app).0, stack(&["board"]));
+    app.set_profiles(Vec::new());
+    let (profiles, text) = meta_profiles(&mut app);
+    assert!(profiles.is_empty() && !text.contains("profiles"), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-240 step 3d: a replay lays its meta's profile stack, a profile not found said and left
+/// out, the replay running all the same; stopping it gives the live link's stack back. At
+/// start, `--profile`'s go over the session's.
+/// How: a recording whose meta has `board` and `gone`, `board` and `cli` in the folder,
+/// replayed over a TCP link laying `live`, then stopped; then opened as `--replay` with `cli`.
+#[test]
+fn replay_lays_its_session_profiles() {
+    use crate::capture::{CaptureFormat, RecordingMeta};
+    let dir = crate::capture::tests::temp_dir("replay_profiles");
+    let profiles_dir = dir.join("profiles");
+    std::fs::create_dir_all(&profiles_dir).unwrap();
+    std::fs::write(profiles_dir.join("board.toml"), "").unwrap();
+    std::fs::write(profiles_dir.join("cli.toml"), "").unwrap();
+    let raw = dir.join("rec.raw");
+    std::fs::write(&raw, b"x").unwrap();
+    let device = crate::capture::tests::device("/dev/ttyUSB0");
+    let mut meta = RecordingMeta::new(chrono::Local::now(), device, CaptureFormat::default());
+    meta.profiles = vec!["board".to_string(), "gone".to_string()];
+    meta.write(&RecordingMeta::path_of(&raw)).unwrap();
+    let stack = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+
+    let (listener, address) = listener();
+    let (mut app, _peer) = connected(&listener, &address);
+    app.profiles_dir = profiles_dir.clone();
+    app.set_profiles(stack(&["live"]));
+    app.dispatch(Action::App(AppAction::Replay {
+        path: raw.clone(),
+        delay: Duration::ZERO,
+    }));
+    assert_eq!(app.link_kind(), LinkKind::Replay);
+    assert_eq!(app.take_profiles_due(), Some(stack(&["board"])));
+    let warning = format!(
+        "Replay without profile 'gone': not in {}",
+        profiles_dir.display()
+    );
+    assert!(toasts(&app).contains(&warning), "{:?}", toasts(&app));
+    app.set_profiles(stack(&["board"]));
+
+    app.dispatch(Action::App(AppAction::StopReplay));
+    assert_eq!(app.take_profiles_due(), Some(stack(&["live"])));
+
+    let mut app = app_on(&address);
+    app.profiles_dir = profiles_dir;
+    app.set_profiles(stack(&["cli"]));
+    app.open_replay(raw, Duration::ZERO, None, &stack(&["cli"]))
+        .unwrap();
+    assert_eq!(app.take_profiles_due(), Some(stack(&["board", "cli"])));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// MAX-171: `open` during a replay that set a live link aside ends the replay first: the live
 /// link comes back with its encoding and its session backup, then the new link opens with a
 /// session backup of its own, and the attach key no longer goes back to the old link. Opening

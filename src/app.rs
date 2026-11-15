@@ -23,8 +23,8 @@ use crate::{
     },
     commands::{CommandError, Invocation, Target},
     configs::{
-        DualBufferMode, KeyBindingAction, KeyResolver, LinksConfig, Mode, PlotsConfig, RawSideView,
-        SettingsConfig, StatusBarLayout, TextEncoding, WrapMode,
+        AppConfig, DualBufferMode, KeyBindingAction, KeyResolver, LinksConfig, Mode, PlotsConfig,
+        RawSideView, SettingsConfig, StatusBarLayout, TextEncoding, WrapMode,
         settings::{PrefixPlace, PrefixWrapBehavior, SPLIT_PERCENT_MAX, SPLIT_PERCENT_MIN, on_off},
     },
     inputs::{
@@ -187,6 +187,8 @@ pub struct App {
     profiles: Vec<String>,
     opening_profiles: Option<Vec<String>>,
     profiles_due: Option<Vec<String>>,
+    /// Where the profiles are: next to the config file, another folder in the tests
+    profiles_dir: PathBuf,
     /// The text `mash` sends until another comes in (MAX-6)
     mash: Option<Mash>,
     /// The plots of `plots.toml`, the one shown and when its clock started (MAX-222)
@@ -222,11 +224,13 @@ pub struct App {
     replay: Option<ReplayRun>,
 }
 
-/// The live link a replay replaced (MAX-166): its settings, the mode, the encoding, the
+/// The live link a replay replaced (MAX-166): its settings, its profile stack (MAX-240), the
+/// mode, the encoding, the
 /// histories of both modes, the counts and its session backup, put back as they were when the
 /// replay stops (MAX-171: the backup kept here only, so it can't stay behind)
 struct ReplacedLink {
     link_config: LinkConfig,
+    profiles: Vec<String>,
     mode: Mode,
     encoding: TextEncoding,
     line_mode: LineMode,
@@ -334,6 +338,7 @@ impl App {
             profiles: Vec::new(),
             opening_profiles: None,
             profiles_due: None,
+            profiles_dir: AppConfig::profiles_dir(),
             mash: None,
             plots: PlotsConfig::default(),
             plot: None,
@@ -668,6 +673,7 @@ impl App {
             Some(replaced) => Some(replaced),
             None if self.link_kind().keeps_sessions() => Some(Box::new(ReplacedLink {
                 link_config: self.link.config().clone(),
+                profiles: self.profiles.clone(),
                 mode: self.settings.mode,
                 encoding: self.settings.encoding,
                 line_mode,
@@ -746,8 +752,8 @@ impl App {
         self.replay.as_ref().is_some_and(|run| run.ended)
     }
 
-    /// Puts back the live link the replay replaced, for the loop to open, and resumes its
-    /// session backup (MAX-166). False when there is none: a replay from the command line
+    /// Puts back the live link the replay replaced, for the loop to open, its profile stack
+    /// for the loop to lay (MAX-240), and resumes its session backup (MAX-166). False when there is none: a replay from the command line
     pub fn stop_replay(&mut self) -> bool {
         let Some(replaced) = self.replay.as_mut().and_then(|run| run.replaced.take()) else {
             self.set_replay_ended(true);
@@ -758,6 +764,7 @@ impl App {
         self.replay = None;
         self.clear_plot();
         self.link.set_config(replaced.link_config);
+        self.set_profiles_due(replaced.profiles);
         self.settings.mode = replaced.mode;
         self.settings.encoding = replaced.encoding;
         self.line_mode = replaced.line_mode;

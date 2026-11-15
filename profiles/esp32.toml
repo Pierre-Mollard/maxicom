@@ -1,0 +1,43 @@
+# The esp32 profile, written by maxicom with the profiles folder. Delete it
+# if you don't want it: --write-config writes it again, --reset-config too.
+# A link uses it with profiles = ["esp32"] in links.toml, or with
+# --profile esp32. Its keys, commands, highlights and triggers are added to
+# the global files' while the link is open, a name already there replaced.
+#
+# The reset commands drive RTS and DTR: keep flow control off on the link,
+# as RTS/CTS lets the driver drive RTS. They are esptool's sequences for the
+# usual auto-reset circuit (RTS to EN, DTR to IO0); a board without it, or
+# with the lines inverted, needs its own: edit them here.
+
+description = "ESP32 boards (ESP-IDF): log levels in color, reset and bootloader keys"
+enabled = true # false: off, the links naming it open without it
+
+[prefixed]
+h = "board-reset" # the default key, now the RTS reset below
+H = "bootloader"
+
+[commands]
+board-reset = { run = "rts on; sleep 100; rts off", help = "Reset through RTS (EN), the app runs" }
+bootloader = { run = "dtr off; rts on; sleep 100; dtr on; rts off; sleep 50; dtr off", help = "Reset into the ROM bootloader, to flash" }
+# the chips with a native USB-Serial/JTAG port (ESP32-S3, C3, C6...)
+usb-bootloader = { run = "rts off; dtr off; sleep 100; dtr on; rts off; sleep 100; rts on; dtr off; rts on; sleep 100; dtr off; rts off", help = "Into the bootloader through the native USB port" }
+
+# ESP-IDF's log lines start with their level: E (1234) tag: message
+[highlights.esp-error]
+line_start = ["E ("]
+fg = "Red"
+
+[highlights.esp-warning]
+line_start = ["W ("]
+fg = "Yellow"
+
+[highlights.esp-debug]
+line_start = ["D (", "V ("]
+fg = "DarkGray"
+
+[triggers.esp-panic]
+match = "Guru Meditation Error"
+run = 'notify error "the board crashed"'
+rearm = true
+armed = true
+silent = true

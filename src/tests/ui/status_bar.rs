@@ -519,6 +519,31 @@ fn armed_triggers() {
     }
 }
 
+/// MAX-240: `{profiles}` names the link's profiles in stack order, the first and how many
+/// more when squeezed, empty without any; `profiles` holds while there are some; a click
+/// does nothing.
+/// How: no profile, then two, then one.
+#[test]
+fn link_profiles() {
+    let mut a = app(Mode::Terminal);
+    let compact = Fit {
+        compact: true,
+        drop_from: None,
+    };
+    let shown = |a: &App| render("[P](profiles?bold:hide)", a).len();
+    assert_eq!(text_with("{profiles}", &a, compact), "");
+    assert_eq!(shown(&a), 0);
+
+    a.set_profiles(vec!["board".to_string(), "proj".to_string()]);
+    assert_eq!(render("{profiles}", &a), [plain("board, proj")]);
+    assert_eq!(text_with("{profiles}", &a, compact), "board +1");
+    assert_eq!(shown(&a), 1);
+
+    a.set_profiles(vec!["board".to_string()]);
+    assert_eq!(text_with("{profiles}", &a, compact), "board");
+    assert_eq!(Var::Profiles.click(), None);
+}
+
 /// MAX-222: the default center shows the plot shown, `{plot}`, in the secondary color, in
 /// the warning one while frozen (`frozen`), hidden without a plot (`plot`); a click on the
 /// name freezes it.
@@ -526,7 +551,7 @@ fn armed_triggers() {
 #[test]
 fn plot_shown_and_frozen() {
     let mut a = app(Mode::Terminal);
-    a.set_plots(crate::configs::PlotsConfig::default());
+    a.set_plots(crate::configs::plots::tests::demo_plots());
     let center = StatusBarConfig::default().center;
     let theme = ThemeConfig::default();
     assert!(render(&center, &a).is_empty());

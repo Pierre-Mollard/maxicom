@@ -143,21 +143,12 @@ impl<'de> Deserialize<'de> for PlotsConfig {
 }
 
 impl Default for PlotsConfig {
-    /// Four demos, each showing other fields: every `key=value` pair on a time axis, the
-    /// serial plotter format (`name:value` or bare numbers) on the last 500 samples,
-    /// two named series on a fixed range with their colors, and the lines tagged `[plot]`
+    /// Three demos, each showing other fields: every `key=value` pair on a time axis, two
+    /// named series on a fixed range with their colors, and the lines tagged `[plot]`. The
+    /// serial plotter format is the `arduino` profile's (MAX-240)
     fn default() -> Self {
         let plots = vec![
             ("key-value".to_string(), PlotDef::default()),
-            (
-                "serial-plotter".to_string(),
-                PlotDef {
-                    separator: ":".to_string(),
-                    columns: true,
-                    window: PlotWindow::Samples(500),
-                    ..PlotDef::default()
-                },
-            ),
             (
                 "sensors".to_string(),
                 PlotDef {
@@ -372,4 +363,4 @@ impl std::error::Error for PlotsFileError {
 
 #[cfg(test)]
 #[path = "../tests/configs/plots.rs"]
-mod tests;
+pub mod tests;

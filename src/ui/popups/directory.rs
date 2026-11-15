@@ -464,6 +464,7 @@ pub fn render_link_form_popup(
         LinkFormField::Address => form.address.value().to_string(),
         LinkFormField::Hosts => form.hosts.value().to_string(),
         LinkFormField::Color => form.color.value().to_string(),
+        LinkFormField::Profiles => form.profiles.value().to_string(),
         LinkFormField::Baud => form.baud.value().to_string(),
         LinkFormField::Bits => format!("< {bits} >"),
         LinkFormField::Parity => format!("< {:?} >", line.framing.parity),
@@ -475,6 +476,7 @@ pub fn render_link_form_popup(
         LinkFormField::Address => "Address",
         LinkFormField::Hosts => "For",
         LinkFormField::Color => "Color",
+        LinkFormField::Profiles => "Profiles",
         LinkFormField::Baud => "Baud rate",
         LinkFormField::Bits => "Data bits",
         LinkFormField::Parity => "Parity",
@@ -505,6 +507,9 @@ pub fn render_link_form_popup(
         ];
         if field == LinkFormField::Hosts && form.hosts.value().trim().is_empty() {
             spans.push(Span::styled("every machine", muted));
+        }
+        if field == LinkFormField::Profiles && form.profiles.value().trim().is_empty() {
+            spans.push(Span::styled("none", muted));
         }
         if field == LinkFormField::Color {
             spans.extend(color_sample(form, theme));

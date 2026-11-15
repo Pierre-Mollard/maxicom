@@ -259,6 +259,7 @@ fn write_session(dir: &Path, stem: &str, device: &CaptureDevice, raw: &[u8]) {
         version: SESSION_META_VERSION,
         started: 1_700_000_000,
         name: None,
+        profiles: Vec::new(),
         device: device.clone(),
         text: CaptureFormat::default(),
         terminal: None,

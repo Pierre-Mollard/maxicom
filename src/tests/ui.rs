@@ -219,7 +219,7 @@ fn plot_harness(w: u16, h: u16, rx: &[u8]) -> Harness {
         orientation: crate::configs::settings::RawSideOrientation::Right,
         split_percent: 40,
     };
-    h.app.set_plots(crate::configs::PlotsConfig::default());
+    h.app.set_plots(crate::configs::plots::tests::demo_plots());
     h.app.show_plot(Some("key-value"));
     h.app.feed_rx(rx);
     h.app.notifications.dismiss_all();
@@ -291,7 +291,7 @@ fn plot_title_arrows_and_long_names() {
     assert!(!has(&rows, "✕"), "{rows:#?}");
 
     let long = "a-plot-with-a-name-far-too-long-for-the-side-panel";
-    let mut plots = crate::configs::PlotsConfig::default();
+    let mut plots = crate::configs::plots::tests::demo_plots();
     plots.plots[0].0 = long.to_string();
     h.app.set_plots(plots);
     h.app.show_plot(Some(long));
@@ -524,7 +524,7 @@ fn plot_in_its_own_place() {
     use ratatui::layout::Rect;
     let r = Rect::new;
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 30);
-    h.app.set_plots(crate::configs::PlotsConfig::default());
+    h.app.set_plots(crate::configs::plots::tests::demo_plots());
     h.app.show_plot(Some("key-value"));
     h.app.notifications.dismiss_all();
     let areas = |h: &mut Harness| {
@@ -611,7 +611,7 @@ fn raw_and_plot_both_shown() {
     let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 100, 30, |s| {
         s.raw_side.view = RawSideView::Hex;
     });
-    h.app.set_plots(crate::configs::PlotsConfig::default());
+    h.app.set_plots(crate::configs::plots::tests::demo_plots());
     h.app.show_plot(Some("key-value"));
     h.app.feed_rx(b"temp=20\ntemp=25\n");
     h.app.notifications.dismiss_all();
@@ -757,7 +757,7 @@ fn scrollbar_beside_the_history_with_a_plot() {
                 s.ui.show_borders = borders;
                 s.plot_side.orientation = orientation;
             });
-            h.app.set_plots(crate::configs::PlotsConfig::default());
+            h.app.set_plots(crate::configs::plots::tests::demo_plots());
             h.app.show_plot(Some("key-value"));
             for i in 0..60 {
                 h.app.feed_rx(format!("line {i:02}\r\n").as_bytes());
@@ -839,7 +839,7 @@ fn raw_panel_joins_the_frame() {
         assert_eq!(ends, (Some('├'), Some('│')), "{mode:?}\n{rows:#?}");
 
         h.app.settings_mut().raw_side.orientation = Right;
-        h.app.set_plots(crate::configs::PlotsConfig::default());
+        h.app.set_plots(crate::configs::plots::tests::demo_plots());
         h.app.show_plot(Some("key-value"));
         h.app.notifications.dismiss_all();
         let (rows, raw, bottom) = frame(&mut h);
@@ -875,7 +875,7 @@ fn plot_padding_and_y_labels() {
             s.ui.show_borders = true;
             s.plot_side.orientation = orientation;
         });
-        h.app.set_plots(crate::configs::PlotsConfig::default());
+        h.app.set_plots(crate::configs::plots::tests::demo_plots());
         h.app.show_plot(Some("key-value"));
         for i in 0..20 {
             let line = format!("temp={} load={}\n", 15 + i % 11, (i * 7) % 100);
@@ -966,7 +966,7 @@ fn plot_compact_legend() {
     let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 100, 30, |s| {
         s.ui.show_borders = true;
     });
-    h.app.set_plots(crate::configs::PlotsConfig::default());
+    h.app.set_plots(crate::configs::plots::tests::demo_plots());
     h.app.show_plot(Some("serial-plotter"));
     for i in 0..500 {
         let temp = if i < 250 { 100 } else { 0 };
@@ -6375,7 +6375,7 @@ fn right_click_closes_a_panel() {
             s.mode = mode;
             s.raw_side.view = RawSideView::Hex;
         });
-        h.app.set_plots(crate::configs::PlotsConfig::default());
+        h.app.set_plots(crate::configs::plots::tests::demo_plots());
         h.app.show_plot(Some("key-value"));
         h.app.notifications.dismiss_all();
         h.draw();

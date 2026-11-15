@@ -1,0 +1,15 @@
+# The arduino profile, written by maxicom with the profiles folder. Delete it
+# if you don't want it: --write-config writes it again, --reset-config too.
+# A link uses it with profiles = ["arduino"] in links.toml, or with
+# --profile arduino. Its plots are added to plots.toml's while the link is
+# open.
+
+description = "Arduino boards: the Arduino IDE serial plotter format"
+enabled = true # false: off, the links naming it open without it
+
+# temp:23.4,hum:51 or bare numbers 23.4 51, as Serial.print writes them for
+# the Arduino IDE's serial plotter
+[plots.serial-plotter]
+separator = ":"
+columns = true # a line of bare numbers: series 1, 2, 3...
+window = 500   # a number: the last 500 samples of each series

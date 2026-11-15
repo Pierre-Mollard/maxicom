@@ -17,6 +17,7 @@ use super::{
         CONFIG_COMMENTS, HIGHLIGHTS_COMMENTS, KEYMAP_COMMENTS, PLOTS_COMMENTS, THEME_COMMENTS,
         TRIGGERS_COMMENTS, with_comments,
     },
+    profiles::{self, BUILT_IN},
     unknown_keys,
 };
 
@@ -58,7 +59,8 @@ fn update_of<T: Serialize + DeserializeOwned>(
 
 /// Brings the files of the settings at `path` up to date, what happened to each in the lines
 /// returned. A file that doesn't load stops it before anything is updated, and the old version
-/// of an updated file stays next to it, as `.bak`
+/// of an updated file stays next to it, as `.bak`. The built-in profiles missing from the
+/// profiles folder are written, a profile already there left as it is (MAX-240)
 pub fn update_files(path: &Path) -> Result<Vec<String>, String> {
     let mut config = AppConfig::load_or_create_default(path).map_err(|err| err.to_string())?;
     let added = config.keybindings.add_new_defaults();
@@ -116,13 +118,21 @@ pub fn update_files(path: &Path) -> Result<Vec<String>, String> {
         ));
         report.extend(update.notes.iter().map(|note| format!("  {note}")));
     }
+    let profiles = AppConfig::profiles_dir_of(path);
+    let written = profiles::write_missing(&profiles)
+        .map_err(|err| format!("{}: {err}", profiles.display()))?;
+    report.extend((written.iter()).map(|file| format!("{}: created", file.display())));
     Ok(report)
 }
 
 /// The files `--reset-config` puts back (MAX-231): the settings at `config`, then the theme,
 /// keymap, highlights, triggers and plots files at their default places, where the reset
-/// settings point. `links.toml` is left alone: the saved links are the user's data
-pub fn reset_targets(config: &Path) -> [PathBuf; 6] {
+/// settings point, then the built-in profiles in the profiles folder next to `config`
+/// (MAX-240). `links.toml` is left alone: the saved links are the user's data, and so are
+/// the user's own profiles
+pub fn reset_targets(config: &Path) -> Vec<PathBuf> {
+    let profiles = AppConfig::profiles_dir_of(config);
+    let built_in = (BUILT_IN.iter()).map(|(name, _)| profiles::file_of(&profiles, name));
     [
         config.to_path_buf(),
         AppConfig::default_theme_path(),
@@ -131,30 +141,35 @@ pub fn reset_targets(config: &Path) -> [PathBuf; 6] {
         AppConfig::default_triggers_path(),
         AppConfig::default_plots_path(),
     ]
+    .into_iter()
+    .chain(built_in)
+    .collect()
 }
 
 /// The text each file of `reset_targets` gets: its defaults and comments, as a first start
 /// writes them
-fn default_texts() -> Result<[String; 6], String> {
+fn default_texts() -> Result<Vec<String>, String> {
     fn text<T: Serialize + Default>(comments: &[(&str, &str)]) -> Result<String, String> {
         let text = toml::to_string_pretty(&T::default()).map_err(|err| err.to_string())?;
         Ok(with_comments(&text, comments))
     }
-    Ok([
+    let files = [
         text::<SettingsConfig>(CONFIG_COMMENTS)?,
         text::<ThemeConfig>(THEME_COMMENTS)?,
         text::<KeyBindingsConfig>(KEYMAP_COMMENTS)?,
         text::<HighlightConfig>(HIGHLIGHTS_COMMENTS)?,
         text::<TriggersConfig>(TRIGGERS_COMMENTS)?,
         text::<PlotsConfig>(PLOTS_COMMENTS)?,
-    ])
+    ];
+    let built_in = BUILT_IN.iter().map(|(_, text)| text.to_string());
+    Ok(files.into_iter().chain(built_in).collect())
 }
 
 /// Puts `files`, as `reset_targets` gives them, back to their defaults, what happened to each
 /// in the lines returned. Nothing is loaded, so a file that doesn't load is reset too. A file
 /// that differs is kept next to it as `.bak` first, one at the defaults already is left as is,
 /// a missing one is created
-pub fn reset_files(files: &[PathBuf; 6]) -> Result<Vec<String>, String> {
+pub fn reset_files(files: &[PathBuf]) -> Result<Vec<String>, String> {
     let texts = default_texts()?;
     let mut report = Vec::new();
     for (path, text) in files.iter().zip(texts) {

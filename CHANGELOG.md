@@ -41,6 +41,18 @@ it needs the file to load, and it drops the sections under the old names
 - The commands that run without arguments (`mark`, `plot`, `break`,
   `replay-stop`...) go on a key like an action, and the help lists them with
   the actions.
+- Profiles: a file in the `profiles` folder next to `config.toml` adds keys,
+  named commands, highlights, triggers and plots while a link uses it. A saved
+  link names its profiles in `links.toml` or in the link form, and
+  `--profile` gives them to any link; several stack, the later one winning.
+  `{profiles}` shows them in the status bar, and a session's replay uses the
+  profiles it was recorded with.
+- Two profiles come with maxicom, written with the `profiles` folder:
+  `esp32` (ESP-IDF log levels in color, an RTS reset on `Ctrl-a h`, the
+  bootloader on `Ctrl-a H`, a crash notice) and `arduino` (the serial plotter
+  plot). Delete one you don't want: it stays deleted. `--write-config` writes
+  a missing one again, `--reset-config` writes them back. `enabled = false`
+  in a profile turns it off without deleting it.
 
 ### Changed
 
@@ -52,6 +64,8 @@ it needs the file to load, and it drops the sections under the old names
 - In copy mode, `,` is copy mode's own `mark` action: it marks at once instead
   of waiting behind a line still running.
 - The help popup grows up to 100 columns, for the actions' descriptions.
+- The default `plots.toml` no longer has `serial-plotter`: it's the `arduino`
+  profile's now. A `plots.toml` already written keeps it.
 
 ## [0.1.2] - 2026-11-14
 

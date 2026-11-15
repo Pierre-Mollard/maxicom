@@ -24,7 +24,7 @@ A session, or a full recording, is a folder `<name>/` holding:
 | --- | --- |
 | `<name>.raw` | The bytes exactly as received |
 | `<name>.times` | When each chunk of bytes came |
-| `<name>.meta` | What they were received on: the device, the line settings, the encoding, the terminal's size |
+| `<name>.meta` | What they were received on: the device, the line settings, the encoding, the terminal's size, the link's profiles |
 | `<name>.log` | The text, for you to read |
 
 The `.raw`, `.times` and `.meta` together let a session replay and restore
@@ -143,7 +143,9 @@ Open its `.log` to read it, or replay it:
 maxicom --replay ~/.cache/maxicom/sessions/20261028_141500123_ttyUSB0
 ```
 
-Its `.meta` gives the replay the encoding and the line settings.
+Its `.meta` gives the replay the encoding, the line settings and the link's
+profiles. A profile that isn't found anymore is skipped with a warning, and
+the replay runs without it.
 
 ## Restore
 

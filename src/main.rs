@@ -142,7 +142,7 @@ fn reset_config(config_path: &std::path::Path) -> ExitCode {
     for file in &files {
         println!("  {}", file.display());
     }
-    println!("links.toml, your saved links, is left alone.");
+    println!("links.toml, your saved links, and your own profiles are left alone.");
     print!("Reset these files to the defaults? [y/N] ");
     let _ = std::io::Write::flush(&mut std::io::stdout());
     let mut answer = String::new();
@@ -348,7 +348,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let picking = app.is_device_unpicked();
     if let (false, Address::Replay(path)) = (picking, &app.link_config().address) {
         let path = path.clone();
-        if let Err(err) = app.open_replay(path.clone(), replay_delay, None) {
+        // `--profile`'s over the session's own (MAX-240)
+        let extra = app.profiles().to_vec();
+        if let Err(err) = app.open_replay(path.clone(), replay_delay, None, &extra) {
             eprintln!(
                 "maxicom: could not open replay file {}: {err}",
                 path.display()

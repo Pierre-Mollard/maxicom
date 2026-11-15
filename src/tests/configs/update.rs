@@ -104,8 +104,33 @@ fn update_adds_new_default_keys() {
     assert!(!new.prefix_actions.contains_key("s"));
 }
 
-/// The six files of a reset, in `folder`, in `reset_targets`' order
-fn reset_paths(folder: &Folder) -> [PathBuf; 6] {
+/// MAX-240: `--write-config` writes a built-in profile missing from the profiles folder and
+/// says so, and leaves an edited one as it is.
+/// How: the files written by a first load, `arduino.toml` deleted and `esp32.toml` edited,
+/// then an update.
+#[test]
+fn update_writes_missing_built_in_profiles() {
+    let folder = Folder::new("update-profiles", "");
+    folder.load().unwrap();
+    fs::remove_file(folder.path("profiles/arduino.toml")).unwrap();
+    folder.write("profiles/esp32.toml", "description = \"mine\"\n");
+
+    let report = update(&folder).unwrap();
+    let arduino = folder.path("profiles/arduino.toml");
+    assert_eq!(
+        report.last().unwrap(),
+        &format!("{}: created", arduino.display())
+    );
+    assert_eq!(folder.read("profiles/arduino.toml"), BUILT_IN[0].1);
+    assert_eq!(
+        folder.read("profiles/esp32.toml"),
+        "description = \"mine\"\n"
+    );
+}
+
+/// The files of a reset, in `folder`, in `reset_targets`' order: the six config files, then
+/// the built-in profiles (MAX-240)
+fn reset_paths(folder: &Folder) -> Vec<PathBuf> {
     [
         "config.toml",
         "theme.toml",
@@ -113,20 +138,35 @@ fn reset_paths(folder: &Folder) -> [PathBuf; 6] {
         "highlights.toml",
         "triggers.toml",
         "plots.toml",
+        "profiles/arduino.toml",
+        "profiles/esp32.toml",
     ]
     .map(|file| folder.path(file))
+    .to_vec()
 }
 
 /// MAX-231: `--reset-config` writes each file back to its defaults and comments, without
 /// loading it: a changed file and one that doesn't load are kept as `.bak` first, a missing
-/// one is created; reset again, nothing changes. `links.toml` isn't one of them.
-/// How: a settings file with a typo that stops it loading, a changed theme, the others
-/// missing; reset twice.
+/// one is created; reset again, nothing changes. `links.toml` isn't one of them. MAX-240:
+/// the built-in profiles go back to their files too, the user's own profiles stay.
+/// How: a settings file with a typo that stops it loading, a changed theme, an edited
+/// `esp32` profile and one of the user's, the others missing; reset twice.
 #[test]
 fn reset_puts_back_the_defaults() {
     let folder = Folder::new("reset", "mdoe = = \"line\"\n");
     fs::write(folder.path("theme.toml"), "[palette]\nmain = \"Red\"\n").unwrap();
     fs::write(folder.path("links.toml"), "# my links\n").unwrap();
+    fs::create_dir_all(folder.path("profiles")).unwrap();
+    fs::write(
+        folder.path("profiles/esp32.toml"),
+        "description = \"mine\"\n",
+    )
+    .unwrap();
+    fs::write(
+        folder.path("profiles/proj.toml"),
+        "description = \"proj\"\n",
+    )
+    .unwrap();
     let broken = folder.read("config.toml");
     let files = reset_paths(&folder);
 
@@ -144,6 +184,21 @@ fn reset_puts_back_the_defaults() {
     assert_eq!(report[2], format!("{keymap}: created"));
     assert_eq!(folder.read("config.toml.bak"), broken);
     assert_eq!(folder.read("links.toml"), "# my links\n");
+    let (arduino, esp32) = (
+        folder.path("profiles/arduino.toml"),
+        folder.path("profiles/esp32.toml"),
+    );
+    assert_eq!(report[6], format!("{}: created", arduino.display()));
+    let esp32 = esp32.display().to_string();
+    assert_eq!(
+        report[7],
+        format!("{esp32}: reset, the old file is {esp32}.bak")
+    );
+    assert_eq!(folder.read("profiles/esp32.toml"), BUILT_IN[1].1);
+    assert_eq!(
+        folder.read("profiles/proj.toml"),
+        "description = \"proj\"\n"
+    );
 
     // the defaults, with their comments, and they load as the defaults
     let settings: SettingsConfig = toml::from_str(&folder.read("config.toml")).unwrap();
@@ -167,11 +222,13 @@ fn reset_puts_back_the_defaults() {
 }
 
 /// MAX-231: the files a reset takes: the settings given, the others at their default places,
-/// never `links.toml`.
+/// never `links.toml`; MAX-240: the built-in profiles next to the settings given.
 #[test]
 fn reset_targets_skip_the_links() {
     let targets = reset_targets(Path::new("/elsewhere/mine.toml"));
     assert_eq!(targets[0], Path::new("/elsewhere/mine.toml"));
     assert_eq!(targets[1], AppConfig::default_theme_path());
     assert!(targets.iter().all(|path| !path.ends_with("links.toml")));
+    assert_eq!(targets[6], Path::new("/elsewhere/profiles/arduino.toml"));
+    assert_eq!(targets.len(), 6 + BUILT_IN.len());
 }

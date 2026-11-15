@@ -57,6 +57,7 @@
 //! | `{replay_read}`     | The bytes it read                                       | `4096`           |
 //! | `{replay_size}`     | The file's size                                         | `9752`           |
 //! | `{plot}`            | The plot shown in the side panel (`plots.toml`), or empty | `pid`          |
+//! | `{profiles}`        | The link's profiles in stack order, empty when none     | `board, proj`    |
 //!
 //! ## Formats
 //! `{name:spec}` with spec `[<>^][0][width][h]`, close to Rust's and C's:
@@ -115,6 +116,7 @@
 //! | `replaced`                      | `live_behind`                              | That replay holds a live link's place: `toggle-attach` goes back to it |
 //! | `plot`                          | `plotting`                                 | A plot is shown in the side panel (`plots.toml`)         |
 //! | `frozen`                        | `plot_frozen`                              | The plot is frozen (`plot-freeze`)                       |
+//! | `profiles`                      | `profile`                                  | The link has profiles laid over the config               |
 //!
 //! ## Style Keywords
 //! - **Modifiers**: `bold`, `dim`, `italic`, `underlined` (`underline`), `reversed` (`reverse`), `reset` (`default`), `crossed`, `slow_blink` (`sblink`), `rapid_blink` (`rblink`)
@@ -135,7 +137,7 @@
 //! When the three parts don't fit side by side, the bar tries, in order:
 //! 1. the variables without a format of their own in a compact form: `{port}` as its file name
 //!    (`ttyUSB0`), `{rx_bytes}`/`{tx_bytes}` as sizes (`1.2K`), the pan as `◀3` / `!2▶`,
-//!    `{trigger_names}` as the first name and how many more (`login +1`);
+//!    `{trigger_names}` and `{profiles}` as the first name and how many more (`login +1`);
 //! 2. without the blocks of the highest `prio`, then the next one, and so on; the blocks with
 //!    the same `prio` go together, so a separator goes with its block. A block without `prio=`
 //!    and plain text always stay;
@@ -147,7 +149,7 @@
 //! ## Clicks
 //! A block without `click=` runs what its first variable implies; a variable in plain text is
 //! clickable on its own. The others (`{port}`, `{rx_bytes}`, `{tx_bytes}`, `{time}`,
-//! `{scroll_max}`) do nothing: the port isn't changed while running.
+//! `{scroll_max}`, `{profiles}`) do nothing: the port isn't changed while running.
 //!
 //! | Variable                                                   | Click                     |
 //! |------------------------------------------------------------|---------------------------|
@@ -470,6 +472,7 @@ enum Var {
     ReplayRead,
     ReplaySize,
     Plot,
+    Profiles,
 }
 
 impl Var {
@@ -505,6 +508,7 @@ impl Var {
             "replay_read" => Self::ReplayRead,
             "replay_size" => Self::ReplaySize,
             "plot" => Self::Plot,
+            "profiles" => Self::Profiles,
             _ => return None,
         })
     }
@@ -536,7 +540,8 @@ impl Var {
             | Self::ReplayState
             | Self::ReplayPercent
             | Self::ReplayRead
-            | Self::ReplaySize => return None,
+            | Self::ReplaySize
+            | Self::Profiles => return None,
         };
         Some(ClickAction::Run(action))
     }
@@ -599,9 +604,12 @@ impl Var {
                 None => out.push_str(&app.link_config().address.tag()),
             },
             // the first name, then how many more
-            None if compact && self == Self::TriggerNames => {
-                let armed = app.armed_triggers();
-                if let Some((first, more)) = armed.split_first() {
+            None if compact && matches!(self, Self::TriggerNames | Self::Profiles) => {
+                let names = match self {
+                    Self::Profiles => app.profiles().iter().map(String::as_str).collect(),
+                    _ => app.armed_triggers(),
+                };
+                if let Some((first, more)) = names.split_first() {
                     out.push_str(first);
                     if !more.is_empty() {
                         let _ = write!(out, " +{}", more.len());
@@ -706,6 +714,7 @@ impl Var {
             }
             Self::ReplayFile | Self::ReplayState => Ok(()),
             Self::Plot => write!(out, "{}", app.plot().map_or("", |plot| plot.name.as_str())),
+            Self::Profiles => write!(out, "{}", app.profiles().join(", ")),
             // the numbers, written by `write`
             Self::Baud
             | Self::RxBytes
@@ -782,6 +791,7 @@ enum Cond {
     AddLf,
     Plot,
     PlotFrozen,
+    Profiles,
     /// Unknown condition name, always false
     Unknown,
 }
@@ -824,6 +834,7 @@ impl Cond {
             "add_lf" => Self::AddLf,
             "plot" | "plotting" => Self::Plot,
             "frozen" | "plot_frozen" => Self::PlotFrozen,
+            "profiles" | "profile" => Self::Profiles,
             _ => Self::Unknown,
         }
     }
@@ -880,6 +891,7 @@ impl Cond {
             Self::AddLf => app.settings().add_lf,
             Self::Plot => app.plot().is_some(),
             Self::PlotFrozen => app.plot().is_some_and(|plot| plot.is_frozen()),
+            Self::Profiles => !app.profiles().is_empty(),
             Self::Unknown => false,
         }
     }

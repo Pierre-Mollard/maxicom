@@ -20,11 +20,13 @@ use super::{
 };
 
 /// A profile file as written. Its keymap sections are empty unless written, unlike the
-/// global keymap's, which take their defaults
-#[derive(Debug, Clone, Default, Deserialize)]
+/// global keymap's, which take their defaults. `enabled = false` turns it off: never laid,
+/// a stack naming it warned about, its file not checked past its syntax
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ProfileFile {
     pub description: String,
+    pub enabled: bool,
     pub prefixed: BTreeMap<String, String>,
     pub direct: BTreeMap<String, String>,
     pub line_mode: BTreeMap<String, String>,
@@ -36,6 +38,27 @@ pub struct ProfileFile {
     pub highlights: Option<HighlightConfig>,
     pub triggers: Option<TriggersConfig>,
     pub plots: Option<PlotsConfig>,
+}
+
+/// On, and empty
+impl Default for ProfileFile {
+    fn default() -> Self {
+        Self {
+            description: String::new(),
+            enabled: true,
+            prefixed: BTreeMap::new(),
+            direct: BTreeMap::new(),
+            line_mode: BTreeMap::new(),
+            terminal_mode: BTreeMap::new(),
+            search_mode: BTreeMap::new(),
+            copy_mode: BTreeMap::new(),
+            dialog: BTreeMap::new(),
+            commands: BTreeMap::new(),
+            highlights: None,
+            triggers: None,
+            plots: None,
+        }
+    }
 }
 
 /// A profile as read from its file, with the unknown keys found in it
@@ -68,7 +91,7 @@ impl Profile {
     /// The profile `name`, `<name>.toml` in the folder `profiles`, checked as the global
     /// files are: its triggers compile, its plots read numbers
     pub fn load(profiles: &Path, name: &str) -> Result<Self, ProfileError> {
-        let path = profiles.join(format!("{name}.toml"));
+        let path = file_of(profiles, name);
         let error = |reason: String| ProfileError {
             name: name.to_string(),
             path: path.clone(),
@@ -80,6 +103,15 @@ impl Profile {
         let text = fs::read_to_string(&path).map_err(|err| error(err.to_string()))?;
         let file: ProfileFile =
             toml::from_str(&text).map_err(|err| error(format!("invalid syntax:\n{err}")))?;
+        // off: nothing of it is used, so nothing more to check
+        if !file.enabled {
+            return Ok(Self {
+                name: name.to_string(),
+                path,
+                file,
+                warnings: Vec::new(),
+            });
+        }
         if let Some(triggers) = &file.triggers {
             triggers.compile().map_err(|err| error(err.to_string()))?;
         }
@@ -98,6 +130,51 @@ impl Profile {
             warnings,
         })
     }
+}
+
+/// The profiles maxicom comes with, as their files: written when the profiles folder is
+/// created, by `--write-config` when one is missing and by `--reset-config`. Board names
+/// live here only, never in the code
+pub const BUILT_IN: [(&str, &str); 2] = [
+    ("arduino", include_str!("../../profiles/arduino.toml")),
+    ("esp32", include_str!("../../profiles/esp32.toml")),
+];
+
+/// The built-in profiles written in the folder `dir` when it doesn't exist yet, as the
+/// other config files are on a first start: once there, a profile deleted stays deleted
+pub fn write_folder(dir: &Path) -> std::io::Result<()> {
+    if !dir.exists() {
+        write_missing(dir)?;
+    }
+    Ok(())
+}
+
+/// The built-in profiles missing from the folder `dir` written in it, the folder created,
+/// their files returned: `--write-config`'s, for one added since the folder was
+pub fn write_missing(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let mut written = Vec::new();
+    for (name, text) in BUILT_IN {
+        let path = file_of(dir, name);
+        if !path.exists() {
+            fs::create_dir_all(dir)?;
+            fs::write(&path, text)?;
+            written.push(path);
+        }
+    }
+    Ok(written)
+}
+
+/// The file of the profile `name` in the folder `dir`
+pub fn file_of(dir: &Path, name: &str) -> PathBuf {
+    dir.join(format!("{name}.toml"))
+}
+
+/// The profiles of `names` with no file in the folder `dir`, for a link saved with them
+pub fn missing<'a>(dir: &Path, names: &'a [String]) -> Vec<&'a str> {
+    (names.iter())
+        .filter(|name| !file_of(dir, name).exists())
+        .map(String::as_str)
+        .collect()
 }
 
 /// `config` with `profiles` laid over it in order, a later one winning (MAX-240):
@@ -144,14 +221,22 @@ pub fn layered(config: &AppConfig, profiles: &[Profile]) -> Result<AppConfig, Pr
 }
 
 /// `config` with the profiles `names` of the folder `dir` laid over it in order: the config
-/// a link with these profiles runs with
+/// a link with these profiles runs with. A profile turned off (`enabled = false`) is left
+/// out, a warning saying so
 pub fn with_profiles(
     config: &AppConfig,
     dir: &Path,
     names: &[String],
 ) -> Result<AppConfig, ProfileError> {
     let profiles: Result<Vec<_>, _> = names.iter().map(|name| Profile::load(dir, name)).collect();
-    layered(config, &profiles?)
+    let (on, off): (Vec<_>, Vec<_>) = profiles?.into_iter().partition(|p| p.file.enabled);
+    let mut laid = layered(config, &on)?;
+    let off = off.iter().map(|profile| {
+        let name = &profile.name;
+        format!("Profile '{name}' is off (enabled = false in its file): not laid")
+    });
+    laid.warnings.extend(off);
+    Ok(laid)
 }
 
 /// `file`'s keys over `keymap`'s, section by section: a key replaces the same key however

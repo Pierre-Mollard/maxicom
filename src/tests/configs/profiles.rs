@@ -32,6 +32,7 @@ fn profile_holds_what_it_writes() {
     assert_eq!(file.highlights.as_ref().unwrap().entries.len(), 1);
     assert!(file.triggers.is_none() && file.plots.is_none());
     assert!(file.prefixed.is_empty() && file.commands.is_empty());
+    assert!(file.enabled, "on unless written");
 
     let error = load(&folder, "nope").err().unwrap().to_string();
     let path = folder.path("profiles").join("nope.toml");
@@ -106,7 +107,7 @@ fn profile_keymap_over_the_global_one() {
 /// of the same name replacing it; its triggers replace the same name; its plots replace the
 /// same name in place, the others added.
 /// How: the default files, a profile with `INFO` and `READY`, `u-boot` and `login`,
-/// `serial-plotter` and `temp`.
+/// `sensors` and `temp`.
 #[test]
 fn profile_over_the_global_files() {
     let folder = Folder::new("profile-other", "");
@@ -117,7 +118,7 @@ fn profile_over_the_global_files() {
             "[highlights]\nINFO = \"Red\"\nREADY = \"Green\"\n",
             "[triggers.u-boot]\nmatch = \"autoboot\"\nrun = \"send x\"\n",
             "[triggers.login]\nmatch = \"login: \"\nrun = 'send root\\r'\n",
-            "[plots.serial-plotter]\nseparator = \"=\"\n",
+            "[plots.sensors]\nseparator = \"=\"\n",
             "[plots.temp]\nseparator = \":\"\n",
         ),
     );
@@ -140,10 +141,10 @@ fn profile_over_the_global_files() {
     assert!(triggers.contains_key("login"));
 
     let plots = laid.plots.names();
-    let place = |names: &[String]| names.iter().position(|n| n == "serial-plotter");
+    let place = |names: &[String]| names.iter().position(|n| n == "sensors");
     assert_eq!(place(&plots), place(&config.plots.names()));
     assert_eq!(plots.last().unwrap(), "temp");
-    assert_eq!(laid.plots.get("serial-plotter").unwrap().separator, "=");
+    assert_eq!(laid.plots.get("sensors").unwrap().separator, "=");
 }
 
 /// MAX-240 step 2: in a stack, a later profile wins over an earlier one.
@@ -205,6 +206,19 @@ fn profile_errors_name_the_profile_and_file() {
     assert_eq!(laid.settings.link, config.settings.link);
 }
 
+/// MAX-240 step 3c: the profiles of a stack with no file in the folder, for the warning of
+/// a link saved with them.
+/// How: one profile written, a stack of it and two more.
+#[test]
+fn missing_profiles() {
+    let folder = Folder::new("profile-missing", "");
+    write(&folder, "board", "");
+    let dir = folder.path("profiles");
+    let names = ["nope".to_string(), "board".to_string(), "gone".to_string()];
+    assert_eq!(missing(&dir, &names), ["nope", "gone"]);
+    assert!(missing(&dir, &names[1..2]).is_empty());
+}
+
 /// MAX-240 step 3: a link opens with its profiles laid in order from the folder, a missing
 /// one stopping it with its name.
 /// How: a profile with a highlight, then a stack with a missing profile.
@@ -225,4 +239,97 @@ fn profiles_laid_from_the_folder() {
     let names = ["board".to_string(), "nope".to_string()];
     let error = with_profiles(&config, &dir, &names).err().unwrap();
     assert_eq!(error.name, "nope");
+}
+
+/// MAX-240 step 4: the config's load writes the built-in profiles with their folder, as real
+/// files to read and edit; once the folder is there, an edited profile stays and a deleted
+/// one stays deleted. `write_missing` (`--write-config`'s) writes the deleted one again, only
+/// that one.
+/// How: a first load, `esp32.toml` edited and `arduino.toml` deleted, a second load, then
+/// `write_missing`.
+#[test]
+fn built_in_profiles_written_with_the_folder() {
+    let folder = Folder::new("profile-built-in", "");
+    folder.load().unwrap();
+    let dir = folder.path("profiles");
+    for (name, text) in BUILT_IN {
+        assert_eq!(fs::read_to_string(file_of(&dir, name)).unwrap(), text);
+    }
+
+    fs::write(file_of(&dir, "esp32"), "description = \"mine\"\n").unwrap();
+    fs::remove_file(file_of(&dir, "arduino")).unwrap();
+    folder.load().unwrap();
+    assert_eq!(load(&folder, "esp32").unwrap().file.description, "mine");
+    assert!(!file_of(&dir, "arduino").exists());
+
+    assert_eq!(write_missing(&dir).unwrap(), [file_of(&dir, "arduino")]);
+    let arduino = fs::read_to_string(file_of(&dir, "arduino")).unwrap();
+    assert_eq!(arduino, BUILT_IN[0].1);
+    assert_eq!(load(&folder, "esp32").unwrap().file.description, "mine");
+    assert!(write_missing(&dir).unwrap().is_empty());
+}
+
+/// MAX-240 step 4: the built-in profiles load without a warning and lay over the default
+/// config: `esp32`'s RTS reset in place of the DTR one on the same key, its bootloader on
+/// `H`, its log level lines and its armed crash trigger; `arduino`'s serial plotter plot.
+/// How: the default files, each profile laid over them.
+#[test]
+fn built_in_profiles_lay_over_the_defaults() {
+    let folder = Folder::new("profile-built-in-lay", "");
+    let config = folder.load().unwrap();
+    let dir = folder.path("profiles");
+    for (name, _) in BUILT_IN {
+        assert!(load(&folder, name).unwrap().warnings.is_empty(), "{name}");
+    }
+
+    let esp32 = with_profiles(&config, &dir, &["esp32".to_string()]).unwrap();
+    let keymap = &esp32.keybindings;
+    assert_eq!(keymap.prefix_actions["h"], "board-reset");
+    assert_eq!(keymap.prefix_actions["H"], "bootloader");
+    assert!(keymap.commands["board-reset"].run.starts_with("rts on"));
+    assert!(keymap.commands.contains_key("usb-bootloader"));
+    let resolver = KeyResolver::try_new(keymap).unwrap();
+    let key = |name: &str| name.parse::<KeyPattern>().unwrap();
+    assert_eq!(resolver.prefix_commands[&key("H")].name, "bootloader");
+    let lines: Vec<_> = (esp32.highlights.entries.iter())
+        .map(|(name, _)| name.as_str())
+        .filter(|name| name.starts_with("esp-"))
+        .collect();
+    assert_eq!(lines, ["esp-error", "esp-warning", "esp-debug"]);
+    esp32.highlights.compile_rules();
+    let panic = &esp32.triggers.rules["esp-panic"];
+    assert!(panic.armed && panic.silent && panic.rearm);
+    esp32.triggers.compile().unwrap();
+
+    let arduino = with_profiles(&config, &dir, &["arduino".to_string()]).unwrap();
+    assert_eq!(arduino.plots.names().last().unwrap(), "serial-plotter");
+    assert!(!config.plots.names().contains(&"serial-plotter".to_string()));
+}
+
+/// MAX-240: a profile with `enabled = false` is off: a stack naming it lays the others and
+/// says it's left out; its file isn't checked past its syntax, so a broken rule in it stops
+/// nothing.
+/// How: `off` with a highlight and a trigger that doesn't compile, and `board`, as a stack.
+#[test]
+fn off_profile_left_out() {
+    let folder = Folder::new("profile-off", "");
+    let off = concat!(
+        "enabled = false\n",
+        "[highlights]\nOFF = \"Red\"\n",
+        "[triggers.bad]\nmatch = \"x\"\nrun = \"rst\"\n",
+    );
+    write(&folder, "off", off);
+    write(&folder, "board", "[highlights]\nREADY = \"Green\"\n");
+    let config = folder.load().unwrap();
+    assert!(!load(&folder, "off").unwrap().file.enabled);
+
+    let names = ["off".to_string(), "board".to_string()];
+    let laid = with_profiles(&config, &folder.path("profiles"), &names).unwrap();
+    let highlights: Vec<_> = (laid.highlights.entries.iter())
+        .map(|(name, _)| name.as_str())
+        .collect();
+    assert!(highlights.contains(&"READY") && !highlights.contains(&"OFF"));
+    assert!(!laid.triggers.rules.contains_key("bad"));
+    let warning = "Profile 'off' is off (enabled = false in its file): not laid";
+    assert_eq!(laid.warnings.last().map(String::as_str), Some(warning));
 }

@@ -87,7 +87,9 @@ prints what it did to each file. A file already up to date isn't touched.
 | A new default key in `keymap.toml` | Added when its section uses neither the key nor its action, and named in the output. A default you removed on purpose can come back this way |
 
 A file that doesn't load stops the command before anything is updated.
-`links.toml` is left alone.
+`links.toml` is left alone. A profile maxicom comes with that's missing from
+the `profiles` folder is written again; the profiles already there are left
+as they are.
 
 ### Resetting the files
 
@@ -104,7 +106,9 @@ what it did to each.
 
 It resets `config.toml` (or the file given with `--config`), `theme.toml`,
 `keymap.toml`, `highlights.toml`, `triggers.toml` and `plots.toml`, at their
-default places. `links.toml`, your saved links, is left alone.
+default places, and the profiles maxicom comes with, in the `profiles`
+folder next to `config.toml`. `links.toml`, your saved links, and your own
+profiles are left alone.
 
 Nothing is loaded first, so it works when a file doesn't load and stops
 maxicom. It also brings the defaults that `--write-config` can't, since that

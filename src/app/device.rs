@@ -18,6 +18,7 @@ use crate::{
     configs::{
         AppConfig, KeyResolver, LinksConfig, PlotsConfig,
         links::{SavedLink, default_name},
+        profiles,
     },
     inputs::Action,
     link::{
@@ -228,6 +229,12 @@ impl App {
         let path = AppConfig::active_links_path(self.settings());
         self.links = Ok(LinksConfig::put(&path, link.clone(), replaces)?);
         self.notify_success(format!("Saved link '{}'", link.name));
+        // saved all the same: the file can come after, the link's open says if it doesn't
+        let missing = profiles::missing(&self.profiles_dir, &link.profiles);
+        if !missing.is_empty() {
+            let (names, dir) = (missing.join("', '"), self.profiles_dir.display());
+            self.notify_warn(format!("No profile '{names}' in {dir}"));
+        }
         Ok(())
     }
 
@@ -273,6 +280,28 @@ impl App {
     /// (MAX-240): a saved link's own, none for another
     pub fn take_profiles_due(&mut self) -> Option<Vec<String>> {
         self.profiles_due.take()
+    }
+
+    /// `profiles` for the loop to lay, none when they're the ones laid
+    pub fn set_profiles_due(&mut self, profiles: Vec<String>) {
+        self.profiles_due = (profiles != self.profiles).then_some(profiles);
+    }
+
+    /// The stack a replay plays with (MAX-240): its session's from the meta, then `extra`
+    /// (`--profile`'s at start). A profile not found is said and left out, the replay running
+    /// all the same
+    fn replay_profiles(&mut self, session: Vec<String>, extra: &[String]) {
+        let mut stack = session;
+        stack.extend(extra.iter().cloned());
+        let missing: Vec<String> = (profiles::missing(&self.profiles_dir, &stack).into_iter())
+            .map(str::to_string)
+            .collect();
+        if !missing.is_empty() {
+            let (names, dir) = (missing.join("', '"), self.profiles_dir.display());
+            self.notify_warn(format!("Replay without profile '{names}': not in {dir}"));
+            stack.retain(|name| !missing.contains(name));
+        }
+        self.set_profiles_due(stack);
     }
 
     /// `profiles` laid over the config (MAX-240): what they change of it, the keys, the
@@ -688,9 +717,7 @@ impl App {
             OpenFor::Open { previous } => {
                 let switched = previous.address != self.link.config().address;
                 let profiles = self.opening_profiles.take().unwrap_or_default();
-                if profiles != self.profiles {
-                    self.profiles_due = Some(profiles);
-                }
+                self.set_profiles_due(profiles);
                 self.notify_link(ToastLevel::Success, format!("Opened {label}"));
                 if let Some(Overlay::Directory(_)) = self.overlay() {
                     self.close_overlay();
@@ -789,22 +816,22 @@ impl App {
     /// For `replay` and `open file://` while running, and for `--replay` at start (MAX-168).
     /// `path` is a recording: its `.raw`, its `.meta` or its folder; anything else is refused
     /// (MAX-175). Without a `session`, the recording's meta file gives the device, when it has
-    /// one (MAX-163)
+    /// one (MAX-163). It plays with its meta's profile stack, `extra` over it (MAX-240)
     pub fn open_replay(
         &mut self,
         path: PathBuf,
         delay: Duration,
         session: Option<&CaptureDevice>,
+        extra: &[String],
     ) -> io::Result<()> {
         let path = recording_raw(&path)?;
         let replay = Replay::open(&path, delay)?;
         self.link.set_replay(replay);
-        let meta = session
-            .is_none()
-            .then(|| RecordingMeta::read(&RecordingMeta::path_of(&path)))
-            .flatten();
+        let meta = RecordingMeta::read(&RecordingMeta::path_of(&path));
         let session = session.or(meta.as_ref().map(|meta| &meta.device));
         self.start_replay(path.clone(), session);
+        let profiles = meta.map(|meta| meta.profiles).unwrap_or_default();
+        self.replay_profiles(profiles, extra);
         self.notify_info(format!("Replaying {}", path.display()));
         self.close_link_popups();
         Ok(())
@@ -812,13 +839,14 @@ impl App {
 
     /// A replay asked while running: a file that doesn't open stops the command line chain
     fn replay_file(&mut self, path: PathBuf, delay: Duration, session: Option<CaptureDevice>) {
-        if let Err(e) = self.open_replay(path.clone(), delay, session.as_ref()) {
+        if let Err(e) = self.open_replay(path.clone(), delay, session.as_ref(), &[]) {
             self.fail_commands(format!("replay: {}: {e}", path.display()));
         }
     }
 
     /// A group of sessions in place of the link (MAX-202): loaded at once, so its replay starts
-    /// finished, on the newest session's file and device, in terminal mode as a replay does.
+    /// finished, on the newest session's file, device and profiles, in terminal mode as a
+    /// replay does.
     /// Line mode holds it on a history of its own, which goes with the replay
     fn open_group_replay(&mut self, sessions: &[Session]) {
         let Some(newest) = sessions.last() else {
@@ -834,6 +862,8 @@ impl App {
         self.link.set_replay(replay);
         let device = newest.meta.as_ref().map(|meta| &meta.device);
         self.start_replay(path.to_path_buf(), device);
+        let profiles = (newest.meta.as_ref()).map(|meta| meta.profiles.clone());
+        self.replay_profiles(profiles.unwrap_or_default(), &[]);
         if let Some(run) = &mut self.replay {
             run.ended = true;
             run.group = Some(sessions.len());

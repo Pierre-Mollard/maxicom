@@ -501,7 +501,7 @@ mod app {
     /// An open app with the default plots, `key-value` and `serial-plotter`
     fn app() -> App {
         let mut app = crate::app::tests::app();
-        app.set_plots(PlotsConfig::default());
+        app.set_plots(crate::configs::plots::tests::demo_plots());
         app
     }
 
@@ -642,10 +642,10 @@ mod app {
         run(&mut app, "plot key-value");
         app.feed_rx(b"a=1 b=2\n");
 
-        app.set_plots(PlotsConfig::default());
+        app.set_plots(crate::configs::plots::tests::demo_plots());
         assert_eq!(last_of(&app, "a"), Some(1.0));
 
-        let mut plots = PlotsConfig::default();
+        let mut plots = crate::configs::plots::tests::demo_plots();
         plots.plots[0].1.keys = vec!["b".to_string()];
         app.set_plots(plots.clone());
         assert_eq!(last_of(&app, "a"), None);

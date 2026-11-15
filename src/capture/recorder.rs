@@ -272,6 +272,18 @@ impl Recorder {
         }
     }
 
+    /// The link's profile stack is now `profiles`: the metas of the session backup and of a
+    /// full recording say it, for their replay (MAX-240)
+    pub fn set_profiles(&mut self, profiles: &[String]) {
+        let full = match self.recording.as_mut().map(|recording| &mut recording.kind) {
+            Some(RecordingKind::Full(full)) => Some(&mut **full),
+            _ => None,
+        };
+        for writer in self.session.iter_mut().chain(full) {
+            writer.set_profiles(profiles);
+        }
+    }
+
     /// The session backup, for what changes in its meta (MAX-213)
     pub fn session_mut(&mut self) -> Option<&mut RecordingWriter> {
         self.session.as_mut()
@@ -530,6 +542,15 @@ impl RecordingWriter {
             return;
         };
         meta.terminal = Some(size);
+        let _ = meta.write(&RecordingMeta::path_of(&self.raw_path));
+    }
+
+    /// The meta written again when the profile stack is now `profiles` (MAX-240)
+    fn set_profiles(&mut self, profiles: &[String]) {
+        let Some(meta) = (self.meta.as_mut()).filter(|meta| meta.profiles != profiles) else {
+            return;
+        };
+        meta.profiles = profiles.to_vec();
         let _ = meta.write(&RecordingMeta::path_of(&self.raw_path));
     }
 

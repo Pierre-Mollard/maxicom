@@ -241,18 +241,6 @@ pub const PLOTS_COMMENTS: &[(&str, &str)] = &[
     ),
     ("key-value.window", "a duration: the X axis is time"),
     (
-        "serial-plotter",
-        "the serial plotter format: temp:23.4,hum:51 or 23.4 51",
-    ),
-    (
-        "serial-plotter.columns",
-        "a line of bare numbers: series 1, 2, 3...",
-    ),
-    (
-        "serial-plotter.window",
-        "a number: the last samples of each series",
-    ),
-    (
         "sensors",
         "two series by name, on a fixed range, in their colors",
     ),

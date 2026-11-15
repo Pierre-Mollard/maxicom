@@ -15,6 +15,7 @@ pub enum LinkFormField {
     Address,
     Hosts,
     Color,
+    Profiles,
     Baud,
     Bits,
     Parity,
@@ -23,11 +24,12 @@ pub enum LinkFormField {
 }
 
 impl LinkFormField {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Name,
         Self::Address,
         Self::Hosts,
         Self::Color,
+        Self::Profiles,
         Self::Baud,
         Self::Bits,
         Self::Parity,
@@ -47,15 +49,19 @@ impl LinkFormField {
     }
 
     pub fn is_line(self) -> bool {
-        !matches!(self, Self::Name | Self::Address | Self::Hosts | Self::Color)
+        !matches!(
+            self,
+            Self::Name | Self::Address | Self::Hosts | Self::Color | Self::Profiles
+        )
     }
 }
 
 /// The form a saved link is written in (MAX-185), new (blank from `n`, filled from the link
 /// in use or a port from `s`) or edited: its name, its address, the
 /// machines it's for (comma separated, none for every machine), its color (MAX-201, none for the
-/// palette's) and its line settings, which a TCP address hasn't (skipped, and shown muted). Name,
-/// address, hosts, color and baud are typed, the other line fields cycle with Left / Right or Space. Tab or Down goes to the next field,
+/// palette's), its profiles (MAX-240, comma separated, in stack order) and its line settings,
+/// which a TCP address hasn't (skipped, and shown muted). Name, address, hosts, color, profiles
+/// and baud are typed, the other line fields cycle with Left / Right or Space. Tab or Down goes to the next field,
 /// Shift-Tab or Up to the one before; Enter saves, in place of `editing` for an edit; Esc
 /// goes back to the directory
 #[derive(Debug, Clone)]
@@ -65,6 +71,7 @@ pub struct LinkForm {
     pub address: Input,
     pub hosts: Input,
     pub color: Input,
+    pub profiles: Input,
     pub baud: Input,
     pub line: LineSettingsDialog,
     pub editing: Option<SavedLink>,
@@ -94,6 +101,7 @@ impl LinkForm {
             address: Input::new(link.address),
             hosts: Input::new(link.hosts.join(", ")),
             color: Input::new(link.color.map_or(String::new(), |color| color.to_string())),
+            profiles: Input::new(link.profiles.join(", ")),
             baud: Input::new(line.baud.to_string()),
             line: line_dialog,
             editing,
@@ -122,6 +130,7 @@ impl LinkForm {
             LinkFormField::Address => Some(&self.address),
             LinkFormField::Hosts => Some(&self.hosts),
             LinkFormField::Color => Some(&self.color),
+            LinkFormField::Profiles => Some(&self.profiles),
             LinkFormField::Baud => Some(&self.baud),
             _ => None,
         }
@@ -133,6 +142,7 @@ impl LinkForm {
             LinkFormField::Address => Some(&mut self.address),
             LinkFormField::Hosts => Some(&mut self.hosts),
             LinkFormField::Color => Some(&mut self.color),
+            LinkFormField::Profiles => Some(&mut self.profiles),
             LinkFormField::Baud => Some(&mut self.baud),
             _ => None,
         }
@@ -172,18 +182,12 @@ impl LinkForm {
         if self.name.value().trim().is_empty() {
             return Err("the name is empty".to_string());
         }
-        let hosts = (self.hosts.value().split(','))
-            .map(str::trim)
-            .filter(|host| !host.is_empty())
-            .map(str::to_string)
-            .collect();
         let link = SavedLink {
             name: self.name.value().trim().to_string(),
-            hosts,
+            hosts: list(&self.hosts),
             address: self.address.value().trim().to_string(),
             color: self.typed_color()?,
-            // no field for them yet: an edited link keeps its own
-            profiles: (self.editing.as_ref()).map_or_else(Vec::new, |link| link.profiles.clone()),
+            profiles: list(&self.profiles),
             ..SavedLink::default()
         };
         if !self.has_line() {
@@ -245,6 +249,15 @@ impl LinkForm {
         }
         OverlayResponse::Handled
     }
+}
+
+/// A field's comma-separated names, without the empty ones
+fn list(input: &Input) -> Vec<String> {
+    (input.value().split(','))
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 #[cfg(test)]

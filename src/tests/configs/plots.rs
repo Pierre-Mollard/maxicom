@@ -1,36 +1,55 @@
 use super::*;
 
+/// The default plots with the `arduino` profile's `serial-plotter` second, as the defaults were
+/// before MAX-240: for the tests of the plots themselves
+pub fn demo_plots() -> PlotsConfig {
+    let mut plots = PlotsConfig::default();
+    let serial_plotter = PlotDef {
+        separator: ":".to_string(),
+        columns: true,
+        window: PlotWindow::Samples(500),
+        ..PlotDef::default()
+    };
+    (plots.plots).insert(1, ("serial-plotter".to_string(), serial_plotter));
+    plots
+}
+
 fn load(toml: &str) -> Result<PlotsConfig, String> {
     let config: PlotsConfig = toml::from_str(toml).map_err(|e| e.to_string())?;
     config.check().map_err(|e| e.to_string())?;
     Ok(config)
 }
 
-/// MAX-222: the default file round-trips and checks: `key-value` on 30 s, `serial-plotter` with
-/// `:`, bare columns and 500 samples, `sensors` with its keys, range and colors, `tagged`
-/// with `line_contains`, in this order.
+/// MAX-222: the default file round-trips and checks: `key-value` on 30 s, `sensors` with its
+/// keys, range and colors, `tagged` with `line_contains`, in this order. MAX-240:
+/// `serial-plotter` is the `arduino` profile's, the same as it was here.
+/// How: the defaults written and read back; the profile file read.
 #[test]
 fn default_plots() {
     let text = toml::to_string_pretty(&PlotsConfig::default()).unwrap();
     let config = load(&text).unwrap();
     assert_eq!(config, PlotsConfig::default());
     let names: Vec<_> = config.plots.iter().map(|(name, _)| name.as_str()).collect();
-    assert_eq!(names, ["key-value", "serial-plotter", "sensors", "tagged"]);
-    let serial_plotter = &config.plots[1].1;
-    assert_eq!(serial_plotter.separator, ":");
-    assert!(serial_plotter.columns);
-    assert_eq!(serial_plotter.window, PlotWindow::Samples(500));
+    assert_eq!(names, ["key-value", "sensors", "tagged"]);
     assert_eq!(
         config.plots[0].1.window,
         PlotWindow::Time(Duration::from_secs(30))
     );
-    let sensors = &config.plots[2].1;
+    let sensors = &config.plots[1].1;
     assert_eq!(sensors.keys, ["temp", "hum"]);
     assert_eq!((sensors.min, sensors.max), (Some(0.0), Some(100.0)));
     assert_eq!(sensors.colors.len(), 2);
-    let tagged = &config.plots[3].1;
+    let tagged = &config.plots[2].1;
     assert_eq!(tagged.line_contains.as_deref(), Some("[plot]"));
     assert_eq!(tagged.window, PlotWindow::Samples(200));
+
+    let (_, arduino) = crate::configs::profiles::BUILT_IN[0];
+    let file: crate::configs::profiles::ProfileFile = toml::from_str(arduino).unwrap();
+    let plots = file.plots.unwrap();
+    assert_eq!(
+        plots.get("serial-plotter"),
+        demo_plots().get("serial-plotter")
+    );
 }
 
 /// MAX-222: the default file as written: short (fields at their default left out, but the
@@ -47,13 +66,6 @@ fn default_file_text() {
         text.contains("[key-value]\nseparator = \"=\"\nwindow = \"30s\" # a duration"),
         "{text}"
     );
-    assert!(
-        text.contains(
-            "[serial-plotter]\nseparator = \":\"\ncolumns = true # a line of bare numbers"
-        ),
-        "{text}"
-    );
-    assert!(text.contains("window = 500 # a number"), "{text}");
     assert!(
         text.contains("# every key=value pair of every line: temp=23.4 hum=51\n[key-value]"),
         "{text}"

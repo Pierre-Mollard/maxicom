@@ -121,11 +121,18 @@ impl AppConfig {
         let links =
             LinksConfig::load(&Self::active_links_path(&settings)).map_err(|err| err.to_string());
 
+        // the built-in profiles, as files to read and edit, with their folder (MAX-240): a
+        // folder that can't be written is said, the rest still loads
+        let profiles_dir = Self::profiles_dir_of(path);
+        let profiles = (profiles::write_folder(&profiles_dir).err())
+            .map(|err| format!("Profiles not written in {}: {err}", profiles_dir.display()));
+
         let warnings = [
             unknown_keys_warning::<SettingsConfig>(path),
             unknown_keys_warning::<ThemeConfig>(&theme_path),
             unknown_keys_warning::<PlotsConfig>(&plots_path),
             unknown_keys_warning::<KeyBindingsConfig>(&keybindings_path),
+            profiles,
         ];
 
         Ok(AppConfig {
@@ -206,8 +213,12 @@ impl AppConfig {
     /// The user's profiles (MAX-240): next to the settings file in use, so `--config` brings
     /// its own
     pub fn profiles_dir() -> PathBuf {
-        let path = Self::config_path();
-        let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        Self::profiles_dir_of(&Self::config_path())
+    }
+
+    /// The profiles folder next to the settings file `config`
+    pub fn profiles_dir_of(config: &Path) -> PathBuf {
+        let dir = config.parent().map(Path::to_path_buf).unwrap_or_default();
         dir.join(PROFILES_DIR)
     }
 

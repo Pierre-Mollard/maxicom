@@ -21,7 +21,9 @@ fn saved(response: OverlayResponse) -> (SavedLink, Option<SavedLink>) {
 
 /// MAX-185: a new link starts with `[link]`'s line; Tab and Down go through the fields, Up
 /// and Shift-Tab back, round; Left, Right and Space cycle a line value; Enter gives the
-/// link with all its line settings. A baud that isn't a number or an empty name says so.
+/// link with all its line settings. MAX-240: the profiles are typed comma separated, in
+/// stack order, the empty names left out. A baud that isn't a number or an empty name says
+/// so.
 /// How: a link for one machine, each field typed or cycled, then Enter; then a bad baud,
 /// then no name.
 #[test]
@@ -39,6 +41,9 @@ fn new_link() {
     type_in(&mut form, "/dev/ttyUSB0");
     form.handle_action(key(KeyCode::Down));
     form.handle_action(key(KeyCode::Down));
+    form.handle_action(key(KeyCode::Down));
+    assert_eq!(form.field, LinkFormField::Profiles);
+    type_in(&mut form, "board, ,proj");
     form.handle_action(key(KeyCode::Down));
     assert_eq!(form.field, LinkFormField::Baud);
     form.baud = Input::new("74880".into());
@@ -63,7 +68,7 @@ fn new_link() {
         hosts: vec!["laptop".into()],
         address: "/dev/ttyUSB0".into(),
         color: None,
-        profiles: Vec::new(),
+        profiles: vec!["board".into(), "proj".into()],
         baud: Some(74880),
         bits: Some(7),
         parity: Some(Parity::Even),
@@ -87,7 +92,7 @@ fn new_link() {
 /// MAX-185: an edit starts on the link as saved, its missing line fields `[link]`'s; a
 /// TCP address skips the line fields and saves none; the hosts split on commas, none for
 /// every machine. Enter gives the link in place of the one edited, its profiles kept
-/// (MAX-240, no field for them yet); Esc goes back to the directory.
+/// (MAX-240: their field starts on them); Esc goes back to the directory.
 /// How: a TCP link with a profile and without hosts edited to two hosts, Tab through it;
 /// then Esc.
 #[test]
@@ -111,6 +116,9 @@ fn edit_link() {
     type_in(&mut form, "a, ,b");
     form.handle_action(DialogAction::CycleNext);
     assert_eq!(form.field, LinkFormField::Color);
+    form.handle_action(DialogAction::CycleNext);
+    assert_eq!(form.field, LinkFormField::Profiles);
+    assert_eq!(form.profiles.value(), "bridge");
     form.handle_action(DialogAction::CycleNext);
     assert_eq!(form.field, LinkFormField::Name);
     form.handle_action(DialogAction::Pick(PopupTarget::LinkFormField(

@@ -118,14 +118,17 @@ pub struct TerminalSize {
 
 /// The `.meta` file of a session or a full recording, written when it starts, and again when
 /// the terminal grid changes size: a restore replays the bytes at the size they ended on
-/// (MAX-178), none in a meta written before, and when the session is named (MAX-213). A file of
-/// another `version` is read as none, and never restores
+/// (MAX-178), none in a meta written before, when the session is named (MAX-213), and when
+/// the link's profile stack changes, which its replay lays again (MAX-240). A file of another
+/// `version` is read as none, and never restores
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordingMeta {
     pub version: u32,
     pub started: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<String>,
     pub device: CaptureDevice,
     pub text: CaptureFormat,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -138,6 +141,7 @@ impl RecordingMeta {
             version: SESSION_META_VERSION,
             started: started.timestamp(),
             name: None,
+            profiles: Vec::new(),
             device,
             text,
             terminal: None,

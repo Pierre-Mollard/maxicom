@@ -14,6 +14,7 @@ categories = ["command-line-utilities", "hardware-support", "development-tools::
 include = [
     "src/**/*",
     "examples/**/*",
+    "profiles/*.toml",
     "Cargo.toml",
     "/README.md",
     "LICENSE-APACHE",

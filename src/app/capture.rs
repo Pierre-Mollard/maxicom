@@ -108,7 +108,8 @@ impl App {
     /// when the line settings or the encoding changed since it started; when the recording's
     /// source changed (another address too), a full recording stops, a text recording gets a
     /// marker line. The session's address is `opened`'s: a new port gets its session once it
-    /// is open. Their metas say the terminal grid's size (MAX-178). Run before the received
+    /// is open. Their metas say the terminal grid's size (MAX-178) and the profile stack
+    /// (MAX-240). Run before the received
     /// bytes are recorded, and on each tick for a change with nothing received after it
     pub fn follow_device(&mut self) {
         let changed =
@@ -138,6 +139,8 @@ impl App {
 
         let (rows, cols) = self.terminal_mode.get_vt100_size();
         self.recorder.set_terminal_size(TerminalSize { rows, cols });
+        // the stack laid now: the last one of a session is its meta's (MAX-240)
+        self.recorder.set_profiles(&self.profiles);
     }
 
     /// What a recording started now records: the link's address and device, a replay's device
