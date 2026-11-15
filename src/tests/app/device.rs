@@ -245,6 +245,84 @@ fn open_switches_and_goes_back_on_failure() {
     );
 }
 
+/// MAX-240: a link opened at runtime brings its saved profiles once it opened, for the loop
+/// to lay, and a link saved without any (or not saved) drops the stack; the same stack, or
+/// a failed open, which goes back to the link that was open, asks for nothing. The stack
+/// laid is the app's.
+/// How: a plain TCP link open; a saved link with two profiles opened, laid; a saved link on
+/// a closed port with another profile; a plain link; then a second plain one.
+#[test]
+fn opened_link_brings_its_profiles() {
+    let (first, first_address) = listener();
+    let (second, second_address) = listener();
+    let (third, third_address) = listener();
+    let (closed, closed_address) = listener();
+    drop(closed);
+    let (mut app, _peer) = connected(&first, &first_address);
+    let links = format!(
+        "[[link]]\nname = 'board'\naddress = '{second_address}'\nprofiles = ['dev', 'proj']\n\
+         [[link]]\nname = 'gone'\naddress = '{closed_address}'\nprofiles = ['other']\n"
+    );
+    app.set_links(Ok(toml::from_str(&links).unwrap()));
+    let open = |app: &mut App, address: &str| {
+        let address = address.parse::<Address>().unwrap();
+        app.dispatch(Action::App(AppAction::Open(address)));
+    };
+    let stack = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+
+    open(&mut app, &second_address);
+    assert_eq!(app.take_profiles_due(), None, "not before it opened");
+    let _second_peer = second.accept().unwrap();
+    poll_until(&mut app, "opened", |app| app.link.is_open());
+    assert_eq!(app.take_profiles_due(), Some(stack(&["dev", "proj"])));
+    assert!(app.profiles().is_empty(), "laid by the loop");
+    let keys = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
+    let plots = crate::configs::PlotsConfig::default();
+    app.apply_profiles(stack(&["dev", "proj"]), keys, Vec::new(), plots);
+    assert_eq!(app.profiles(), stack(&["dev", "proj"]));
+
+    open(&mut app, &closed_address);
+    poll_until(&mut app, "failed", |app| {
+        app.link_config().address == second_address.parse::<Address>().unwrap()
+    });
+    assert_eq!(
+        app.take_profiles_due(),
+        None,
+        "back to the link and its stack"
+    );
+
+    open(&mut app, &first_address);
+    let _first_peer = first.accept().unwrap();
+    poll_until(&mut app, "plain opened", |app| app.link.is_open());
+    assert_eq!(app.take_profiles_due(), Some(Vec::new()));
+    app.set_profiles(Vec::new());
+
+    open(&mut app, &third_address);
+    let _third_peer = third.accept().unwrap();
+    poll_until(&mut app, "second plain opened", |app| {
+        app.link.is_open() && app.link_config().address.to_string() == third_address
+    });
+    assert_eq!(app.take_profiles_due(), None, "the same stack");
+}
+
+/// MAX-240: started on the directory with `--profile`, the link picked first keeps them,
+/// over its own saved ones.
+/// How: a saved TCP link with a profile, `cli` as the start's stack, the link opened.
+#[test]
+fn first_pick_keeps_the_option_profiles() {
+    let (listener, address) = listener();
+    let mut app = app_on(&address);
+    let links = format!("[[link]]\nname = 'board'\naddress = '{address}'\nprofiles = ['own']\n");
+    app.set_links(Ok(toml::from_str(&links).unwrap()));
+    app.set_profiles(vec!["cli".to_string()]);
+    app.start_in_directory(Vec::new(), None);
+    app.dispatch(Action::App(AppAction::Open(address.parse().unwrap())));
+    let _peer = listener.accept().unwrap();
+    poll_until(&mut app, "opened", |app| app.link.is_open());
+    let due = vec!["own".to_string(), "cli".to_string()];
+    assert_eq!(app.take_profiles_due(), Some(due));
+}
+
 /// MAX-187: each device switched to gets a session backup of its own, A -> B -> A three of
 /// them; a failed open goes back to the link that was open with its views, and its backup
 /// records on.

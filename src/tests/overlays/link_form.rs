@@ -63,6 +63,7 @@ fn new_link() {
         hosts: vec!["laptop".into()],
         address: "/dev/ttyUSB0".into(),
         color: None,
+        profiles: Vec::new(),
         baud: Some(74880),
         bits: Some(7),
         parity: Some(Parity::Even),
@@ -85,9 +86,10 @@ fn new_link() {
 
 /// MAX-185: an edit starts on the link as saved, its missing line fields `[link]`'s; a
 /// TCP address skips the line fields and saves none; the hosts split on commas, none for
-/// every machine. Enter gives the link in place of the one edited; Esc goes back to the
-/// directory.
-/// How: a TCP link without hosts edited to two hosts, Tab through it; then Esc.
+/// every machine. Enter gives the link in place of the one edited, its profiles kept
+/// (MAX-240, no field for them yet); Esc goes back to the directory.
+/// How: a TCP link with a profile and without hosts edited to two hosts, Tab through it;
+/// then Esc.
 #[test]
 fn edit_link() {
     let defaults = LinkDefaults {
@@ -97,6 +99,7 @@ fn edit_link() {
     let old = SavedLink {
         name: "router".into(),
         address: "tcp://10.0.0.1:4000".into(),
+        profiles: vec!["bridge".into()],
         ..SavedLink::default()
     };
     let mut form = LinkForm::edit(old.clone(), &defaults);
@@ -118,6 +121,7 @@ fn edit_link() {
     let (link, replaces) = saved(form.handle_action(DialogAction::Confirm));
     assert_eq!(replaces, Some(old));
     assert_eq!(link.hosts, ["a", "b"]);
+    assert_eq!(link.profiles, ["bridge"]);
     assert_eq!(link.baud, None);
     assert!(matches!(
         form.handle_action(DialogAction::Close),

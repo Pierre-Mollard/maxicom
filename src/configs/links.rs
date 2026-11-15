@@ -29,7 +29,8 @@ pub struct LinksConfig {
 }
 
 /// A link as written: its name, the machines it's for, its address, its color in place of the
-/// palette's (MAX-201), and the line settings that differ from `[link]`'s (none on a TCP link)
+/// palette's (MAX-201), its profiles laid over the config while it's open (MAX-240), and the
+/// line settings that differ from `[link]`'s (none on a TCP link)
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SavedLink {
@@ -39,6 +40,8 @@ pub struct SavedLink {
     pub address: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<Color>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub baud: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]

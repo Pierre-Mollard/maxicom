@@ -182,6 +182,11 @@ pub struct App {
     /// the ones for it (MAX-185)
     links: Result<LinksConfig, String>,
     host: Option<String>,
+    /// The profile stack laid over the config, the one of the link being opened, and the one
+    /// for the loop to lay once that link opened, when it isn't the same (MAX-240)
+    profiles: Vec<String>,
+    opening_profiles: Option<Vec<String>>,
+    profiles_due: Option<Vec<String>>,
     /// The text `mash` sends until another comes in (MAX-6)
     mash: Option<Mash>,
     /// The plots of `plots.toml`, the one shown and when its clock started (MAX-222)
@@ -326,6 +331,9 @@ impl App {
             triggers: Vec::new(),
             links: Ok(LinksConfig::default()),
             host: crate::configs::links::this_host(),
+            profiles: Vec::new(),
+            opening_profiles: None,
+            profiles_due: None,
             mash: None,
             plots: PlotsConfig::default(),
             plot: None,

@@ -333,6 +333,43 @@ fn plot_option() {
     );
 }
 
+/// MAX-240: a saved link opens with its profiles, then the `--profile` ones in the order
+/// given, glued or not; a device given has only the options' and none by default; the
+/// option needs its name.
+/// How: a saved link with a profile, given by name with two more, then a device, then the
+/// option alone.
+#[test]
+fn profile_option() {
+    let links: Vec<SavedLink> = toml::from_str::<crate::configs::LinksConfig>(
+        "[[link]]\nname = 'board'\naddress = '/dev/ttyUSB1'\nprofiles = ['vendor']\n",
+    )
+    .unwrap()
+    .links;
+    let profiles = |args: &[&str]| match parse_args_from(
+        args.iter().map(|a| a.to_string()),
+        &LinkDefaults::default(),
+        &links,
+    ) {
+        Ok(ParseOutcome::Run { profiles, .. }) => Ok(profiles),
+        Ok(other) => panic!("not a run: {other:?}"),
+        Err(err) => Err(err.to_string()),
+    };
+    assert_eq!(
+        profiles(&["--profile", "project", "board", "--profile=debug"]),
+        Ok(vec!["vendor".into(), "project".into(), "debug".into()])
+    );
+    assert_eq!(profiles(&["board"]), Ok(vec!["vendor".into()]));
+    assert_eq!(
+        profiles(&["/dev/ttyUSB0", "--profile", "project"]),
+        Ok(vec!["project".into()])
+    );
+    assert_eq!(profiles(&["/dev/ttyUSB0"]), Ok(vec![]));
+    assert_eq!(
+        profiles(&["/dev/ttyUSB0", "--profile"]),
+        Err("Missing value for option '--profile'.".to_string())
+    );
+}
+
 /// MAX-156: the device can be given without `--device`, a TCP one with `--tcp` too, and the
 /// last one given wins.
 #[test]

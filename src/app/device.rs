@@ -12,11 +12,11 @@ use std::{
 
 use ratatui::style::Color;
 
-use super::{App, UpdateEffect};
+use super::{App, UpdateEffect, triggers::Trigger};
 use crate::{
     capture::{CaptureDevice, RecordingMeta, Session, recording_raw},
     configs::{
-        AppConfig, LinksConfig,
+        AppConfig, KeyResolver, LinksConfig, PlotsConfig,
         links::{SavedLink, default_name},
     },
     inputs::Action,
@@ -250,9 +250,47 @@ impl App {
 
     /// The name `address` is saved under for this machine, when it is (MAX-185)
     pub fn saved_name(&self, address: &Address) -> Option<&str> {
+        self.saved_at(address).map(|link| link.name.as_str())
+    }
+
+    /// The link saved for `address` on this machine, when there's one
+    fn saved_at(&self, address: &Address) -> Option<&SavedLink> {
         self.links_here()
             .find(|link| link.address.parse::<Address>().ok().as_ref() == Some(address))
-            .map(|link| link.name.as_str())
+    }
+
+    /// The profile stack laid over the config (MAX-240)
+    pub fn profiles(&self) -> &[String] {
+        &self.profiles
+    }
+
+    /// The stack laid at start: the link's, then `--profile`'s (MAX-240)
+    pub fn set_profiles(&mut self, profiles: Vec<String>) {
+        self.profiles = profiles;
+    }
+
+    /// The stack of the link just opened, when it isn't the one laid, for the loop to lay it
+    /// (MAX-240): a saved link's own, none for another
+    pub fn take_profiles_due(&mut self) -> Option<Vec<String>> {
+        self.profiles_due.take()
+    }
+
+    /// `profiles` laid over the config (MAX-240): what they change of it, the keys, the
+    /// triggers and the plots. The settings stay as they are, toggles included, which a
+    /// reload would put back from the file
+    pub fn apply_profiles(
+        &mut self,
+        profiles: Vec<String>,
+        key_resolver: KeyResolver,
+        triggers: Vec<Trigger>,
+        plots: PlotsConfig,
+    ) {
+        self.profiles = profiles;
+        self.key_resolver = key_resolver;
+        self.prefix_active = false;
+        self.set_triggers(triggers);
+        self.set_plots(plots);
+        self.warn_shadowed_keys();
     }
 
     /// This machine's saved colors by address, the first link of an address first (MAX-201)
@@ -649,6 +687,10 @@ impl App {
             }
             OpenFor::Open { previous } => {
                 let switched = previous.address != self.link.config().address;
+                let profiles = self.opening_profiles.take().unwrap_or_default();
+                if profiles != self.profiles {
+                    self.profiles_due = Some(profiles);
+                }
                 self.notify_link(ToastLevel::Success, format!("Opened {label}"));
                 if let Some(Overlay::Directory(_)) = self.overlay() {
                     self.close_overlay();
@@ -702,6 +744,7 @@ impl App {
             }
             // the retries reopen the port that was open, which the link is back on
             OpenFor::Open { .. } => {
+                self.opening_profiles = None;
                 let back = self.link_label();
                 self.fail_commands(format!("open: {e}, back to {back}"));
             }
@@ -725,6 +768,16 @@ impl App {
         if self.replaced_link().is_some() {
             self.stop_replay();
         }
+        // the stack goes with the link once it opened, a failed open going back to both: a
+        // saved link's own, then `--profile`'s on the first pick from the start's directory
+        let own = self
+            .saved_at(&config.address)
+            .map(|link| link.profiles.clone());
+        let mut profiles = own.unwrap_or_default();
+        if self.device_unpicked {
+            profiles.extend(self.profiles.iter().cloned());
+        }
+        self.opening_profiles = Some(profiles);
         self.link.switch_to(config);
         self.pause_commands(Instant::now() + CONNECT_TIMEOUT * 2);
         let message = format!("Opening {}", self.link_label());

@@ -13,8 +13,6 @@ pub mod highlights;
 pub mod keybindings;
 pub mod links;
 pub mod plots;
-// TODO: (MAX-240) remove the allow at step 3, where a link's profiles are layered
-#[allow(dead_code)]
 pub mod profiles;
 pub mod settings;
 pub mod style;
@@ -47,6 +45,7 @@ const HIGHLIGHT_FILE: &str = "highlights.toml";
 const TRIGGERS_FILE: &str = "triggers.toml";
 const LINKS_FILE: &str = "links.toml";
 const PLOTS_FILE: &str = "plots.toml";
+const PROFILES_DIR: &str = "profiles";
 
 /// The settings file given with `--config`, set once at startup (MAX-206)
 static CONFIG_FILE_GIVEN: OnceLock<PathBuf> = OnceLock::new();
@@ -204,6 +203,14 @@ impl AppConfig {
         path.parent().map(Path::to_path_buf).unwrap_or_default()
     }
 
+    /// The user's profiles (MAX-240): next to the settings file in use, so `--config` brings
+    /// its own
+    pub fn profiles_dir() -> PathBuf {
+        let path = Self::config_path();
+        let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        dir.join(PROFILES_DIR)
+    }
+
     /// The config folder, then each config file put out of it (`--config`, a `*_path`
     /// setting), with what they are: what the help and the settings show and copy (MAX-163)
     pub fn config_paths(settings: &SettingsConfig) -> Vec<(&'static str, PathBuf)> {
@@ -259,6 +266,7 @@ pub enum ConfigsError {
     Highlight(HighlightError),
     Triggers(TriggersFileError),
     Plots(PlotsFileError),
+    Profile(profiles::ProfileError),
 }
 
 impl std::fmt::Display for ConfigsError {
@@ -270,6 +278,7 @@ impl std::fmt::Display for ConfigsError {
             Self::Highlight(err) => write!(f, "{err}"),
             Self::Triggers(err) => write!(f, "{err}"),
             Self::Plots(err) => write!(f, "{err}"),
+            Self::Profile(err) => write!(f, "{err}"),
         }
     }
 }
@@ -283,6 +292,7 @@ impl std::error::Error for ConfigsError {
             Self::Highlight(err) => Some(err),
             Self::Triggers(err) => Some(err),
             Self::Plots(err) => Some(err),
+            Self::Profile(err) => Some(err),
         }
     }
 }

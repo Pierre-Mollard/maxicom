@@ -173,6 +173,7 @@ fn saved_from_a_config() {
         hosts: vec!["laptop".into()],
         address: "/dev/ttyUSB0".into(),
         color: None,
+        profiles: Vec::new(),
         baud: Some(9600),
         bits: Some(7),
         parity: Some(Parity::Even),

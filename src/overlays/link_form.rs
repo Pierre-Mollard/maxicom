@@ -182,6 +182,8 @@ impl LinkForm {
             hosts,
             address: self.address.value().trim().to_string(),
             color: self.typed_color()?,
+            // no field for them yet: an edited link keeps its own
+            profiles: (self.editing.as_ref()).map_or_else(Vec::new, |link| link.profiles.clone()),
             ..SavedLink::default()
         };
         if !self.has_line() {

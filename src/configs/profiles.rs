@@ -1,10 +1,10 @@
 //! Profiles (MAX-240): a file of settings laid over the global config while a link uses it,
-//! `profiles/<name>.toml`. It holds a description, line settings in `[link]`, keys and named
-//! commands in the sections of `keymap.toml`, and highlights, triggers and plots under
-//! `[highlights]`, `[triggers]` and `[plots]` in the formats of their files; all optional. A
-//! board's or a project's knowledge lives in profiles, never in the code. A stack of profiles
-//! is laid in order over the global config, a later one winning, and rebuilt from the global
-//! config on each change, never patched
+//! `profiles/<name>.toml`. It holds a description, keys and named commands in the sections of
+//! `keymap.toml`, and highlights, triggers and plots under `[highlights]`, `[triggers]` and
+//! `[plots]` in the formats of their files; all optional. No line settings: those are the
+//! saved link's. A board's or a project's knowledge lives in profiles, never in the code. A
+//! stack of profiles is laid in order over the global config, a later one winning, and
+//! rebuilt from the global config on each change, never patched
 
 use std::{
     collections::BTreeMap,
@@ -18,18 +18,6 @@ use super::{
     AppConfig, HighlightConfig, KeyBindingsConfig, KeyPattern, KeyResolver, PlotsConfig,
     TriggersConfig, keybindings::NamedCommandConfig, unknown_keys,
 };
-use crate::link::serial::{FlowControl, Parity};
-
-/// A profile's `[link]`: the line settings it gives a link, under the link's own
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
-#[serde(default)]
-pub struct LinkLayer {
-    pub baud: Option<u32>,
-    pub bits: Option<u8>,
-    pub parity: Option<Parity>,
-    pub stop_bits: Option<u8>,
-    pub flow: Option<FlowControl>,
-}
 
 /// A profile file as written. Its keymap sections are empty unless written, unlike the
 /// global keymap's, which take their defaults
@@ -37,7 +25,6 @@ pub struct LinkLayer {
 #[serde(default)]
 pub struct ProfileFile {
     pub description: String,
-    pub link: LinkLayer,
     pub prefixed: BTreeMap<String, String>,
     pub direct: BTreeMap<String, String>,
     pub line_mode: BTreeMap<String, String>,
@@ -116,11 +103,9 @@ impl Profile {
 /// `config` with `profiles` laid over it in order, a later one winning (MAX-240):
 /// - keys replace the same key of their section, named commands the same name;
 /// - highlights come after the config's, drawn over them, one of the same name replacing it;
-/// - triggers and plots replace the same name, a plot keeping its place, others added;
-/// - the line settings replace `[link]`'s, under a saved link's own.
+/// - triggers and plots replace the same name, a plot keeping its place, others added.
 ///
-/// The keymap and the line settings of each step are checked as the global ones: an error
-/// names the profile's file
+/// The keymap of each step is checked as the global one: an error names the profile's file
 pub fn layered(config: &AppConfig, profiles: &[Profile]) -> Result<AppConfig, ProfileError> {
     let mut config = config.clone();
     for profile in profiles {
@@ -153,17 +138,20 @@ pub fn layered(config: &AppConfig, profiles: &[Profile]) -> Result<AppConfig, Pr
                 }
             }
         }
-        let (line, link) = (&mut config.settings.link, &file.link);
-        line.baud = link.baud.unwrap_or(line.baud);
-        line.bits = link.bits.unwrap_or(line.bits);
-        line.parity = link.parity.unwrap_or(line.parity);
-        line.stop_bits = link.stop_bits.unwrap_or(line.stop_bits);
-        line.flow = link.flow.unwrap_or(line.flow);
-        line.validate()
-            .map_err(|err| error(format!("[link]: {err}")))?;
         config.warnings.extend(profile.warnings.iter().cloned());
     }
     Ok(config)
+}
+
+/// `config` with the profiles `names` of the folder `dir` laid over it in order: the config
+/// a link with these profiles runs with
+pub fn with_profiles(
+    config: &AppConfig,
+    dir: &Path,
+    names: &[String],
+) -> Result<AppConfig, ProfileError> {
+    let profiles: Result<Vec<_>, _> = names.iter().map(|name| Profile::load(dir, name)).collect();
+    layered(config, &profiles?)
 }
 
 /// `file`'s keys over `keymap`'s, section by section: a key replaces the same key however

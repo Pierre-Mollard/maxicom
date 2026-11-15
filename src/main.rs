@@ -19,7 +19,7 @@ use crate::{
     args::{ParseOutcome, parse_args, print_help, print_version},
     configs::{
         AppConfig, ConfigsError, KeyResolver, KeywordHighlight, LinksConfig, PlotsConfig,
-        RawSideView, SettingsConfig, ThemeConfig,
+        RawSideView, SettingsConfig, ThemeConfig, profiles::with_profiles,
     },
     link::{Address, ByteSource, LinkConfig, LinkError},
     notification::ToastLevel,
@@ -102,24 +102,37 @@ struct RuntimeConfig {
     status_bar: CompiledStatusBar,
 }
 
-fn load_runtime_config(config_path: &Path) -> Result<RuntimeConfig, ConfigsError> {
-    let configs = AppConfig::load_or_create_default(config_path)?;
-    let key_resolver = KeyResolver::try_new(&configs.keybindings)
-        .expect("keybindings were already validated during config loading");
-    let status_bar = CompiledStatusBar::new(&configs.settings.ui.status_bar, &configs.theme);
-    let triggers = (configs.triggers.compile())
-        .expect("triggers were already validated during config loading");
-    Ok(RuntimeConfig {
-        highlight_rules: configs.highlights.compile_rules(),
-        triggers,
-        links: configs.links,
-        plots: configs.plots,
-        warnings: configs.warnings,
-        settings: configs.settings,
-        theme: configs.theme,
-        key_resolver,
-        status_bar,
-    })
+/// The config files, kept to lay another stack over them, and the runtime config with the
+/// link's `profiles` laid over them (MAX-240)
+fn load_runtime_config(
+    config_path: &Path,
+    profiles: &[String],
+) -> Result<(AppConfig, RuntimeConfig), ConfigsError> {
+    let global = AppConfig::load_or_create_default(config_path)?;
+    let laid = with_profiles(&global, &AppConfig::profiles_dir(), profiles)
+        .map_err(ConfigsError::Profile)?;
+    Ok((global, RuntimeConfig::new(laid)))
+}
+
+impl RuntimeConfig {
+    fn new(configs: AppConfig) -> Self {
+        let key_resolver = KeyResolver::try_new(&configs.keybindings)
+            .expect("keybindings were already validated during config loading");
+        let status_bar = CompiledStatusBar::new(&configs.settings.ui.status_bar, &configs.theme);
+        let triggers = (configs.triggers.compile())
+            .expect("triggers were already validated during config loading");
+        Self {
+            highlight_rules: configs.highlights.compile_rules(),
+            triggers,
+            links: configs.links,
+            plots: configs.plots,
+            warnings: configs.warnings,
+            settings: configs.settings,
+            theme: configs.theme,
+            key_resolver,
+            status_bar,
+        }
+    }
 }
 
 /// `--reset-config` (MAX-231): the files it resets, a confirmation, then what it did
@@ -164,6 +177,38 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     if args::reset_config() {
         return Ok(reset_config(&config_path));
     }
+    let mut global = match AppConfig::load_or_create_default(&config_path) {
+        Ok(config) => config,
+        Err(err) => {
+            eprintln!("maxicom: {err}");
+            return Ok(ExitCode::FAILURE);
+        }
+    };
+
+    // this machine's saved links, which a name given or `[link] device` may be (MAX-185)
+    let host = configs::links::this_host();
+    let saved: Vec<_> = (global.links.as_ref().ok())
+        .map(|config| {
+            (config.links.iter())
+                .filter(|link| link.is_for(host.as_deref()))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    let outcome = parse_args(&global.settings.link, &saved);
+
+    // the link's profiles laid over the config, kept by the app (MAX-240)
+    let profiles = match &outcome {
+        Ok(ParseOutcome::Run { profiles, .. }) => profiles.clone(),
+        _ => Vec::new(),
+    };
+    let laid = match with_profiles(&global, &AppConfig::profiles_dir(), &profiles) {
+        Ok(config) => config,
+        Err(err) => {
+            eprintln!("maxicom: {err}");
+            return Ok(ExitCode::FAILURE);
+        }
+    };
     let RuntimeConfig {
         mut settings,
         mut theme,
@@ -174,83 +219,67 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         plots,
         warnings,
         mut status_bar,
-    } = match load_runtime_config(&config_path) {
-        Ok(config) => config,
-        Err(err) => {
-            eprintln!("maxicom: {err}");
-            return Ok(ExitCode::FAILURE);
+    } = RuntimeConfig::new(laid);
+
+    let (address, line, replay_delay, restore, capture_file) = match outcome {
+        Ok(ParseOutcome::Run {
+            address,
+            line,
+            replay_delay,
+            restore,
+            capture_file,
+            display_hex,
+            encoding,
+            plot,
+            profiles: _,
+        }) => {
+            // minicom's `-H` and `-R`, over the settings until a reload (MAX-181)
+            if display_hex {
+                settings.raw_side.view = RawSideView::Hex;
+            }
+            if let Some(encoding) = encoding {
+                settings.encoding = encoding;
+            }
+            if plot.is_some() {
+                settings.plot = plot;
+            }
+            (address, line, replay_delay, restore, capture_file)
+        }
+        Ok(ParseOutcome::Help) => {
+            print_help();
+            return Ok(ExitCode::SUCCESS);
+        }
+        Ok(ParseOutcome::Version) => {
+            print_version();
+            return Ok(ExitCode::SUCCESS);
+        }
+        // the folder to look into the backups out of the app: `cd $(maxicom --cache-dir)`
+        Ok(ParseOutcome::CacheDir) => match AppConfig::default_sessions_dir() {
+            Some(dir) => {
+                println!("{}", dir.display());
+                return Ok(ExitCode::SUCCESS);
+            }
+            None => {
+                eprintln!("maxicom: no cache folder on this system");
+                return Ok(ExitCode::FAILURE);
+            }
+        },
+        // the settings just loaded, so a file that doesn't load has already stopped it
+        Ok(ParseOutcome::WriteConfig) => match configs::update::update_files(&config_path) {
+            Ok(report) => {
+                report.iter().for_each(|line| println!("{line}"));
+                return Ok(ExitCode::SUCCESS);
+            }
+            Err(err) => {
+                eprintln!("maxicom: {err}");
+                return Ok(ExitCode::FAILURE);
+            }
+        },
+        Err(error) => {
+            eprintln!("Argument error: {error}");
+            return Ok(ExitCode::from(EXIT_USAGE));
         }
     };
-
-    // this machine's saved links, which a name given or `[link] device` may be (MAX-185)
-    let host = configs::links::this_host();
-    let saved: Vec<_> = (links.as_ref().ok())
-        .map(|config| {
-            (config.links.iter())
-                .filter(|link| link.is_for(host.as_deref()))
-                .cloned()
-                .collect()
-        })
-        .unwrap_or_default();
-    let (address, line, replay_delay, restore, capture_file) =
-        match parse_args(&settings.link, &saved) {
-            Ok(ParseOutcome::Run {
-                address,
-                line,
-                replay_delay,
-                restore,
-                capture_file,
-                display_hex,
-                encoding,
-                plot,
-            }) => {
-                // minicom's `-H` and `-R`, over the settings until a reload (MAX-181)
-                if display_hex {
-                    settings.raw_side.view = RawSideView::Hex;
-                }
-                if let Some(encoding) = encoding {
-                    settings.encoding = encoding;
-                }
-                if plot.is_some() {
-                    settings.plot = plot;
-                }
-                (address, line, replay_delay, restore, capture_file)
-            }
-            Ok(ParseOutcome::Help) => {
-                print_help();
-                return Ok(ExitCode::SUCCESS);
-            }
-            Ok(ParseOutcome::Version) => {
-                print_version();
-                return Ok(ExitCode::SUCCESS);
-            }
-            // the folder to look into the backups out of the app: `cd $(maxicom --cache-dir)`
-            Ok(ParseOutcome::CacheDir) => match AppConfig::default_sessions_dir() {
-                Some(dir) => {
-                    println!("{}", dir.display());
-                    return Ok(ExitCode::SUCCESS);
-                }
-                None => {
-                    eprintln!("maxicom: no cache folder on this system");
-                    return Ok(ExitCode::FAILURE);
-                }
-            },
-            // the settings just loaded, so a file that doesn't load has already stopped it
-            Ok(ParseOutcome::WriteConfig) => match configs::update::update_files(&config_path) {
-                Ok(report) => {
-                    report.iter().for_each(|line| println!("{line}"));
-                    return Ok(ExitCode::SUCCESS);
-                }
-                Err(err) => {
-                    eprintln!("maxicom: {err}");
-                    return Ok(ExitCode::FAILURE);
-                }
-            },
-            Err(error) => {
-                eprintln!("Argument error: {error}");
-                return Ok(ExitCode::from(EXIT_USAGE));
-            }
-        };
 
     // no device named: the directory on the ports the system lists and the saved links, the
     // link waiting on the first port, else the first link, until one is picked; with none,
@@ -299,6 +328,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut input_buffer = vec![0u8; settings.rx_buffer_size];
 
     let mut app = App::new(settings, key_resolver, link_config);
+    app.set_profiles(profiles);
     app.set_triggers(triggers);
     app.set_links(links);
     app.set_plots(plots);
@@ -350,6 +380,28 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         };
         needs_redraw |= link_redraw;
 
+        // a link opened at runtime with another stack: laid over the config in use, its
+        // files not read again (MAX-240)
+        if let Some(profiles) = app.take_profiles_due() {
+            match with_profiles(&global, &AppConfig::profiles_dir(), &profiles) {
+                Ok(laid) => {
+                    let known = global.warnings.len();
+                    let config = RuntimeConfig::new(laid);
+                    highlight_rules = config.highlight_rules;
+                    let (keys, triggers) = (config.key_resolver, config.triggers);
+                    app.apply_profiles(profiles, keys, triggers, config.plots);
+                    let warnings = config.warnings.into_iter().skip(known);
+                    warnings.for_each(|w| app.notify_warn(w));
+                }
+                // the stack in use stays
+                Err(err) => app.open_overlay(Overlay::Error(
+                    ErrorDialog::new("Profiles Not Applied", "The link's profiles didn't load")
+                        .with_details(err),
+                )),
+            }
+            needs_redraw = true;
+        }
+
         // the input poll is the loop's only idle wait: none while RX flows, otherwise until the
         // next frame is due (if one is pending) or IDLE_WAIT. Then drain what is already pending
         // (key bursts, pastes) before drawing, instead of one event per frame
@@ -394,27 +446,30 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     UpdateEffect::CopyToClipboardAs { text, what } => {
                         execute_clipboard_copy(&mut app, &text, Some(&what));
                     }
-                    UpdateEffect::ReloadConfig => match load_runtime_config(&config_path) {
-                        Ok(config) => {
-                            input_buffer.resize(config.settings.rx_buffer_size, 0);
-                            theme = config.theme;
-                            highlight_rules = config.highlight_rules;
-                            app.set_triggers(config.triggers);
-                            app.set_links(config.links);
-                            app.set_plots(config.plots);
-                            status_bar = config.status_bar;
-                            app.apply_reload(config.settings, config.key_resolver);
-                            config.warnings.into_iter().for_each(|w| app.notify_warn(w));
+                    UpdateEffect::ReloadConfig => {
+                        match load_runtime_config(&config_path, app.profiles()) {
+                            Ok((files, config)) => {
+                                global = files;
+                                input_buffer.resize(config.settings.rx_buffer_size, 0);
+                                theme = config.theme;
+                                highlight_rules = config.highlight_rules;
+                                app.set_triggers(config.triggers);
+                                app.set_links(config.links);
+                                app.set_plots(config.plots);
+                                status_bar = config.status_bar;
+                                app.apply_reload(config.settings, config.key_resolver);
+                                config.warnings.into_iter().for_each(|w| app.notify_warn(w));
+                            }
+                            // the running config stays
+                            Err(err) => app.open_overlay(Overlay::Error(
+                                ErrorDialog::new(
+                                    "Config Reload Failed",
+                                    "The config files were not applied",
+                                )
+                                .with_details(err),
+                            )),
                         }
-                        // the running config stays
-                        Err(err) => app.open_overlay(Overlay::Error(
-                            ErrorDialog::new(
-                                "Config Reload Failed",
-                                "The config files were not applied",
-                            )
-                            .with_details(err),
-                        )),
-                    },
+                    }
                     _ => {}
                 }
                 if running {

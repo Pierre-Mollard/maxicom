@@ -13,7 +13,9 @@ use crate::{
 /// over the settings' or a saved link's (MAX-185). `replay_delay` is
 /// `--delay`, for a replay only. `restore` is `--restore` / `--no-restore`, the last one given,
 /// over `sessions.restore`. `capture_file`, `display_hex` and `encoding` are minicom's `-C`,
-/// `-H` and `-R`, over the settings (MAX-181). `plot` is `--plot`, over the settings' (MAX-222)
+/// `-H` and `-R`, over the settings (MAX-181). `plot` is `--plot`, over the settings' (MAX-222).
+/// `profiles` the stack the link opens with (MAX-240): a saved link's own, then the
+/// `--profile` ones in order, a later one winning
 #[derive(Debug)]
 pub enum ParseOutcome {
     Run {
@@ -25,6 +27,7 @@ pub enum ParseOutcome {
         display_hex: bool,
         encoding: Option<TextEncoding>,
         plot: Option<String>,
+        profiles: Vec<String>,
     },
     Help,
     Version,
@@ -97,21 +100,21 @@ enum Given {
     Word(String),
 }
 
-/// `word` as a saved link's name, its address and line over `[link]`'s, else as a device with
-/// `[link]`'s line; `what` before a device that doesn't parse
+/// `word` as a saved link's name, its address and line over `[link]`'s, with its profiles,
+/// else as a device with `[link]`'s line and none; `what` before a device that doesn't parse
 fn by_name(
     word: &str,
     what: &str,
     defaults: &LinkDefaults,
     links: &[SavedLink],
-) -> Result<(Address, LineSettings), ParseError> {
+) -> Result<(Address, LineSettings, Vec<String>), ParseError> {
     let bad = |err| ParseError::BadFormat(format!("{what}{err}"));
     match links.iter().find(|link| link.name == word) {
         Some(link) => {
             let address = link.address.parse().map_err(bad)?;
-            Ok((address, link.over(defaults).line()))
+            Ok((address, link.over(defaults).line(), link.profiles.clone()))
         }
-        None => Ok((word.parse().map_err(bad)?, defaults.line())),
+        None => Ok((word.parse().map_err(bad)?, defaults.line(), Vec::new())),
     }
 }
 
@@ -130,6 +133,7 @@ const VALUE_OPTIONS: &[(&str, &str)] = &[
     ("", "--flow"),
     ("", "--config"),
     ("", "--plot"),
+    ("", "--profile"),
 ];
 
 /// The value glued to its option split off, as getopt takes it for minicom (MAX-181):
@@ -175,6 +179,7 @@ fn parse_args_from(
     let mut display_hex = false;
     let mut encoding: Option<TextEncoding> = None;
     let mut plot: Option<String> = None;
+    let mut profiles: Vec<String> = Vec::new();
     // the line options given, refused on a link whose bridge sets the line (MAX-156)
     let mut line_options: Vec<&'static str> = Vec::new();
 
@@ -258,6 +263,9 @@ fn parse_args_from(
             "--plot" => {
                 plot = Some(args.next().ok_or(ParseError::MissingValue("--plot"))?);
             }
+            "--profile" => {
+                profiles.push(args.next().ok_or(ParseError::MissingValue("--profile"))?);
+            }
             // already read by `config_file`, before the settings loaded (MAX-206)
             "--config" => {
                 args.next().ok_or(ParseError::MissingValue("--config"))?;
@@ -283,18 +291,19 @@ fn parse_args_from(
     }
 
     // the link given, else the settings' one, if any; a name a saved link's first
-    let (address, mut line) = match (given, defaults.device()) {
-        (Some(Given::Address(address)), _) => (Some(address), defaults.line()),
+    let (address, mut line, own) = match (given, defaults.device()) {
+        (Some(Given::Address(address)), _) => (Some(address), defaults.line(), Vec::new()),
         (Some(Given::Word(word)), _) => {
-            let (address, line) = by_name(&word, "", defaults, links)?;
-            (Some(address), line)
+            let (address, line, own) = by_name(&word, "", defaults, links)?;
+            (Some(address), line, own)
         }
         (None, Some(device)) => {
-            let (address, line) = by_name(device, "link.device: ", defaults, links)?;
-            (Some(address), line)
+            let (address, line, own) = by_name(device, "link.device: ", defaults, links)?;
+            (Some(address), line, own)
         }
-        (None, None) => (None, defaults.line()),
+        (None, None) => (None, defaults.line(), Vec::new()),
     };
+    let profiles = own.into_iter().chain(profiles).collect();
     line.baud = baud.unwrap_or(line.baud);
     line.framing.char_size = char_size.unwrap_or(line.framing.char_size);
     line.framing.stop_bits = stop_bits.unwrap_or(line.framing.stop_bits);
@@ -318,6 +327,7 @@ fn parse_args_from(
         display_hex,
         encoding,
         plot,
+        profiles,
     })
 }
 
@@ -383,6 +393,9 @@ Options:
                            latin1 [default: the settings' encoding]
       --plot <NAME>        Show the plot NAME of plots.toml in the raw side panel's
                            place [default: plot in config.toml]
+      --profile <NAME>     Lay the profile NAME (profiles/NAME.toml next to config.toml)
+                           over the config, after a saved link's own; repeatable, the
+                           later one winning
 
   An option's value can be glued to it: --baudrate=9600, -b9600.
 

@@ -15,8 +15,7 @@ fn load(folder: &Folder, name: &str) -> Result<Profile, ProfileError> {
 }
 
 /// MAX-240 step 2: a profile file holds only what it writes: no keys, no highlights, triggers
-/// nor plots, no line setting unless written; a name with no file isn't found, the file
-/// named.
+/// nor plots unless written; a name with no file isn't found, the file named.
 /// How: a profile with a description and highlights only, then a name with no file.
 #[test]
 fn profile_holds_what_it_writes() {
@@ -33,7 +32,6 @@ fn profile_holds_what_it_writes() {
     assert_eq!(file.highlights.as_ref().unwrap().entries.len(), 1);
     assert!(file.triggers.is_none() && file.plots.is_none());
     assert!(file.prefixed.is_empty() && file.commands.is_empty());
-    assert_eq!(file.link, LinkLayer::default());
 
     let error = load(&folder, "nope").err().unwrap().to_string();
     let path = folder.path("profiles").join("nope.toml");
@@ -53,10 +51,12 @@ fn global_config_stays() {
     let same = layered(&config, &[]).unwrap();
     assert_eq!(format!("{same:?}"), format!("{config:?}"));
 
-    write(&folder, "board", "[link]\nbaud = 9600\n");
+    write(&folder, "board", "[highlights]\nREADY = \"Green\"\n");
     let laid = layered(&config, &[load(&folder, "board").unwrap()]).unwrap();
-    assert_eq!(laid.settings.link.baud, 9600);
-    assert_eq!(config.settings.link.baud, 115_200);
+    let global = config.highlights.entries.len();
+    assert_eq!(laid.highlights.entries.len(), global + 1);
+    assert_eq!(folder.load().unwrap().highlights.entries.len(), global);
+    assert_eq!(config.highlights.entries.len(), global);
 }
 
 /// MAX-240 step 2: a profile's keys replace the same key of their section however it's
@@ -104,10 +104,9 @@ fn profile_keymap_over_the_global_one() {
 
 /// MAX-240 step 2: a profile's highlights come after the global ones, drawn over them, one
 /// of the same name replacing it; its triggers replace the same name; its plots replace the
-/// same name in place, the others added; its line settings replace `[link]`'s, the others
-/// stay.
+/// same name in place, the others added.
 /// How: the default files, a profile with `INFO` and `READY`, `u-boot` and `login`,
-/// `serial-plotter` and `temp`, a baud rate and flow control.
+/// `serial-plotter` and `temp`.
 #[test]
 fn profile_over_the_global_files() {
     let folder = Folder::new("profile-other", "");
@@ -115,7 +114,6 @@ fn profile_over_the_global_files() {
         &folder,
         "board",
         concat!(
-            "[link]\nbaud = 9600\nflow = \"rtscts\"\n",
             "[highlights]\nINFO = \"Red\"\nREADY = \"Green\"\n",
             "[triggers.u-boot]\nmatch = \"autoboot\"\nrun = \"send x\"\n",
             "[triggers.login]\nmatch = \"login: \"\nrun = 'send root\\r'\n",
@@ -146,20 +144,16 @@ fn profile_over_the_global_files() {
     assert_eq!(place(&plots), place(&config.plots.names()));
     assert_eq!(plots.last().unwrap(), "temp");
     assert_eq!(laid.plots.get("serial-plotter").unwrap().separator, "=");
-
-    let link = &laid.settings.link;
-    assert_eq!((link.baud, link.flow), (9600, FlowControl::RtsCts));
-    assert_eq!((link.bits, link.stop_bits), (8, 1));
 }
 
 /// MAX-240 step 2: in a stack, a later profile wins over an earlier one.
-/// How: two profiles binding `F6` and setting the baud rate, in both orders.
+/// How: two profiles binding `F6`, in both orders.
 #[test]
 fn later_profile_wins() {
     let folder = Folder::new("profile-stack", "");
-    for (name, baud) in [("a", 9600), ("b", 57600)] {
+    for name in ["a", "b"] {
         let text = format!(
-            "[link]\nbaud = {baud}\n[prefixed]\nF6 = \"{name}-boot\"\n[commands]\n{name}-boot = {{ run = \"break\" }}\n"
+            "[prefixed]\nF6 = \"{name}-boot\"\n[commands]\n{name}-boot = {{ run = \"break\" }}\n"
         );
         write(&folder, name, &text);
     }
@@ -167,17 +161,16 @@ fn later_profile_wins() {
     let (a, b) = (load(&folder, "a").unwrap(), load(&folder, "b").unwrap());
     let laid = layered(&config, &[a.clone(), b.clone()]).unwrap();
     assert_eq!(laid.keybindings.prefix_actions["F6"], "b-boot");
-    assert_eq!(laid.settings.link.baud, 57600);
     let laid = layered(&config, &[b, a]).unwrap();
     assert_eq!(laid.keybindings.prefix_actions["F6"], "a-boot");
-    assert_eq!(laid.settings.link.baud, 9600);
 }
 
-/// MAX-240 step 2: a profile that doesn't read, or whose keys or line settings don't hold
-/// once laid, is an error naming the profile and its file, saying what's wrong, as a global
-/// file's would; an unknown key is a warning naming the profile, kept in the laid config.
-/// How: bad syntax, a trigger that doesn't compile, a key on an unknown name, a line setting
-/// out of range, then unknown keys.
+/// MAX-240 step 2: a profile that doesn't read, or whose keys don't hold once laid, is an
+/// error naming the profile and its file, saying what's wrong, as a global file's would; an
+/// unknown key is a warning naming the profile, kept in the laid config. Line settings are
+/// the saved link's: a `[link]` in a profile is unknown, `[link]` untouched.
+/// How: bad syntax, a trigger that doesn't compile, a key on an unknown name, then unknown
+/// keys and a `[link]`.
 #[test]
 fn profile_errors_name_the_profile_and_file() {
     let folder = Folder::new("profile-errors", "");
@@ -202,16 +195,34 @@ fn profile_errors_name_the_profile_and_file() {
     assert!(text.contains("rst"), "{text}");
     let text = error("[prefixed]\nF6 = \"nope\"\n");
     assert_eq!(text, format!("{head}in [prefixed]: unknown action 'nope'"));
-    let text = error("[link]\nbits = 9\n");
-    assert!(
-        text.starts_with(&format!("{head}[link]: link.bits")),
-        "{text}"
-    );
 
-    write(&folder, "bad", "colour = 1\n[link]\nbauds = 9600\n");
+    write(&folder, "bad", "colour = 1\n[link]\nbaud = 9600\n");
     let profile = load(&folder, "bad").unwrap();
-    let warning = "Unknown keys in profile 'bad': colour, link.bauds";
+    let warning = "Unknown keys in profile 'bad': colour, link";
     assert_eq!(profile.warnings, [warning]);
     let laid = layered(&config, &[profile]).unwrap();
     assert_eq!(laid.warnings, [warning]);
+    assert_eq!(laid.settings.link, config.settings.link);
+}
+
+/// MAX-240 step 3: a link opens with its profiles laid in order from the folder, a missing
+/// one stopping it with its name.
+/// How: a profile with a highlight, then a stack with a missing profile.
+#[test]
+fn profiles_laid_from_the_folder() {
+    let folder = Folder::new("profile-link", "");
+    write(&folder, "board", "[highlights]\nREADY = \"Green\"\n");
+    let config = folder.load().unwrap();
+    let dir = folder.path("profiles");
+    let laid = with_profiles(&config, &dir, &["board".to_string()]).unwrap();
+    let last = laid
+        .highlights
+        .entries
+        .last()
+        .map(|(name, _)| name.as_str());
+    assert_eq!(last, Some("READY"));
+
+    let names = ["board".to_string(), "nope".to_string()];
+    let error = with_profiles(&config, &dir, &names).err().unwrap();
+    assert_eq!(error.name, "nope");
 }
