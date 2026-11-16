@@ -273,7 +273,8 @@ fn built_in_profiles_written_with_the_folder() {
 /// config: `esp32`'s RTS reset in place of the DTR one on the same key, its bootloader on
 /// `H`, its log level lines and its armed crash trigger; `arduino`'s serial plotter plot.
 /// MAX-9: `esp32`'s `on_open` is commented out, and runs `board-reset` once uncommented.
-/// MAX-220: its crash triggers, armed, silent, rearmed, each marking `c`.
+/// MAX-220: its crash triggers, armed, silent, rearmed, each marking `c`. MAX-247: both
+/// switch to line mode on load.
 /// How: the default files, each profile laid over them; `esp32`'s text with `on_open`
 /// uncommented.
 #[test]
@@ -331,6 +332,12 @@ fn built_in_profiles_lay_over_the_defaults() {
     let invocations = crate::commands::parse_with(&line, &resolver.commands).unwrap();
     let names: Vec<_> = invocations.iter().map(|i| i.spec.name).collect();
     assert_eq!(names, ["dtr", "rts", "sleep", "rts"]);
+
+    for (name, _) in BUILT_IN {
+        let on_load = load(&folder, name).unwrap().file.on_load.unwrap();
+        assert_eq!(on_load, "mode line", "{name}");
+        crate::commands::parse(&on_load).unwrap();
+    }
 
     let arduino = with_profiles(&config, &dir, &["arduino".to_string()]).unwrap();
     assert_eq!(arduino.plots.names().last().unwrap(), "serial-plotter");

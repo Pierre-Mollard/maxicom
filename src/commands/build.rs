@@ -462,6 +462,21 @@ pub fn set(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     })
 }
 
+/// `mode line|terminal` (MAX-247): the mode set, nothing when it is so already, as `set` does;
+/// a profile's `on_load` sets it whatever it was
+pub fn mode(app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let mode = match args {
+        [ArgValue::Enum("line")] => Mode::Line,
+        [ArgValue::Enum("terminal")] => Mode::Terminal,
+        _ => unreachable!("mode takes line or terminal"),
+    };
+    Ok(if app.settings().mode == mode {
+        Action::Ignore
+    } else {
+        Action::App(AppAction::ToggleSetting(SettingKey::Mode))
+    })
+}
+
 /// `encoding utf8|ascii|cp437|latin1`: how the received bytes are read as text
 pub fn encoding(_app: &App, args: &[ArgValue]) -> Result<Action, String> {
     let encoding = match args {

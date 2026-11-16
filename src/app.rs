@@ -191,6 +191,8 @@ pub struct App {
     /// since, for the loop to run it once the stack is laid
     on_open: Option<String>,
     on_open_due: bool,
+    /// The `on_load` lines of the profiles just laid, for the loop to run (MAX-247)
+    on_load_due: Vec<String>,
     /// Where the profiles are: next to the config file, another folder in the tests
     profiles_dir: PathBuf,
     /// The text `mash` sends until another comes in (MAX-6)
@@ -346,6 +348,7 @@ impl App {
             profiles_due: None,
             on_open: None,
             on_open_due: false,
+            on_load_due: Vec::new(),
             profiles_dir: AppConfig::profiles_dir(),
             mash: None,
             plots: PlotsConfig::default(),

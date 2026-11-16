@@ -28,7 +28,8 @@ maxicom -D /dev/ttyUSB0 -b 115200
 ```
 
 The line settings have their own options: `-b, --baudrate`, `--bits`,
-`--parity`, `--stop-bits` and `--flow`. An option's value can be glued to
+`--parity`, `--stop-bits`, `--flow`, and `--dtr` and `--rts` for the
+[control lines on open](#dtr-and-rts-on-open). An option's value can be glued to
 it: `--baudrate=9600`, `-b9600`.
 
 ### A device over TCP
@@ -101,7 +102,8 @@ framing in the status bar opens it too. It sets:
 
 - the baud rate, among the common rates from 9600 to 921600;
 - the data bits, the parity and the stop bits;
-- the flow control.
+- the flow control;
+- DTR and RTS on open, see [below](#dtr-and-rts-on-open).
 
 ![The line settings popup](images/line-settings.png)
 
@@ -124,6 +126,38 @@ The same settings have commands, for the
 
 On a detached port, they are kept for when it opens. A TCP link and a replay
 refuse them.
+
+### DTR and RTS on open
+
+Many boards reset or start their bootloader from the DTR and RTS lines, so
+what an open does to them matters. Each line takes one of three values:
+
+| Value | On each open |
+| --- | --- |
+| `keep` (default) | maxicom doesn't touch the line: it stays as the system put it |
+| `on` | The line is set on right after the open |
+| `off` | The line is set off right after the open |
+
+Set them with `dtr` and `rts` in [`[link]`](#default-link) or in a
+[saved link](saved-links.md), with `--dtr` and `--rts` at startup, or in the
+line settings popup. They apply on every open: at start, on an attach, on a
+reconnect and on a switch. Changed while the port is open, they wait for the
+next open, and a notice says so; to move a line now, use the `dtr` and `rts`
+[commands](command-line.md#control-lines-and-break).
+
+With `keep`, what you get depends on the system. On Linux and macOS, opening
+a port turns both lines on. On Windows, maxicom's serial library turns both
+off.
+
+When both lines change, maxicom moves them together on Linux and macOS. That
+matters for the usual ESP32 auto-reset circuit, which resets the board
+while RTS is on and DTR off: lines moved one at a time could pass through
+that state. On Windows the lines can only move one at a time, so RTS goes
+off first and on last.
+
+With hardware flow control (`flow = "rtscts"`), the driver drives RTS, so
+the `rts` value is left out. A port that refuses the lines, such as a
+pseudo-terminal, fails to open with `on` or `off`.
 
 ## Detach and attach
 
@@ -179,6 +213,8 @@ bits = 8
 parity = "none"    # none, even, odd
 stop_bits = 1
 flow = "none"      # none, rtscts, xonxoff
+dtr = "keep"       # on open: keep, on, off
+rts = "keep"
 ```
 
 - `device` can also be the name of a saved link.

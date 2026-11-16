@@ -23,6 +23,8 @@ bits = 8
 parity = "none"
 stop_bits = 1
 flow = "none"
+dtr = "keep"                 # on open: keep, on, off
+rts = "keep"
 
 [[link]]
 name = "router console"
@@ -44,8 +46,9 @@ You rarely need to edit the file by hand. In the directory:
 | `n` | Empty, for a new link |
 | `e` | On the selected link, to edit it |
 
-In the form, move between the fields and change the bits, parity, stop bits
-and flow with the [popup keys](popups.md). Enter saves, and Esc goes back to
+In the form, move between the fields and change the bits, parity, stop bits,
+flow, and [DTR and RTS on open](links.md#dtr-and-rts-on-open) with the
+[popup keys](popups.md). Enter saves, and Esc goes back to
 the directory. A TCP address greys out the line settings, since its bridge
 sets them.
 

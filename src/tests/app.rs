@@ -1532,7 +1532,8 @@ fn command_line_replay() {
     assert!(matches!(app.update(detach), UpdateEffect::ToggleAttach));
 }
 
-/// MAX-12: `set` turns an on/off setting on or off (nothing when it is so already),
+/// MAX-12: `set` turns an on/off setting on or off (nothing when it is so already), `mode`
+/// the mode (MAX-247),
 /// `encoding` sets the encoding, `search` opens the search bar on its text with its matches,
 /// `screenshot` saves the terminal at once in `screenshot.dir`, as text or with its colors
 /// (`.ans`), and refuses in line mode.
@@ -1571,6 +1572,15 @@ fn command_line_set_encoding_search_screenshot() {
     assert!(!app.settings.ui.mouse && app.settings.show_timestamps);
     assert!(!app.settings.terminal_mode.answer_queries);
     assert!(parse_fails(&mut app, "set line-wrap on"));
+
+    // MAX-247: `mode` sets the mode, nothing when it is so already
+    run_line(&mut app, "mode line");
+    assert_eq!(app.settings.mode, Mode::Line);
+    run_line(&mut app, "mode terminal; mode terminal");
+    assert_eq!(app.settings.mode, Mode::Terminal);
+    run_line(&mut app, "mode line");
+    assert_eq!(app.settings.mode, Mode::Line);
+    assert!(parse_fails(&mut app, "mode raw"));
 
     run_line(&mut app, "encoding cp437");
     assert_eq!(app.settings.encoding, crate::configs::TextEncoding::Cp437);

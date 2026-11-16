@@ -25,13 +25,15 @@ uses the format of its own config file:
 ```toml
 description = "My board: reset keys, log colors, a crash notice"
 enabled = true
+on_load = "mode line"
+on_open = "board-reset"
 
 [prefixed]
 h = "board-reset"
 H = "bootloader"
 
 [commands]
-board-reset = { run = "rts on; sleep 100; rts off", help = "Reset through RTS" }
+board-reset = { run = "dtr off; rts on; sleep 100; rts off", help = "Reset through RTS" }
 bootloader = { run = "dtr off; rts on; sleep 100; dtr on; rts off", help = "Start the bootloader" }
 
 [highlights.error-lines]
@@ -53,6 +55,8 @@ keys = ["heap"]
 | --- | --- | --- |
 | `description` | One line, shown in the profiles popup | |
 | `enabled` | `false` turns the profile off, see [Turning one off](#turning-one-off) | |
+| `on_load` | A command line run when the profile is laid, see [Running commands](#running-commands) | [Command line](command-line.md) |
+| `on_open` | A command line run when the link opens, see [Running commands](#running-commands) | [Command line](command-line.md) |
 | `[prefixed]`, `[direct]`, `[line_mode]`, `[terminal_mode]`, `[search_mode]`, `[copy_mode]`, `[dialog]` | The sections of `keymap.toml` | [Keybindings](keybindings.md) |
 | `[commands]` | Named commands, as in `keymap.toml` | [Named commands](keybindings.md#named-commands) |
 | `[highlights.<name>]`, or words under `[highlights]` | The entries of `highlights.toml` | [Highlights](highlights.md) |
@@ -62,6 +66,38 @@ keys = ["heap"]
 A profile has no line settings: the baud rate and the framing belong to the
 link, in [`links.toml`](saved-links.md) or on the command line. A `[link]`
 table in a profile is ignored, with a warning.
+
+## Running commands
+
+A profile can run two [command lines](command-line.md) of its own, at two
+different moments.
+
+`on_load` runs when the profile is laid: at start, when a link that names it
+opens, and on `profile load`. It's the place for settings, such as the mode
+the board's output reads best in:
+
+```toml
+on_load = "mode line; set timestamps on"
+```
+
+A profile doesn't hold settings itself: `on_load` sets them as if you typed
+the line, and they stay as they are when the profile is taken off. It runs
+only for a profile new to the stack, so laying another profile on top
+doesn't undo what you changed since.
+
+`on_open` runs once the link opens: at start, on an attach and on `open`. It
+doesn't run when maxicom reopens a lost port on its own, since a board that
+resets on `on_open` and drops its USB port would loop. Use it to reset the
+board, so its whole boot log comes in:
+
+```toml
+on_open = "board-reset"
+```
+
+When both are due, `on_load` runs first, then `on_open`, before any command
+still waiting. With several profiles, each new one runs its `on_load` in
+stack order, and only the last `on_open` of the stack runs. A line that
+doesn't parse is said in a warning, `on_load: ...` or `on_open: ...`.
 
 ## How a profile is added
 
@@ -178,8 +214,8 @@ When maxicom creates the `profiles` folder, it writes two profiles in it:
 
 | Profile | Holds |
 | --- | --- |
-| `esp32` | ESP-IDF's log lines colored by level (`E` red, `W` yellow, `D` and `V` dimmed), `Ctrl-a h` resetting the board through RTS, `Ctrl-a H` starting its bootloader, a `usb-bootloader` command for the chips with a native USB port, and on each crash (a panic, `abort()`, a stack overflow, the task watchdog, a brownout) a notice and mark `c` on its line |
-| `arduino` | The `serial-plotter` plot: `temp:23.4,hum:51` or bare numbers, as the Arduino IDE's serial plotter reads them |
+| `esp32` | ESP-IDF's log lines colored by level (`E` red, `W` yellow, `I` blue, `D` and `V` dimmed), `Ctrl-a h` resetting the board through RTS, `Ctrl-a H` starting its bootloader, a `usb-bootloader` command for the chips with a native USB port, line mode on load (its `on_open` reset is there, commented out), and on each crash (a panic, `abort()`, a stack overflow, the task watchdog, a brownout) a notice and mark `c` on its line |
+| `arduino` | Line mode on load, and the `serial-plotter` plot: `temp:23.4,hum:51` or bare numbers, as the Arduino IDE's serial plotter reads them |
 
 They're plain files: read them, edit them, or copy one to start your own.
 The `esp32` reset commands drive RTS and DTR, so keep flow control off on

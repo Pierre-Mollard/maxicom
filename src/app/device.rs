@@ -274,7 +274,19 @@ impl App {
     /// The stack laid at start: the link's, then `--profile`'s (MAX-240)
     pub fn set_profiles(&mut self, profiles: Vec<String>) {
         self.on_open = self.on_open_of(&profiles);
+        self.on_load_due.extend(self.on_load_of(&profiles));
         self.profiles = profiles;
+    }
+
+    /// The `on_load` lines of the profiles of `profiles` not laid yet, in stack order, the
+    /// ones that are on (MAX-247): a profile laid again over the others doesn't run theirs
+    fn on_load_of(&self, profiles: &[String]) -> Vec<String> {
+        (profiles.iter())
+            .filter(|name| !self.profiles.contains(name))
+            .filter_map(|name| self.profile(name).ok())
+            .filter(|profile| profile.file.enabled)
+            .filter_map(|profile| profile.file.on_load)
+            .collect()
     }
 
     /// The `on_open` of the stack `profiles`, the later one that has it and is on (MAX-9),
@@ -286,24 +298,31 @@ impl App {
             .find_map(|profile| profile.file.on_open)
     }
 
-    /// The stack's `on_open` line once a link opened (MAX-9): at start, on an attach and on an
-    /// open, not on a reopen after a lost port (a board's native USB port drops on its reset,
-    /// it would loop), nor on a replay. Before the commands waiting, the rest of an `open`
-    /// line; a line that doesn't parse said
-    pub fn run_on_open(&mut self) {
-        if !std::mem::take(&mut self.on_open_due) {
-            return;
+    /// The profiles' lines that are due, before the commands waiting (the rest of an `open`
+    /// or a `profile load` line), a line that doesn't parse said:
+    /// - the `on_load` of the profiles just laid (MAX-247), first: settings before the board
+    ///   talks;
+    /// - the stack's `on_open` once a link opened (MAX-9): at start, on an attach and on an
+    ///   open, not on a reopen after a lost port (a board's native USB port drops on its
+    ///   reset, it would loop), nor on a replay.
+    pub fn run_profile_lines(&mut self) {
+        let mut lines: Vec<(&str, String)> = (std::mem::take(&mut self.on_load_due).into_iter())
+            .map(|line| ("on_load", line))
+            .collect();
+        if std::mem::take(&mut self.on_open_due)
+            && let Some(line) = self.on_open.clone()
+        {
+            lines.push(("on_open", line));
         }
-        let Some(line) = self.on_open.clone() else {
-            return;
-        };
-        match crate::commands::parse_with(&line, &self.key_resolver.commands) {
-            Ok(invocations) => {
-                for invocation in invocations.into_iter().rev() {
-                    self.pending_commands.push_front(invocation);
-                }
+        let mut invocations = Vec::new();
+        for (key, line) in lines {
+            match crate::commands::parse_with(&line, &self.key_resolver.commands) {
+                Ok(line) => invocations.extend(line),
+                Err(err) => self.notify_warn(format!("{key}: {err}")),
             }
-            Err(err) => self.notify_warn(format!("on_open: {err}")),
+        }
+        for invocation in invocations.into_iter().rev() {
+            self.pending_commands.push_front(invocation);
         }
     }
 
@@ -435,6 +454,7 @@ impl App {
         plots: PlotsConfig,
     ) {
         self.on_open = self.on_open_of(&profiles);
+        self.on_load_due.extend(self.on_load_of(&profiles));
         self.profiles = profiles;
         self.key_resolver = key_resolver;
         self.prefix_active = false;

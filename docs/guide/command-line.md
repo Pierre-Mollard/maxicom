@@ -177,6 +177,7 @@ Without a running session it refuses, and stops the rest of the line.
 | Command | Does |
 | --- | --- |
 | `set <setting> on\|off` | Sets `local-echo`, `timestamps`, `mouse`, `answer-queries`, `add-cr` or `add-lf`. Does nothing when it's already so. |
+| `mode line\|terminal` | Switches to line or terminal mode. Does nothing when it's already so. |
 | `encoding utf8\|ascii\|cp437\|latin1` | Sets how the received bytes are read |
 
 Settings with more than two values cycle with their keys. See

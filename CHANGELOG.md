@@ -8,6 +8,8 @@ you says so in an "Upgrading" section.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-16
+
 ### Upgrading
 
 Run [`maxicom --write-config`](https://pierre-mollard.github.io/maxicom/settings.html#updating-the-files)
@@ -30,6 +32,15 @@ Do both before
 [`maxicom --write-config`](https://pierre-mollard.github.io/maxicom/settings.html#updating-the-files):
 it needs the file to load, and it drops the sections under the old names
 (the old file stays next to it, as `.bak`).
+
+A profile already in your `profiles` folder isn't updated by a new
+version. To get the new `esp32` and `arduino` (line mode on load, the crash
+triggers, the `board-reset` fix), delete them and run
+[`maxicom --write-config`](https://pierre-mollard.github.io/maxicom/settings.html#updating-the-files).
+
+A `center` status bar template saved in your `config.toml` keeps the armed
+triggers in red: write `armed?primary:hide` in its `◎ {trigger_count}` block,
+as in the [default](https://pierre-mollard.github.io/maxicom/status-bar.html#the-default).
 
 ### Added
 
@@ -59,6 +70,20 @@ it needs the file to load, and it drops the sections under the old names
   plot). Delete one you don't want: it stays deleted. `--write-config` writes
   a missing one again, `--reset-config` writes them back. `enabled = false`
   in a profile turns it off without deleting it.
+- A profile's `on_load` runs a command line when the profile is laid, for
+  settings such as `mode line`, and `on_open` one when the link opens, such
+  as a board reset. See
+  [Running commands](https://pierre-mollard.github.io/maxicom/profiles.html#running-commands).
+  The `esp32` and `arduino` profiles switch to line mode on load; `esp32`'s
+  `on_open` reset is there, commented out.
+- `mode line|terminal` switches the mode, and does nothing when it's already
+  so.
+- [DTR and RTS on open](https://pierre-mollard.github.io/maxicom/links.html#dtr-and-rts-on-open):
+  `dtr` and `rts` in `[link]` and in saved links, `--dtr` and `--rts`, and two
+  rows in the line settings popup and the link form. `keep` (the default)
+  leaves each line as the system puts it, `on` and `off` set it on each open.
+  On Linux and macOS both lines move together, so a board's auto-reset
+  circuit doesn't see one line alone.
 - A trigger's `mark = "c"` puts that mark on the line its text came in on, so
   `Ctrl-a '` then `c` goes back to it. See
   [Marking the line](https://pierre-mollard.github.io/maxicom/triggers.html#marking-the-line).
@@ -80,6 +105,20 @@ it needs the file to load, and it drops the sections under the old names
 - The help popup grows up to 100 columns, for the actions' descriptions.
 - The default `plots.toml` no longer has `serial-plotter`: it's the `arduino`
   profile's now. A `plots.toml` already written keeps it.
+- The armed triggers in the status bar are in the main color, cyan by
+  default, instead of red.
+- In a status bar template, `line` and `term` are the mode shown, also while
+  the prefix, copy mode, the search or a popup has the keys.
+- The `esp32` profile colors ESP-IDF's info lines (`I (`) blue.
+
+### Fixed
+
+- In terminal mode, the cursor keys mode (`NOR`, `APP`) no longer disappears
+  from the status bar while the prefix, copy mode, the search or a popup has
+  the keys.
+- The `esp32` profile's `board-reset` (`Ctrl-a h`) turns DTR off first: after
+  an open both lines are on, and the reset only worked after a flash had
+  left DTR off.
 
 ## [0.1.2] - 2026-11-14
 
@@ -402,7 +441,8 @@ The first release. Everything below is described in the
   [status bar](https://pierre-mollard.github.io/maxicom/status-bar.html),
   reloaded while it runs (`Ctrl-a r`).
 
-[Unreleased]: https://github.com/Pierre-Mollard/maxicom/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/Pierre-Mollard/maxicom/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/Pierre-Mollard/maxicom/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Pierre-Mollard/maxicom/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Pierre-Mollard/maxicom/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Pierre-Mollard/maxicom/releases/tag/v0.1.0

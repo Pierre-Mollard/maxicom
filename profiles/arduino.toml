@@ -6,6 +6,8 @@
 
 description = "Arduino boards: the Arduino IDE serial plotter format"
 enabled = true # false: off, the links naming it open without it
+# A command line run when the profile is laid: Serial.print writes lines
+on_load = "mode line"
 
 # temp:23.4,hum:51 or bare numbers 23.4 51, as Serial.print writes them for
 # the Arduino IDE's serial plotter

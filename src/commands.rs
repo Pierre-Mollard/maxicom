@@ -580,6 +580,12 @@ pub static COMMANDS: &[CommandSpec] = {
             "Set local-echo, timestamps, mouse, answer-queries, add-cr or add-lf on or off",
         ),
         CommandSpec::build(
+            "mode",
+            &[arg("mode", ArgKind::Enum(&["line", "terminal"]))],
+            build::mode,
+            "Switch to line or terminal mode, nothing when it is so already",
+        ),
+        CommandSpec::build(
             "encoding",
             &[arg(
                 "encoding",

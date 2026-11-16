@@ -2137,7 +2137,7 @@ fn levels_changed_on_an_open_port_wait_for_the_next_open() {
 /// The later profile that has one wins, an off profile's is left out, and a stack laid
 /// later brings its own; a line that doesn't parse is said.
 /// How: `on_open` lines of `send` in a temp profiles folder, a TCP link; the loop's
-/// `run_on_open` called after each poll, the queued commands taken one by one.
+/// `run_profile_lines` called after each poll, the queued commands taken one by one.
 #[test]
 fn on_open_runs_once_after_an_open() {
     let dir = crate::capture::tests::temp_dir("on_open");
@@ -2152,7 +2152,7 @@ fn on_open_runs_once_after_an_open() {
     write("bad", "on_open = 'nope'");
     let stack = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
     let sent = |app: &mut App| {
-        app.run_on_open();
+        app.run_profile_lines();
         let mut sent = Vec::new();
         while let Some(action) = app.next_command_action(Instant::now()) {
             if let UpdateEffect::Transmit(bytes) = app.update(action) {
@@ -2200,4 +2200,113 @@ fn on_open_runs_once_after_an_open() {
     assert!(sent(&mut app).is_empty());
     let said = toasts(&app);
     assert!(said.iter().any(|t| t.starts_with("on_open: ")), "{said:?}");
+}
+
+/// MAX-247 step 0: laying profiles changes no setting: at start, a link's stack, another laid
+/// on top, all taken off; the settings toggled while running stay as they are.
+/// How: two profiles with keys, a highlight, a trigger and `on_open`, in a temp folder;
+/// the mode and the timestamps toggled; then each lay.
+#[test]
+fn laying_profiles_keeps_the_settings() {
+    let dir = crate::capture::tests::temp_dir("lay_settings");
+    std::fs::create_dir_all(&dir).unwrap();
+    let full = "on_open = 'send x'\n[prefixed]\nh = 'quit'\n[highlights]\nERR = 'Red'\n\
+                [triggers.t]\nmatch = 'x'\nrun = 'send y'\narmed = true\n";
+    std::fs::write(dir.join("board.toml"), full).unwrap();
+    std::fs::write(dir.join("proj.toml"), full).unwrap();
+    let stack = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+    let lay = |app: &mut App, names: &[&str]| {
+        let keys = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
+        let plots = crate::configs::PlotsConfig::default();
+        app.apply_profiles(stack(names), keys, Vec::new(), plots);
+    };
+
+    let mut app = app_on("/dev/ttyUSB0");
+    app.profiles_dir = dir.clone();
+    app.update(Action::App(AppAction::ToggleSetting(
+        crate::overlays::SettingKey::Mode,
+    )));
+    app.update(Action::App(AppAction::ToggleSetting(
+        crate::overlays::SettingKey::DisplayTimestamp,
+    )));
+    let toggled = app.settings().clone();
+    assert_ne!(toggled, SettingsConfig::default());
+
+    app.set_profiles(stack(&["board"]));
+    assert_eq!(*app.settings(), toggled, "at start");
+    lay(&mut app, &["board"]);
+    lay(&mut app, &["board", "proj"]);
+    assert_eq!(*app.settings(), toggled, "one laid on top");
+    lay(&mut app, &[]);
+    assert_eq!(*app.settings(), toggled, "all taken off");
+}
+
+/// MAX-247: a profile's `on_load` runs when it's laid: at start, and on a lay for the
+/// profiles new to the stack only, in stack order; not again when another is laid on top,
+/// nor when one is taken off; an off profile's not at all. When a link opened too, the
+/// `on_load` lines run before `on_open`. A line that doesn't parse is said.
+/// How: `notify` lines in a temp profiles folder, so the notices tell what ran and in which
+/// order; a TCP link; `run_profile_lines` as the loop calls it, the queue drained.
+#[test]
+fn on_load_runs_for_the_profiles_laid() {
+    let dir = crate::capture::tests::temp_dir("on_load");
+    std::fs::create_dir_all(&dir).unwrap();
+    let write = |name: &str, text: &str| {
+        std::fs::write(dir.join(format!("{name}.toml")), text).unwrap();
+    };
+    write(
+        "board",
+        "on_load = 'notify info \"board loaded\"'\non_open = 'notify info \"board opened\"'",
+    );
+    write("proj", "on_load = 'notify info \"proj loaded\"'");
+    write("late", "on_load = 'notify info \"late loaded\"'");
+    write(
+        "off",
+        "enabled = false\non_load = 'notify info \"off loaded\"'",
+    );
+    write("bad", "on_load = 'nope'");
+    let stack = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+    let lay = |app: &mut App, names: &[&str]| {
+        let keys = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
+        let plots = crate::configs::PlotsConfig::default();
+        app.apply_profiles(stack(names), keys, Vec::new(), plots);
+    };
+    let ran = |app: &mut App| {
+        app.notifications.dismiss_all();
+        app.run_profile_lines();
+        while let Some(action) = app.next_command_action(Instant::now()) {
+            app.update(action);
+        }
+        toasts(app)
+    };
+
+    let (listener, address) = listener();
+    let mut app = app_on(&address);
+    app.profiles_dir = dir.clone();
+    app.set_profiles(stack(&["board", "off"]));
+    assert_eq!(ran(&mut app), ["board loaded"], "at start");
+    app.start_link(None);
+    let _peer = listener.accept().unwrap();
+    poll_until(&mut app, "connected", |app| app.link.is_open());
+    assert_eq!(ran(&mut app), ["board opened"], "not loaded again");
+
+    lay(&mut app, &["board", "off", "proj"]);
+    assert_eq!(ran(&mut app), ["proj loaded"], "the new one only");
+    lay(&mut app, &["board", "off"]);
+    assert!(ran(&mut app).is_empty(), "nothing on unload");
+
+    app.dispatch(Action::App(AppAction::ToggleAttach));
+    app.dispatch(Action::App(AppAction::ToggleAttach));
+    let _peer = listener.accept().unwrap();
+    poll_until(&mut app, "attached", |app| app.link.is_open());
+    lay(&mut app, &["board", "off", "proj", "late"]);
+    assert_eq!(
+        ran(&mut app),
+        ["proj loaded", "late loaded", "board opened"],
+        "in stack order, before on_open"
+    );
+
+    lay(&mut app, &["board", "off", "proj", "late", "bad"]);
+    let said = ran(&mut app);
+    assert!(said.iter().any(|t| t.starts_with("on_load: ")), "{said:?}");
 }

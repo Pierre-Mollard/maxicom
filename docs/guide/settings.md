@@ -54,6 +54,8 @@ bits = 8 # 5 to 8
 parity = "none" # values: none, even, odd
 stop_bits = 1 # 1 or 2
 flow = "none" # values: none, rtscts, xonxoff
+dtr = "keep" # values: keep, on, off
+rts = "keep" # values: keep, on, off
 ```
 
 A setting left out of a file takes its default, so a file can hold only what
@@ -293,6 +295,7 @@ The device and line settings used when none are given. See
 | `parity` | `"none"` |
 | `stop_bits` | `1` |
 | `flow` | `"none"` |
+| `dtr`, `rts` | `"keep"`, see [DTR and RTS on open](links.md#dtr-and-rts-on-open) |
 
 ### `[capture]`, `[sessions]`, `[screenshot]`
 
