@@ -8,6 +8,30 @@ you says so in an "Upgrading" section.
 
 ## [Unreleased]
 
+### Added
+
+- In line mode, copy mode and the mouse select in the line still coming in,
+  before its line end, in the text and the raw side panel. A selection on it
+  stays when the rest of the line arrives. See
+  [The line still coming in](https://pierre-mollard.github.io/maxicom/copy-mode-and-mouse.html#the-line-still-coming-in).
+
+### Changed
+
+- From the live view, line mode's copy mode starts on the line still coming
+  in, when there is one.
+- In Hex, Octal and Binary, the line still coming in shows its last blanks
+  and a carriage return waiting for its line feed, as the lines before it
+  show their line end.
+
+### Fixed
+
+- The line still coming in is decoded with the `encoding` setting, as the
+  lines before it: it was always read as UTF-8.
+- In the raw side panel, the line still coming in wraps with its text: it
+  was one row, out of step with the text's rows once the line wrapped.
+- Jumping to a mark put on the line still coming in, by a trigger's `mark`,
+  no longer crashes maxicom.
+
 ## [0.1.3] - 2026-11-16
 
 ### Upgrading

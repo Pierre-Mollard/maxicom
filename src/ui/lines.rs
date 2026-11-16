@@ -35,7 +35,7 @@ use crate::{
             apply_selection_to_spans, border_style_for, draw_scrollbar_marks, highlight_spans,
             prompt_view, render_search_bar,
         },
-        data_display::{format_entry_content, format_line_content},
+        data_display::format_entry_content,
         layout::{
             LogicalLineLayout, PreparedLayout, byte_mode_rows, continuation_indent,
             prepare_view_layout,
@@ -207,8 +207,9 @@ pub fn render_monitor(
     //   scroll from there (MAX-72)
     let row_scrolling = active_focus.is_none();
     // The entry the window is built around: the scrolled-to one (the last one when live), or
-    // the focused one
-    let anchor_entry = focus_entry;
+    // the focused one. A focus on the partial RX line (a copy cursor or a mark on it, MAX-250)
+    // builds it around the last entry, which the partial line is drawn after
+    let anchor_entry = focus_entry.min(total_entries - 1);
 
     // Rows scrolled since the last frame (#36): positive is up. Taken now, before layout, so the
     // window below lays out exactly what this frame needs. Capped at a view height either way
@@ -254,22 +255,9 @@ pub fn render_monitor(
     // only restyle (MAX-237: the highlights of every received line cost more than the frame)
     let search = app.line_mode.search();
     let line_prefix_cached = app.settings().line_prefixes().line.to_string();
-    let lay_out_entry = |global_idx: usize, styled: bool| {
-        let entry = &app.line_mode.history()[global_idx];
-        // each match with whether it is the current one
-        let line_matches: Vec<(bool, &SearchMatch)> = if styled && is_search_active {
-            let start = search.matches.partition_point(|m| m.line_idx < global_idx);
-            let end = search.matches.partition_point(|m| m.line_idx <= global_idx);
-            search.matches[start..end]
-                .iter()
-                .enumerate()
-                .map(|(offset, m)| (start + offset == active_match_idx, m))
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        let sel_range = copy_range.filter(|_| styled).and_then(|(start, end)| {
+    // the selected chars of entry `global_idx`, the partial RX line's included (MAX-250)
+    let selection_of = |global_idx: usize| {
+        copy_range.and_then(|(start, end)| {
             if global_idx < start.line_idx || global_idx > end.line_idx {
                 None
             } else {
@@ -285,7 +273,24 @@ pub fn render_monitor(
                 };
                 Some((from, to, selection_style))
             }
-        });
+        })
+    };
+    let lay_out_entry = |global_idx: usize, styled: bool| {
+        let entry = &app.line_mode.history()[global_idx];
+        // each match with whether it is the current one
+        let line_matches: Vec<(bool, &SearchMatch)> = if styled && is_search_active {
+            let start = search.matches.partition_point(|m| m.line_idx < global_idx);
+            let end = search.matches.partition_point(|m| m.line_idx <= global_idx);
+            search.matches[start..end]
+                .iter()
+                .enumerate()
+                .map(|(offset, m)| (start + offset == active_match_idx, m))
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let sel_range = selection_of(global_idx).filter(|_| styled);
 
         let line = history_entry_to_line(
             entry,
@@ -421,44 +426,40 @@ pub fn render_monitor(
     }
 
     // The partial RX line (received but not ended yet) is drawn after the last entry, so only
-    // when the window reaches the last entry: otherwise it would land in the middle of history
+    // when the window reaches the last entry: otherwise it would land in the middle of history.
+    // Shown as the entry it becomes, so copy mode's chars are the ones drawn (MAX-250)
     if end_idx == total_entries
-        && app.settings().line_mode.show_partial_rx
-        && !app.line_mode.partial_rx().is_empty()
+        && let Some(partial) = &app.line_mode.partial_entry(app.settings())
     {
-        let partial_bytes = app.line_mode.partial_rx();
-        let trimmed_bytes = partial_bytes.trim_ascii_end();
+        let mut partial_spans = Vec::new();
 
-        if !trimmed_bytes.is_empty() {
-            let display_mode = app.settings().line_mode.display_mode;
-            let partial_raw = String::from_utf8_lossy(trimmed_bytes);
-
-            let mut partial_spans = Vec::new();
-
-            if app.settings().show_timestamps
-                && let Some(partial_timestamp) = app.line_mode.partial_line_timestamp()
-            {
-                let time = partial_timestamp
-                    .format(&app.settings().timestamp_format)
-                    .to_string();
-                partial_spans.push(Span::styled(time, theme.line_mode.timestamp));
-            }
-
-            let partial_prefix = app.settings().line_prefixes().partial.to_string();
-            let partial_prefix_style = *theme.line_mode.line_partial_prefix;
-            partial_spans.push(Span::styled(partial_prefix, partial_prefix_style));
-            partial_spans.extend(highlight_spans(
-                format_line_content(&partial_raw, display_mode, theme),
-                highlights,
-            ));
-            let partial_line = Line::from(partial_spans);
-            window.push_back(prepare_view_layout(
-                vec![partial_line],
-                app.settings(),
-                theme,
-                content_width,
-            ));
+        if app.settings().show_timestamps
+            && let Some(partial_timestamp) = partial.timestamp
+        {
+            let time = partial_timestamp
+                .format(&app.settings().timestamp_format)
+                .to_string();
+            partial_spans.push(Span::styled(time, theme.line_mode.timestamp));
         }
+
+        let partial_prefix = app.settings().line_prefixes().partial.to_string();
+        let partial_prefix_style = *theme.line_mode.line_partial_prefix;
+        partial_spans.push(Span::styled(partial_prefix, partial_prefix_style));
+        let mut content_spans = highlight_spans(
+            format_entry_content(partial, display_mode, theme),
+            highlights,
+        );
+        if let Some((from, to, style)) = selection_of(total_entries) {
+            content_spans = apply_selection_to_spans(content_spans, from, to, style);
+        }
+        partial_spans.extend(content_spans);
+        let partial_line = Line::from(partial_spans);
+        window.push_back(prepare_view_layout(
+            vec![partial_line],
+            app.settings(),
+            theme,
+            content_width,
+        ));
     }
 
     // One layout for the window: its row indexes start at 0 on `start_idx`'s first row, and
@@ -655,7 +656,7 @@ pub fn render_monitor(
 
     // for the next cursor move: a cursor that isn't shown is revealed centered (MAX-143)
     let cursor_shown = is_copy_active
-        && (start_idx..end_idx).contains(&copy_cursor.0)
+        && (start_idx..=end_idx).contains(&copy_cursor.0)
         && row_of_char(copy_cursor.0 - start_idx, copy_cursor.1).is_some_and(|row| {
             (paragraph_y_offset..paragraph_y_offset + content_height).contains(&row)
         });
@@ -727,15 +728,20 @@ pub fn render_monitor(
         WrapMode::Truncate => app.line_mode.x_offset(),
     };
 
+    // the partial RX line, when drawn, is the layout after the window's entries (MAX-250)
     if let Some((target_line, target_char)) = active_focus
         && target_line >= start_idx
-        && target_line < end_idx
+        && target_line <= end_idx
         && let Some(line_meta) = layout.line_layouts.get(target_line - start_idx)
     {
         let mut local_byte_offset = 0;
         let mut total_sub_bytes = 0;
 
-        if let Some(entry) = app.line_mode.history().get(target_line) {
+        let partial = (target_line == total_entries)
+            .then(|| app.line_mode.partial_entry(app.settings()))
+            .flatten();
+        let history = app.line_mode.history();
+        if let Some(entry) = history.get(target_line).or(partial.as_ref()) {
             let raw_bytes = entry.wire_bytes();
             let display_text = entry_display_text(entry, app.settings().line_mode.display_mode);
             let disp_map = entry_display_to_wire_map(entry, app.settings().line_mode.display_mode);
@@ -825,7 +831,6 @@ pub fn render_monitor(
         map_text_rows(
             app,
             &layout,
-            end_idx - start_idx,
             start_idx,
             paragraph_y_offset,
             line_x_offset,
@@ -883,8 +888,9 @@ pub fn render_monitor(
 
         let indent_width = continuation_indent_width(app.settings());
 
+        // the partial RX line, when drawn, is the layout after the window's entries (MAX-250)
         if cursor_line >= start_idx
-            && cursor_line < end_idx
+            && cursor_line <= end_idx
             && let Some(line_meta) = layout.line_layouts.get(cursor_line - start_idx)
         {
             let mut resolved_row = line_meta.first_text_row();
@@ -1250,18 +1256,19 @@ fn continuation_indent_width(settings: &SettingsConfig) -> usize {
 }
 
 /// Where each screen row's chars are, for mouse clicks (MAX-113): the same walk as the copy
-/// cursor's, from the window row on the view's top line and the pan
+/// cursor's, from the window row on the view's top line and the pan. The partial RX line, when
+/// drawn, is the layout after the window's entries: its rows map to the line after the last
+/// entry, where copy mode has it (MAX-250)
 fn map_text_rows(
     app: &mut App,
     layout: &PreparedLayout,
-    entries_shown: usize,
     start_idx: usize,
     paragraph_y_offset: usize,
     line_x_offset: usize,
     content_area: Rect,
 ) {
     let indent_width = continuation_indent_width(app.settings());
-    let entries = &layout.line_layouts[..entries_shown];
+    let entries = &layout.line_layouts;
     let content_width = content_area.width as usize;
     let map = app.frame_map_mut();
     map.text_area = content_area;
@@ -1336,6 +1343,7 @@ pub fn render_raw_side_panel(
 
     let raw_display_mode = raw_view_to_display_mode(raw_view);
     let copy_range = app.line_mode.copy_state().normalized_selection();
+    let partial = app.line_mode.partial_entry(app.settings());
     let history = app.line_mode.history();
     let is_search_active = app.line_mode.search().shows_matches();
     let active_match_idx = app.line_mode.search().current_match;
@@ -1383,7 +1391,9 @@ pub fn render_raw_side_panel(
         }
         let first_text_row = current_visual_row + entry_layout.gap;
 
-        if let Some(entry) = history.get(global_idx) {
+        // the partial RX line is the layout after the last entry (MAX-250)
+        let partial = partial.as_ref().filter(|_| global_idx == history.len());
+        if let Some(entry) = history.get(global_idx).or(partial) {
             let raw_bytes = entry.wire_bytes();
             let display_text = entry_display_text(entry, app.settings().line_mode.display_mode);
 
@@ -1556,18 +1566,6 @@ pub fn render_raw_side_panel(
         }
 
         current_visual_row = entry_visual_end;
-    }
-
-    if app.settings().line_mode.show_partial_rx
-        && !app.line_mode.partial_rx().is_empty()
-        && visible_raw_lines.len() < view_height
-    {
-        visible_raw_lines.push(format_raw_bytes_with_highlights(
-            app.line_mode.partial_rx(),
-            raw_display_mode,
-            &[],
-            theme,
-        ));
     }
 
     let max_visible_raw_width = visible_raw_lines

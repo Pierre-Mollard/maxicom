@@ -230,6 +230,7 @@ fn raw_bytes_of_entries_are_the_received_bytes() {
         let lm = received(encoding, wire);
         let mut source = LineModeTextSource {
             history: &lm.local_history,
+            partial: None,
             display_mode: LineDisplayMode::Pretty,
             raw_view: RawSideView::Hex,
             view_height: 10,
@@ -509,4 +510,129 @@ fn search_reopens_empty_with_the_last_query() {
     assert_eq!(cursor(&lm), 3);
     assert_eq!(lm.repeat_search(false), Some(true));
     assert_eq!(cursor(&lm), 0);
+}
+
+/// Copy mode with "first" ended and "prompt> ab" still arriving
+fn copy_on_partial(settings: &SettingsConfig) -> LineMode {
+    let mut lm = line_mode(10);
+    lm.feed_rx(false, TextEncoding::Utf8, b"first\nprompt> ab");
+    lm.handle_copy_action(CopyModeAction::Enter, settings);
+    lm
+}
+
+/// MAX-250: the partial RX line is the line after the last entry in copy mode: copy mode
+/// starts on it from the live view, the cursor goes back down onto it and a yank copies what
+/// has arrived.
+/// How: "prompt> ab" not ended, copy mode, MoveUp, MoveDown then JumpToBottom, select it
+/// whole and yank.
+#[test]
+fn copy_cursor_reaches_the_partial_line() {
+    let settings = SettingsConfig::default();
+    let mut lm = copy_on_partial(&settings);
+    assert_eq!(lm.copy_state.cursor.line_idx, 1);
+    lm.handle_copy_action(CopyModeAction::MoveUp, &settings);
+    assert_eq!(lm.copy_state.cursor.line_idx, 0);
+    lm.handle_copy_action(CopyModeAction::MoveDown, &settings);
+    assert_eq!(lm.copy_state.cursor.line_idx, 1);
+    lm.handle_copy_action(CopyModeAction::JumpToTop, &settings);
+    lm.handle_copy_action(CopyModeAction::JumpToBottom, &settings);
+    assert_eq!(lm.copy_state.cursor.line_idx, 1);
+    assert_eq!(lm.copy_line_text(&settings), "prompt> ab");
+
+    lm.handle_copy_action(CopyModeAction::StartOfLine, &settings);
+    lm.handle_copy_action(CopyModeAction::Select, &settings);
+    lm.handle_copy_action(CopyModeAction::EndOfLine, &settings);
+    let yanked = lm.handle_copy_action(CopyModeAction::Yank, &settings);
+    assert_eq!(yanked.as_deref(), Some("prompt> ab"));
+}
+
+/// MAX-250: a raw yank of the partial line gives its bytes received so far.
+/// How: select "prompt> ab" in the Hex raw view, yank raw.
+#[test]
+fn partial_line_raw_yank_gives_its_bytes() {
+    let mut settings = SettingsConfig::default();
+    settings.raw_side.view = RawSideView::Hex;
+    let mut lm = copy_on_partial(&settings);
+    lm.handle_copy_action(CopyModeAction::MoveDown, &settings);
+    lm.handle_copy_action(CopyModeAction::Select, &settings);
+    lm.handle_copy_action(CopyModeAction::EndOfLine, &settings);
+    let yanked = lm.handle_copy_action(CopyModeAction::YankRaw, &settings);
+    assert_eq!(yanked.as_deref(), Some("70 72 6F 6D 70 74 3E 20 61 62"));
+}
+
+/// MAX-250: a partial line not drawn is not a line for copy mode: `show_partial_rx` off,
+/// or only blanks received so far.
+/// How: copy mode starts on the last entry and MoveDown stays on it in both cases.
+#[test]
+fn hidden_partial_line_is_not_reachable() {
+    let mut settings = SettingsConfig::default();
+    settings.line_mode.show_partial_rx = false;
+    let mut lm = copy_on_partial(&settings);
+    assert_eq!(lm.copy_state.cursor.line_idx, 0);
+    lm.handle_copy_action(CopyModeAction::MoveDown, &settings);
+    assert_eq!(lm.copy_state.cursor.line_idx, 0);
+
+    let settings = SettingsConfig::default();
+    let mut lm = line_mode(10);
+    lm.feed_rx(false, TextEncoding::Utf8, b"first\n  ");
+    lm.handle_copy_action(CopyModeAction::Enter, &settings);
+    lm.handle_copy_action(CopyModeAction::MoveDown, &settings);
+    assert_eq!(lm.copy_state.cursor.line_idx, 0);
+}
+
+/// MAX-250: the partial line keeps its index once ended, so a selection on it stays on it
+/// while bytes arrive and after its line end; a yank then has the whole line.
+/// How: select from "prompt> ab"'s start, "cd" then "ef\n" arrive, yank to the line end.
+#[test]
+fn selection_on_partial_line_survives_its_line_end() {
+    let settings = SettingsConfig::default();
+    let mut lm = copy_on_partial(&settings);
+    lm.handle_copy_action(CopyModeAction::MoveDown, &settings);
+    lm.handle_copy_action(CopyModeAction::Select, &settings);
+    lm.feed_rx(false, TextEncoding::Utf8, b"cd");
+    lm.feed_rx(false, TextEncoding::Utf8, b"ef\n");
+    assert_eq!(texts(&lm), ["first\n", "prompt> abcdef\n"]);
+    assert_eq!(lm.copy_state.cursor.line_idx, 1);
+    lm.handle_copy_action(CopyModeAction::EndOfLine, &settings);
+    let yanked = lm.handle_copy_action(CopyModeAction::Yank, &settings);
+    assert_eq!(yanked.as_deref(), Some("prompt> abcdef"));
+}
+
+/// MAX-250: a lone CR restarts the partial line (progress bar) under a selection ending past
+/// its new end: the yank stops at the line's end.
+/// How: select "progress 10%" whole, "\r2%" arrives, yank.
+#[test]
+fn partial_line_restarted_under_the_selection() {
+    let settings = SettingsConfig::default();
+    let mut lm = line_mode(10);
+    lm.feed_rx(false, TextEncoding::Utf8, b"first\nprogress 10%");
+    lm.handle_copy_action(CopyModeAction::Enter, &settings);
+    lm.handle_copy_action(CopyModeAction::MoveDown, &settings);
+    lm.handle_copy_action(CopyModeAction::Select, &settings);
+    lm.handle_copy_action(CopyModeAction::EndOfLine, &settings);
+    lm.feed_rx(false, TextEncoding::Utf8, b"\r2%");
+    assert_eq!(lm.partial_rx(), b"2%");
+    let yanked = lm.handle_copy_action(CopyModeAction::Yank, &settings);
+    assert_eq!(yanked.as_deref(), Some("2%"));
+}
+
+/// MAX-250: the partial line ending with a full history drops the first entry: the cursor
+/// and the selection move up with the lines and stay on it.
+/// How: history capped at 2, select "ab" not ended, "c\n" arrives, yank to the line end.
+#[test]
+fn selection_on_partial_line_follows_an_eviction() {
+    let settings = SettingsConfig::default();
+    let mut lm = line_mode(2);
+    lm.feed_rx(false, TextEncoding::Utf8, b"one\ntwo\nab");
+    lm.handle_copy_action(CopyModeAction::Enter, &settings);
+    lm.handle_copy_action(CopyModeAction::JumpToBottom, &settings);
+    assert_eq!(lm.copy_state.cursor.line_idx, 2);
+    lm.handle_copy_action(CopyModeAction::StartOfLine, &settings);
+    lm.handle_copy_action(CopyModeAction::Select, &settings);
+    lm.feed_rx(false, TextEncoding::Utf8, b"c\n");
+    assert_eq!(texts(&lm), ["two\n", "abc\n"]);
+    assert_eq!(lm.copy_state.cursor.line_idx, 1);
+    lm.handle_copy_action(CopyModeAction::EndOfLine, &settings);
+    let yanked = lm.handle_copy_action(CopyModeAction::Yank, &settings);
+    assert_eq!(yanked.as_deref(), Some("abc"));
 }

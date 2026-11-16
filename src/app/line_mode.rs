@@ -144,10 +144,6 @@ impl LineMode {
         &self.user_input
     }
 
-    pub fn partial_line_timestamp(&self) -> Option<DateTime<Local>> {
-        self.partial_line.timestamp()
-    }
-
     /// The received bytes cut into lines, a lone CR ending one with `add_lf` (MAX-181)
     pub fn feed_rx(&mut self, add_lf: bool, encoding: TextEncoding, bytes: &[u8]) {
         self.feed_rx_at(add_lf, encoding, bytes, Some(Local::now()));
@@ -551,10 +547,9 @@ impl LineMode {
     ) -> Option<String> {
         let display_mode = settings.line_mode.display_mode;
         let wrap_mode = settings.line_mode.wrap_mode;
-        let gutter_width = settings.line_gutter_width();
 
         if let CopyModeAction::HandleKey(key) = action {
-            let display_text = self.copy_line_text(display_mode);
+            let display_text = self.copy_line_text(settings);
             if let Some(sub_action) = dispatch_copy_key_vi(
                 &mut self.vi_state_copymode,
                 &display_text,
@@ -579,7 +574,8 @@ impl LineMode {
 
         // entering copy mode leaves the view where it is (MAX-143): a scrolled view gets the
         // cursor on its bottom row. From the live view the cursor, on the first row of the last
-        // entry, is shown: that entry can be taller than the view (MAX-123)
+        // entry, is shown: that entry can be taller than the view (MAX-123). The last line is
+        // the partial RX line while it is shown (MAX-250)
         if action == CopyModeAction::Enter {
             self.copy_held = false;
             let max_line = self.local_history.len().saturating_sub(1);
@@ -587,6 +583,10 @@ impl LineMode {
             match self.bottom_row_start {
                 Some((line, char_idx)) if !live && line <= max_line => {
                     self.copy_state.enter_at(line, char_idx);
+                }
+                _ if self.partial_entry(settings).is_some() => {
+                    self.copy_state.enter_at(self.local_history.len(), 0);
+                    self.copy_reveal = Some(Reveal::Edge);
                 }
                 _ => {
                     self.copy_state.enter_at(max_line, 0);
@@ -600,6 +600,7 @@ impl LineMode {
         // adapter for the TextSource trait
         let mut source = LineModeTextSource {
             history: &self.local_history,
+            partial: self.partial_entry(settings),
             display_mode,
             raw_view: settings.raw_side.view,
             view_height: self.scroller.view_height,
@@ -624,7 +625,7 @@ impl LineMode {
                 self.copy_reveal = Some(reveal);
 
                 if wrap_mode == WrapMode::Truncate {
-                    self.sync_pan_with_cursor(display_mode, gutter_width);
+                    self.sync_pan_with_cursor(settings);
                 }
                 None
             }
@@ -633,21 +634,20 @@ impl LineMode {
         }
     }
 
-    fn sync_pan_with_cursor(&mut self, display_mode: LineDisplayMode, gutter_width: usize) {
+    fn sync_pan_with_cursor(&mut self, settings: &SettingsConfig) {
         let view_w = self.scroller.view_width;
         if view_w == 0 {
             return;
         }
 
+        let gutter_width = settings.line_gutter_width();
         let cursor_char_idx = self.copy_state.cursor.char_idx;
-        let content_width =
-            if let Some(entry) = self.local_history.get(self.copy_state.cursor.line_idx) {
-                let display_text = entry_display_text(entry, display_mode);
-                let chars_before: String = display_text.chars().take(cursor_char_idx).collect();
-                unicode_width::UnicodeWidthStr::width(chars_before.as_str())
-            } else {
-                cursor_char_idx
-            };
+        let content_width = if let Some(display_text) = self.copy_line_display(settings) {
+            let chars_before: String = display_text.chars().take(cursor_char_idx).collect();
+            unicode_width::UnicodeWidthStr::width(chars_before.as_str())
+        } else {
+            cursor_char_idx
+        };
 
         let total_cursor_col = gutter_width + content_width;
 
@@ -869,11 +869,32 @@ impl LineMode {
     }
 
     /// The text of the copy cursor's line, as shown
-    pub fn copy_line_text(&self, display_mode: LineDisplayMode) -> String {
-        self.local_history
-            .get(self.copy_state.cursor.line_idx)
-            .map(|e| entry_display_text(e, display_mode).into_owned())
-            .unwrap_or_default()
+    pub fn copy_line_text(&self, settings: &SettingsConfig) -> String {
+        self.copy_line_display(settings).unwrap_or_default()
+    }
+
+    /// The copy cursor's line as shown, the partial RX line included, none past the lines
+    fn copy_line_display(&self, settings: &SettingsConfig) -> Option<String> {
+        let display_mode = settings.line_mode.display_mode;
+        let line = self.copy_state.cursor.line_idx;
+        if let Some(entry) = self.local_history.get(line) {
+            return Some(entry_display_text(entry, display_mode).into_owned());
+        }
+        let partial = self
+            .partial_entry(settings)
+            .filter(|_| line == self.local_history.len());
+        partial.map(|entry| entry_display_text(&entry, display_mode).into_owned())
+    }
+
+    /// The partial RX line as the entry it becomes once ended, while it is shown (MAX-250):
+    /// copy mode sees it after the last entry, at the index it keeps once committed
+    pub fn partial_entry(&self, settings: &SettingsConfig) -> Option<LogEntry> {
+        let bytes = self.partial_line.line();
+        let shown = settings.line_mode.show_partial_rx && !bytes.trim_ascii_end().is_empty();
+        shown.then(|| {
+            let text = settings.encoding.decode(bytes);
+            LogEntry::received(text, bytes, self.partial_line.timestamp())
+        })
     }
 
     #[inline]
@@ -920,30 +941,39 @@ impl LineMode {
 
 struct LineModeTextSource<'a> {
     history: &'a VecDeque<LogEntry>,
+    /// The partial RX line while it is shown, the line after the history (MAX-250)
+    partial: Option<LogEntry>,
     display_mode: LineDisplayMode,
     raw_view: RawSideView,
     view_height: usize,
 }
 
+impl LineModeTextSource<'_> {
+    fn entry(&self, line_idx: usize) -> Option<&LogEntry> {
+        let partial = self.partial.as_ref();
+        self.history
+            .get(line_idx)
+            .or(partial.filter(|_| line_idx == self.history.len()))
+    }
+}
+
 impl<'a> TextSource for LineModeTextSource<'a> {
     fn total_lines(&mut self) -> usize {
-        self.history.len()
+        self.history.len() + usize::from(self.partial.is_some())
     }
 
     fn get_line_text(&mut self, line_idx: usize) -> Option<String> {
-        self.history
-            .get(line_idx)
+        self.entry(line_idx)
             .map(|e| entry_display_text(e, self.display_mode).into_owned())
     }
 
     fn get_line_raw_bytes(&mut self, line_idx: usize) -> Option<Vec<u8>> {
-        self.history
-            .get(line_idx)
+        self.entry(line_idx)
             .map(|entry| entry.wire_bytes().to_vec())
     }
 
     fn get_line_raw_map(&mut self, line_idx: usize, raw_bytes: &[u8]) -> Vec<usize> {
-        match self.history.get(line_idx) {
+        match self.entry(line_idx) {
             Some(entry) => entry_display_to_wire_map(entry, self.display_mode),
             None => build_display_to_raw_byte_map(raw_bytes, self.display_mode),
         }

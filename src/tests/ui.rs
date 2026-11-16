@@ -10106,3 +10106,148 @@ fn help_commands_cut_with_an_ellipsis() {
         "{row}"
     );
 }
+
+/// MAX-250: the copy cursor and a selection are drawn on the partial RX line, in the text and
+/// the raw panel, and stay on the same chars once its line end arrives.
+/// How: "first", then "prompt> ab" not ended, Hex panel. Copy mode, down: the cursor is on the
+/// "p". Select to the line end: "prompt> ab" and its bytes are selected. "cd" and the line end
+/// arrive: "prompt> ab" still selected, "cd" not.
+#[test]
+fn copy_cursor_and_selection_on_the_partial_line() {
+    let selection = h_theme().ui.selection.bg;
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+    h.app.settings_mut().raw_side.view = RawSideView::Hex;
+    h.feed(b"first\r\nprompt> ab");
+    h.draw();
+    let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+    copy(&mut h, CopyModeAction::Enter);
+    copy(&mut h, CopyModeAction::MoveDown);
+    let rows = h.draw();
+    assert_eq!(under_cursor(&mut h, &rows), "pr");
+
+    copy(&mut h, CopyModeAction::Select);
+    copy(&mut h, CopyModeAction::EndOfLine);
+    let rows = h.draw();
+    let (x, y) = cell_of(&rows, "prompt> ab");
+    assert_eq!(bg_at(&h, (x, y)), selection);
+    assert_eq!(bg_at(&h, (x + 9, y)), selection);
+    let (x, y) = cell_of(&rows, "70 72");
+    assert_eq!(bg_at(&h, (x, y)), selection);
+    assert_eq!(bg_at(&h, cell_of(&rows, "61 62")), selection);
+
+    h.feed(b"cd\r\n");
+    let rows = h.draw();
+    let (x, y) = cell_of(&rows, "prompt> abcd");
+    assert_eq!(bg_at(&h, (x, y)), selection);
+    assert_eq!(bg_at(&h, (x + 9, y)), selection);
+    assert_ne!(bg_at(&h, (x + 10, y)), selection);
+}
+
+/// MAX-250: the partial RX line is decoded with the encoding, like the line it becomes, so
+/// copy mode's chars are the ones drawn.
+/// How: "x" E9 "y" not ended, received as Latin1: drawn "xéy".
+#[test]
+fn partial_line_drawn_with_the_encoding() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+    h.app.settings_mut().encoding = TextEncoding::Latin1;
+    h.feed_as(TextEncoding::Latin1, b"first\r\nx\xE9y");
+    let rows = h.draw();
+    assert!(shows(&rows, "xéy"), "{rows:#?}");
+}
+
+/// MAX-250: a jump to a mark put on the line being received (a crash trigger's, MAX-220)
+/// shows it, before its line end too: the view is built around the last entry.
+/// How: 30 lines, "boot>" not ended and marked, view scrolled to the top, jump to the mark.
+#[test]
+fn mark_jump_to_the_partial_line() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+    for i in 0..30 {
+        h.feed(format!("line {i}\r\n").as_bytes());
+    }
+    h.feed(b"boot>");
+    h.app.line_mode.mark_receiving('a');
+    h.draw();
+    h.scroll(HistoryAction::ScrollToTop);
+    let rows = h.draw();
+    assert!(!shows(&rows, "boot>"));
+    h.app.line_mode.jump_to_mark('a');
+    let rows = h.draw();
+    assert!(shows(&rows, "boot>"), "{rows:#?}");
+}
+
+/// MAX-250: the mouse selects in the partial RX line like in an entry, on its wrapped rows
+/// too: a click puts the copy cursor there, a drag from the last entry into it yanks across
+/// both, a drag past the history's bottom right stops at its last char.
+/// How: wrapped lines with timestamps, then "boot> one two three four five six seven" not
+/// ended, which wraps. Click "two", drag "theta" to "seven", drag "one" to far below right.
+#[test]
+fn mouse_selects_in_the_partial_line() {
+    let mut h = wrapped_lines();
+    h.feed(b"boot> one two three four five six seven");
+    let rows = h.draw();
+    let partial_row = cell_of(&rows, "boot>").1;
+    assert!(
+        rows[partial_row as usize + 1].contains("seven"),
+        "{rows:#?}"
+    );
+
+    let (x, y) = cell_of(&rows, "two");
+    click(&mut h, (x + 1, y));
+    h.draw();
+    assert_eq!(cursor_cell(&mut h), (x + 1, y));
+    assert_eq!(h.app.line_mode.copy_state().cursor.line_idx, 30);
+    h.app.update(Action::CopyMode(CopyModeAction::Exit));
+
+    let rows = h.draw();
+    // the "theta" ending line 29, the row above the partial line
+    let above = &rows[partial_row as usize - 1];
+    let from = (
+        above[..above.find("theta").unwrap()].chars().count() as u16,
+        partial_row - 1,
+    );
+    let (x, y) = cell_of(&rows, "seven");
+    mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), from);
+    mouse_do(&mut h, MouseEventKind::Drag(MouseButton::Left), (x + 4, y));
+    match mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), (x + 4, y)) {
+        UpdateEffect::CopyToClipboard(text) => {
+            assert_eq!(text, "theta\nboot> one two three four five six seven")
+        }
+        _ => panic!("expected a yank"),
+    }
+
+    let rows = h.draw();
+    let from = cell_of(&rows, "one");
+    let below = (200, 200);
+    mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), from);
+    mouse_do(&mut h, MouseEventKind::Drag(MouseButton::Left), below);
+    match mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), below) {
+        UpdateEffect::CopyToClipboard(text) => {
+            assert_eq!(text, "one two three four five six seven")
+        }
+        _ => panic!("expected a yank"),
+    }
+}
+
+/// MAX-250: the raw panel pans to the raw copy cursor on the partial RX line, as on an entry.
+/// How: Truncate, Hex panel, "first" then 100 "a" and "QQ" not ended. Copy mode (on the
+/// partial line), raw side, line end: the panel panned and the cursor is drawn on the last
+/// "Q" (51).
+#[test]
+fn raw_pan_follows_the_cursor_on_the_partial_line() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+    h.app.settings_mut().raw_side.view = RawSideView::Hex;
+    h.app.settings_mut().line_mode.wrap_mode = crate::configs::WrapMode::Truncate;
+    let mut bytes = b"first\r\n".to_vec();
+    bytes.extend([b'a'; 100]);
+    bytes.extend(b"QQ");
+    h.feed(&bytes);
+    h.draw();
+    let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+    copy(&mut h, CopyModeAction::Enter);
+    assert_eq!(h.app.line_mode.copy_state().cursor.line_idx, 1);
+    copy(&mut h, CopyModeAction::ToggleSide);
+    copy(&mut h, CopyModeAction::EndOfLine);
+    let rows = h.draw();
+    assert!(h.app.line_mode.raw_pan_x() > 0);
+    assert_eq!(under_cursor(&mut h, &rows), "51");
+}

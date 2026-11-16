@@ -158,7 +158,7 @@ in the settings popup cycles it.
 
 | Setting | Default | Does |
 | --- | --- | --- |
-| `show_partial_rx` | `true` | Shows the line still coming in as it grows. Off, a line shows once it ends. |
+| `show_partial_rx` | `true` | Shows the line still coming in as it grows, and lets [copy mode](copy-mode-and-mouse.md#the-line-still-coming-in) select in it. Off, a line shows once it ends. |
 | `entry_spacing` | `0` | Blank rows between two lines |
 | `history_size` | `250000` | Lines kept; older ones are dropped. Read at startup. See [History size](#history-size). |
 | `unfocused_cursor_glyph` | `█` | The cursor drawn while the input box isn't focused |

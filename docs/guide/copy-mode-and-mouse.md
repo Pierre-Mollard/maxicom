@@ -28,8 +28,9 @@ terminal mode.
 
 The cursor starts where you are looking: at the start of the view's bottom
 line when you have scrolled up. From the live view, it starts on the last
-line in line mode, and on the device's cursor in terminal mode, or on the
-last line with text when the device's cursor sits on an empty row.
+line in line mode, the one still coming in when there is one, and on the
+device's cursor in terminal mode, or on the last line with text when the
+device's cursor sits on an empty row.
 
 ![Copy mode in line mode: two lines selected, the mode badge in magenta](images/copy-mode.png)
 
@@ -67,6 +68,22 @@ left it.
 
 On a view wider than the screen, the cursor pans the view as it moves.
 Leaving copy mode gives back the pan you had when you entered it.
+
+### The line still coming in
+
+In line mode, the line the device is still sending (a prompt, a progress
+line) is a line like the others in copy mode. The cursor goes onto it, and
+the keys and the mouse select in it, also in the raw side panel. A copy
+takes what has arrived so far.
+
+A selection on it stays on the same characters as more of the line arrives,
+and once its line end comes in. If the device restarts the line with a lone
+carriage return, as a progress bar does, a copy stops at its new end.
+
+Copy mode only sees this line while line mode shows it: with
+`show_partial_rx` on (the default), and once something other than blanks
+has arrived. A [search](search.md) doesn't find text in it until the line
+ends.
 
 ### Where the copy goes
 

@@ -2141,13 +2141,10 @@ impl App {
                 self.terminal_mode.copy_state().cursor,
                 self.terminal_mode.copy_line_text(),
             ),
-            Mode::Line => {
-                let display_mode = self.settings.line_mode.display_mode;
-                (
-                    self.line_mode.copy_state().cursor,
-                    self.line_mode.copy_line_text(display_mode),
-                )
-            }
+            Mode::Line => (
+                self.line_mode.copy_state().cursor,
+                self.line_mode.copy_line_text(&self.settings),
+            ),
         };
         let Some((start, word)) = word_at(&text, cursor.char_idx) else {
             self.notify_warn("No word under the cursor");
