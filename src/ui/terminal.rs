@@ -10,13 +10,15 @@ use ratatui::{
 use crate::{
     app::{
         App,
-        data_processing::{build_display_to_raw_byte_map, map_disp_byte_to_raw},
+        data_processing::map_disp_byte_to_raw,
         selection::CopySide,
+        terminal_mode::raw_row,
         types::{FocusTarget, RawRow, RowChars, ScrollbarMap, TextRow},
     },
     configs::{
         KeywordHighlight, Mode, RawSideView, ThemeConfig, settings::raw_view_to_display_mode,
     },
+    invalid_bytes::{shown, shown_string},
     terminal::{MaxicomCursor, MaxicomTerminal, vt100_size},
     ui::{
         common::{draw_scrollbar_marks, keyword_matches, render_search_bar},
@@ -50,7 +52,10 @@ fn highlight_grid(
     while row > 0 && screen.row_wrapped(row - 1) {
         row -= 1;
     }
-    let mut row_texts = screen.rows(0, cols).skip(usize::from(row));
+    let mut row_texts = screen
+        .rows(0, cols)
+        .skip(usize::from(row))
+        .map(shown_string);
     let mut joined = String::new();
     // each cell's text start in the line's text, its grid row and column
     let mut cells: Vec<(usize, u16, u16)> = Vec::new();
@@ -142,7 +147,7 @@ fn push_row_cells(
             text.push(' ');
         }
         cells.push((text.len(), row, col));
-        text.push_str(cell.contents());
+        text.push_str(&shown(cell.contents()));
     }
     if to_end && let Some(from) = blanks_from {
         for blank in from..cols {
@@ -243,24 +248,20 @@ pub fn render_vt100_terminal(
     {
         let emulator_row = target_row - top_visible_world_line;
         if emulator_row < grid_rows as usize {
-            let row_raw_bytes = app
+            let formatted = app
                 .terminal_mode
                 .vt100_screen()
                 .rows_formatted(0, cols)
                 .nth(emulator_row)
-                .unwrap_or_default()
-                .into_bytes();
-
-            let plain_text = app
-                .terminal_mode
-                .vt100_screen()
-                .rows(0, cols)
-                .nth(emulator_row)
                 .unwrap_or_default();
+            let (row_raw_bytes, disp_map) = raw_row(&formatted);
 
-            let disp_map = build_display_to_raw_byte_map(
-                &row_raw_bytes,
-                crate::configs::LineDisplayMode::Pretty,
+            let plain_text = shown_string(
+                app.terminal_mode
+                    .vt100_screen()
+                    .rows(0, cols)
+                    .nth(emulator_row)
+                    .unwrap_or_default(),
             );
 
             // Map target_col (which is a visual char index) to display byte, then to raw byte:
@@ -373,7 +374,8 @@ pub fn render_vt100_terminal(
                 .vt100_screen()
                 .rows(0, cols)
                 .skip(pan_y)
-                .take(content_area.height as usize);
+                .take(content_area.height as usize)
+                .map(shown_string);
 
             for (r, row_text) in visible_rows.enumerate() {
                 let emulator_row = r + pan_y;
@@ -665,25 +667,24 @@ pub fn render_vt100_raw_side_panel(
     let mut raw_rows = Vec::new();
 
     // formatted bytes and plain text (for column -> byte resolution) walked together in one pass
-    for (r, (row_raw_bytes, plain_text)) in screen
+    for (r, (formatted, plain_text)) in screen
         .rows_formatted(0, cols)
-        .zip(screen.rows(0, cols))
+        .zip(screen.rows(0, cols).map(shown_string))
         .skip(pan_y)
         .take(rows_to_render)
         .enumerate()
     {
         let emulator_row = r + pan_y;
         let world_row = top_visible_world_line + emulator_row;
-        let raw_bytes_slice = row_raw_bytes.as_bytes();
+        // invalid bytes as they were received (MAX-249)
+        let (row_raw_bytes, disp_map) = raw_row(&formatted);
+        let raw_bytes_slice = &row_raw_bytes[..];
 
         let mut plain_char_to_byte = Vec::with_capacity(plain_text.chars().count() + 1);
         for (b_idx, _) in plain_text.char_indices() {
             plain_char_to_byte.push(b_idx);
         }
         plain_char_to_byte.push(plain_text.len());
-
-        let disp_map =
-            build_display_to_raw_byte_map(raw_bytes_slice, crate::configs::LineDisplayMode::Pretty);
 
         let mut highlights = Vec::new();
 

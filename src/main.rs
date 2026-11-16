@@ -33,6 +33,7 @@ mod capture;
 mod commands;
 mod configs;
 mod inputs;
+mod invalid_bytes;
 mod link;
 mod notification;
 mod overlays;

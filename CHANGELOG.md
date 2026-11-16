@@ -31,6 +31,11 @@ you says so in an "Upgrading" section.
   was one row, out of step with the text's rows once the line wrapped.
 - Jumping to a mark put on the line still coming in, by a trigger's `mark`,
   no longer crashes maxicom.
+- In terminal mode, bytes that aren't valid text (invalid UTF-8, or from
+  `80` up in `ascii`) show as `�`, one per broken character as in line mode,
+  instead of disappearing. The raw side panel and a raw copy show them as
+  received. See
+  [Bytes that aren't valid text](https://pierre-mollard.github.io/maxicom/encoding-and-newlines.html#bytes-that-arent-valid-text).
 
 ## [0.1.3] - 2026-11-16
 

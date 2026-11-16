@@ -27,6 +27,29 @@ A change applies to the bytes that come next, not to what is already on
 screen. A recording keeps the encoding it was made with, so its replay
 decodes it the same way.
 
+### Bytes that aren't valid text
+
+Sometimes the device sends bytes that don't make a character in the
+encoding: a binary file printed with `cat`, an uninitialized buffer, a wrong
+baud rate. They show as `�`, in line mode and in terminal mode alike, so you
+can see that bad data came in.
+
+- In `utf8`, a byte that can't start a character, or a character cut short,
+  shows as one `�`: `F1 80` followed by `A` is one `�`, two stray `80` bytes
+  are two.
+- In `ascii`, each byte from `80` up shows as `�`. In line mode, the control
+  bytes other than tab, CR and LF do too.
+- In `latin1` and `cp437`, every byte is a character, so nothing shows as
+  `�`.
+
+A copy and a search give the `�` too. The
+[raw side panel](raw-side-panel.md), and a raw copy (`Y` in copy mode), show
+the bytes as they were received, `F1 80` here.
+
+In terminal mode, a character still incomplete at the end of what has
+arrived waits for the next byte, which says whether it is complete or
+broken.
+
 ## Received newlines
 
 Devices don't all end their lines the same way. A line break is normally

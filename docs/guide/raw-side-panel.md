@@ -46,6 +46,9 @@ In terminal mode, the panel also shows:
 
 - the text after its decoding to UTF-8: with the `latin1` encoding, a
   received `E9` (`é`) shows as `C3 A9`;
+- except the bytes that aren't valid text, drawn `�` on the screen: the
+  panel shows them as received, see
+  [Bytes that aren't valid text](encoding-and-newlines.md#bytes-that-arent-valid-text);
 - nothing of the queries, cursor moves and other control sequences, which act
   on the screen instead of drawing on it.
 

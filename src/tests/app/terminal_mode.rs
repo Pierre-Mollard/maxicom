@@ -710,3 +710,126 @@ fn search_confirm_enters_copy_mode_on_the_match() {
     let cursor = &tm.copy_state.cursor;
     assert_eq!((cursor.line_idx, cursor.char_idx), (last.line_idx, 4));
 }
+
+/// The contents of the first `n` cells of screen row 0 (an empty string for an empty cell)
+fn first_cells(tm: &TerminalMode, n: u16) -> Vec<String> {
+    let screen = tm.vt100_screen();
+    (0..n)
+        .map(|col| {
+            screen
+                .cell(0, col)
+                .map(|c| c.contents().to_string())
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// MAX-249 step 0: valid UTF-8 cut between two reads is one char, a wide char takes two
+/// cells; the invalid bytes fix must not change it.
+/// How: "a" C3 | A9 "b", then a rocket fed byte by byte and "b".
+#[test]
+fn valid_utf8_split_across_reads() {
+    let mut tm = terminal(3);
+    tm.process_rx(TextEncoding::Utf8, b"a\xC3");
+    tm.process_rx(TextEncoding::Utf8, b"\xA9b");
+    assert_eq!(first_cells(&tm, 3), ["a", "é", "b"]);
+
+    let mut tm = terminal(3);
+    for byte in "🚀b".as_bytes() {
+        tm.process_rx(TextEncoding::Utf8, &[*byte]);
+    }
+    assert_eq!(first_cells(&tm, 3), ["🚀", "", "b"]);
+    assert!(tm.vt100_screen().cell(0, 0).unwrap().is_wide());
+}
+
+/// MAX-249 step 0: escape sequences right after text, and cut between two reads, still
+/// apply.
+/// How: "a" ESC[31m "b" ESC[0m "c", then ESC[3 | 1m "x": b and x red, a and c not.
+#[test]
+fn escape_sequences_next_to_text_and_split() {
+    let red = vt100::Color::Idx(1);
+    let mut tm = terminal(3);
+    tm.process_rx(TextEncoding::Utf8, b"a\x1b[31mb\x1b[0mc\x1b[3");
+    tm.process_rx(TextEncoding::Utf8, b"1mx");
+    assert_eq!(first_cells(&tm, 4), ["a", "b", "c", "x"]);
+    let fg = |col| tm.vt100_screen().cell(0, col).unwrap().fgcolor();
+    assert_eq!(fg(0), vt100::Color::Default);
+    assert_eq!(fg(1), red);
+    assert_eq!(fg(2), vt100::Color::Default);
+    assert_eq!(fg(3), red);
+}
+
+/// MAX-249 step 0: the single byte encodings decode every byte, none is invalid.
+/// How: E9 FF in Latin1, 82 in CP437.
+#[test]
+fn single_byte_encodings_decode_every_byte() {
+    let mut tm = terminal(3);
+    tm.process_rx(TextEncoding::Latin1, b"\xE9\xFF");
+    assert_eq!(first_cells(&tm, 2), ["é", "ÿ"]);
+
+    let mut tm = terminal(3);
+    tm.process_rx(TextEncoding::Cp437, b"\x82");
+    assert_eq!(first_cells(&tm, 1), ["é"]);
+}
+
+/// MAX-249 step 0: the control bytes the emulator ignores stay hidden (marking them is
+/// MAX-253, not the invalid bytes fix).
+/// How: "a" NUL 01 DEL "b".
+#[test]
+fn ignored_control_bytes_stay_hidden() {
+    let mut tm = terminal(3);
+    tm.process_rx(TextEncoding::Utf8, b"a\x00\x01\x7Fb");
+    assert_eq!(first_cells(&tm, 3), ["a", "b", ""]);
+}
+
+/// MAX-249: invalid UTF-8 shows as one `�` per broken char, like line mode; the text copy
+/// and search read keeps a char per column, so a match after it is in the right column.
+/// How: "a" F1 80 "b" 80 80 "c": a�b��c, "c" found at column 5; a screenshot has it too.
+#[test]
+fn invalid_utf8_shows_like_line_mode() {
+    let raw_view = RawSideView::default();
+    let input = b"a\xF1\x80b\x80\x80c";
+    let mut tm = terminal(3);
+    tm.process_rx(TextEncoding::Utf8, input);
+    assert_eq!(row_text(&mut tm, 0), String::from_utf8_lossy(input));
+    assert_eq!(row_text(&mut tm, 0), "a\u{FFFD}b\u{FFFD}\u{FFFD}c");
+
+    tm.handle_search_action(SearchModeAction::Query("c".to_string()), raw_view);
+    assert_eq!(tm.search_state.matches[0].col_idx, 5);
+    assert!(
+        tm.screenshot()
+            .text
+            .starts_with("a\u{FFFD}b\u{FFFD}\u{FFFD}c")
+    );
+}
+
+/// MAX-249: received as ASCII, each byte from 80 up is a `�`, as line mode shows it.
+/// How: "a" E9 "b" in ASCII.
+#[test]
+fn ascii_high_bytes_show_as_replacement() {
+    let mut tm = terminal(3);
+    tm.process_rx(TextEncoding::Ascii, b"a\xE9b");
+    assert_eq!(row_text(&mut tm, 0), "a\u{FFFD}b");
+}
+
+/// MAX-249: a broken char cut at the end of a read shows once the next read says it's broken,
+/// a valid one cut the same way is whole.
+/// How: "a" F1 then "b": a�b.
+#[test]
+fn broken_char_cut_between_reads() {
+    let mut tm = terminal(3);
+    tm.process_rx(TextEncoding::Utf8, b"a\xF1");
+    assert_eq!(row_text(&mut tm, 0), "a");
+    tm.process_rx(TextEncoding::Utf8, b"b");
+    assert_eq!(row_text(&mut tm, 0), "a\u{FFFD}b");
+}
+
+/// MAX-249 step 3: the marks popup shows a row's invalid bytes as `�`.
+/// How: "a" F1 "b" marked a.
+#[test]
+fn marks_popup_shows_invalid_bytes() {
+    let mut tm = terminal(3);
+    tm.process_rx(TextEncoding::Utf8, b"a\xF1b");
+    tm.marks.set('a', 0);
+    assert_eq!(tm.mark_rows()[0].text.trim_end(), "a\u{FFFD}b");
+}

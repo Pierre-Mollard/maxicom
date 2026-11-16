@@ -12,6 +12,7 @@ use terminput_crossterm::to_terminput_key;
 use crate::{
     app::{
         UpdateEffect, ViewportSize,
+        data_processing::build_display_to_raw_byte_map,
         marks::Marks,
         raw_scroller::RawSideScroller,
         scroller::ViewportScroller,
@@ -20,11 +21,14 @@ use crate::{
         term_answers::{Answer, size_report},
     },
     capture::{Screenshot, TimedChunk},
-    configs::{SettingsConfig, TerminalDimensionMode, TextEncoding, settings::RawSideView},
+    configs::{
+        LineDisplayMode, SettingsConfig, TerminalDimensionMode, TextEncoding, settings::RawSideView,
+    },
     inputs::{
         CopyModeAction, SideViewAction, TerminalAction, ViPending,
         local_dispatchers::dispatch_copy_key_vi,
     },
+    invalid_bytes::{self, InvalidBytes, shown_string},
     overlays::MarkRow,
     terminal::{TerminalParser, new_parser, vt100_dim, vt100_size},
 };
@@ -71,6 +75,8 @@ pub struct TerminalMode {
     restored_separator: Option<usize>,
     /// The last byte from the device was a CR, for add CR / add LF across chunks (MAX-181)
     rx_after_cr: bool,
+    /// Invalid UTF-8 as stand-ins vt100 draws, a char cut between two reads kept (MAX-249)
+    invalid_bytes: InvalidBytes,
     /// The pan when copy mode started, given back when it ends (MAX-217)
     copy_pan: Option<usize>,
     /// Copy mode held the live view when rows arrived: leaving it goes back live (MAX-193)
@@ -106,6 +112,7 @@ impl TerminalMode {
             search_stale: false,
             restored_separator: None,
             rx_after_cr: false,
+            invalid_bytes: InvalidBytes::default(),
             copy_pan: None,
             copy_held: false,
             marks: Marks::default(),
@@ -143,7 +150,12 @@ impl TerminalMode {
         let live_rows_before = self.live_rows();
         let lines_before = self.max_content_scrollback;
 
-        let utf8_bytes = encoding.to_utf8_bytes(raw_bytes);
+        // invalid bytes as stand-ins, shown `�` like line mode: vt100 drops its own (MAX-249)
+        let utf8_bytes = match encoding {
+            TextEncoding::Utf8 => self.invalid_bytes.utf8(raw_bytes),
+            TextEncoding::Ascii => invalid_bytes::ascii(raw_bytes),
+            TextEncoding::Latin1 | TextEncoding::Cp437 => encoding.to_utf8_bytes(raw_bytes),
+        };
         self.vt100_parser.process(&utf8_bytes);
         let evicted = std::mem::take(&mut self.vt100_parser.callbacks_mut().evicted);
         self.search_text_changed(started_on_main, lines_before, evicted);
@@ -413,7 +425,7 @@ impl TerminalMode {
                 MarkRow {
                     letter,
                     time: self.get_timeline_timestamp(row),
-                    text: String::from_utf8_lossy(&text.unwrap_or_default()).into_owned(),
+                    text: shown_string(text.unwrap_or_default()),
                 }
             })
             .collect()
@@ -766,7 +778,7 @@ impl TerminalMode {
             } else {
                 self.vt100_parser.screen_mut().set_scrollback(sb);
                 if let Some(first_row) = self.vt100_parser.screen().rows(0, cols).next() {
-                    lines.push(first_row);
+                    lines.push(shown_string(first_row));
                 }
             }
             sb -= 1;
@@ -775,7 +787,7 @@ impl TerminalMode {
         self.vt100_parser.screen_mut().set_scrollback(0);
         let screen_from = from.saturating_sub(max_sb);
         for row in self.vt100_parser.screen().rows(0, cols).skip(screen_from) {
-            lines.push(row);
+            lines.push(shown_string(row));
         }
 
         self.vt100_parser.screen_mut().set_scrollback(current_sb);
@@ -1124,8 +1136,8 @@ impl TerminalMode {
         self.trigger_flash();
         let screen = self.vt100_parser.screen();
         Screenshot {
-            text: screen.contents(),
-            ansi: screen.contents_formatted(),
+            text: shown_string(screen.contents()),
+            ansi: shown_string(screen.contents_formatted()),
         }
     }
 
@@ -1216,27 +1228,41 @@ pub fn read_vt100_world_line_text(
     world_row: usize,
 ) -> Option<String> {
     // vt100's own row text, like search and the selection read it: the gaps a tab or a cursor
-    // move leave are spaces, so a char index is a screen column (#33)
+    // move leave are spaces, so a char index is a screen column (#33); a stand-in is one `�`
     with_world_row(parser, max_sb, world_row, |screen, view_row, cols| {
-        screen.rows(0, cols).nth(view_row).unwrap_or_default()
+        shown_string(screen.rows(0, cols).nth(view_row).unwrap_or_default())
     })
 }
 
-/// The bytes of a world row as the raw side panel shows them: vt100's formatted row (its text
-/// with the escape sequences of its styles), so the raw copy cursor walks the panel's bytes
-/// (MAX-71)
+/// vt100's formatted row (its text with the escape sequences of its styles), stand-ins in it:
+/// [`raw_row`] gives the bytes the raw side panel shows (MAX-71)
 pub fn read_vt100_world_line_formatted(
     parser: &mut TerminalParser,
     max_sb: usize,
     world_row: usize,
-) -> Option<Vec<u8>> {
+) -> Option<String> {
     with_world_row(parser, max_sb, world_row, |screen, view_row, cols| {
         screen
             .rows_formatted(0, cols)
             .nth(view_row)
             .unwrap_or_default()
-            .into_bytes()
     })
+}
+
+/// A row as the raw side panel shows it, from vt100's formatted row: its bytes, invalid bytes
+/// as they were received (MAX-249), and for each byte of its text as shown (`rows()` through
+/// [`shown_string`]) and its end, the raw byte it comes from. The map is built on the shown
+/// text, valid UTF-8, then carried on to the bytes received, as line mode does (#20)
+pub fn raw_row(formatted: &str) -> (Cow<'_, [u8]>, Vec<usize>) {
+    let shown_text = invalid_bytes::shown(formatted);
+    let map = build_display_to_raw_byte_map(shown_text.as_bytes(), LineDisplayMode::Pretty);
+    match invalid_bytes::received(formatted) {
+        None => (Cow::Borrowed(formatted.as_bytes()), map),
+        Some((bytes, offsets)) => {
+            let map = map.into_iter().map(|byte| offsets[byte]).collect();
+            (Cow::Owned(bytes), map)
+        }
+    }
 }
 
 /// Reads world row `world_row` (history first, then the screen) from the screen scrolled back
@@ -1376,7 +1402,17 @@ impl<'a> TextSource for TerminalModeTextSource<'a> {
     }
 
     fn get_line_raw_bytes(&mut self, line_idx: usize) -> Option<Vec<u8>> {
-        read_vt100_world_line_formatted(self.parser, self.max_content_scrollback, line_idx)
+        let formatted =
+            read_vt100_world_line_formatted(self.parser, self.max_content_scrollback, line_idx)?;
+        Some(raw_row(&formatted).0.into_owned())
+    }
+
+    /// The map of the row's raw bytes, built on its formatted text: its bytes received are not
+    /// UTF-8 when it holds invalid bytes (MAX-249)
+    fn get_line_raw_map(&mut self, line_idx: usize, _raw_bytes: &[u8]) -> Vec<usize> {
+        let formatted =
+            read_vt100_world_line_formatted(self.parser, self.max_content_scrollback, line_idx);
+        raw_row(&formatted.unwrap_or_default()).1
     }
 
     #[inline]

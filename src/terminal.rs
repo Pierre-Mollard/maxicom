@@ -327,10 +327,11 @@ fn visible_cursor_position(screen: &vt100::Screen) -> (u16, u16) {
 }
 
 /// Copies a vt100 cell (contents, colors, modifiers) into a ratatui cell. An empty vt100 cell
-/// keeps the symbol already in the buffer, its style is always replaced
+/// keeps the symbol already in the buffer, its style is always replaced. A stand-in for
+/// invalid bytes is drawn `�` (MAX-249)
 fn fill_buf_cell(screen_cell: &vt100::Cell, buf_cell: &mut Cell) {
     if screen_cell.has_contents() {
-        buf_cell.set_symbol(screen_cell.contents());
+        buf_cell.set_symbol(&crate::invalid_bytes::shown(screen_cell.contents()));
     }
 
     let mut modifier = Modifier::empty();

@@ -10251,3 +10251,122 @@ fn raw_pan_follows_the_cursor_on_the_partial_line() {
     assert!(h.app.line_mode.raw_pan_x() > 0);
     assert_eq!(under_cursor(&mut h, &rows), "51");
 }
+
+/// MAX-249 step 0: terminal mode's raw panel shows a valid multi-byte char as its bytes,
+/// and a raw yank gives them; the invalid bytes fix must not change it.
+/// How: "aé" on the grid's last row, Hex panel: 61 C3 A9 shown; copy mode, raw side,
+/// select the row and yank raw.
+#[test]
+fn terminal_raw_panel_keeps_valid_utf8_bytes() {
+    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+        s.mode = Mode::Terminal;
+    });
+    h.app.settings_mut().raw_side.view = RawSideView::Hex;
+    let mut bytes = b"\r\n".repeat(23);
+    bytes.extend_from_slice("aé".as_bytes());
+    h.app.terminal_mode.process_rx(TextEncoding::Utf8, &bytes);
+    let rows = h.draw();
+    assert!(shows(&rows, "61 C3 A9"), "{rows:#?}");
+
+    let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+    copy(&mut h, CopyModeAction::Enter);
+    copy(&mut h, CopyModeAction::StartOfLine);
+    copy(&mut h, CopyModeAction::Select);
+    copy(&mut h, CopyModeAction::EndOfLine);
+    match copy(&mut h, CopyModeAction::YankRaw) {
+        UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "61 C3 A9"),
+        _ => panic!("expected a yank"),
+    }
+}
+
+/// MAX-249: terminal mode draws invalid UTF-8 as `�`, one cell each, and a copy gives it.
+/// How: "a" F1 80 "b" on the grid's last row: the screen shows a�b; copy mode, select the
+/// row and yank.
+#[test]
+fn terminal_draws_invalid_utf8() {
+    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+        s.mode = Mode::Terminal;
+    });
+    let mut bytes = b"\r\n".repeat(23);
+    bytes.extend_from_slice(b"a\xF1\x80b");
+    h.app.terminal_mode.process_rx(TextEncoding::Utf8, &bytes);
+    let rows = h.draw();
+    assert!(shows(&rows, "a\u{FFFD}b"), "{rows:#?}");
+
+    let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+    copy(&mut h, CopyModeAction::Enter);
+    copy(&mut h, CopyModeAction::StartOfLine);
+    copy(&mut h, CopyModeAction::Select);
+    copy(&mut h, CopyModeAction::EndOfLine);
+    match copy(&mut h, CopyModeAction::Yank) {
+        UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "a\u{FFFD}b"),
+        _ => panic!("expected a yank"),
+    }
+}
+
+/// A terminal harness with the Hex raw panel and `bytes` on the grid's last row
+fn terminal_raw(bytes: &[u8]) -> Harness {
+    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+        s.mode = Mode::Terminal;
+    });
+    h.app.settings_mut().raw_side.view = RawSideView::Hex;
+    let mut all = b"\r\n".repeat(23);
+    all.extend_from_slice(bytes);
+    h.app.terminal_mode.process_rx(TextEncoding::Utf8, &all);
+    h
+}
+
+/// MAX-249 step 3: the raw panel shows invalid bytes as they were received, and a raw yank
+/// gives them.
+/// How: "a" F1 80 "b": the panel shows 61 F1 80 62; copy mode, raw side, select the row and
+/// yank raw.
+#[test]
+fn terminal_raw_panel_shows_invalid_bytes() {
+    let mut h = terminal_raw(b"a\xF1\x80b");
+    let rows = h.draw();
+    assert!(shows(&rows, "61 F1 80 62"), "{rows:#?}");
+
+    let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+    copy(&mut h, CopyModeAction::Enter);
+    copy(&mut h, CopyModeAction::ToggleSide);
+    copy(&mut h, CopyModeAction::StartOfLine);
+    copy(&mut h, CopyModeAction::Select);
+    copy(&mut h, CopyModeAction::EndOfLine);
+    match copy(&mut h, CopyModeAction::YankRaw) {
+        UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "61 F1 80 62"),
+        _ => panic!("expected a yank"),
+    }
+}
+
+/// MAX-249 step 3: the text cursor's ghost in the raw panel, and a text selection, land on the
+/// right bytes after a `�`, with a color sequence in the row too.
+/// How: ESC[31m "a" F1 80 "b" ESC[0m "c". Cursor on "b": ghost on 62. Cursor on the `�`:
+/// ghost on F1. Select "b" to "c": 62 selected, F1 not.
+#[test]
+fn terminal_raw_ghost_and_selection_after_invalid_bytes() {
+    let ghost = h_theme().ui.cursor_ghost.bg;
+    let selection = h_theme().ui.selection.bg;
+    let mut h = terminal_raw(b"\x1b[31ma\xF1\x80b\x1b[0mc");
+    h.draw();
+    let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+    copy(&mut h, CopyModeAction::Enter);
+    copy(&mut h, CopyModeAction::StartOfLine);
+    copy(&mut h, CopyModeAction::MoveRight);
+    copy(&mut h, CopyModeAction::MoveRight);
+    let rows = h.draw();
+    let (x, y) = cell_of(&rows, "F1 80 62");
+    assert_eq!(bg_at(&h, (x + 6, y)), ghost, "62 under the ghost");
+
+    copy(&mut h, CopyModeAction::MoveLeft);
+    let rows = h.draw();
+    let (x, y) = cell_of(&rows, "F1 80 62");
+    assert_eq!(bg_at(&h, (x, y)), ghost, "F1 under the ghost");
+
+    copy(&mut h, CopyModeAction::MoveRight);
+    copy(&mut h, CopyModeAction::Select);
+    copy(&mut h, CopyModeAction::EndOfLine);
+    let rows = h.draw();
+    let (x, y) = cell_of(&rows, "F1 80 62");
+    assert_eq!(bg_at(&h, (x + 6, y)), selection, "62 selected");
+    assert_ne!(bg_at(&h, (x, y)), selection, "F1 not selected");
+}
