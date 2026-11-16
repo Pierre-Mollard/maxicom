@@ -179,3 +179,12 @@ fn history_defaults() {
     assert_eq!(settings.terminal_mode.history_size, 100_000);
     assert_eq!(settings.sessions.max_size.0, 5 << 30);
 }
+
+/// MAX-254: ASCII keeps every byte below 80, the controls and ESC included, and only the bytes
+/// from 80 up are `�`, as terminal mode reads them.
+/// How: ESC[31m, NUL, DEL, tab and E9 decoded as ASCII.
+#[test]
+fn ascii_keeps_controls_and_marks_high_bytes() {
+    let decoded = TextEncoding::Ascii.decode(b"\x1b[31ma\x00\x7F\tb\xE9");
+    assert_eq!(decoded, "\x1b[31ma\x00\x7F\tb\u{FFFD}");
+}

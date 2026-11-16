@@ -10370,3 +10370,20 @@ fn terminal_raw_ghost_and_selection_after_invalid_bytes() {
     assert_eq!(bg_at(&h, (x + 6, y)), selection, "62 selected");
     assert_ne!(bg_at(&h, (x, y)), selection, "F1 not selected");
 }
+
+/// MAX-254: in ASCII, line mode keeps the escape sequences, as terminal mode and the other
+/// encodings do: the text is colored, its controls hidden, a byte from 80 up is `�`.
+/// How: ESC[31m "red" ESC[0m NUL " ok" E9, received as ASCII.
+#[test]
+fn line_mode_ascii_keeps_colors() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 60, 6);
+    h.app.settings_mut().encoding = TextEncoding::Ascii;
+    h.feed_as(TextEncoding::Ascii, b"\x1b[31mred\x1b[0m\x00 ok\xE9\r\n");
+    let rows = h.draw();
+    assert!(shows(&rows, "red ok\u{FFFD}"), "{rows:#?}");
+    let (x, y) = cell_of(&rows, "red");
+    assert_eq!(
+        h.terminal.backend().buffer()[(x, y)].fg,
+        ratatui::style::Color::Red
+    );
+}

@@ -37,8 +37,8 @@ can see that bad data came in.
 - In `utf8`, a byte that can't start a character, or a character cut short,
   shows as one `�`: `F1 80` followed by `A` is one `�`, two stray `80` bytes
   are two.
-- In `ascii`, each byte from `80` up shows as `�`. In line mode, the control
-  bytes other than tab, CR and LF do too.
+- In `ascii`, each byte from `80` up shows as `�`. The bytes below `80`
+  are read as in `utf8`, so escape sequences and colors work.
 - In `latin1` and `cp437`, every byte is a character, so nothing shows as
   `�`.
 

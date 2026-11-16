@@ -36,6 +36,9 @@ you says so in an "Upgrading" section.
   instead of disappearing. The raw side panel and a raw copy show them as
   received. See
   [Bytes that aren't valid text](https://pierre-mollard.github.io/maxicom/encoding-and-newlines.html#bytes-that-arent-valid-text).
+- With the `ascii` encoding, line mode keeps the escape sequences and their
+  colors, as terminal mode does: it showed each control byte, `ESC`
+  included, as `�`.
 
 ## [0.1.3] - 2026-11-16
 

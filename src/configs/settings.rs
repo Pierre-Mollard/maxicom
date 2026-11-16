@@ -201,15 +201,11 @@ impl TextEncoding {
     pub fn decode(&self, bytes: &[u8]) -> String {
         match self {
             Self::Utf8 => String::from_utf8_lossy(bytes).into_owned(),
+            // the controls stay, for the escape sequences (MAX-254): only bytes from 80 up are
+            // not ASCII, as terminal mode reads them (MAX-249)
             Self::Ascii => bytes
                 .iter()
-                .map(|&b| {
-                    if (0x20..=0x7E).contains(&b) || b == b'\r' || b == b'\n' || b == b'\t' {
-                        b as char
-                    } else {
-                        '\u{FFFD}'
-                    }
-                })
+                .map(|&b| if b.is_ascii() { b as char } else { '\u{FFFD}' })
                 .collect(),
             Self::Latin1 => bytes.iter().map(|&b| b as char).collect(),
             Self::Cp437 => decode_cp437(bytes),
