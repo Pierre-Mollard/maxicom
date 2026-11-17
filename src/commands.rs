@@ -294,6 +294,26 @@ pub static COMMANDS: &[CommandSpec] = {
         CommandSpec::action("pan-end", A::PanEnd, "Pan to the line end"),
         CommandSpec::action("pan-side-right", A::PanSideRight, "Pan the side view right"),
         CommandSpec::action("pan-side-left", A::PanSideLeft, "Pan the side view left"),
+        CommandSpec::action(
+            "scroll-side-up",
+            A::ScrollSideUp,
+            "Scroll the side view up a line",
+        ),
+        CommandSpec::action(
+            "scroll-side-down",
+            A::ScrollSideDown,
+            "Scroll the side view down a line",
+        ),
+        CommandSpec::action(
+            "page-side-up",
+            A::PageSideUp,
+            "Scroll the side view up a page",
+        ),
+        CommandSpec::action(
+            "page-side-down",
+            A::PageSideDown,
+            "Scroll the side view down a page",
+        ),
         CommandSpec::action("side-grow", A::SideGrow, "Grow the side view by 1 %"),
         CommandSpec::action("side-shrink", A::SideShrink, "Shrink the side view by 1 %"),
         CommandSpec::action("side-grow-5", A::SideGrow5, "Grow the side view by 5 %"),

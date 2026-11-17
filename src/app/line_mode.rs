@@ -676,7 +676,10 @@ impl LineMode {
             SideViewAction::PanLeft(bytes) => self.line_bytes.pan_left(bytes, raw_view),
             SideViewAction::PanRight(bytes) => self.line_bytes.pan_right(bytes, raw_view),
             // the raw panel scrolls with the history
-            SideViewAction::ScrollUp(_) | SideViewAction::ScrollDown(_) => {}
+            SideViewAction::ScrollUp(_)
+            | SideViewAction::ScrollDown(_)
+            | SideViewAction::PageUp
+            | SideViewAction::PageDown => {}
         }
     }
 

@@ -58,6 +58,13 @@ prefix = "ctrl-b"
 
 Pressing the prefix twice sends the prefix key itself to the device.
 
+After a move that goes one step, the prefix stays: press the key again to
+move again, without the prefix. These are the line and pan moves
+(`scroll-up`, `scroll-down`, `pan-left`, `pan-right`) and every move of the
+side view (`scroll-side-*`, `page-side-*`, `pan-side-*`). Any other key ends
+it, and runs as after the prefix when it has a prefixed action: `Esc` ends it
+and does nothing else. The status bar shows the prefix while it stays.
+
 ### Writing a key
 
 A key is written with its modifiers, joined by `-`: `ctrl-a`, `alt-r`,
@@ -264,8 +271,12 @@ your own.
 | `Ctrl-a q`, `Ctrl-a x` | `quit` | Quit maxicom |
 | `Ctrl-a r` | `reload-config` | Reload the config files |
 | `Ctrl-a Right` | `pan-right` | Pan right |
+| `Ctrl-a Shift-Down` | `scroll-side-down` | Scroll the side view down a line |
 | `Ctrl-a Shift-Left` | `pan-side-left` | Pan the side view left |
+| `Ctrl-a Shift-PageDown` | `page-side-down` | Scroll the side view down a page |
+| `Ctrl-a Shift-PageUp` | `page-side-up` | Scroll the side view up a page |
 | `Ctrl-a Shift-Right` | `pan-side-right` | Pan the side view right |
+| `Ctrl-a Shift-Up` | `scroll-side-up` | Scroll the side view up a line |
 | `Ctrl-a t` | `toggle-display-timestamp` | Toggle timestamps |
 | `Ctrl-a u` | `toggle-add-cr` | Read a received LF as CR LF |
 | `Ctrl-a Up` | `scroll-up` | Scroll up one line |
@@ -315,7 +326,7 @@ are built in: see [Line mode](line-mode.md#editing-the-line).
 | `y`, `Enter` | `yank` | Copy and leave |
 | `Y` | `yank-side-inspector` | Copy the bytes as the raw panel shows them |
 | `Tab` | `toggle-side` | Cursor to the raw panel and back |
-| `Ctrl-y` / `Ctrl-e` | `scroll-up` / `scroll-down` | Scroll the view a line |
+| `Ctrl-y` / `Ctrl-e` | `scroll-up` / `scroll-down` | Scroll the view a line, the raw side panel's in terminal mode with the cursor there |
 | `PageUp` / `PageDown` | `page-up` / `page-down` | A page |
 | `,` | `mark` | Mark the cursor's line, waits for its letter |
 | `'` | `marks` | Open the marks |
@@ -404,6 +415,10 @@ command: see [Actions and commands](#actions-and-commands).
 | `pan-end` | Pan to the line end | `Ctrl-a $` |
 | `pan-side-right` | Pan the side view right | `Ctrl-a Shift-Right` |
 | `pan-side-left` | Pan the side view left | `Ctrl-a Shift-Left` |
+| `scroll-side-up` | Scroll the side view up a line | `Ctrl-a Shift-Up` |
+| `scroll-side-down` | Scroll the side view down a line | `Ctrl-a Shift-Down` |
+| `page-side-up` | Scroll the side view up a page | `Ctrl-a Shift-PageUp` |
+| `page-side-down` | Scroll the side view down a page | `Ctrl-a Shift-PageDown` |
 | `side-grow` | Grow the side view by 1 % | — |
 | `side-shrink` | Shrink the side view by 1 % | — |
 | `side-grow-5` | Grow the side view by 5 % | `Ctrl-a >` |

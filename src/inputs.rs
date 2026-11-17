@@ -200,13 +200,16 @@ pub enum HistoryAction {
     ScrollTo(usize),
 }
 
+/// The side panel moved: panned, or scrolled (terminal mode's dump scrolls on its own, line
+/// mode's panel with the history, MAX-252)
 #[derive(Debug, PartialEq, Eq)]
 pub enum SideViewAction {
     PanLeft(usize),
     PanRight(usize),
-    /// Terminal mode's raw panel scrolls on its own (MAX-252)
     ScrollUp(usize),
     ScrollDown(usize),
+    PageUp,
+    PageDown,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -257,6 +260,9 @@ pub enum CopyModeAction {
     MouseDrag(LogicalPosition, (u16, u16)),
     MouseRelease,
     HandleKey(KeyEvent),
+    /// The view scrolled, the cursor staying: the dump's when the cursor is in it (MAX-252),
+    /// else the history's
+    ScrollView(HistoryAction),
     Exit,
 }
 

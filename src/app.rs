@@ -919,6 +919,8 @@ impl App {
     }
 
     pub fn update(&mut self, action: Action) -> UpdateEffect {
+        // the prefix stays after a line or pan move, the side panel's too: the key again moves
+        // again (MAX-252 for the side panel)
         let is_repeatable_history = self.prefix_active
             && matches!(
                 action,
@@ -927,7 +929,7 @@ impl App {
                         | HistoryAction::ScrollDown(_)
                         | HistoryAction::PanLeft(_)
                         | HistoryAction::PanRight(_)
-                )
+                ) | Action::App(AppAction::SideView(_))
             );
 
         // a mouse move (ignored, or a hover) between the prefix and its key keeps it (MAX-131)
@@ -2004,15 +2006,46 @@ impl App {
 
     fn update_side_view(&mut self, action: SideViewAction) -> UpdateEffect {
         let raw_view = self.settings.raw_side.view;
-        match self.settings.mode {
-            Mode::Terminal => {
+        match (self.settings.mode, action) {
+            (Mode::Terminal, action) => {
                 self.terminal_mode.handle_side_view_action(action, raw_view);
             }
-            Mode::Line => {
+            // line mode's raw panel scrolls with the history
+            (Mode::Line, SideViewAction::ScrollUp(lines)) => {
+                return self.update_action_history(HistoryAction::ScrollUp(lines));
+            }
+            (Mode::Line, SideViewAction::ScrollDown(lines)) => {
+                return self.update_action_history(HistoryAction::ScrollDown(lines));
+            }
+            (Mode::Line, SideViewAction::PageUp) => {
+                return self.update_action_history(HistoryAction::ScrollUpPage);
+            }
+            (Mode::Line, SideViewAction::PageDown) => {
+                return self.update_action_history(HistoryAction::ScrollDownPage);
+            }
+            (Mode::Line, action) => {
                 self.line_mode.handle_side_view_action(action, raw_view);
             }
         }
 
+        UpdateEffect::None
+    }
+
+    /// Copy mode's scroll, the cursor staying: the dump scrolls while the cursor is in it
+    /// (MAX-252), else the history
+    fn copy_scroll(&mut self, scroll: HistoryAction) -> UpdateEffect {
+        if self.settings.mode == Mode::Line || self.terminal_mode.dump_copy().is_none() {
+            return self.update_action_history(scroll);
+        }
+        let dump = self.terminal_mode.dump_mut();
+        let page = dump.page();
+        match scroll {
+            HistoryAction::ScrollUp(lines) => dump.scroll_up(lines),
+            HistoryAction::ScrollDown(lines) => dump.scroll_down(lines),
+            HistoryAction::ScrollUpPage => dump.scroll_up(page),
+            HistoryAction::ScrollDownPage => dump.scroll_down(page),
+            _ => {}
+        }
         UpdateEffect::None
     }
 
@@ -2037,6 +2070,9 @@ impl App {
     }
 
     fn update_action_copy_mode(&mut self, action: CopyModeAction) -> UpdateEffect {
+        if let CopyModeAction::ScrollView(scroll) = action {
+            return self.copy_scroll(scroll);
+        }
         // the click that focuses the window doesn't select, nor does its drag
         if matches!(action, CopyModeAction::MousePress(..)) && self.is_focus_click() {
             self.pending_press = None;

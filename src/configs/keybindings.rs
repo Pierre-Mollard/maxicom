@@ -57,6 +57,10 @@ pub enum KeyBindingAction {
     PanHome,
     PanSideRight,
     PanSideLeft,
+    ScrollSideUp,
+    ScrollSideDown,
+    PageSideUp,
+    PageSideDown,
     ClearHistory,
     Sessions,
     ToggleAttach,
@@ -135,6 +139,10 @@ impl KeyBindingAction {
                 | Self::PanEnd
                 | Self::PanSideLeft
                 | Self::PanSideRight
+                | Self::ScrollSideUp
+                | Self::ScrollSideDown
+                | Self::PageSideUp
+                | Self::PageSideDown
         )
     }
 
@@ -149,6 +157,10 @@ impl KeyBindingAction {
                 | Self::PanRight
                 | Self::PanSideLeft
                 | Self::PanSideRight
+                | Self::ScrollSideUp
+                | Self::ScrollSideDown
+                | Self::PageSideUp
+                | Self::PageSideDown
         )
     }
 }
@@ -1279,6 +1291,10 @@ impl Default for KeyBindingsConfig {
             "$"     => KeyBindingAction::PanEnd,
             "shift-left"  => KeyBindingAction::PanSideLeft,
             "shift-right" => KeyBindingAction::PanSideRight,
+            "shift-up"    => KeyBindingAction::ScrollSideUp,
+            "shift-down"  => KeyBindingAction::ScrollSideDown,
+            "shift-pageup"   => KeyBindingAction::PageSideUp,
+            "shift-pagedown" => KeyBindingAction::PageSideDown,
             "pageup"      => KeyBindingAction::PageUp,
             "pagedown"    => KeyBindingAction::PageDown,
             "["     => KeyBindingAction::EnterCopyMode,

@@ -8,8 +8,23 @@ you says so in an "Upgrading" section.
 
 ## [Unreleased]
 
+### Upgrading
+
+Run [`maxicom --write-config`](https://pierre-mollard.github.io/maxicom/settings.html#updating-the-files)
+to get the new keys that scroll the raw side panel in your `keymap.toml`:
+`Ctrl-a Shift-Up` / `Ctrl-a Shift-Down` and `Ctrl-a Shift-PageUp` /
+`Ctrl-a Shift-PageDown`.
+
 ### Added
 
+- `Ctrl-a Shift-Up` / `Ctrl-a Shift-Down` (`scroll-side-up` /
+  `scroll-side-down`) scroll the raw side panel a line, and
+  `Ctrl-a Shift-PageUp` / `Ctrl-a Shift-PageDown` (`page-side-up` /
+  `page-side-down`) a page: in terminal mode the dump on its own, in line mode
+  the history with it. The prefix stays between them, as after `Ctrl-a Up`. In
+  copy mode with the cursor in terminal mode's dump, `Ctrl-y` / `Ctrl-e`
+  scroll the dump. See
+  [In terminal mode](https://pierre-mollard.github.io/maxicom/raw-side-panel.html#in-terminal-mode).
 - A `byte_escape` color in the theme's `[raw_inspector]`, for the ESC byte
   (`0x1B`) in the raw side panel.
 - In line mode, copy mode and the mouse select in the line still coming in,

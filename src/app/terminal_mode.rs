@@ -1028,6 +1028,8 @@ impl TerminalMode {
             SideViewAction::PanRight(bytes) => self.dump.pan_right(bytes, raw_view),
             SideViewAction::ScrollUp(lines) => self.dump.scroll_up(lines),
             SideViewAction::ScrollDown(lines) => self.dump.scroll_down(lines),
+            SideViewAction::PageUp => self.dump.scroll_up(self.dump.page()),
+            SideViewAction::PageDown => self.dump.scroll_down(self.dump.page()),
         }
     }
 

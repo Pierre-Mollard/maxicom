@@ -102,6 +102,18 @@ impl KeyBindingAction {
             KeyBindingAction::PanSideLeft => {
                 Action::App(AppAction::SideView(SideViewAction::PanLeft(2)))
             }
+            KeyBindingAction::ScrollSideUp => {
+                Action::App(AppAction::SideView(SideViewAction::ScrollUp(1)))
+            }
+            KeyBindingAction::ScrollSideDown => {
+                Action::App(AppAction::SideView(SideViewAction::ScrollDown(1)))
+            }
+            KeyBindingAction::PageSideUp => {
+                Action::App(AppAction::SideView(SideViewAction::PageUp))
+            }
+            KeyBindingAction::PageSideDown => {
+                Action::App(AppAction::SideView(SideViewAction::PageDown))
+            }
             KeyBindingAction::SideGrow => Action::App(AppAction::ResizeSidePanel(1)),
             KeyBindingAction::SideShrink => Action::App(AppAction::ResizeSidePanel(-1)),
             KeyBindingAction::SideGrow5 => Action::App(AppAction::ResizeSidePanel(5)),
@@ -225,10 +237,18 @@ impl KeyBindingCopyAction {
             Self::YankSideInspector => Action::CopyMode(CopyModeAction::YankRaw),
             Self::ToggleSide => Action::CopyMode(CopyModeAction::ToggleSide),
             Self::Exit => Action::CopyMode(CopyModeAction::Exit),
-            Self::ScrollUp => Action::History(HistoryAction::ScrollUp(1)),
-            Self::ScrollDown => Action::History(HistoryAction::ScrollDown(1)),
-            Self::ScrollPageUp => Action::History(HistoryAction::ScrollUpPage),
-            Self::ScrollPageDown => Action::History(HistoryAction::ScrollDownPage),
+            Self::ScrollUp => {
+                Action::CopyMode(CopyModeAction::ScrollView(HistoryAction::ScrollUp(1)))
+            }
+            Self::ScrollDown => {
+                Action::CopyMode(CopyModeAction::ScrollView(HistoryAction::ScrollDown(1)))
+            }
+            Self::ScrollPageUp => {
+                Action::CopyMode(CopyModeAction::ScrollView(HistoryAction::ScrollUpPage))
+            }
+            Self::ScrollPageDown => {
+                Action::CopyMode(CopyModeAction::ScrollView(HistoryAction::ScrollDownPage))
+            }
             Self::Mark => Action::App(AppAction::Mark(MarkAction::Await(PendingMark::Add))),
             Self::Marks => Action::App(AppAction::OpenMarks),
             Self::PrevMark => Action::App(AppAction::Mark(MarkAction::Adjacent(false))),

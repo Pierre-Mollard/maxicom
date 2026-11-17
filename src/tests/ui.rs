@@ -1439,6 +1439,27 @@ fn truncate_scrolled_and_panned_view() {
     assert_eq!(shown, expected);
 }
 
+/// MAX-252: in line mode, where the raw panel scrolls with the history, `Ctrl-a Shift-Up` /
+/// `Ctrl-a Shift-Down` (`scroll-side-up` / `scroll-side-down`) scroll the history a row and
+/// `Ctrl-a Shift-PageUp` a page, the prefix staying between them.
+/// How: the tall Binary lines with the raw panel in hex: `Ctrl-a` once, up, up, down, page up
+#[test]
+fn line_side_scroll_keys_scroll_the_history() {
+    use crossterm::event::KeyCode::{Char, Down, PageUp, Up};
+    let mut h = tall_binary_lines();
+    h.app.settings_mut().raw_side.view = RawSideView::Hex;
+    h.draw();
+    key_do(&mut h, Char('a'), KeyModifiers::CONTROL);
+    for (code, offset) in [(Up, 1), (Up, 2), (Down, 1)] {
+        key_do(&mut h, code, KeyModifiers::SHIFT);
+        h.draw();
+        assert_eq!(h.app.scroll_status().offset_from_bottom, offset);
+    } // a page, the prefix still on
+    key_do(&mut h, PageUp, KeyModifiers::SHIFT);
+    h.draw();
+    assert!(h.app.scroll_status().offset_from_bottom > 2);
+}
+
 /// The scroll position counts rows (#5d): each scroll step moves it by one, from 0 (live,
 /// `Bot`) to `max_scroll` = total rows - view (`Top`), and scroll to top / bottom land on
 /// both ends exactly.
@@ -3121,7 +3142,7 @@ fn help_tabs_list_keys_and_names() {
         .iter()
         .find(|row| row.contains(" Ctrl-a + d "))
         .unwrap();
-    assert!(directory.contains("Open the director…│"), "{directory}");
+    assert!(directory.contains("Open the direc…│"), "{directory}");
 }
 
 /// MAX-239: a key bound to a named command shows in its section's tab with the command's
@@ -10383,6 +10404,88 @@ fn terminal_dump_scrolls_on_its_own() {
     feed(&mut h, 25..26);
     let rows = h.draw();
     assert!(shows(&rows, "line 25."), "{rows:#?}");
+}
+
+/// MAX-252: `Ctrl-a Shift-Up` / `Ctrl-a Shift-Down` (`scroll-side-up` / `scroll-side-down`)
+/// scroll the dump a line and `Ctrl-a Shift-PageUp` / `Shift-PageDown` a page, the screen
+/// staying; the prefix stays between them, another key ends it.
+/// How: 160 columns, 20 lines of 8 bytes ("line NN\n", one a dump line); `Ctrl-a` once, 3 lines
+/// up and back down, a page up and back down, Esc
+#[test]
+fn terminal_dump_scrolls_with_keys() {
+    use crossterm::event::KeyCode::{Char, Down, Esc, PageDown, PageUp, Up};
+    let mut h = terminal_raw_on(160, b"");
+    for i in 0..20 {
+        let line = format!("line {i:02}\n");
+        (h.app.terminal_mode).process_device_rx(TextEncoding::Utf8, line.as_bytes(), false, false);
+    }
+    assert!(shows(&h.draw(), "line 19."));
+    let screen_offset = h.app.terminal_mode.scroller().offset_y;
+    // the prefix stays after a side scroll: the key again scrolls again
+    key_do(&mut h, Char('a'), KeyModifiers::CONTROL);
+    for _ in 0..3 {
+        key_do(&mut h, Up, KeyModifiers::SHIFT);
+    }
+    let rows = h.draw();
+    assert!(
+        shows(&rows, "line 16.") && !shows(&rows, "line 17."),
+        "{rows:#?}"
+    );
+    assert_eq!(h.app.terminal_mode.scroller().offset_y, screen_offset);
+
+    for _ in 0..3 {
+        key_do(&mut h, Down, KeyModifiers::SHIFT);
+    }
+    assert!(shows(&h.draw(), "line 19."));
+    assert!(h.app.is_prefix_active());
+
+    // a page: the rows shown but one; another key ends the prefix
+    key_do(&mut h, PageUp, KeyModifiers::SHIFT);
+    let rows = h.draw();
+    assert!(
+        !shows(&rows, "line 10.") && !shows(&rows, "line 19."),
+        "{rows:#?}"
+    );
+    key_do(&mut h, PageDown, KeyModifiers::SHIFT);
+    assert!(shows(&h.draw(), "line 19."));
+    key_do(&mut h, Esc, KeyModifiers::NONE);
+    assert!(!h.app.is_prefix_active());
+}
+
+/// MAX-252: in copy mode `Ctrl-y` / `Ctrl-e` scroll the view the cursor is in, the cursor
+/// staying: the dump with the cursor in it, the screen otherwise.
+/// How: the 20 lines of `terminal_dump_scrolls_with_keys`; copy mode, Tab into the dump,
+/// `Ctrl-y` twice; Tab back to the screen, `Ctrl-y` once
+#[test]
+fn copy_mode_scrolls_the_view_of_its_cursor() {
+    use crossterm::event::KeyCode::{Char, Tab};
+    let mut h = terminal_raw_on(160, b"");
+    for i in 0..20 {
+        let line = format!("line {i:02}\n");
+        (h.app.terminal_mode).process_device_rx(TextEncoding::Utf8, line.as_bytes(), false, false);
+    }
+    h.draw();
+    let screen_offset = h.app.terminal_mode.scroller().offset_y;
+    h.app.update(Action::CopyMode(CopyModeAction::Enter));
+    key_do(&mut h, Tab, KeyModifiers::NONE);
+    let cursor = |h: &Harness| h.app.terminal_mode.dump_copy().map(|copy| copy.cursor);
+    let in_dump = cursor(&h);
+    assert!(in_dump.is_some());
+
+    key_do(&mut h, Char('y'), KeyModifiers::CONTROL);
+    key_do(&mut h, Char('y'), KeyModifiers::CONTROL);
+    let rows = h.draw();
+    assert!(
+        shows(&rows, "line 17.") && !shows(&rows, "line 18."),
+        "{rows:#?}"
+    );
+    assert_eq!(cursor(&h), in_dump);
+    assert_eq!(h.app.terminal_mode.scroller().offset_y, screen_offset);
+
+    key_do(&mut h, Tab, KeyModifiers::NONE);
+    key_do(&mut h, Char('y'), KeyModifiers::CONTROL);
+    h.draw();
+    assert_eq!(h.app.terminal_mode.scroller().offset_y, screen_offset + 1);
 }
 
 /// MAX-252 step 3: Tab puts the copy cursor in the dump, on the last byte shown; it moves by

@@ -84,6 +84,11 @@ impl Dump {
         self.scroller.scroll_up(lines, start, end);
     }
 
+    /// The lines a page scrolls: the rows shown but one
+    pub fn page(&self) -> usize {
+        self.scroller.rows.saturating_sub(1).max(1)
+    }
+
     pub fn scroll_down(&mut self, lines: usize) {
         let (start, end) = self.span();
         self.scroller.scroll_down(lines, start, end);

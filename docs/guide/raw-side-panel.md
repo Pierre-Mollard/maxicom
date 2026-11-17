@@ -30,7 +30,9 @@ panel, which turns it off.
 ### In line mode
 
 The panel follows the history: its rows are the same lines, so a line and
-its bytes stay side by side as you scroll.
+its bytes stay side by side as you scroll. The keys that scroll terminal
+mode's dump scroll them both: `Ctrl-a Shift-Up` / `Ctrl-a Shift-Down` a row,
+`Ctrl-a Shift-PageUp` / `Ctrl-a Shift-PageDown` a page.
 
 ### In terminal mode
 
@@ -53,8 +55,17 @@ Every line holds the same number of bytes, the most that fit the panel's
 width in groups of 8, at least 8. When even 8 don't fit, as often in binary,
 `Ctrl-a Shift-Left` / `Ctrl-a Shift-Right` pan it.
 
-The dump scrolls on its own, apart from the screen: the wheel over it, or
-its own scrollbar in its right column. It follows the bytes coming in while
+The dump scrolls on its own, apart from the screen:
+
+- the wheel over it, or its own scrollbar in its right column;
+- `Ctrl-a Shift-Up` / `Ctrl-a Shift-Down`, a line, and
+  `Ctrl-a Shift-PageUp` / `Ctrl-a Shift-PageDown`, a page. The prefix stays
+  between them: `Ctrl-a` once, then `Shift-Up` as many times as needed, see
+  [The prefix](keybindings.md#the-prefix);
+- in copy mode with the cursor in it, `Ctrl-y` / `Ctrl-e`, the cursor
+  staying.
+
+It follows the bytes coming in while
 it shows its last line. A line and the screen row next to it aren't linked:
 one byte can redraw a row far up, and a progress bar writes the same row
 again and again.
@@ -96,6 +107,7 @@ In terminal mode, the cursor moves in the dump, a byte at a time:
 | `gg` / `G` | The first / last byte kept |
 | `Ctrl-u` `Ctrl-b` / `Ctrl-d` `Ctrl-f`, PageUp / PageDown | A page up / down |
 | `v` / `V` | Select bytes / whole lines |
+| `Ctrl-y` / `Ctrl-e` | Scroll the dump a line; the cursor stays |
 | `y` or Enter | Copy the selection as the panel shows it, in its view |
 | `Y` | Copy the selection's bytes as received, read as UTF-8 |
 

@@ -43,7 +43,7 @@ device's cursor sits on an empty row.
 | `0` `^` / `$` | Start / end of the line |
 | `gg` / `G` | Top / bottom of the history |
 | `Ctrl-u` `Ctrl-b` / `Ctrl-d` `Ctrl-f`, PageUp / PageDown | A page up / down |
-| `Ctrl-y` / `Ctrl-e` | Scroll the view a line; the cursor stays |
+| `Ctrl-y` / `Ctrl-e` | Scroll the view a line; the cursor stays. With the cursor in terminal mode's raw side panel, the panel scrolls |
 | `v` or Space | Start a selection at the cursor |
 | `V` | Select whole lines |
 | `iw` `aw` `i"` `i(` `i[` `i{`... | Select a word, or what's inside quotes or brackets |
