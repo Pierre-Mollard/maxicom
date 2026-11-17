@@ -208,12 +208,10 @@ pub struct FrameMap {
     pub text_area: Rect,
     pub text_rows: Vec<Option<TextRow>>,
     pub raw_area: Rect,
-    pub raw_rows: Vec<Option<RawRow>>,
+    pub raw_rows: RawRows,
     /// Raw panel pan (columns) and width of one byte (columns), as drawn
     pub raw_pan_x: usize,
     pub raw_stride: usize,
-    /// Terminal mode's dump: where its text column starts, past the bytes (MAX-252)
-    pub raw_text_col: Option<usize>,
     /// The open popup's area, and the parts of it a click picks
     pub popup: Option<Rect>,
     pub popup_targets: Vec<(Rect, PopupTarget)>,
@@ -405,6 +403,27 @@ pub enum RowChars {
     },
 }
 
+/// The raw panel's rows as drawn, each mode's own way: line mode's per screen row (the history
+/// line shown and its bytes, `None` for a row showing none); terminal mode's dump as its shape
+/// (MAX-252), its lines being arithmetic: line `top_line` on the first row, `width` bytes a
+/// line up to offset `end`, the text column from column `text_col`
+#[derive(Debug)]
+pub enum RawRows {
+    Lines(Vec<Option<RawRow>>),
+    Dump {
+        top_line: u64,
+        width: usize,
+        end: u64,
+        text_col: usize,
+    },
+}
+
+impl Default for RawRows {
+    fn default() -> Self {
+        Self::Lines(Vec::new())
+    }
+}
+
 #[derive(Debug)]
 pub struct RawRow {
     pub line_idx: usize,
@@ -417,8 +436,7 @@ impl FrameMap {
         self.text_area = Rect::default();
         self.text_rows.clear();
         self.raw_area = Rect::default();
-        self.raw_rows.clear();
-        self.raw_text_col = None;
+        self.raw_rows = RawRows::default();
         self.popup = None;
         self.popup_targets.clear();
         self.prompt = None;
@@ -588,17 +606,41 @@ impl FrameMap {
     /// The raw position (byte) under a screen cell of the raw panel, `clamp` as for the text
     pub fn raw_position(&self, x: u16, y: u16, clamp: bool) -> Option<LogicalPosition> {
         let (col, row) = cell_in(self.raw_area, x, y, clamp)?;
-        let raw_row = pick_row(&self.raw_rows, row, clamp)?;
         let stride = self.raw_stride.max(1);
         let col = col + self.raw_pan_x;
-        // a char of the dump's text column is its byte too
-        let byte_in_row = match self.raw_text_col {
-            Some(text_col) if col >= text_col => col - text_col,
-            _ => col / stride,
+        let (line_idx, byte_idx) = match &self.raw_rows {
+            RawRows::Lines(rows) => {
+                let raw_row = pick_row(rows, row, clamp)?;
+                let byte = (col / stride).min(raw_row.byte_count.saturating_sub(1));
+                (raw_row.line_idx, raw_row.byte_start + byte)
+            }
+            &RawRows::Dump {
+                top_line,
+                width,
+                end,
+                text_col,
+            } => {
+                let width = width.max(1) as u64;
+                // the rows from the top down to the last line with bytes
+                let lines = end.div_ceil(width).saturating_sub(top_line);
+                let row = match row as u64 {
+                    row if row < lines => row,
+                    _ if clamp && lines > 0 => lines - 1,
+                    _ => return None,
+                };
+                let line = top_line + row;
+                // a char of the text column is its byte too
+                let byte = if col >= text_col {
+                    col - text_col
+                } else {
+                    col / stride
+                };
+                let offset = (line * width + (byte as u64).min(width - 1)).min(end - 1);
+                (line as usize, offset as usize)
+            }
         };
-        let byte_idx = raw_row.byte_start + byte_in_row.min(raw_row.byte_count.saturating_sub(1));
         Some(LogicalPosition {
-            line_idx: raw_row.line_idx,
+            line_idx,
             char_idx: 0,
             preferred_col: byte_idx,
             byte_idx,

@@ -1174,7 +1174,9 @@ fn entry_spacing_puts_blank_rows_before_entries() {
     assert!(text_rows[0].is_none() && text_rows[2].is_none());
     assert_eq!(text_rows[1].as_ref().map(|row| row.line_idx), Some(0));
     assert_eq!(text_rows[3].as_ref().map(|row| row.line_idx), Some(1));
-    let raw_rows = &h.app.frame_map().raw_rows;
+    let crate::app::types::RawRows::Lines(raw_rows) = &h.app.frame_map().raw_rows else {
+        panic!("line mode's raw rows");
+    };
     assert!(raw_rows[0].is_none() && raw_rows[2].is_none());
     assert_eq!(raw_rows[3].as_ref().map(|row| row.line_idx), Some(1));
 
@@ -1797,14 +1799,14 @@ fn search_raw_pan_moves_after_the_jump() {
 
     search(&mut h, "QQ");
     h.draw();
-    let centered = h.app.line_mode.raw_pan_x();
+    let centered = h.app.line_mode.line_bytes().pan_x();
     assert!(centered >= 6, "{centered}");
     h.app.update(Action::App(crate::inputs::AppAction::SideView(
         crate::inputs::SideViewAction::PanLeft(2),
     )));
     h.draw();
     h.draw();
-    assert_eq!(h.app.line_mode.raw_pan_x(), centered - 6);
+    assert_eq!(h.app.line_mode.line_bytes().pan_x(), centered - 6);
 }
 
 /// MAX-72: terminal mode scrolls while the search bar is open (the scroller's offset counts
@@ -1854,9 +1856,12 @@ fn terminal_raw_pan_stops_at_the_dump_end() {
     h.app.update(Action::App(crate::inputs::AppAction::SideView(
         crate::inputs::SideViewAction::PanRight(100),
     )));
-    let max = h.app.terminal_mode.raw_pan_x_max();
+    let max = h.app.terminal_mode.dump().pan_x();
     assert!(max > 0 && max.is_multiple_of(9), "{max}");
-    assert_eq!(h.app.terminal_mode.raw_pan_x(), max);
+    h.app.update(Action::App(crate::inputs::AppAction::SideView(
+        crate::inputs::SideViewAction::PanRight(1),
+    )));
+    assert_eq!(h.app.terminal_mode.dump().pan_x(), max);
     let rows = h.draw();
     assert!(shows(&rows, "00000030"), "{rows:#?}");
     assert!(shows(&rows, "a..b.[0m"), "{rows:#?}");
@@ -5893,7 +5898,7 @@ fn mouse_click_on_a_raw_byte() {
         crate::inputs::SideViewAction::PanRight(2),
     )));
     let rows = h.draw();
-    assert_eq!(h.app.line_mode.raw_pan_x(), 6);
+    assert_eq!(h.app.line_mode.line_bytes().pan_x(), 6);
     let (x, y) = cell_of(&rows, "6F 6B");
     click(&mut h, (x, y));
     let rows = h.draw();
@@ -10204,7 +10209,7 @@ fn raw_pan_follows_the_cursor_on_the_partial_line() {
     copy(&mut h, CopyModeAction::ToggleSide);
     copy(&mut h, CopyModeAction::EndOfLine);
     let rows = h.draw();
-    assert!(h.app.line_mode.raw_pan_x() > 0);
+    assert!(h.app.line_mode.line_bytes().pan_x() > 0);
     assert_eq!(under_cursor(&mut h, &rows), "51");
 }
 
@@ -10594,7 +10599,7 @@ fn terminal_dump_scrollbar_mouse() {
     let (x, top, bottom) = (bar.area.x, bar.area.y, bar.area.bottom() - 1);
     let position = |h: &mut Harness| {
         h.draw();
-        h.app.terminal_mode.dump_scroll_position()
+        h.app.terminal_mode.dump().scroll_position()
     };
     let (max, live) = position(&mut h);
     assert_eq!(live, max, "following the live end");
@@ -10682,7 +10687,7 @@ fn terminal_dump_at_the_bottom() {
         .terminal_mode
         .process_device_rx(TextEncoding::Utf8, &all, false, false);
     let rows = h.draw();
-    let bounds = h.app.terminal_mode.dump_bounds();
+    let bounds = h.app.terminal_mode.dump().bounds();
     assert!(
         bounds.width >= 32 && bounds.width.is_multiple_of(8),
         "{bounds:?}"
@@ -10701,14 +10706,14 @@ fn terminal_dump_at_the_bottom() {
         _ => panic!("expected a yank"),
     }
 
-    let (_, live) = h.app.terminal_mode.dump_scroll_position();
+    let (_, live) = h.app.terminal_mode.dump().scroll_position();
     mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), digits);
     let above = (digits.0, raw.y - 2);
     mouse_do(&mut h, MouseEventKind::Drag(MouseButton::Left), above);
     assert_eq!(h.app.copy_side(), Some(CopySide::Raw));
     h.app
         .drag_scroll(Instant::now() + Duration::from_millis(100));
-    let (_, scrolled) = h.app.terminal_mode.dump_scroll_position();
+    let (_, scrolled) = h.app.terminal_mode.dump().scroll_position();
     assert!(scrolled < live, "{scrolled} < {live}");
 }
 

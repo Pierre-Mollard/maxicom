@@ -836,7 +836,7 @@ fn marks_popup_shows_invalid_bytes() {
 
 /// Every byte the stream holds, both slices joined (MAX-252)
 fn stream_bytes(tm: &TerminalMode) -> Vec<u8> {
-    let stream = &tm.rx_stream;
+    let stream = tm.dump.stream();
     let (front, back) = stream.slices(stream.start()..stream.end());
     [front, back].concat()
 }
@@ -851,13 +851,20 @@ fn stream_keeps_the_device_bytes_as_received() {
     tm.process_device_rx(TextEncoding::Utf8, b"c", true, false);
     assert_eq!(stream_bytes(&tm), b"a\nb\xF1c");
     let reads: Vec<u64> = tm
-        .rx_stream
+        .dump
+        .stream()
         .reads()
         .iter()
         .map(|read| read.offset)
         .collect();
     assert_eq!(reads, [0, 4]);
-    assert!(tm.rx_stream.reads().iter().all(|read| read.time.is_some()));
+    assert!(
+        tm.dump
+            .stream()
+            .reads()
+            .iter()
+            .all(|read| read.time.is_some())
+    );
 }
 
 /// MAX-252 step 1: a restored session's chunks go in the stream with their times, maxicom's
@@ -878,7 +885,7 @@ fn stream_holds_restored_bytes_not_the_reset() {
     ];
     tm.restore(TextEncoding::Utf8, &chunks, "--");
     assert_eq!(stream_bytes(&tm), b"one\r\ntwo");
-    assert_eq!(tm.rx_stream.reads().len(), 2);
+    assert_eq!(tm.dump.stream().reads().len(), 2);
 
     tm.clear_history();
     assert!(stream_bytes(&tm).is_empty());

@@ -9,10 +9,9 @@ use crate::{
             build_display_to_raw_byte_map, entry_display_text, entry_display_to_wire_map,
         },
         marks::Marks,
-        raw_scroller::RawSideScroller,
         scroller::{ScrollStatus, ViewportScroller},
         search::{SearchHost, SearchState, SearchView},
-        selection::{CopyActionResult, CopyModeState, Reveal, TextSource},
+        selection::{CopyActionResult, CopyModeState, CopySide, Reveal, TextSource},
         types::{LogEntry, RxLineSplitter, ViewportSize},
     },
     capture::TimedChunk,
@@ -23,6 +22,7 @@ use crate::{
         vi::ViPending,
     },
     overlays::MarkRow,
+    raw_side::line::{self, LineBytes},
 };
 
 pub struct LineMode {
@@ -62,7 +62,8 @@ pub struct LineMode {
     row_heights_key: u64,
     /// Scroll position in rows, from the render (#5d)
     row_scroll_status: ScrollStatus,
-    raw_scroller: RawSideScroller,
+    /// The raw side panel's pan, and what copy mode does on that side
+    line_bytes: LineBytes,
     vi_state_copymode: Option<ViPending>,
     evicted_lines: usize,
     /// All the lines dropped from the top of the history so far (MAX-202)
@@ -102,7 +103,6 @@ impl LineMode {
         let search_state = SearchState::default();
         let copy_state = CopyModeState::default();
         let scroller = ViewportScroller::default();
-        let raw_scroller = RawSideScroller::default();
         LineMode {
             // grown on demand, the configured size is only a limit
             local_history: VecDeque::new(),
@@ -123,7 +123,7 @@ impl LineMode {
             row_heights: VecDeque::new(),
             row_heights_key: 0,
             row_scroll_status: ScrollStatus::default(),
-            raw_scroller,
+            line_bytes: LineBytes::default(),
             vi_state_copymode: None,
             evicted_lines: 0,
             dropped_lines: 0,
@@ -606,7 +606,18 @@ impl LineMode {
             view_height: self.scroller.view_height,
         };
 
-        let result = self.copy_state.apply_action(action, &mut source);
+        // the raw side panel's side (MAX-71), until a press on the text
+        let on_raw = match action {
+            CopyModeAction::MousePress(_, side, _) => side == CopySide::Raw,
+            _ => self.copy_state.side == CopySide::Raw,
+        };
+        let result = if action == CopyModeAction::ToggleSide {
+            line::toggle_side(&mut self.copy_state, &mut source)
+        } else if on_raw {
+            line::copy_action(&mut self.copy_state, action, &mut source)
+        } else {
+            self.copy_state.apply_action(action, &mut source)
+        };
         // out of copy mode (Esc, a yank), a view it held goes back live (MAX-193), and the
         // matches kept after a search are no longer shown (MAX-215)
         if !self.copy_state.active {
@@ -662,19 +673,11 @@ impl LineMode {
 
     pub fn handle_side_view_action(&mut self, action: SideViewAction, raw_view: RawSideView) {
         match action {
-            SideViewAction::PanLeft(bytes) => {
-                self.raw_scroller.pan_left(bytes, raw_view);
-            }
-            SideViewAction::PanRight(bytes) => {
-                self.raw_scroller.pan_right(bytes, raw_view);
-            }
+            SideViewAction::PanLeft(bytes) => self.line_bytes.pan_left(bytes, raw_view),
+            SideViewAction::PanRight(bytes) => self.line_bytes.pan_right(bytes, raw_view),
             // the raw panel scrolls with the history
             SideViewAction::ScrollUp(_) | SideViewAction::ScrollDown(_) => {}
         }
-    }
-
-    pub fn update_raw_limits(&mut self, overflow: usize, raw_view: RawSideView) {
-        self.raw_scroller.set_limit(overflow, raw_view);
     }
 
     #[inline]
@@ -843,12 +846,14 @@ impl LineMode {
     }
 
     #[inline]
-    pub fn raw_pan_x_max(&self) -> usize {
-        self.raw_scroller.max_pan_x
+    #[cfg(test)]
+    pub fn line_bytes(&self) -> &LineBytes {
+        &self.line_bytes
     }
+
     #[inline]
-    pub fn raw_pan_x(&self) -> usize {
-        self.raw_scroller.pan_x
+    pub fn line_bytes_mut(&mut self) -> &mut LineBytes {
+        &mut self.line_bytes
     }
 
     #[inline]
@@ -908,36 +913,6 @@ impl LineMode {
     #[inline]
     pub fn scroller_mut(&mut self) -> &mut ViewportScroller {
         &mut self.scroller
-    }
-
-    pub fn center_raw_pan_on_byte(
-        &mut self,
-        raw_view: RawSideView,
-        usable_panel_width: usize,
-        local_byte_offset: usize,
-        total_sub_bytes: usize,
-    ) {
-        self.raw_scroller.center_on_byte(
-            raw_view,
-            usable_panel_width,
-            local_byte_offset,
-            total_sub_bytes,
-        );
-    }
-
-    pub fn sync_raw_pan_with_local_col(
-        &mut self,
-        raw_view: RawSideView,
-        usable_panel_width: usize,
-        local_byte_offset: usize,
-        total_sub_bytes: usize,
-    ) {
-        self.raw_scroller.sync_with_cursor(
-            raw_view,
-            usable_panel_width,
-            local_byte_offset,
-            total_sub_bytes,
-        );
     }
 }
 

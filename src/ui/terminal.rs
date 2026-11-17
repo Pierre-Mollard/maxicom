@@ -4,21 +4,21 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::{Paragraph, ScrollbarState},
 };
 
 use crate::{
     app::{
         App,
         selection::CopySide,
-        types::{FocusTarget, RawRow, RowChars, ScrollbarMap, TextRow},
+        types::{FocusTarget, RowChars, ScrollbarMap, TextRow},
     },
-    configs::{KeywordHighlight, Mode, RawSideView, ThemeConfig},
+    configs::{KeywordHighlight, Mode, ThemeConfig},
     invalid_bytes::{shown, shown_string},
     terminal::{MaxicomCursor, MaxicomTerminal, vt100_size},
     ui::{
-        common::{draw_scrollbar_marks, keyword_matches, render_search_bar},
-        raw_side::{DumpLayout, raw_panel_layout},
+        common::{draw_scrollbar_marks, keyword_matches, render_search_bar, scrollbar},
+        raw_side,
     },
 };
 
@@ -227,7 +227,7 @@ pub fn render_vt100_terminal(
     let is_search_active = app.terminal_mode.search().shows_matches() && !dump_search;
 
     if let Some(raw_area) = raw_side_area {
-        render_vt100_raw_side_panel(app, frame, raw_area, theme);
+        raw_side::terminal::render(app, frame, raw_area, theme);
     }
 
     // seach
@@ -527,176 +527,4 @@ pub fn draw_mark_letters(
                 .set_style(*theme.ui.mark);
         }
     }
-}
-
-/// The history's and the dump's scrollbar
-fn scrollbar(theme: &ThemeConfig) -> Scrollbar<'static> {
-    Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(Some("▲"))
-        .end_symbol(Some("▼"))
-        .track_symbol(Some("│"))
-        .thumb_symbol("█")
-        .thumb_style(*theme.ui.scrollbar_thumb)
-        .track_style(*theme.ui.scrollbar_track)
-        .begin_style(*theme.ui.scrollbar_thumb)
-        .end_style(*theme.ui.scrollbar_thumb)
-}
-
-/// The raw panel's dump of the bytes received (MAX-252): the offset column pinned, the bytes
-/// and their text panned, the lines following the live end unless scrolled, a scrollbar in
-/// its right column. In copy mode on the raw side, its cursor and selection
-pub fn render_vt100_raw_side_panel(
-    app: &mut App,
-    frame: &mut Frame,
-    raw_area: Rect,
-    theme: &ThemeConfig,
-) {
-    let raw_view = app.settings().raw_side.view;
-    if raw_view == RawSideView::Off || raw_area.width == 0 || raw_area.height == 0 {
-        return;
-    }
-    let (block, inner_area) =
-        raw_panel_layout(raw_area, app.settings().raw_side.orientation, theme);
-    frame.render_widget(block, raw_area);
-    // the scrollbar's column, kept while there's nothing to scroll as the history's is
-    let (inner_area, bar_area) = if app.show_scrollbar() && inner_area.width > 1 {
-        let width = inner_area.width - 1;
-        let bar = Rect {
-            x: inner_area.x + width,
-            width: 1,
-            ..inner_area
-        };
-        (
-            Rect {
-                width,
-                ..inner_area
-            },
-            Some(bar),
-        )
-    } else {
-        (inner_area, None)
-    };
-
-    let end = app.terminal_mode.rx_stream().end();
-    let layout = DumpLayout::fit(inner_area.width as usize, raw_view, end);
-    let rows = inner_area.height as usize;
-    let top = app.terminal_mode.dump_top(layout.bytes_per_line, rows);
-    let (max, position) = app.terminal_mode.dump_scroll_position();
-    if let Some(bar) = bar_area
-        && max > 0
-    {
-        let mut state = ScrollbarState::new(max)
-            .viewport_content_length(rows)
-            .position(position);
-        frame.render_stateful_widget(scrollbar(theme), bar, &mut state);
-        app.frame_map_mut().dump_scrollbar = Some(ScrollbarMap {
-            area: bar,
-            max,
-            position,
-            view: rows,
-        });
-    }
-    let offset_width = (layout.offset_width() as u16).min(inner_area.width);
-    let body_area = Rect {
-        x: inner_area.x + offset_width,
-        width: inner_area.width - offset_width,
-        ..inner_area
-    };
-    app.terminal_mode
-        .pan_to_dump_cursor(raw_view, body_area.width as usize);
-    let overflow = layout.body_width.saturating_sub(body_area.width as usize);
-    app.terminal_mode.update_raw_limits(overflow, raw_view);
-    let pan_x = app
-        .terminal_mode
-        .raw_pan_x()
-        .min(app.terminal_mode.raw_pan_x_max());
-
-    let bounds = app.terminal_mode.dump_bounds();
-    let copy = app.terminal_mode.dump_copy().copied();
-    let selection = copy.and_then(|copy| copy.selection(&bounds));
-    let selection_style = theme.ui.selection_style(true);
-    let search = app.terminal_mode.search();
-    let shows_matches = app.terminal_mode.dump_search() && search.shows_matches();
-    let matches = if shows_matches {
-        &search.matches[..]
-    } else {
-        &[]
-    };
-    let current_match = matches.get(search.current_match).map(|m| m.byte_offset);
-    let stream = app.terminal_mode.rx_stream();
-    let width = layout.bytes_per_line as u64;
-    let mut offsets = Vec::with_capacity(rows);
-    let mut bodies = Vec::with_capacity(rows);
-    let mut map_rows = Vec::with_capacity(rows);
-    let mut bytes = Vec::with_capacity(layout.bytes_per_line);
-    let mut cursor_cell = None;
-    for (row, line) in (top..)
-        .take(rows)
-        .take_while(|&line| line * width < bounds.end)
-        .enumerate()
-    {
-        let from = line * width;
-        let (front, back) = stream.slices(from..from + width);
-        bytes.clear();
-        bytes.extend_from_slice(front);
-        bytes.extend_from_slice(back);
-        let lead = bounds.start.saturating_sub(from) as usize;
-        // the line's bytes selected, and the cursor's, by their index in the line
-        let local = |range: &std::ops::Range<u64>| {
-            let to = range.end.clamp(from, from + width);
-            (range.start.clamp(from, to) - from) as usize..(to - from) as usize
-        };
-        let mut marks = Vec::new();
-        // a raw search's matches (MAX-252), sorted by their first byte
-        let first = matches.partition_point(|m| (m.byte_offset + m.byte_len) as u64 <= from);
-        let shown = matches[first..].iter();
-        let mut active = None;
-        for m in shown.take_while(|m| (m.byte_offset as u64) < from + width) {
-            let bytes = local(&(m.byte_offset as u64..(m.byte_offset + m.byte_len) as u64));
-            if Some(m.byte_offset) == current_match {
-                active = Some(bytes);
-            } else {
-                marks.push((bytes, *theme.search.search_match));
-            }
-        }
-        // over the matches it overlaps
-        marks.extend(active.map(|bytes| (bytes, *theme.search.search_match_active)));
-        if let Some(selected) = &selection {
-            marks.push((local(selected), selection_style));
-        }
-        if let Some(copy) = copy
-            && (from..from + width).contains(&copy.cursor)
-        {
-            let byte = (copy.cursor - from) as usize;
-            marks.push((byte..byte + 1, *theme.ui.cursor_ghost));
-            cursor_cell = Some((row, byte * raw_view.stride()));
-        }
-        offsets.push(layout.offset_line(line, theme));
-        bodies.push(layout.body_line(lead, &bytes, raw_view, theme, &marks));
-        map_rows.push(Some(RawRow {
-            line_idx: line as usize,
-            byte_start: from as usize,
-            byte_count: lead + bytes.len(),
-        }));
-    }
-
-    if app.settings().ui.mouse {
-        let map = app.frame_map_mut();
-        map.raw_area = body_area;
-        map.raw_rows = map_rows;
-        map.raw_pan_x = pan_x;
-        map.raw_stride = raw_view.stride();
-        map.raw_text_col = Some(layout.text_col(raw_view));
-    }
-    // the digits under the frame's cursor, the char in the text column as its ghost
-    if let Some((row, col)) = cursor_cell
-        && let Some(x) = col.checked_sub(pan_x)
-        && x < body_area.width as usize
-    {
-        frame.set_cursor_position((body_area.x + x as u16, body_area.y + row as u16));
-    }
-
-    frame.render_widget(Paragraph::new(offsets), inner_area);
-    let body = Paragraph::new(bodies).scroll((0, pan_x.min(u16::MAX as usize) as u16));
-    frame.render_widget(body, body_area);
 }

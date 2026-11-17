@@ -4,6 +4,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
+    widgets::{Scrollbar, ScrollbarOrientation},
 };
 
 use std::fmt::Write;
@@ -643,6 +644,19 @@ pub fn draw_scrollbar_marks(
         cell.set_symbol(letter.encode_utf8(&mut [0; 4]))
             .set_style(style);
     }
+}
+
+/// The history's and the dump's scrollbar
+pub fn scrollbar(theme: &ThemeConfig) -> Scrollbar<'static> {
+    Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"))
+        .track_symbol(Some("│"))
+        .thumb_symbol("█")
+        .thumb_style(*theme.ui.scrollbar_thumb)
+        .track_style(*theme.ui.scrollbar_track)
+        .begin_style(*theme.ui.scrollbar_thumb)
+        .end_style(*theme.ui.scrollbar_thumb)
 }
 
 #[cfg(test)]

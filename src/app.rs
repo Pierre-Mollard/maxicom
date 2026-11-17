@@ -53,7 +53,6 @@ pub mod line_mode;
 pub mod marks;
 pub mod mash;
 pub mod plots;
-pub mod raw_scroller;
 pub mod scroller;
 pub mod search;
 pub mod selection;
@@ -1580,10 +1579,10 @@ impl App {
             (ScrollbarId::History, BarScroll::To(position)) => {
                 self.update_action_history(HistoryAction::ScrollTo(bar.max - position));
             }
-            (ScrollbarId::Dump, BarScroll::Up) => self.terminal_mode.scroll_dump_up(1),
-            (ScrollbarId::Dump, BarScroll::Down) => self.terminal_mode.scroll_dump_down(1),
+            (ScrollbarId::Dump, BarScroll::Up) => self.terminal_mode.dump_mut().scroll_up(1),
+            (ScrollbarId::Dump, BarScroll::Down) => self.terminal_mode.dump_mut().scroll_down(1),
             (ScrollbarId::Dump, BarScroll::To(position)) => {
-                self.terminal_mode.scroll_dump_to(position);
+                self.terminal_mode.dump_mut().scroll_to(position);
             }
         }
     }

@@ -90,3 +90,39 @@ fn text_to_wire_offsets_hold_on_generated_bytes() {
         }
     }
 }
+
+/// MAX-252: a click on the dump finds its byte by arithmetic: digits by the byte's width, the
+/// text column by char; past the last line, nothing, or with `clamp` that line; never past the
+/// last byte.
+/// How: a 40x4 panel at (10, 5), 8 bytes a line from line 2, bytes up to offset 30 (line 3 holds
+/// 24..30), Hex (3 columns a byte), the text column at 26, no pan.
+#[test]
+fn dump_click_finds_its_byte() {
+    use crate::app::types::RawRows;
+    use ratatui::layout::Rect;
+
+    let map = FrameMap {
+        raw_area: Rect::new(10, 5, 40, 4),
+        raw_rows: RawRows::Dump {
+            top_line: 2,
+            width: 8,
+            end: 30,
+            text_col: 26,
+        },
+        raw_stride: 3,
+        ..FrameMap::default()
+    };
+    let at = |x, y, clamp| {
+        map.raw_position(x, y, clamp)
+            .map(|pos| (pos.line_idx, pos.byte_idx))
+    };
+    // row 0 is line 2 (bytes 16..24): the digits of its byte 2, the text column's byte 3
+    assert_eq!(at(10 + 7, 5, false), Some((2, 18)));
+    assert_eq!(at(10 + 26 + 3, 5, false), Some((2, 19)));
+    // row 1 is line 3, its last byte 29: a click past it stays on it
+    assert_eq!(at(10 + 24, 6, false), Some((3, 29)));
+    assert_eq!(at(10 + 26 + 7, 6, false), Some((3, 29)));
+    // rows 2 and 3 show no line: nothing, or the last line with `clamp`
+    assert_eq!(at(10, 7, false), None);
+    assert_eq!(at(10, 8, true), Some((3, 24)));
+}

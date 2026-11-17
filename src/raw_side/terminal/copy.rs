@@ -1,37 +1,10 @@
-//! Copy mode in terminal mode's raw panel dump (MAX-252): the cursor and the selection are
-//! absolute byte offsets of the bytes received, so a resize changing the bytes per line, or the
-//! oldest bytes dropped, keep them on their bytes. The lines are only arithmetic: line `n` holds
-//! the bytes `n * width..(n + 1) * width`
+//! Copy mode in the dump: the cursor and the selection are absolute byte offsets, so a
+//! resize changing the bytes per line, or the oldest bytes dropped, keep them on their bytes
 
 use std::ops::Range;
 
+use super::DumpBounds;
 use crate::inputs::CopyModeAction;
-
-/// The bytes kept (`start..end`) and the dump's shape as last drawn
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DumpBounds {
-    pub start: u64,
-    pub end: u64,
-    pub width: usize,
-    pub rows: usize,
-}
-
-impl DumpBounds {
-    fn width(&self) -> u64 {
-        self.width.max(1) as u64
-    }
-
-    /// The offset brought onto a byte kept
-    fn clamp(&self, offset: u64) -> u64 {
-        offset.clamp(self.start, self.end.saturating_sub(1).max(self.start))
-    }
-
-    /// The bytes of `offset`'s line still kept
-    fn line_of(&self, offset: u64) -> Range<u64> {
-        let from = offset - offset % self.width();
-        self.clamp(from)..self.clamp(from + self.width() - 1) + 1
-    }
-}
 
 /// What an action did
 #[derive(Debug, PartialEq, Eq)]
@@ -147,5 +120,5 @@ impl DumpCopy {
 }
 
 #[cfg(test)]
-#[path = "tests/dump.rs"]
+#[path = "../../tests/raw_side/terminal/copy.rs"]
 mod tests;
