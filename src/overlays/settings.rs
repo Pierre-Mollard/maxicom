@@ -56,6 +56,7 @@ impl SettingsDialog {
                 }
                 KeyCode::Char('s' | 'S') => toggle(SettingKey::DimensionMode),
                 KeyCode::Char('a' | 'A') => toggle(SettingKey::AnswerQueries),
+                KeyCode::Char('l' | 'L') => toggle(SettingKey::ByteTrace),
                 KeyCode::Char('r' | 'R') => toggle(SettingKey::AddCr),
                 KeyCode::Char('f' | 'F') => toggle(SettingKey::AddLf),
                 KeyCode::Char('n' | 'N') => toggle(SettingKey::TxEol),

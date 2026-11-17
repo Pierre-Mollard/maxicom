@@ -10291,7 +10291,7 @@ fn terminal_raw_on(w: u16, bytes: &[u8]) -> Harness {
     all.extend_from_slice(bytes);
     h.app
         .terminal_mode
-        .process_device_rx(TextEncoding::Utf8, &all, false, false);
+        .process_device_rx(TextEncoding::Utf8, &all, false, false, true);
     h
 }
 
@@ -10366,6 +10366,7 @@ fn terminal_dump_scrolls_on_its_own() {
                 line.as_bytes(),
                 false,
                 false,
+                true,
             );
         }
     };
@@ -10417,7 +10418,13 @@ fn terminal_dump_scrolls_with_keys() {
     let mut h = terminal_raw_on(160, b"");
     for i in 0..20 {
         let line = format!("line {i:02}\n");
-        (h.app.terminal_mode).process_device_rx(TextEncoding::Utf8, line.as_bytes(), false, false);
+        (h.app.terminal_mode).process_device_rx(
+            TextEncoding::Utf8,
+            line.as_bytes(),
+            false,
+            false,
+            true,
+        );
     }
     assert!(shows(&h.draw(), "line 19."));
     let screen_offset = h.app.terminal_mode.scroller().offset_y;
@@ -10462,7 +10469,13 @@ fn copy_mode_scrolls_the_view_of_its_cursor() {
     let mut h = terminal_raw_on(160, b"");
     for i in 0..20 {
         let line = format!("line {i:02}\n");
-        (h.app.terminal_mode).process_device_rx(TextEncoding::Utf8, line.as_bytes(), false, false);
+        (h.app.terminal_mode).process_device_rx(
+            TextEncoding::Utf8,
+            line.as_bytes(),
+            false,
+            false,
+            true,
+        );
     }
     h.draw();
     let screen_offset = h.app.terminal_mode.scroller().offset_y;
@@ -10788,7 +10801,7 @@ fn terminal_dump_at_the_bottom() {
     all.extend_from_slice(b"a\xF1\x80b");
     h.app
         .terminal_mode
-        .process_device_rx(TextEncoding::Utf8, &all, false, false);
+        .process_device_rx(TextEncoding::Utf8, &all, false, false, true);
     let rows = h.draw();
     let bounds = h.app.terminal_mode.dump().bounds();
     assert!(
@@ -10839,7 +10852,7 @@ fn terminal_dump_scrollbar_beside_a_plot() {
             split_percent: 30,
         };
         let all = b"line 00\n".repeat(40);
-        (h.app.terminal_mode).process_device_rx(TextEncoding::Utf8, &all, false, false);
+        (h.app.terminal_mode).process_device_rx(TextEncoding::Utf8, &all, false, false, true);
         let rows = h.draw();
         let bar = h.app.frame_map().dump_scrollbar.expect("a dump scrollbar");
         let raw = h.app.frame_map().raw_area;

@@ -2099,6 +2099,25 @@ fn queries_answered_in_terminal_mode_only() {
     assert!(app.take_query_answers().is_empty());
 }
 
+/// MAX-256: `byte_trace` off (the settings popup's `L`) drops the trace kept and records no
+/// more; on again, the bytes received from then on are traced.
+/// How: terminal mode, "abc", off, "def", on, "ghi"
+#[test]
+fn byte_trace_follows_the_setting() {
+    let mut app = app();
+    app.settings.mode = Mode::Terminal;
+    let runs = |app: &App| app.terminal_mode.dump().writes().len();
+    app.feed_rx(b"abc");
+    assert_eq!(runs(&app), 1);
+    app.toggle_setting(SettingKey::ByteTrace);
+    assert_eq!(runs(&app), 0);
+    app.feed_rx(b"\r\ndef");
+    assert_eq!(runs(&app), 0);
+    app.toggle_setting(SettingKey::ByteTrace);
+    app.feed_rx(b"\r\nghi");
+    assert_eq!(runs(&app), 1);
+}
+
 /// MAX-151: the settings apply to what is received after them: the popup toggle turns the
 /// answers off and on, and the answerback answers ENQ once set.
 #[test]

@@ -5,6 +5,8 @@
 mod copy;
 mod scroll;
 mod stream;
+pub mod tokens;
+pub mod writes;
 
 use std::ops::Range;
 
@@ -13,13 +15,41 @@ use chrono::{DateTime, Local};
 pub use copy::{DumpCopy, DumpResult};
 use scroll::DumpScroller;
 pub use stream::RxStream;
+use tokens::{Token, Tokenizer};
+use writes::{Run, Writes};
 
 use crate::{
-    configs::{RawSideView, settings::raw_view_to_display_mode},
+    configs::{RawSideView, TextEncoding, settings::raw_view_to_display_mode},
     inputs::CopyModeAction,
     raw_side::RawSideScroller,
     ui::raw_side::format_raw_bytes_to_plain_string,
 };
+
+/// The most runs kept per history row: about 25 MB for the default 100000 rows (MAX-256)
+const RUNS_PER_ROW: usize = 16;
+
+/// A cell of the terminal (MAX-256): an absolute row (a grid row on the alternate screen) and a
+/// column
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cell {
+    pub row: u64,
+    pub col: u16,
+    pub alternate: bool,
+}
+
+/// A char received: its bytes and the cell it went to
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Write {
+    pub bytes: Range<u64>,
+    pub ch: char,
+    pub cell: Cell,
+}
+
+/// The cells a char takes, as vt100 draws it: 0 for a combining char, 2 at most
+fn width(ch: char) -> u64 {
+    use unicode_width::UnicodeWidthChar;
+    ch.width().unwrap_or(1).min(2) as u64
+}
 
 /// The dump: the bytes kept, its own scroll and pan, and copy mode's cursor in it
 #[derive(Debug)]
@@ -28,6 +58,8 @@ pub struct Dump {
     scroller: DumpScroller,
     pan: RawSideScroller,
     copy: DumpCopy,
+    tokenizer: Tokenizer,
+    writes: Writes,
 }
 
 impl Dump {
@@ -38,17 +70,154 @@ impl Dump {
             scroller: DumpScroller::default(),
             pan: RawSideScroller::default(),
             copy: DumpCopy::default(),
+            tokenizer: Tokenizer::new(TextEncoding::Utf8),
+            writes: Writes::new(history_rows.saturating_mul(RUNS_PER_ROW).max(4096)),
         }
     }
 
-    pub fn push(&mut self, bytes: &[u8], time: Option<DateTime<Local>>) {
-        self.stream.push(bytes, time);
+    /// Adds a read; returns its first byte's offset
+    pub fn push(&mut self, bytes: &[u8], time: Option<DateTime<Local>>) -> u64 {
+        let offset = self.stream.push(bytes, time);
+        self.writes.trim(self.stream.start());
+        offset
     }
 
     /// Every byte dropped, the offsets still counting on; the dump follows the live end
     pub fn clear(&mut self) {
         self.stream.clear();
+        self.writes.clear();
         self.scroller.follow();
+    }
+
+    /// The tokens of a read pushed at `offset`, read in `encoding` (MAX-256)
+    pub fn tokens(&mut self, encoding: TextEncoding, bytes: &[u8], offset: u64) -> Vec<Token> {
+        if self.tokenizer.encoding() != encoding {
+            self.tokenizer = Tokenizer::new(encoding);
+        }
+        let mut tokens = Vec::new();
+        self.tokenizer.feed(bytes, offset, &mut tokens);
+        tokens
+    }
+
+    /// The byte trace dropped, its memory given back (MAX-256)
+    pub fn forget_trace(&mut self) {
+        self.writes.release();
+    }
+
+    #[inline]
+    pub fn writes(&self) -> &Writes {
+        &self.writes
+    }
+
+    /// Records a printable run on a screen `cols` wide, its cells counted from its bytes kept (a
+    /// char cut between two reads included); returns them
+    pub fn record(&mut self, run: Run, encoding: TextEncoding, cols: u16) -> u32 {
+        let (front, back) = self.stream.slices(run.start..run.end);
+        let cells = if front.is_ascii() && back.is_ascii() {
+            (front.len() + back.len()) as u32
+        } else {
+            (self.chars(run.start..run.end, encoding).iter())
+                .map(|&(_, ch)| width(ch))
+                .sum::<u64>() as u32
+        };
+        self.writes.push(run, cells, cols);
+        cells
+    }
+
+    /// What byte `offset` wrote (MAX-256): its char and the cell it went to, on a screen `cols`
+    /// wide; none for a byte that draws nothing (a control byte, a sequence) or no longer kept
+    pub fn written(&self, offset: u64, encoding: TextEncoding, cols: u16) -> Option<Write> {
+        let run = self.writes.at(offset)?;
+        (self.writes_of(run, encoding, cols).into_iter())
+            .find(|write| write.bytes.contains(&offset))
+    }
+
+    /// The writes to `cell` on a screen `cols` wide, newest first, `max` at most
+    pub fn writes_to(
+        &self,
+        cell: Cell,
+        encoding: TextEncoding,
+        cols: u16,
+        max: usize,
+    ) -> Vec<Write> {
+        let wide = u64::from(cols.max(1));
+        let mut found = Vec::new();
+        for run in self.writes.newest_first() {
+            if run.alternate != cell.alternate || cell.row < run.row {
+                continue;
+            }
+            // a char takes a byte at least, a cell at most two: the rows it can reach
+            let reach = (u64::from(run.col) + 2 * (run.end - run.start)) / wide;
+            if cell.row > run.row + reach {
+                continue;
+            }
+            let write = (self.writes_of(run, encoding, cols).into_iter()).find(|write| {
+                let width = width(write.ch).max(1);
+                write.cell.row == cell.row
+                    && (u64::from(write.cell.col)..u64::from(write.cell.col) + width)
+                        .contains(&u64::from(cell.col))
+            });
+            found.extend(write);
+            if found.len() >= max {
+                break;
+            }
+        }
+        found
+    }
+
+    /// The chars a run wrote and their cells: from its first cell on, a char wrapping to the next
+    /// row when it doesn't fit, a combining char on the cell before it
+    fn writes_of(&self, run: Run, encoding: TextEncoding, cols: u16) -> Vec<Write> {
+        let cols = u64::from(cols.max(1));
+        let (mut row, mut col) = (run.row, u64::from(run.col));
+        let mut last = None;
+        let mut out = Vec::new();
+        for (bytes, ch) in self.chars(run.start..run.end, encoding) {
+            let width = width(ch);
+            let cell = if width == 0 {
+                match last {
+                    Some(cell) => cell,
+                    None => continue,
+                }
+            } else {
+                if col + width > cols {
+                    row += 1;
+                    col = 0;
+                }
+                let cell = Cell {
+                    row,
+                    col: col as u16,
+                    alternate: run.alternate,
+                };
+                col += width;
+                cell
+            };
+            last = Some(cell);
+            out.push(Write { bytes, ch, cell });
+        }
+        out
+    }
+
+    /// The chars of the bytes `range` kept, read in `encoding`, each with its bytes
+    fn chars(
+        &self,
+        range: std::ops::Range<u64>,
+        encoding: TextEncoding,
+    ) -> Vec<(Range<u64>, char)> {
+        let bytes = self.bytes(range.clone());
+        let at = |i: usize| range.start + i as u64;
+        match encoding {
+            TextEncoding::Utf8 => String::from_utf8_lossy(&bytes)
+                .char_indices()
+                .map(|(i, ch)| (at(i)..at(i + ch.len_utf8()), ch))
+                .collect(),
+            _ => (bytes.iter().enumerate())
+                .filter_map(|(i, &byte)| {
+                    let ch = encoding.decode(&[byte]).chars().next()?;
+                    Some((at(i)..at(i + 1), ch))
+                })
+                .collect(),
+        }
     }
 
     #[inline]

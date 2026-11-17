@@ -313,6 +313,7 @@ pub enum SettingKey {
     Mouse,
     DimensionMode,
     AnswerQueries,
+    ByteTrace,
     AddCr,
     AddLf,
     TxEol,

@@ -513,7 +513,7 @@ fn an_explicit_size_applies_as_asked() {
 fn restore_resets_the_modes_left_set() {
     let mut tm = TerminalMode::new(100, 24, 80);
     let raw = b"before\r\nkept\r\n\x1b[?1049h\x1b[?1h\x1b[?1000h\x1b[?2004h\x1b[?25l\x1b[5;10rvim";
-    tm.restore(TextEncoding::Utf8, &untimed(raw), "-- restored --");
+    tm.restore(TextEncoding::Utf8, &untimed(raw), "-- restored --", true);
     let screen = tm.vt100_screen();
     assert!(!screen.alternate_screen());
     assert!(!screen.application_cursor());
@@ -544,7 +544,7 @@ fn restore_resets_the_modes_left_set() {
 
     // a session that ended mid-line: the separator goes on the next one
     let mut tm = TerminalMode::new(100, 24, 80);
-    tm.restore(TextEncoding::Utf8, &untimed(b"abc"), "-- restored --");
+    tm.restore(TextEncoding::Utf8, &untimed(b"abc"), "-- restored --", true);
     let lines = tm.all_text_lines();
     let separator = lines.iter().position(|l| l == "-- restored --").unwrap();
     assert_eq!(lines[separator - 1], "abc", "{lines:?}");
@@ -556,6 +556,7 @@ fn restore_resets_the_modes_left_set() {
         TextEncoding::Utf8,
         &untimed(b"top\x1b[10;1Hstatus\x1b[2;1H"),
         "-- restored --",
+        true,
     );
     let screen = tm.vt100_screen();
     assert_eq!(screen.contents().trim_end(), "-- restored --");
@@ -601,6 +602,7 @@ fn restore_separator_stays_on_top_when_the_grid_grows() {
             TextEncoding::Utf8,
             &untimed(raw.as_bytes()),
             "-- restored --",
+            true,
         );
         if let Some(live) = live {
             tm.process_rx(TextEncoding::Utf8, format!("{live}\r\n").as_bytes());
@@ -847,8 +849,8 @@ fn stream_bytes(tm: &TerminalMode) -> Vec<u8> {
 #[test]
 fn stream_keeps_the_device_bytes_as_received() {
     let mut tm = terminal(3);
-    tm.process_device_rx(TextEncoding::Utf8, b"a\nb\xF1", true, false);
-    tm.process_device_rx(TextEncoding::Utf8, b"c", true, false);
+    tm.process_device_rx(TextEncoding::Utf8, b"a\nb\xF1", true, false, true);
+    tm.process_device_rx(TextEncoding::Utf8, b"c", true, false, true);
     assert_eq!(stream_bytes(&tm), b"a\nb\xF1c");
     let reads: Vec<u64> = tm
         .dump
@@ -883,10 +885,453 @@ fn stream_holds_restored_bytes_not_the_reset() {
             time: None,
         },
     ];
-    tm.restore(TextEncoding::Utf8, &chunks, "--");
+    tm.restore(TextEncoding::Utf8, &chunks, "--", true);
     assert_eq!(stream_bytes(&tm), b"one\r\ntwo");
     assert_eq!(tm.dump.stream().reads().len(), 2);
 
     tm.clear_history();
     assert!(stream_bytes(&tm).is_empty());
+}
+
+// ---- MAX-256: which bytes wrote which cells ----
+
+/// The device's bytes, read as they come in `reads`
+fn device(tm: &mut TerminalMode, reads: &[&[u8]]) {
+    for read in reads {
+        tm.process_device_rx(TextEncoding::Utf8, read, false, false, true);
+    }
+}
+
+/// The byte range `start..end`
+fn span(start: u64, end: u64) -> std::ops::Range<u64> {
+    start..end
+}
+
+/// The bytes of the writes at a world position, newest first
+fn bytes_at(tm: &mut TerminalMode, line: usize, col: usize) -> Option<Vec<std::ops::Range<u64>>> {
+    let writes = tm.writes_at(line, col, TextEncoding::Utf8, 32)?;
+    Some(writes.into_iter().map(|write| write.bytes).collect())
+}
+
+/// MAX-256: a printable byte leads to the cell it drew, which still shows it; a control byte
+/// or a sequence draws nothing. Colors between runs don't move the cells.
+/// How: "ab" CR LF ESC[31m "red" ESC[0m " x": 'b' (1), 'r' (9), 'x' (17), the CR, the
+/// sequence
+#[test]
+fn a_byte_leads_to_its_cell() {
+    let mut tm = terminal(24);
+    device(&mut tm, &[b"ab\r\n\x1b[31mred\x1b[0m x"]);
+    let at = |tm: &mut TerminalMode, offset| tm.written_at(offset, TextEncoding::Utf8);
+    assert_eq!(at(&mut tm, 1), Some(((0, 1), true)));
+    assert_eq!(at(&mut tm, 9), Some(((1, 0), true)));
+    assert_eq!(at(&mut tm, 17), Some(((1, 4), true)));
+    assert_eq!(at(&mut tm, 2), None);
+    assert_eq!(at(&mut tm, 4), None);
+    assert_eq!(bytes_at(&mut tm, 1, 4), Some(vec![span(17, 18)]));
+}
+
+/// MAX-256: a cell written again and again (a progress bar) leads to the write it shows now,
+/// then the earlier ones; an earlier byte leads to its cell, which no longer shows it.
+/// How: CR "10%", CR "20%", CR "30%": the cell of the tens
+#[test]
+fn a_redrawn_cell_keeps_its_history() {
+    let mut tm = terminal(24);
+    device(&mut tm, &[b"\r10%", b"\r20%", b"\r30%"]);
+    assert_eq!(bytes_at(&mut tm, 0, 0), Some(vec![9..10, 5..6, 1..2]));
+    assert_eq!(tm.written_at(1, TextEncoding::Utf8), Some(((0, 0), false)));
+    assert_eq!(tm.written_at(9, TextEncoding::Utf8), Some(((0, 0), true)));
+}
+
+/// MAX-256: a cell that no longer shows its newest write leads to no bytes, never wrong ones: an
+/// erase leaves it blank, a scroll region moves other text onto it. (A moved char equal to the
+/// one written there passes: the check reads the char, not where it came from.)
+/// How: "abc" erased by ESC[2K; then "one" "two" "six" on rows 2 to 4, a scroll region on
+/// them scrolled once: "two" is on the row "one" was written on
+#[test]
+fn a_changed_cell_has_no_link() {
+    let mut tm = terminal(24);
+    device(&mut tm, &[b"abc\x1b[2K"]);
+    assert_eq!(bytes_at(&mut tm, 0, 0), None);
+    assert_eq!(tm.written_at(0, TextEncoding::Utf8), Some(((0, 0), false)));
+
+    let mut tm = terminal(24);
+    device(
+        &mut tm,
+        &[b"\x1b[2;4r\x1b[2;1Hone\x1b[3;1Htwo\x1b[4;1Hsix\n"],
+    );
+    assert_eq!(bytes_at(&mut tm, 1, 0), None);
+    assert_eq!(bytes_at(&mut tm, 2, 0), None);
+}
+
+/// MAX-256: a run wraps at the row's end, also when it starts there with the cursor waiting
+/// past the last cell; wide chars take two cells, a char cut between two reads is one.
+/// How: 80 columns: 85 'x'; 80 'y', a color, "z"; "中a"; 'é' cut between two reads
+#[test]
+fn cells_follow_wraps_wide_and_cut_chars() {
+    let mut tm = terminal(24);
+    device(&mut tm, &[&[b'x'; 85]]);
+    assert_eq!(tm.written_at(82, TextEncoding::Utf8), Some(((1, 2), true)));
+
+    let mut tm = terminal(24);
+    let mut bytes = vec![b'y'; 80];
+    bytes.extend_from_slice(b"\x1b[1mz");
+    device(&mut tm, &[&bytes]);
+    assert_eq!(tm.written_at(84, TextEncoding::Utf8), Some(((1, 0), true)));
+
+    let mut tm = terminal(24);
+    device(&mut tm, &["中a".as_bytes()]);
+    assert_eq!(tm.written_at(3, TextEncoding::Utf8), Some(((0, 2), true)));
+    assert_eq!(bytes_at(&mut tm, 0, 1), Some(vec![span(0, 3)]));
+
+    let mut tm = terminal(24);
+    device(&mut tm, &[b"a\xC3", b"\xA9b"]);
+    assert_eq!(bytes_at(&mut tm, 0, 1), Some(vec![span(1, 3)]));
+    assert_eq!(tm.written_at(3, TextEncoding::Utf8), Some(((0, 2), true)));
+}
+
+/// MAX-256: after a run and only colors, the next run starts where the run before ended (vt100
+/// isn't asked): past the row's end it wraps. On the alternate screen's last row a wrap scrolls
+/// the screen (it has no history, its rows move): the char past it leads nowhere, and vt100 is
+/// asked again for the next run.
+/// How: 78 'a', a color, "bcd" ('d' wraps); the alternate screen, its last row: 79 'e', a
+/// color, "fg" ('g' scrolls the screen up), a color, "h"
+#[test]
+fn runs_after_colors_start_where_the_last_ended() {
+    let mut tm = terminal(24);
+    let mut bytes = vec![b'a'; 78];
+    bytes.extend_from_slice(b"\x1b[1mbcd");
+    device(&mut tm, &[&bytes]);
+    // ESC[1m is bytes 78..82: 'b' 82, 'c' 83, 'd' 84
+    assert_eq!(tm.written_at(82, TextEncoding::Utf8), Some(((0, 78), true)));
+    assert_eq!(tm.written_at(83, TextEncoding::Utf8), Some(((0, 79), true)));
+    assert_eq!(tm.written_at(84, TextEncoding::Utf8), Some(((1, 0), true)));
+
+    let mut tm = terminal(24);
+    let mut bytes = b"\x1b[?1049h\x1b[24;1H".to_vec();
+    let start = bytes.len() as u64;
+    bytes.extend_from_slice(&[b'e'; 79]);
+    bytes.extend_from_slice(b"\x1b[31mfg\x1b[0mh");
+    device(&mut tm, &[&bytes]);
+    tm.refresh_max_scrollback();
+    let last = tm.max_content_scrollback + 23;
+    let g = start + 79 + 5 + 1;
+    assert_eq!(tm.written_at(g, TextEncoding::Utf8), None);
+    assert_eq!(
+        tm.written_at(g + 5, TextEncoding::Utf8),
+        Some(((last, 1), true))
+    );
+}
+
+/// MAX-256: with the byte trace off (`byte_trace`) nothing is recorded: no bytes lead to the
+/// screen, no cell to bytes.
+/// How: "abc" received with the trace off
+#[test]
+fn no_trace_when_off() {
+    let mut tm = terminal(24);
+    tm.process_device_rx(TextEncoding::Utf8, b"abc", false, false, false);
+    assert_eq!(tm.dump.writes().len(), 0);
+    assert_eq!(tm.written_at(0, TextEncoding::Utf8), None);
+    assert_eq!(bytes_at(&mut tm, 0, 0), None);
+}
+
+/// MAX-256: small reads don't multiply the runs, and rows scrolled into the history keep their
+/// bytes; add CR doesn't shift the offsets.
+/// How: "hello" a byte a read; 30 numbered lines on 24 rows; "a" LF "b" with add CR
+#[test]
+fn trace_survives_small_reads_scrolling_and_added_cr() {
+    let mut tm = terminal(24);
+    let bytes: Vec<&[u8]> = b"hello".chunks(1).collect();
+    device(&mut tm, &bytes);
+    assert_eq!(tm.dump.writes().len(), 1);
+
+    let mut tm = terminal(24);
+    let lines: String = (0..30).map(|i| format!("line {i:02}\r\n")).collect();
+    device(&mut tm, &[lines.as_bytes()]);
+    tm.refresh_max_scrollback();
+    // "line 00" is in the history now
+    assert_eq!(tm.written_at(0, TextEncoding::Utf8), Some(((0, 0), true)));
+    assert_eq!(
+        bytes_at(&mut tm, 29, 5),
+        Some(vec![span(29 * 9 + 5, 29 * 9 + 6)])
+    );
+
+    let mut tm = terminal(24);
+    tm.process_device_rx(TextEncoding::Utf8, b"a\nb", true, false, true);
+    assert_eq!(tm.written_at(2, TextEncoding::Utf8), Some(((1, 0), true)));
+}
+
+/// MAX-256: on the alternate screen the trace is its own and holds while it's shown; back on
+/// the main screen its writes lead nowhere, the main screen's lead to their cells again.
+/// How: "main", then the alternate screen with "alt", then back
+#[test]
+fn the_alternate_screen_has_its_own_links() {
+    let mut tm = terminal(24);
+    device(&mut tm, &[b"main\x1b[?1049h\x1b[Halt"]);
+    let alt = 4 + 8 + 3;
+    tm.refresh_max_scrollback();
+    let line = tm.max_content_scrollback;
+    assert_eq!(
+        tm.written_at(alt, TextEncoding::Utf8),
+        Some(((line, 0), true))
+    );
+    assert_eq!(tm.written_at(0, TextEncoding::Utf8), None);
+
+    device(&mut tm, &[b"\x1b[?1049l"]);
+    assert_eq!(tm.written_at(alt, TextEncoding::Utf8), None);
+    assert_eq!(tm.written_at(0, TextEncoding::Utf8), Some(((0, 0), true)));
+}
+
+// ---- MAX-256 benches: the byte trace's cost and coverage (ignored: run by hand, in release) ----
+//
+// cargo test --release trace_coverage_bench -- --ignored --nocapture
+// cargo test --release trace_cost_bench -- --ignored --nocapture   (a few minutes)
+//
+// The cost bench feeds the same bytes with the trace off and on, for 2 sizes, 2 amounts, 7
+// kinds of data and 3 read sizes; both print a table
+
+/// Non-blank cells on the live screen: (with a current link, without), through the lookup the
+/// UI uses
+fn bench_coverage(tm: &mut TerminalMode) -> (usize, usize) {
+    let (rows, cols) = tm.get_vt100_size();
+    tm.refresh_max_scrollback();
+    let sb = tm.max_content_scrollback;
+    let lines: Vec<usize> = if tm.vt100_parser.screen().alternate_screen() {
+        (sb..sb + rows as usize).collect()
+    } else {
+        // the screen shown live: a lookup scans the runs, every history row would take long
+        (sb..sb + rows as usize).collect()
+    };
+    let (mut current, mut none) = (0, 0);
+    for line in lines {
+        let text = if tm.vt100_parser.screen().alternate_screen() {
+            let screen = tm.vt100_parser.screen();
+            screen.rows(0, cols).nth(line - sb).unwrap_or_default()
+        } else {
+            read_vt100_world_line_text(&mut tm.vt100_parser, sb, line).unwrap_or_default()
+        };
+        for (col, ch) in text.chars().enumerate() {
+            if ch == ' ' {
+                continue;
+            }
+            match tm.writes_at(line, col, TextEncoding::Utf8, 1) {
+                Some(_) => current += 1,
+                None => none += 1,
+            }
+        }
+    }
+    (current, none)
+}
+
+/// Feeds `bytes` in reads of `read` bytes, as a serial port gives them
+fn bench_feed(tm: &mut TerminalMode, bytes: &[u8], read: usize) {
+    for chunk in bytes.chunks(read) {
+        tm.process_device_rx(TextEncoding::Utf8, chunk, false, false, true);
+    }
+}
+
+#[test]
+#[ignore = "MAX-256 bench: prints the byte trace's coverage"]
+fn trace_coverage_bench() {
+    let boot: String = (0..300)
+        .map(|i| {
+            format!(
+                "[{:5}.{:06}] \x1b[32m  OK  \x1b[0m Started service number {i}.\r\n",
+                i / 10,
+                i * 337 % 1_000_000
+            )
+        })
+        .collect();
+    let mut progress = String::from("Downloading firmware.bin\r\n");
+    for p in 0..=100 {
+        let bar = "#".repeat(p / 2);
+        progress.push_str(&format!("\r[{bar:<50}] \x1b[1m{p:3}%\x1b[0m"));
+    }
+    progress.push_str("\r\ndone\r\n$ ");
+    let mut top = String::from("\x1b[?1049h");
+    for frame in 0..10 {
+        top.push_str("\x1b[H");
+        for n in 0..22 {
+            top.push_str(&format!(
+                "{:5} root 20 0 {:6} S {:4.1} \x1b[1mproc{n}\x1b[0m\x1b[K\r\n",
+                1000 + n,
+                (n * 977 + frame * 13) % 100_000,
+                ((n + frame) % 37) as f32 / 3.0
+            ));
+        }
+        top.push_str("\x1b[J");
+    }
+    let mut vi = String::from("\x1b[?1049h\x1b[H\x1b[2J");
+    for r in 1..=23 {
+        vi.push_str(&format!("\x1b[{r};1Hfn line_{r}() {{ body {r} }}"));
+    }
+    vi.push_str("\x1b[1;23r");
+    for n in 0..10 {
+        vi.push_str(&format!("\x1b[23;1H\nfn added_{n}() {{}}"));
+    }
+    vi.push_str("\x1b[5;1H\x1b[Linserted line\x1b[10;3H\x1b[2P\x1b[r");
+    let mut shell = String::from("$ ");
+    for ch in "ls -la /tmp".chars() {
+        shell.push(ch);
+    }
+    shell.push_str("\x08\x1b[K\x08\x1b[K\x08\x1b[Kvar\r\x1b[K$ cat notes.txt\r\n");
+    for i in 0..30 {
+        shell.push_str(&format!(
+            "note {i}: \x1b[33mtodo\x1b[0m check the board\r\n"
+        ));
+    }
+    shell.push_str("$ ");
+
+    for (name, bytes) in [
+        ("boot log", boot.as_bytes()),
+        ("progress bar", progress.as_bytes()),
+        ("top (alternate)", top.as_bytes()),
+        ("vi (alternate, scroll region, IL, DCH)", vi.as_bytes()),
+        ("shell line editing", shell.as_bytes()),
+    ] {
+        let mut tm = TerminalMode::new(1000, 24, 80);
+        bench_feed(&mut tm, bytes, 64);
+        let (current, none) = bench_coverage(&mut tm);
+        let all = (current + none).max(1) as f64;
+        println!(
+            "{name:40} cells {:6}  current {:5.1}%  no link {:5.1}%  runs {}",
+            current + none,
+            100.0 * current as f64 / all,
+            100.0 * none as f64 / all,
+            tm.dump.writes().len(),
+        );
+    }
+}
+
+/// The bench's streams by kind, about `amount` bytes each, for a `cols` wide screen
+fn bench_streams(amount: usize, cols: usize) -> Vec<(&'static str, Vec<u8>)> {
+    let fill = |unit: &dyn Fn(usize) -> String| {
+        let mut out = String::new();
+        let mut i = 0;
+        while out.len() < amount {
+            out.push_str(&unit(i));
+            i += 1;
+        }
+        out.into_bytes()
+    };
+    let words = [
+        "error", "warn", "info", "debug", "trace", "ok", "fail", "done",
+    ];
+    let mut garbage = Vec::with_capacity(amount);
+    let mut seed: u32 = 0x1234_5678;
+    while garbage.len() < amount {
+        seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+        garbage.push((seed >> 16) as u8);
+    }
+    vec![
+        (
+            "plain log",
+            fill(&|i| format!("[{:8}] sensor {i}: temp=21.{} hum=40 ok\r\n", i * 7, i % 10)),
+        ),
+        (
+            "colored words",
+            fill(&|i| {
+                let line: Vec<String> = (0..8)
+                    .map(|w| format!("\x1b[3{}m{}\x1b[0m", (i + w) % 7 + 1, words[(i + w) % 8]))
+                    .collect();
+                format!("{}\r\n", line.join(" "))
+            }),
+        ),
+        (
+            "progress bar",
+            fill(&|i| {
+                let p = i % 101;
+                let bar = "#".repeat(p / 2);
+                let end = if p == 100 { "\r\n" } else { "" };
+                format!("\r[{bar:<50}] \x1b[1m{p:3}%\x1b[0m{end}")
+            }),
+        ),
+        (
+            "top redraw",
+            fill(&|i| {
+                let mut frame = String::from("\x1b[H");
+                for n in 0..20 {
+                    frame.push_str(&format!(
+                        "{:5} root 20 0 {:6} S {:4.1} \x1b[1mproc{n}\x1b[0m\x1b[K\r\n",
+                        1000 + n,
+                        (n * 977 + i * 13) % 100_000,
+                        ((n + i) % 37) as f32 / 3.0
+                    ));
+                }
+                frame
+            }),
+        ),
+        (
+            "vi scroll region",
+            fill(&|i| {
+                // a line inserted now and then, as vi opening one
+                let insert = if i % 10 == 0 { "\x1b[5;1H\x1b[L" } else { "" };
+                format!("\x1b[1;20r\x1b[20;1H\nfn added_{i}() {{ x }}{insert}\x1b[r")
+            }),
+        ),
+        (
+            "long wrapping lines",
+            fill(&|i| format!("{}\r\n", "x".repeat(cols * 3 + i % 7))),
+        ),
+        ("binary garbage", garbage),
+    ]
+}
+
+/// The bytes received in reads of `read` bytes, the trace off or on: seconds taken
+fn bench_time(bytes: &[u8], rows: u16, cols: u16, read: usize, trace: bool) -> (f64, TerminalMode) {
+    let mut tm = TerminalMode::new(10_000, rows, cols);
+    let start = std::time::Instant::now();
+    for chunk in bytes.chunks(read) {
+        tm.process_device_rx(TextEncoding::Utf8, chunk, false, false, trace);
+    }
+    (start.elapsed().as_secs_f64(), tm)
+}
+
+#[test]
+#[ignore = "MAX-256 bench: prints the byte trace's cost (run in release)"]
+fn trace_cost_bench() {
+    let mb = 1024.0 * 1024.0;
+    println!(
+        "{:10} {:6} {:22} {:>6} {:>9} {:>9} {:>7} {:>9} {:>8} {:>8}",
+        "size",
+        "MB",
+        "kind",
+        "read",
+        "off MB/s",
+        "on MB/s",
+        "cost",
+        "runs/MB",
+        "current",
+        "no link"
+    );
+    for (rows, cols) in [(24u16, 80u16), (60, 200)] {
+        for amount in [1 << 20, 10 << 20] {
+            for (kind, bytes) in bench_streams(amount, cols as usize) {
+                for read in [1usize, 64, 4096] {
+                    // a 1 byte read of 10 MB takes long and says the same as at 1 MB
+                    if read == 1 && amount > 1 << 20 {
+                        continue;
+                    }
+                    let (old, _) = bench_time(&bytes, rows, cols, read, false);
+                    let (new, mut tm) = bench_time(&bytes, rows, cols, read, true);
+                    let size = bytes.len() as f64 / mb;
+                    let runs = tm.dump.writes().len() as f64;
+                    let (current, none) = bench_coverage(&mut tm);
+                    let all = (current + none).max(1) as f64;
+                    println!(
+                        "{:10} {:6.1} {:22} {:>6} {:>9.1} {:>9.1} {:>+6.0}% {:>9.0} {:>7.1}% {:>7.1}%",
+                        format!("{cols}x{rows}"),
+                        size,
+                        kind,
+                        read,
+                        size / old,
+                        size / new,
+                        100.0 * (new - old) / old,
+                        runs / size,
+                        100.0 * current as f64 / all,
+                        100.0 * none as f64 / all,
+                    );
+                }
+            }
+        }
+    }
 }

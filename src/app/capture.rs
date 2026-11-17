@@ -312,7 +312,8 @@ impl App {
                 time: chunk.time,
             })
             .collect();
-        (self.terminal_mode).restore(encoding, &shown_chunks, separator);
+        let trace = self.settings.terminal_mode.byte_trace;
+        (self.terminal_mode).restore(encoding, &shown_chunks, separator, trace);
     }
 
     /// Loads a group of sessions, oldest first, for a replay (MAX-202): the end of the group that

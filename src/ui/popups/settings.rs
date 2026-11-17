@@ -76,6 +76,7 @@ pub fn render_settings_popup(
 
     let mouse_str = on_off(app.settings().ui.mouse);
     let answers_str = on_off(app.settings().terminal_mode.answer_queries);
+    let trace_str = on_off(app.settings().terminal_mode.byte_trace);
     let add_cr_str = on_off(app.settings().add_cr);
     let add_lf_str = on_off(app.settings().add_lf);
     let tx_eol_str = app.settings().line_mode.tx_eol.as_str();
@@ -142,6 +143,7 @@ pub fn render_settings_popup(
                 SettingKey::AnswerQueries,
                 row("A", "Query Answers", answers_str),
             ),
+            (SettingKey::ByteTrace, row("L", "Byte Trace", trace_str)),
         ],
     );
     // the config folder, then the files out of it; a click copies one (MAX-163)

@@ -154,6 +154,7 @@ isn't written. A click on a setting does the same.
 | `W` | Line wrap | `I` | Wrap indent |
 | `P` | Row marks (`prefix_place`) | `D` | Display mode |
 | `S` | Dimension mode | `A` | Answer queries |
+| `L` | Byte trace | | |
 
 ### Setting a value directly
 
@@ -166,8 +167,8 @@ set local-echo on
 set timestamps off
 ```
 
-`set` takes `local-echo`, `timestamps`, `mouse`, `answer-queries`, `add-cr`
-and `add-lf`. For the encoding, use `encoding utf8|ascii|cp437|latin1`. The
+`set` takes `local-echo`, `timestamps`, `mouse`, `answer-queries`,
+`byte-trace`, `add-cr` and `add-lf`. For the encoding, use `encoding utf8|ascii|cp437|latin1`. The
 other settings, with more than two values, cycle with their keys.
 
 ### Config paths
@@ -281,6 +282,7 @@ See [Terminal mode](terminal-mode.md).
 | `answer_queries` | `true` | Answer the device's terminal queries |
 | `answer_groups` | `["status", "identity", "size", "modes"]` | Which queries |
 | `answerback` | `""` | Sent back on ENQ, nothing when empty |
+| `byte_trace` | `true` | Record which received bytes drew which cells, to connect the screen and the [raw side panel](raw-side-panel.md). Takes up to 256 bytes per `history_size` row (about 25 MB by default) and a little time on a fast link (TCP, a replay); `false` records nothing and gives the memory back |
 
 ### `[link]`
 

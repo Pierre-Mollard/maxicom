@@ -1427,6 +1427,7 @@ impl App {
                 chunk,
                 settings.add_cr,
                 settings.add_lf,
+                settings.terminal_mode.byte_trace,
             );
             let answers = self.terminal_mode.take_answers();
             if live && self.settings.mode == Mode::Terminal {
@@ -1482,6 +1483,7 @@ impl App {
             SettingKey::DisplayTimestamp => Some(self.settings.show_timestamps),
             SettingKey::Mouse => Some(self.settings.ui.mouse),
             SettingKey::AnswerQueries => Some(self.settings.terminal_mode.answer_queries),
+            SettingKey::ByteTrace => Some(self.settings.terminal_mode.byte_trace),
             SettingKey::AddCr => Some(self.settings.add_cr),
             SettingKey::AddLf => Some(self.settings.add_lf),
             _ => None,
@@ -2502,6 +2504,16 @@ impl App {
                 terminal.answer_queries = !terminal.answer_queries;
                 let state = on_off(terminal.answer_queries);
                 self.notify_setting("setting:answers", format!("Query answers {state}"));
+            }
+            // from the bytes received now on; off gives the memory back (MAX-256)
+            SettingKey::ByteTrace => {
+                let terminal = &mut self.settings.terminal_mode;
+                terminal.byte_trace = !terminal.byte_trace;
+                let state = on_off(terminal.byte_trace);
+                if !terminal.byte_trace {
+                    self.terminal_mode.dump_mut().forget_trace();
+                }
+                self.notify_setting("setting:byte-trace", format!("Byte trace {state}"));
             }
             // the bytes received from now on, what's shown stays as it came (MAX-181)
             SettingKey::AddCr => {

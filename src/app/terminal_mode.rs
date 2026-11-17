@@ -31,7 +31,11 @@ use crate::{
     },
     invalid_bytes::{self, InvalidBytes, shown_string},
     overlays::MarkRow,
-    raw_side::terminal::{Dump, DumpCopy, DumpResult},
+    raw_side::terminal::{
+        Cell, Dump, DumpCopy, DumpResult, Write,
+        tokens::{Effect, Kind},
+        writes::Run,
+    },
     terminal::{TerminalParser, new_parser, vt100_dim, vt100_size},
 };
 
@@ -47,6 +51,19 @@ const RESTORE_RESET: &str = concat!(
     "\x1b[?6l\x1b[4l\x1b[?7h",
     "\x1b[0m\x1b[?25h",
 );
+
+/// How bytes reach the emulator (MAX-256): the device's, at `offset` in the dump's stream (none
+/// when the byte trace is off: their runs aren't recorded) with add CR / add LF; or maxicom's own
+/// (a restore's reset, the separator, `clear`), which aren't in the stream
+#[derive(Debug, Clone, Copy)]
+enum Feed {
+    Device {
+        offset: Option<u64>,
+        add_cr: bool,
+        add_lf: bool,
+    },
+    Own,
+}
 
 pub struct TerminalMode {
     vt100_parser: TerminalParser,
@@ -80,6 +97,9 @@ pub struct TerminalMode {
     invalid_bytes: InvalidBytes,
     /// The device's bytes as received, the raw side panel's dump (MAX-252)
     dump: Dump,
+    /// The main screen's rows dropped from the top of the scrollback so far: a world row plus
+    /// this is an absolute row, which scrolling doesn't change (MAX-256)
+    rows_gone: u64,
     /// Copy mode as a search found it when it opened, given back by Esc (MAX-252)
     search_from: Option<(CopyModeState, DumpCopy)>,
     /// The pan when copy mode started, given back when it ends (MAX-217)
@@ -117,6 +137,7 @@ impl TerminalMode {
             rx_after_cr: false,
             invalid_bytes: InvalidBytes::default(),
             dump: Dump::new(max_history_lines),
+            rows_gone: 0,
             search_from: None,
             copy_pan: None,
             copy_held: false,
@@ -125,30 +146,195 @@ impl TerminalMode {
     }
 
     /// The device's bytes, with minicom's add CR / add LF when on (MAX-181); the stream keeps
-    /// them as received (MAX-252)
+    /// them as received (MAX-252), and with `trace` which cells they drew (MAX-256)
     pub fn process_device_rx(
         &mut self,
         encoding: TextEncoding,
         raw_bytes: &[u8],
         add_cr: bool,
         add_lf: bool,
+        trace: bool,
     ) {
-        self.dump.push(raw_bytes, Some(Local::now()));
-        let bytes = add_newlines(raw_bytes, add_cr, add_lf, &mut self.rx_after_cr);
-        self.process_rx(encoding, &bytes);
+        let offset = self.dump.push(raw_bytes, Some(Local::now()));
+        let feed = Feed::Device {
+            offset: trace.then_some(offset),
+            add_cr,
+            add_lf,
+        };
+        self.process_rx_at(encoding, raw_bytes, Some(Local::now()), feed);
     }
 
+    /// Bytes not from the device (maxicom's own, tests'): not in the stream, nothing recorded
     pub fn process_rx(&mut self, encoding: TextEncoding, raw_bytes: &[u8]) {
-        self.process_rx_at(encoding, raw_bytes, Some(Local::now()));
+        self.process_rx_at(encoding, raw_bytes, Some(Local::now()), Feed::Own);
     }
 
-    /// `process_rx` for bytes received at `time`, none when it isn't known: the rows the cursor
-    /// goes through get no time then (MAX-175)
+    /// Bytes to the emulator: add CR / add LF applied, invalid bytes as stand-ins shown `�` like
+    /// line mode, vt100 drops its own (MAX-249)
+    fn feed(&mut self, encoding: TextEncoding, raw_bytes: &[u8], (add_cr, add_lf): (bool, bool)) {
+        let raw_bytes = add_newlines(raw_bytes, add_cr, add_lf, &mut self.rx_after_cr);
+        let utf8_bytes = match encoding {
+            TextEncoding::Utf8 => self.invalid_bytes.utf8(&raw_bytes),
+            TextEncoding::Ascii => invalid_bytes::ascii(&raw_bytes),
+            TextEncoding::Latin1 | TextEncoding::Cp437 => encoding.to_utf8_bytes(&raw_bytes),
+        };
+        self.vt100_parser.process(&utf8_bytes);
+    }
+
+    /// `feed` for the stream's bytes from `offset`, cut where a printable run starts: the cursor
+    /// there is the cell its first char goes to, recorded with the run (MAX-256). After a run
+    /// and only styles (colors), the next run starts where it ended: no cut needed
+    fn feed_runs(
+        &mut self,
+        encoding: TextEncoding,
+        raw_bytes: &[u8],
+        offset: u64,
+        newlines: (bool, bool),
+    ) {
+        let tokens = self.dump.tokens(encoding, raw_bytes, offset);
+        let (rows, cols) = self.get_vt100_size();
+        let wide = u64::from(cols.max(1));
+        let mut done = 0;
+        // where the next char goes when known without asking vt100: (row, column, alternate)
+        let mut next: Option<(u64, u64, bool)> = None;
+        for token in &tokens {
+            match token.kind {
+                Kind::Text => {}
+                Kind::Sequence(Effect::Style) => continue,
+                _ => {
+                    next = None;
+                    continue;
+                }
+            }
+            let (row, col, alternate) = match next {
+                Some(at) => at,
+                None => {
+                    // a run can start in an earlier read: its bytes there are fed already
+                    let start = token.start.saturating_sub(offset) as usize;
+                    self.feed(encoding, &raw_bytes[done..start], newlines);
+                    done = start;
+                    self.cursor_cell()
+                }
+            };
+            let run = Run {
+                start: token.start,
+                end: token.end,
+                row,
+                col: col as u16,
+                alternate,
+            };
+            let cells = self.dump.record(run, encoding, cols);
+            // past the row's end the next char wraps, as vt100 places it; the cursor waits past
+            // the last cell when a row is just full
+            let (mut row, mut col) = (row, col + u64::from(cells));
+            while col > wide {
+                row += 1;
+                col -= wide;
+            }
+            // the alternate screen scrolls its grid rows: past its bottom, ask vt100
+            let fits = !alternate || row < u64::from(rows);
+            next = fits.then_some((row, col, alternate));
+        }
+        self.feed(encoding, &raw_bytes[done..], newlines);
+    }
+
+    /// The cursor as a run's first cell: an absolute row on the main screen (rows evicted so far,
+    /// the history's rows, the cursor's), a grid row on the alternate one
+    fn cursor_cell(&self) -> (u64, u64, bool) {
+        let screen = self.vt100_parser.screen();
+        let (row, col) = screen.cursor_position();
+        let alternate = screen.alternate_screen();
+        let row = if alternate {
+            u64::from(row)
+        } else {
+            let evicted = self.vt100_parser.callbacks().evicted as u64;
+            self.rows_gone + evicted + screen.scrollback_len() as u64 + u64::from(row)
+        };
+        (row, u64::from(col), alternate)
+    }
+
+    /// The cell a world position is, as the writes count rows (MAX-256): on the alternate
+    /// screen a grid row, else an absolute row
+    fn cell_at(&self, line_idx: usize, col: usize) -> Cell {
+        let alternate = self.vt100_screen().alternate_screen();
+        let row = if alternate {
+            line_idx.saturating_sub(self.max_content_scrollback) as u64
+        } else {
+            self.rows_gone + line_idx as u64
+        };
+        Cell {
+            row,
+            col: col.min(usize::from(u16::MAX)) as u16,
+            alternate,
+        }
+    }
+
+    /// A cell's world position, none when it isn't kept or its screen isn't shown
+    fn line_of(&self, cell: Cell) -> Option<(usize, usize)> {
+        let alternate = self.vt100_screen().alternate_screen();
+        let rows = self.get_vt100_size().0 as usize;
+        let line = if cell.alternate {
+            let row = usize::try_from(cell.row).ok().filter(|&row| row < rows)?;
+            self.max_content_scrollback + row
+        } else {
+            let line = usize::try_from(cell.row.checked_sub(self.rows_gone)?).ok()?;
+            (line < self.max_content_scrollback + rows).then_some(line)?
+        };
+        (alternate == cell.alternate).then_some((line, usize::from(cell.col)))
+    }
+
+    /// Whether a cell still shows the char a write put there: an erase, a scroll region or an
+    /// insert moves or removes it without telling (MAX-256)
+    fn still_shows(&mut self, write: &Write) -> bool {
+        let Some((line, col)) = self.line_of(write.cell) else {
+            return false;
+        };
+        let (sb, ch) = (self.max_content_scrollback, write.ch);
+        with_world_row(&mut self.vt100_parser, sb, line, |screen, view_row, _| {
+            let cell = screen.cell(view_row as u16, col as u16);
+            cell.is_some_and(|cell| cell.contents().starts_with(ch))
+        })
+        .unwrap_or(false)
+    }
+
+    /// The bytes behind a world position (MAX-256): the write it shows now, then the earlier
+    /// writes there, newest first, `max` in all. None when the newest write recorded there isn't
+    /// what it shows (moved by a scroll region, erased): no bytes rather than wrong ones
+    pub fn writes_at(
+        &mut self,
+        line_idx: usize,
+        col: usize,
+        encoding: TextEncoding,
+        max: usize,
+    ) -> Option<Vec<Write>> {
+        let cell = self.cell_at(line_idx, col);
+        let cols = self.get_vt100_size().1;
+        let writes = self.dump.writes_to(cell, encoding, cols, max);
+        let shown = writes.first()?;
+        self.still_shows(&shown.clone()).then_some(writes)
+    }
+
+    /// Where byte `offset` drew (MAX-256): its world position and whether it still shows there.
+    /// None for a byte that draws nothing, or a cell no longer kept or on the screen not shown
+    pub fn written_at(
+        &mut self,
+        offset: u64,
+        encoding: TextEncoding,
+    ) -> Option<((usize, usize), bool)> {
+        let cols = self.get_vt100_size().1;
+        let write = self.dump.written(offset, encoding, cols)?;
+        let at = self.line_of(write.cell)?;
+        Some((at, self.still_shows(&write)))
+    }
+
+    /// Bytes to the emulator, received at `time` (none when it isn't known: the rows the cursor
+    /// goes through get no time then, MAX-175)
     fn process_rx_at(
         &mut self,
         encoding: TextEncoding,
         raw_bytes: &[u8],
         time: Option<DateTime<Local>>,
+        feed: Feed,
     ) {
         self.scroller.on_rx_received();
 
@@ -157,14 +343,21 @@ impl TerminalMode {
         let live_rows_before = self.live_rows();
         let lines_before = self.max_content_scrollback;
 
-        // invalid bytes as stand-ins, shown `�` like line mode: vt100 drops its own (MAX-249)
-        let utf8_bytes = match encoding {
-            TextEncoding::Utf8 => self.invalid_bytes.utf8(raw_bytes),
-            TextEncoding::Ascii => invalid_bytes::ascii(raw_bytes),
-            TextEncoding::Latin1 | TextEncoding::Cp437 => encoding.to_utf8_bytes(raw_bytes),
-        };
-        self.vt100_parser.process(&utf8_bytes);
+        match feed {
+            Feed::Device {
+                offset: Some(offset),
+                add_cr,
+                add_lf,
+            } => self.feed_runs(encoding, raw_bytes, offset, (add_cr, add_lf)),
+            Feed::Device {
+                offset: None,
+                add_cr,
+                add_lf,
+            } => self.feed(encoding, raw_bytes, (add_cr, add_lf)),
+            Feed::Own => self.feed(encoding, raw_bytes, (false, false)),
+        }
         let evicted = std::mem::take(&mut self.vt100_parser.callbacks_mut().evicted);
+        self.rows_gone += evicted as u64;
         self.search_text_changed(started_on_main, lines_before, evicted);
         self.update_live_bottom();
         self.content_cols = None;
@@ -715,6 +908,7 @@ impl TerminalMode {
         self.vt100_parser.set_size(vt100_dim(rows), vt100_dim(cols));
         let events = self.vt100_parser.callbacks_mut();
         let evicted = std::mem::take(&mut events.evicted);
+        self.rows_gone += evicted as u64;
         // the remote app asked for each new size (mode 2048), sent with the answers (MAX-159)
         if events.size_reports {
             events.answers.push(size_report(rows, cols));
@@ -1168,15 +1362,26 @@ impl TerminalMode {
     /// screen, application cursor keys, mouse reports, bracketed paste, a scroll region, a
     /// hidden cursor, colors) so the keys and the mouse work. Then, like a `clear`, the screen
     /// goes up into the scrollback and `separator` is written dimmed on the top row, the cursor
-    /// under it (MAX-176)
-    pub fn restore(&mut self, encoding: TextEncoding, chunks: &[TimedChunk], separator: &str) {
+    /// under it (MAX-176). With `trace`, which cells the chunks drew is recorded (MAX-256)
+    pub fn restore(
+        &mut self,
+        encoding: TextEncoding,
+        chunks: &[TimedChunk],
+        separator: &str,
+        trace: bool,
+    ) {
         for chunk in chunks {
-            self.dump.push(chunk.bytes, chunk.time);
-            self.process_rx_at(encoding, chunk.bytes, chunk.time);
+            let offset = self.dump.push(chunk.bytes, chunk.time);
+            let feed = Feed::Device {
+                offset: trace.then_some(offset),
+                add_cr: false,
+                add_lf: false,
+            };
+            self.process_rx_at(encoding, chunk.bytes, chunk.time, feed);
         }
         // leaving it restores a saved cursor, so only when the session is in it
         if self.vt100_parser.screen().alternate_screen() {
-            self.process_rx_at(TextEncoding::Utf8, b"\x1b[?1049l", None);
+            self.process_rx_at(TextEncoding::Utf8, b"\x1b[?1049l", None, Feed::Own);
         }
         let (row, col) = self.vt100_parser.screen().cursor_position();
         let mut reset = String::from(RESTORE_RESET);
@@ -1185,7 +1390,7 @@ impl TerminalMode {
         if col > 0 {
             reset.push_str("\r\n");
         }
-        self.process_rx_at(TextEncoding::Utf8, reset.as_bytes(), None);
+        self.process_rx_at(TextEncoding::Utf8, reset.as_bytes(), None, Feed::Own);
 
         // the rows up to the cursor's and the last one with text go into the scrollback, line
         // feeds on the bottom row pushing them up
@@ -1200,7 +1405,7 @@ impl TerminalMode {
         end.push_str("\x1b[1;1H\x1b[2m");
         end.push_str(separator);
         end.push_str("\x1b[0m\r\n");
-        self.process_rx_at(TextEncoding::Utf8, end.as_bytes(), None);
+        self.process_rx_at(TextEncoding::Utf8, end.as_bytes(), None, Feed::Own);
         // on the top row: its world row is the first after the scrollback
         self.restored_separator = Some(self.max_content_scrollback);
         // the queries of a past session are not answered (MAX-151), and the size reports its

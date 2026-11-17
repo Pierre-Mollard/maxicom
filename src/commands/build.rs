@@ -436,6 +436,7 @@ pub const ON_OFF_SETTINGS: &[&str] = &[
     "timestamps",
     "mouse",
     "answer-queries",
+    "byte-trace",
     "add-cr",
     "add-lf",
 ];
@@ -450,6 +451,7 @@ pub fn set(app: &App, args: &[ArgValue]) -> Result<Action, String> {
         "timestamps" => SettingKey::DisplayTimestamp,
         "mouse" => SettingKey::Mouse,
         "answer-queries" => SettingKey::AnswerQueries,
+        "byte-trace" => SettingKey::ByteTrace,
         "add-cr" => SettingKey::AddCr,
         "add-lf" => SettingKey::AddLf,
         _ => unreachable!("set takes one of ON_OFF_SETTINGS"),

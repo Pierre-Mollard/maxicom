@@ -730,6 +730,10 @@ pub struct TerminalModeConfig {
     pub answer_groups: Vec<QueryGroup>,
     /// Sent back on ENQ (`0x05`), nothing when empty: `0x05` also shows up in binary data
     pub answerback: String,
+    /// Record which received bytes drew which cells, to connect the screen and the raw side
+    /// panel (MAX-256): about 256 B per `history_size` row at most, and some time on a fast link
+    /// (TCP, a replay). Off: nothing recorded, the memory given back
+    pub byte_trace: bool,
 }
 
 impl Default for TerminalModeConfig {
@@ -744,6 +748,7 @@ impl Default for TerminalModeConfig {
             answer_queries: true,
             answer_groups: QueryGroup::ALL.to_vec(),
             answerback: String::new(),
+            byte_trace: true,
         }
     }
 }
