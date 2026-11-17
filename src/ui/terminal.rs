@@ -10,22 +10,15 @@ use ratatui::{
 use crate::{
     app::{
         App,
-        data_processing::map_disp_byte_to_raw,
         selection::CopySide,
-        terminal_mode::raw_row,
         types::{FocusTarget, RawRow, RowChars, ScrollbarMap, TextRow},
     },
-    configs::{
-        KeywordHighlight, Mode, RawSideView, ThemeConfig, settings::raw_view_to_display_mode,
-    },
+    configs::{KeywordHighlight, Mode, RawSideView, ThemeConfig},
     invalid_bytes::{shown, shown_string},
     terminal::{MaxicomCursor, MaxicomTerminal, vt100_size},
     ui::{
         common::{draw_scrollbar_marks, keyword_matches, render_search_bar},
-        raw_side::{
-            CharHighlight, format_raw_bytes_with_highlights, raw_panel_layout,
-            render_raw_panel_widget,
-        },
+        raw_side::{DumpLayout, raw_panel_layout},
     },
 };
 
@@ -173,8 +166,10 @@ pub fn render_vt100_terminal(
     // matches shown while data came, found again once a frame (MAX-218)
     app.terminal_mode.refresh_stale_matches(raw_view);
 
+    // a raw search's matches are in the dump, its cursor brought it there (MAX-252)
+    let dump_search = app.terminal_mode.dump_search();
     let search_jump = app.terminal_mode.search_mut().target_jump.take();
-    if let Some((target_row, target_col)) = search_jump {
+    if let Some((target_row, target_col)) = search_jump.filter(|_| !dump_search) {
         app.terminal_mode.center_on_target_match(
             target_row,
             target_col,
@@ -229,76 +224,7 @@ pub fn render_vt100_terminal(
         }));
     }
 
-    let is_search_active = app.terminal_mode.search().shows_matches();
-
-    // raw panel
-    let active_focus = if app.terminal_mode.copy_state().active {
-        Some((
-            app.terminal_mode.copy_state().cursor.line_idx,
-            app.terminal_mode.copy_state().cursor.char_idx,
-        ))
-    } else if is_search_active && search_jump.is_some() {
-        app.terminal_mode.search().current_match_position()
-    } else {
-        None
-    };
-
-    if let Some((target_row, target_col)) = active_focus
-        && target_row >= top_visible_world_line
-    {
-        let emulator_row = target_row - top_visible_world_line;
-        if emulator_row < grid_rows as usize {
-            let formatted = app
-                .terminal_mode
-                .vt100_screen()
-                .rows_formatted(0, cols)
-                .nth(emulator_row)
-                .unwrap_or_default();
-            let (row_raw_bytes, disp_map) = raw_row(&formatted);
-
-            let plain_text = shown_string(
-                app.terminal_mode
-                    .vt100_screen()
-                    .rows(0, cols)
-                    .nth(emulator_row)
-                    .unwrap_or_default(),
-            );
-
-            // Map target_col (which is a visual char index) to display byte, then to raw byte:
-            let plain_byte_offset = plain_text
-                .char_indices()
-                .nth(target_col)
-                .map(|(b, _)| b)
-                .unwrap_or(plain_text.len());
-
-            let copy_state = app.terminal_mode.copy_state();
-            let raw_byte_offset = if copy_state.active && copy_state.side == CopySide::Raw {
-                copy_state.cursor.byte_idx
-            } else {
-                map_disp_byte_to_raw(plain_byte_offset, &disp_map, row_raw_bytes.len())
-            };
-
-            if let Some(raw_area) = raw_side_area {
-                let usable_width = (raw_area.width as usize).saturating_sub(1);
-                // centered on a match once, as it's jumped to: then the side pan keys move it
-                if is_search_active && search_jump.is_some() {
-                    app.terminal_mode.center_raw_pan_on_byte(
-                        raw_view,
-                        usable_width,
-                        raw_byte_offset,
-                        row_raw_bytes.len(),
-                    );
-                } else {
-                    app.terminal_mode.sync_raw_pan_with_local_col(
-                        raw_view,
-                        usable_width,
-                        raw_byte_offset,
-                        row_raw_bytes.len(),
-                    );
-                }
-            }
-        }
-    }
+    let is_search_active = app.terminal_mode.search().shows_matches() && !dump_search;
 
     if let Some(raw_area) = raw_side_area {
         render_vt100_raw_side_panel(app, frame, raw_area, theme);
@@ -435,17 +361,7 @@ pub fn render_vt100_terminal(
                 .viewport_content_length(view_height)
                 .position(position_from_top);
 
-            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(Some("▲"))
-                .end_symbol(Some("▼"))
-                .track_symbol(Some("│"))
-                .thumb_symbol("█")
-                .thumb_style(*theme.ui.scrollbar_thumb)
-                .track_style(*theme.ui.scrollbar_track)
-                .begin_style(*theme.ui.scrollbar_thumb)
-                .end_style(*theme.ui.scrollbar_thumb);
-
-            frame.render_stateful_widget(scrollbar, sb_area, &mut scrollbar_state);
+            frame.render_stateful_widget(scrollbar(theme), sb_area, &mut scrollbar_state);
             // the marks' ticks, each at its row of the scrollback and the screen (MAX-164)
             if app.settings().ui.marks.scrollbar {
                 let marks = app.terminal_mode.marks().sorted();
@@ -613,6 +529,22 @@ pub fn draw_mark_letters(
     }
 }
 
+/// The history's and the dump's scrollbar
+fn scrollbar(theme: &ThemeConfig) -> Scrollbar<'static> {
+    Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"))
+        .track_symbol(Some("│"))
+        .thumb_symbol("█")
+        .thumb_style(*theme.ui.scrollbar_thumb)
+        .track_style(*theme.ui.scrollbar_track)
+        .begin_style(*theme.ui.scrollbar_thumb)
+        .end_style(*theme.ui.scrollbar_thumb)
+}
+
+/// The raw panel's dump of the bytes received (MAX-252): the offset column pinned, the bytes
+/// and their text panned, the lines following the live end unless scrolled, a scrollbar in
+/// its right column. In copy mode on the raw side, its cursor and selection
 pub fn render_vt100_raw_side_panel(
     app: &mut App,
     frame: &mut Frame,
@@ -623,209 +555,148 @@ pub fn render_vt100_raw_side_panel(
     if raw_view == RawSideView::Off || raw_area.width == 0 || raw_area.height == 0 {
         return;
     }
-
     let (block, inner_area) =
         raw_panel_layout(raw_area, app.settings().raw_side.orientation, theme);
-    let view_height = inner_area.height as usize;
-
-    let display_mode = raw_view_to_display_mode(raw_view);
-    let screen = app.terminal_mode.vt100_screen();
-    let (grid_rows, cols) = vt100_size(screen);
-    let pan_y = app.terminal_mode.pan_offset_y();
-    let max_sb = app.terminal_mode.get_max_scrollback();
-    let current_sb = screen.scrollback();
-    let top_visible_world_line = if current_sb > 0 {
-        max_sb.saturating_sub(current_sb)
+    frame.render_widget(block, raw_area);
+    // the scrollbar's column, kept while there's nothing to scroll as the history's is
+    let (inner_area, bar_area) = if app.show_scrollbar() && inner_area.width > 1 {
+        let width = inner_area.width - 1;
+        let bar = Rect {
+            x: inner_area.x + width,
+            width: 1,
+            ..inner_area
+        };
+        (
+            Rect {
+                width,
+                ..inner_area
+            },
+            Some(bar),
+        )
     } else {
-        max_sb
+        (inner_area, None)
     };
 
-    let copy_state = app.terminal_mode.copy_state();
-    let normalized_selection = if copy_state.active {
-        copy_state.normalized_selection()
-    } else {
-        None
-    };
-    let raw_side = copy_state.side == CopySide::Raw;
-    let raw_cursor = (copy_state.active && raw_side)
-        .then_some((copy_state.cursor.line_idx, copy_state.cursor.byte_idx));
-    let raw_ghost = (copy_state.active && !raw_side)
-        .then_some((copy_state.cursor.line_idx, copy_state.cursor.char_idx));
-    let mut raw_cursor_cell = None;
-
-    let search = app.terminal_mode.search();
-    let is_search_active = search.shows_matches();
-    let active_match_idx = search.current_match;
-
-    let normal_style = *theme.search.search_match;
-    let active_style = *theme.search.search_match_active;
-
-    let rows_to_render = view_height.min((grid_rows as usize).saturating_sub(pan_y));
-    let mut raw_lines = Vec::with_capacity(rows_to_render);
-    // the bytes of each panel row, for mouse clicks (MAX-113)
-    let map_rows = app.settings().ui.mouse;
-    let mut raw_rows = Vec::new();
-
-    // formatted bytes and plain text (for column -> byte resolution) walked together in one pass
-    for (r, (formatted, plain_text)) in screen
-        .rows_formatted(0, cols)
-        .zip(screen.rows(0, cols).map(shown_string))
-        .skip(pan_y)
-        .take(rows_to_render)
-        .enumerate()
+    let end = app.terminal_mode.rx_stream().end();
+    let layout = DumpLayout::fit(inner_area.width as usize, raw_view, end);
+    let rows = inner_area.height as usize;
+    let top = app.terminal_mode.dump_top(layout.bytes_per_line, rows);
+    let (max, position) = app.terminal_mode.dump_scroll_position();
+    if let Some(bar) = bar_area
+        && max > 0
     {
-        let emulator_row = r + pan_y;
-        let world_row = top_visible_world_line + emulator_row;
-        // invalid bytes as they were received (MAX-249)
-        let (row_raw_bytes, disp_map) = raw_row(&formatted);
-        let raw_bytes_slice = &row_raw_bytes[..];
-
-        let mut plain_char_to_byte = Vec::with_capacity(plain_text.chars().count() + 1);
-        for (b_idx, _) in plain_text.char_indices() {
-            plain_char_to_byte.push(b_idx);
-        }
-        plain_char_to_byte.push(plain_text.len());
-
-        let mut highlights = Vec::new();
-
-        if is_search_active {
-            let start_idx = search.matches.partition_point(|m| m.line_idx < world_row);
-            let end_idx = search.matches.partition_point(|m| m.line_idx <= world_row);
-
-            for (global_m_idx, m) in search.matches[start_idx..end_idx]
-                .iter()
-                .enumerate()
-                .map(|(offset, m)| (start_idx + offset, m))
-            {
-                let disp_start_b = plain_char_to_byte.get(m.col_idx).copied().unwrap_or(0);
-                let disp_end_b = plain_char_to_byte
-                    .get(m.col_idx + m.match_char_len.max(1))
-                    .copied()
-                    .unwrap_or(plain_text.len());
-
-                let raw_m_start =
-                    map_disp_byte_to_raw(disp_start_b, &disp_map, raw_bytes_slice.len());
-                let raw_m_end = map_disp_byte_to_raw(disp_end_b, &disp_map, raw_bytes_slice.len());
-
-                if raw_m_start < raw_m_end {
-                    highlights.push(CharHighlight {
-                        start_col: raw_m_start,
-                        end_col: raw_m_end,
-                        style: if global_m_idx == active_match_idx {
-                            active_style
-                        } else {
-                            normal_style
-                        },
-                    });
-                }
-            }
-        }
-
-        if let Some((start_pos, end_pos)) = normalized_selection
-            && world_row >= start_pos.line_idx
-            && world_row <= end_pos.line_idx
-        {
-            let is_first_line = world_row == start_pos.line_idx;
-            let is_last_line = world_row == end_pos.line_idx;
-
-            let raw_from_b = if raw_side {
-                if is_first_line { start_pos.byte_idx } else { 0 }
-            } else if !is_first_line || start_pos.char_idx == 0 {
-                0
-            } else {
-                let disp_from_b = plain_char_to_byte
-                    .get(start_pos.char_idx)
-                    .copied()
-                    .unwrap_or(0);
-                map_disp_byte_to_raw(disp_from_b, &disp_map, raw_bytes_slice.len())
-            };
-
-            let raw_to_b = if !is_last_line {
-                raw_bytes_slice.len()
-            } else if raw_side {
-                end_pos.byte_idx + 1
-            } else {
-                let to_char = end_pos.char_idx + 1;
-                if to_char >= plain_text.chars().count() {
-                    raw_bytes_slice.len()
-                } else {
-                    let disp_to_b = plain_char_to_byte
-                        .get(to_char)
-                        .copied()
-                        .unwrap_or(plain_text.len());
-                    map_disp_byte_to_raw(disp_to_b, &disp_map, raw_bytes_slice.len())
-                }
-            };
-
-            if raw_from_b < raw_to_b {
-                highlights.push(CharHighlight {
-                    start_col: raw_from_b,
-                    end_col: raw_to_b,
-                    style: theme.ui.selection_style(raw_side),
-                });
-            }
-        }
-
-        if let Some((ghost_row, ghost_char)) = raw_ghost
-            && ghost_row == world_row
-        {
-            let disp_b = plain_char_to_byte
-                .get(ghost_char)
-                .copied()
-                .unwrap_or(plain_text.len());
-            let ghost_byte = map_disp_byte_to_raw(disp_b, &disp_map, raw_bytes_slice.len())
-                .min(raw_bytes_slice.len().saturating_sub(1));
-            highlights.push(CharHighlight {
-                start_col: ghost_byte,
-                end_col: ghost_byte + 1,
-                style: *theme.ui.cursor_ghost,
-            });
-        }
-        if let Some((cursor_row, cursor_byte)) = raw_cursor
-            && cursor_row == world_row
-        {
-            raw_cursor_cell = Some((r, cursor_byte * raw_view.stride()));
-        }
-        if map_rows {
-            raw_rows.push(Some(RawRow {
-                line_idx: world_row,
-                byte_start: 0,
-                byte_count: raw_bytes_slice.len(),
-            }));
-        }
-
-        raw_lines.push(format_raw_bytes_with_highlights(
-            raw_bytes_slice,
-            display_mode,
-            &highlights,
-            theme,
-        ));
+        let mut state = ScrollbarState::new(max)
+            .viewport_content_length(rows)
+            .position(position);
+        frame.render_stateful_widget(scrollbar(theme), bar, &mut state);
+        app.frame_map_mut().dump_scrollbar = Some(ScrollbarMap {
+            area: bar,
+            max,
+            position,
+            view: rows,
+        });
     }
-
-    // the pan stops at the widest row shown, on a byte start (MAX-71)
-    let max_raw_width = raw_lines.iter().map(|l| l.width()).max().unwrap_or(0);
-    let overflow = max_raw_width.saturating_sub(inner_area.width as usize);
+    let offset_width = (layout.offset_width() as u16).min(inner_area.width);
+    let body_area = Rect {
+        x: inner_area.x + offset_width,
+        width: inner_area.width - offset_width,
+        ..inner_area
+    };
+    app.terminal_mode
+        .pan_to_dump_cursor(raw_view, body_area.width as usize);
+    let overflow = layout.body_width.saturating_sub(body_area.width as usize);
     app.terminal_mode.update_raw_limits(overflow, raw_view);
-    let raw_pan_x = app
+    let pan_x = app
         .terminal_mode
         .raw_pan_x()
         .min(app.terminal_mode.raw_pan_x_max());
 
-    if map_rows {
-        let map = app.frame_map_mut();
-        map.raw_area = inner_area;
-        map.raw_rows = raw_rows;
-        map.raw_pan_x = raw_pan_x;
-        map.raw_stride = raw_view.stride();
-    }
-
-    if let Some((row, col)) = raw_cursor_cell
-        && col >= raw_pan_x
-        && col - raw_pan_x < inner_area.width as usize
+    let bounds = app.terminal_mode.dump_bounds();
+    let copy = app.terminal_mode.dump_copy().copied();
+    let selection = copy.and_then(|copy| copy.selection(&bounds));
+    let selection_style = theme.ui.selection_style(true);
+    let search = app.terminal_mode.search();
+    let shows_matches = app.terminal_mode.dump_search() && search.shows_matches();
+    let matches = if shows_matches {
+        &search.matches[..]
+    } else {
+        &[]
+    };
+    let current_match = matches.get(search.current_match).map(|m| m.byte_offset);
+    let stream = app.terminal_mode.rx_stream();
+    let width = layout.bytes_per_line as u64;
+    let mut offsets = Vec::with_capacity(rows);
+    let mut bodies = Vec::with_capacity(rows);
+    let mut map_rows = Vec::with_capacity(rows);
+    let mut bytes = Vec::with_capacity(layout.bytes_per_line);
+    let mut cursor_cell = None;
+    for (row, line) in (top..)
+        .take(rows)
+        .take_while(|&line| line * width < bounds.end)
+        .enumerate()
     {
-        let x = inner_area.x + (col - raw_pan_x) as u16;
-        frame.set_cursor_position((x, inner_area.y + row as u16));
+        let from = line * width;
+        let (front, back) = stream.slices(from..from + width);
+        bytes.clear();
+        bytes.extend_from_slice(front);
+        bytes.extend_from_slice(back);
+        let lead = bounds.start.saturating_sub(from) as usize;
+        // the line's bytes selected, and the cursor's, by their index in the line
+        let local = |range: &std::ops::Range<u64>| {
+            let to = range.end.clamp(from, from + width);
+            (range.start.clamp(from, to) - from) as usize..(to - from) as usize
+        };
+        let mut marks = Vec::new();
+        // a raw search's matches (MAX-252), sorted by their first byte
+        let first = matches.partition_point(|m| (m.byte_offset + m.byte_len) as u64 <= from);
+        let shown = matches[first..].iter();
+        let mut active = None;
+        for m in shown.take_while(|m| (m.byte_offset as u64) < from + width) {
+            let bytes = local(&(m.byte_offset as u64..(m.byte_offset + m.byte_len) as u64));
+            if Some(m.byte_offset) == current_match {
+                active = Some(bytes);
+            } else {
+                marks.push((bytes, *theme.search.search_match));
+            }
+        }
+        // over the matches it overlaps
+        marks.extend(active.map(|bytes| (bytes, *theme.search.search_match_active)));
+        if let Some(selected) = &selection {
+            marks.push((local(selected), selection_style));
+        }
+        if let Some(copy) = copy
+            && (from..from + width).contains(&copy.cursor)
+        {
+            let byte = (copy.cursor - from) as usize;
+            marks.push((byte..byte + 1, *theme.ui.cursor_ghost));
+            cursor_cell = Some((row, byte * raw_view.stride()));
+        }
+        offsets.push(layout.offset_line(line, theme));
+        bodies.push(layout.body_line(lead, &bytes, raw_view, theme, &marks));
+        map_rows.push(Some(RawRow {
+            line_idx: line as usize,
+            byte_start: from as usize,
+            byte_count: lead + bytes.len(),
+        }));
     }
 
-    render_raw_panel_widget(frame, raw_area, inner_area, block, raw_lines, raw_pan_x);
+    if app.settings().ui.mouse {
+        let map = app.frame_map_mut();
+        map.raw_area = body_area;
+        map.raw_rows = map_rows;
+        map.raw_pan_x = pan_x;
+        map.raw_stride = raw_view.stride();
+        map.raw_text_col = Some(layout.text_col(raw_view));
+    }
+    // the digits under the frame's cursor, the char in the text column as its ghost
+    if let Some((row, col)) = cursor_cell
+        && let Some(x) = col.checked_sub(pan_x)
+        && x < body_area.width as usize
+    {
+        frame.set_cursor_position((body_area.x + x as u16, body_area.y + row as u16));
+    }
+
+    frame.render_widget(Paragraph::new(offsets), inner_area);
+    let body = Paragraph::new(bodies).scroll((0, pan_x.min(u16::MAX as usize) as u16));
+    frame.render_widget(body, body_area);
 }

@@ -525,3 +525,62 @@ fn walk_the_search_history() {
     s.query = Input::from("b");
     assert_eq!(walk(&mut s, true), (true, "boot".into()));
 }
+
+/// MAX-252 step 4: a raw search over the ring's two slices finds overlapping matches and those
+/// across the two, at their absolute offsets; a one-byte needle has nothing across.
+/// How: "xxab" + "cdab" for "bc" and "ab"; "a" + "aa" for "aa" and "a", from offset 100
+#[test]
+fn byte_search_reads_across_the_ring() {
+    assert_eq!(
+        find_in_ring(b"xxab", b"cdab", b"bc").collect::<Vec<_>>(),
+        [3]
+    );
+    assert_eq!(
+        find_in_ring(b"xxab", b"cdab", b"ab").collect::<Vec<_>>(),
+        [2, 6]
+    );
+    assert_eq!(find_in_ring(b"a", b"aa", b"aa").collect::<Vec<_>>(), [0, 1]);
+    assert_eq!(
+        find_in_ring(b"a", b"aa", b"a").collect::<Vec<_>>(),
+        [0, 1, 2]
+    );
+    assert_eq!(find_in_ring(b"", b"ab", b"ab").collect::<Vec<_>>(), [0]);
+
+    let mut s = search("62 63", SearchModeKind::RawBytes);
+    s.update_matches_from_bytes((b"xxab", b"cdab"), 100, RawSideView::Hex);
+    let found: Vec<_> = s
+        .matches
+        .iter()
+        .map(|m| (m.line_idx, m.byte_offset))
+        .collect();
+    assert_eq!(found, [(103, 103)]);
+    assert_eq!(s.matches[0].byte_len, 2);
+}
+
+/// MAX-252 step 4: the bytes are read from the origin (the dump cursor's offset) in the
+/// search's direction, around the end, so the cap keeps the matches reached first; the first
+/// match is the one after the origin forward, before it backward.
+/// How: 1500 "a", a search for 61 from 700, forward then backward
+#[test]
+fn byte_search_caps_from_the_origin() {
+    let bytes = vec![b'a'; 1500];
+    let mut s = search("61", SearchModeKind::RawBytes);
+    s.origin = Some(LogicalPosition {
+        line_idx: 700,
+        ..LogicalPosition::default()
+    });
+    s.update_matches_from_bytes((&bytes, &[]), 0, RawSideView::Hex);
+    assert_eq!(s.matches.len(), MAX_SEARCH_MATCHES);
+    assert_eq!(s.matches[0].line_idx, 0);
+    assert_eq!(s.matches[199].line_idx, 199);
+    assert_eq!(s.matches[200].line_idx, 700);
+    assert_eq!(s.current_match_position(), Some((701, 0)));
+
+    s.direction = SearchDirection::Backward;
+    s.update_matches_from_bytes((&bytes, &[]), 0, RawSideView::Hex);
+    assert_eq!(s.matches.len(), MAX_SEARCH_MATCHES);
+    assert_eq!(s.matches[700].line_idx, 700);
+    assert_eq!(s.matches[701].line_idx, 1201);
+    assert_eq!(s.matches.last().unwrap().line_idx, 1499);
+    assert_eq!(s.current_match_position(), Some((699, 0)));
+}

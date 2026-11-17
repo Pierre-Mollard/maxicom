@@ -12,18 +12,22 @@ use terminput_crossterm::to_terminput_key;
 use crate::{
     app::{
         UpdateEffect, ViewportSize,
-        data_processing::build_display_to_raw_byte_map,
+        data_processing::{RxStream, build_display_to_raw_byte_map},
         marks::Marks,
-        raw_scroller::RawSideScroller,
+        raw_scroller::{DumpScroller, RawSideScroller},
         scroller::ViewportScroller,
-        search::{SearchHost, SearchState, SearchView},
-        selection::{CopyActionResult, CopyModeState, Reveal, TextSource},
+        search::{SearchHost, SearchModeKind, SearchState, SearchView},
+        selection::{
+            CopyActionResult, CopyModeState, CopySide, LogicalPosition, Reveal, TextSource,
+        },
         term_answers::{Answer, size_report},
     },
     capture::{Screenshot, TimedChunk},
     configs::{
-        LineDisplayMode, SettingsConfig, TerminalDimensionMode, TextEncoding, settings::RawSideView,
+        LineDisplayMode, SettingsConfig, TerminalDimensionMode, TextEncoding,
+        settings::{RawSideView, raw_view_to_display_mode},
     },
+    dump::{DumpBounds, DumpCopy, DumpResult},
     inputs::{
         CopyModeAction, SideViewAction, TerminalAction, ViPending,
         local_dispatchers::dispatch_copy_key_vi,
@@ -31,6 +35,7 @@ use crate::{
     invalid_bytes::{self, InvalidBytes, shown_string},
     overlays::MarkRow,
     terminal::{TerminalParser, new_parser, vt100_dim, vt100_size},
+    ui::raw_side::format_raw_bytes_to_plain_string,
 };
 
 /// The modes a restored session may have left set, reset (MAX-148): the scroll region,
@@ -77,6 +82,13 @@ pub struct TerminalMode {
     rx_after_cr: bool,
     /// Invalid UTF-8 as stand-ins vt100 draws, a char cut between two reads kept (MAX-249)
     invalid_bytes: InvalidBytes,
+    /// The device's bytes as received, for the raw side panel (MAX-252)
+    rx_stream: RxStream,
+    dump_scroller: DumpScroller,
+    /// Copy mode's cursor in the dump, while on the raw side
+    dump_copy: DumpCopy,
+    /// Copy mode as a search found it when it opened, given back by Esc (MAX-252)
+    search_from: Option<(CopyModeState, DumpCopy)>,
     /// The pan when copy mode started, given back when it ends (MAX-217)
     copy_pan: Option<usize>,
     /// Copy mode held the live view when rows arrived: leaving it goes back live (MAX-193)
@@ -113,13 +125,18 @@ impl TerminalMode {
             restored_separator: None,
             rx_after_cr: false,
             invalid_bytes: InvalidBytes::default(),
+            rx_stream: RxStream::new(max_history_lines),
+            dump_scroller: DumpScroller::default(),
+            dump_copy: DumpCopy::default(),
+            search_from: None,
             copy_pan: None,
             copy_held: false,
             marks: Marks::default(),
         }
     }
 
-    /// The device's bytes, with minicom's add CR / add LF when on (MAX-181)
+    /// The device's bytes, with minicom's add CR / add LF when on (MAX-181); the stream keeps
+    /// them as received (MAX-252)
     pub fn process_device_rx(
         &mut self,
         encoding: TextEncoding,
@@ -127,6 +144,7 @@ impl TerminalMode {
         add_cr: bool,
         add_lf: bool,
     ) {
+        self.rx_stream.push(raw_bytes, Some(Local::now()));
         let bytes = add_newlines(raw_bytes, add_cr, add_lf, &mut self.rx_after_cr);
         self.process_rx(encoding, &bytes);
     }
@@ -360,6 +378,8 @@ impl TerminalMode {
 
         self.vt100_parser = new_parser(rows, cols, self.max_history_lines);
         self.row_timestamps = VecDeque::from(vec![None; rows as usize]);
+        self.rx_stream.clear();
+        self.dump_scroller.follow();
         self.forget_search_text();
         self.restored_separator = None;
         self.marks.clear();
@@ -853,9 +873,22 @@ impl TerminalMode {
             }
             return None;
         }
+        let raw_view = settings.raw_side.view;
+        if action == CopyModeAction::ToggleSide {
+            self.toggle_dump_side(raw_view);
+            return None;
+        }
         // copy mode starting (a key or a mouse press): its pan comes back when it ends
         if !self.copy_state.active {
             self.copy_pan = Some(self.scroller.offset_x);
+        }
+        // the dump's side (MAX-252), until a press on the screen
+        let on_dump = match action {
+            CopyModeAction::MousePress(_, side, _) => side == CopySide::Raw,
+            _ => self.dump_copy().is_some(),
+        };
+        if on_dump {
+            return self.dump_copy_action(action, raw_view);
         }
 
         if action == CopyModeAction::Enter {
@@ -884,21 +917,13 @@ impl TerminalMode {
             parser: &mut self.vt100_parser,
             max_content_scrollback: self.max_content_scrollback,
             live_bottom: self.live_bottom,
-            raw_view: settings.raw_side.view,
+            raw_view,
             view_height: self.scroller.view_height,
         };
 
         let result = self.copy_state.apply_action(action, &mut source);
-        // out of copy mode (Esc, a yank), a view it held goes back live (MAX-193), and the
-        // matches kept after a search are no longer shown (MAX-215)
         if !self.copy_state.active {
-            self.search_state.kept = false;
-            if let Some(pan) = self.copy_pan.take() {
-                self.scroller.offset_x = pan;
-            }
-            if std::mem::take(&mut self.copy_held) {
-                self.scroll_to_bottom();
-            }
+            self.copy_mode_ended();
         }
         match result {
             CopyActionResult::Moved => {
@@ -1002,9 +1027,8 @@ impl TerminalMode {
         let typing = self.search_state.active;
         self.update_search_matches(raw_view);
         if !typing {
-            let cursor = self.copy_state.cursor;
-            self.search_state
-                .select_at((cursor.line_idx, cursor.char_idx));
+            let cursor = self.match_cursor();
+            self.search_state.select_at(cursor);
             // the view stays where it is: only typing jumps to a match
             self.search_state.target_jump = None;
         }
@@ -1018,7 +1042,35 @@ impl TerminalMode {
             SideViewAction::PanRight(bytes) => {
                 self.raw_scroller.pan_right(bytes, raw_view);
             }
+            SideViewAction::ScrollUp(lines) => self.scroll_dump_up(lines),
+            SideViewAction::ScrollDown(lines) => self.scroll_dump_down(lines),
         }
+    }
+
+    pub fn scroll_dump_up(&mut self, lines: usize) {
+        let (start, end) = (self.rx_stream.start(), self.rx_stream.end());
+        self.dump_scroller.scroll_up(lines, start, end);
+    }
+
+    pub fn scroll_dump_down(&mut self, lines: usize) {
+        let (start, end) = (self.rx_stream.start(), self.rx_stream.end());
+        self.dump_scroller.scroll_down(lines, start, end);
+    }
+
+    /// The dump's top line at `position` of its scrollbar, 0 the first line kept (MAX-252)
+    pub fn scroll_dump_to(&mut self, position: usize) {
+        let (start, end) = (self.rx_stream.start(), self.rx_stream.end());
+        let (first, _) = self.dump_scroller.bounds(start, end);
+        (self.dump_scroller).scroll_to(first + position as u64, start, end);
+    }
+
+    /// The dump's scrollbar once drawn: its positions past the first (the live view's) and the
+    /// one shown, both from the first line kept (MAX-252)
+    pub fn dump_scroll_position(&self) -> (usize, usize) {
+        let (start, end) = (self.rx_stream.start(), self.rx_stream.end());
+        let (first, live) = self.dump_scroller.bounds(start, end);
+        let top = self.dump_scroller.top_line(start, end);
+        ((live - first) as usize, (top - first) as usize)
     }
 
     pub fn update_raw_limits(&mut self, overflow: usize, raw_view: RawSideView) {
@@ -1077,6 +1129,140 @@ impl TerminalMode {
     }
 
     #[inline]
+    pub fn rx_stream(&self) -> &RxStream {
+        &self.rx_stream
+    }
+
+    /// The dump's top line once drawn `width` bytes a line on `rows` rows
+    pub fn dump_top(&mut self, width: usize, rows: usize) -> u64 {
+        self.dump_scroller.width = width;
+        self.dump_scroller.rows = rows;
+        (self.dump_scroller).top_line(self.rx_stream.start(), self.rx_stream.end())
+    }
+
+    pub fn dump_bounds(&self) -> DumpBounds {
+        DumpBounds {
+            start: self.rx_stream.start(),
+            end: self.rx_stream.end(),
+            width: self.dump_scroller.width,
+            rows: self.dump_scroller.rows,
+        }
+    }
+
+    /// The pan showing the dump cursor's byte in a body `cols` wide, when it's off the panel
+    pub fn pan_to_dump_cursor(&mut self, raw_view: RawSideView, cols: usize) {
+        let Some(cursor) = self.dump_copy().map(|copy| copy.cursor) else {
+            return;
+        };
+        let width = self.dump_scroller.width.max(1);
+        let byte = (cursor % width as u64) as usize;
+        (self.raw_scroller).sync_with_cursor(raw_view, cols, byte, width);
+    }
+
+    /// The dump scrolled to its copy cursor's line, by the fewest lines
+    fn reveal_dump_cursor(&mut self) {
+        let bounds = self.dump_bounds();
+        let line = self.dump_copy.cursor / bounds.width.max(1) as u64;
+        (self.dump_scroller).reveal(line, bounds.start, bounds.end);
+    }
+
+    /// The search's matches are in the dump: a raw search goes over the bytes received
+    /// (MAX-252), a text search over the screen and the scrollback
+    pub fn dump_search(&self) -> bool {
+        self.search_state.mode_kind == SearchModeKind::RawBytes
+    }
+
+    /// Copy mode's cursor in the dump, while it's on the raw side
+    pub fn dump_copy(&self) -> Option<&DumpCopy> {
+        let state = &self.copy_state;
+        (state.active && state.side == CopySide::Raw).then_some(&self.dump_copy)
+    }
+
+    /// Copy mode switching to the dump: its cursor on the last byte of the bottom line shown
+    /// (no bytes: it stays on the screen); back to the screen, where its cursor was. Neither
+    /// side keeps the other's selection
+    fn toggle_dump_side(&mut self, raw_view: RawSideView) {
+        let state = &mut self.copy_state;
+        if !state.active || raw_view == RawSideView::Off {
+            return;
+        }
+        state.selection_anchor = None;
+        state.line_select = false;
+        if state.side == CopySide::Raw {
+            state.side = CopySide::Text;
+            return;
+        }
+        let bounds = self.dump_bounds();
+        if bounds.end == bounds.start {
+            return;
+        }
+        let top = self.dump_scroller.top_line(bounds.start, bounds.end);
+        let bottom = (top + bounds.rows.max(1) as u64) * bounds.width.max(1) as u64;
+        self.dump_copy = DumpCopy::at(bottom.min(bounds.end) - 1);
+        self.copy_state.side = CopySide::Raw;
+    }
+
+    /// A copy action on the dump's side (MAX-252): a press there starts it, a press on the
+    /// screen leaves it for the screen's copy mode
+    fn dump_copy_action(
+        &mut self,
+        action: CopyModeAction,
+        raw_view: RawSideView,
+    ) -> Option<String> {
+        let bounds = self.dump_bounds();
+        let result = match action {
+            CopyModeAction::MousePress(pos, _, _) => {
+                self.copy_state.active = true;
+                self.copy_state.side = CopySide::Raw;
+                self.copy_state.selection_anchor = None;
+                self.dump_copy.press(pos.byte_idx as u64, &bounds);
+                DumpResult::None
+            }
+            CopyModeAction::MouseDrag(pos, _) => {
+                self.dump_copy.drag(pos.byte_idx as u64, &bounds);
+                DumpResult::None
+            }
+            CopyModeAction::MouseRelease => self.dump_copy.release(&bounds),
+            action => self.dump_copy.apply(action, &bounds),
+        };
+        match result {
+            DumpResult::Moved => {
+                self.reveal_dump_cursor();
+                None
+            }
+            DumpResult::Yank { bytes, as_received } => {
+                let (front, back) = self.rx_stream.slices(bytes);
+                let bytes = [front, back].concat();
+                self.copy_state.exit();
+                self.copy_mode_ended();
+                Some(if as_received {
+                    String::from_utf8_lossy(&bytes).into_owned()
+                } else {
+                    format_raw_bytes_to_plain_string(&bytes, raw_view_to_display_mode(raw_view))
+                })
+            }
+            DumpResult::Exited => {
+                self.copy_state.exit();
+                self.copy_mode_ended();
+                None
+            }
+            DumpResult::None => None,
+        }
+    }
+
+    /// Out of copy mode (Esc, a yank), a view it held goes back live (MAX-193), and the
+    /// matches kept after a search are no longer shown (MAX-215)
+    fn copy_mode_ended(&mut self) {
+        self.search_state.kept = false;
+        if let Some(pan) = self.copy_pan.take() {
+            self.scroller.offset_x = pan;
+        }
+        if std::mem::take(&mut self.copy_held) {
+            self.scroll_to_bottom();
+        }
+    }
+
+    #[inline]
     pub fn raw_pan_x_max(&self) -> usize {
         self.raw_scroller.max_pan_x
     }
@@ -1089,6 +1275,7 @@ impl TerminalMode {
     /// under it (MAX-176)
     pub fn restore(&mut self, encoding: TextEncoding, chunks: &[TimedChunk], separator: &str) {
         for chunk in chunks {
+            self.rx_stream.push(chunk.bytes, chunk.time);
             self.process_rx_at(encoding, chunk.bytes, chunk.time);
         }
         // leaving it restores a saved cursor, so only when the session is in it
@@ -1158,36 +1345,6 @@ impl TerminalMode {
             }
         }
         false
-    }
-
-    pub fn center_raw_pan_on_byte(
-        &mut self,
-        raw_view: RawSideView,
-        usable_panel_width: usize,
-        local_byte_offset: usize,
-        total_sub_bytes: usize,
-    ) {
-        self.raw_scroller.center_on_byte(
-            raw_view,
-            usable_panel_width,
-            local_byte_offset,
-            total_sub_bytes,
-        );
-    }
-
-    pub fn sync_raw_pan_with_local_col(
-        &mut self,
-        raw_view: RawSideView,
-        usable_panel_width: usize,
-        local_byte_offset: usize,
-        total_sub_bytes: usize,
-    ) {
-        self.raw_scroller.sync_with_cursor(
-            raw_view,
-            usable_panel_width,
-            local_byte_offset,
-            total_sub_bytes,
-        );
     }
 
     pub fn center_on_target_match(
@@ -1434,6 +1591,16 @@ impl SearchHost for TerminalMode {
     /// again (MAX-218)
     fn find_matches(&mut self, view: SearchView) {
         self.search_stale = false;
+        if self.dump_search() {
+            // no dump to show them in: no match, the app warns (MAX-252)
+            let stream = &self.rx_stream;
+            let bytes = match view.raw_view {
+                RawSideView::Off => (&[][..], &[][..]),
+                _ => stream.slices(stream.start()..stream.end()),
+            };
+            (self.search_state).update_matches_from_bytes(bytes, stream.start(), view.raw_view);
+            return;
+        }
         match (self.search_text.is_some(), self.search_text_from.take()) {
             (false, _) => self.search_text = Some(self.all_text_lines()),
             (true, Some(from)) => {
@@ -1451,7 +1618,72 @@ impl SearchHost for TerminalMode {
     }
 
     fn center_copy_cursor(&mut self) {
-        self.reveal_copy_cursor(Reveal::Center);
+        if self.copy_state.side == CopySide::Raw {
+            self.reveal_dump_cursor();
+        } else {
+            self.reveal_copy_cursor(Reveal::Center);
+        }
+    }
+
+    /// Copy mode kept as it was, for Esc; the origin is its cursor on the side of the
+    /// matches, none from the other side: `/` starts at the oldest match, `?` at the newest
+    /// (MAX-252)
+    fn search_origin(&mut self, opening: bool) -> Option<LogicalPosition> {
+        if opening {
+            let copy = &self.copy_state;
+            self.search_from = copy.active.then(|| (copy.clone(), self.dump_copy));
+        }
+        let (copy, dump) = self.search_from.as_ref()?;
+        match (copy.side, self.dump_search()) {
+            (CopySide::Text, false) => Some(copy.cursor),
+            (CopySide::Raw, true) => Some(LogicalPosition {
+                line_idx: dump.cursor as usize,
+                ..LogicalPosition::default()
+            }),
+            _ => None,
+        }
+    }
+
+    /// The dump cursor's offset for a raw search, even from the screen
+    fn match_cursor(&mut self) -> (usize, usize) {
+        let cursor = self.copy_state.cursor;
+        if self.dump_search() {
+            (self.dump_copy.cursor as usize, 0)
+        } else {
+            (cursor.line_idx, cursor.char_idx)
+        }
+    }
+
+    /// A raw match moves the dump cursor, a text match the screen's: copy mode switches to
+    /// the match's side, neither side keeping the other's selection (MAX-252)
+    fn cursor_to_match(&mut self, row: usize, col: usize) {
+        let to_dump = self.dump_search();
+        let state = &mut self.copy_state;
+        if (state.side == CopySide::Raw) != to_dump {
+            state.selection_anchor = None;
+            state.line_select = false;
+            state.side = if to_dump {
+                CopySide::Raw
+            } else {
+                CopySide::Text
+            };
+            self.dump_copy = DumpCopy::default();
+        }
+        if to_dump {
+            self.dump_copy.cursor = row as u64;
+            self.reveal_dump_cursor();
+        } else {
+            self.copy_state.jump_to(row, col);
+        }
+    }
+
+    fn back_to_origin(&mut self) -> bool {
+        let Some((copy, dump)) = self.search_from.clone() else {
+            return false;
+        };
+        self.copy_state = copy;
+        self.dump_copy = dump;
+        true
     }
 }
 

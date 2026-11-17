@@ -1,9 +1,10 @@
 # Raw side panel
 
-The raw side panel shows the received bytes next to the text. In line mode
-they are the bytes as they came off the wire, so it reveals what the
-decoding and the colors hide: a stray `\r`, a `0x00`, a framing problem. In
-terminal mode it shows less, see [In terminal mode](#in-terminal-mode).
+The raw side panel shows the bytes as they came off the wire, next to the
+text. It reveals what the decoding, the colors and the screen hide: a stray
+`\r`, a `0x00`, an escape sequence, a framing problem. Line mode shows each
+line next to its bytes; terminal mode shows every byte received in a dump,
+see [In terminal mode](#in-terminal-mode).
 
 A [plot](plots.md) shows at the bottom, under this panel; set to the same side,
 it takes the panel's place while one is shown.
@@ -26,35 +27,40 @@ panel, which turns it off.
 
 ## Reading it
 
+### In line mode
+
 The panel follows the history: its rows are the same lines, so a line and
 its bytes stay side by side as you scroll.
 
 ### In terminal mode
 
-In line mode, each row shows the line's bytes exactly as received. In
-terminal mode, the bytes go through the emulator first, and the panel shows
-each screen row rebuilt from what is left on it. So some bytes never show:
+The screen doesn't keep the bytes that drew it: CR and LF move the cursor,
+text gets written over, an erase or a window title leaves nothing behind.
+So in terminal mode the panel shows every byte received, in the order it
+came, as a dump like `xxd`'s:
 
-| The device sent | The panel shows | Why |
-| --- | --- | --- |
-| `abc`, CR, `XY`, CR LF | `XYc` | CR and LF move the cursor; `XY` wrote over `ab` |
-| `ESC [ 1 ; 32 m ok` | `ESC [ 32 ; 1 m ok` | The colors are written again by the emulator, not copied |
-| `café`, `ESC [ 2 K`, `gone` | `ESC [ 5 C gone` | The erase removed `café`; the gap comes back as a cursor move |
-| `ESC ] 0 ; title`, BEL | Nothing | A window title isn't drawn on the screen |
+```text
+00000000  1B 5B 33 32 6D 6F 6B 1B 5B 30 6D 0D 0A 24 20 F1  .[32mok.[0m..$ .
+00000010  0D 0A                                            ..
+```
 
-In terminal mode, the panel also shows:
+- The offset of the line's first byte, in hex. It stays in place when the
+  panel pans.
+- The bytes, in the panel's view.
+- Their text: printable ASCII as is, every other byte `.`.
 
-- the text after its decoding to UTF-8: with the `latin1` encoding, a
-  received `E9` (`é`) shows as `C3 A9`;
-- except the bytes that aren't valid text, drawn `�` on the screen: the
-  panel shows them as received, see
-  [Bytes that aren't valid text](encoding-and-newlines.md#bytes-that-arent-valid-text);
-- nothing of the queries, cursor moves and other control sequences, which act
-  on the screen instead of drawing on it.
+Every line holds the same number of bytes, the most that fit the panel's
+width in groups of 8, at least 8. When even 8 don't fit, as often in binary,
+`Ctrl-a Shift-Left` / `Ctrl-a Shift-Right` pan it.
 
-To see every byte the device sent, switch to line mode (`Ctrl-a m`). It has
-the same data, as long as `dual_mode_buffering` is `"always_both"`, the
-default (see [Two modes](introduction.md#two-modes)).
+The dump scrolls on its own, apart from the screen: the wheel over it, or
+its own scrollbar in its right column. It follows the bytes coming in while
+it shows its last line. A line and the screen row next to it aren't linked:
+one byte can redraw a row far up, and a progress bar writes the same row
+again and again.
+
+maxicom keeps the bytes of the last `terminal_mode.history_size` × 512
+bytes (51 MB with the default), the oldest dropped first.
 
 Bytes are colored by kind, from `[raw_inspector]` in the theme:
 
@@ -64,6 +70,7 @@ Bytes are colored by kind, from `[raw_inspector]` in the theme:
 | `byte_whitespace` | `\n`, `\r`, `\t` |
 | `byte_null` | `0x00` |
 | `byte_ones` | `0xFF` |
+| `byte_escape` | `0x1B`, the ESC starting escape sequences |
 | `byte_sync` | The sync bytes `0x55`, `0xAA`, `0x7E` |
 | `byte_other` | Everything else |
 
@@ -72,11 +79,35 @@ When its rows are wider than the panel, `Ctrl-a Shift-Left` /
 
 ## Copying and searching bytes
 
-- In [copy mode](copy-mode-and-mouse.md#copy-mode), Tab moves the cursor
-  into the panel to select bytes.
-- `Y` copies a selection's bytes as the panel shows them.
-- A [byte search](search.md#byte-search) takes bytes written in the panel's
-  current view.
+In [copy mode](copy-mode-and-mouse.md#copy-mode), Tab moves the cursor into
+the panel to select bytes, and back. A [byte search](search.md#byte-search)
+takes bytes written in the panel's current view.
+
+In line mode, the cursor moves along the line's bytes and `Y` copies a
+selection's bytes as the panel shows them.
+
+In terminal mode, the cursor moves in the dump, a byte at a time:
+
+| Keys | Do |
+| --- | --- |
+| `h` `l`, Left Right | The byte before / after |
+| `j` `k`, Down Up | The same byte a line down / up |
+| `0` `^` / `$` | Start / end of the line |
+| `gg` / `G` | The first / last byte kept |
+| `Ctrl-u` `Ctrl-b` / `Ctrl-d` `Ctrl-f`, PageUp / PageDown | A page up / down |
+| `v` / `V` | Select bytes / whole lines |
+| `y` or Enter | Copy the selection as the panel shows it, in its view |
+| `Y` | Copy the selection's bytes as received, read as UTF-8 |
+
+The mouse selects in the dump as on the screen: drag over the bytes or their
+text, and the release copies. Held past the panel's edge, the drag scrolls
+the dump.
+
+A byte search goes over every byte kept, and finds what the screen doesn't
+show, as an `F1` drawn `�`. Its matches are marked in the dump, and `n` /
+`N` move the dump's cursor to them, even when the search started on the
+screen. A text search moves the screen's cursor. With the panel off, a byte
+search finds nothing and says so.
 
 ## Size and position
 

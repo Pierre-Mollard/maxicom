@@ -7,6 +7,7 @@ use crate::{
         KeyBindingAction, KeyBindingCopyAction, KeyBindingSearchAction,
         settings::RawSideOrientation,
     },
+    inputs::ScrollbarId,
     overlays::PopupTarget,
 };
 
@@ -211,6 +212,8 @@ pub struct FrameMap {
     /// Raw panel pan (columns) and width of one byte (columns), as drawn
     pub raw_pan_x: usize,
     pub raw_stride: usize,
+    /// Terminal mode's dump: where its text column starts, past the bytes (MAX-252)
+    pub raw_text_col: Option<usize>,
     /// The open popup's area, and the parts of it a click picks
     pub popup: Option<Rect>,
     pub popup_targets: Vec<(Rect, PopupTarget)>,
@@ -222,6 +225,8 @@ pub struct FrameMap {
     pub command_line: Option<PromptMap>,
     /// The history's scrollbar, as drawn
     pub scrollbar: Option<ScrollbarMap>,
+    /// The terminal raw panel dump's scrollbar, as drawn (MAX-252)
+    pub dump_scrollbar: Option<ScrollbarMap>,
     /// The side panels' borders, the raw panel's and the plot's (MAX-230)
     pub side_handles: Vec<SideHandle>,
     /// The status bar blocks, border buttons and search bar hints a click runs, in drawing
@@ -413,12 +418,14 @@ impl FrameMap {
         self.text_rows.clear();
         self.raw_area = Rect::default();
         self.raw_rows.clear();
+        self.raw_text_col = None;
         self.popup = None;
         self.popup_targets.clear();
         self.prompt = None;
         self.search_query = None;
         self.command_line = None;
         self.scrollbar = None;
+        self.dump_scrollbar = None;
         self.side_handles.clear();
         self.click_targets.clear();
         self.toasts.clear();
@@ -469,8 +476,33 @@ impl FrameMap {
         }
         self.click_target_at(x, y)
             .map(|target| target.area)
-            .or_else(|| self.scrollbar?.part_at(x, y))
+            .or_else(|| self.scrollbar_part_at(x, y))
             .or_else(|| self.side_handle_at(x, y).map(|handle| handle.area))
+    }
+
+    /// A scrollbar as drawn
+    pub fn scrollbar_of(&self, id: ScrollbarId) -> Option<ScrollbarMap> {
+        match id {
+            ScrollbarId::History => self.scrollbar,
+            ScrollbarId::Dump => self.dump_scrollbar,
+        }
+    }
+
+    /// The scrollbar under a screen cell, and its row there
+    pub fn scrollbar_at(&self, x: u16, y: u16) -> Option<(ScrollbarId, u16)> {
+        [ScrollbarId::History, ScrollbarId::Dump]
+            .into_iter()
+            .find_map(|id| {
+                let bar = self.scrollbar_of(id)?;
+                bar.area
+                    .contains(ratatui::layout::Position::new(x, y))
+                    .then(|| (id, y - bar.area.y))
+            })
+    }
+
+    /// The cells of a scrollbar's arrow or thumb under a screen cell, for the hover
+    pub fn scrollbar_part_at(&self, x: u16, y: u16) -> Option<Rect> {
+        (self.scrollbar?.part_at(x, y)).or_else(|| self.dump_scrollbar?.part_at(x, y))
     }
 
     /// The side panel border under a cell
@@ -558,7 +590,12 @@ impl FrameMap {
         let (col, row) = cell_in(self.raw_area, x, y, clamp)?;
         let raw_row = pick_row(&self.raw_rows, row, clamp)?;
         let stride = self.raw_stride.max(1);
-        let byte_in_row = (col + self.raw_pan_x) / stride;
+        let col = col + self.raw_pan_x;
+        // a char of the dump's text column is its byte too
+        let byte_in_row = match self.raw_text_col {
+            Some(text_col) if col >= text_col => col - text_col,
+            _ => col / stride,
+        };
         let byte_idx = raw_row.byte_start + byte_in_row.min(raw_row.byte_count.saturating_sub(1));
         Some(LogicalPosition {
             line_idx: raw_row.line_idx,

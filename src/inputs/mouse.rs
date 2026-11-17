@@ -91,7 +91,15 @@ pub fn handle_mouse(event: MouseEvent, app: &App) -> Action {
                 .frame_areas()
                 .raw_side
                 .is_some_and(|area| area.contains(at));
+            // terminal mode's raw panel scrolls on its own (MAX-252)
+            let own_scroll = on_raw_side && app.settings().mode == Mode::Terminal;
             match wheel {
+                Wheel::Up if own_scroll => {
+                    Action::App(AppAction::SideView(SideViewAction::ScrollUp(WHEEL_ROWS)))
+                }
+                Wheel::Down if own_scroll => {
+                    Action::App(AppAction::SideView(SideViewAction::ScrollDown(WHEEL_ROWS)))
+                }
                 Wheel::Up => Action::History(HistoryAction::ScrollUp(WHEEL_ROWS)),
                 Wheel::Down => Action::History(HistoryAction::ScrollDown(WHEEL_ROWS)),
                 Wheel::Left if on_raw_side => {
@@ -256,7 +264,8 @@ fn handle_left_button(event: MouseEvent, app: &App) -> Action {
     if app.is_scrollbar_held() {
         match event.kind {
             MouseEventKind::Drag(_) => {
-                return map.scrollbar.map_or(Action::Ignore, |bar| {
+                let bar = app.scrollbar_held().and_then(|id| map.scrollbar_of(id));
+                return bar.map_or(Action::Ignore, |bar| {
                     scrollbar(ScrollbarAction::Drag(i32::from(y) - i32::from(bar.area.y)))
                 });
             }
@@ -264,11 +273,8 @@ fn handle_left_button(event: MouseEvent, app: &App) -> Action {
             _ => {}
         }
     }
-    if is_press
-        && let Some(bar) = map.scrollbar
-        && bar.area.contains(Position::new(x, y))
-    {
-        return scrollbar(ScrollbarAction::Press(y - bar.area.y));
+    if is_press && let Some((id, row)) = map.scrollbar_at(x, y) {
+        return scrollbar(ScrollbarAction::Press(id, row));
     }
 
     // a side panel's border, from a press on it to the release (MAX-189)

@@ -128,13 +128,20 @@ pub enum PendingMark {
     Jump,
 }
 
-/// The left button on the history's scrollbar (MAX-142): a press on one of its rows (`0` the
-/// `▲`), a drag held from it on a row (above or below it too), the release
+/// The left button on a scrollbar (MAX-142): a press on one of its rows (`0` the `▲`), a drag
+/// held from it on a row (above or below it too), the release
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScrollbarAction {
-    Press(u16),
+    Press(ScrollbarId, u16),
     Drag(i32),
     Release,
+}
+
+/// Which scrollbar: the history's, or terminal mode's raw panel dump's (MAX-252)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrollbarId {
+    History,
+    Dump,
 }
 
 /// The left button on a side panel's border (MAX-189): the press on that panel's, a drag held
@@ -197,6 +204,9 @@ pub enum HistoryAction {
 pub enum SideViewAction {
     PanLeft(usize),
     PanRight(usize),
+    /// Terminal mode's raw panel scrolls on its own (MAX-252)
+    ScrollUp(usize),
+    ScrollDown(usize),
 }
 
 #[derive(Debug, PartialEq, Eq)]

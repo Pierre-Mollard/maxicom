@@ -432,27 +432,39 @@ fn raw_side_layout_locked() {
                 Some(r(1, 16, 98, 10)),
             ),
         ),
+    ] {
+        let (content, scrollbar, side) = want;
+        let split = Some(r(1, 1, 98, scrollbar.unwrap().height));
+        assert_eq!(
+            layout(mode, orientation, true),
+            (content, scrollbar, side, split),
+            "{mode:?} {orientation:?}"
+        );
+    }
+
+    // borders on in terminal mode: the dump has its own bar, so the history's stays in the
+    // history's last column, never beside the dump's (MAX-252)
+    for (orientation, want) in [
         (
-            Mode::Terminal,
             Right,
             (
-                r(1, 1, 59, 28),
-                Some(r(99, 1, 1, 28)),
+                r(1, 1, 58, 28),
+                Some(r(59, 1, 1, 28)),
                 Some(r(60, 1, 39, 28)),
             ),
         ),
         (
-            Mode::Terminal,
             Bottom,
             (
-                r(1, 1, 98, 17),
-                Some(r(99, 1, 1, 28)),
+                r(1, 1, 97, 17),
+                Some(r(98, 1, 1, 17)),
                 Some(r(1, 18, 98, 11)),
             ),
         ),
     ] {
         let (content, scrollbar, side) = want;
-        let split = Some(r(1, 1, 98, scrollbar.unwrap().height));
+        let mode = Mode::Terminal;
+        let split = Some(r(1, 1, 98, 28));
         assert_eq!(
             layout(mode, orientation, true),
             (content, scrollbar, side, split),
@@ -804,7 +816,8 @@ fn scrollbar_beside_the_history_with_a_plot() {
 
 /// MAX-230: the raw panel's border meets the app's as the plot's does, where it reaches it:
 /// on the right `┬` in the top border and `┴` in the bottom one, at the bottom `├` on the
-/// left; the scrollbar in the right border keeps its track. Above a bottom plot, a right raw
+/// left; the scrollbar in the right border keeps its track (line mode: terminal mode's is in
+/// the history's column, MAX-252). Above a bottom plot, a right raw
 /// panel's border ends on the plot's separator (`┴`), the app's bottom border left plain.
 /// How: 100x30, borders on, the raw view in Hex, line then terminal mode: on the right, at
 /// the bottom, then on the right with the plot at the bottom.
@@ -836,7 +849,9 @@ fn raw_panel_joins_the_frame() {
         h.app.settings_mut().raw_side.orientation = Bottom;
         let (rows, raw, _) = frame(&mut h);
         let ends = (at(&rows, 0, raw.y), at(&rows, 99, raw.y));
-        assert_eq!(ends, (Some('├'), Some('│')), "{mode:?}\n{rows:#?}");
+        // terminal mode's history bar is in the history's column, not the border (MAX-252)
+        let right = if mode == Mode::Line { '│' } else { '┤' };
+        assert_eq!(ends, (Some('├'), Some(right)), "{mode:?}\n{rows:#?}");
 
         h.app.settings_mut().raw_side.orientation = Right;
         h.app.set_plots(crate::configs::plots::tests::demo_plots());
@@ -1774,35 +1789,22 @@ fn search_raw_pan_moves_after_the_jump() {
     line[90..92].copy_from_slice(b"QQ");
     line.extend_from_slice(b"\r\n");
 
-    let mut lm = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
-    lm.app.settings_mut().raw_side.view = RawSideView::Hex;
-    lm.app.settings_mut().line_mode.wrap_mode = crate::configs::WrapMode::Truncate;
-    lm.feed(&line);
-    lm.draw();
-    let mut tm = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
-        s.mode = Mode::Terminal;
-        s.terminal_mode.cols = 120;
-    });
-    tm.app.settings_mut().raw_side.view = RawSideView::Hex;
-    tm.app.terminal_mode.process_rx(TextEncoding::Utf8, &line);
-    tm.draw();
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+    h.app.settings_mut().raw_side.view = RawSideView::Hex;
+    h.app.settings_mut().line_mode.wrap_mode = crate::configs::WrapMode::Truncate;
+    h.feed(&line);
+    h.draw();
 
-    let raw_pan = |h: &Harness| match h.app.settings().mode {
-        Mode::Line => h.app.line_mode.raw_pan_x(),
-        Mode::Terminal => h.app.terminal_mode.raw_pan_x(),
-    };
-    for mut h in [lm, tm] {
-        search(&mut h, "QQ");
-        h.draw();
-        let centered = raw_pan(&h);
-        assert!(centered >= 6, "{centered}");
-        h.app.update(Action::App(crate::inputs::AppAction::SideView(
-            crate::inputs::SideViewAction::PanLeft(2),
-        )));
-        h.draw();
-        h.draw();
-        assert_eq!(raw_pan(&h), centered - 6, "{:?}", h.app.settings().mode);
-    }
+    search(&mut h, "QQ");
+    h.draw();
+    let centered = h.app.line_mode.raw_pan_x();
+    assert!(centered >= 6, "{centered}");
+    h.app.update(Action::App(crate::inputs::AppAction::SideView(
+        crate::inputs::SideViewAction::PanLeft(2),
+    )));
+    h.draw();
+    h.draw();
+    assert_eq!(h.app.line_mode.raw_pan_x(), centered - 6);
 }
 
 /// MAX-72: terminal mode scrolls while the search bar is open (the scroller's offset counts
@@ -1841,19 +1843,13 @@ fn search_jump_view_is_kept_with_tall_entries() {
     }
 }
 
-/// MAX-71: terminal mode's raw panel pan stops at its widest row (it had no limit), on a
-/// byte start.
-/// How: a 40 byte row in a Binary panel, pan right by 100 bytes
+/// MAX-71, MAX-252: terminal mode's raw panel pans the dump's bytes and text, not past the
+/// text's end, on a byte start; the offset column stays.
+/// How: 80 columns, Binary (8 bytes a line, wider than the panel), pan right by 100 bytes
 #[test]
-fn terminal_raw_pan_stops_at_the_widest_row() {
-    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
-        s.mode = Mode::Terminal;
-    });
+fn terminal_raw_pan_stops_at_the_dump_end() {
+    let mut h = terminal_raw(b"a\xF1\x80b\x1b[0m");
     h.app.settings_mut().raw_side.view = RawSideView::Binary;
-    // on the grid's last row (24 rows), which the 12 row view shows
-    let mut bytes = b"\r\n".repeat(23);
-    bytes.extend_from_slice(&[b'a'; 40]);
-    h.app.terminal_mode.process_rx(TextEncoding::Utf8, &bytes);
     h.draw();
     h.app.update(Action::App(crate::inputs::AppAction::SideView(
         crate::inputs::SideViewAction::PanRight(100),
@@ -1861,8 +1857,9 @@ fn terminal_raw_pan_stops_at_the_widest_row() {
     let max = h.app.terminal_mode.raw_pan_x_max();
     assert!(max > 0 && max.is_multiple_of(9), "{max}");
     assert_eq!(h.app.terminal_mode.raw_pan_x(), max);
-    // the last byte is still on screen
-    assert!(shows(&h.draw(), "01100001"));
+    let rows = h.draw();
+    assert!(shows(&rows, "00000030"), "{rows:#?}");
+    assert!(shows(&rows, "a..b.[0m"), "{rows:#?}");
 }
 
 /// The two hex digits under the frame's cursor (MAX-71)
@@ -1956,47 +1953,6 @@ fn copy_ghosts_and_raw_selection() {
 
 fn h_theme() -> ThemeConfig {
     ThemeConfig::default()
-}
-
-/// MAX-71: terminal mode's raw copy cursor walks the bytes its panel shows (the formatted
-/// row, escape sequences included), with the ghost in the screen, and yanks them.
-/// How: a green "ok" on the grid's last row, Hex panel. Copy mode on that row, start of
-/// line, toggle: on 6F ("o", after the color sequence), ghost on the "o"; start of the raw
-/// row: on 1B; select to 6D and yank: the color sequence
-#[test]
-fn terminal_raw_copy_cursor() {
-    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
-        s.mode = Mode::Terminal;
-    });
-    h.app.settings_mut().raw_side.view = RawSideView::Hex;
-    let mut bytes = b"\r\n".repeat(23);
-    bytes.extend_from_slice(b"\x1b[32mok\x1b[0m");
-    h.app.terminal_mode.process_rx(TextEncoding::Utf8, &bytes);
-    h.draw();
-    let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
-
-    copy(&mut h, CopyModeAction::Enter);
-    copy(&mut h, CopyModeAction::StartOfLine);
-    copy(&mut h, CopyModeAction::ToggleSide);
-    let rows = h.draw();
-    assert_eq!(under_cursor(&mut h, &rows), "6F");
-    assert_eq!(
-        bg_at(&h, cell_of(&rows, "ok")),
-        h_theme().ui.cursor_ghost.bg
-    );
-
-    copy(&mut h, CopyModeAction::StartOfLine);
-    let rows = h.draw();
-    assert_eq!(under_cursor(&mut h, &rows), "1B");
-
-    copy(&mut h, CopyModeAction::Select);
-    for _ in 0..4 {
-        copy(&mut h, CopyModeAction::MoveRight);
-    }
-    match copy(&mut h, CopyModeAction::Yank) {
-        UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "1B 5B 33 32 6D"),
-        _ => panic!("expected a yank"),
-    }
 }
 
 /// MAX-127: `V` through the default keymap selects whole lines in line mode: every char of
@@ -10254,17 +10210,11 @@ fn raw_pan_follows_the_cursor_on_the_partial_line() {
 
 /// MAX-249 step 0: terminal mode's raw panel shows a valid multi-byte char as its bytes,
 /// and a raw yank gives them; the invalid bytes fix must not change it.
-/// How: "aé" on the grid's last row, Hex panel: 61 C3 A9 shown; copy mode, raw side,
-/// select the row and yank raw.
+/// How: "aé" on the grid's last row, Hex panel: 61 C3 A9 shown; copy mode, select the row
+/// and yank raw.
 #[test]
 fn terminal_raw_panel_keeps_valid_utf8_bytes() {
-    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
-        s.mode = Mode::Terminal;
-    });
-    h.app.settings_mut().raw_side.view = RawSideView::Hex;
-    let mut bytes = b"\r\n".repeat(23);
-    bytes.extend_from_slice("aé".as_bytes());
-    h.app.terminal_mode.process_rx(TextEncoding::Utf8, &bytes);
+    let mut h = terminal_raw("aé".as_bytes());
     let rows = h.draw();
     assert!(shows(&rows, "61 C3 A9"), "{rows:#?}");
 
@@ -10304,22 +10254,28 @@ fn terminal_draws_invalid_utf8() {
     }
 }
 
-/// A terminal harness with the Hex raw panel and `bytes` on the grid's last row
-fn terminal_raw(bytes: &[u8]) -> Harness {
-    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+/// A terminal harness `w` columns wide with the Hex raw panel and `bytes` received on the
+/// grid's last row, from offset 48 (0x30): the start of a dump line
+fn terminal_raw_on(w: u16, bytes: &[u8]) -> Harness {
+    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, w, 12, |s| {
         s.mode = Mode::Terminal;
     });
     h.app.settings_mut().raw_side.view = RawSideView::Hex;
-    let mut all = b"\r\n".repeat(23);
+    let mut all = b"\r\n".repeat(24);
     all.extend_from_slice(bytes);
-    h.app.terminal_mode.process_rx(TextEncoding::Utf8, &all);
+    h.app
+        .terminal_mode
+        .process_device_rx(TextEncoding::Utf8, &all, false, false);
     h
+}
+
+fn terminal_raw(bytes: &[u8]) -> Harness {
+    terminal_raw_on(80, bytes)
 }
 
 /// MAX-249 step 3: the raw panel shows invalid bytes as they were received, and a raw yank
 /// gives them.
-/// How: "a" F1 80 "b": the panel shows 61 F1 80 62; copy mode, raw side, select the row and
-/// yank raw.
+/// How: "a" F1 80 "b": the panel shows 61 F1 80 62; copy mode, select the row and yank raw.
 #[test]
 fn terminal_raw_panel_shows_invalid_bytes() {
     let mut h = terminal_raw(b"a\xF1\x80b");
@@ -10328,7 +10284,6 @@ fn terminal_raw_panel_shows_invalid_bytes() {
 
     let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
     copy(&mut h, CopyModeAction::Enter);
-    copy(&mut h, CopyModeAction::ToggleSide);
     copy(&mut h, CopyModeAction::StartOfLine);
     copy(&mut h, CopyModeAction::Select);
     copy(&mut h, CopyModeAction::EndOfLine);
@@ -10338,37 +10293,463 @@ fn terminal_raw_panel_shows_invalid_bytes() {
     }
 }
 
-/// MAX-249 step 3: the text cursor's ghost in the raw panel, and a text selection, land on the
-/// right bytes after a `�`, with a color sequence in the row too.
-/// How: ESC[31m "a" F1 80 "b" ESC[0m "c". Cursor on "b": ghost on 62. Cursor on the `�`:
-/// ghost on F1. Select "b" to "c": 62 selected, F1 not.
+/// MAX-252 step 2: terminal mode's raw panel is a dump of the bytes received, 8 a line by
+/// absolute offset: the offset, the bytes, their text (`.` for the others), each byte in its
+/// class's color, ESC in its own; the offset column muted.
+/// How: 160 columns (8 bytes fit, not 16), "a" F1 80 "b" ESC[0m from offset 0x30
 #[test]
-fn terminal_raw_ghost_and_selection_after_invalid_bytes() {
-    let ghost = h_theme().ui.cursor_ghost.bg;
-    let selection = h_theme().ui.selection.bg;
-    let mut h = terminal_raw(b"\x1b[31ma\xF1\x80b\x1b[0mc");
-    h.draw();
+fn terminal_raw_panel_is_a_dump() {
+    let theme = h_theme();
+    let mut h = terminal_raw_on(160, b"a\xF1\x80b\x1b[0m");
+    let rows = h.draw();
+    assert!(
+        shows(&rows, "00000028  0D 0A 0D 0A 0D 0A 0D 0A  ........"),
+        "{rows:#?}"
+    );
+    let line = "00000030  61 F1 80 62 1B 5B 30 6D  a..b.[0m";
+    assert!(shows(&rows, line), "{rows:#?}");
+
+    let fg = |at: (u16, u16)| h.terminal.backend().buffer()[at].fg;
+    let (x, y) = cell_of(&rows, line);
+    assert_eq!(fg((x, y)), theme.palette.text_muted);
+    assert_eq!(fg((x + 10, y)), theme.raw_inspector.byte_ascii, "61");
+    assert_eq!(fg((x + 22, y)), theme.raw_inspector.byte_escape, "1B");
+    assert_eq!(
+        fg((x + 39, y)),
+        theme.raw_inspector.byte_escape,
+        "the ESC's '.'"
+    );
+    assert_ne!(
+        theme.raw_inspector.byte_escape,
+        theme.raw_inspector.byte_other
+    );
+}
+
+/// MAX-252 step 2: the dump shows the live end; the wheel over the panel scrolls it alone (the
+/// screen stays), and it stays on its bytes while more come; back down, it follows again.
+/// How: 160 columns, 20 lines of 8 bytes ("line NN\n") on 11 rows, wheel up twice (3 lines a
+/// notch), 5 more lines, wheel down 4 times and one more line
+#[test]
+fn terminal_dump_scrolls_on_its_own() {
+    let mut h = terminal_raw_on(160, b"");
+    let feed = |h: &mut Harness, range: std::ops::Range<usize>| {
+        for i in range {
+            let line = format!("line {i:02}\n");
+            h.app.terminal_mode.process_device_rx(
+                TextEncoding::Utf8,
+                line.as_bytes(),
+                false,
+                false,
+            );
+        }
+    };
+    feed(&mut h, 0..20);
+    let rows = h.draw();
+    assert!(shows(&rows, "line 19."), "{rows:#?}");
+    let screen_offset = h.app.terminal_mode.scroller().offset_y;
+
+    let (x, y) = cell_of(&rows, "line 19.");
+    mouse_do(&mut h, MouseEventKind::ScrollUp, (x, y));
+    mouse_do(&mut h, MouseEventKind::ScrollUp, (x, y));
+    let rows = h.draw();
+    assert!(
+        shows(&rows, "line 13.") && !shows(&rows, "line 14."),
+        "{rows:#?}"
+    );
+    assert_eq!(h.app.terminal_mode.scroller().offset_y, screen_offset);
+
+    // the dump's lines, from their offset, without the scrollbar (its thumb moves as the
+    // bytes come)
+    let dump = |rows: &[String]| -> Vec<String> {
+        let bar: &[char] = &['▲', '▼', '█', '│', ' '];
+        rows.iter()
+            .filter_map(|row| row.find("000000").map(|at| row[at..].trim_end_matches(bar)))
+            .map(str::to_owned)
+            .collect()
+    };
+    let scrolled = dump(&rows);
+    feed(&mut h, 20..25);
+    assert_eq!(dump(&h.draw()), scrolled);
+
+    // 4 notches go past the live top: it follows again
+    for _ in 0..4 {
+        mouse_do(&mut h, MouseEventKind::ScrollDown, (x, y));
+    }
+    feed(&mut h, 25..26);
+    let rows = h.draw();
+    assert!(shows(&rows, "line 25."), "{rows:#?}");
+}
+
+/// MAX-252 step 3: Tab puts the copy cursor in the dump, on the last byte shown; it moves by
+/// byte and line, its selection is drawn in both columns (the cursor's char in the text column
+/// as a ghost), `y` yanks the bytes in the view's
+/// radix and `Y` as received; Tab goes back to the screen.
+/// How: 160 columns, "a" F1 80 "b" ESC[0m from 0x30. Copy mode, Tab: on 6D; line start: 61;
+/// select 3 bytes right; yank. Again with `Y`. Then Tab twice
+#[test]
+fn terminal_copy_mode_in_the_dump() {
     let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+    let mut h = terminal_raw_on(160, b"a\xF1\x80b\x1b[0m");
+    h.draw();
     copy(&mut h, CopyModeAction::Enter);
+    copy(&mut h, CopyModeAction::ToggleSide);
+    assert_eq!(h.app.copy_side(), Some(CopySide::Raw));
+    let rows = h.draw();
+    assert_eq!(under_cursor(&mut h, &rows), "6D");
+
     copy(&mut h, CopyModeAction::StartOfLine);
-    copy(&mut h, CopyModeAction::MoveRight);
-    copy(&mut h, CopyModeAction::MoveRight);
+    copy(&mut h, CopyModeAction::Select);
+    for _ in 0..3 {
+        copy(&mut h, CopyModeAction::MoveRight);
+    }
     let rows = h.draw();
-    let (x, y) = cell_of(&rows, "F1 80 62");
-    assert_eq!(bg_at(&h, (x + 6, y)), ghost, "62 under the ghost");
+    assert_eq!(under_cursor(&mut h, &rows), "62");
+    let selection = h_theme().ui.selection_raw.bg;
+    let (x, y) = cell_of(&rows, "61 F1 80 62 1B");
+    assert_eq!(bg_at(&h, (x, y)), selection, "61");
+    assert_eq!(bg_at(&h, (x + 2, y)), selection, "the space after 61");
+    assert_ne!(bg_at(&h, (x + 12, y)), selection, "1B");
+    let (x, y) = cell_of(&rows, "a..b.[0m");
+    assert_eq!(bg_at(&h, (x, y)), selection, "a in the text column");
+    let ghost = h_theme().ui.cursor_ghost.bg;
+    assert_eq!(
+        bg_at(&h, (x + 3, y)),
+        ghost,
+        "the cursor's b in the text column"
+    );
+    assert_ne!(bg_at(&h, (x + 4, y)), selection, "ESC in the text column");
+    match copy(&mut h, CopyModeAction::Yank) {
+        UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "61 F1 80 62"),
+        _ => panic!("expected a yank"),
+    }
+    assert_eq!(h.app.copy_side(), None);
 
-    copy(&mut h, CopyModeAction::MoveLeft);
-    let rows = h.draw();
-    let (x, y) = cell_of(&rows, "F1 80 62");
-    assert_eq!(bg_at(&h, (x, y)), ghost, "F1 under the ghost");
-
-    copy(&mut h, CopyModeAction::MoveRight);
+    copy(&mut h, CopyModeAction::Enter);
+    copy(&mut h, CopyModeAction::ToggleSide);
+    copy(&mut h, CopyModeAction::StartOfLine);
     copy(&mut h, CopyModeAction::Select);
     copy(&mut h, CopyModeAction::EndOfLine);
+    match copy(&mut h, CopyModeAction::YankRaw) {
+        UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "a\u{FFFD}b\x1b[0m"),
+        _ => panic!("expected a yank"),
+    }
+
+    copy(&mut h, CopyModeAction::Enter);
+    copy(&mut h, CopyModeAction::ToggleSide);
+    copy(&mut h, CopyModeAction::ToggleSide);
+    assert_eq!(h.app.copy_side(), Some(CopySide::Text));
+}
+
+/// MAX-252 step 3: the dump follows its copy cursor: a jump to the first byte scrolls it there,
+/// one to the last brings it back live.
+/// How: 160 columns, 40 lines of 8 bytes on 11 rows; copy mode in the dump, `gg`, then `G`
+#[test]
+fn terminal_dump_follows_its_copy_cursor() {
+    let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+    let mut h = terminal_raw_on(160, &b"line 00\n".repeat(40));
+    h.draw();
+    copy(&mut h, CopyModeAction::Enter);
+    copy(&mut h, CopyModeAction::ToggleSide);
+    copy(&mut h, CopyModeAction::JumpToTop);
     let rows = h.draw();
-    let (x, y) = cell_of(&rows, "F1 80 62");
-    assert_eq!(bg_at(&h, (x + 6, y)), selection, "62 selected");
-    assert_ne!(bg_at(&h, (x, y)), selection, "F1 not selected");
+    assert!(shows(&rows, "00000000  0D 0A"), "{rows:#?}");
+    assert_eq!(under_cursor(&mut h, &rows), "0D");
+
+    copy(&mut h, CopyModeAction::JumpToBottom);
+    let rows = h.draw();
+    assert!(!shows(&rows, "00000000"), "{rows:#?}");
+    assert_eq!(under_cursor(&mut h, &rows), "0A");
+}
+
+/// MAX-252 step 3: a drag in the dump selects bytes and its release yanks them, from the digits
+/// to a char of the text column; a plain click only focuses, as on the screen.
+/// How: 160 columns, "a" F1 80 "b" ESC[0m from 0x30: a click on 61; a drag from 61 to the "b"
+/// of the text column
+#[test]
+fn terminal_mouse_drag_in_the_dump() {
+    let mut h = terminal_raw_on(160, b"a\xF1\x80b\x1b[0m");
+    let rows = h.draw();
+    let digits = cell_of(&rows, "61 F1");
+    click(&mut h, digits);
+    assert_eq!(h.app.copy_side(), None);
+
+    let (x, y) = cell_of(&rows, "a..b.[0m");
+    mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), digits);
+    mouse_do(&mut h, MouseEventKind::Drag(MouseButton::Left), (x + 3, y));
+    assert_eq!(h.app.copy_side(), Some(CopySide::Raw));
+    match mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), (x + 3, y)) {
+        UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "61 F1 80 62"),
+        _ => panic!("expected a yank"),
+    }
+}
+
+/// MAX-252 step 4: in terminal mode a raw search goes over the bytes received, so it finds
+/// F1 80 behind the screen's `\u{FFFD}`; its match is drawn in both columns of the dump, not on
+/// the screen, and the copy cursor goes to it in the dump. Esc gives the screen's cursor back.
+/// How: 160 columns, "a" F1 80 "b" ESC[0m from 0x30: `/`, raw kind, "F1 80"; Esc; again with
+/// Enter
+#[test]
+fn terminal_raw_search_goes_over_the_bytes() {
+    let search = |h: &mut Harness, action| h.app.update(Action::Search(action));
+    let mut h = terminal_raw_on(160, b"a\xF1\x80b\x1b[0m");
+    h.draw();
+    h.app.update(Action::CopyMode(CopyModeAction::Enter));
+    let screen_cursor = h.app.terminal_mode.copy_state().cursor;
+    search(&mut h, SearchModeAction::Start(SearchDirection::Forward));
+    search(&mut h, SearchModeAction::Kind);
+    search(&mut h, SearchModeAction::Paste("F1 80".into()));
+    assert_eq!(h.app.terminal_mode.search().matches_count(), 1);
+    assert_eq!(h.app.copy_side(), Some(CopySide::Raw));
+    // the frame's cursor is in the search bar while it's open
+    let dump_cursor = h.app.terminal_mode.dump_copy().map(|copy| copy.cursor);
+    assert_eq!(dump_cursor, Some(0x31));
+    let rows = h.draw();
+    let active = h_theme().search.search_match_active.bg;
+    let (x, y) = cell_of(&rows, "61 F1 80 62");
+    assert_eq!(bg_at(&h, (x + 6, y)), active, "80");
+    assert_ne!(bg_at(&h, (x + 9, y)), active, "62");
+    let (x, y) = cell_of(&rows, "a..b.[0m");
+    assert_eq!(bg_at(&h, (x + 2, y)), active, "80's '.'");
+    let (x, y) = cell_of(&rows, "a\u{FFFD}b");
+    assert_ne!(bg_at(&h, (x + 1, y)), active, "the screen's \u{FFFD}");
+
+    search(&mut h, SearchModeAction::Cancel);
+    assert_eq!(h.app.copy_side(), Some(CopySide::Text));
+    assert_eq!(h.app.terminal_mode.copy_state().cursor, screen_cursor);
+
+    search(&mut h, SearchModeAction::Start(SearchDirection::Forward));
+    search(&mut h, SearchModeAction::Paste("F1 80".into()));
+    search(&mut h, SearchModeAction::Confirm);
+    assert_eq!(h.app.copy_side(), Some(CopySide::Raw));
+    let rows = h.draw();
+    assert_eq!(under_cursor(&mut h, &rows), "F1");
+}
+
+/// MAX-252 step 4: `n` / `N` of a raw search move the dump's cursor, also from the screen,
+/// which they leave for the dump; a text search from the dump goes back to the screen.
+/// How: 160 columns, "xy xy" from 0x30: a raw search for 78 79 (`/` from the live view: the
+/// oldest match), `n`, Tab to the screen, `n` (around the end); then `/xy`
+#[test]
+fn terminal_raw_search_steps_in_the_dump() {
+    let search = |h: &mut Harness, action| h.app.update(Action::Search(action));
+    let dump_cursor = |h: &Harness| h.app.terminal_mode.dump_copy().map(|copy| copy.cursor);
+    let mut h = terminal_raw_on(160, b"xy xy");
+    h.draw();
+    search(&mut h, SearchModeAction::Start(SearchDirection::Forward));
+    search(&mut h, SearchModeAction::Kind);
+    search(&mut h, SearchModeAction::Paste("78 79".into()));
+    search(&mut h, SearchModeAction::Confirm);
+    assert_eq!(dump_cursor(&h), Some(0x30));
+
+    search(&mut h, SearchModeAction::Repeat(false));
+    assert_eq!(dump_cursor(&h), Some(0x33));
+    h.app.update(Action::CopyMode(CopyModeAction::ToggleSide));
+    assert_eq!(h.app.copy_side(), Some(CopySide::Text));
+    search(&mut h, SearchModeAction::Repeat(false));
+    assert_eq!(dump_cursor(&h), Some(0x30));
+    let rows = h.draw();
+    assert_eq!(under_cursor(&mut h, &rows), "78");
+
+    search(&mut h, SearchModeAction::Start(SearchDirection::Forward));
+    search(&mut h, SearchModeAction::Kind);
+    search(&mut h, SearchModeAction::Paste("xy".into()));
+    search(&mut h, SearchModeAction::Confirm);
+    assert_eq!(h.app.copy_side(), Some(CopySide::Text));
+    assert_eq!(h.app.terminal_mode.copy_state().cursor.char_idx, 0);
+}
+
+/// MAX-252 step 4: with the raw panel off there is no dump to show a raw search's matches:
+/// it finds none and says why.
+/// How: "xy" received, the panel off: `/`, raw kind, "78"
+#[test]
+fn terminal_raw_search_needs_the_panel() {
+    let search = |h: &mut Harness, action| h.app.update(Action::Search(action));
+    let mut h = terminal_raw_on(160, b"xy");
+    h.app.settings_mut().raw_side.view = RawSideView::Off;
+    h.draw();
+    search(&mut h, SearchModeAction::Start(SearchDirection::Forward));
+    search(&mut h, SearchModeAction::Kind);
+    search(&mut h, SearchModeAction::Paste("78".into()));
+    assert_eq!(h.app.terminal_mode.search().matches_count(), 0);
+    let toasts = h.app.notifications.active_toasts();
+    assert!(
+        toasts
+            .iter()
+            .any(|t| t.message.starts_with("A raw search needs"))
+    );
+}
+
+/// MAX-252 step 5: the dump has its own scrollbar in the panel's right column: `▲` / `▼`
+/// scroll it a line and repeat while held, a press on the track puts the thumb there, the
+/// thumb dragged moves the dump, off the column and past its ends too. The screen stays.
+/// How: 160 columns, 40 lines of 8 bytes on top of the 6 lines of CRLF
+#[test]
+fn terminal_dump_scrollbar_mouse() {
+    use std::time::{Duration, Instant};
+    let mut h = terminal_raw_on(160, &b"line 00\n".repeat(40));
+    h.draw();
+    let bar = h.app.frame_map().dump_scrollbar.expect("a dump scrollbar");
+    let raw = h.app.frame_map().raw_area;
+    assert_eq!(bar.area.x, raw.right(), "right of the dump's body");
+    let (x, top, bottom) = (bar.area.x, bar.area.y, bar.area.bottom() - 1);
+    let position = |h: &mut Harness| {
+        h.draw();
+        h.app.terminal_mode.dump_scroll_position()
+    };
+    let (max, live) = position(&mut h);
+    assert_eq!(live, max, "following the live end");
+    let screen_offset = h.app.terminal_mode.scroller().offset_y;
+    let press = |h: &mut Harness, at| mouse_do(h, MouseEventKind::Down(MouseButton::Left), at);
+    let release = |h: &mut Harness, at| mouse_do(h, MouseEventKind::Up(MouseButton::Left), at);
+
+    click(&mut h, (x, top));
+    assert_eq!(position(&mut h), (max, max - 1), "▲");
+    click(&mut h, (x, bottom));
+    assert_eq!(position(&mut h), (max, max), "▼");
+
+    press(&mut h, (x, top));
+    assert_eq!(
+        h.app.scrollbar_held(),
+        Some(crate::inputs::ScrollbarId::Dump)
+    );
+    assert!(!h.app.scrollbar_repeat(Instant::now()));
+    assert!(
+        h.app
+            .scrollbar_repeat(Instant::now() + Duration::from_millis(400))
+    );
+    release(&mut h, (x, top));
+    assert!(!h.app.is_scrollbar_held());
+    assert_eq!(position(&mut h), (max, max - 2), "repeated");
+
+    click(&mut h, (x, top + 1));
+    assert_eq!(position(&mut h), (max, 0), "track top");
+    assert!(shows(&h.draw(), "00000000  0D 0A"));
+    click(&mut h, (x, bottom - 1));
+    assert_eq!(position(&mut h), (max, max), "track bottom");
+
+    let bar = h.app.frame_map().dump_scrollbar.unwrap();
+    let (first, _) = bar.thumb();
+    press(&mut h, (x, top + 1 + first as u16));
+    mouse_do(
+        &mut h,
+        MouseEventKind::Drag(MouseButton::Left),
+        (x, top + 3),
+    );
+    let (_, middle) = position(&mut h);
+    assert!(0 < middle && middle < max, "{middle}/{max}");
+    mouse_do(
+        &mut h,
+        MouseEventKind::Drag(MouseButton::Left),
+        (5, top + 3),
+    );
+    assert_eq!(position(&mut h), (max, middle), "off the column");
+    mouse_do(&mut h, MouseEventKind::Drag(MouseButton::Left), (5, 0));
+    assert_eq!(position(&mut h), (max, 0), "above");
+    mouse_do(&mut h, MouseEventKind::Drag(MouseButton::Left), (5, 11));
+    assert_eq!(position(&mut h), (max, max), "below");
+    release(&mut h, (5, 11));
+    assert!(!h.app.is_scrollbar_held());
+    assert_eq!(h.app.terminal_mode.scroller().offset_y, screen_offset);
+}
+
+/// MAX-252 step 5: with every byte shown there's nothing to scroll: no dump scrollbar, its
+/// column kept blank.
+/// How: 160 columns, the 6 lines of CRLF and "ab"
+#[test]
+fn terminal_dump_scrollbar_only_to_scroll() {
+    let mut h = terminal_raw_on(160, b"ab");
+    let rows = h.draw();
+    assert!(h.app.frame_map().dump_scrollbar.is_none());
+    assert!(!rows.iter().any(|row| row.ends_with('▲')), "{rows:#?}");
+}
+
+/// MAX-252 step 5: the raw panel at the bottom: the dump fits more bytes a line (a multiple of
+/// 8), its scrollbar in its right column; a drag in it selects and its release yanks; a drag
+/// held past its top edge scrolls it up.
+/// How: 160x24, the panel at the bottom; 40 lines of 8 bytes then "a" F1 80 "b"
+#[test]
+fn terminal_dump_at_the_bottom() {
+    use std::time::{Duration, Instant};
+    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 160, 24, |s| {
+        s.mode = Mode::Terminal;
+    });
+    h.app.settings_mut().raw_side.view = RawSideView::Hex;
+    h.app.settings_mut().raw_side.orientation =
+        crate::configs::settings::RawSideOrientation::Bottom;
+    let mut all = b"line 00\n".repeat(40);
+    all.extend_from_slice(b"a\xF1\x80b");
+    h.app
+        .terminal_mode
+        .process_device_rx(TextEncoding::Utf8, &all, false, false);
+    let rows = h.draw();
+    let bounds = h.app.terminal_mode.dump_bounds();
+    assert!(
+        bounds.width >= 32 && bounds.width.is_multiple_of(8),
+        "{bounds:?}"
+    );
+    let raw = h.app.frame_map().raw_area;
+    assert!(raw.width > 100 && raw.y > 8, "{raw:?}");
+    let bar = h.app.frame_map().dump_scrollbar.expect("a dump scrollbar");
+    assert_eq!((bar.area.x, bar.area.y), (raw.right(), raw.y));
+
+    let digits = cell_of(&rows, "61 F1 80 62");
+    mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), digits);
+    let end = (digits.0 + 9, digits.1);
+    mouse_do(&mut h, MouseEventKind::Drag(MouseButton::Left), end);
+    match mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), end) {
+        UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "61 F1 80 62"),
+        _ => panic!("expected a yank"),
+    }
+
+    let (_, live) = h.app.terminal_mode.dump_scroll_position();
+    mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), digits);
+    let above = (digits.0, raw.y - 2);
+    mouse_do(&mut h, MouseEventKind::Drag(MouseButton::Left), above);
+    assert_eq!(h.app.copy_side(), Some(CopySide::Raw));
+    h.app
+        .drag_scroll(Instant::now() + Duration::from_millis(100));
+    let (_, scrolled) = h.app.terminal_mode.dump_scroll_position();
+    assert!(scrolled < live, "{scrolled} < {live}");
+}
+
+/// MAX-252 step 5: with a plot in the other place, the dump's scrollbar runs along the dump's
+/// rows only, never into the plot.
+/// How: terminal mode 160x30, 40 lines of 8 bytes; the raw panel on the right and the
+/// key-value plot at the bottom, then the other way round
+#[test]
+fn terminal_dump_scrollbar_beside_a_plot() {
+    use crate::configs::settings::{PlotSideConfig, RawSideOrientation};
+    for (raw_place, plot_place) in [
+        (RawSideOrientation::Right, RawSideOrientation::Bottom),
+        (RawSideOrientation::Bottom, RawSideOrientation::Right),
+    ] {
+        let mut h = plot_harness(160, 30, b"");
+        h.app.settings_mut().mode = Mode::Terminal;
+        h.app.settings_mut().raw_side.orientation = raw_place;
+        h.app.settings_mut().plot_side = PlotSideConfig {
+            orientation: plot_place,
+            split_percent: 30,
+        };
+        let all = b"line 00\n".repeat(40);
+        (h.app.terminal_mode).process_device_rx(TextEncoding::Utf8, &all, false, false);
+        let rows = h.draw();
+        let bar = h.app.frame_map().dump_scrollbar.expect("a dump scrollbar");
+        let raw = h.app.frame_map().raw_area;
+        assert_eq!(
+            (bar.area.y, bar.area.height),
+            (raw.y, raw.height),
+            "{raw_place:?}"
+        );
+        let at = |y: u16| rows[y as usize].chars().nth(bar.area.x as usize);
+        assert_eq!(at(bar.area.y), Some('▲'), "{raw_place:?}");
+        assert_eq!(at(bar.area.bottom() - 1), Some('▼'), "{raw_place:?}");
+        // the plot's title, below the bar or right of it
+        let (x, y) = cell_of(&rows, "key-value");
+        assert!(
+            y >= bar.area.bottom() || x > bar.area.x,
+            "{raw_place:?} {rows:#?}"
+        );
+    }
 }
 
 /// MAX-254: in ASCII, line mode keeps the escape sequences, as terminal mode and the other

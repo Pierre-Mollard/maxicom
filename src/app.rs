@@ -16,7 +16,7 @@ use crate::{
         selection::{ClickCounter, CopySide, LogicalPosition, MouseUnit},
         term_answers::answer_bytes,
         triggers::Trigger,
-        types::{FocusTarget, FrameAreas, FrameMap, SidePanel, ViewportSize},
+        types::{FocusTarget, FrameAreas, FrameMap, ScrollbarMap, SidePanel, ViewportSize},
     },
     capture::{
         CaptureDevice, CaptureLine, Recorder, RecordingWriter, ScreenshotFormat, Session, Stream,
@@ -29,7 +29,7 @@ use crate::{
     },
     inputs::{
         Action, AppAction, ClickHoldAction, CopyModeAction, HistoryAction, LineInputAction,
-        MarkAction, PendingMark, ScrollbarAction, SearchModeAction, SideHandleAction,
+        MarkAction, PendingMark, ScrollbarAction, ScrollbarId, SearchModeAction, SideHandleAction,
         SideViewAction, TerminalAction,
     },
     link::{
@@ -111,6 +111,14 @@ enum ScrollbarHold {
     Thumb { grab: usize },
 }
 
+/// A scrollbar's scroll: a row up or down, or to a position from the top
+#[derive(Debug, Clone, Copy)]
+enum BarScroll {
+    Up,
+    Down,
+    To(usize),
+}
+
 /// How long the line a mark jump lands on flashes (MAX-164)
 const MARK_FLASH: Duration = Duration::from_millis(400);
 
@@ -151,7 +159,7 @@ pub struct App {
     /// scroll last ran (MAX-126)
     drag_hold: Option<(u16, u16)>,
     last_drag_scroll: Option<Instant>,
-    scrollbar_hold: Option<ScrollbarHold>,
+    scrollbar_hold: Option<(ScrollbarId, ScrollbarHold)>,
     side_handle_held: Option<SidePanel>,
     /// When a held scrollbar arrow scrolls again
     scrollbar_repeat_at: Option<Instant>,
@@ -1505,27 +1513,36 @@ impl App {
         toasts_expired || flashing || drag_scrolled || tested
     }
 
-    /// The left button is on the scrollbar, from its press to its release (MAX-142)
+    /// The left button is on a scrollbar, from its press to its release (MAX-142)
     pub fn is_scrollbar_held(&self) -> bool {
         self.scrollbar_hold.is_some()
     }
 
-    /// The left button on the history's scrollbar, as the last frame drew it (MAX-142): `▲` or
-    /// `▼` scrolls a row, then again every `DRAG_SCROLL_EVERY` while held; a press on the thumb
-    /// grabs it by that row, on the rest of the track it puts the thumb's middle there first;
-    /// a drag then moves the thumb with the pointer
+    /// The scrollbar the left button holds (MAX-252)
+    pub fn scrollbar_held(&self) -> Option<ScrollbarId> {
+        self.scrollbar_hold.map(|(id, _)| id)
+    }
+
+    /// The left button on a scrollbar, as the last frame drew it (MAX-142): `▲` or `▼` scrolls
+    /// a row, then again every `DRAG_SCROLL_EVERY` while held; a press on the thumb grabs it by
+    /// that row, on the rest of the track it puts the thumb's middle there first; a drag then
+    /// moves the thumb with the pointer
     fn scrollbar(&mut self, action: ScrollbarAction, now: Instant) {
-        let Some(bar) = self.frame_map.scrollbar else {
+        let id = match action {
+            ScrollbarAction::Press(id, _) => Some(id),
+            _ => self.scrollbar_held(),
+        };
+        let Some((id, bar)) = id.and_then(|id| Some((id, self.frame_map.scrollbar_of(id)?))) else {
             self.scrollbar_hold = None;
             return;
         };
-        let to_thumb = |first: isize| HistoryAction::ScrollTo(bar.max - bar.position_at(first));
+        let to_thumb = |first: isize| BarScroll::To(bar.position_at(first));
         match action {
-            ScrollbarAction::Press(row) => {
+            ScrollbarAction::Press(_, row) => {
                 let (hold, scroll) = if row == 0 {
-                    (ScrollbarHold::Up, HistoryAction::ScrollUp(1))
+                    (ScrollbarHold::Up, BarScroll::Up)
                 } else if row + 1 >= bar.area.height {
-                    (ScrollbarHold::Down, HistoryAction::ScrollDown(1))
+                    (ScrollbarHold::Down, BarScroll::Down)
                 } else {
                     let in_track = usize::from(row - 1);
                     let (first, length) = bar.thumb();
@@ -1537,17 +1554,37 @@ impl App {
                     let scroll = to_thumb(in_track as isize - grab as isize);
                     (ScrollbarHold::Thumb { grab }, scroll)
                 };
-                self.scrollbar_hold = Some(hold);
+                self.scrollbar_hold = Some((id, hold));
                 self.scrollbar_repeat_at = Some(now + SCROLLBAR_REPEAT_AFTER);
-                self.update_action_history(scroll);
+                self.scroll_bar(id, bar, scroll);
             }
             ScrollbarAction::Drag(row) => {
-                if let Some(ScrollbarHold::Thumb { grab }) = self.scrollbar_hold {
+                if let Some((_, ScrollbarHold::Thumb { grab })) = self.scrollbar_hold {
                     let first = row as isize - 1 - grab as isize;
-                    self.update_action_history(to_thumb(first));
+                    self.scroll_bar(id, bar, to_thumb(first));
                 }
             }
             ScrollbarAction::Release => self.scrollbar_hold = None,
+        }
+    }
+
+    /// Scrolls what scrollbar `id` runs along: the history, or the dump (MAX-252)
+    fn scroll_bar(&mut self, id: ScrollbarId, bar: ScrollbarMap, scroll: BarScroll) {
+        match (id, scroll) {
+            (ScrollbarId::History, BarScroll::Up) => {
+                self.update_action_history(HistoryAction::ScrollUp(1));
+            }
+            (ScrollbarId::History, BarScroll::Down) => {
+                self.update_action_history(HistoryAction::ScrollDown(1));
+            }
+            (ScrollbarId::History, BarScroll::To(position)) => {
+                self.update_action_history(HistoryAction::ScrollTo(bar.max - position));
+            }
+            (ScrollbarId::Dump, BarScroll::Up) => self.terminal_mode.scroll_dump_up(1),
+            (ScrollbarId::Dump, BarScroll::Down) => self.terminal_mode.scroll_dump_down(1),
+            (ScrollbarId::Dump, BarScroll::To(position)) => {
+                self.terminal_mode.scroll_dump_to(position);
+            }
         }
     }
 
@@ -1623,16 +1660,19 @@ impl App {
 
     /// A scrollbar arrow held scrolls again; returns true when it did
     pub fn scrollbar_repeat(&mut self, now: Instant) -> bool {
-        let scroll = match self.scrollbar_hold {
-            Some(ScrollbarHold::Up) => HistoryAction::ScrollUp(1),
-            Some(ScrollbarHold::Down) => HistoryAction::ScrollDown(1),
+        let (id, scroll) = match self.scrollbar_hold {
+            Some((id, ScrollbarHold::Up)) => (id, BarScroll::Up),
+            Some((id, ScrollbarHold::Down)) => (id, BarScroll::Down),
             _ => return false,
         };
         if self.scrollbar_repeat_at.is_some_and(|at| now < at) {
             return false;
         }
+        let Some(bar) = self.frame_map.scrollbar_of(id) else {
+            return false;
+        };
         self.scrollbar_repeat_at = Some(now + DRAG_SCROLL_EVERY);
-        self.update_action_history(scroll);
+        self.scroll_bar(id, bar, scroll);
         true
     }
 
@@ -1663,10 +1703,10 @@ impl App {
             return false;
         }
         let (top, bottom) = (area.top(), area.bottom() - 1);
-        let scroll = if y <= top {
-            HistoryAction::ScrollUp(usize::from(top - y) + 1)
+        let (up, lines) = if y <= top {
+            (true, usize::from(top - y) + 1)
         } else if y >= bottom {
-            HistoryAction::ScrollDown(usize::from(y - bottom) + 1)
+            (false, usize::from(y - bottom) + 1)
         } else {
             return false;
         };
@@ -1674,7 +1714,20 @@ impl App {
         if let Some(pos) = self.frame_map.copy_position(side, x, y, true) {
             self.update_action_copy_mode(CopyModeAction::MouseDrag(pos, (x, y)));
         }
-        self.update_action_history(scroll);
+        // terminal mode's dump scrolls on its own (MAX-252)
+        if side == CopySide::Raw && self.settings.mode == Mode::Terminal {
+            self.update_side_view(if up {
+                SideViewAction::ScrollUp(lines)
+            } else {
+                SideViewAction::ScrollDown(lines)
+            });
+        } else {
+            self.update_action_history(if up {
+                HistoryAction::ScrollUp(lines)
+            } else {
+                HistoryAction::ScrollDown(lines)
+            });
+        }
         self.last_drag_scroll = Some(now);
         true
     }
@@ -2072,6 +2125,11 @@ impl App {
         let leaves_copy = matches!(action, SearchModeAction::Cancel)
             && std::mem::take(&mut self.search_mut().exits_copy);
         let confirmed = matches!(action, SearchModeAction::Confirm);
+        // no dump to show a raw search's matches in terminal mode (MAX-252)
+        let opens = matches!(
+            action,
+            SearchModeAction::Start(_) | SearchModeAction::Query(_) | SearchModeAction::Kind
+        );
         // where a search from copy mode started, to tell a match around the history's end;
         // from the live view it goes to the oldest or newest match on purpose (MAX-218)
         let started_at = if confirmed {
@@ -2085,6 +2143,13 @@ impl App {
         match self.settings.mode {
             Mode::Terminal => self.terminal_mode.handle_search_action(action, view),
             Mode::Line => self.line_mode.handle_search_action(action, view),
+        }
+        if opens
+            && self.settings.mode == Mode::Terminal
+            && self.terminal_mode.dump_search()
+            && self.settings.raw_side.view == RawSideView::Off
+        {
+            self.notify_warn("A raw search needs the raw panel: no bytes shown to search");
         }
         if leaves_copy {
             self.copy_action(CopyModeAction::Exit);

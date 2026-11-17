@@ -226,8 +226,11 @@ impl ScreenLayout {
         // the scrollbar scrolls the history, so it runs beside it, never along a plot (MAX-230)
         let plot_on_right =
             plot_area.is_some() && plot_side.orientation == RawSideOrientation::Right;
+        // in terminal mode the dump has its own bar: the history's stays in the history's column
+        // so the two never sit side by side (MAX-252)
+        let dump_bar = input_mode == Mode::Terminal && raw_side_area.is_some();
         let (content_area, scrollbar_area) = if show_scrollbar {
-            if show_borders && !plot_on_right {
+            if show_borders && !plot_on_right && !dump_bar {
                 // in the right border, along the view (not the transfer row) or above a plot
                 let sb_area = Rect {
                     x: monitor_outer.x + monitor_outer.width.saturating_sub(1),

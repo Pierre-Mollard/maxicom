@@ -125,6 +125,7 @@ The byte kinds of the [raw side panel](raw-side-panel.md#reading-it).
 | `byte_whitespace` | `Yellow` |
 | `byte_sync` | `LightRed` |
 | `byte_ones` | `Red` |
+| `byte_escape` | `LightMagenta` |
 | `byte_other` | `LightBlue` |
 
 ### `[popup]`

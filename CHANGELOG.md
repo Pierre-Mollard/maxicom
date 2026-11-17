@@ -10,6 +10,8 @@ you says so in an "Upgrading" section.
 
 ### Added
 
+- A `byte_escape` color in the theme's `[raw_inspector]`, for the ESC byte
+  (`0x1B`) in the raw side panel.
 - In line mode, copy mode and the mouse select in the line still coming in,
   before its line end, in the text and the raw side panel. A selection on it
   stays when the rest of the line arrives. See
@@ -17,6 +19,15 @@ you says so in an "Upgrading" section.
 
 ### Changed
 
+- In terminal mode, the raw side panel shows every byte received, in a dump
+  like `xxd`'s: offsets, the bytes and their text, the same number of bytes
+  on every line. It showed each screen row rebuilt by the emulator, so line
+  ends, cursor moves, erases and text written over never showed, and colors
+  came back in the emulator's own codes. The dump scrolls on its own, with
+  its own scrollbar, instead of following the screen; the history's
+  scrollbar moves next to the history. Copy mode, the mouse and a byte
+  search work in it. See
+  [In terminal mode](https://pierre-mollard.github.io/maxicom/raw-side-panel.html#in-terminal-mode).
 - From the live view, line mode's copy mode starts on the line still coming
   in, when there is one.
 - In Hex, Octal and Binary, the line still coming in shows its last blanks

@@ -32,6 +32,7 @@ mod args;
 mod capture;
 mod commands;
 mod configs;
+mod dump;
 mod inputs;
 mod invalid_bytes;
 mod link;

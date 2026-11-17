@@ -123,6 +123,10 @@ A byte search looks for bytes in the received data. Write them the way the
 | octal | `015 012` |
 | binary | the bits of each byte |
 
+In terminal mode, it goes over every byte received, not the screen, and
+moves the raw side panel's cursor. See
+[Copying and searching bytes](raw-side-panel.md#copying-and-searching-bytes).
+
 ## From the command line
 
 `search <text>` on the [command line](command-line.md) starts a search forward

@@ -833,3 +833,53 @@ fn marks_popup_shows_invalid_bytes() {
     tm.marks.set('a', 0);
     assert_eq!(tm.mark_rows()[0].text.trim_end(), "a\u{FFFD}b");
 }
+
+/// Every byte the stream holds, both slices joined (MAX-252)
+fn stream_bytes(tm: &TerminalMode) -> Vec<u8> {
+    let stream = &tm.rx_stream;
+    let (front, back) = stream.slices(stream.start()..stream.end());
+    [front, back].concat()
+}
+
+/// MAX-252 step 1: the stream keeps the device's bytes as received, before add CR, the
+/// invalid bytes included; a read is one entry with its time.
+/// How: "a\nb" F1 with add CR on, then "c".
+#[test]
+fn stream_keeps_the_device_bytes_as_received() {
+    let mut tm = terminal(3);
+    tm.process_device_rx(TextEncoding::Utf8, b"a\nb\xF1", true, false);
+    tm.process_device_rx(TextEncoding::Utf8, b"c", true, false);
+    assert_eq!(stream_bytes(&tm), b"a\nb\xF1c");
+    let reads: Vec<u64> = tm
+        .rx_stream
+        .reads()
+        .iter()
+        .map(|read| read.offset)
+        .collect();
+    assert_eq!(reads, [0, 4]);
+    assert!(tm.rx_stream.reads().iter().all(|read| read.time.is_some()));
+}
+
+/// MAX-252 step 1: a restored session's chunks go in the stream with their times, maxicom's
+/// own restore reset doesn't; Clear history empties it.
+/// How: restore "one\r\n" and "two" (no time), then clear the history.
+#[test]
+fn stream_holds_restored_bytes_not_the_reset() {
+    let mut tm = terminal(3);
+    let chunks = [
+        TimedChunk {
+            bytes: b"one\r\n",
+            time: None,
+        },
+        TimedChunk {
+            bytes: b"two",
+            time: None,
+        },
+    ];
+    tm.restore(TextEncoding::Utf8, &chunks, "--");
+    assert_eq!(stream_bytes(&tm), b"one\r\ntwo");
+    assert_eq!(tm.rx_stream.reads().len(), 2);
+
+    tm.clear_history();
+    assert!(stream_bytes(&tm).is_empty());
+}

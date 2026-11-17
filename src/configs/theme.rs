@@ -286,6 +286,7 @@ pub struct RawInspectorColors {
     pub byte_whitespace: Color, // 0x0A, 0x0D, 0x09 (\n, \r, \t)
     pub byte_sync: Color,       // 0x55, 0xAA, 0x7E (sync preambles)
     pub byte_ones: Color,       // 0xFF (broadcast, erased flash)
+    pub byte_escape: Color,     // 0x1B (ESC, starts the escape sequences)
     pub byte_other: Color,      // Other arbitrary payloads
 }
 
@@ -298,6 +299,7 @@ impl Default for RawInspectorColors {
             byte_whitespace: Color::Yellow,
             byte_sync: Color::LightRed,
             byte_ones: Color::Red,
+            byte_escape: Color::LightMagenta,
             byte_other: Color::LightBlue,
         }
     }
@@ -425,6 +427,7 @@ impl ThemeConfig {
             0x0A | 0x0D | 0x09 => self.raw_inspector.byte_whitespace,
             0xAA | 0x55 | 0x7E => self.raw_inspector.byte_sync,
             0xFF => self.raw_inspector.byte_ones,
+            0x1B => self.raw_inspector.byte_escape,
             0x20..=0x7E => self.raw_inspector.byte_ascii,
             _ => self.raw_inspector.byte_other,
         }

@@ -94,15 +94,11 @@ view, make the screen wider and pan, see
 Sixel and kitty graphics aren't drawn. Their bytes still show in line
 mode's [raw side panel](raw-side-panel.md).
 
-### The raw panel doesn't show every byte in terminal mode
+### The raw panel and the screen scroll apart in terminal mode
 
-In terminal mode, the raw side panel shows each screen row rebuilt by the
-emulator, not the bytes as received. What only acts on the screen never
-shows: CR and LF, cursor moves, erases, a window title, queries. Text that
-was written over is gone too, colors come back in the emulator's own codes,
-and the text is shown after its decoding to UTF-8.
-
-To see every byte the device sent, use line mode. See
+In terminal mode, the raw side panel shows every byte received in a dump,
+with its own scrolling. A dump line isn't tied to the screen row next to it,
+and selecting on one side doesn't select on the other. See
 [In terminal mode](raw-side-panel.md#in-terminal-mode).
 
 ### Some queries stay unanswered

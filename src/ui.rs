@@ -269,7 +269,7 @@ pub fn render(
         } else {
             map.click_target_at(x, y)
                 .and_then(|target| Some((target.area, target.hover?)))
-                .or_else(|| Some((map.scrollbar?.part_at(x, y)?, *theme.ui.hover)))
+                .or_else(|| Some((map.scrollbar_part_at(x, y)?, *theme.ui.hover)))
                 .or_else(|| Some((map.side_handle_at(x, y)?.area, *theme.ui.hover)))
         };
         if let Some((area, style)) = hovered {

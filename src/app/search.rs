@@ -206,6 +206,59 @@ impl SearchState {
         self.select_first_match();
     }
 
+    /// A raw search over terminal mode's bytes received (MAX-252), `front` then `back` (the
+    /// store's ring), `first` the first one's absolute offset. A match's line is its first
+    /// byte's offset, its column 0, so the origin is the dump cursor's offset. The bytes are
+    /// read from the origin in the search's direction, around the end, up to MAX_SEARCH_MATCHES
+    pub fn update_matches_from_bytes(
+        &mut self,
+        (front, back): (&[u8], &[u8]),
+        first: u64,
+        raw_view: RawSideView,
+    ) {
+        let needle = match self.query.value() {
+            "" => None,
+            query => parse_raw_bytes_for_view(query, raw_view),
+        };
+        self.matches = match needle {
+            Some(needle) => {
+                let len = needle.len();
+                let to_match = move |at: usize| {
+                    let offset = first as usize + at;
+                    SearchMatch {
+                        line_idx: offset,
+                        col_idx: 0,
+                        occurrence_in_line: 0,
+                        match_char_len: len,
+                        byte_offset: offset,
+                        byte_len: len,
+                    }
+                };
+                let all = || find_in_ring(front, back, &needle).map(to_match);
+                let origin = self.origin.map(|origin| origin.line_idx);
+                if self.direction == SearchDirection::Forward {
+                    let from = origin.unwrap_or(0);
+                    let mut found: Vec<_> = (all().filter(|m| m.line_idx >= from))
+                        .take(MAX_SEARCH_MATCHES)
+                        .collect();
+                    let room = MAX_SEARCH_MATCHES - found.len();
+                    found.splice(0..0, all().take_while(|m| m.line_idx < from).take(room));
+                    found
+                } else {
+                    let from = origin.unwrap_or(usize::MAX);
+                    let mut found = last_n(all().take_while(|m| m.line_idx <= from));
+                    let room = MAX_SEARCH_MATCHES - found.len();
+                    // around the end, the newest are reached first
+                    let after = last_n(all().filter(|m| m.line_idx > from));
+                    found.extend(after.iter().skip(after.len().saturating_sub(room)));
+                    found.into()
+                }
+            }
+            None => Vec::new(),
+        };
+        self.select_first_match();
+    }
+
     /// The line a search reads first (MAX-215): the origin's from copy mode, else the first
     /// line forward and the last one backward
     fn start_line(&self, line_count: usize) -> usize {
@@ -477,6 +530,40 @@ fn collect_matches(
     matches
 }
 
+/// The last MAX_SEARCH_MATCHES matches of `found`
+fn last_n(found: impl Iterator<Item = SearchMatch>) -> VecDeque<SearchMatch> {
+    let mut last = VecDeque::with_capacity(MAX_SEARCH_MATCHES);
+    for m in found {
+        if last.len() == MAX_SEARCH_MATCHES {
+            last.pop_front();
+        }
+        last.push_back(m);
+    }
+    last
+}
+
+/// The offsets of `needle` in `front` then `back`, a ring's two slices: overlapping ones, and
+/// those across the two, included (MAX-252)
+fn find_in_ring<'a>(
+    front: &'a [u8],
+    back: &'a [u8],
+    needle: &'a [u8],
+) -> impl Iterator<Item = usize> + 'a {
+    // a match across starts in the last `needle.len() - 1` bytes of `front`
+    let reach = needle.len().saturating_sub(1);
+    let head = &front[front.len() - reach.min(front.len())..];
+    let window = [head, &back[..reach.min(back.len())]].concat();
+    let seam = front.len() - head.len();
+    let across: Vec<usize> = find_byte_subslice_iter(&window, needle)
+        .take_while(|&at| at < head.len())
+        .map(|at| seam + at)
+        .collect();
+    let in_back = find_byte_subslice_iter(back, needle).map(move |at| front.len() + at);
+    find_byte_subslice_iter(front, needle)
+        .chain(across)
+        .chain(in_back)
+}
+
 pub fn parse_raw_bytes_for_view(input: &str, raw_view: RawSideView) -> Option<Vec<u8>> {
     let q = input.trim();
     if q.is_empty() {
@@ -684,9 +771,57 @@ pub trait SearchHost {
     /// The view centered on the copy cursor, now or on the next frame
     fn center_copy_cursor(&mut self);
 
+    /// Where a search starts, in its matches' places: the copy cursor when the search opens
+    /// (`opening`) from copy mode (MAX-215); the same one when its kind changes
+    fn search_origin(&mut self, opening: bool) -> Option<LogicalPosition> {
+        let (search, copy) = self.search_and_copy();
+        if opening {
+            copy_origin(copy)
+        } else {
+            search.origin
+        }
+    }
+
+    /// The copy cursor in the matches' places, which `n` / `N` go on from
+    fn match_cursor(&mut self) -> (usize, usize) {
+        let cursor = self.search_and_copy().1.cursor;
+        (cursor.line_idx, cursor.char_idx)
+    }
+
+    /// The copy cursor onto the match at `row`, `col`
+    fn cursor_to_match(&mut self, row: usize, col: usize) {
+        self.search_and_copy().1.jump_to(row, col);
+    }
+
+    /// The copy cursor back where the search started; false when it started out of copy mode
+    fn back_to_origin(&mut self) -> bool {
+        let (search, copy) = self.search_and_copy();
+        let Some(origin) = search.origin else {
+            return false;
+        };
+        copy.cursor = origin;
+        true
+    }
+
     fn update_search_matches(&mut self, view: impl Into<SearchView>) {
         self.find_matches(view.into());
-        follow_search_match(self.search_and_copy());
+        self.follow_search_match();
+    }
+
+    /// In copy mode the cursor goes to the current match as the query changes, so the view
+    /// follows it; back to where the search started without one (MAX-215). After Enter, the
+    /// matches found again leave it where it is
+    fn follow_search_match(&mut self) {
+        let (search, copy) = self.search_and_copy();
+        if !(search.active && copy.active) {
+            return;
+        }
+        match search.current_match_position() {
+            Some((row, col)) => self.cursor_to_match(row, col),
+            None => {
+                self.back_to_origin();
+            }
+        }
     }
 
     fn handle_input_search(&mut self, key_event: KeyEvent, view: impl Into<SearchView>) {
@@ -702,51 +837,51 @@ pub trait SearchHost {
     /// last search, its matches shown again. None without a match, `Some(true)` when it went
     /// around the history's end
     fn repeat_search(&mut self, opposite: bool) -> Option<bool> {
-        let (search, copy) = self.search_and_copy();
-        let cursor = (copy.cursor.line_idx, copy.cursor.char_idx);
+        let cursor = self.match_cursor();
+        let (search, _) = self.search_and_copy();
         let wrapped = search.step_from(cursor, opposite)?;
         let (row, col) = search.current_match_position()?;
-        copy.jump_to(row, col);
         search.kept = true;
+        self.cursor_to_match(row, col);
         Some(wrapped)
     }
 
     fn handle_search_action(&mut self, action: SearchModeAction, view: impl Into<SearchView>) {
         let view = view.into();
-        let (search, copy) = self.search_and_copy();
+        let (search, _) = self.search_and_copy();
         match action {
             SearchModeAction::Start(direction) => {
                 search.direction = direction;
-                search.origin = copy_origin(copy);
                 search.toggle(true);
                 search.open_empty();
+                self.search_and_copy().0.origin = self.search_origin(true);
                 self.update_search_matches(view);
             }
             SearchModeAction::Next => {
                 if search.active
                     && let Some((row, col)) = search.next_match()
                 {
-                    copy.jump_to(row, col);
+                    self.cursor_to_match(row, col);
                 }
             }
             SearchModeAction::Previous => {
                 if search.active
                     && let Some((row, col)) = search.prev_match()
                 {
-                    copy.jump_to(row, col);
+                    self.cursor_to_match(row, col);
                 }
             }
             SearchModeAction::Cancel => {
                 search.restore_last_query();
                 self.update_search_matches(view);
-                let (search, copy) = self.search_and_copy();
+                let (search, _) = self.search_and_copy();
                 search.toggle(false);
                 search.kept = false;
                 // from copy mode, back where the search started (MAX-215)
-                if let Some(origin) = search.origin.take() {
-                    copy.cursor = origin;
+                if self.back_to_origin() {
                     self.center_copy_cursor();
                 }
+                self.search_and_copy().0.origin = None;
             }
             SearchModeAction::Confirm => {
                 if search.reuse_last_query() {
@@ -758,7 +893,8 @@ pub trait SearchHost {
                 search.kept = true;
 
                 // from copy mode the cursor is already on the match, the selection kept
-                if search.origin.take().is_none() {
+                search.origin = None;
+                if !copy.active {
                     let (row, col) = match_pos.unwrap_or((0, 0));
                     copy.enter_at(row, col);
                 }
@@ -777,13 +913,14 @@ pub trait SearchHost {
             }
             SearchModeAction::Query(text) => {
                 search.direction = SearchDirection::Forward;
-                search.origin = copy_origin(copy);
                 search.toggle(true);
                 search.query = Input::new(text);
+                self.search_and_copy().0.origin = self.search_origin(true);
                 self.update_search_matches(view);
             }
             SearchModeAction::Kind => {
                 search.toggle_mode();
+                self.search_and_copy().0.origin = self.search_origin(false);
                 self.update_search_matches(view);
             }
             SearchModeAction::ClickAt(column) => {
@@ -801,18 +938,6 @@ pub trait SearchHost {
 /// The copy cursor a search opened from copy mode starts from (MAX-215)
 fn copy_origin(copy: &CopyModeState) -> Option<LogicalPosition> {
     copy.active.then_some(copy.cursor)
-}
-
-/// From copy mode the cursor goes to the current match as the query changes, so the view
-/// follows it; back to where the search started without one (MAX-215)
-fn follow_search_match((search, copy): (&mut SearchState, &mut CopyModeState)) {
-    let Some(origin) = search.origin else {
-        return;
-    };
-    match search.current_match_position() {
-        Some((row, col)) => copy.jump_to(row, col),
-        None => copy.cursor = origin,
-    }
 }
 
 #[cfg(test)]
