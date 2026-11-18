@@ -17,18 +17,18 @@ to get the new keys that scroll the raw side panel in your `keymap.toml`:
 
 ### Added
 
-- In terminal mode, the byte trace: in copy mode, the raw side panel shows
-  the bytes behind the screen's cursor, the char the cell shows and the
-  earlier ones written there (a progress bar's), and the screen shows the
-  cell the dump cursor's byte drew, written over or not. Each panel scrolls
-  to the other's ghost, and Tab lands on it. A selection on one side shows
-  on the other: on the screen, the dump shows the bytes that make it, colors
-  and line ends included, and `Y` copies them: the bytes received, no longer
+- In terminal mode, the byte trace: maxicom remembers which received bytes
+  drew which cell of the screen. In copy mode, the raw side panel shows the
+  bytes behind the screen's cursor (the char the cell shows, and the earlier
+  ones written there, as a progress bar's), and the screen shows the cell the
+  dump cursor's byte drew, written over or not. Each panel keeps the other's
+  ghost in its middle, and Tab lands on it. A selection on one side shows on
+  the other: on the screen, the dump shows the bytes that make it, colors and
+  line ends included, and `Y` copies them, the bytes received rather than
   the ones the screen rebuilds (still copied, with a warning, without a
-  trace). A new theme color,
-  `cursor_ghost_old`, for the earlier and written over ones. `byte_trace` in
-  `[terminal_mode]` (`Y` in the settings popup, `set byte-trace`) turns it
-  off on a fast link. See
+  trace). A new theme color, `cursor_ghost_old`, for the earlier and written
+  over ones. `byte_trace` in `[terminal_mode]` (`Y` in the settings popup,
+  `set byte-trace`) turns it off, for a fast link. See
   [The byte trace](https://pierre-mollard.github.io/maxicom/raw-side-panel.html#the-byte-trace).
 - `Ctrl-a Shift-Up` / `Ctrl-a Shift-Down` (`scroll-side-up` /
   `scroll-side-down`) scroll the raw side panel a line, and
@@ -53,9 +53,8 @@ to get the new keys that scroll the raw side panel in your `keymap.toml`:
   ends, cursor moves, erases and text written over never showed, and colors
   came back in the emulator's own codes. The dump scrolls on its own, with
   its own scrollbar, instead of following the screen, and goes back live
-  when the screen does; the history's
-  scrollbar moves next to the history. Copy mode, the mouse and a byte
-  search work in it. See
+  when the screen does; the history's scrollbar moves next to the history.
+  Copy mode, the mouse and a byte search work in it. See
   [In terminal mode](https://pierre-mollard.github.io/maxicom/raw-side-panel.html#in-terminal-mode).
 - From the live view, line mode's copy mode starts on the line still coming
   in, when there is one.

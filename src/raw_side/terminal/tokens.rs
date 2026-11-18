@@ -122,14 +122,6 @@ impl Tokenizer {
 
     // NOTE: review from here
 
-    /// Where the token still being read starts, none between tokens
-    pub fn pending(&self) -> Option<u64> {
-        match self.state {
-            State::Ground => (self.utf8_left > 0).then_some(self.start),
-            _ => Some(self.start),
-        }
-    }
-
     fn byte(&mut self, byte: u8, at: u64, out: &mut Vec<Token>) {
         match self.state {
             State::Ground => self.ground(byte, at, out),

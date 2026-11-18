@@ -2,6 +2,14 @@
 
 use super::*;
 
+/// Where the token still being read starts, none between tokens
+fn pending(tokenizer: &Tokenizer) -> Option<u64> {
+    match tokenizer.state {
+        State::Ground => (tokenizer.utf8_left > 0).then_some(tokenizer.start),
+        _ => Some(tokenizer.start),
+    }
+}
+
 fn tokens_of(encoding: TextEncoding, bytes: &[u8]) -> (Vec<Token>, Tokenizer) {
     let mut tokenizer = Tokenizer::new(encoding);
     let mut out = Vec::new();
@@ -55,7 +63,7 @@ fn text_controls_and_sequences() {
             (STYLE, b"\x1b[0m".to_vec()),
         ]
     );
-    assert_eq!(tokenizer.pending(), None);
+    assert_eq!(pending(&tokenizer), None);
 }
 
 /// Cursor jumps, clears and styles (which leave the cursor where it is, MAX-256) are told
@@ -196,7 +204,7 @@ fn tokens_cut_between_reads() {
     let mut out = Vec::new();
     tokenizer.feed(b"ab\x1b[3", 0, &mut out);
     assert_eq!(out, [token(0, 2, Kind::Text)]);
-    assert_eq!(tokenizer.pending(), Some(2));
+    assert_eq!(pending(&tokenizer), Some(2));
     tokenizer.feed(b"1m", 5, &mut out);
     assert_eq!(out[1..], [token(2, 7, STYLE)]);
 
@@ -204,7 +212,7 @@ fn tokens_cut_between_reads() {
     let mut out = Vec::new();
     tokenizer.feed(b"a\xC3", 0, &mut out);
     assert_eq!(out, [token(0, 1, Kind::Text)]);
-    assert_eq!(tokenizer.pending(), Some(1));
+    assert_eq!(pending(&tokenizer), Some(1));
     tokenizer.feed(b"\xA9b", 2, &mut out);
     assert_eq!(out[1..], [token(1, 4, Kind::Text)]);
 }
@@ -253,7 +261,7 @@ fn tokens_cover_the_bytes_and_any_cut() {
             }
             assert_eq!(
                 at,
-                tokenizer.pending().unwrap_or(bytes.len() as u64),
+                pending(&tokenizer).unwrap_or(bytes.len() as u64),
                 "seed {seed}"
             );
         }

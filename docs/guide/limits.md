@@ -94,12 +94,15 @@ view, make the screen wider and pan, see
 Sixel and kitty graphics aren't drawn. Their bytes still show in line
 mode's [raw side panel](raw-side-panel.md).
 
-### The raw panel and the screen scroll apart in terminal mode
+### The byte trace loses text a full-screen program moves
 
-In terminal mode, the raw side panel shows every byte received in a dump,
-with its own scrolling. A dump line isn't tied to the screen row next to it,
-and selecting on one side doesn't select on the other. See
-[In terminal mode](raw-side-panel.md#in-terminal-mode).
+In terminal mode, the raw side panel shows every byte received with its own
+scrolling, and in copy mode [the byte trace](raw-side-panel.md#the-byte-trace)
+shows which bytes drew which cell. It follows what a program writes, but not
+where the program moves it afterwards: a scroll region, inserted or deleted
+lines, or the alternate screen scrolling (vi, `less`, `top`). Those cells
+show no bytes, and their bytes show their old cell as written over. Bytes
+older than the ones kept have no cell either.
 
 ### Some queries stay unanswered
 

@@ -14,7 +14,8 @@ It opens a serial port or a device over TCP, on Linux, macOS and Windows.
 - Two views of the same data: a terminal emulator for shells and full-screen
   programs, and a line mode for logs, with timestamps and an input box
 - Scrollback, search, copy mode with vi keys, mouse selection
-- A raw side panel with the bytes in hex, octal or binary
+- A raw side panel with the bytes in hex, octal or binary, and in terminal
+  mode which bytes drew each character on screen
 - Live plots of the numbers your device prints (`temp=23.4`, the serial
   plotter format), next to the text
 - Every session backed up and restored at the next launch; recordings and

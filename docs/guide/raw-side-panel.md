@@ -65,11 +65,14 @@ The dump scrolls on its own, apart from the screen:
 - in copy mode with the cursor in it, `Ctrl-y` / `Ctrl-e`, the cursor
   staying.
 
-It follows the bytes coming in while
-it shows its last line, and goes back to them when the screen goes back live:
-a key typed, the screen scrolled back down to its end. A line and the screen row next to it aren't linked:
-one byte can redraw a row far up, and a progress bar writes the same row
-again and again.
+It follows the bytes coming in while it shows its last line, and goes back to
+them when the screen goes back live: a key typed, the screen scrolled back
+down to its end.
+
+A dump line and the screen row next to it aren't the same text: one byte can
+redraw a row far up, and a progress bar writes the same row again and again.
+In copy mode, [the byte trace](#the-byte-trace) shows which bytes drew which
+cell.
 
 maxicom keeps the bytes of the last `terminal_mode.history_size` × 512
 bytes (51 MB with the default), the oldest dropped first.
@@ -148,10 +151,11 @@ A byte that draws nothing, a control byte or part of an escape sequence, has
 no cell.
 
 When the cursor moves, the other panel keeps its ghost in the middle half of
-what it shows: it stays still while the ghost is there, and centers it when it
-would leave. Bytes coming in don't move it back, and a panel scrolled by hand stays until the cursor moves
-again. Tab puts the cursor on its ghost: from the screen on the bytes the
-cell shows, from the dump on the cell its byte still shows.
+what it shows: it stays still while the ghost is there, and centers it when
+it would leave. Bytes coming in don't move it back, and a panel scrolled by
+hand stays until the cursor moves again. Tab puts the cursor on its ghost:
+from the screen on the bytes the cell shows, from the dump on the cell its
+byte still shows.
 
 A selection shows in the other panel too, in its own look:
 
@@ -163,9 +167,9 @@ A selection shows in the other panel too, in its own look:
 
 `Y` on a screen selection copies the bytes the dump shows for it, as the
 panel shows them, in hex when the panel is closed: the trace is kept either
-way. Without a trace for it, the trace off or its bytes dropped
-or moved, `Y` copies the bytes the screen rebuilds from its cells instead:
-the text and its colors, but not the bytes received, and maxicom warns so.
+way. Without a trace for it (the trace off, its bytes dropped or moved), `Y`
+copies the bytes the screen rebuilds from its cells instead: the text and its
+colors, but not the bytes received, and maxicom warns so.
 
 A cell shows no bytes when nothing traced drew what it shows now:
 

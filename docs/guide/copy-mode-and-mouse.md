@@ -57,6 +57,17 @@ device's cursor sits on an empty row.
 | `n` / `N` | Next match of the last search / the other way |
 | `q` or Esc | Leave |
 
+### In the raw side panel
+
+With the [raw side panel](raw-side-panel.md) shown, the cursor and the
+selection show in both panels. Tab moves the cursor from one to the other.
+
+- In line mode, the panel's rows are the text's rows: a char and its bytes
+  sit side by side.
+- In terminal mode, the panel is a dump of every byte received, and
+  [the byte trace](raw-side-panel.md#the-byte-trace) shows the cursor's
+  bytes in the dump, or the cell of the dump cursor's byte on the screen.
+
 ### The view while copying
 
 Copy mode holds the view still while data arrives, so your selection stays
