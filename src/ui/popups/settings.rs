@@ -143,7 +143,7 @@ pub fn render_settings_popup(
                 SettingKey::AnswerQueries,
                 row("A", "Query Answers", answers_str),
             ),
-            (SettingKey::ByteTrace, row("L", "Byte Trace", trace_str)),
+            (SettingKey::ByteTrace, row("Y", "Byte Trace", trace_str)),
         ],
     );
     // the config folder, then the files out of it; a click copies one (MAX-163)

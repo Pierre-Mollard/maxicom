@@ -154,7 +154,7 @@ isn't written. A click on a setting does the same.
 | `W` | Line wrap | `I` | Wrap indent |
 | `P` | Row marks (`prefix_place`) | `D` | Display mode |
 | `S` | Dimension mode | `A` | Answer queries |
-| `L` | Byte trace | | |
+| `Y` | Byte trace | | |
 
 ### Setting a value directly
 

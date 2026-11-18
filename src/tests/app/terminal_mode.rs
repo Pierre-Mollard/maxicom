@@ -844,7 +844,7 @@ fn stream_bytes(tm: &TerminalMode) -> Vec<u8> {
 }
 
 /// MAX-252 step 1: the stream keeps the device's bytes as received, before add CR, the
-/// invalid bytes included; a read is one entry with its time.
+/// invalid bytes included.
 /// How: "a\nb" F1 with add CR on, then "c".
 #[test]
 fn stream_keeps_the_device_bytes_as_received() {
@@ -852,25 +852,10 @@ fn stream_keeps_the_device_bytes_as_received() {
     tm.process_device_rx(TextEncoding::Utf8, b"a\nb\xF1", true, false, true);
     tm.process_device_rx(TextEncoding::Utf8, b"c", true, false, true);
     assert_eq!(stream_bytes(&tm), b"a\nb\xF1c");
-    let reads: Vec<u64> = tm
-        .dump
-        .stream()
-        .reads()
-        .iter()
-        .map(|read| read.offset)
-        .collect();
-    assert_eq!(reads, [0, 4]);
-    assert!(
-        tm.dump
-            .stream()
-            .reads()
-            .iter()
-            .all(|read| read.time.is_some())
-    );
 }
 
-/// MAX-252 step 1: a restored session's chunks go in the stream with their times, maxicom's
-/// own restore reset doesn't; Clear history empties it.
+/// MAX-252 step 1: a restored session's chunks go in the stream, maxicom's own restore reset
+/// doesn't; Clear history empties it.
 /// How: restore "one\r\n" and "two" (no time), then clear the history.
 #[test]
 fn stream_holds_restored_bytes_not_the_reset() {
@@ -887,7 +872,6 @@ fn stream_holds_restored_bytes_not_the_reset() {
     ];
     tm.restore(TextEncoding::Utf8, &chunks, "--", true);
     assert_eq!(stream_bytes(&tm), b"one\r\ntwo");
-    assert_eq!(tm.dump.stream().reads().len(), 2);
 
     tm.clear_history();
     assert!(stream_bytes(&tm).is_empty());

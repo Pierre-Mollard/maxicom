@@ -13,8 +13,6 @@ use std::{
     ops::{Range, RangeInclusive},
 };
 
-use chrono::{DateTime, Local};
-
 pub use copy::{DumpCopy, DumpResult};
 use scroll::DumpScroller;
 pub use stream::RxStream;
@@ -79,8 +77,8 @@ impl Dump {
     }
 
     /// Adds a read; returns its first byte's offset
-    pub fn push(&mut self, bytes: &[u8], time: Option<DateTime<Local>>) -> u64 {
-        let offset = self.stream.push(bytes, time);
+    pub fn push(&mut self, bytes: &[u8]) -> u64 {
+        let offset = self.stream.push(bytes);
         self.writes.trim(self.stream.start());
         offset
     }
@@ -100,6 +98,11 @@ impl Dump {
         let mut tokens = Vec::new();
         self.tokenizer.feed(bytes, offset, &mut tokens);
         tokens
+    }
+
+    /// Back to following the bytes as they come
+    pub fn follow(&mut self) {
+        self.scroller.follow();
     }
 
     /// The byte trace dropped, its memory given back (MAX-256)
@@ -425,6 +428,20 @@ impl Dump {
     /// Scrolls the fewest lines that show the cursor
     fn reveal_cursor(&mut self) {
         self.reveal(self.copy.cursor);
+    }
+
+    /// Keeps byte `offset` in the middle half of the lines shown: nothing moves while it's there,
+    /// else the dump centers it (MAX-256: following the other panel's cursor, calmer than the
+    /// fewest lines, which leave it on an edge)
+    pub fn keep_in_middle(&mut self, offset: u64) {
+        let (start, end) = self.span();
+        let line = offset / self.scroller.width.max(1) as u64;
+        let rows = self.scroller.rows.max(1) as u64;
+        let top = self.scroller.top_line(start, end);
+        let margin = rows / 4;
+        if !(top + margin..top + rows - margin).contains(&line) {
+            (self.scroller).scroll_to(line.saturating_sub(rows / 2), start, end);
+        }
     }
 
     /// Scrolls the fewest lines that show byte `offset`

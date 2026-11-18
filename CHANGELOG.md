@@ -27,7 +27,7 @@ to get the new keys that scroll the raw side panel in your `keymap.toml`:
   the ones the screen rebuilds (still copied, with a warning, without a
   trace). A new theme color,
   `cursor_ghost_old`, for the earlier and written over ones. `byte_trace` in
-  `[terminal_mode]` (`L` in the settings popup, `set byte-trace`) turns it
+  `[terminal_mode]` (`Y` in the settings popup, `set byte-trace`) turns it
   off on a fast link. See
   [The byte trace](https://pierre-mollard.github.io/maxicom/raw-side-panel.html#the-byte-trace).
 - `Ctrl-a Shift-Up` / `Ctrl-a Shift-Down` (`scroll-side-up` /
@@ -52,7 +52,8 @@ to get the new keys that scroll the raw side panel in your `keymap.toml`:
   on every line. It showed each screen row rebuilt by the emulator, so line
   ends, cursor moves, erases and text written over never showed, and colors
   came back in the emulator's own codes. The dump scrolls on its own, with
-  its own scrollbar, instead of following the screen; the history's
+  its own scrollbar, instead of following the screen, and goes back live
+  when the screen does; the history's
   scrollbar moves next to the history. Copy mode, the mouse and a byte
   search work in it. See
   [In terminal mode](https://pierre-mollard.github.io/maxicom/raw-side-panel.html#in-terminal-mode).

@@ -66,7 +66,8 @@ The dump scrolls on its own, apart from the screen:
   staying.
 
 It follows the bytes coming in while
-it shows its last line. A line and the screen row next to it aren't linked:
+it shows its last line, and goes back to them when the screen goes back live:
+a key typed, the screen scrolled back down to its end. A line and the screen row next to it aren't linked:
 one byte can redraw a row far up, and a progress bar writes the same row
 again and again.
 
@@ -146,8 +147,9 @@ With the cursor in the dump, the screen shows the cell its byte drew:
 A byte that draws nothing, a control byte or part of an escape sequence, has
 no cell.
 
-When the cursor moves, the other panel scrolls to its ghost. Bytes coming in
-don't move it back, and a panel scrolled by hand stays until the cursor moves
+When the cursor moves, the other panel keeps its ghost in the middle half of
+what it shows: it stays still while the ghost is there, and centers it when it
+would leave. Bytes coming in don't move it back, and a panel scrolled by hand stays until the cursor moves
 again. Tab puts the cursor on its ghost: from the screen on the bytes the
 cell shows, from the dump on the cell its byte still shows.
 
@@ -177,7 +179,7 @@ A cell shows no bytes when nothing traced drew what it shows now:
 
 The trace takes up to 256 bytes per `terminal_mode.history_size` row (about
 25 MB with the default) and some time on a fast link: a TCP link or a replay
-flooding maxicom. `L` in the settings popup, `set byte-trace on|off`, or
+flooding maxicom. `Y` in the settings popup, `set byte-trace on|off`, or
 `byte_trace = false` in `[terminal_mode]` turns it off: nothing is recorded
 and the memory is given back. Turned on again, it traces the bytes received
 from then on.

@@ -8,8 +8,6 @@
 
 use std::{collections::VecDeque, ops::Range};
 
-use chrono::{DateTime, Local};
-
 /// The most bytes kept per terminal history row
 pub const BYTES_PER_ROW: usize = 512;
 /// The least bytes kept, for a history of a few rows
@@ -20,17 +18,7 @@ pub struct RxStream {
     bytes: VecDeque<u8>,
     /// The offset of `bytes[0]`
     start: u64,
-    /// Each read from the device, oldest first: the first kept one starts at `start`
-    reads: VecDeque<Read>,
     capacity: usize,
-}
-
-/// A read from the device: its first byte's offset, and when it came (none when not known, a
-/// restored session's bytes without their times)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Read {
-    pub offset: u64,
-    pub time: Option<DateTime<Local>>,
 }
 
 impl RxStream {
@@ -39,53 +27,24 @@ impl RxStream {
         Self {
             bytes: VecDeque::new(),
             start: 0,
-            reads: VecDeque::new(),
             capacity: history_rows.saturating_mul(BYTES_PER_ROW).max(MIN_CAPACITY),
         }
     }
 
-    /// Adds a read received at `time`, the oldest bytes dropped past the ceiling; returns its
-    /// first byte's offset
-    pub fn push(&mut self, bytes: &[u8], time: Option<DateTime<Local>>) -> u64 {
+    /// Adds a read, the oldest bytes dropped past the ceiling; returns its first byte's offset
+    pub fn push(&mut self, bytes: &[u8]) -> u64 {
         let offset = self.end();
-        if bytes.is_empty() {
-            return offset;
-        }
-        self.reads.push_back(Read { offset, time });
         self.bytes.extend(bytes);
         if let Some(over) = self.bytes.len().checked_sub(self.capacity) {
-            self.drop_front(over);
+            self.bytes.drain(..over);
+            self.start += over as u64;
         }
         offset
-    }
-
-    fn drop_front(&mut self, count: usize) {
-        if count == 0 {
-            return;
-        }
-        self.bytes.drain(..count);
-        self.start += count as u64;
-        if self.bytes.is_empty() {
-            self.reads.clear();
-            return;
-        }
-        // the read holding the new first byte stays, starting there
-        while self
-            .reads
-            .get(1)
-            .is_some_and(|next| next.offset <= self.start)
-        {
-            self.reads.pop_front();
-        }
-        if let Some(read) = self.reads.front_mut() {
-            read.offset = read.offset.max(self.start);
-        }
     }
 
     pub fn clear(&mut self) {
         self.start = self.end();
         self.bytes.clear();
-        self.reads.clear();
     }
 
     /// The first byte kept
@@ -111,14 +70,6 @@ impl RxStream {
             &front[from.min(split)..to.min(split)],
             &back[from.saturating_sub(split)..to.saturating_sub(split)],
         )
-    }
-
-    /// The reads with a byte kept, oldest first
-    // TODO: (MAX-252) step 7, a mark at the read boundaries in the dump
-    #[allow(dead_code)]
-    #[inline]
-    pub fn reads(&self) -> &VecDeque<Read> {
-        &self.reads
     }
 }
 

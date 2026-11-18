@@ -143,6 +143,9 @@ pub struct TerminalMode {
     invalid_bytes: InvalidBytes,
     /// The device's bytes as received, the raw side panel's dump (MAX-252)
     dump: Dump,
+    /// The screen scrolled up from live when last reconciled: going back down sends the dump
+    /// live too (MAX-256)
+    screen_scrolled: bool,
     /// The main screen's rows dropped from the top of the scrollback so far: a world row plus
     /// this is an absolute row, which scrolling doesn't change (MAX-256)
     rows_gone: u64,
@@ -198,6 +201,7 @@ impl TerminalMode {
             invalid_bytes: InvalidBytes::default(),
             dump: Dump::new(max_history_lines),
             rows_gone: 0,
+            screen_scrolled: false,
             trace_ghosts: None,
             trace_followed: None,
             trace_cell: None,
@@ -222,7 +226,7 @@ impl TerminalMode {
         add_lf: bool,
         trace: bool,
     ) {
-        let offset = self.dump.push(raw_bytes, Some(Local::now()));
+        let offset = self.dump.push(raw_bytes);
         let feed = Feed::Device {
             offset: trace.then_some(offset),
             add_cr,
@@ -536,7 +540,7 @@ impl TerminalMode {
         let moved = self.trace_followed != Some((line, col));
         self.trace_followed = Some((line, col));
         if moved && let Some(shown) = ghosts.first() {
-            self.dump.reveal(shown.start);
+            self.dump.keep_in_middle(shown.start);
         }
         (ghosts, moved)
     }
@@ -559,6 +563,13 @@ impl TerminalMode {
         if self.trace_followed_byte != Some(offset) {
             self.trace_followed_byte = Some(offset);
             if let Some(((line, col), _)) = cell {
+                // kept in the middle half of the rows shown, else centered, as the dump does;
+                // the pan as for the copy cursor
+                let (top, bottom) = self.visible_lines();
+                let margin = (bottom - top + 1) / 4;
+                if !(top + margin..=bottom - margin).contains(&line) {
+                    self.scroll_to_target_line(line, self.scroller.view_height);
+                }
                 self.reveal_at(line, col, Reveal::Edge);
             }
         }
@@ -1081,6 +1092,21 @@ impl TerminalMode {
 
         self.pan_offset_y = y_offset as usize;
         self.vt100_parser.screen_mut().set_scrollback(vt_scrollback);
+
+        // the screen scrolled back down to live: the dump goes back live with it
+        let scrolled = self.scroller.offset_y > 0;
+        if self.screen_scrolled && !scrolled {
+            self.dump_back_live();
+        }
+        self.screen_scrolled = scrolled;
+    }
+
+    /// The dump back to its live end, as the screen goes live (MAX-256); not while copy mode's
+    /// cursor is in it, which the screen follows
+    fn dump_back_live(&mut self) {
+        if self.dump_copy().is_none() {
+            self.dump.follow();
+        }
     }
 
     pub fn scroll_up(&mut self, lines: usize) {
@@ -1103,9 +1129,11 @@ impl TerminalMode {
         self.scroll_down(self.scroller.view_height.saturating_sub(1));
     }
 
+    /// The screen back live (a key typed, a paste, `Shift-End`...): the dump too
     pub fn scroll_to_bottom(&mut self) {
         self.scroller.scroll_to_bottom();
         self.reconcile_both_vertical_scroll();
+        self.dump_back_live();
     }
 
     /// To `rows` above the live view (MAX-142)
@@ -1677,7 +1705,7 @@ impl TerminalMode {
         trace: bool,
     ) {
         for chunk in chunks {
-            let offset = self.dump.push(chunk.bytes, chunk.time);
+            let offset = self.dump.push(chunk.bytes);
             let feed = Feed::Device {
                 offset: trace.then_some(offset),
                 add_cr: false,

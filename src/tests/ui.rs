@@ -2064,6 +2064,45 @@ fn popup_hints_follow_the_keymap() {
     assert!(has(&rows, "x Return"), "{rows:#?}");
 }
 
+/// MAX-256: every key the settings popup shows works in both cases: none is one of the popups'
+/// own keys (`h` `j` `k` `l` move, `g` goes home), which would take it first.
+/// How: the popup drawn, each `[X]` label's letter pressed lowercase and uppercase
+#[test]
+fn settings_popup_keys_work_in_both_cases() {
+    use crossterm::event::{KeyCode, KeyEvent};
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 40);
+    h.app
+        .update(Action::App(AppAction::OpenOverlay(Overlay::Settings(
+            SettingsDialog::new(),
+        ))));
+    let rows = h.draw();
+    let letters: Vec<char> = rows
+        .iter()
+        .flat_map(|row| row.match_indices('[').map(move |(at, _)| &row[at..]))
+        .filter_map(|label| {
+            let mut chars = label.chars();
+            match (chars.next(), chars.next(), chars.next()) {
+                (Some('['), Some(c), Some(']')) if c.is_ascii_alphabetic() => Some(c),
+                _ => None,
+            }
+        })
+        .collect();
+    assert!(letters.contains(&'Y') && letters.len() > 10, "{letters:?}");
+    for letter in letters {
+        for (code, mods) in [
+            (letter.to_ascii_lowercase(), KeyModifiers::NONE),
+            (letter.to_ascii_uppercase(), KeyModifiers::SHIFT),
+        ] {
+            let event = Event::Key(KeyEvent::new(KeyCode::Char(code), mods));
+            let action = crate::inputs::handle_event(event, &h.app);
+            assert!(
+                matches!(action, Action::Overlay(DialogAction::HandleKey(_))),
+                "{code:?}: {action:?}"
+            );
+        }
+    }
+}
+
 /// MAX-163: the settings show the config folder and the files a setting puts out of it;
 /// `c` or a click on the folder copies its path, the file's number or a click on it the
 /// file's, a number with no file nothing. The
@@ -10954,6 +10993,120 @@ fn screen_yank_raw_warns_without_the_trace() {
         warned.iter().any(|toast| toast
             == "Copied the screen's bytes, not the ones received: no byte trace for this selection"),
         "{warned:?}"
+    );
+}
+
+/// MAX-256: the dump goes back live when the screen does: a key typed (the screen live already),
+/// the screen scrolled back down to live; not on a scroll that leaves the screen live, nor while
+/// copy mode's cursor is in the dump.
+/// How: 160 columns, 60 lines; the dump scrolled up 10 lines; a key; both scrolled up, the screen
+/// back down; the dump scrolled up, a scroll down on the live screen; copy mode in the dump on
+/// an early byte, the screen sent live
+#[test]
+fn the_dump_goes_live_with_the_screen() {
+    use crossterm::event::{KeyCode, KeyEvent};
+    let lines: String = (0..60).map(|i| format!("line {i:02}\r\n")).collect();
+    let mut h = terminal_raw_on(160, lines.as_bytes());
+    h.draw();
+    let live = |h: &Harness| {
+        let (max, position) = h.app.terminal_mode.dump().scroll_position();
+        position == max
+    };
+    assert!(live(&h));
+
+    h.app.terminal_mode.dump_mut().scroll_up(10);
+    assert!(!live(&h));
+    let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+    h.app
+        .update(Action::Terminal(crate::inputs::TerminalAction::Key(key)));
+    assert!(live(&h), "a key typed");
+
+    h.scroll(HistoryAction::ScrollUp(5));
+    h.app.terminal_mode.dump_mut().scroll_up(10);
+    h.scroll(HistoryAction::ScrollDown(5));
+    assert!(live(&h), "the screen scrolled back down to live");
+
+    h.app.terminal_mode.dump_mut().scroll_up(10);
+    h.scroll(HistoryAction::ScrollDown(3));
+    assert!(!live(&h), "the screen was live already");
+
+    h.app.update(Action::CopyMode(CopyModeAction::Enter));
+    h.app.update(Action::CopyMode(CopyModeAction::ToggleSide));
+    h.app.terminal_mode.dump_mut().cursor_to(93);
+    h.draw();
+    h.app.terminal_mode.scroll_to_bottom();
+    h.draw();
+    assert!(
+        dump_cell(&h, 93).is_some(),
+        "the dump keeps its copy cursor shown"
+    );
+}
+
+/// MAX-256: following the other panel's cursor, a panel keeps the ghost in the middle half of
+/// what it shows: it stays still while the ghost is there, else centers it, so the ghost is
+/// never left on an edge and the panel moves less often than the cursor.
+/// How: 160 columns, 60 lines "line NN" CR LF (9 bytes, after 48); copy mode on line 10 of the
+/// text, 12 lines down; then in the dump from line 10's bytes, 12 dump lines down (a step on a
+/// CR or LF has no ghost)
+#[test]
+fn followed_ghosts_stay_in_the_middle() {
+    let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+    let lines: String = (0..60).map(|i| format!("line {i:02}\r\n")).collect();
+    let mut h = terminal_raw_on(160, lines.as_bytes());
+    h.draw();
+    let in_middle = |row: u16, height: u16| (height / 4..height - height / 4).contains(&row);
+
+    copy(&mut h, CopyModeAction::Enter);
+    h.app.terminal_mode.copy_state_mut().jump_to(24 + 10, 0);
+    h.draw();
+    let mut tops = std::collections::HashSet::new();
+    for step in 0..12 {
+        copy(&mut h, CopyModeAction::MoveDown);
+        h.draw();
+        let line = 10 + step + 1;
+        let (_, y) = dump_cell(&h, 48 + 9 * line).expect("the ghost shown");
+        let area = h.app.frame_map().raw_area;
+        assert!(
+            in_middle(y - area.y, area.height),
+            "step {step}: row {}",
+            y - area.y
+        );
+        tops.insert(h.app.terminal_mode.dump().scroll_position().1);
+    }
+    assert!(
+        tops.len() < 6,
+        "the dump moved at {} of 12 steps",
+        tops.len()
+    );
+
+    copy(&mut h, CopyModeAction::Exit);
+    copy(&mut h, CopyModeAction::Enter);
+    copy(&mut h, CopyModeAction::ToggleSide);
+    h.app.terminal_mode.dump_mut().cursor_to(48 + 9 * 10);
+    h.draw();
+    let mut offsets = std::collections::HashSet::new();
+    for step in 0..12 {
+        copy(&mut h, CopyModeAction::MoveDown);
+        h.draw();
+        let cursor = h.app.terminal_mode.dump_copy().unwrap().cursor;
+        // a CR or LF draws no cell: no ghost to follow
+        let Some(((line, col), _)) = h.app.terminal_mode.written_at(cursor, TextEncoding::Utf8)
+        else {
+            continue;
+        };
+        let (_, y) = screen_cell(&h, line, col).expect("the ghost shown");
+        let area = h.app.frame_map().text_area;
+        assert!(
+            in_middle(y - area.y, area.height),
+            "step {step}: row {}",
+            y - area.y
+        );
+        offsets.insert(h.app.terminal_mode.scroller().offset_y);
+    }
+    assert!(
+        offsets.len() < 6,
+        "the screen moved at {} of 12 steps",
+        offsets.len()
     );
 }
 
