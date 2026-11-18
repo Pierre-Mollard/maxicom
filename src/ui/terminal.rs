@@ -178,6 +178,9 @@ pub fn render_vt100_terminal(
         );
     }
 
+    // the dump copy cursor's cell (MAX-256), before the view: the screen may follow it
+    let traced = app.terminal_mode.trace_cell(app.settings().encoding);
+
     let cursor = MaxicomCursor::from_config(
         *theme.ui.cursor_unfocused,
         &app.settings().terminal_mode.unfocused_cursor_glyph,
@@ -209,6 +212,10 @@ pub fn render_vt100_terminal(
     } else {
         max_sb
     };
+    // the dump copy selection's cells on the rows shown, in its look (MAX-256)
+    let first_shown = top_visible_world_line + pan_y;
+    let shown_lines = first_shown..first_shown + content_area.height as usize;
+    let mirror = (app.terminal_mode).selection_cells(app.settings().encoding, shown_lines);
 
     // the grid rows shown, for mouse clicks (MAX-113): one char per column
     if app.settings().ui.mouse {
@@ -322,8 +329,38 @@ pub fn render_vt100_terminal(
             }
         }
 
+        for &((line, col), shown) in &mirror {
+            let (Some(row), Some(col)) = (line.checked_sub(first_shown), col.checked_sub(pan_x))
+            else {
+                continue;
+            };
+            if row < content_area.height as usize && col < content_area.width as usize {
+                let style = match shown {
+                    true => theme.ui.selection_style(true),
+                    false => *theme.ui.cursor_ghost_old,
+                };
+                buf[(content_area.x + col as u16, content_area.y + row as u16)].set_style(style);
+            }
+        }
+
+        // the dump copy cursor's cell, its byte still shown or written over (MAX-256)
+        if copy_state.side == CopySide::Raw
+            && let Some(((line, col), shown)) = traced
+            && let Some(row) = (line.checked_sub(top_visible_world_line + pan_y))
+                .filter(|&row| row < content_area.height as usize)
+            && let Some(col) = col
+                .checked_sub(pan_x)
+                .filter(|&col| col < content_area.width as usize)
+        {
+            let style = match shown {
+                true => *theme.ui.cursor_ghost,
+                false => *theme.ui.cursor_ghost_old,
+            };
+            buf[(content_area.x + col as u16, content_area.y + row as u16)].set_style(style);
+        }
+
         // selection cursor
-        if cursor.line_idx >= top_visible_world_line {
+        if copy_state.side == CopySide::Text && cursor.line_idx >= top_visible_world_line {
             let emulator_row = cursor.line_idx - top_visible_world_line;
             if emulator_row >= pan_y {
                 let viewer_row = emulator_row - pan_y;
@@ -333,15 +370,11 @@ pub fn render_vt100_terminal(
                         let screen_x = content_area.x + viewer_col as u16;
                         let screen_y = content_area.y + viewer_row as u16;
 
-                        if copy_state.side == CopySide::Raw {
-                            buf[(screen_x, screen_y)].set_style(*theme.ui.cursor_ghost);
-                        } else {
-                            if !app.is_app_focused() {
-                                buf[(screen_x, screen_y)]
-                                    .set_style(Style::default().add_modifier(Modifier::REVERSED));
-                            }
-                            frame.set_cursor_position((screen_x, screen_y));
+                        if !app.is_app_focused() {
+                            buf[(screen_x, screen_y)]
+                                .set_style(Style::default().add_modifier(Modifier::REVERSED));
                         }
+                        frame.set_cursor_position((screen_x, screen_y));
                     }
                 }
             }

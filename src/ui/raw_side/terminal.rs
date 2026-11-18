@@ -53,6 +53,12 @@ pub fn render(app: &mut App, frame: &mut Frame, raw_area: Rect, theme: &ThemeCon
         (inner_area, None)
     };
 
+    // the screen copy cursor's bytes (MAX-256), before the top line: the dump may follow them
+    let encoding = app.settings().encoding;
+    let (ghosts, follow) = app.terminal_mode.trace_ghosts(encoding);
+    // the screen copy selection's bytes, in its look (MAX-256)
+    let mirror = app.terminal_mode.selection_bytes(encoding);
+    let mirror_style = theme.ui.selection_style(false);
     let dump = app.terminal_mode.dump_mut();
     let layout = DumpLayout::fit(inner_area.width as usize, raw_view, dump.stream().end());
     let rows = inner_area.height as usize;
@@ -80,6 +86,9 @@ pub fn render(app: &mut App, frame: &mut Frame, raw_area: Rect, theme: &ThemeCon
     };
     app.terminal_mode
         .pan_to_dump_cursor(raw_view, body_area.width as usize);
+    if follow && let Some(shown) = ghosts.first() {
+        (app.terminal_mode.dump_mut()).pan_to(shown.start, raw_view, body_area.width as usize);
+    }
     let overflow = layout.body_width.saturating_sub(body_area.width as usize);
     let dump = app.terminal_mode.dump_mut();
     dump.set_pan_limit(overflow, raw_view);
@@ -132,6 +141,22 @@ pub fn render(app: &mut App, frame: &mut Frame, raw_area: Rect, theme: &ThemeCon
         }
         // over the matches it overlaps
         marks.extend(active.map(|bytes| (bytes, *theme.search.search_match_active)));
+        for range in mirror
+            .iter()
+            .filter(|range| range.end > from && range.start < from + width)
+        {
+            marks.push((local(range), mirror_style));
+        }
+        // the screen copy cursor's bytes: the earlier writes on its cell, then the one it shows
+        for (i, ghost) in ghosts.iter().enumerate().rev() {
+            if ghost.end > from && ghost.start < from + width {
+                let style = match i {
+                    0 => *theme.ui.cursor_ghost,
+                    _ => *theme.ui.cursor_ghost_old,
+                };
+                marks.push((local(ghost), style));
+            }
+        }
         if let Some(selected) = &selection {
             marks.push((local(selected), selection_style));
         }

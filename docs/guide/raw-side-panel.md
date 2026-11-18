@@ -91,7 +91,8 @@ When its rows are wider than the panel, `Ctrl-a Shift-Left` /
 ## Copying and searching bytes
 
 In [copy mode](copy-mode-and-mouse.md#copy-mode), Tab moves the cursor into
-the panel to select bytes, and back. A [byte search](search.md#byte-search)
+the panel to select bytes, and back. In terminal mode it lands on the
+[byte trace](#the-byte-trace)'s ghost when there is one. A [byte search](search.md#byte-search)
 takes bytes written in the panel's current view.
 
 In line mode, the cursor moves along the line's bytes and `Y` copies a
@@ -120,6 +121,60 @@ show, as an `F1` drawn `�`. Its matches are marked in the dump, and `n` /
 `N` move the dump's cursor to them, even when the search started on the
 screen. A text search moves the screen's cursor. With the panel off, a byte
 search finds nothing and says so.
+
+## The byte trace
+
+In terminal mode, maxicom remembers which received bytes drew which cell of
+the screen: the byte trace. In [copy mode](copy-mode-and-mouse.md#copy-mode),
+each panel shows where the other one's cursor is.
+
+With the cursor on the screen, the dump shows the bytes behind the cursor's
+cell:
+
+| Look | Bytes |
+| --- | --- |
+| `cursor_ghost` | The char the cell shows: the last one written there |
+| `cursor_ghost_old`, dimmer | The chars written there before, up to 32: a progress bar writes the same cells again and again |
+
+With the cursor in the dump, the screen shows the cell its byte drew:
+
+| Look | Cell |
+| --- | --- |
+| `cursor_ghost` | It still shows that byte's char |
+| `cursor_ghost_old`, dimmer | Something was written over it since |
+
+A byte that draws nothing, a control byte or part of an escape sequence, has
+no cell.
+
+When the cursor moves, the other panel scrolls to its ghost. Bytes coming in
+don't move it back, and a panel scrolled by hand stays until the cursor moves
+again. Tab puts the cursor on its ghost: from the screen on the bytes the
+cell shows, from the dump on the cell its byte still shows.
+
+A selection shows in the other panel too, in its own look:
+
+- selected on the screen, the dump shows the bytes that make it: the
+  selected chars' bytes and what lies between them that draws nothing, the
+  colors and the line ends, but not bytes that drew other text;
+- selected in the dump, the screen shows the cells those bytes drew,
+  `cursor_ghost_old` where something was written over them.
+
+A cell shows no bytes when nothing traced drew what it shows now:
+
+- it's blank, or erased;
+- its bytes were dropped, past the bytes kept (see
+  [In terminal mode](#in-terminal-mode));
+- a full-screen program moved its text: a scroll region, inserted or deleted
+  lines, or the alternate screen scrolling. maxicom shows no bytes rather
+  than wrong ones. For the same reason, a byte whose text moved shows its
+  old cell, as written over.
+
+The trace takes up to 256 bytes per `terminal_mode.history_size` row (about
+25 MB with the default) and some time on a fast link: a TCP link or a replay
+flooding maxicom. `L` in the settings popup, `set byte-trace on|off`, or
+`byte_trace = false` in `[terminal_mode]` turns it off: nothing is recorded
+and the memory is given back. Turned on again, it traces the bytes received
+from then on.
 
 ## Size and position
 

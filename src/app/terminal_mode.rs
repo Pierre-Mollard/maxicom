@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     collections::VecDeque,
+    ops::Range,
     time::{Duration, Instant},
 };
 
@@ -52,6 +53,42 @@ const RESTORE_RESET: &str = concat!(
     "\x1b[0m\x1b[?25h",
 );
 
+/// The earlier writes on the copy cursor's cell shown in the dump, past the one it shows: a
+/// progress bar's cell can have thousands (MAX-256)
+const OLD_GHOSTS: usize = 32;
+
+/// The screen copy cursor's bytes in the dump, newest first, found for a cursor and the bytes
+/// kept: `(line, column, stream end)` (MAX-256)
+#[derive(Debug, Clone)]
+struct Ghosts {
+    at: (usize, usize, u64),
+    bytes: Vec<Range<u64>>,
+}
+
+/// The dump copy cursor's cell on the screen, found for a cursor byte and the bytes kept:
+/// `(offset, stream end)` (MAX-256)
+#[derive(Debug, Clone, Copy)]
+struct TraceCell {
+    at: (u64, u64),
+    cell: Option<((usize, usize), bool)>,
+}
+
+/// The screen copy selection's bytes in the dump, found for a selection and the bytes kept:
+/// `(start, end, stream end)` (MAX-256)
+#[derive(Debug, Clone)]
+struct MirrorBytes {
+    at: ((usize, usize), (usize, usize), u64),
+    bytes: Vec<Range<u64>>,
+}
+
+/// The dump copy selection's cells on the screen, found for its bytes, the bytes kept and the
+/// world lines shown (MAX-256)
+#[derive(Debug, Clone)]
+struct MirrorCells {
+    at: (Range<u64>, u64, Range<usize>),
+    cells: Vec<((usize, usize), bool)>,
+}
+
 /// How bytes reach the emulator (MAX-256): the device's, at `offset` in the dump's stream (none
 /// when the byte trace is off: their runs aren't recorded) with add CR / add LF; or maxicom's own
 /// (a restore's reset, the separator, `clear`), which aren't in the stream
@@ -100,6 +137,18 @@ pub struct TerminalMode {
     /// The main screen's rows dropped from the top of the scrollback so far: a world row plus
     /// this is an absolute row, which scrolling doesn't change (MAX-256)
     rows_gone: u64,
+    /// The screen copy cursor's bytes in the dump, as last found (MAX-256)
+    trace_ghosts: Option<Ghosts>,
+    /// The screen copy cursor the dump last followed to its bytes
+    trace_followed: Option<(usize, usize)>,
+    /// The dump copy cursor's cell on the screen, as last found (MAX-256)
+    trace_cell: Option<TraceCell>,
+    /// The dump copy cursor the screen last followed to its cell
+    trace_followed_byte: Option<u64>,
+    /// The screen copy selection's bytes in the dump, as last found (MAX-256)
+    mirror_bytes: Option<MirrorBytes>,
+    /// The dump copy selection's cells on the screen, as last found (MAX-256)
+    mirror_cells: Option<MirrorCells>,
     /// Copy mode as a search found it when it opened, given back by Esc (MAX-252)
     search_from: Option<(CopyModeState, DumpCopy)>,
     /// The pan when copy mode started, given back when it ends (MAX-217)
@@ -138,6 +187,12 @@ impl TerminalMode {
             invalid_bytes: InvalidBytes::default(),
             dump: Dump::new(max_history_lines),
             rows_gone: 0,
+            trace_ghosts: None,
+            trace_followed: None,
+            trace_cell: None,
+            trace_followed_byte: None,
+            mirror_bytes: None,
+            mirror_cells: None,
             search_from: None,
             copy_pan: None,
             copy_held: false,
@@ -289,12 +344,131 @@ impl TerminalMode {
         let Some((line, col)) = self.line_of(write.cell) else {
             return false;
         };
-        let (sb, ch) = (self.max_content_scrollback, write.ch);
+        self.shows_on_line(line, &[(col, write.ch)])[0]
+    }
+
+    /// `still_shows` for chars on one world line, `(column, char)` each: the line read once
+    fn shows_on_line(&mut self, line: usize, chars: &[(usize, char)]) -> Vec<bool> {
+        let sb = self.max_content_scrollback;
         with_world_row(&mut self.vt100_parser, sb, line, |screen, view_row, _| {
-            let cell = screen.cell(view_row as u16, col as u16);
-            cell.is_some_and(|cell| cell.contents().starts_with(ch))
+            (chars.iter())
+                .map(|&(col, ch)| {
+                    let cell = screen.cell(view_row as u16, col as u16);
+                    cell.is_some_and(|cell| cell.contents().starts_with(ch))
+                })
+                .collect()
         })
-        .unwrap_or(false)
+        .unwrap_or_else(|| vec![false; chars.len()])
+    }
+
+    /// The bytes making the screen copy selection (MAX-256), in byte order: of each selected
+    /// cell, the bytes of the char it shows now (none for a cell showing no traced char), joined
+    /// across the gaps that draw nothing (escape sequences, colors, line ends) but not across
+    /// bytes that drew other text. Empty off copy mode, in the dump, without a selection
+    pub fn selection_bytes(&mut self, encoding: TextEncoding) -> Vec<Range<u64>> {
+        let state = &self.copy_state;
+        if !state.active || state.side != CopySide::Text {
+            return Vec::new();
+        }
+        let Some((start, end)) = state.normalized_selection() else {
+            return Vec::new();
+        };
+        let at = (
+            (start.line_idx, start.char_idx),
+            (end.line_idx, end.char_idx),
+            self.dump.stream().end(),
+        );
+        if let Some(found) = self.mirror_bytes.as_ref().filter(|found| found.at == at) {
+            return found.bytes.clone();
+        }
+        let cols = self.get_vt100_size().1;
+        let last_col = usize::from(cols.max(1)) - 1;
+        let (first, last) = (
+            self.cell_at(start.line_idx, 0),
+            self.cell_at(end.line_idx, 0),
+        );
+        let rows = first.row..=last.row;
+        let writes = (self.dump).newest_writes_on(rows, first.alternate, encoding, cols);
+        let mut pieces = Vec::new();
+        for line in start.line_idx..=end.line_idx {
+            let from = if line == start.line_idx {
+                start.char_idx
+            } else {
+                0
+            };
+            let to = if line == end.line_idx {
+                end.char_idx
+            } else {
+                last_col
+            };
+            let row = self.cell_at(line, 0).row;
+            let found: Vec<&Write> = (from..=to.min(last_col))
+                .filter_map(|col| writes.get(&(row, col as u16)))
+                .collect();
+            let chars: Vec<_> = (found.iter())
+                .map(|write| (usize::from(write.cell.col), write.ch))
+                .collect();
+            let shown = self.shows_on_line(line, &chars);
+            let still_shown = found.iter().zip(shown).filter(|&(_, shown)| shown);
+            pieces.extend(still_shown.map(|(write, _)| write.bytes.clone()));
+        }
+        pieces.sort_by_key(|piece| piece.start);
+        let mut bytes: Vec<Range<u64>> = Vec::new();
+        for piece in pieces {
+            match bytes.last_mut() {
+                Some(last)
+                    if piece.start <= last.end || !self.dump.draws_in(last.end..piece.start) =>
+                {
+                    last.end = last.end.max(piece.end);
+                }
+                _ => bytes.push(piece),
+            }
+        }
+        self.mirror_bytes = Some(MirrorBytes {
+            at,
+            bytes: bytes.clone(),
+        });
+        bytes
+    }
+
+    /// The cells the dump copy selection's bytes drew (MAX-256), on the world `lines` given
+    /// (the ones shown), each with whether it still shows its char (else written over). Empty
+    /// off copy mode, on the screen, without a selection
+    pub fn selection_cells(
+        &mut self,
+        encoding: TextEncoding,
+        lines: Range<usize>,
+    ) -> Vec<((usize, usize), bool)> {
+        let Some(copy) = self.dump_copy() else {
+            return Vec::new();
+        };
+        let Some(selected) = copy.selection(&self.dump.bounds()) else {
+            return Vec::new();
+        };
+        let at = (selected.clone(), self.dump.stream().end(), lines.clone());
+        if let Some(found) = self.mirror_cells.as_ref().filter(|found| found.at == at) {
+            return found.cells.clone();
+        }
+        let cols = self.get_vt100_size().1;
+        let mut by_line: std::collections::BTreeMap<usize, Vec<(usize, char)>> =
+            std::collections::BTreeMap::new();
+        for write in self.dump.written_in(selected, encoding, cols) {
+            if let Some((line, col)) = self.line_of(write.cell)
+                && lines.contains(&line)
+            {
+                by_line.entry(line).or_default().push((col, write.ch));
+            }
+        }
+        let mut cells = Vec::new();
+        for (line, chars) in by_line {
+            let shown = self.shows_on_line(line, &chars);
+            cells.extend((chars.iter().zip(shown)).map(|(&(col, _), shown)| ((line, col), shown)));
+        }
+        self.mirror_cells = Some(MirrorCells {
+            at,
+            cells: cells.clone(),
+        });
+        cells
     }
 
     /// The bytes behind a world position (MAX-256): the write it shows now, then the earlier
@@ -312,6 +486,62 @@ impl TerminalMode {
         let writes = self.dump.writes_to(cell, encoding, cols, max);
         let shown = writes.first()?;
         self.still_shows(&shown.clone()).then_some(writes)
+    }
+
+    /// The bytes behind the screen copy cursor (MAX-256), newest first: the write it shows,
+    /// then the earlier ones on its cell, `OLD_GHOSTS` at most; none off copy mode, in the
+    /// dump, or when the cell shows no write traced. And whether the cursor moved since the
+    /// last call: the dump follows it then, to the bytes it shows (copy mode only, new bytes
+    /// don't move it)
+    pub fn trace_ghosts(&mut self, encoding: TextEncoding) -> (Vec<Range<u64>>, bool) {
+        let state = &self.copy_state;
+        if !state.active || state.side != CopySide::Text {
+            return (Vec::new(), false);
+        }
+        let (line, col) = (state.cursor.line_idx, state.cursor.char_idx);
+        let key = (line, col, self.dump.stream().end());
+        let ghosts = match &self.trace_ghosts {
+            Some(found) if found.at == key => found.bytes.clone(),
+            _ => {
+                let writes = self.writes_at(line, col, encoding, 1 + OLD_GHOSTS);
+                let bytes: Vec<_> = writes.into_iter().flatten().map(|w| w.bytes).collect();
+                self.trace_ghosts = Some(Ghosts {
+                    at: key,
+                    bytes: bytes.clone(),
+                });
+                bytes
+            }
+        };
+        let moved = self.trace_followed != Some((line, col));
+        self.trace_followed = Some((line, col));
+        if moved && let Some(shown) = ghosts.first() {
+            self.dump.reveal(shown.start);
+        }
+        (ghosts, moved)
+    }
+
+    /// The cell the dump copy cursor's byte drew (MAX-256), as a world position, and whether it
+    /// still shows that byte's char (else written over); none off copy mode, on the screen's
+    /// side, for a byte that draws nothing or a cell no longer kept. When the dump cursor moved
+    /// since the last call, the screen follows it to that cell (copy mode only)
+    pub fn trace_cell(&mut self, encoding: TextEncoding) -> Option<((usize, usize), bool)> {
+        let offset = self.dump_copy()?.cursor;
+        let key = (offset, self.dump.stream().end());
+        let cell = match &self.trace_cell {
+            Some(found) if found.at == key => found.cell,
+            _ => {
+                let cell = self.written_at(offset, encoding);
+                self.trace_cell = Some(TraceCell { at: key, cell });
+                cell
+            }
+        };
+        if self.trace_followed_byte != Some(offset) {
+            self.trace_followed_byte = Some(offset);
+            if let Some(((line, col), _)) = cell {
+                self.reveal_at(line, col, Reveal::Edge);
+            }
+        }
+        cell
     }
 
     /// Where byte `offset` drew (MAX-256): its world position and whether it still shows there.
@@ -1057,7 +1287,7 @@ impl TerminalMode {
         }
         let raw_view = settings.raw_side.view;
         if action == CopyModeAction::ToggleSide {
-            self.toggle_dump_side(raw_view);
+            self.toggle_dump_side(raw_view, settings.encoding);
             return None;
         }
         // copy mode starting (a key or a mouse press): its pan comes back when it ends
@@ -1140,8 +1370,12 @@ impl TerminalMode {
     /// Brings the view to the copy cursor (MAX-143): a step out of the view moves it by the
     /// fewest rows, a jump centers it; the pan follows the cursor's column the same way
     fn reveal_copy_cursor(&mut self, reveal: Reveal) {
-        let cursor_row = self.copy_state.cursor.line_idx;
-        let cursor_col = self.copy_state.cursor.char_idx;
+        let cursor = self.copy_state.cursor;
+        self.reveal_at(cursor.line_idx, cursor.char_idx, reveal);
+    }
+
+    /// Brings the view to a world position, as `reveal_copy_cursor` does to the copy cursor
+    fn reveal_at(&mut self, cursor_row: usize, cursor_col: usize, reveal: Reveal) {
         let view_h = self.scroller.view_height;
         let view_w = self.scroller.view_width; // or passed-in visible columns width
         let (_, grid_cols) = self.get_vt100_size();
@@ -1302,10 +1536,11 @@ impl TerminalMode {
         (state.active && state.side == CopySide::Raw).then_some(self.dump.copy())
     }
 
-    /// Copy mode switching to the dump: its cursor on the last byte of the bottom line shown
-    /// (no bytes: it stays on the screen); back to the screen, where its cursor was. Neither
-    /// side keeps the other's selection
-    fn toggle_dump_side(&mut self, raw_view: RawSideView) {
+    /// Copy mode switching to the dump: its cursor on the bytes the screen cursor's cell shows
+    /// (MAX-256), else on the last byte of the bottom line shown (no bytes: it stays on the
+    /// screen); back to the screen, on the dump cursor's cell when it still shows its byte, else
+    /// where the screen cursor was. Neither side keeps the other's selection, neither view jumps
+    fn toggle_dump_side(&mut self, raw_view: RawSideView, encoding: TextEncoding) {
         let state = &mut self.copy_state;
         if !state.active || raw_view == RawSideView::Off {
             return;
@@ -1313,11 +1548,23 @@ impl TerminalMode {
         state.selection_anchor = None;
         state.line_select = false;
         if state.side == CopySide::Raw {
-            state.side = CopySide::Text;
+            let cursor = self.dump.copy().cursor;
+            if let Some(((line, col), true)) = self.written_at(cursor, encoding) {
+                self.copy_state.jump_to(line, col);
+                self.trace_followed = Some((line, col));
+            }
+            self.copy_state.side = CopySide::Text;
             return;
         }
-        if self.dump.start_copy() {
-            state.side = CopySide::Raw;
+        let cursor = state.cursor;
+        let traced = self.writes_at(cursor.line_idx, cursor.char_idx, encoding, 1);
+        if let Some(shown) = traced.and_then(|writes| writes.into_iter().next()) {
+            self.dump.set_copy(DumpCopy::at(shown.bytes.start));
+            self.dump.reveal(shown.bytes.start);
+            self.trace_followed_byte = Some(shown.bytes.start);
+            self.copy_state.side = CopySide::Raw;
+        } else if self.dump.start_copy() {
+            self.copy_state.side = CopySide::Raw;
         }
     }
 
@@ -1349,6 +1596,12 @@ impl TerminalMode {
     /// matches kept after a search are no longer shown (MAX-215)
     fn copy_mode_ended(&mut self) {
         self.search_state.kept = false;
+        self.trace_ghosts = None;
+        self.trace_followed = None;
+        self.trace_cell = None;
+        self.trace_followed_byte = None;
+        self.mirror_bytes = None;
+        self.mirror_cells = None;
         if let Some(pan) = self.copy_pan.take() {
             self.scroller.offset_x = pan;
         }

@@ -17,6 +17,17 @@ to get the new keys that scroll the raw side panel in your `keymap.toml`:
 
 ### Added
 
+- In terminal mode, the byte trace: in copy mode, the raw side panel shows
+  the bytes behind the screen's cursor, the char the cell shows and the
+  earlier ones written there (a progress bar's), and the screen shows the
+  cell the dump cursor's byte drew, written over or not. Each panel scrolls
+  to the other's ghost, and Tab lands on it. A selection on one side shows
+  on the other: on the screen, the dump shows the bytes that make it, colors
+  and line ends included. A new theme color,
+  `cursor_ghost_old`, for the earlier and written over ones. `byte_trace` in
+  `[terminal_mode]` (`L` in the settings popup, `set byte-trace`) turns it
+  off on a fast link. See
+  [The byte trace](https://pierre-mollard.github.io/maxicom/raw-side-panel.html#the-byte-trace).
 - `Ctrl-a Shift-Up` / `Ctrl-a Shift-Down` (`scroll-side-up` /
   `scroll-side-down`) scroll the raw side panel a line, and
   `Ctrl-a Shift-PageUp` / `Ctrl-a Shift-PageDown` (`page-side-up` /

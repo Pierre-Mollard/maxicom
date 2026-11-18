@@ -10561,6 +10561,294 @@ fn terminal_copy_mode_in_the_dump() {
     assert_eq!(h.app.copy_side(), Some(CopySide::Text));
 }
 
+/// The screen cell of byte `offset`'s digits in the dump as last drawn, none when it isn't shown
+fn dump_cell(h: &Harness, offset: u64) -> Option<(u16, u16)> {
+    let map = h.app.frame_map();
+    let crate::app::types::RawRows::Dump {
+        top_line, width, ..
+    } = map.raw_rows
+    else {
+        return None;
+    };
+    let width = width.max(1) as u64;
+    let row = (offset / width).checked_sub(top_line)?;
+    let col = ((offset % width) as usize * map.raw_stride).checked_sub(map.raw_pan_x)?;
+    let (x, y) = (map.raw_area.x + col as u16, map.raw_area.y + row as u16);
+    (row < u64::from(map.raw_area.height) && col < usize::from(map.raw_area.width))
+        .then_some((x, y))
+}
+
+/// MAX-256 step 2: with the screen's copy cursor on a cell, the dump shows the bytes that wrote
+/// it: the write it shows bright, the earlier writes there dimmer; they move with the cursor.
+/// How: 160 columns, CR "10%" CR "20%" CR "30%" (after 48 bytes of CR LF: '1' 49, '2' 53, '3' 57);
+/// copy mode, the line's start, then one char right
+#[test]
+fn screen_cursor_ghosts_in_the_dump() {
+    let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+    let mut h = terminal_raw_on(160, b"\r10%\r20%\r30%");
+    h.draw();
+    copy(&mut h, CopyModeAction::Enter);
+    copy(&mut h, CopyModeAction::StartOfLine);
+    h.draw();
+    let theme = h_theme();
+    let (shown, old) = (theme.ui.cursor_ghost.bg, theme.ui.cursor_ghost_old.bg);
+    let bg = |h: &Harness, offset| bg_at(h, dump_cell(h, offset).unwrap());
+    assert_eq!(bg(&h, 57), shown, "'3'");
+    assert_eq!(bg(&h, 53), old, "'2'");
+    assert_eq!(bg(&h, 49), old, "'1'");
+    assert_ne!(bg(&h, 58), shown, "the '0' after");
+
+    copy(&mut h, CopyModeAction::MoveRight);
+    h.draw();
+    assert_eq!(bg(&h, 58), shown, "'0' of 30%");
+    assert_eq!(bg(&h, 54), old, "'0' of 20%");
+    assert_ne!(bg(&h, 57), shown, "'3'");
+
+    // off copy mode, no ghost
+    copy(&mut h, CopyModeAction::Exit);
+    h.draw();
+    assert_ne!(bg(&h, 58), shown);
+}
+
+/// MAX-256 step 2: the dump follows the screen's copy cursor to its bytes, by the fewest lines,
+/// when the cursor moves; bytes arriving don't move it back.
+/// How: 160 columns, 60 lines "line NN" CR LF (9 bytes, after 48 of CR LF); copy mode, the
+/// cursor put on "line 05" (byte 93); 10 more lines; then a line down ("line 06", byte 102)
+#[test]
+fn the_dump_follows_the_screen_cursor() {
+    let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+    let lines: String = (0..60).map(|i| format!("line {i:02}\r\n")).collect();
+    let mut h = terminal_raw_on(160, lines.as_bytes());
+    h.draw();
+    assert_eq!(dump_cell(&h, 93), None, "the dump shows the live end");
+    copy(&mut h, CopyModeAction::Enter);
+    h.app.terminal_mode.copy_state_mut().jump_to(24 + 5, 0);
+    h.draw();
+    let shown = h_theme().ui.cursor_ghost.bg;
+    let cell = dump_cell(&h, 93).expect("the dump went to 'line 05'");
+    assert_eq!(bg_at(&h, cell), shown);
+
+    let more: String = (60..70).map(|i| format!("line {i:02}\r\n")).collect();
+    (h.app.terminal_mode).process_device_rx(
+        TextEncoding::Utf8,
+        more.as_bytes(),
+        false,
+        false,
+        true,
+    );
+    h.draw();
+    assert_eq!(dump_cell(&h, 93), Some(cell), "new bytes don't move it");
+
+    copy(&mut h, CopyModeAction::MoveDown);
+    h.draw();
+    let cell = dump_cell(&h, 102).expect("'line 06' shown");
+    assert_eq!(bg_at(&h, cell), shown);
+}
+
+/// MAX-256 step 2: with the byte trace off, the screen's copy cursor has no bytes in the dump.
+/// How: CR "10%" CR "20%"; the trace turned off; copy mode on the '2'
+#[test]
+fn no_ghosts_without_the_byte_trace() {
+    let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+    let mut h = terminal_raw_on(160, b"\r10%\r20%");
+    h.app
+        .update(Action::App(crate::inputs::AppAction::ToggleSetting(
+            crate::overlays::SettingKey::ByteTrace,
+        )));
+    h.draw();
+    copy(&mut h, CopyModeAction::Enter);
+    copy(&mut h, CopyModeAction::StartOfLine);
+    h.draw();
+    let theme = h_theme();
+    for offset in [49, 53] {
+        let bg = bg_at(&h, dump_cell(&h, offset).unwrap());
+        assert_ne!(bg, theme.ui.cursor_ghost.bg, "{offset}");
+        assert_ne!(bg, theme.ui.cursor_ghost_old.bg, "{offset}");
+    }
+}
+
+/// The screen cell of world position `(line, col)` as last drawn, none when it isn't shown
+fn screen_cell(h: &Harness, line: usize, col: usize) -> Option<(u16, u16)> {
+    let map = h.app.frame_map();
+    let row = map
+        .text_rows
+        .iter()
+        .position(|row| row.as_ref().is_some_and(|row| row.line_idx == line))?;
+    let first = match map.text_rows[row].as_ref()?.chars {
+        crate::app::types::RowChars::Grid { first } => first,
+        _ => 0,
+    };
+    let col = col.checked_sub(first)?;
+    (col < usize::from(map.text_area.width))
+        .then_some((map.text_area.x + col as u16, map.text_area.y + row as u16))
+}
+
+/// MAX-256 step 3: with the copy cursor in the dump, the screen shows the cell its byte drew:
+/// as the cursor's ghost while the cell still shows it, dimmer once written over, none for a
+/// byte that draws nothing. Tab lands each cursor on the other's traced place.
+/// How: CR "10%" CR "20%" CR "30%" ('2' 53, CR 56, '3' 57, '0' 58); copy mode on the '3', Tab
+/// (the dump cursor on 57); left 4 (on '2', written over); left (CR); right 6 (the '0' of
+/// 30%), Tab back
+#[test]
+fn dump_cursor_ghost_on_the_screen() {
+    let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+    let mut h = terminal_raw_on(160, b"\r10%\r20%\r30%");
+    h.draw();
+    copy(&mut h, CopyModeAction::Enter);
+    copy(&mut h, CopyModeAction::StartOfLine);
+    let line = h.app.terminal_mode.copy_state().cursor.line_idx;
+    copy(&mut h, CopyModeAction::ToggleSide);
+    assert_eq!(
+        h.app.terminal_mode.dump_copy().map(|copy| copy.cursor),
+        Some(57)
+    );
+    h.draw();
+    let theme = h_theme();
+    let (shown, old) = (theme.ui.cursor_ghost.bg, theme.ui.cursor_ghost_old.bg);
+    let cell0 = screen_cell(&h, line, 0).unwrap();
+    assert_eq!(bg_at(&h, cell0), shown, "the '3'");
+
+    for _ in 0..4 {
+        copy(&mut h, CopyModeAction::MoveLeft);
+    }
+    h.draw();
+    assert_eq!(bg_at(&h, cell0), old, "the '2', written over");
+
+    copy(&mut h, CopyModeAction::MoveLeft);
+    h.draw();
+    assert_ne!(bg_at(&h, cell0), old, "the CR draws nothing");
+    assert_ne!(bg_at(&h, cell0), shown);
+
+    for _ in 0..6 {
+        copy(&mut h, CopyModeAction::MoveRight);
+    }
+    h.draw();
+    assert_eq!(
+        bg_at(&h, screen_cell(&h, line, 1).unwrap()),
+        shown,
+        "the '0'"
+    );
+    copy(&mut h, CopyModeAction::ToggleSide);
+    let cursor = h.app.terminal_mode.copy_state().cursor;
+    assert_eq!((cursor.line_idx, cursor.char_idx), (line, 1));
+}
+
+/// MAX-256 step 3: the screen follows the dump's copy cursor to its byte's cell, out of view
+/// before.
+/// How: 160 columns, 60 lines "line NN" CR LF (9 bytes, after 48 of CR LF); copy mode in the
+/// dump, its cursor put on 'l' of "line 05" (byte 93, world line 29)
+#[test]
+fn the_screen_follows_the_dump_cursor() {
+    let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+    let lines: String = (0..60).map(|i| format!("line {i:02}\r\n")).collect();
+    let mut h = terminal_raw_on(160, lines.as_bytes());
+    h.draw();
+    assert_eq!(
+        screen_cell(&h, 29, 0),
+        None,
+        "the screen shows the live end"
+    );
+    copy(&mut h, CopyModeAction::Enter);
+    copy(&mut h, CopyModeAction::ToggleSide);
+    h.app.terminal_mode.dump_mut().cursor_to(93);
+    h.draw();
+    let cell = screen_cell(&h, 29, 0).expect("the screen went to 'line 05'");
+    assert_eq!(bg_at(&h, cell), h_theme().ui.cursor_ghost.bg);
+}
+
+/// MAX-256 step 4: a selection on the screen shows in the dump as the bytes that make it: the
+/// selected chars' bytes and the sequences and line ends between them, not bytes that drew
+/// other text.
+/// How: (after 48 bytes of CR LF) "a" ESC[31m "cd" is "ab" ESC[31m "cd" ESC[0m CR LF "xy": 'a'
+/// 48, 'b' 49, ESC[31m 50..55, 'c' 55, 'd' 56, ESC[0m 57..61, CR LF 61..63, 'x' 63, 'y' 64.
+/// Select "bc"; then from 'd' a line down. Then "a" ESC[5G "b" ESC[3G "c": 'a' 48, 'b' 53, 'c' 58
+/// on columns 0, 4, 2: select columns 0 to 2
+#[test]
+fn screen_selection_mirrors_in_the_dump() {
+    let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+    let mut h = terminal_raw_on(160, b"ab\x1b[31mcd\x1b[0m\r\nxy");
+    h.draw();
+    copy(&mut h, CopyModeAction::Enter);
+    copy(&mut h, CopyModeAction::MoveUp);
+    copy(&mut h, CopyModeAction::StartOfLine);
+    copy(&mut h, CopyModeAction::MoveRight);
+    copy(&mut h, CopyModeAction::Select);
+    copy(&mut h, CopyModeAction::MoveRight);
+    h.draw();
+    let selected = h_theme().ui.selection.bg;
+    let ghost = h_theme().ui.cursor_ghost.bg;
+    let bg = |h: &Harness, offset| bg_at(h, dump_cell(h, offset).unwrap());
+    for offset in [49, 50, 54] {
+        assert_eq!(bg(&h, offset), selected, "{offset}");
+    }
+    // the cursor's char: its ghost over the selection
+    assert_eq!(bg(&h, 55), ghost, "'c'");
+    for offset in [48, 56] {
+        assert_ne!(bg(&h, offset), selected, "{offset}");
+    }
+
+    copy(&mut h, CopyModeAction::Select);
+    copy(&mut h, CopyModeAction::MoveRight);
+    copy(&mut h, CopyModeAction::Select);
+    copy(&mut h, CopyModeAction::MoveDown);
+    h.draw();
+    for offset in [56, 59, 62, 63] {
+        assert_eq!(bg(&h, offset), selected, "{offset}");
+    }
+    assert_eq!(bg(&h, 64), ghost, "'y', the cursor's");
+
+    let mut h = terminal_raw_on(160, b"a\x1b[5Gb\x1b[3Gc");
+    h.draw();
+    copy(&mut h, CopyModeAction::Enter);
+    copy(&mut h, CopyModeAction::StartOfLine);
+    copy(&mut h, CopyModeAction::Select);
+    copy(&mut h, CopyModeAction::MoveRight);
+    copy(&mut h, CopyModeAction::MoveRight);
+    h.draw();
+    assert_eq!(bg(&h, 48), selected, "'a'");
+    assert_eq!(bg(&h, 58), ghost, "'c', the cursor's");
+    assert_ne!(bg(&h, 53), selected, "'b' drew another cell");
+}
+
+/// MAX-256 step 4: a selection in the dump shows on the screen as the cells its bytes drew: in
+/// the dump selection's look while they show them, dimmer once written over.
+/// How: CR "10%" CR "20%" CR "30%" ('2' 53, '0' 54, '3' 57, '0' 58); copy mode on the '3', Tab,
+/// select "30"; then the dump cursor 4 left (on '2'), select "20"
+#[test]
+fn dump_selection_mirrors_on_the_screen() {
+    let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+    let mut h = terminal_raw_on(160, b"\r10%\r20%\r30%");
+    h.draw();
+    copy(&mut h, CopyModeAction::Enter);
+    copy(&mut h, CopyModeAction::StartOfLine);
+    let line = h.app.terminal_mode.copy_state().cursor.line_idx;
+    copy(&mut h, CopyModeAction::ToggleSide);
+    copy(&mut h, CopyModeAction::Select);
+    copy(&mut h, CopyModeAction::MoveRight);
+    h.draw();
+    let theme = h_theme();
+    let cell = |h: &Harness, col| bg_at(h, screen_cell(h, line, col).unwrap());
+    assert_eq!(cell(&h, 0), theme.ui.selection_raw.bg, "the '3'");
+
+    copy(&mut h, CopyModeAction::Select);
+    for _ in 0..5 {
+        copy(&mut h, CopyModeAction::MoveLeft);
+    }
+    copy(&mut h, CopyModeAction::Select);
+    copy(&mut h, CopyModeAction::MoveRight);
+    h.draw();
+    assert_eq!(
+        cell(&h, 0),
+        theme.ui.cursor_ghost_old.bg,
+        "the '2', written over"
+    );
+    assert_ne!(
+        cell(&h, 2),
+        theme.ui.selection_raw.bg,
+        "not selected: the '%'"
+    );
+}
+
 /// MAX-252 step 3: the dump follows its copy cursor: a jump to the first byte scrolls it there,
 /// one to the last brings it back live.
 /// How: 160 columns, 40 lines of 8 bytes on 11 rows; copy mode in the dump, `gg`, then `G`

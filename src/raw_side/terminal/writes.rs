@@ -2,7 +2,7 @@
 //! char went to. A run's cells follow from its start by arithmetic, wraps included, so a run is
 //! 16 bytes whatever its length. Kept in time order, dropped with the bytes or past a limit
 
-use std::collections::VecDeque;
+use std::{collections::VecDeque, ops::Range};
 
 // NOTE: review here
 
@@ -151,6 +151,7 @@ impl Writes {
         self.runs = VecDeque::new();
     }
 
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.runs.len()
     }
@@ -160,6 +161,15 @@ impl Writes {
         let idx = (self.runs).partition_point(|run| run.start + u64::from(run.len) <= offset);
         let run = self.runs.get(idx).filter(|run| run.start <= offset)?;
         Some(self.unpack(run))
+    }
+
+    /// The runs holding bytes of `range`, in byte order
+    pub fn within(&self, range: Range<u64>) -> impl Iterator<Item = Run> + '_ {
+        let first =
+            (self.runs).partition_point(|run| run.start + u64::from(run.len) <= range.start);
+        (self.runs.range(first..))
+            .take_while(move |run| run.start < range.end)
+            .map(|run| self.unpack(run))
     }
 
     /// The runs, newest first

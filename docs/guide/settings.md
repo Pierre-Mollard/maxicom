@@ -282,7 +282,7 @@ See [Terminal mode](terminal-mode.md).
 | `answer_queries` | `true` | Answer the device's terminal queries |
 | `answer_groups` | `["status", "identity", "size", "modes"]` | Which queries |
 | `answerback` | `""` | Sent back on ENQ, nothing when empty |
-| `byte_trace` | `true` | Record which received bytes drew which cells, to connect the screen and the [raw side panel](raw-side-panel.md). Takes up to 256 bytes per `history_size` row (about 25 MB by default) and a little time on a fast link (TCP, a replay); `false` records nothing and gives the memory back |
+| `byte_trace` | `true` | Record which received bytes drew which cells, to connect the screen and the raw side panel, see [The byte trace](raw-side-panel.md#the-byte-trace). Takes up to 256 bytes per `history_size` row (about 25 MB by default) and a little time on a fast link (TCP, a replay); `false` records nothing and gives the memory back |
 
 ### `[link]`
 

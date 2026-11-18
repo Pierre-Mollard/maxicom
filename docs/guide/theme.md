@@ -77,6 +77,7 @@ these names too (`main`, `secondary`...).
 | `border_app_unfocused` | `DarkGray` | The borders while the window isn't focused |
 | `cursor_unfocused` | `DarkGray` | The cursor while the window isn't focused |
 | `cursor_ghost` | `White` on `#4A4A5A` | The copy cursor's place in the other panel |
+| `cursor_ghost_old` | `Gray` on `#2C2C36` | In terminal mode, the copy cursor's ghost in the other panel when written over: the earlier bytes of its cell, the cell its byte no longer shows, see [The byte trace](raw-side-panel.md#the-byte-trace) |
 | `selection` / `selection_raw` | black on `Magenta` / on `Red` | The copy mode selection, in the text / in the raw panel |
 | `hover` | reversed | What's under the mouse |
 | `status_bar` | `White` on `#1E232D` | The status bar's text; its background fills the `band` layout |

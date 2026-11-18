@@ -145,6 +145,7 @@ pub struct UiStyles {
     pub border_app_unfocused: ConfigStyle,
     pub cursor_unfocused: ConfigStyle,
     pub cursor_ghost: ConfigStyle,
+    pub cursor_ghost_old: ConfigStyle,
     pub selection: ConfigStyle,
     pub selection_raw: ConfigStyle,
     pub hover: ConfigStyle,
@@ -182,6 +183,11 @@ impl Default for UiStyles {
                 Style::default()
                     .bg(Color::Rgb(0x4a, 0x4a, 0x5a))
                     .fg(Color::White),
+            ),
+            cursor_ghost_old: ConfigStyle::new(
+                Style::default()
+                    .bg(Color::Rgb(0x2c, 0x2c, 0x36))
+                    .fg(Color::Gray),
             ),
             selection: ConfigStyle::new(Style::default().bg(Color::Magenta).fg(Color::Black)),
             selection_raw: ConfigStyle::new(Style::default().bg(Color::Red).fg(Color::Black)),

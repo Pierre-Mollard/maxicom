@@ -8,7 +8,10 @@ mod stream;
 pub mod tokens;
 pub mod writes;
 
-use std::ops::Range;
+use std::{
+    collections::HashMap,
+    ops::{Range, RangeInclusive},
+};
 
 use chrono::{DateTime, Local};
 
@@ -105,6 +108,7 @@ impl Dump {
     }
 
     #[inline]
+    #[cfg(test)]
     pub fn writes(&self) -> &Writes {
         &self.writes
     }
@@ -163,6 +167,54 @@ impl Dump {
             }
         }
         found
+    }
+
+    /// The chars the bytes of `range` wrote, in byte order, a char cut by its ends included
+    pub fn written_in(&self, range: Range<u64>, encoding: TextEncoding, cols: u16) -> Vec<Write> {
+        let mut found = Vec::new();
+        for run in self.writes.within(range.clone()) {
+            let writes = self.writes_of(run, encoding, cols).into_iter();
+            found.extend(writes.filter(|w| w.bytes.start < range.end && w.bytes.end > range.start));
+        }
+        found
+    }
+
+    /// The newest write on each cell of `rows` on the main screen or the alternate one (a wide
+    /// char on both its cells), as `writes_to` finds each, in one pass over the runs
+    pub fn newest_writes_on(
+        &self,
+        rows: RangeInclusive<u64>,
+        alternate: bool,
+        encoding: TextEncoding,
+        cols: u16,
+    ) -> HashMap<(u64, u16), Write> {
+        let wide = u64::from(cols.max(1));
+        let mut found = HashMap::new();
+        for run in self.writes.newest_first() {
+            if run.alternate != alternate || run.row > *rows.end() {
+                continue;
+            }
+            // a char takes a byte at least, a cell at most two: the rows it can reach
+            let reach = (u64::from(run.col) + 2 * (run.end - run.start)) / wide;
+            if run.row + reach < *rows.start() {
+                continue;
+            }
+            for write in self.writes_of(run, encoding, cols) {
+                if !rows.contains(&write.cell.row) {
+                    continue;
+                }
+                let (row, col) = (write.cell.row, write.cell.col);
+                for col in col..col + width(write.ch).max(1) as u16 {
+                    found.entry((row, col)).or_insert_with(|| write.clone());
+                }
+            }
+        }
+        found
+    }
+
+    /// Whether bytes of `range` drew anything: false for escape sequences and line ends only
+    pub fn draws_in(&self, range: Range<u64>) -> bool {
+        self.writes.within(range).next().is_some()
     }
 
     /// The chars a run wrote and their cells: from its first cell on, a char wrapping to the next
@@ -299,8 +351,13 @@ impl Dump {
 
     /// The pan showing the cursor's byte in a body `cols` wide, when it's off the panel
     pub fn pan_to_cursor(&mut self, view: RawSideView, cols: usize) {
+        self.pan_to(self.copy.cursor, view, cols);
+    }
+
+    /// The pan showing byte `offset` in a body `cols` wide, when it's off the panel
+    pub fn pan_to(&mut self, offset: u64, view: RawSideView, cols: usize) {
         let width = self.scroller.width.max(1);
-        let byte = (self.copy.cursor % width as u64) as usize;
+        let byte = (offset % width as u64) as usize;
         self.pan.sync_with_cursor(view, cols, byte, width);
     }
 
@@ -367,8 +424,13 @@ impl Dump {
 
     /// Scrolls the fewest lines that show the cursor
     fn reveal_cursor(&mut self) {
+        self.reveal(self.copy.cursor);
+    }
+
+    /// Scrolls the fewest lines that show byte `offset`
+    pub fn reveal(&mut self, offset: u64) {
         let (start, end) = self.span();
-        let line = self.copy.cursor / self.scroller.width.max(1) as u64;
+        let line = offset / self.scroller.width.max(1) as u64;
         self.scroller.reveal(line, start, end);
     }
 
