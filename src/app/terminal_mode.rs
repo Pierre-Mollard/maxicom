@@ -89,6 +89,15 @@ struct MirrorCells {
     cells: Vec<((usize, usize), bool)>,
 }
 
+/// Why `Y` on the screen copied the bytes vt100 rebuilds from its cells, not the ones received
+/// (MAX-256): the byte trace is off, or none of the selection is traced (bytes dropped, text
+/// moved)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UntracedYank {
+    TraceOff,
+    NotTraced,
+}
+
 /// How bytes reach the emulator (MAX-256): the device's, at `offset` in the dump's stream (none
 /// when the byte trace is off: their runs aren't recorded) with add CR / add LF; or maxicom's own
 /// (a restore's reset, the separator, `clear`), which aren't in the stream
@@ -149,6 +158,8 @@ pub struct TerminalMode {
     mirror_bytes: Option<MirrorBytes>,
     /// The dump copy selection's cells on the screen, as last found (MAX-256)
     mirror_cells: Option<MirrorCells>,
+    /// `Y` on the screen copied the rebuilt bytes, and why: the app warns (MAX-256)
+    untraced_yank: Option<UntracedYank>,
     /// Copy mode as a search found it when it opened, given back by Esc (MAX-252)
     search_from: Option<(CopyModeState, DumpCopy)>,
     /// The pan when copy mode started, given back when it ends (MAX-217)
@@ -193,6 +204,7 @@ impl TerminalMode {
             trace_followed_byte: None,
             mirror_bytes: None,
             mirror_cells: None,
+            untraced_yank: None,
             search_from: None,
             copy_pan: None,
             copy_held: false,
@@ -268,6 +280,14 @@ impl TerminalMode {
                     let start = token.start.saturating_sub(offset) as usize;
                     self.feed(encoding, &raw_bytes[done..start], newlines);
                     done = start;
+                    // a broken char before the run, still held back, is drawn first; held
+                    // bytes of a run that started in an earlier read are its first char
+                    if token.start >= offset {
+                        let broken = self.invalid_bytes.flush();
+                        if !broken.is_empty() {
+                            self.vt100_parser.process(&broken);
+                        }
+                    }
                     self.cursor_cell()
                 }
             };
@@ -353,8 +373,9 @@ impl TerminalMode {
         with_world_row(&mut self.vt100_parser, sb, line, |screen, view_row, _| {
             (chars.iter())
                 .map(|&(col, ch)| {
+                    // a `�` received shows as its stand-in (MAX-249)
                     let cell = screen.cell(view_row as u16, col as u16);
-                    cell.is_some_and(|cell| cell.contents().starts_with(ch))
+                    cell.is_some_and(|cell| invalid_bytes::shown(cell.contents()).starts_with(ch))
                 })
                 .collect()
         })
@@ -542,6 +563,12 @@ impl TerminalMode {
             }
         }
         cell
+    }
+
+    /// Why the last `Y` on the screen copied the screen's rebuilt bytes, not the ones received
+    /// (MAX-256), once
+    pub fn take_untraced_yank(&mut self) -> Option<UntracedYank> {
+        self.untraced_yank.take()
     }
 
     /// Where byte `offset` drew (MAX-256): its world position and whether it still shows there.
@@ -1321,6 +1348,32 @@ impl TerminalMode {
                     .enter_at(cursor_line, (c_col as usize).min(max_col));
             }
             return None;
+        }
+        // `Y` on the screen: the bytes received for the selection, in the raw panel's view (hex
+        // with the panel closed), from the byte trace; without it, the screen's rebuilt bytes and
+        // a warning (MAX-256)
+        let raw_view = match (action == CopyModeAction::YankRaw, raw_view) {
+            (true, RawSideView::Off) => RawSideView::Hex,
+            _ => raw_view,
+        };
+        if action == CopyModeAction::YankRaw && self.copy_state.selection_anchor.is_some() {
+            let traced = match settings.terminal_mode.byte_trace {
+                true => self.selection_bytes(settings.encoding),
+                false => Vec::new(),
+            };
+            if !traced.is_empty() {
+                let text = (traced.into_iter())
+                    .map(|bytes| self.dump.yank_text(bytes, false, raw_view))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                self.copy_state.exit();
+                self.copy_mode_ended();
+                return Some(text);
+            }
+            self.untraced_yank = Some(match settings.terminal_mode.byte_trace {
+                true => UntracedYank::NotTraced,
+                false => UntracedYank::TraceOff,
+            });
         }
         let reveal = Reveal::for_move(&action, self.copy_cursor_shown());
 

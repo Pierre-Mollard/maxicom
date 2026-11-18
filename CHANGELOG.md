@@ -23,7 +23,9 @@ to get the new keys that scroll the raw side panel in your `keymap.toml`:
   cell the dump cursor's byte drew, written over or not. Each panel scrolls
   to the other's ghost, and Tab lands on it. A selection on one side shows
   on the other: on the screen, the dump shows the bytes that make it, colors
-  and line ends included. A new theme color,
+  and line ends included, and `Y` copies them: the bytes received, no longer
+  the ones the screen rebuilds (still copied, with a warning, without a
+  trace). A new theme color,
   `cursor_ghost_old`, for the earlier and written over ones. `byte_trace` in
   `[terminal_mode]` (`L` in the settings popup, `set byte-trace`) turns it
   off on a fast link. See
@@ -62,6 +64,8 @@ to get the new keys that scroll the raw side panel in your `keymap.toml`:
 
 ### Fixed
 
+- In terminal mode, a `�` the device sends shows: it disappeared, so a `�`
+  pasted to a shell never showed in its echo.
 - The line still coming in is decoded with the `encoding` setting, as the
   lines before it: it was always read as UTF-8.
 - In the raw side panel, the line still coming in wraps with its text: it

@@ -159,6 +159,12 @@ A selection shows in the other panel too, in its own look:
 - selected in the dump, the screen shows the cells those bytes drew,
   `cursor_ghost_old` where something was written over them.
 
+`Y` on a screen selection copies the bytes the dump shows for it, as the
+panel shows them, in hex when the panel is closed: the trace is kept either
+way. Without a trace for it, the trace off or its bytes dropped
+or moved, `Y` copies the bytes the screen rebuilds from its cells instead:
+the text and its colors, but not the bytes received, and maxicom warns so.
+
 A cell shows no bytes when nothing traced drew what it shows now:
 
 - it's blank, or erased;

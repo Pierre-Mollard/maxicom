@@ -13,14 +13,21 @@
 //! | `a` | `BASE + a` |
 //! | `a` (E0..F4) `b` | `BASE + 0x100 + ((a - E0) << 6 \| b & 3F)` |
 //! | `a` (F0..F4) `b c` | `BASE + 0x1000 + ((a - F0) << 12 \| (b & 3F) << 6 \| c & 3F)` |
+//!
+//! vt100 drops a `�` (U+FFFD) received as such too, `EF BF BD`: it gets a stand-in of its own,
+//! `REPLACEMENT`, holding those bytes (MAX-256)
 
 use std::borrow::Cow;
 
 const BASE: u32 = 0x10_0000;
 const TWO: u32 = BASE + 0x100;
 const THREE: u32 = BASE + 0x1000;
+/// The stand-in of a `�` received as such, past the broken chars' ones
+const REPLACEMENT: u32 = THREE + 0x5000;
 /// Past the last stand-in
-const END: u32 = THREE + 0x5000;
+const END: u32 = REPLACEMENT + 1;
+/// A `�` received as such, in UTF-8
+const FFFD: [u8; 3] = [0xEF, 0xBF, 0xBD];
 
 /// UTF-8 received in reads: a char cut between two reads waits for the next one
 #[derive(Debug, Default)]
@@ -44,26 +51,26 @@ impl InvalidBytes {
 
     fn repair<'b>(&mut self, bytes: &'b [u8]) -> Cow<'b, [u8]> {
         let err = match std::str::from_utf8(bytes) {
-            Ok(_) => return Cow::Borrowed(bytes),
+            Ok(_) => return valid(bytes),
             Err(err) => err,
         };
         // only the last char is cut: the rest goes as it is
         if err.error_len().is_none() {
             self.keep(&bytes[err.valid_up_to()..]);
-            return Cow::Borrowed(&bytes[..err.valid_up_to()]);
+            return valid(&bytes[..err.valid_up_to()]);
         }
         let mut out = Vec::with_capacity(bytes.len() + 8);
         let mut rest = bytes;
         loop {
             let err = match std::str::from_utf8(rest) {
                 Ok(_) => {
-                    out.extend_from_slice(rest);
+                    out.extend_from_slice(&valid(rest));
                     break;
                 }
                 Err(err) => err,
             };
-            let (valid, broken) = rest.split_at(err.valid_up_to());
-            out.extend_from_slice(valid);
+            let (good, broken) = rest.split_at(err.valid_up_to());
+            out.extend_from_slice(&valid(good));
             let Some(len) = err.error_len() else {
                 self.keep(broken);
                 break;
@@ -74,10 +81,40 @@ impl InvalidBytes {
         Cow::Owned(out)
     }
 
+    /// The char waiting for the rest of its bytes, given up as broken: its stand-in, nothing
+    /// when none waits. For a feed cut where the tokens already know it's broken: a printable
+    /// run comes next, the stand-in is drawn before the cursor is read (MAX-256)
+    pub fn flush(&mut self) -> Vec<u8> {
+        let mut out = Vec::new();
+        if self.pending_len > 0 {
+            push_stand_in(&self.pending[..self.pending_len], &mut out);
+            self.pending_len = 0;
+        }
+        out
+    }
+
     fn keep(&mut self, cut: &[u8]) {
         self.pending[..cut.len()].copy_from_slice(cut);
         self.pending_len = cut.len();
     }
+}
+
+/// Valid UTF-8 with each `�` received as such as its stand-in; borrowed when there is none
+/// (the common case: only chars from U+F000 have an `EF` byte)
+fn valid(bytes: &[u8]) -> Cow<'_, [u8]> {
+    if !bytes.contains(&0xEF) || !bytes.windows(3).any(|w| w == FFFD) {
+        return Cow::Borrowed(bytes);
+    }
+    let mut out = Vec::with_capacity(bytes.len() + 4);
+    let mut rest = bytes;
+    while let Some(at) = rest.windows(3).position(|w| w == FFFD) {
+        out.extend_from_slice(&rest[..at]);
+        let stand_in = char::from_u32(REPLACEMENT).unwrap_or('\u{FFFD}');
+        out.extend_from_slice(stand_in.encode_utf8(&mut [0; 4]).as_bytes());
+        rest = &rest[at + 3..];
+    }
+    out.extend_from_slice(rest);
+    Cow::Owned(out)
 }
 
 /// `bytes` received as ASCII: each byte from 80 up is a broken char of its own
@@ -139,6 +176,7 @@ fn stand_in_bytes(c: char) -> Option<([u8; 3], usize)> {
     let next = |bits: u32| 0x80 | (bits & 0x3F) as u8;
     match code {
         _ if !is_stand_in(c) => None,
+        REPLACEMENT => Some((FFFD, 3)),
         THREE.. => {
             let bits = code - THREE;
             Some(([0xF0 + (bits >> 12) as u8, next(bits >> 6), next(bits)], 3))

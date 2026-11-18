@@ -10849,6 +10849,114 @@ fn dump_selection_mirrors_on_the_screen() {
     );
 }
 
+/// MAX-256 step 5: `Y` on a screen selection copies the bytes received for it, as the dump
+/// shows them: the chars and the colors between them.
+/// How: "ab" ESC[31m "cd": select "bc", `Y`
+#[test]
+fn screen_yank_raw_copies_the_bytes_received() {
+    let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+    let mut h = terminal_raw_on(160, b"ab\x1b[31mcd");
+    h.draw();
+    copy(&mut h, CopyModeAction::Enter);
+    copy(&mut h, CopyModeAction::StartOfLine);
+    copy(&mut h, CopyModeAction::MoveRight);
+    copy(&mut h, CopyModeAction::Select);
+    copy(&mut h, CopyModeAction::MoveRight);
+    match copy(&mut h, CopyModeAction::YankRaw) {
+        UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "62 1B 5B 33 31 6D 63"),
+        _ => panic!("expected a yank"),
+    }
+    assert!(crate::app::tests::toasts(&h.app).is_empty());
+}
+
+/// MAX-256 step 5: `Y` works with the raw panel closed, in hex (the panel's default view): the
+/// bytes received from the trace, and with the trace off the rebuilt bytes and the warning.
+/// How: the panel off; "ab" ESC[31m "cd", select "bc", `Y`; then the trace off, "xyz", `Y`
+#[test]
+fn screen_yank_raw_without_the_raw_panel() {
+    let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+    let mut h = terminal_raw_on(160, b"ab\x1b[31mcd");
+    h.app.settings_mut().raw_side.view = RawSideView::Off;
+    h.draw();
+    copy(&mut h, CopyModeAction::Enter);
+    copy(&mut h, CopyModeAction::StartOfLine);
+    copy(&mut h, CopyModeAction::MoveRight);
+    copy(&mut h, CopyModeAction::Select);
+    copy(&mut h, CopyModeAction::MoveRight);
+    match copy(&mut h, CopyModeAction::YankRaw) {
+        UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "62 1B 5B 33 31 6D 63"),
+        _ => panic!("expected a yank"),
+    }
+
+    let mut h = terminal_raw_on(160, b"");
+    h.app.settings_mut().raw_side.view = RawSideView::Off;
+    h.app
+        .update(Action::App(crate::inputs::AppAction::ToggleSetting(
+            crate::overlays::SettingKey::ByteTrace,
+        )));
+    (h.app.terminal_mode).process_device_rx(TextEncoding::Utf8, b"xyz", false, false, false);
+    h.draw();
+    copy(&mut h, CopyModeAction::Enter);
+    copy(&mut h, CopyModeAction::StartOfLine);
+    copy(&mut h, CopyModeAction::Select);
+    copy(&mut h, CopyModeAction::EndOfLine);
+    match copy(&mut h, CopyModeAction::YankRaw) {
+        UpdateEffect::CopyToClipboard(text) => assert_eq!(text, "78 79 7A"),
+        _ => panic!("expected a yank"),
+    }
+    let warned = crate::app::tests::toasts(&h.app);
+    assert!(
+        warned
+            .iter()
+            .any(|toast| toast.ends_with("the byte trace is off")),
+        "{warned:?}"
+    );
+}
+
+/// MAX-256 step 5: without a trace for the selection, `Y` copies the bytes the screen rebuilds
+/// from its cells, and warns they aren't the bytes received: the trace off, or bytes never
+/// traced (here maxicom's own).
+/// How: "abc" with the trace off, `Y` on it; then "xyz" fed as maxicom's own, `Y` on it
+#[test]
+fn screen_yank_raw_warns_without_the_trace() {
+    let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+    let yank_row = |h: &mut Harness| {
+        copy(h, CopyModeAction::Enter);
+        copy(h, CopyModeAction::StartOfLine);
+        copy(h, CopyModeAction::Select);
+        copy(h, CopyModeAction::EndOfLine);
+        match copy(h, CopyModeAction::YankRaw) {
+            UpdateEffect::CopyToClipboard(text) => text,
+            _ => panic!("expected a yank"),
+        }
+    };
+    let mut h = terminal_raw_on(160, b"");
+    h.app
+        .update(Action::App(crate::inputs::AppAction::ToggleSetting(
+            crate::overlays::SettingKey::ByteTrace,
+        )));
+    (h.app.terminal_mode).process_device_rx(TextEncoding::Utf8, b"abc", false, false, false);
+    h.draw();
+    assert_eq!(yank_row(&mut h), "61 62 63");
+    let warned = crate::app::tests::toasts(&h.app);
+    assert!(
+        warned.iter().any(|toast| toast
+            == "Copied the screen's bytes, not the ones received: the byte trace is off"),
+        "{warned:?}"
+    );
+
+    let mut h = terminal_raw_on(160, b"");
+    h.app.terminal_mode.process_rx(TextEncoding::Utf8, b"xyz");
+    h.draw();
+    assert_eq!(yank_row(&mut h), "78 79 7A");
+    let warned = crate::app::tests::toasts(&h.app);
+    assert!(
+        warned.iter().any(|toast| toast
+            == "Copied the screen's bytes, not the ones received: no byte trace for this selection"),
+        "{warned:?}"
+    );
+}
+
 /// MAX-252 step 3: the dump follows its copy cursor: a jump to the first byte scrolls it there,
 /// one to the last brings it back live.
 /// How: 160 columns, 40 lines of 8 bytes on 11 rows; copy mode in the dump, `gg`, then `G`

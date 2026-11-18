@@ -62,7 +62,7 @@ pub mod triggers;
 pub mod types;
 
 pub use line_mode::LineMode;
-pub use terminal_mode::TerminalMode;
+pub use terminal_mode::{TerminalMode, UntracedYank};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputContext {
@@ -2054,9 +2054,20 @@ impl App {
     /// The copy action applied by the mode's copy state: the text a yank gives
     fn copy_action(&mut self, action: CopyModeAction) -> Option<String> {
         match self.settings.mode {
-            Mode::Terminal => self
-                .terminal_mode
-                .handle_copy_action(action, &self.settings),
+            Mode::Terminal => {
+                let text = (self.terminal_mode).handle_copy_action(action, &self.settings);
+                // `Y` couldn't give the bytes received (MAX-256)
+                if let Some(why) = self.terminal_mode.take_untraced_yank() {
+                    let why = match why {
+                        UntracedYank::TraceOff => "the byte trace is off",
+                        UntracedYank::NotTraced => "no byte trace for this selection",
+                    };
+                    self.notify_warn(format!(
+                        "Copied the screen's bytes, not the ones received: {why}"
+                    ));
+                }
+                text
+            }
             Mode::Line => self.line_mode.handle_copy_action(action, &self.settings),
         }
     }

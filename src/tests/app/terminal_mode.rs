@@ -1034,6 +1034,34 @@ fn no_trace_when_off() {
     assert_eq!(bytes_at(&mut tm, 0, 0), None);
 }
 
+/// MAX-256: a broken char before a run is drawn (as its `�`) before the run's cell is read, also
+/// when it was cut between two reads: the run lands after it.
+/// How: "a" F1 80 "b" in one read, then "a" F1 | 80 "b"
+#[test]
+fn a_broken_char_before_a_run_takes_its_cell() {
+    for reads in [&[&b"a\xF1\x80b"[..]][..], &[b"a\xF1", b"\x80b"]] {
+        let mut tm = terminal(24);
+        device(&mut tm, reads);
+        assert_eq!(
+            tm.written_at(3, TextEncoding::Utf8),
+            Some(((0, 2), true)),
+            "{reads:?}"
+        );
+    }
+}
+
+/// MAX-256: a `�` received as such is shown (vt100 alone drops it), and the byte trace finds its
+/// cell as showing it.
+/// How: "a" U+FFFD "b": the line reads "a�b", byte 1 drew column 1
+#[test]
+fn a_received_replacement_char_is_shown() {
+    let mut tm = terminal(24);
+    device(&mut tm, &["a\u{FFFD}b".as_bytes()]);
+    assert_eq!(tm.copy_line_text(), "a\u{FFFD}b");
+    assert_eq!(tm.written_at(1, TextEncoding::Utf8), Some(((0, 1), true)));
+    assert_eq!(tm.written_at(4, TextEncoding::Utf8), Some(((0, 2), true)));
+}
+
 /// MAX-256: small reads don't multiply the runs, and rows scrolled into the history keep their
 /// bytes; add CR doesn't shift the offsets.
 /// How: "hello" a byte a read; 30 numbered lines on 24 rows; "a" LF "b" with add CR

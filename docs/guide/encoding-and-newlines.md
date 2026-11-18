@@ -42,6 +42,9 @@ can see that bad data came in.
 - In `latin1` and `cp437`, every byte is a character, so nothing shows as
   `�`.
 
+A `�` the device really sends (`EF BF BD` in `utf8`), like a shell echoing a
+pasted `�`, shows too, in both modes.
+
 A copy and a search give the `�` too. The
 [raw side panel](raw-side-panel.md), and a raw copy (`Y` in copy mode), show
 the bytes as they were received, `F1 80` here.

@@ -172,3 +172,20 @@ fn received_maps_the_shown_text() {
     assert_eq!(offsets, [0, 1, 1, 1, 3, 4]);
     assert_eq!(received("plain é"), None);
 }
+
+/// MAX-256: a `�` received as such (`EF BF BD`, which vt100 drops too) gets a stand-in of its
+/// own: shown as `�`, decoded back to its bytes, also cut between two reads; the rest of the
+/// valid text is kept.
+/// How: "a" EF BF BD "b" in one read, then "a" EF BF | BD "b"
+#[test]
+fn a_received_replacement_char_is_kept() {
+    for reads in [&[&b"a\xEF\xBF\xBDb"[..]][..], &[b"a\xEF\xBF", b"\xBDb"]] {
+        let mut stand_ins = InvalidBytes::default();
+        let out: Vec<u8> = reads
+            .iter()
+            .flat_map(|read| stand_ins.utf8(read).into_owned())
+            .collect();
+        assert_eq!(shown_text(&out), "a\u{FFFD}b", "{reads:?}");
+        assert_eq!(decoded(&out), b"a\xEF\xBF\xBDb", "{reads:?}");
+    }
+}
