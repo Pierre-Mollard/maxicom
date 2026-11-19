@@ -154,7 +154,7 @@ isn't written. A click on a setting does the same.
 | `W` | Line wrap | `I` | Wrap indent |
 | `P` | Row marks (`prefix_place`) | `D` | Display mode |
 | `S` | Dimension mode | `A` | Answer queries |
-| `Y` | Byte trace | | |
+| `Y` | Byte trace | `O` | Backspace (DEL / BS) |
 
 ### Setting a value directly
 
@@ -282,6 +282,7 @@ See [Terminal mode](terminal-mode.md).
 | `answer_queries` | `true` | Answer the device's terminal queries |
 | `answer_groups` | `["status", "identity", "size", "modes"]` | Which queries |
 | `answerback` | `""` | Sent back on ENQ, nothing when empty |
+| `backspace` | `"del"` | What the Backspace key sends: `del` (`7f`) or `bs` (`08`), see [Backspace](terminal-mode.md#backspace) |
 | `draw_zero_width` | `false` | Send the invisible characters a cell holds (emoji joiners and selectors, soft hyphens) to your terminal, see [Invisible characters](terminal-mode.md#invisible-characters) |
 | `byte_trace` | `true` | Record which received bytes drew which cells, to connect the screen and the raw side panel, see [The byte trace](raw-side-panel.md#the-byte-trace). Takes up to 256 bytes per `history_size` row (about 25 MB by default) and a little time on a fast link (TCP, a replay); `false` records nothing and gives the memory back |
 

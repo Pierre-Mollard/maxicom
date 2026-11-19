@@ -61,6 +61,7 @@ impl SettingsDialog {
                 KeyCode::Char('r' | 'R') => toggle(SettingKey::AddCr),
                 KeyCode::Char('f' | 'F') => toggle(SettingKey::AddLf),
                 KeyCode::Char('n' | 'N') => toggle(SettingKey::TxEol),
+                KeyCode::Char('o' | 'O') => toggle(SettingKey::Backspace),
                 // not `g`: the popups' Home (MAX-222)
                 KeyCode::Char('v' | 'V') => toggle(SettingKey::Plot),
                 _ => OverlayResponse::Handled,

@@ -118,7 +118,8 @@ fn never_answered() {
     }
 }
 
-/// Modes vt100 tracks answer 1 (set) or 2 (reset), the others 0, ANSI modes included.
+/// Modes vt100 tracks answer 1 (set) or 2 (reset), autowrap 3 (permanently set, MAX-270), the
+/// others 0, ANSI modes included.
 #[test]
 fn mode_states() {
     let mut parser = parser();
@@ -132,6 +133,8 @@ fn mode_states() {
     assert_eq!(take(&mut parser), set);
 
     assert_eq!(answer(b"\x1b[?2026$p"), "\x1b[?2026;0$y");
+    // MAX-270: autowrap can't be turned off, vt100 always wraps: permanently set
+    assert_eq!(answer(b"\x1b[?7l\x1b[?7$p"), "\x1b[?7;3$y");
     assert_eq!(answer(b"\x1b[?6$p"), "\x1b[?6;0$y");
     assert_eq!(answer(b"\x1b[4$p"), "\x1b[4;0$y");
     // kitty keyboard and modifyOtherKeys stay unanswered: DA1 tells the app

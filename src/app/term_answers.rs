@@ -72,8 +72,9 @@
 //! * DECRQM `CSI ? mode $ p` (private modes) / `CSI mode $ p` (ANSI modes), "is this mode
 //!   on?": `CSI ? mode ; state $ y`, state 1 = set, 2 = reset, 0 = unknown mode. neovim and fzf
 //!   ask before using synchronized output (2026), bracketed paste (2004), mouse modes. Known:
-//!   the private modes vt100 tracks and shows, and 2048 (size reports, answered in group
-//!   `size`, see above); see `private_mode_state`. No ANSI mode
+//!   the private modes vt100 tracks and shows, 7 (autowrap, permanently set: vt100 always
+//!   wraps, MAX-270) and 2048 (size reports, answered in group `size`, see above); see
+//!   `private_mode_state`. No ANSI mode
 //!
 //! Left unanswered: the app falls back when DA1 comes first
 //! * Kitty keyboard `CSI ? u` and modifyOtherKeys `CSI ? 4 m`: richer key reports, not
@@ -248,9 +249,11 @@ pub fn answer_control(b: u8) -> Option<Answer> {
 
 /// The DECRQM state of a private mode: 1 set, 2 reset, 0 for a mode vt100 doesn't track (or
 /// keeps private, like origin mode 6). 47 and 1049 both tell the alternate screen. 2048 is
-/// maxicom's own, `size_reports`, which vt100 doesn't know
+/// maxicom's own, `size_reports`, which vt100 doesn't know. Autowrap (7) is 3, permanently set:
+/// vt100 always wraps, and a program that asks knows `CSI ? 7 l` does nothing (MAX-270)
 fn private_mode_state(screen: &Screen, mode: u16, size_reports: bool) -> u8 {
     let set = match mode {
+        7 => return 3,
         SIZE_REPORTS => size_reports,
         1 => screen.application_cursor(),
         25 => !screen.hide_cursor(),

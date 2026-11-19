@@ -317,6 +317,7 @@ pub enum SettingKey {
     AddCr,
     AddLf,
     TxEol,
+    Backspace,
     Plot,
 }
 

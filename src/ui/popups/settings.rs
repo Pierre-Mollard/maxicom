@@ -80,6 +80,7 @@ pub fn render_settings_popup(
     let add_cr_str = on_off(app.settings().add_cr);
     let add_lf_str = on_off(app.settings().add_lf);
     let tx_eol_str = app.settings().line_mode.tx_eol.as_str();
+    let backspace_str = app.settings().terminal_mode.backspace.as_str();
     // each row with the setting a click on it toggles (MAX-113), in groups
     let group = |title, rows: Vec<(SettingKey, Line<'static>)>| {
         let mut group = vec![(None, section(title, theme))];
@@ -144,6 +145,7 @@ pub fn render_settings_popup(
                 row("A", "Query Answers", answers_str),
             ),
             (SettingKey::ByteTrace, row("Y", "Byte Trace", trace_str)),
+            (SettingKey::Backspace, row("O", "Backspace", backspace_str)),
         ],
     );
     // the config folder, then the files out of it; a click copies one (MAX-163)

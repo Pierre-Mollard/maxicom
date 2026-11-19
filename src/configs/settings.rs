@@ -333,6 +333,40 @@ impl TxNewlineSymbol {
     }
 }
 
+/// The byte the Backspace key sends in terminal mode (MAX-270): DEL like xterm and Linux
+/// consoles, or BS like minicom, for a device whose shell erases on BS only
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum BackspaceByte {
+    #[default]
+    Del,
+    Bs,
+}
+
+impl BackspaceByte {
+    pub fn byte(&self) -> u8 {
+        match self {
+            BackspaceByte::Del => 0x7f,
+            BackspaceByte::Bs => 0x08,
+        }
+    }
+
+    /// The other one, as the settings popup cycles them
+    pub fn toggle(&mut self) {
+        *self = match self {
+            BackspaceByte::Del => BackspaceByte::Bs,
+            BackspaceByte::Bs => BackspaceByte::Del,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BackspaceByte::Del => "DEL",
+            BackspaceByte::Bs => "BS",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum PrefixWrapBehavior {
@@ -730,6 +764,7 @@ pub struct TerminalModeConfig {
     pub answer_groups: Vec<QueryGroup>,
     /// Sent back on ENQ (`0x05`), nothing when empty: `0x05` also shows up in binary data
     pub answerback: String,
+    pub backspace: BackspaceByte,
     /// Record which received bytes drew which cells, to connect the screen and the raw side
     /// panel (MAX-256): about 256 B per `history_size` row at most, and some time on a fast link
     /// (TCP, a replay). Off: nothing recorded, the memory given back
@@ -752,6 +787,7 @@ impl Default for TerminalModeConfig {
             answer_queries: true,
             answer_groups: QueryGroup::ALL.to_vec(),
             answerback: String::new(),
+            backspace: BackspaceByte::default(),
             byte_trace: true,
             draw_zero_width: false,
         }

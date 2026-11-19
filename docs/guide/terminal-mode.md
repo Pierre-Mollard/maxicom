@@ -106,6 +106,14 @@ The echo isn't part of what the device sent: the raw side panel doesn't show
 it, and a recording doesn't hold it. With a device that echoes too, every
 character shows twice: turn it off.
 
+## Backspace
+
+The Backspace key sends DEL (`7f`), as xterm and Linux consoles do. Some
+devices only erase on BS (`08`), minicom's default: the character stays and
+`^?` may show instead. Set `backspace = "bs"` in `[terminal_mode]`, or press
+`O` in the settings popup to switch it for this session. Ctrl-h sends BS
+either way, and Alt-Backspace sends ESC before the same byte.
+
 ## Invisible characters
 
 Some characters take no room on the screen: the soft hyphen (a place a word
@@ -225,6 +233,7 @@ The modes maxicom knows:
 | Mode | Is |
 | --- | --- |
 | `1` | Cursor keys in application mode |
+| `7` | Autowrap: answered `3`, always on, see [Terminal mode always wraps](limits.md#terminal-mode-always-wraps) |
 | `25` | The cursor shown |
 | `47`, `1049` | The alternate screen, the one full-screen programs draw on |
 | `9`, `1000`, `1002`, `1003` | Mouse reports: on press, on press and release, while dragging, on any move |

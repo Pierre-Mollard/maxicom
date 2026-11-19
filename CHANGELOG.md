@@ -17,6 +17,9 @@ to get the new keys that scroll the raw side panel in your `keymap.toml`:
 
 ### Added
 
+- `backspace = "del" | "bs"` in `[terminal_mode]`, and `O` in the settings
+  popup: what the Backspace key sends, DEL as before or BS as minicom does,
+  for a device that only erases on BS.
 - In terminal mode, the byte trace: maxicom remembers which received bytes
   drew which cell of the screen. In copy mode, the raw side panel shows the
   bytes behind the screen's cursor (the char the cell shows, and the earlier
@@ -64,6 +67,9 @@ to get the new keys that scroll the raw side panel in your `keymap.toml`:
 
 ### Fixed
 
+- In terminal mode, a program asking whether autowrap is on
+  (`ESC [ ? 7 $ p`) hears "always on": maxicom can't turn it off, and the
+  program can cut its lines itself. It heard "unknown".
 - Local echo (`Ctrl-a e`) works in terminal mode: what you type, paste and
   send shows on the screen, as in minicom. It only worked in line mode.
 - In terminal mode, invisible characters (soft hyphens, zero-width spaces,

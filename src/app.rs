@@ -1016,7 +1016,8 @@ impl App {
                     _ => None,
                 };
                 let key = matches!(action, TerminalAction::Key(_));
-                let effect = self.terminal_mode.update_action_terminal(action);
+                let backspace = self.settings.terminal_mode.backspace;
+                let effect = self.terminal_mode.update_action_terminal(action, backspace);
                 if let UpdateEffect::Transmit(bytes) = &effect {
                     if let Some(text) = paste {
                         self.terminal_mode.echo_paste(&text);
@@ -2558,6 +2559,12 @@ impl App {
                 self.settings.add_lf = !self.settings.add_lf;
                 let state = on_off(self.settings.add_lf);
                 self.notify_setting("setting:add-lf", format!("Add LF {state}"));
+            }
+            // what the Backspace key sends in terminal mode (MAX-270)
+            SettingKey::Backspace => {
+                self.settings.terminal_mode.backspace.toggle();
+                let byte = self.settings.terminal_mode.backspace.as_str();
+                self.notify_setting("setting:backspace", format!("Backspace sends {byte}"));
             }
             // what Enter sends in line mode (MAX-184)
             SettingKey::TxEol => {

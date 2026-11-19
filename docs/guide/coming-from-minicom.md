@@ -90,7 +90,64 @@ comments in it are lost. One file can serve several machines. See
 
 ### The terminal always wraps
 
-There is no `-w`. `Ctrl-a w` changes the wrap of line mode only.
+minicom doesn't wrap by default, `-w` turns it on; maxicom always wraps, as
+xterm does. There is no `-w`, and `Ctrl-a w` changes the wrap of line mode
+only.
+
+### Backspace sends DEL
+
+minicom's Backspace sends BS (`08`), maxicom's DEL (`7f`), as xterm does. For
+a device that wants BS, set `backspace = "bs"` in `[terminal_mode]`, see
+[Backspace](terminal-mode.md#backspace).
+
+### Some keys send other codes
+
+In terminal mode, maxicom sends the codes xterm sends. Most keys send the same
+bytes as in minicom, except these:
+
+| Key | minicom | maxicom |
+| --- | --- | --- |
+| Backspace | `08` | `7f` (see above) |
+| Home | `ESC [ 1 ~` | `ESC [ H` |
+| End | `ESC [ 4 ~` | `ESC [ F` |
+| F5 | `ESC [ 1 6 ~` | `ESC [ 1 5 ~` |
+
+A device that only knows minicom's Home and End codes won't see these keys.
+minicom's F5 code is one that no xterm key sends.
+
+### Received newlines
+
+With add LF on, minicom shows a blank line after each line ending in CR LF:
+it adds an LF to the device's own. maxicom keeps that CR LF as one line
+break, see [Received newlines](encoding-and-newlines.md#received-newlines).
+
+The two other line controls are read as xterm reads them: vertical tab
+(`0B`) and form feed (`0C`) move down one line. minicom ignores the vertical
+tab, and clears the screen on a form feed.
+
+### Bytes that aren't valid text
+
+maxicom shows one `�` for each broken character, and never hides the valid
+text around it. minicom sometimes shows one `�` for several broken
+characters in a row, drops the valid character that follows a broken one, or
+puts the `�` after the next tab. See
+[Bytes that aren't valid text](encoding-and-newlines.md#bytes-that-arent-valid-text).
+
+The C1 control characters (`80` to `9F` in `latin1`, `C2 80` to `C2 9F` in
+`utf8`) aren't shown: minicom draws them as characters.
+
+### Colors and escape sequences
+
+maxicom shows colors without any option (minicom needs `-c on`), with 256
+colors, true colors, dim and italic. Sequences that minicom doesn't know
+are hidden instead of printed: a window title (`ESC ] 0 ; title BEL`) or a
+soft reset doesn't leave text on the screen.
+
+### Local echo shows the text you type
+
+With local echo on, both show what you type, Enter as a new line and
+Backspace moving back. minicom also passes the arrows and function keys to
+its screen, so its cursor moves; maxicom leaves them out.
 
 ### File transfers
 

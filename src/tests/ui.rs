@@ -2254,7 +2254,8 @@ fn settings_in_two_columns() {
     for row in &rows {
         for value in row.split(" : ").skip(1) {
             let value = value.split_whitespace().next().unwrap_or("");
-            let acronym = ["UTF8", "ASCII", "CP437", "LF", "CR", "CRLF"].contains(&value);
+            let acronym =
+                ["UTF8", "ASCII", "CP437", "LF", "CR", "CRLF", "DEL", "BS"].contains(&value);
             let title = value.chars().next().is_some_and(char::is_uppercase)
                 && !value.chars().skip(1).all(|c| c.is_uppercase());
             assert!(

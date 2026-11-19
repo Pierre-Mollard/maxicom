@@ -24,7 +24,8 @@ use crate::{
     },
     capture::{Screenshot, TimedChunk},
     configs::{
-        LineDisplayMode, SettingsConfig, TerminalDimensionMode, TextEncoding, settings::RawSideView,
+        LineDisplayMode, SettingsConfig, TerminalDimensionMode, TextEncoding,
+        settings::{BackspaceByte, RawSideView},
     },
     inputs::{
         CopyModeAction, SideViewAction, TerminalAction, ViPending,
@@ -42,14 +43,14 @@ use crate::{
 
 /// The modes a restored session may have left set, reset (MAX-148): the scroll region,
 /// application cursor keys and keypad, mouse reports, bracketed paste, origin and insert modes,
-/// autowrap back on, colors, and the cursor shown. The scroll region and origin mode move the
+/// colors, and the cursor shown (autowrap can't be turned off, MAX-270). The scroll region and origin mode move the
 /// cursor home, so `TerminalMode::restore` puts it back after
 const RESTORE_RESET: &str = concat!(
     "\x1b[r",
     "\x1b[?1l\x1b>",
     "\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l",
     "\x1b[?2004l",
-    "\x1b[?6l\x1b[4l\x1b[?7h",
+    "\x1b[?6l\x1b[4l",
     "\x1b[0m\x1b[?25h",
 );
 
@@ -1303,7 +1304,11 @@ impl TerminalMode {
         lines
     }
 
-    pub fn update_action_terminal(&mut self, action: TerminalAction) -> UpdateEffect {
+    pub fn update_action_terminal(
+        &mut self,
+        action: TerminalAction,
+        backspace: BackspaceByte,
+    ) -> UpdateEffect {
         match action {
             TerminalAction::MouseReport(bytes) => UpdateEffect::Transmit(bytes),
             // the emulator's size, where the lines wrap, as the query answers say (MAX-151)
@@ -1328,7 +1333,7 @@ impl TerminalMode {
             // there blind is no use; what it sends never moves a scrolled view (MAX-141)
             TerminalAction::Key(key_event) => {
                 let application_cursor = self.vt100_screen().application_cursor();
-                match encode_terminal_key(key_event, application_cursor) {
+                match encode_terminal_key(key_event, application_cursor, backspace) {
                     Some(bytes) => {
                         self.scroll_to_bottom();
                         UpdateEffect::Transmit(bytes)
@@ -1952,8 +1957,12 @@ pub fn add_newlines<'a>(
 /// Bytes sent to the remote for a key typed in terminal mode (legacy xterm encoding). When the
 /// remote turned on application cursor mode (DECCKM, `ESC[?1h`), unmodified arrows, Home and End
 /// are sent as `ESC O x` instead of `ESC [ x`, like xterm does. Modified ones (`ESC[1;5A`) are the
-/// same in both modes
-fn encode_terminal_key(key_event: KeyEvent, application_cursor: bool) -> Option<Vec<u8>> {
+/// same in both modes. Backspace's DEL is the `backspace` setting's byte (MAX-270)
+fn encode_terminal_key(
+    key_event: KeyEvent,
+    application_cursor: bool,
+    backspace: BackspaceByte,
+) -> Option<Vec<u8>> {
     let key_event = to_terminput_key(key_event).ok()?;
     let mut buf = [0u8; 32];
     let len = terminput::Event::Key(key_event)
@@ -1968,6 +1977,11 @@ fn encode_terminal_key(key_event: KeyEvent, application_cursor: bool) -> Option<
         ] = bytes.as_mut_slice()
     {
         *introducer = b'O';
+    }
+    if key_event.code == terminput::KeyCode::Backspace
+        && let Some(last @ 0x7f) = bytes.last_mut()
+    {
+        *last = backspace.byte();
     }
     Some(bytes)
 }

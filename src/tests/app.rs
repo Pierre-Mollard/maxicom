@@ -2695,3 +2695,28 @@ fn terminal_mode_local_echo() {
     quiet.update(Action::TransmitRaw(b"AT\r".to_vec()));
     assert_eq!(quiet.terminal_mode.vt100_screen().contents(), "");
 }
+
+/// MAX-270: the settings popup's Backspace row switches what the Backspace key sends in
+/// terminal mode, DEL by default, and back.
+/// How: Backspace, toggle, Backspace, toggle, Backspace
+#[test]
+fn backspace_setting_toggles_the_byte_sent() {
+    use crossterm::event::{KeyCode, KeyEvent};
+    let mut app = app();
+    app.settings.mode = Mode::Terminal;
+    let sent = |app: &mut App| {
+        let key = Action::Terminal(TerminalAction::Key(KeyEvent::from(KeyCode::Backspace)));
+        match app.update(key) {
+            UpdateEffect::Transmit(bytes) => bytes,
+            _ => panic!("expected Backspace sent"),
+        }
+    };
+    let toggle = || Action::App(AppAction::ToggleSetting(SettingKey::Backspace));
+    assert_eq!(sent(&mut app), b"\x7f");
+    app.update(toggle());
+    let bs = crate::configs::settings::BackspaceByte::Bs;
+    assert_eq!(app.settings.terminal_mode.backspace, bs);
+    assert_eq!(sent(&mut app), b"\x08");
+    app.update(toggle());
+    assert_eq!(sent(&mut app), b"\x7f");
+}

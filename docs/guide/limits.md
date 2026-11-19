@@ -89,6 +89,19 @@ wrapping off only exists in line mode (`Ctrl-a w`). For lines wider than the
 view, make the screen wider and pan, see
 [Screen size](terminal-mode.md#screen-size).
 
+A device can't turn it off either: `ESC [ ? 7 l` (`tput rmam`) does nothing,
+and the text past the right edge still goes on to the next row, where a
+terminal would write it over the last column. A program that asks first
+(`ESC [ ? 7 $ p`) gets "always on" and can cut its lines itself. Few do it
+over a serial link: shells, logs and full-screen programs don't.
+
+### Some text styles aren't shown
+
+Blinking text, hidden text (`ESC [ 8 m`) and strikethrough show as plain
+text. Bold, dim, italic, underline, reverse and the colors show as sent. The
+screen alignment test of vttest (`ESC # 8`, a screen full of `E`) does
+nothing.
+
 ### No images
 
 Sixel and kitty graphics aren't drawn. Their bytes still show in line

@@ -49,6 +49,7 @@ pub const CONFIG_COMMENTS: &[(&str, &str)] = &[
         "terminal_mode.answer_groups",
         "values: status, identity, size, modes",
     ),
+    ("terminal_mode.backspace", "values: del, bs"),
     (
         "terminal_mode.byte_trace",
         "connects the screen and the raw side panel; false: no memory or time spent",

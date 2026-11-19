@@ -14,7 +14,12 @@ fn key(code: KeyCode) -> KeyEvent {
 }
 
 fn sent(code: KeyCode, modifiers: KeyModifiers, application_cursor: bool) -> Vec<u8> {
-    encode_terminal_key(KeyEvent::new(code, modifiers), application_cursor).unwrap()
+    encode_terminal_key(
+        KeyEvent::new(code, modifiers),
+        application_cursor,
+        BackspaceByte::Del,
+    )
+    .unwrap()
 }
 
 /// Normal cursor mode sends the same bytes as before #31 (captured from the old
@@ -383,7 +388,7 @@ fn copy_mode_row_text_keeps_gaps() {
 fn cursor_mode_follows_remote() {
     let mut tm = TerminalMode::new(100, 24, 80);
     let up = |tm: &mut TerminalMode| match tm
-        .update_action_terminal(TerminalAction::Key(key(KeyCode::Up)))
+        .update_action_terminal(TerminalAction::Key(key(KeyCode::Up)), BackspaceByte::Del)
     {
         UpdateEffect::Transmit(bytes) => bytes,
         _ => panic!("expected a transmit"),
@@ -629,9 +634,10 @@ fn restore_separator_stays_on_top_when_the_grid_grows() {
 /// How: `fixed` 24x80 in a 50x200 window, then `grow_only` after the window shrank.
 #[test]
 fn auto_resize_remote_sends_the_emulator_size() {
-    let stty = |tm: &mut TerminalMode| match tm
-        .update_action_terminal(TerminalAction::AutoResizeRemoteToEmulator)
-    {
+    let stty = |tm: &mut TerminalMode| match tm.update_action_terminal(
+        TerminalAction::AutoResizeRemoteToEmulator,
+        BackspaceByte::Del,
+    ) {
         UpdateEffect::Transmit(bytes) => String::from_utf8(bytes).unwrap(),
         _ => panic!("nothing sent"),
     };
@@ -1132,6 +1138,28 @@ fn backspace_bytes() {
     assert_eq!(
         sent(KeyCode::Backspace, KeyModifiers::ALT, false),
         b"\x1b\x7f"
+    );
+}
+
+/// MAX-270: with `backspace = "bs"` Backspace sends BS, Alt-Backspace ESC BS; Ctrl-h,
+/// Ctrl-Backspace (BS with both) and the other keys don't change.
+/// How: the keys encoded with each setting
+#[test]
+fn backspace_setting_picks_the_byte() {
+    let bs = |code, modifiers| {
+        encode_terminal_key(KeyEvent::new(code, modifiers), false, BackspaceByte::Bs).unwrap()
+    };
+    let none = KeyModifiers::NONE;
+    assert_eq!(bs(KeyCode::Backspace, none), b"\x08");
+    assert_eq!(bs(KeyCode::Backspace, KeyModifiers::ALT), b"\x1b\x08");
+    assert_eq!(bs(KeyCode::Char('h'), KeyModifiers::CONTROL), b"\x08");
+    assert_eq!(bs(KeyCode::Delete, none), b"\x1b[3~");
+    assert_eq!(bs(KeyCode::Char('a'), none), b"a");
+    // Ctrl-Backspace is BS with both
+    assert_eq!(bs(KeyCode::Backspace, KeyModifiers::CONTROL), b"\x08");
+    assert_eq!(
+        sent(KeyCode::Backspace, KeyModifiers::CONTROL, false),
+        b"\x08"
     );
 }
 
