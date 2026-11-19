@@ -475,6 +475,32 @@ pub enum Mode {
     Terminal,
 }
 
+impl Mode {
+    pub const fn other(self) -> Self {
+        match self {
+            Self::Line => Self::Terminal,
+            Self::Terminal => Self::Line,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Line => "line",
+            Self::Terminal => "terminal",
+        }
+    }
+}
+
+/// The mode the user can't switch to, none by default (MAX-260)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum DisabledMode {
+    #[default]
+    None,
+    Line,
+    Terminal,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum DualBufferMode {
@@ -1052,6 +1078,7 @@ pub struct SettingsConfig {
     pub add_lf: bool,
     pub encoding: TextEncoding,
     pub mode: Mode,
+    pub disabled_mode: DisabledMode,
     pub dual_mode_buffering: DualBufferMode,
     /// The plot of `plots.toml` shown at start, read at start only (MAX-222)
     pub plot: Option<String>,
@@ -1092,6 +1119,7 @@ impl Default for SettingsConfig {
             encoding: TextEncoding::default(),
             rx_buffer_size: 4096,
             mode: Mode::default(),
+            disabled_mode: DisabledMode::default(),
             dual_mode_buffering: DualBufferMode::default(),
             plot: None,
             show_timestamps: false,
@@ -1184,6 +1212,10 @@ impl SettingsConfig {
             });
         }
 
+        if !self.mode_enabled(self.mode) {
+            return Err(ConfigValidationError::DisabledMode(self.mode));
+        }
+
         if self.timestamp_format.is_empty() {
             return Err(ConfigValidationError::InvalidTimestampFormat {
                 err: "format cannot be empty".to_owned(),
@@ -1226,6 +1258,14 @@ impl SettingsConfig {
         self.link.validate()?;
 
         Ok(())
+    }
+
+    /// `mode` isn't the one `disabled_mode` turns off (MAX-260)
+    pub fn mode_enabled(&self, mode: Mode) -> bool {
+        !matches!(
+            (self.disabled_mode, mode),
+            (DisabledMode::Line, Mode::Line) | (DisabledMode::Terminal, Mode::Terminal)
+        )
     }
 
     pub fn refresh_timestamp_width(&mut self) {
@@ -1323,6 +1363,7 @@ pub enum ConfigValidationError {
         min: usize,
         max: usize,
     },
+    DisabledMode(Mode),
 }
 
 impl std::fmt::Display for ConfigValidationError {
@@ -1344,6 +1385,10 @@ impl std::fmt::Display for ConfigValidationError {
             Self::InvalidCaptureName { field, err } => write!(f, "invalid {field}: {err}"),
             Self::InvalidGenericField { name, min, max } => {
                 write!(f, "{name} is not a value between {min} and {max}")
+            }
+            Self::DisabledMode(mode) => {
+                let mode = mode.as_str();
+                write!(f, "mode is \"{mode}\", the mode disabled_mode turns off")
             }
         }
     }

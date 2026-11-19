@@ -5,7 +5,7 @@ use crate::{
     app::capture::tests::asking_app,
     app::search::SearchDirection,
     capture::{CaptureFormat, RecordingMeta},
-    configs::KeyBindingsConfig,
+    configs::{KeyBindingsConfig, settings::DisabledMode},
     inputs::{DialogAction, SearchModeAction},
 };
 
@@ -1661,6 +1661,37 @@ fn setting_toggles_keep_the_viewport() {
     assert_eq!(app.settings.mode, Mode::Terminal);
     let scroller = app.terminal_mode.scroller();
     assert_eq!((scroller.view_width, scroller.view_height), (100, 30));
+}
+
+/// MAX-260: the mode `disabled_mode` turns off can't be switched to: the toggle stays and
+/// warns, a replay doesn't go to it, and it receives nothing even with `always_both`.
+/// With none disabled the toggle switches.
+/// How: line mode with terminal disabled: the toggle, bytes received, a replay link; then
+/// `disabled_mode = none` and the toggle
+#[test]
+fn disabled_mode_cant_be_switched_to() {
+    let mut app = app();
+    app.settings.mode = Mode::Line;
+    app.settings.disabled_mode = DisabledMode::Terminal;
+    app.update(Action::App(AppAction::ToggleSetting(SettingKey::Mode)));
+    assert_eq!(app.settings.mode, Mode::Line);
+    assert_eq!(
+        toasts(&app),
+        ["The terminal mode is disabled (disabled_mode)"]
+    );
+
+    app.feed_rx(b"hello\r\n");
+    assert_eq!(app.terminal_mode.dump().stream().end(), 0);
+    assert!(!app.line_mode.history().is_empty());
+
+    app.link
+        .set_address("file:///tmp/capture.raw".parse::<Address>().unwrap());
+    app.fit_mode_to_link();
+    assert_eq!(app.settings.mode, Mode::Line);
+
+    app.settings.disabled_mode = DisabledMode::None;
+    app.update(Action::App(AppAction::ToggleSetting(SettingKey::Mode)));
+    assert_eq!(app.settings.mode, Mode::Terminal);
 }
 
 pub fn toasts(app: &App) -> Vec<String> {

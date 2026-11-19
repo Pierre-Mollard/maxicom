@@ -160,12 +160,14 @@ fn open_menu(event: MouseEvent, app: &App) -> Action {
     }
     let at = (event.column, event.row);
     let recording = app.recording().is_some();
+    let settings = app.settings();
     // the marks' rows (MAX-164): a mark on the line clicked, on a scrolled view or in copy
     // mode; the list while there are marks
     let add = (app.is_copy_mode_active() || !app.scroll_status().is_bottom())
         .then(|| (app.frame_map().text_position(at.0, at.1, false)).map(|pos| pos.line_idx));
     let menu = ActionMenu::new(at, app.settings().mode, app.link_kind(), recording)
         .with_marks(add, !app.marks().is_empty())
+        .with_switch(settings.mode_enabled(settings.mode.other()))
         .with_close(app.frame_areas().panel_at(at.0, at.1));
     Action::App(AppAction::OpenOverlay(Overlay::ActionMenu(menu)))
 }

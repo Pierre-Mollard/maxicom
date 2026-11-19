@@ -240,6 +240,7 @@ Durations are written `"500ms"`, `"30s"`, `"4h"` or `"1day"`.
 | `local_echo` | `false` | Show what you send: [Line mode](line-mode.md#local-echo), [Terminal mode](terminal-mode.md#local-echo) |
 | `add_cr`, `add_lf` | `false` | Read a lone LF / CR as CR LF: [Encoding and newlines](encoding-and-newlines.md#received-newlines) |
 | `encoding` | `"utf8"` | `utf8`, `ascii`, `cp437`, `latin1`: [Encoding and newlines](encoding-and-newlines.md#text-encoding) |
+| `disabled_mode` | `"none"` | `none`, `line` or `terminal`: the mode you can't switch to, [Introduction](introduction.md#two-modes) |
 | `dual_mode_buffering` | `"always_both"` | `always_both` or `active_only`: [Introduction](introduction.md#two-modes) |
 | `rx_buffer_size` | `4096` | Bytes read from the link at once, 512 to 65536 |
 | `show_timestamps` | `false` | Times before the lines / rows: [Line mode](line-mode.md#timestamps) |

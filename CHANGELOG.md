@@ -22,6 +22,8 @@ remove or rename them. `byte_text` and `byte_invalid` are new.
 
 ### Added
 
+- `disabled_mode = "line" | "terminal"` in `config.toml` turns a mode off:
+  switching to it only warns, and it receives nothing. `"none"` by default.
 - `notify_copy = false` in `[ui]` turns off the notification after each copy;
   a clipboard error still shows.
 - `backspace = "del" | "bs"` in `[terminal_mode]`, and `O` in the settings

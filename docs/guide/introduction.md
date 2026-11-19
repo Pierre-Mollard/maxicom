@@ -40,6 +40,10 @@ history in the other mode. This is `dual_mode_buffering = "always_both"`. On
 a very fast link, `"active_only"` feeds only the mode on screen, which saves
 work.
 
+To use only one mode, set `disabled_mode` to the other one (`"line"` or
+`"terminal"`). Switching to it then only warns, and it receives nothing.
+`mode` can't be the disabled one.
+
 ## The screen
 
 | Part | What it shows |

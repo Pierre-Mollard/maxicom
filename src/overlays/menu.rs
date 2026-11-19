@@ -100,11 +100,23 @@ impl ActionMenu {
             Some(SidePanel::Plot) => "Close plot",
             None => return self,
         };
-        let switch = MenuRun::Action(KeyBindingAction::SKInputMode);
-        self.items.retain(|&(_, run)| run != switch);
+        self.drop_switch();
         self.items
             .insert(0, (label, MenuRun::ClosePanel(panel.unwrap())));
         self
+    }
+
+    /// No mode switch when the other mode is disabled, `switch` false (MAX-260)
+    pub fn with_switch(mut self, switch: bool) -> Self {
+        if !switch {
+            self.drop_switch();
+        }
+        self
+    }
+
+    fn drop_switch(&mut self) {
+        let switch = MenuRun::Action(KeyBindingAction::SKInputMode);
+        self.items.retain(|&(_, run)| run != switch);
     }
 
     pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {

@@ -188,3 +188,20 @@ fn ascii_keeps_controls_and_marks_high_bytes() {
     let decoded = TextEncoding::Ascii.decode(b"\x1b[31ma\x00\x7F\tb\xE9");
     assert_eq!(decoded, "\x1b[31ma\x00\x7F\tb\u{FFFD}");
 }
+
+/// MAX-260: `disabled_mode` reads none, line or terminal; `mode` can't be the one it turns
+/// off.
+/// How: the default, then line disabled with `mode = "terminal"` and with `mode = "line"`
+#[test]
+fn disabled_mode_is_not_the_start_mode() {
+    let parse = |toml: &str| toml::from_str::<SettingsConfig>(toml).unwrap();
+    assert_eq!(SettingsConfig::default().disabled_mode, DisabledMode::None);
+    let settings = parse("mode = \"terminal\"\ndisabled_mode = \"line\"\n");
+    assert!(settings.validate().is_ok());
+    assert!(!settings.mode_enabled(Mode::Line));
+    let settings = parse("mode = \"line\"\ndisabled_mode = \"line\"\n");
+    assert_eq!(
+        settings.validate().unwrap_err().to_string(),
+        "mode is \"line\", the mode disabled_mode turns off"
+    );
+}

@@ -6628,6 +6628,29 @@ fn right_click_menu_opens_the_resize_popup() {
     }
 }
 
+/// MAX-260: the right-click menu has no mode switch when the other mode is disabled, and
+/// has it when none is.
+/// How: terminal mode with line disabled, a right-click; then none disabled, again
+#[test]
+fn right_click_menu_hides_a_disabled_mode() {
+    use crate::configs::settings::DisabledMode;
+    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 30, |s| {
+        s.mode = Mode::Terminal;
+        s.disabled_mode = DisabledMode::Line;
+    });
+    h.draw();
+    mouse_do(&mut h, MouseEventKind::Down(MouseButton::Right), (10, 3));
+    let rows = h.draw();
+    assert!(shows(&rows, "Search"), "{rows:#?}");
+    assert!(!shows(&rows, "Switch to LINE"), "{rows:#?}");
+
+    h.app.update(Action::Overlay(DialogAction::Close));
+    h.app.settings_mut().disabled_mode = DisabledMode::None;
+    h.draw();
+    mouse_do(&mut h, MouseEventKind::Down(MouseButton::Right), (10, 3));
+    assert!(shows(&h.draw(), "Switch to LINE"));
+}
+
 /// MAX-133: the settings popup has a "Terminal Mode" section with the size mode; its key
 /// `S` and a click cycle it (grow only, match view, fixed cols, fixed) and the grid follows
 /// at once.

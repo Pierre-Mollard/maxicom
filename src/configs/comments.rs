@@ -28,6 +28,7 @@ pub const CONFIG_COMMENTS: &[(&str, &str)] = &[
     ),
     ("encoding", "values: utf8, ascii, cp437, latin1"),
     ("mode", "values: line, terminal"),
+    ("disabled_mode", "values: none, line, terminal"),
     ("dual_mode_buffering", "values: always_both, active_only"),
     ("rx_buffer_size", "512 to 65536"),
     ("inactivity_detach_timeout", "\"0s\": never"),

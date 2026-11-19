@@ -727,7 +727,7 @@ impl App {
     /// Terminal mode on a link that isn't written (a replay), as line mode is for typing to it
     /// (MAX-168): at start, on a reload and when a replay starts
     fn fit_mode_to_link(&mut self) {
-        if !self.link_kind().writes() {
+        if !self.link_kind().writes() && self.settings.mode_enabled(Mode::Terminal) {
             self.settings.mode = Mode::Terminal;
         }
     }
@@ -792,7 +792,10 @@ impl App {
         self.clear_plot();
         self.link.set_config(replaced.link_config);
         self.set_profiles_due(replaced.profiles);
-        self.settings.mode = replaced.mode;
+        // a reload during the replay may have turned that mode off
+        if self.settings.mode_enabled(replaced.mode) {
+            self.settings.mode = replaced.mode;
+        }
         self.settings.encoding = replaced.encoding;
         self.line_mode = replaced.line_mode;
         self.terminal_mode = replaced.terminal_mode;
@@ -1428,11 +1431,12 @@ impl App {
         }
     }
 
-    /// Which modes the received bytes go to: the one shown, both with `always_both`
+    /// Which modes the received bytes go to: the one shown, both with `always_both`, never
+    /// a disabled one
     fn fed_modes(&self) -> (bool, bool) {
         let both = self.settings.dual_mode_buffering == DualBufferMode::AlwaysBoth;
-        let mode = self.settings.mode;
-        (both || mode == Mode::Line, both || mode == Mode::Terminal)
+        let fed = |mode| self.settings.mode_enabled(mode) && (both || self.settings.mode == mode);
+        (fed(Mode::Line), fed(Mode::Terminal))
     }
 
     /// Feeds both modes. The remote's queries are answered when `live` (not held while the
@@ -2554,11 +2558,13 @@ impl App {
                 };
                 self.update_viewport(self.viewport);
             }
+            // no switching to the mode `disabled_mode` turns off (MAX-260)
+            SettingKey::Mode if !self.settings.mode_enabled(self.settings.mode.other()) => {
+                let other = self.settings.mode.other().as_str();
+                self.notify_warn(format!("The {other} mode is disabled (disabled_mode)"));
+            }
             SettingKey::Mode => {
-                self.settings.mode = match self.settings.mode {
-                    Mode::Line => Mode::Terminal,
-                    Mode::Terminal => Mode::Line,
-                };
+                self.settings.mode = self.settings.mode.other();
                 self.update_viewport(self.viewport);
             }
             SettingKey::DisplayTimestamp => {
