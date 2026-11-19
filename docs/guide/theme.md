@@ -116,18 +116,20 @@ See [Search](search.md).
 
 ### `[raw_inspector]`
 
-The byte kinds of the [raw side panel](raw-side-panel.md#reading-it).
+The byte kinds of the [raw side panel](raw-side-panel.md#byte-colors), also
+used by line mode's Hex, Octal and Binary displays. `byte_any` is the text of
+line mode's Raw display.
 
 | Entry | Default |
 | --- | --- |
 | `byte_any` | `White` |
-| `byte_null` | `DarkGray` |
-| `byte_ascii` | `Cyan` |
+| `byte_ascii` | `White` |
+| `byte_text` | `LightBlue` |
+| `byte_invalid` | `LightRed` |
 | `byte_whitespace` | `Yellow` |
-| `byte_sync` | `LightRed` |
-| `byte_ones` | `Red` |
 | `byte_escape` | `LightMagenta` |
-| `byte_other` | `LightBlue` |
+| `byte_null` | `DarkGray` |
+| `byte_control` | `Gray` |
 
 ### `[popup]`
 

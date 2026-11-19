@@ -12,7 +12,8 @@ use ratatui::{
 };
 
 use crate::{
-    configs::{LineDisplayMode, ThemeConfig, settings::RawSideOrientation},
+    configs::{LineDisplayMode, TextEncoding, ThemeConfig, settings::RawSideOrientation},
+    raw_side::{ByteClass, byte_classes},
     ui::data_display::byte_digit_spans,
 };
 
@@ -40,8 +41,10 @@ pub fn raw_panel_layout(
     (block, inner_area)
 }
 
+/// `bytes` in the colors of their `classes`
 pub fn format_raw_bytes_with_highlights(
     bytes: &[u8],
+    classes: &[ByteClass],
     display_mode: LineDisplayMode,
     highlights: &[CharHighlight],
     theme: &ThemeConfig,
@@ -54,6 +57,7 @@ pub fn format_raw_bytes_with_highlights(
         LineDisplayMode::Hex | LineDisplayMode::Octal | LineDisplayMode::Binary => {
             byte_digit_spans(
                 bytes,
+                classes,
                 display_mode,
                 Style::default().fg(theme.palette.text_muted),
                 theme,
@@ -99,7 +103,14 @@ pub fn highlight_raw_byte_range(
 }
 
 pub fn format_raw_bytes_to_plain_string(bytes: &[u8], display_mode: LineDisplayMode) -> String {
-    let line = format_raw_bytes_with_highlights(bytes, display_mode, &[], &ThemeConfig::default());
+    let classes = byte_classes(bytes, 0..bytes.len(), TextEncoding::Utf8);
+    let line = format_raw_bytes_with_highlights(
+        bytes,
+        &classes,
+        display_mode,
+        &[],
+        &ThemeConfig::default(),
+    );
     line.spans.iter().map(|s| s.content.as_ref()).collect()
 }
 

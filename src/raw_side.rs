@@ -6,7 +6,9 @@
 pub mod line;
 pub mod terminal;
 
-use crate::configs::RawSideView;
+use std::ops::Range;
+
+use crate::configs::{RawSideView, TextEncoding};
 
 /// The panel's pan, by whole bytes of the view
 #[derive(Debug, Default, Clone, Copy)]
@@ -82,6 +84,80 @@ impl RawSideScroller {
         }
 
         self.pan_x = self.pan_x.min(self.max_pan_x);
+    }
+}
+
+/// What a byte is in the encoding, for its color in both panels (MAX-265)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ByteClass {
+    Null,
+    Whitespace,
+    Escape,
+    Control,
+    Ascii,
+    Text,
+    Invalid,
+}
+
+impl ByteClass {
+    /// The class of `b` alone: from 80 up, UTF-8 needs the bytes around (`byte_classes`)
+    fn alone(b: u8, encoding: TextEncoding) -> Self {
+        match b {
+            0x00 => Self::Null,
+            0x09 | 0x0A | 0x0D => Self::Whitespace,
+            0x1B => Self::Escape,
+            0x20..=0x7E => Self::Ascii,
+            0x01..=0x7F => Self::Control,
+            _ => match encoding {
+                TextEncoding::Utf8 | TextEncoding::Ascii => Self::Invalid,
+                TextEncoding::Latin1 if b <= 0x9F => Self::Control,
+                TextEncoding::Latin1 | TextEncoding::Cp437 => Self::Text,
+            },
+        }
+    }
+}
+
+/// The class of each byte of `bytes[range]`, decoded with up to 3 bytes before and after it:
+/// a char cut by the range's edges is seen whole. A char not complete at the end of `bytes` is
+/// text, more may come
+pub fn byte_classes(bytes: &[u8], range: Range<usize>, encoding: TextEncoding) -> Vec<ByteClass> {
+    let from = range.start.saturating_sub(3);
+    let window = &bytes[from..(range.end + 3).min(bytes.len())];
+    let mut classes: Vec<ByteClass> = window
+        .iter()
+        .map(|&b| ByteClass::alone(b, encoding))
+        .collect();
+    if encoding == TextEncoding::Utf8 {
+        utf8_text(window, &mut classes);
+    }
+    classes.drain(..range.start - from);
+    classes.truncate(range.len());
+    classes
+}
+
+/// The bytes from 80 up of valid chars as text, the broken ones stay invalid (one
+/// `std::str::from_utf8` pass, as `InvalidBytes::repair` cuts them)
+fn utf8_text(window: &[u8], classes: &mut [ByteClass]) {
+    let mut at = 0;
+    loop {
+        let (valid_end, broken) = match std::str::from_utf8(&window[at..]) {
+            Ok(_) => (window.len(), None),
+            Err(err) => (at + err.valid_up_to(), Some(err.error_len())),
+        };
+        for idx in at..valid_end {
+            if window[idx] >= 0x80 {
+                classes[idx] = ByteClass::Text;
+            }
+        }
+        match broken {
+            None => return,
+            Some(Some(len)) => at = valid_end + len,
+            // not complete at the end
+            Some(None) => {
+                classes[valid_end..].fill(ByteClass::Text);
+                return;
+            }
+        }
     }
 }
 

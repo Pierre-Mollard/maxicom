@@ -232,8 +232,8 @@ your own.
 | `Ctrl-a /` | `enter-search` | Search the history |
 | `Ctrl-a 0` | `pan-home` | Pan to the line start |
 | `Ctrl-a :` | `command-line` | Open the command line |
-| `Ctrl-a <` | `side-shrink-5` | Shrink the side view by 5 % |
-| `Ctrl-a >` | `side-grow-5` | Grow the side view by 5 % |
+| `Ctrl-a <` | `side-grow-5` | Grow the side view by 5 % |
+| `Ctrl-a >` | `side-shrink-5` | Shrink the side view by 5 % |
 | `Ctrl-a ?` | `enter-search-backward` | Search the history from the end |
 | `Ctrl-a B` | `toggle-display-raw` | Toggle the raw side view |
 | `Ctrl-a C` | `clear-history` | Clear the history |
@@ -421,8 +421,8 @@ command: see [Actions and commands](#actions-and-commands).
 | `page-side-down` | Scroll the side view down a page | `Ctrl-a Shift-PageDown` |
 | `side-grow` | Grow the side view by 1 % | — |
 | `side-shrink` | Shrink the side view by 1 % | — |
-| `side-grow-5` | Grow the side view by 5 % | `Ctrl-a >` |
-| `side-shrink-5` | Shrink the side view by 5 % | `Ctrl-a <` |
+| `side-grow-5` | Grow the side view by 5 % | `Ctrl-a <` |
+| `side-shrink-5` | Shrink the side view by 5 % | `Ctrl-a >` |
 | `clear` | Clear the view, the history a scroll up | `Ctrl-a c` |
 | `clear-history` | Clear the history | `Ctrl-a C` |
 | `sessions` | Open the session backups | `Ctrl-a j` |

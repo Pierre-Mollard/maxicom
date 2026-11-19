@@ -8,6 +8,7 @@ use crate::configs::{
     comments::{THEME_COMMENTS, with_comments},
     style::ConfigStyle,
 };
+use crate::raw_side::ByteClass;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -286,14 +287,14 @@ impl Default for TerminalStyles {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RawInspectorColors {
-    pub byte_any: Color,        // Default / text bytes
+    pub byte_any: Color,        // Line mode's Raw display
     pub byte_null: Color,       // 0x00 (padding, zero bytes)
     pub byte_ascii: Color,      // 0x20..=0x7E (printable ASCII)
+    pub byte_text: Color,       // the bytes of the other chars in the encoding
+    pub byte_invalid: Color,    // bytes that make no char in the encoding
     pub byte_whitespace: Color, // 0x0A, 0x0D, 0x09 (\n, \r, \t)
-    pub byte_sync: Color,       // 0x55, 0xAA, 0x7E (sync preambles)
-    pub byte_ones: Color,       // 0xFF (broadcast, erased flash)
     pub byte_escape: Color,     // 0x1B (ESC, starts the escape sequences)
-    pub byte_other: Color,      // Other arbitrary payloads
+    pub byte_control: Color,    // the other control bytes
 }
 
 impl Default for RawInspectorColors {
@@ -301,12 +302,12 @@ impl Default for RawInspectorColors {
         Self {
             byte_any: Color::White,
             byte_null: Color::DarkGray,
-            byte_ascii: Color::Cyan,
+            byte_ascii: Color::White,
+            byte_text: Color::LightBlue,
+            byte_invalid: Color::LightRed,
             byte_whitespace: Color::Yellow,
-            byte_sync: Color::LightRed,
-            byte_ones: Color::Red,
             byte_escape: Color::LightMagenta,
-            byte_other: Color::LightBlue,
+            byte_control: Color::Gray,
         }
     }
 }
@@ -426,16 +427,17 @@ impl ThemeConfig {
         Ok(default_theme)
     }
 
-    #[inline]
-    pub fn byte_color(&self, b: u8) -> Color {
-        match b {
-            0x00 => self.raw_inspector.byte_null,
-            0x0A | 0x0D | 0x09 => self.raw_inspector.byte_whitespace,
-            0xAA | 0x55 | 0x7E => self.raw_inspector.byte_sync,
-            0xFF => self.raw_inspector.byte_ones,
-            0x1B => self.raw_inspector.byte_escape,
-            0x20..=0x7E => self.raw_inspector.byte_ascii,
-            _ => self.raw_inspector.byte_other,
+    /// The color of a byte in the raw panels: of its class in the encoding (MAX-265)
+    pub fn byte_class_color(&self, class: ByteClass) -> Color {
+        let colors = &self.raw_inspector;
+        match class {
+            ByteClass::Null => colors.byte_null,
+            ByteClass::Whitespace => colors.byte_whitespace,
+            ByteClass::Escape => colors.byte_escape,
+            ByteClass::Control => colors.byte_control,
+            ByteClass::Ascii => colors.byte_ascii,
+            ByteClass::Text => colors.byte_text,
+            ByteClass::Invalid => colors.byte_invalid,
         }
     }
 }

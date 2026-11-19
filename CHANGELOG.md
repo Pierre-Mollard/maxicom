@@ -13,7 +13,12 @@ you says so in an "Upgrading" section.
 Run [`maxicom --write-config`](https://pierre-mollard.github.io/maxicom/settings.html#updating-the-files)
 to get the new keys that scroll the raw side panel in your `keymap.toml`:
 `Ctrl-a Shift-Up` / `Ctrl-a Shift-Down` and `Ctrl-a Shift-PageUp` /
-`Ctrl-a Shift-PageDown`.
+`Ctrl-a Shift-PageDown`. It also swaps `Ctrl-a <` and `Ctrl-a >`, now grow and
+shrink: a `keymap.toml` written before keeps them the old way round.
+
+In `theme.toml`, `[raw_inspector]` drops `byte_sync` and `byte_ones`, and
+`byte_other` is now `byte_control`: maxicom warns about these keys until you
+remove or rename them. `byte_text` and `byte_invalid` are new.
 
 ### Added
 
@@ -66,6 +71,20 @@ to get the new keys that scroll the raw side panel in your `keymap.toml`:
 - In Hex, Octal and Binary, the line still coming in shows its last blanks
   and a carriage return waiting for its line feed, as the lines before it
   show their line end.
+- The raw side panel colors bytes by what they are in the encoding, a char
+  read whole even when a row cuts it: printable ASCII in white (it was
+  cyan, and `U` and `~` showed red as sync bytes), the bytes of other chars
+  in light blue, bytes that make no char (a broken UTF-8 char, `0xFF`) in
+  light red, the other control bytes in gray. Line mode's Hex, Octal and
+  Binary displays color them the same way. See
+  [Byte colors](https://pierre-mollard.github.io/maxicom/raw-side-panel.html#byte-colors).
+- `Ctrl-a <` grows the side panel and `Ctrl-a >` shrinks it, the way the
+  border moves when the panel is on the right. In terminal mode, with the raw
+  panel on the right, they size it by the dump's lines: growing, to just fit
+  8 more bytes a line; shrinking, to just fit 8 bytes less, with no blank
+  columns left. Past the last group of 8, by 1 %.
+- In terminal mode, the raw side panel first opens at the size that just
+  fits 8 bytes a line in the dump, instead of `split_percent`.
 
 ### Fixed
 

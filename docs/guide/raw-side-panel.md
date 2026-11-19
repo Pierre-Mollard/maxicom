@@ -77,20 +77,26 @@ cell.
 maxicom keeps the bytes of the last `terminal_mode.history_size` × 512
 bytes (51 MB with the default), the oldest dropped first.
 
-Bytes are colored by kind, from `[raw_inspector]` in the theme:
+When its rows are wider than the panel, `Ctrl-a Shift-Left` /
+`Ctrl-a Shift-Right` pan it.
+
+### Byte colors
+
+Bytes are colored by what they are in the
+[encoding](encoding-and-newlines.md), from `[raw_inspector]` in the theme:
 
 | Entry | Bytes |
 | --- | --- |
 | `byte_ascii` | Printable ASCII |
+| `byte_text` | The bytes of the other chars: a UTF-8 char of several bytes, or `0x80` and up in `latin1` and `cp437` |
+| `byte_invalid` | Bytes that make no char: a broken UTF-8 char (shown `�`), `0xFF` in UTF-8, `0x80` and up in `ascii` |
 | `byte_whitespace` | `\n`, `\r`, `\t` |
-| `byte_null` | `0x00` |
-| `byte_ones` | `0xFF` |
 | `byte_escape` | `0x1B`, the ESC starting escape sequences |
-| `byte_sync` | The sync bytes `0x55`, `0xAA`, `0x7E` |
-| `byte_other` | Everything else |
+| `byte_null` | `0x00` |
+| `byte_control` | The other control bytes, and `0x80` to `0x9F` in `latin1` |
 
-When its rows are wider than the panel, `Ctrl-a Shift-Left` /
-`Ctrl-a Shift-Right` pan it.
+A char cut by the end of a row is read whole, with its bytes on the next row.
+A char still waiting for its last bytes shows as text.
 
 ## Copying and searching bytes
 
@@ -195,10 +201,16 @@ from then on.
 | `split_percent` | `40` | The share of the room it takes, 10 to 85 |
 | `orientation` | `"right"` | Where it sits: `right` or `bottom` |
 
+In terminal mode, the first time the dump shows on the right, the panel takes
+the size that just fits 8 bytes a line, when the room allows it; line mode
+keeps that size too.
+
 To resize it while maxicom runs:
 
 - drag its border with the mouse;
-- `Ctrl-a >` / `Ctrl-a <` grow or shrink it by 5 %;
+- `Ctrl-a <` / `Ctrl-a >` grow or shrink it by 5 %; in terminal mode, with
+  the panel on the right, to just fit 8 more or 8 fewer bytes a line in the
+  dump, with no blank columns left (by 1 % when no other group of 8 fits);
 - the actions `side-grow` / `side-shrink` do it by 1 %, for a key you bind.
 
 The new size lasts until you quit; `config.toml` keeps its value.

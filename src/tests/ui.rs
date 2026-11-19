@@ -384,6 +384,13 @@ fn plot_side_too_small() {
     assert!(!h.draw().join("\n").contains("key-value"));
 }
 
+/// The terminal dump's first showing sizes its panel (`App::fit_dump_once`): a first draw
+/// lets it, then the panel goes back to the default 40 %
+fn past_dump_fit(h: &mut Harness) {
+    h.draw();
+    h.app.settings_mut().raw_side.split_percent = 40;
+}
+
 /// MAX-230 step 0: where the raw side panel and the scrollbar sit, locked before the plot
 /// gets its own placement: right and bottom, borders on and off, in line and terminal mode.
 /// The raw panel must stay there whatever the plot does.
@@ -403,6 +410,7 @@ fn raw_side_layout_locked() {
             s.raw_side.orientation = orientation;
             s.ui.show_borders = borders;
         });
+        past_dump_fit(&mut h);
         let l = ScreenLayout::compute(r(0, 0, 100, 30), &h.app);
         assert_eq!(l.plot_area, None);
         // the drawn frame agrees with the computed one
@@ -835,6 +843,7 @@ fn raw_panel_joins_the_frame() {
             s.ui.show_borders = true;
             s.raw_side.view = RawSideView::Hex;
         });
+        past_dump_fit(&mut h);
         // the rows drawn, the raw panel and the app border's last row
         let frame = |h: &mut Harness| {
             let l = ScreenLayout::compute(Rect::new(0, 0, 100, 30), &h.app);
@@ -5772,6 +5781,107 @@ fn side_actions_resize_the_raw_panel() {
     assert_eq!(crate::app::tests::toasts(&h.app), ["SideView is Off"]);
 }
 
+/// The terminal dump's first showing on the right sizes its panel to just fit 8 bytes a
+/// line: a percent less cuts the line's text. Later, the size set stays, the panel turned off
+/// and on again included; line mode keeps the config's.
+/// How: 240 columns from 40 %: drawn, the line's whole text shows; a percent less, it doesn't;
+/// back, resized by hand to 50 %, the panel off and on; line mode at 40 %
+#[test]
+fn dump_first_showing_fits_8_bytes() {
+    let mut h = terminal_raw_on(240, &[b'a'; 300]);
+    let rows = h.draw();
+    let fitted = h.app.settings().raw_side.split_percent;
+    assert!(fitted < 40, "{fitted}");
+    assert_eq!(dump_bytes_per_line(&rows), 8);
+    let line = "61 61 61 61 61 61 61 61  aaaaaaaa";
+    assert!(shows(&rows, line), "{rows:#?}");
+    h.app.settings_mut().raw_side.split_percent = fitted - 1;
+    assert!(!shows(&h.draw(), line), "the text column is cut");
+
+    h.app.settings_mut().raw_side.split_percent = 50;
+    h.app.settings_mut().raw_side.view = RawSideView::Off;
+    h.draw();
+    h.app.settings_mut().raw_side.view = RawSideView::Hex;
+    h.draw();
+    assert_eq!(h.app.settings().raw_side.split_percent, 50);
+
+    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 240, 12, |s| {
+        s.raw_side.view = RawSideView::Hex;
+    });
+    h.draw();
+    assert_eq!(h.app.settings().raw_side.split_percent, 40);
+}
+
+/// The dump's bytes a line, from the first two offsets drawn (each past a `│`)
+fn dump_bytes_per_line(rows: &[String]) -> u64 {
+    let offsets: Vec<u64> = rows
+        .iter()
+        .filter_map(|row| {
+            row.split('│').find_map(|part| {
+                let digits = part.get(..8)?;
+                let hex = digits.chars().all(|c| c.is_ascii_hexdigit());
+                (hex && part.get(8..10) == Some("  "))
+                    .then(|| u64::from_str_radix(digits, 16).ok())?
+            })
+        })
+        .collect();
+    assert!(offsets.len() > 1, "{rows:#?}");
+    offsets[1] - offsets[0]
+}
+
+/// The big steps (`Ctrl-a <` / `Ctrl-a >`) in terminal mode size the raw panel by the dump's
+/// lines: growing, to the first size with 8 more bytes a line; shrinking, to the last size
+/// below where a group just fits, no padding left (a percent less shows a group less). By 1 %
+/// past the last group, up to 85.
+/// How: 240 columns (16 bytes a line), Hex panel at 40 %; grow, a percent less, shrink twice,
+/// then grow to 85
+#[test]
+fn side_big_steps_fit_the_dump_lines() {
+    let mut h = terminal_raw_on(240, &[b'a'; 300]);
+    past_dump_fit(&mut h);
+    let step = |h: &mut Harness, action: Option<KeyBindingAction>| {
+        if let Some(action) = action {
+            let action = action.to_action(&h.app);
+            h.app.update(action);
+        }
+        let rows = h.draw();
+        (
+            h.app.settings().raw_side.split_percent,
+            dump_bytes_per_line(&rows),
+        )
+    };
+    let set = |h: &mut Harness, percent| h.app.settings_mut().raw_side.split_percent = percent;
+    let (start, before) = step(&mut h, None);
+    assert_eq!((start, before), (40, 16));
+
+    let (grown, bytes) = step(&mut h, Some(KeyBindingAction::SideGrow5));
+    assert_eq!(bytes, before + 8);
+    set(&mut h, grown - 1);
+    assert_eq!(
+        step(&mut h, None).1,
+        before,
+        "the first size with a group more"
+    );
+    set(&mut h, grown);
+    step(&mut h, None);
+
+    // back to the group less, with no padding: a percent less loses a group
+    let (shrunk, bytes) = step(&mut h, Some(KeyBindingAction::SideShrink5));
+    assert_eq!(bytes, before);
+    assert!(shrunk <= start);
+    set(&mut h, shrunk - 1);
+    assert_eq!(step(&mut h, None).1, before - 8, "no padding left");
+    set(&mut h, shrunk);
+    let (_, bytes) = step(&mut h, Some(KeyBindingAction::SideShrink5));
+    assert_eq!(bytes, before - 8);
+
+    let mut last = 0;
+    for _ in 0..80 {
+        last = step(&mut h, Some(KeyBindingAction::SideGrow5)).0;
+    }
+    assert_eq!(last, 85);
+}
+
 /// MAX-189: the raw panel's border is a handle: a drag from it puts it under the pointer,
 /// on the right (a column) and at the bottom (a row), in 10..=85 % of the split; the
 /// release, or a move with no button (MAX-191), lets go. The pointer over it shows it.
@@ -10391,8 +10501,62 @@ fn terminal_raw_panel_is_a_dump() {
     );
     assert_ne!(
         theme.raw_inspector.byte_escape,
-        theme.raw_inspector.byte_other
+        theme.raw_inspector.byte_control
     );
+}
+
+/// MAX-265: line mode's raw panel colors each byte by what it is in the encoding: `U` and
+/// `~` ASCII, the bytes of `é` a char's, the broken `F1 80` no char's.
+/// How: "U~" C3 A9 F1 80 in UTF-8, Hex panel
+#[test]
+fn line_raw_panel_colors_bytes_by_class() {
+    let theme = h_theme().raw_inspector;
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+    h.app.settings_mut().raw_side.view = RawSideView::Hex;
+    h.feed(b"U~\xC3\xA9\xF1\x80\r\n");
+    let rows = h.draw();
+    let fg = |at: (u16, u16)| h.terminal.backend().buffer()[at].fg;
+    let (x, y) = cell_of(&rows, "55 7E C3 A9 F1 80");
+    let colors: Vec<_> = (0..6).map(|i| fg((x + 3 * i, y))).collect();
+    let expected = [
+        theme.byte_ascii,
+        theme.byte_ascii,
+        theme.byte_text,
+        theme.byte_text,
+        theme.byte_invalid,
+        theme.byte_invalid,
+    ];
+    assert_eq!(colors, expected);
+}
+
+/// MAX-265: the dump colors each byte by what it is in the encoding, in both columns, and a
+/// char cut by a line's end is seen whole: its bytes on both lines are a char's.
+/// How: 160 columns (8 bytes a line), from offset 0x30: "U~" C3 A9 F1 80 "a" E2 | 82 AC "b"
+/// (`€` across the line's end)
+#[test]
+fn dump_colors_bytes_by_class() {
+    let theme = h_theme().raw_inspector;
+    let mut h = terminal_raw_on(160, b"U~\xC3\xA9\xF1\x80a\xE2\x82\xACb");
+    let rows = h.draw();
+    let fg = |at: (u16, u16)| h.terminal.backend().buffer()[at].fg;
+    let (x, y) = cell_of(&rows, "00000030  55 7E C3 A9 F1 80 61 E2  U~....a.");
+    let digits: Vec<_> = (0..8).map(|i| fg((x + 10 + 3 * i, y))).collect();
+    let chars: Vec<_> = (0..8).map(|i| fg((x + 35 + i, y))).collect();
+    let expected = [
+        theme.byte_ascii,
+        theme.byte_ascii,
+        theme.byte_text,
+        theme.byte_text,
+        theme.byte_invalid,
+        theme.byte_invalid,
+        theme.byte_ascii,
+        theme.byte_text,
+    ];
+    assert_eq!(digits, expected);
+    assert_eq!(chars, expected);
+    let (x, y) = cell_of(&rows, "00000038  82 AC 62");
+    assert_eq!(fg((x + 10, y)), theme.byte_text, "82");
+    assert_eq!(fg((x + 13, y)), theme.byte_text, "AC");
 }
 
 /// MAX-252 step 2: the dump shows the live end; the wheel over the panel scrolls it alone (the

@@ -86,7 +86,13 @@ pub fn render(
     frame.render_widget(root_backdrop, root_area);
 
     app.set_screen_size(root_area.width, root_area.height);
-    let layout = ScreenLayout::compute(root_area, app);
+    let mut layout = ScreenLayout::compute(root_area, app);
+    // the dump's first showing: its panel fits a group of bytes a line
+    if let Some(split) = layout.raw_split_area
+        && app.fit_dump_once(split)
+    {
+        layout = ScreenLayout::compute(root_area, app);
+    }
     app.set_frame_areas(FrameAreas {
         content: layout.content_area,
         raw_side: layout.raw_side_area,

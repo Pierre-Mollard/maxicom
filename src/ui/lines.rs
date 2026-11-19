@@ -73,8 +73,10 @@ pub fn history_entry_to_line(
     ));
 
     // highlights first: the search matches and the selection are drawn over them (MAX-229)
-    let mut content_spans =
-        highlight_spans(format_entry_content(entry, display_mode, theme), highlights);
+    let mut content_spans = highlight_spans(
+        format_entry_content(entry, display_mode, settings.encoding, theme),
+        highlights,
+    );
 
     if !line_matches.is_empty() {
         let normal_style = *theme.search.search_match;
@@ -441,7 +443,7 @@ pub fn render_monitor(
         let partial_prefix_style = *theme.line_mode.line_partial_prefix;
         partial_spans.push(Span::styled(partial_prefix, partial_prefix_style));
         let mut content_spans = highlight_spans(
-            format_entry_content(partial, display_mode, theme),
+            format_entry_content(partial, display_mode, app.settings().encoding, theme),
             highlights,
         );
         if let Some((from, to, style)) = selection_of(total_entries) {

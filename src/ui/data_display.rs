@@ -9,14 +9,16 @@ use crate::{
         plain_visible_line, walk_visible_line,
     },
     app::types::LogEntry,
-    configs::{LineDisplayMode, ThemeConfig},
+    configs::{LineDisplayMode, TextEncoding, ThemeConfig},
+    raw_side::{ByteClass, byte_classes},
 };
 
 /// Spans of a history entry: the byte modes show the bytes received, the others its decoded
-/// text (#20)
+/// text (#20); the bytes in the colors of their classes in `encoding`
 pub fn format_entry_content(
     entry: &LogEntry,
     mode: LineDisplayMode,
+    encoding: TextEncoding,
     theme: &ThemeConfig,
 ) -> Vec<Span<'static>> {
     match mode {
@@ -25,7 +27,8 @@ pub fn format_entry_content(
             if bytes.is_empty() {
                 return vec![Span::raw("")];
             }
-            byte_digit_spans(bytes, mode, Style::default(), theme)
+            let classes = byte_classes(bytes, 0..bytes.len(), encoding);
+            byte_digit_spans(bytes, &classes, mode, Style::default(), theme)
         }
         _ => format_line_content(&entry.text, mode, theme),
     }
@@ -79,15 +82,18 @@ pub fn format_line_content(
             if bytes.is_empty() {
                 return vec![Span::raw("")];
             }
-            byte_digit_spans(bytes, mode, Style::default(), theme)
+            let classes = byte_classes(bytes, 0..bytes.len(), TextEncoding::Utf8);
+            byte_digit_spans(bytes, &classes, mode, Style::default(), theme)
         }
     }
 }
 
-/// One span per byte colored by `theme.byte_color`, separated by `separator_style` spaces
-/// (spans 2*i are bytes, 2*i+1 separators). Spans borrow static digit strings, no alloc per byte.
+/// One span per byte in the color of its class in `classes`, separated by `separator_style`
+/// spaces (spans 2*i are bytes, 2*i+1 separators). Spans borrow static digit strings, no alloc
+/// per byte.
 pub fn byte_digit_spans(
     bytes: &[u8],
+    classes: &[ByteClass],
     mode: LineDisplayMode,
     separator_style: Style,
     theme: &ThemeConfig,
@@ -99,10 +105,10 @@ pub fn byte_digit_spans(
     };
 
     let mut spans = Vec::with_capacity(bytes.len() * 2);
-    for (i, &b) in bytes.iter().enumerate() {
+    for (i, (&b, &class)) in bytes.iter().zip(classes).enumerate() {
         spans.push(Span::styled(
             digits_of(b),
-            Style::default().fg(theme.byte_color(b)),
+            Style::default().fg(theme.byte_class_color(class)),
         ));
         if i + 1 < bytes.len() {
             spans.push(Span::styled(" ", separator_style));

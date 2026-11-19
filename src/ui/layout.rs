@@ -297,6 +297,12 @@ fn split_side(
         });
         return (area, None);
     }
+    let (rest, side) = side_chunks(area, direction, percent);
+    (rest, Some(side))
+}
+
+/// `area` split for a side panel taking `percent` of it in `direction`: the rest, the panel
+pub fn side_chunks(area: Rect, direction: Direction, percent: u16) -> (Rect, Rect) {
     let chunks = Layout::default()
         .direction(direction)
         .constraints([
@@ -304,7 +310,7 @@ fn split_side(
             Constraint::Percentage(percent),
         ])
         .split(area);
-    (chunks[0], Some(chunks[1]))
+    (chunks[0], chunks[1])
 }
 
 #[derive(Debug, Clone)]

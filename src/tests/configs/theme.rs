@@ -71,3 +71,19 @@ fn session_browser_theme_reads_back() {
     let read: ThemeConfig = toml::from_str(&written).unwrap();
     assert_eq!(read, ThemeConfig::default());
 }
+
+/// MAX-265: each byte class has its own `[raw_inspector]` key; ASCII, a char's bytes and the
+/// bytes of no char are apart by default, and a theme sets a class's color.
+/// How: `byte_invalid` set to red, the classes' colors read back
+#[test]
+fn byte_classes_have_their_own_colors() {
+    let theme = ThemeConfig::default();
+    let ascii = theme.byte_class_color(ByteClass::Ascii);
+    let text = theme.byte_class_color(ByteClass::Text);
+    let invalid = theme.byte_class_color(ByteClass::Invalid);
+    assert!(ascii != text && text != invalid && ascii != invalid);
+
+    let theme: ThemeConfig = toml::from_str("[raw_inspector]\nbyte_invalid = \"red\"\n").unwrap();
+    assert_eq!(theme.byte_class_color(ByteClass::Invalid), Color::Red);
+    assert_eq!(theme.byte_class_color(ByteClass::Text), text);
+}

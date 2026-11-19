@@ -16,6 +16,7 @@ use crate::{
         types::{RawRow, RawRows},
     },
     configs::{RawSideView, ThemeConfig, settings::raw_view_to_display_mode},
+    raw_side::byte_classes,
     ui::{
         layout::PreparedLayout,
         raw_side::{CharHighlight, format_raw_bytes_with_highlights, raw_panel_layout},
@@ -98,6 +99,7 @@ pub fn render(
         let partial = partial.as_ref().filter(|_| global_idx == history.len());
         if let Some(entry) = history.get(global_idx).or(partial) {
             let raw_bytes = entry.wire_bytes();
+            let classes = byte_classes(raw_bytes, 0..raw_bytes.len(), app.settings().encoding);
             let display_text = entry_display_text(entry, app.settings().line_mode.display_mode);
 
             // Display text character -> byte mapping:
@@ -151,8 +153,9 @@ pub fn render(
                         map_disp_byte_to_raw(disp_byte_end, &disp_map, raw_bytes.len())
                     };
 
-                    let sub_raw_bytes = &raw_bytes
-                        [raw_byte_start.min(raw_bytes.len())..raw_byte_end.min(raw_bytes.len())];
+                    let sub_range =
+                        raw_byte_start.min(raw_bytes.len())..raw_byte_end.min(raw_bytes.len());
+                    let sub_raw_bytes = &raw_bytes[sub_range.clone()];
 
                     let mut highlights = Vec::new();
 
@@ -258,6 +261,7 @@ pub fn render(
                     }
                     visible_raw_lines.push(format_raw_bytes_with_highlights(
                         sub_raw_bytes,
+                        &classes[sub_range],
                         raw_display_mode,
                         &highlights,
                         theme,

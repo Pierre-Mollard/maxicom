@@ -1,6 +1,7 @@
 //! The dump's layout (MAX-252).
 
 use super::*;
+use crate::configs::TextEncoding;
 
 fn plain(line: &Line) -> String {
     line.spans
@@ -40,8 +41,10 @@ fn dump_fits_the_panel_by_groups_of_8() {
 fn dump_lines_keep_their_columns() {
     let theme = ThemeConfig::default();
     let layout = DumpLayout::fit(63, RawSideView::Hex, 0x100);
-    let line =
-        |lead, bytes: &[u8]| plain(&layout.body_line(lead, bytes, RawSideView::Hex, &theme, &[]));
+    let line = |lead, bytes: &[u8]| {
+        let classes = byte_classes(bytes, 0..bytes.len(), TextEncoding::Utf8);
+        plain(&layout.body_line(lead, bytes, &classes, RawSideView::Hex, &theme, &[]))
+    };
     assert_eq!(line(0, b"ABCDEFGH"), "41 42 43 44 45 46 47 48  ABCDEFGH");
     assert_eq!(line(0, b"AB\x1b"), "41 42 1B                 AB.");
     assert_eq!(line(5, b"xyz"), "               78 79 7A       xyz");

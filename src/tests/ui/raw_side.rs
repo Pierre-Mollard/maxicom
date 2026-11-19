@@ -40,7 +40,13 @@ fn highlight_range_covers_bytes_and_inner_separators() {
         end_col: 2,
         style,
     }];
-    let line = format_raw_bytes_with_highlights(b"ABC", LineDisplayMode::Hex, &highlights, &theme);
+    let line = format_raw_bytes_with_highlights(
+        b"ABC",
+        &[ByteClass::Ascii; 3],
+        LineDisplayMode::Hex,
+        &highlights,
+        &theme,
+    );
     let styled: Vec<bool> = line.spans.iter().map(|s| s.style == style).collect();
     // spans: "41" " " "42" " " "43"
     assert_eq!(styled, [true, true, true, false, false]);
@@ -57,7 +63,13 @@ fn highlight_out_of_range_is_clamped() {
         end_col: 99,
         style,
     }];
-    let line = format_raw_bytes_with_highlights(b"AB", LineDisplayMode::Hex, &highlights, &theme);
+    let line = format_raw_bytes_with_highlights(
+        b"AB",
+        &[ByteClass::Ascii; 2],
+        LineDisplayMode::Hex,
+        &highlights,
+        &theme,
+    );
     let styled: Vec<bool> = line.spans.iter().map(|s| s.style == style).collect();
     assert_eq!(styled, [false, false, true]);
 }

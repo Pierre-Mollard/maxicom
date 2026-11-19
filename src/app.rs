@@ -4,6 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use ratatui::layout::{Direction, Rect};
+
 use crate::{
     app::{
         mash::{Mash, MashStep},
@@ -25,7 +27,10 @@ use crate::{
     configs::{
         AppConfig, DualBufferMode, KeyBindingAction, KeyResolver, LinksConfig, Mode, PlotsConfig,
         RawSideView, SettingsConfig, StatusBarLayout, TextEncoding, WrapMode,
-        settings::{PrefixPlace, PrefixWrapBehavior, SPLIT_PERCENT_MAX, SPLIT_PERCENT_MIN, on_off},
+        settings::{
+            PrefixPlace, PrefixWrapBehavior, RawSideOrientation, SPLIT_PERCENT_MAX,
+            SPLIT_PERCENT_MIN, on_off,
+        },
     },
     inputs::{
         Action, AppAction, ClickHoldAction, CopyModeAction, HistoryAction, LineInputAction,
@@ -41,6 +46,7 @@ use crate::{
     overlays::{MarkBrowser, Overlay, OverlayResponse, PopupTarget, ScreenshotDialog, SettingKey},
     paths::{create_parent_dirs, expand_home},
     transfer::{FileTransfer, Step, modem::Protocol},
+    ui::{layout::side_chunks, raw_side::terminal::DumpLayout},
 };
 
 /// How soon after the window gains focus a press is the one that focused it
@@ -160,6 +166,8 @@ pub struct App {
     last_drag_scroll: Option<Instant>,
     scrollbar_hold: Option<(ScrollbarId, ScrollbarHold)>,
     side_handle_held: Option<SidePanel>,
+    /// The dump was sized to fit its bytes on its first showing (`fit_dump_once`)
+    dump_fitted: bool,
     /// When a held scrollbar arrow scrolls again
     scrollbar_repeat_at: Option<Instant>,
     /// The action and cells of the click target the left button holds (MAX-143), and when it
@@ -334,6 +342,7 @@ impl App {
             last_drag_scroll: None,
             scrollbar_hold: None,
             side_handle_held: None,
+            dump_fitted: false,
             scrollbar_repeat_at: None,
             click_hold: None,
             click_repeat_at: None,
@@ -2004,8 +2013,68 @@ impl App {
             Some(_) => SidePanel::Plot,
             None => SidePanel::Raw,
         };
-        let split = self.split_percent_mut(panel);
-        *split = ((*split as i16 + by).max(0) as u16).clamp(SPLIT_PERCENT_MIN, SPLIT_PERCENT_MAX);
+        let split = *self.split_percent_mut(panel);
+        // the big steps fit the dump's lines in terminal mode
+        let to = match panel {
+            SidePanel::Raw if by.abs() > 1 => self.dump_resize(split, by.signum()),
+            _ => None,
+        };
+        let to = to.unwrap_or_else(|| (split as i16 + by).max(0) as u16);
+        *self.split_percent_mut(panel) = to.clamp(SPLIT_PERCENT_MIN, SPLIT_PERCENT_MAX);
+    }
+
+    /// Terminal mode's raw panel on the right, from `split` percent: growing (`dir` 1), the
+    /// first size where the dump shows a group of bytes more a line; shrinking (-1), the last
+    /// size below where a group just fits, with no padding left. By 1 % when there's none
+    fn dump_resize(&self, split: u16, dir: i16) -> Option<u16> {
+        if !self.dump_on_right() {
+            return None;
+        }
+        let handle = self.frame_map.side_handle(SidePanel::Raw)?;
+        let groups = |percent| self.dump_groups(handle.split, percent);
+        let found = if dir > 0 {
+            let now = groups(split);
+            (split + 1..=SPLIT_PERCENT_MAX).find(|&percent| groups(percent) > now)
+        } else {
+            (SPLIT_PERCENT_MIN + 1..split)
+                .rev()
+                .find(|&percent| groups(percent) > groups(percent - 1))
+        };
+        Some(found.unwrap_or_else(|| split.saturating_add_signed(dir)))
+    }
+
+    /// Terminal mode's raw panel, on the right: the dump's lines can size it
+    fn dump_on_right(&self) -> bool {
+        self.settings.mode == Mode::Terminal
+            && self.settings.raw_side.orientation == RawSideOrientation::Right
+    }
+
+    /// The groups of bytes a dump line shows with the raw panel at `percent` of `split`
+    fn dump_groups(&self, split: Rect, percent: u16) -> usize {
+        let (_, panel) = side_chunks(split, Direction::Horizontal, percent);
+        // the left border, the scrollbar's column
+        let chrome = 1 + u16::from(self.show_scrollbar());
+        let width = panel.width.saturating_sub(chrome).into();
+        let end = self.terminal_mode.dump().stream().end();
+        DumpLayout::groups(width, self.settings.raw_side.view, end)
+    }
+
+    /// The first time the dump shows on the right, its panel takes the size that just fits
+    /// one group of bytes a line, when one fits in the config's range; `split` is the room it
+    /// shares with the screen. True when the size changed, to lay the frame out again
+    pub fn fit_dump_once(&mut self, split: Rect) -> bool {
+        if self.dump_fitted || !self.dump_on_right() {
+            return false;
+        }
+        self.dump_fitted = true;
+        let fits = (SPLIT_PERCENT_MIN..=SPLIT_PERCENT_MAX)
+            .find(|&percent| self.dump_groups(split, percent) > 0);
+        let Some(percent) = fits else {
+            return false;
+        };
+        let changed = self.settings.raw_side.split_percent != percent;
+        self.settings.raw_side.split_percent = percent;
+        changed
     }
 
     /// The right-click menu's "Close": the raw view off, as `Ctrl-a B` says it, or the plot

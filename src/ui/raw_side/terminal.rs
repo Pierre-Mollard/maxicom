@@ -15,6 +15,7 @@ use crate::{
         types::{RawRows, ScrollbarMap},
     },
     configs::{RawSideView, ThemeConfig},
+    raw_side::{ByteClass, byte_classes},
     ui::{common::scrollbar, raw_side::raw_panel_layout},
 };
 
@@ -116,11 +117,16 @@ pub fn render(app: &mut App, frame: &mut Frame, raw_area: Rect, theme: &ThemeCon
         .enumerate()
     {
         let from = line * width;
-        let (front, back) = app.terminal_mode.dump().stream().slices(from..from + width);
+        // the line with up to 3 bytes kept around it: a char cut by its edges is seen whole
+        let around = from.saturating_sub(3).max(bounds.start)..(from + width + 3).min(bounds.end);
+        let (front, back) = app.terminal_mode.dump().stream().slices(around.clone());
         bytes.clear();
         bytes.extend_from_slice(front);
         bytes.extend_from_slice(back);
         let lead = bounds.start.saturating_sub(from) as usize;
+        let in_line = (from + lead as u64 - around.start) as usize
+            ..((from + width).min(around.end) - around.start) as usize;
+        let classes = byte_classes(&bytes, in_line.clone(), encoding);
         // the line's bytes selected, and the cursor's, by their index in the line
         let local = |range: &std::ops::Range<u64>| {
             let to = range.end.clamp(from, from + width);
@@ -168,7 +174,8 @@ pub fn render(app: &mut App, frame: &mut Frame, raw_area: Rect, theme: &ThemeCon
             cursor_cell = Some((row, byte * raw_view.stride()));
         }
         offsets.push(layout.offset_line(line, theme));
-        bodies.push(layout.body_line(lead, &bytes, raw_view, theme, &marks));
+        let line_bytes = &bytes[in_line];
+        bodies.push(layout.body_line(lead, line_bytes, &classes, raw_view, theme, &marks));
     }
 
     if app.settings().ui.mouse {
@@ -210,17 +217,27 @@ impl DumpLayout {
     /// The layout for a panel `width` columns wide showing bytes up to offset `end`: the most
     /// bytes per line that fit, a multiple of [`DUMP_GROUP`], at least one group
     pub fn fit(width: usize, view: RawSideView, end: u64) -> Self {
-        let offset_digits = (u64::BITS - end.leading_zeros()).div_ceil(4).max(8) as usize;
-        let free = width.saturating_sub(offset_digits + DUMP_GAP);
-        // a byte takes its digits and a space, plus its char in the text column
-        let per_byte = view.stride() + 1;
-        let fits = free.saturating_sub(DUMP_GAP - 1) / per_byte;
-        let bytes_per_line = (fits - fits % DUMP_GROUP).max(DUMP_GROUP);
+        let offset_digits = Self::offset_digits(end);
+        let bytes_per_line = Self::groups(width, view, end).max(1) * DUMP_GROUP;
         Self {
             offset_digits,
             bytes_per_line,
-            body_width: bytes_per_line * per_byte + DUMP_GAP - 1,
+            body_width: bytes_per_line * (view.stride() + 1) + DUMP_GAP - 1,
         }
+    }
+
+    /// The groups of [`DUMP_GROUP`] bytes a line that fit whole in a panel `width` columns
+    /// wide, none when not even one does
+    pub fn groups(width: usize, view: RawSideView, end: u64) -> usize {
+        let offset_digits = Self::offset_digits(end);
+        let free = width.saturating_sub(offset_digits + DUMP_GAP);
+        // a byte takes its digits and a space, plus its char in the text column
+        let per_byte = view.stride() + 1;
+        free.saturating_sub(DUMP_GAP - 1) / per_byte / DUMP_GROUP
+    }
+
+    fn offset_digits(end: u64) -> usize {
+        (u64::BITS - end.leading_zeros()).div_ceil(4).max(8) as usize
     }
 
     #[inline]
@@ -244,13 +261,15 @@ impl DumpLayout {
     }
 
     /// The bytes and text of a line starting `lead` bytes before `bytes` (bytes dropped from
-    /// the store, drawn blank so the columns stay aligned), each byte in its class's color;
+    /// the store, drawn blank so the columns stay aligned), each byte in the color of its class
+    /// in `classes`;
     /// `marks` style the bytes of their ranges (indexes in the line, `lead` included) in both
     /// columns, and the spaces between two bytes of a range
     pub fn body_line(
         &self,
         lead: usize,
         bytes: &[u8],
+        classes: &[ByteClass],
         view: RawSideView,
         theme: &ThemeConfig,
         marks: &[(std::ops::Range<usize>, Style)],
@@ -263,8 +282,8 @@ impl DumpLayout {
         let stride = view.stride();
         let mut spans = Vec::with_capacity(bytes.len() * 3 + 3);
         spans.push(Span::raw(" ".repeat(lead * stride)));
-        for &byte in bytes {
-            let style = Style::default().fg(theme.byte_color(byte));
+        for (&byte, &class) in bytes.iter().zip(classes) {
+            let style = Style::default().fg(theme.byte_class_color(class));
             spans.push(Span::styled(digits_of(byte), style));
             spans.push(Span::raw(" "));
         }
@@ -273,13 +292,13 @@ impl DumpLayout {
         spans.push(Span::raw(
             " ".repeat(missing * stride + DUMP_GAP - 1 + lead),
         ));
-        for &byte in bytes {
+        for (&byte, &class) in bytes.iter().zip(classes) {
             let shown = if (0x20..=0x7E).contains(&byte) {
                 byte as char
             } else {
                 '.'
             };
-            let style = Style::default().fg(theme.byte_color(byte));
+            let style = Style::default().fg(theme.byte_class_color(class));
             spans.push(Span::styled(shown.to_string(), style));
         }
         // spans: the lead, a digits and a space per byte, the padding, a char per byte
