@@ -53,14 +53,22 @@ pub fn render_plot_panel(
     }
 
     // `  ◀ name ▶ frozen` under the separator, in from the border, and `✕` at the row's
-    // right end: the name cut to what's left
+    // right end: the name cut to what's left, and centered in the width of the longest of
+    // plots.toml so the buttons don't move from one plot to the next (MAX-269)
     let text = Style::default().fg(theme.palette.text);
     let muted = Style::default().fg(theme.palette.text_muted);
     let button_style = Style::default().fg(theme.palette.secondary);
     let frozen = if plot.is_frozen() { " frozen" } else { "" };
     let room = (inner.width as usize).saturating_sub(TITLE_FIXED_WIDTH + frozen.len());
     let name = shorten(&plot.name, room.max(3));
-    let name_width = name.width() as u16;
+    let longest = (app.plots().plots.iter())
+        .map(|(name, _)| name.width())
+        .max()
+        .unwrap_or(0);
+    let slot = longest.min(room).max(name.width());
+    let pad = slot - name.width();
+    let name = format!("{}{name}{}", " ".repeat(pad / 2), " ".repeat(pad - pad / 2));
+    let name_width = slot as u16;
     let title_row = Rect { height: 1, ..inner };
     let title = Line::from(vec![
         Span::raw("  "),

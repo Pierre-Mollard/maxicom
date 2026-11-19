@@ -34,20 +34,20 @@ impl LinkAlert {
     fn disconnected(kind: LinkKind) -> Self {
         match kind {
             LinkKind::Serial => Self {
-                headline: "⚠ SERIAL PORT DISCONNECTED ⚠",
+                headline: "◆ SERIAL PORT DISCONNECTED ◆",
                 before: "Port ",
                 after: " was closed or unplugged.",
                 next: "Waiting for it to come back...",
             },
             LinkKind::Tcp => Self {
-                headline: "⚠ TCP CONNECTION LOST ⚠",
+                headline: "◆ TCP CONNECTION LOST ◆",
                 before: "",
                 after: " closed the connection or stopped answering.",
                 next: "Reconnecting...",
             },
             // a replay never reopens, so this popup isn't shown for one
             LinkKind::Replay => Self {
-                headline: "⚠ REPLAY STOPPED ⚠",
+                headline: "◆ REPLAY STOPPED ◆",
                 before: "File ",
                 after: " can't be read.",
                 next: "",
@@ -58,20 +58,20 @@ impl LinkAlert {
     fn detached(kind: LinkKind) -> Self {
         match kind {
             LinkKind::Serial => Self {
-                headline: "⚠ SERIAL PORT DETACHED ⚠",
+                headline: "◆ SERIAL PORT DETACHED ◆",
                 before: "Port ",
                 after: " was released.",
                 next: "Other programs can open it now.",
             },
             LinkKind::Tcp => Self {
-                headline: "⚠ TCP CONNECTION DETACHED ⚠",
+                headline: "◆ TCP CONNECTION DETACHED ◆",
                 before: "The connection to ",
                 after: " was closed.",
                 next: "Another client can connect now.",
             },
             // a replay doesn't detach, so this popup isn't shown for one
             LinkKind::Replay => Self {
-                headline: "⚠ REPLAY DETACHED ⚠",
+                headline: "◆ REPLAY DETACHED ◆",
                 before: "File ",
                 after: " was released.",
                 next: "",
@@ -182,7 +182,7 @@ pub fn render_no_device_popup(
 ) -> Rect {
     let text = vec![
         Line::from(Span::styled(
-            "⚠ NO DEVICE ⚠",
+            "◆ NO DEVICE ◆",
             Style::default()
                 .fg(theme.palette.text_warn)
                 .add_modifier(Modifier::BOLD),
@@ -214,7 +214,7 @@ pub fn render_error_popup(
 ) -> Rect {
     let mut lines = vec![
         Line::from(Span::styled(
-            format!("⚠  {}  ⚠", err.title),
+            format!("◆  {}  ◆", err.title),
             Style::default()
                 .fg(theme.palette.text_warn)
                 .add_modifier(Modifier::BOLD),

@@ -2856,6 +2856,19 @@ impl App {
         self.notifications.push_keyed(key, msg, level, duration);
     }
 
+    /// A copy made: what it was (`Copied the <what>: <text>`) or how many chars, in the copy's
+    /// box; nothing with `notify_copy` off, a clipboard error still shows (MAX-269)
+    pub fn notify_copied(&mut self, text: &str, what: Option<&str>) {
+        if !self.settings.ui.notify_copy {
+            return;
+        }
+        let msg = match what {
+            Some(what) => format!("Copied the {what}: {text}"),
+            None => format!("Copied {} chars to clipboard", text.chars().count()),
+        };
+        self.notify_keyed("copy", ToastLevel::Success, msg);
+    }
+
     /// A file transfer's toast: its messages follow each other in one box (MAX-228)
     pub fn notify_transfer(&mut self, level: ToastLevel, msg: impl Into<String>) {
         self.notify_keyed("transfer", level, msg);

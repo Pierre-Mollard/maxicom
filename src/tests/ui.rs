@@ -265,7 +265,8 @@ fn plot_in_the_side_panel() {
 
 /// MAX-222: a click on the title's `▶` shows the next plot, on its `◀` the previous one; a
 /// name too long for the panel is cut with `…`, the buttons kept. MAX-230: `◀` on the first
-/// plot goes to the last, never off; `✕` closes the plot (the hex panel back).
+/// plot goes to the last, never off; `✕` closes the plot (the hex panel back). MAX-269: `▶`
+/// stays in its column from one plot to the next.
 /// How: `key-value` shown, `▶`, `◀`, `◀`, `✕`; then a plot with a long name.
 #[test]
 fn plot_title_arrows_and_long_names() {
@@ -278,9 +279,12 @@ fn plot_title_arrows_and_long_names() {
     );
     let rows = h.draw();
     assert!(has(&rows, "  ◀ serial-plotter ▶ "), "{rows:#?}");
+    let next_at = cell_of(&rows, "▶");
     click(&mut h, cell_of(&rows, "◀"));
     assert_eq!(h.app.plot().map(|p| p.name.as_str()), Some("key-value"));
     let rows = h.draw();
+    // MAX-269: the name centered in the longest one's width, `▶` doesn't move
+    assert_eq!(cell_of(&rows, "▶"), next_at, "{rows:#?}");
     click(&mut h, cell_of(&rows, "◀"));
     assert_eq!(h.app.plot().map(|p| p.name.as_str()), Some("tagged"));
     let rows = h.draw();
@@ -316,7 +320,7 @@ fn plot_frozen_title() {
     h.app.toggle_plot_freeze();
     h.app.notifications.dismiss_all();
     let screen = h.draw().join("\n");
-    assert!(screen.contains("│  ◀ key-value ▶ frozen "), "{screen}");
+    assert!(screen.contains("│  ◀   key-value    ▶ frozen "), "{screen}");
     assert!(screen.contains("temp 20 "), "{screen}");
 }
 
@@ -331,7 +335,7 @@ fn plot_waiting_at_the_bottom() {
         crate::configs::settings::RawSideOrientation::Bottom;
     let rows = h.draw();
     let at = |text: &str| rows.iter().position(|row| row.contains(text)).unwrap();
-    let title = at("  ◀ key-value ▶ ");
+    let title = at("  ◀   key-value    ▶ ");
     assert!(rows[title].ends_with("✕ "), "{rows:#?}");
     assert!(
         rows[title - 1].chars().all(|c| c == '─' || c == '┴'),
@@ -557,7 +561,7 @@ fn plot_in_its_own_place() {
     );
     let rows = h.draw();
     assert!(rows[18].starts_with("────"), "{rows:#?}");
-    assert!(rows[19].starts_with("  ◀ key-value ▶ "), "{rows:#?}");
+    assert!(rows[19].starts_with("  ◀   key-value    ▶ "), "{rows:#?}");
     assert!(rows[19].ends_with("✕ "), "{rows:#?}");
 
     h.app.settings_mut().plot_side.orientation = Right;
@@ -648,7 +652,7 @@ fn raw_and_plot_both_shown() {
     assert!(has(&rows, "temp 25 ↓20 ↑25"), "{rows:#?}");
     assert_eq!(rows[17].chars().nth(60), Some('│'), "{rows:#?}");
     assert_eq!(rows[18].chars().nth(60), Some('┴'), "{rows:#?}");
-    assert!(rows[19].starts_with("  ◀ key-value ▶ "), "{rows:#?}");
+    assert!(rows[19].starts_with("  ◀   key-value    ▶ "), "{rows:#?}");
     assert!(rows[19].ends_with("✕ "), "{rows:#?}");
 
     // each border its own split: the raw one to column 50, the plot's to row 14

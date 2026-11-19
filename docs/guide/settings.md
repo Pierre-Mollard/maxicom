@@ -328,6 +328,7 @@ Where `download` puts what it receives. See
 | `middle_click_paste` | `true` | A middle click pastes the last copy, see [Middle-click paste](copy-mode-and-mouse.md#middle-click-paste) |
 | `focus_effects` | `true` | The gray border and cursor while the window isn't focused, see [Cursor](terminal-mode.md#cursor) |
 | `transfer_row` | `true` | The progress row while a file is sent, see [The progress row](file-transfers.md#the-progress-row) |
+| `notify_copy` | `true` | A notification after each copy, see [Where the copy goes](copy-mode-and-mouse.md#where-the-copy-goes) |
 | `hide_borders_below` | `[60, 16]` | See below |
 | `hide_scrollbar_below` | `[40, 10]` | See below |
 | `hide_status_bar_below` | `[35, 6]` | See below |

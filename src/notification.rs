@@ -23,7 +23,7 @@ impl ToastLevel {
         match self {
             Self::Info => "ℹ ",
             Self::Success => "✓ ",
-            Self::Warn => "⚠ ",
+            Self::Warn => "◆ ",
             Self::Error => "✗ ",
         }
     }

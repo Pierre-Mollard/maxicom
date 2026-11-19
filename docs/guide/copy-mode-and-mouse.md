@@ -104,8 +104,10 @@ sequence. Your terminal must allow it:
 - Windows Terminal, kitty, WezTerm, Alacritty and iTerm2 do;
 - in tmux, add `set -g set-clipboard on`.
 
-A notification says how many characters were copied. maxicom also keeps the
-last copy itself, for a right-click or middle-click paste.
+A notification says how many characters were copied. To copy without it,
+set `notify_copy = false` in `[ui]`: only a clipboard error still shows.
+maxicom also keeps the last copy itself, for a right-click or middle-click
+paste.
 
 ### Colors
 

@@ -2720,3 +2720,28 @@ fn backspace_setting_toggles_the_byte_sent() {
     app.update(toggle());
     assert_eq!(sent(&mut app), b"\x7f");
 }
+
+/// MAX-269: a copy says what it copied, in the copy's box; with `notify_copy` off nothing shows.
+/// How: 5 chars copied, a named copy, then both again with the setting off
+#[test]
+fn copy_notification_can_be_turned_off() {
+    let mut app = app();
+    let messages = |app: &App| -> Vec<String> {
+        (app.notifications.active_toasts().iter())
+            .map(|toast| toast.message.clone())
+            .collect()
+    };
+    app.notify_copied("hello", None);
+    assert_eq!(messages(&app), ["Copied 5 chars to clipboard"]);
+    app.notify_copied("~/.config/maxicom", Some("config path"));
+    assert_eq!(
+        messages(&app),
+        ["Copied the config path: ~/.config/maxicom"]
+    );
+
+    app.notifications.dismiss_all();
+    app.settings.ui.notify_copy = false;
+    app.notify_copied("hello", None);
+    app.notify_copied("~/.config/maxicom", Some("config path"));
+    assert!(messages(&app).is_empty());
+}

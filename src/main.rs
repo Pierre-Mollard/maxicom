@@ -583,17 +583,8 @@ fn lay_profiles(
 }
 
 fn execute_clipboard_copy(app: &mut App, text: &str, what: Option<&str>) {
-    if let Err(e) = copy_via_osc52(text) {
-        app.notify_keyed("copy", ToastLevel::Error, format!("Clipboard error: {e}"));
-    } else if let Some(what) = what {
-        app.notify_keyed(
-            "copy",
-            ToastLevel::Success,
-            format!("Copied the {what}: {text}"),
-        );
-    } else {
-        let count = text.chars().count();
-        let msg = format!("Copied {count} chars to clipboard");
-        app.notify_keyed("copy", ToastLevel::Success, msg);
+    match copy_via_osc52(text) {
+        Err(e) => app.notify_keyed("copy", ToastLevel::Error, format!("Clipboard error: {e}")),
+        Ok(()) => app.notify_copied(text, what),
     }
 }

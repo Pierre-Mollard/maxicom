@@ -17,6 +17,8 @@ to get the new keys that scroll the raw side panel in your `keymap.toml`:
 
 ### Added
 
+- `notify_copy = false` in `[ui]` turns off the notification after each copy;
+  a clipboard error still shows.
 - `backspace = "del" | "bs"` in `[terminal_mode]`, and `O` in the settings
   popup: what the Backspace key sends, DEL as before or BS as minicom does,
   for a device that only erases on BS.
@@ -67,6 +69,8 @@ to get the new keys that scroll the raw side panel in your `keymap.toml`:
 
 ### Fixed
 
+- The plot panel's `◀` and `▶` stay in place from one plot to the next: the
+  name is centered in the width of the longest one in `plots.toml`.
 - In terminal mode, a program asking whether autowrap is on
   (`ESC [ ? 7 $ p`) hears "always on": maxicom can't turn it off, and the
   program can cut its lines itself. It heard "unknown".

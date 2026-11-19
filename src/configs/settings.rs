@@ -974,6 +974,9 @@ pub struct UiConfig {
     /// A row with the file being sent and its progress over the status bar, while one is sent
     /// (MAX-162); off, the status bar's `{send_*}` variables can show it
     pub transfer_row: bool,
+    /// A notification after each copy, saying what was copied (MAX-269); off, only a clipboard
+    /// error shows
+    pub notify_copy: bool,
     /// Each part hides on a screen narrower or shorter than its `[cols, rows]`, a `0` side
     /// never (MAX-181): the borders first, the status bar last, as minicom always shows its own
     pub hide_borders_below: [u16; 2],
@@ -1014,6 +1017,7 @@ impl Default for UiConfig {
             focus_effects: true,
             middle_click_paste: true,
             transfer_row: true,
+            notify_copy: true,
             hide_borders_below: [60, 16],
             hide_scrollbar_below: [40, 10],
             hide_status_bar_below: [35, 6],
