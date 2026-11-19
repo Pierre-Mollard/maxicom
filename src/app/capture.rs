@@ -3,7 +3,7 @@
 //! `capture::Recorder` writes the files
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Local};
+use jiff::Timestamp;
 
 use super::App;
 use crate::{
@@ -533,7 +533,7 @@ fn tail_is_cut(sessions: &[Session], tail: &[(&Session, u64)]) -> bool {
 }
 
 /// When a session's chunks from raw offset `start` on were received, none when it isn't known
-fn session_times(session: &Session, start: u64) -> Vec<(u64, DateTime<Local>)> {
+fn session_times(session: &Session, start: u64) -> Vec<(u64, Timestamp)> {
     (session.times_path())
         .and_then(|path| read_times(path, start).ok())
         .unwrap_or_default()

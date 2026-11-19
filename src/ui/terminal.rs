@@ -13,6 +13,7 @@ use crate::{
         selection::CopySide,
         types::{FocusTarget, RowChars, ScrollbarMap, TextRow},
     },
+    clock,
     configs::{KeywordHighlight, Mode, ThemeConfig},
     invalid_bytes::{shown, shown_string},
     terminal::{MaxicomCursor, MaxicomTerminal, vt100_size},
@@ -515,7 +516,7 @@ pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect, theme: 
         let row_has_text = app.terminal_mode.row_has_content(source_row as u16);
 
         if row_has_text && let Some(ts) = maybe_ts {
-            let formatted = ts.format(&app.settings().timestamp_format).to_string();
+            let formatted = clock::format(ts, &app.settings().timestamp_format);
             lines.push(Line::from(vec![
                 Span::styled(formatted, theme.terminal.timestamp),
                 Span::styled("│", theme.terminal.timestamp_del),

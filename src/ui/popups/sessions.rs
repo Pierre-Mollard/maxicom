@@ -1,5 +1,5 @@
-use chrono::{DateTime, Local};
 use crossterm::event::{KeyCode, KeyModifiers};
+use jiff::Timestamp;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -7,9 +7,11 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Clear, Paragraph},
 };
+use std::time::Duration;
 
 use crate::{
     capture::{NodeKind, Session, SessionNode},
+    clock,
     configs::{
         KeyPattern, KeyResolver, LineDisplayMode, ThemeConfig, keybindings::KeyBindingDialogAction,
     },
@@ -218,7 +220,7 @@ fn render_list(
     theme: &ThemeConfig,
     targets: &mut Vec<(Rect, PopupTarget)>,
 ) {
-    let now = Local::now();
+    let now = Timestamp::now();
     let height = area.height as usize;
     let rows = browser.rows();
     let first = (browser.selected + 1).saturating_sub(height);
@@ -293,7 +295,7 @@ fn tree_row<'a>(
     browser: &SessionBrowser,
     row: &BrowserRow,
     width: u16,
-    now: DateTime<Local>,
+    now: Timestamp,
     theme: &ThemeConfig,
 ) -> Line<'a> {
     let node = row.node;
@@ -355,7 +357,7 @@ fn list_row<'a>(
     browser: &SessionBrowser,
     node: &SessionNode,
     width: u16,
-    now: DateTime<Local>,
+    now: Timestamp,
     theme: &ThemeConfig,
 ) -> Line<'a> {
     let Some(session) = node.sessions.first().map(|&index| &browser.sessions[index]) else {
@@ -364,7 +366,7 @@ fn list_row<'a>(
     let (mark, mark_color) = mark(browser, node, theme);
     let started = session.started.map_or_else(
         || "????-??-?? ??:??".to_string(),
-        |time| time.format("%Y-%m-%d %H:%M").to_string(),
+        |time| clock::format(time, "%Y-%m-%d %H:%M"),
     );
     // only the text is colored: the gaps and the size's padding keep the text color
     let cell = |text: String, color| Span::styled(text, Style::default().fg(color));
@@ -391,11 +393,11 @@ fn list_row<'a>(
 
 /// The date's color by the age of the session's last write, muted when its times aren't known.
 /// A last write in the future (a clock set back) is as new as `now`
-fn date_color(session: &Session, now: DateTime<Local>, theme: &ThemeConfig) -> Color {
+fn date_color(session: &Session, now: Timestamp, theme: &ThemeConfig) -> Color {
     match (session.started, session.ended) {
         (Some(_), Some(ended)) => theme
             .session_browser
-            .date_color((now - ended).to_std().unwrap_or_default()),
+            .date_color(Duration::try_from(now.duration_since(ended)).unwrap_or_default()),
         _ => theme.palette.text_muted,
     }
 }
@@ -428,7 +430,7 @@ fn render_preview(browser: &SessionBrowser, area: Rect, frame: &mut Frame, theme
         // gives, a space after it. The sessions of a group can differ
         let stamp_width = (browser.sessions[index].meta.as_ref())
             .and_then(|meta| meta.text.timestamp.as_deref())
-            .map(|format| Local::now().format(format).to_string().len() + 1);
+            .map(|format| clock::format(Timestamp::now(), format).len() + 1);
         let (stamp, text) = match stamp_width {
             Some(width) if line.text.is_char_boundary(width) => line.text.split_at(width),
             _ => ("", line.text.as_str()),
@@ -451,7 +453,7 @@ fn group_details<'a>(
     let size_color = theme.session_browser.size_color(node.size);
     let newest = node.sessions.last().map(|&index| &browser.sessions[index]);
     let date = newest.map_or(theme.palette.text_muted, |newest| {
-        date_color(newest, Local::now(), theme)
+        date_color(newest, Timestamp::now(), theme)
     });
     vec![
         field("Group", node.label.clone(), plain),
@@ -516,7 +518,7 @@ fn details<'a>(
             muted,
         ))),
     }
-    let date = Style::default().fg(date_color(session, Local::now(), theme));
+    let date = Style::default().fg(date_color(session, Timestamp::now(), theme));
     lines.push(field("Session", session.time_span(), date));
     let size_style = Style::default().fg(colors.size_color(session.size));
     lines.push(field("Size", size(session.size), size_style));

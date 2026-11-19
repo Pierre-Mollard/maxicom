@@ -289,8 +289,8 @@ fn word_wrap_golden_rows() {
         settings.show_timestamps = timestamps;
         settings.timestamp_format = String::from("%M:%S");
         settings.line_mode.wrap_indent = indent;
-        let time =
-            chrono::TimeZone::with_ymd_and_hms(&chrono::Local, 2026, 10, 24, 12, 34, 56).unwrap();
+        let wall = jiff::civil::date(2026, 10, 24).at(12, 34, 56, 0);
+        let time = crate::clock::from_local(wall).unwrap();
         let entry = LogEntry::received(TextEncoding::Utf8.decode(wire), wire, Some(time));
         let prefix = settings.line_prefixes().line.to_string();
         let line = history_entry_to_line(&entry, &settings, &[], &[], None, &theme, &prefix);
@@ -380,7 +380,7 @@ fn byte_mode_rows_match_the_word_wrap() {
                     let entry = LogEntry::received(
                         TextEncoding::Utf8.decode(&wire),
                         &wire,
-                        Some(chrono::Local::now()),
+                        Some(jiff::Timestamp::now()),
                     );
                     let line =
                         history_entry_to_line(&entry, &settings, &[], &[], None, &theme, &prefix);

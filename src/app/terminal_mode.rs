@@ -5,8 +5,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chrono::{DateTime, Local};
 use crossterm::event::KeyEvent;
+use jiff::Timestamp;
 use terminput::Encoding;
 use terminput_crossterm::to_terminput_key;
 
@@ -127,7 +127,7 @@ pub struct TerminalMode {
     content_cols: Option<u16>,
     vi_pending_copy: Option<ViPending>,
     flash_until: Option<Instant>,
-    row_timestamps: VecDeque<Option<DateTime<Local>>>,
+    row_timestamps: VecDeque<Option<Timestamp>>,
     /// The world lines' text a search reads, and the first line data may have changed since,
     /// re-read when the search next needs it: the rows above it went up into the scrollback,
     /// which doesn't change (MAX-218)
@@ -233,7 +233,7 @@ impl TerminalMode {
             add_cr,
             add_lf,
         };
-        self.process_rx_at(encoding, raw_bytes, Some(Local::now()), feed);
+        self.process_rx_at(encoding, raw_bytes, Some(Timestamp::now()), feed);
     }
 
     /// Local echo (MAX-270): bytes sent shown on the screen as maxicom's own, not in the stream.
@@ -259,7 +259,7 @@ impl TerminalMode {
 
     /// Bytes not from the device (maxicom's own, tests'): not in the stream, nothing recorded
     pub fn process_rx(&mut self, encoding: TextEncoding, raw_bytes: &[u8]) {
-        self.process_rx_at(encoding, raw_bytes, Some(Local::now()), Feed::Own);
+        self.process_rx_at(encoding, raw_bytes, Some(Timestamp::now()), Feed::Own);
     }
 
     /// Bytes to the emulator: add CR / add LF applied, invalid bytes as stand-ins shown `�` like
@@ -623,7 +623,7 @@ impl TerminalMode {
         &mut self,
         encoding: TextEncoding,
         raw_bytes: &[u8],
-        time: Option<DateTime<Local>>,
+        time: Option<Timestamp>,
         feed: Feed,
     ) {
         self.scroller.on_rx_received();
@@ -807,7 +807,7 @@ impl TerminalMode {
         }
     }
 
-    fn cursor_row_time(&self) -> Option<DateTime<Local>> {
+    fn cursor_row_time(&self) -> Option<Timestamp> {
         let row = self.vt100_parser.screen().cursor_position().0 as usize;
         self.get_timeline_timestamp(self.max_content_scrollback + row)
     }
@@ -841,7 +841,7 @@ impl TerminalMode {
         self.row_timestamps.len()
     }
 
-    pub fn get_timeline_timestamp(&self, global_idx: usize) -> Option<DateTime<Local>> {
+    pub fn get_timeline_timestamp(&self, global_idx: usize) -> Option<Timestamp> {
         self.row_timestamps.get(global_idx).copied().flatten()
     }
 

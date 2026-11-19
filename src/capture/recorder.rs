@@ -4,10 +4,10 @@ use super::session::{
     SessionLimits, TerminalSize, folder_file, prune_sessions, session_start, session_tag,
 };
 use crate::app::types::RxLineSplitter;
+use crate::clock;
 use crate::configs::TextEncoding;
 use crate::paths::create_parent_dirs;
-use chrono::format::{Item, StrftimeItems};
-use chrono::{DateTime, Local};
+use jiff::Timestamp;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -98,9 +98,9 @@ pub struct RecordingWriter {
     raw_len: u64,
     text_path: PathBuf,
     raw_path: PathBuf,
-    timestamp: Option<TimestampFormat>,
+    timestamp: Option<String>,
     tx_mark: Option<String>,
-    started: DateTime<Local>,
+    started: Timestamp,
     meta: Option<RecordingMeta>,
 }
 
@@ -115,7 +115,7 @@ struct Recording {
 enum RecordingKind {
     Text {
         file: LogFile,
-        timestamp: Option<TimestampFormat>,
+        timestamp: Option<String>,
     },
     Full(Box<RecordingWriter>),
 }
@@ -129,13 +129,6 @@ pub struct Recorder {
     session: Option<RecordingWriter>,
     lines: RxLineSplitter,
     line_buf: Vec<u8>,
-}
-
-/// `timestamp_format` parsed once, and again only when it changes (on reload), instead of on
-/// every line
-struct TimestampFormat {
-    format: String,
-    items: Vec<Item<'static>>,
 }
 
 impl Recorder {
@@ -197,7 +190,7 @@ impl Recorder {
                 "a full recording with this name already exists",
             ));
         }
-        let started = session.as_ref().map_or_else(Local::now, |s| s.started);
+        let started = session.as_ref().map_or_else(Timestamp::now, |s| s.started);
         let mut full = RecordingWriter::create(folder, source.device.as_ref(), text, started)?;
         if let Some(session) = session {
             copy_file(&mut session.text, &mut full.text)?;
@@ -239,10 +232,14 @@ impl Recorder {
         text: &CaptureFormat,
         limits: SessionLimits,
     ) -> io::Result<PruneReport> {
-        let now = session_start(dir, Local::now());
+        let now = session_start(dir, Timestamp::now());
         // to the millisecond: a relaunch within the second must not append to the last
         // session and overwrite its meta (MAX-148)
-        let stem = format!("{}_{}", now.format(STEM_TIME), session_tag(&device.address));
+        let stem = format!(
+            "{}_{}",
+            clock::format(now, STEM_TIME),
+            session_tag(&device.address)
+        );
         let session = RecordingWriter::create(&dir.join(&stem), Some(device), text, now)?;
         // held while the session runs, so no pruning removes it, from this maxicom or another
         // one (MAX-148). The OS drops it with the process, even killed. A file system without
@@ -388,7 +385,7 @@ impl Recorder {
         timestamp_format: Option<&str>,
         bytes: &[u8],
     ) {
-        let now = Local::now();
+        let now = Timestamp::now();
         for writer in self.writers() {
             writer.record_raw(bytes, now);
         }
@@ -410,7 +407,7 @@ impl Recorder {
 
     /// RX that isn't text, to the raw streams only: a transfer protocol's answers (MAX-162)
     pub fn record_raw_rx(&mut self, bytes: &[u8]) {
-        let now = Local::now();
+        let now = Timestamp::now();
         for writer in self.writers() {
             writer.record_raw(bytes, now);
         }
@@ -446,7 +443,7 @@ impl Recorder {
             return;
         }
         self.set_timestamp_format(timestamp_format);
-        let now = Local::now();
+        let now = Timestamp::now();
         for line in tx_lines(bytes) {
             let text = encoding.decode_cow(line);
             self.write_text(now, &text, mark, true);
@@ -454,15 +451,15 @@ impl Recorder {
         self.flush_if_due();
     }
 
-    /// The text recording's format: `format` parsed when it isn't the one already parsed
+    /// The text recording's format, `format` from now on
     fn set_timestamp_format(&mut self, format: Option<&str>) {
         let Some(RecordingKind::Text { timestamp, .. }) = self.kind() else {
             return;
         };
         match format {
             None => *timestamp = None,
-            Some(format) if timestamp.as_ref().is_some_and(|t| t.format == format) => {}
-            Some(format) => *timestamp = Some(TimestampFormat::new(format)),
+            Some(format) if timestamp.as_deref() == Some(format) => {}
+            Some(format) => *timestamp = Some(format.to_string()),
         }
     }
 
@@ -470,11 +467,11 @@ impl Recorder {
     /// full recording after their own mark (a sent line when `tx`), each with its own
     /// timestamp format. A `None` mark leaves that file out. The line is built again only for a
     /// file written another way than the one before
-    fn write_text(&mut self, time: DateTime<Local>, text: &str, mark: Option<&str>, tx: bool) {
+    fn write_text(&mut self, time: Timestamp, text: &str, mark: Option<&str>, tx: bool) {
         // the format and mark `line_buf` was built with
         let mut built: Option<(Option<String>, String)> = None;
-        let mut write = |file: &mut LogFile, format: &Option<TimestampFormat>, mark: &str| {
-            let key = (format.as_ref().map(|t| t.format.clone()), mark.to_string());
+        let mut write = |file: &mut LogFile, format: &Option<String>, mark: &str| {
+            let key = (format.clone(), mark.to_string());
             if built.as_ref() != Some(&key) {
                 build_line(&mut self.line_buf, format, time, mark, text);
                 built = Some(key);
@@ -509,7 +506,7 @@ impl RecordingWriter {
         folder: &Path,
         device: Option<&CaptureDevice>,
         text: &CaptureFormat,
-        started: DateTime<Local>,
+        started: Timestamp,
     ) -> io::Result<Self> {
         let path = |extension: &str| folder_file(folder, extension);
         let (text_path, raw_path) = (path("log"), path("raw"));
@@ -525,7 +522,7 @@ impl RecordingWriter {
             raw_len: 0,
             text_path,
             raw_path,
-            timestamp: text.timestamp.as_deref().map(TimestampFormat::new),
+            timestamp: text.timestamp.clone(),
             tx_mark: text.tx_mark.clone(),
             started,
             meta,
@@ -565,7 +562,7 @@ impl RecordingWriter {
 
     /// The bytes received at `time`: the time first, so a crash between the writes leaves
     /// bytes without a time, not a time past the bytes (MAX-175)
-    fn record_raw(&mut self, bytes: &[u8], time: DateTime<Local>) {
+    fn record_raw(&mut self, bytes: &[u8], time: Timestamp) {
         let line = times_line(self.raw_len, time);
         let _ = self.times.writer.write_all(line.as_bytes());
         let _ = self.raw.writer.write_all(bytes);
@@ -612,18 +609,6 @@ fn copy_file(from: &mut LogFile, to: &mut LogFile) -> io::Result<()> {
     Ok(())
 }
 
-impl TimestampFormat {
-    /// Settings validate the format, so one that doesn't parse gives an empty timestamp
-    fn new(format: &str) -> Self {
-        Self {
-            format: format.to_string(),
-            items: StrftimeItems::new(format)
-                .parse_to_owned()
-                .unwrap_or_default(),
-        }
-    }
-}
-
 /// The lines of sent bytes, without their EOL. A last part without EOL is a line too, as a
 /// send is whole (a lone ^C)
 fn tx_lines(bytes: &[u8]) -> Vec<&[u8]> {
@@ -649,16 +634,13 @@ fn tx_lines(bytes: &[u8]) -> Vec<&[u8]> {
 /// Builds a text line in `buf`, reused so a line costs no allocation: the time when a format
 /// is set, `mark`, then `text` without its EOL and a single "\n". It is built once and
 /// written to every text file
-fn build_line(
-    buf: &mut Vec<u8>,
-    format: &Option<TimestampFormat>,
-    time: DateTime<Local>,
-    mark: &str,
-    text: &str,
-) {
+fn build_line(buf: &mut Vec<u8>, format: &Option<String>, time: Timestamp, mark: &str, text: &str) {
     buf.clear();
     if let Some(format) = format {
-        let _ = write!(buf, "{} ", time.format_with_items(format.items.iter()));
+        // settings check the format: one jiff can't write leaves the time out
+        if write!(buf, "{} ", clock::local(time).strftime(format)).is_err() {
+            buf.clear();
+        }
     }
     let text = text.strip_suffix('\n').unwrap_or(text);
     let text = text.strip_suffix('\r').unwrap_or(text);

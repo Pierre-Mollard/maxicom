@@ -1,5 +1,5 @@
-use chrono::{DateTime, Local};
 use crossterm::event::{KeyCode, KeyModifiers};
+use jiff::Timestamp;
 
 use crate::{
     inputs::DialogAction,
@@ -14,7 +14,7 @@ const PAGE: usize = 10;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarkRow {
     pub letter: char,
-    pub time: Option<DateTime<Local>>,
+    pub time: Option<Timestamp>,
     pub text: String,
 }
 

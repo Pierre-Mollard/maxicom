@@ -440,7 +440,7 @@ keep = 0                                 # sessions kept, 0: no limit (the size 
 max_size = "5G"                          # all sessions, K/M/G/T, "0": no limit
 group_by = ["month", "week", "day"]      # the session browser's tree, in any order
 restore = "always"                       # always, ask or never
-restore_max_age = "1day"                 # since it ended, "0s": no limit
+restore_max_age = "1d"                   # since it ended, "0s": no limit
 
 [screenshot]
 dir = ""

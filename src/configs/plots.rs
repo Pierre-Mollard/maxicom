@@ -5,11 +5,13 @@ use std::{
     time::Duration,
 };
 
-use humantime_serde::re::humantime;
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 
-use crate::configs::comments::{PLOTS_COMMENTS, with_comments};
+use crate::configs::{
+    comments::{PLOTS_COMMENTS, with_comments},
+    duration,
+};
 
 /// The most series a plot draws: `keys` can't name more
 pub const MAX_SERIES: usize = 8;
@@ -67,9 +69,7 @@ pub enum PlotWindow {
 impl Serialize for PlotWindow {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
-            Self::Time(duration) => {
-                serializer.serialize_str(&humantime::format_duration(*duration).to_string())
-            }
+            Self::Time(duration) => serializer.serialize_str(&duration::format(*duration)),
             Self::Samples(count) => serializer.serialize_u64(*count as u64),
         }
     }
@@ -86,7 +86,7 @@ impl<'de> Deserialize<'de> for PlotWindow {
             }
 
             fn visit_str<E: serde::de::Error>(self, text: &str) -> Result<Self::Value, E> {
-                humantime::parse_duration(text)
+                duration::parse(text)
                     .map(PlotWindow::Time)
                     .map_err(|err| E::custom(format!("window '{text}': {err}")))
             }

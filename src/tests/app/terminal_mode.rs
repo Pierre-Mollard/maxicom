@@ -74,7 +74,7 @@ fn feed_lines(tm: &mut TerminalMode, lines: &[&str]) {
 }
 
 /// Timestamps of every world row, history first (top to bottom).
-fn timeline(tm: &TerminalMode) -> Vec<Option<DateTime<Local>>> {
+fn timeline(tm: &TerminalMode) -> Vec<Option<Timestamp>> {
     (0..tm.total_timeline_len())
         .map(|i| tm.get_timeline_timestamp(i))
         .collect()
@@ -86,7 +86,7 @@ fn terminal_with(history: usize, rows: u16) -> TerminalMode {
 
 /// Feeds each line as its own chunk, 1 ms apart, and returns each line's text with the
 /// timestamp of the row the cursor is on right after it arrived.
-fn feed_and_stamp(tm: &mut TerminalMode, lines: &[&str]) -> Vec<(String, Option<DateTime<Local>>)> {
+fn feed_and_stamp(tm: &mut TerminalMode, lines: &[&str]) -> Vec<(String, Option<Timestamp>)> {
     let mut stamps = Vec::new();
     for (i, line) in lines.iter().enumerate() {
         let sep = if i == 0 { "" } else { "\r\n" };
@@ -99,10 +99,7 @@ fn feed_and_stamp(tm: &mut TerminalMode, lines: &[&str]) -> Vec<(String, Option<
 }
 
 /// Checks every world row with text has the timestamp its line got when it arrived.
-fn assert_rows_keep_their_stamps(
-    tm: &mut TerminalMode,
-    stamps: &[(String, Option<DateTime<Local>>)],
-) {
+fn assert_rows_keep_their_stamps(tm: &mut TerminalMode, stamps: &[(String, Option<Timestamp>)]) {
     let world = tm.get_max_scrollback() + tm.get_vt100_size().0 as usize;
     assert_eq!(
         tm.total_timeline_len(),

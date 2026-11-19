@@ -2,17 +2,18 @@
 
 use super::*;
 use crate::capture::{CaptureFormat, RecordingMeta, tests::device};
-use chrono::{Local, TimeZone};
+use crate::clock;
+use jiff::{ToSpan, civil};
 use std::path::PathBuf;
 
 /// A session on `address` started at `at` (`2026-11-07 09:00`), its meta with `device`
 /// and `text`, 10 bytes.
 fn session(at: &str, device: &CaptureDevice, text: &CaptureFormat) -> Session {
-    let naive = chrono::NaiveDateTime::parse_from_str(at, "%Y-%m-%d %H:%M").unwrap();
-    let started = Local.from_local_datetime(&naive).earliest().unwrap();
+    let wall = civil::DateTime::strptime("%Y-%m-%d %H:%M", at).unwrap();
+    let started = clock::from_local(wall).unwrap();
     let stem = format!(
         "{}_{}",
-        started.format("%Y%m%d_%H%M%S%3f"),
+        clock::format(started, "%Y%m%d_%H%M%S%3f"),
         device.address.tag()
     );
     Session {
@@ -185,7 +186,7 @@ fn group_by_picks_the_levels() {
 /// How: the week of Oct 26 and the week of Nov 2, 2026.
 #[test]
 fn week_labels() {
-    let monday = |d| NaiveDate::from_ymd_opt(2026, 10, 26).unwrap() + Duration::days(d);
+    let monday = |d: i64| civil::date(2026, 10, 26) + d.days();
     assert_eq!(
         period_label(GroupLevel::Week, monday(0)),
         "2026-W44 (Oct 26–Nov 01)"

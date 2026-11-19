@@ -3,10 +3,11 @@
 //! as one, so a device group holds only sessions whose bytes share one setup; the text format
 //! of their `.log` isn't part of it, as a replay reads the `.raw` alone. Nothing moves
 //! on disk: the tree is built from the listed sessions each time
-use chrono::{Datelike, Duration, NaiveDate};
+use jiff::{ToSpan, civil::Date};
 use serde::{Deserialize, Serialize};
 
 use super::session::{CaptureDevice, Session, hostname, time_span};
+use crate::clock;
 
 /// A time level of the tree, coarse to fine
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -144,9 +145,12 @@ fn group(
         return leaves;
     };
     let weeks = levels.contains(&GroupLevel::Week);
-    let mut buckets: Vec<(NaiveDate, Vec<usize>)> = Vec::new();
+    let mut buckets: Vec<(Date, Vec<usize>)> = Vec::new();
     for &index in indexes {
-        let Some(day) = sessions[index].started.map(|started| started.date_naive()) else {
+        let Some(day) = sessions[index]
+            .started
+            .map(|started| clock::local(started).date())
+        else {
             continue;
         };
         let start = period_start(level, day, weeks);
@@ -217,16 +221,16 @@ impl GroupLevel {
 
 /// The first day of the period of `level` holding `day`. With `weeks`, a month starts from
 /// the Thursday of `day`'s week, so the week stays whole in one month
-fn period_start(level: GroupLevel, day: NaiveDate, weeks: bool) -> NaiveDate {
-    let monday = day - Duration::days(day.weekday().num_days_from_monday().into());
+fn period_start(level: GroupLevel, day: Date, weeks: bool) -> Date {
+    let monday = day.saturating_sub(day.weekday().to_monday_zero_offset().days());
     match level {
         GroupLevel::Month => {
             let day = if weeks {
-                monday + Duration::days(3)
+                monday.saturating_add(3.days())
             } else {
                 day
             };
-            day.with_day(1).unwrap_or(day)
+            day.first_of_month()
         }
         GroupLevel::Week => monday,
         GroupLevel::Day => day,
@@ -234,33 +238,33 @@ fn period_start(level: GroupLevel, day: NaiveDate, weeks: bool) -> NaiveDate {
 }
 
 /// The part of a node's key a period gives: the same for the same period after a reload
-fn period_key(level: GroupLevel, start: NaiveDate) -> String {
+fn period_key(level: GroupLevel, start: Date) -> String {
     match level {
-        GroupLevel::Month => start.format("%Y-%m").to_string(),
-        GroupLevel::Week => start.format("%G-W%V").to_string(),
-        GroupLevel::Day => start.format("%Y-%m-%d").to_string(),
+        GroupLevel::Month => start.strftime("%Y-%m").to_string(),
+        GroupLevel::Week => start.strftime("%G-W%V").to_string(),
+        GroupLevel::Day => start.strftime("%Y-%m-%d").to_string(),
     }
 }
 
 /// How a period reads, whole on its own since a collapsed level can hide its parent:
 /// `2026-11`, `2026-W45 (Nov 02–08)`, `Sat 2026-11-07`
-pub fn period_label(level: GroupLevel, start: NaiveDate) -> String {
+pub fn period_label(level: GroupLevel, start: Date) -> String {
     match level {
-        GroupLevel::Month => start.format("%Y-%m").to_string(),
+        GroupLevel::Month => start.strftime("%Y-%m").to_string(),
         GroupLevel::Week => {
-            let end = start + Duration::days(6);
+            let end = start.saturating_add(6.days());
             let end = if end.month() == start.month() {
-                end.format("%d")
+                end.strftime("%d")
             } else {
-                end.format("%b %d")
+                end.strftime("%b %d")
             };
             format!(
                 "{} ({}–{end})",
-                start.format("%G-W%V"),
-                start.format("%b %d")
+                start.strftime("%G-W%V"),
+                start.strftime("%b %d")
             )
         }
-        GroupLevel::Day => start.format("%a %Y-%m-%d").to_string(),
+        GroupLevel::Day => start.strftime("%a %Y-%m-%d").to_string(),
     }
 }
 

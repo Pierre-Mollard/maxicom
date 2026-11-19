@@ -1,12 +1,12 @@
 //! Query parsing and match finding for text and raw-byte search.
 
 use super::*;
-use chrono::Local;
+use jiff::Timestamp;
 
 fn history(lines: &[&str]) -> VecDeque<LogEntry> {
     lines
         .iter()
-        .map(|t| LogEntry::new(t.to_string(), Local::now()))
+        .map(|t| LogEntry::new(t.to_string(), Timestamp::now()))
         .collect()
 }
 

@@ -13,6 +13,7 @@ use crate::{
         delete_sessions, group_separator, hostname, list_sessions, name_finished_session,
         read_tail_lines, session_list, session_name_notice, session_tree,
     },
+    clock,
     configs::ThemeConfig,
     inputs::{DialogAction, dispatch_input_key, paste_into_input},
     link::Address,
@@ -216,7 +217,7 @@ impl SessionBrowser {
             .filter_map(|session| session.started)
             .min();
         if let Some(oldest) = oldest {
-            usage.push_str(&format!(" · oldest {}", oldest.format("%Y-%m-%d")));
+            usage.push_str(&format!(" · oldest {}", clock::format(oldest, "%Y-%m-%d")));
         }
         usage
     }

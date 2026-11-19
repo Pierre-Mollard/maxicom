@@ -1,16 +1,17 @@
+use crate::clock;
 use crate::configs::TextEncoding;
 use crate::link::Address;
 use crate::link::{
     LinkConfig,
     serial::{Framing, LineSettings},
 };
-use chrono::{DateTime, Local, NaiveDateTime, SubsecRound, TimeDelta, TimeZone};
+use jiff::{RoundMode, SignedDuration, Timestamp, Unit, ZonedDateTimeRound, civil};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 pub const SESSION_META_VERSION: u32 = 1;
 
@@ -136,10 +137,10 @@ pub struct RecordingMeta {
 }
 
 impl RecordingMeta {
-    pub fn new(started: DateTime<Local>, device: CaptureDevice, text: CaptureFormat) -> Self {
+    pub fn new(started: Timestamp, device: CaptureDevice, text: CaptureFormat) -> Self {
         Self {
             version: SESSION_META_VERSION,
-            started: started.timestamp(),
+            started: started.as_second(),
             name: None,
             profiles: Vec::new(),
             device,
@@ -201,8 +202,8 @@ impl PruneReport {
     /// The day the newest session removed started, from its stem (`2026-10-12`)
     pub fn newest_day(&self) -> Option<String> {
         let stem = self.newest.as_deref()?;
-        let day = chrono::NaiveDate::parse_from_str(stem.get(..8)?, "%Y%m%d").ok()?;
-        Some(day.format("%Y-%m-%d").to_string())
+        let day = civil::Date::strptime("%Y%m%d", stem.get(..8)?).ok()?;
+        Some(day.to_string())
     }
 }
 
@@ -323,16 +324,21 @@ pub const STEM_TIME: &str = "%Y%m%d_%H%M%S%3f";
 /// there when the clock went back past it, as WSL2's does when it syncs with Windows. A new
 /// session sorts last, for the date order, the pruning and the restore's last session
 /// (MAX-199)
-pub fn session_start(dir: &Path, now: DateTime<Local>) -> DateTime<Local> {
+pub fn session_start(dir: &Path, now: Timestamp) -> Timestamp {
     let newest = session_files(dir).ok().and_then(|sessions| {
         (sessions.into_keys())
-            .filter_map(|stem| NaiveDateTime::parse_from_str(stem.get(..18)?, STEM_TIME).ok())
+            .filter_map(|stem| civil::DateTime::strptime(STEM_TIME, stem.get(..18)?).ok())
             .max()
     });
+    let to_millis = ZonedDateTimeRound::new()
+        .smallest(Unit::Millisecond)
+        .mode(RoundMode::Trunc);
+    let wall = clock::local(now).round(to_millis).map(|now| now.datetime());
     match newest {
-        Some(newest) if newest >= now.naive_local().trunc_subsecs(3) => Local
-            .from_local_datetime(&(newest + TimeDelta::milliseconds(1)))
-            .earliest()
+        Some(newest) if wall.is_ok_and(|wall| newest >= wall) => newest
+            .checked_add(SignedDuration::from_millis(1))
+            .ok()
+            .and_then(clock::from_local)
             .unwrap_or(now),
         _ => now,
     }
@@ -349,8 +355,8 @@ pub struct Session {
     pub folder: PathBuf,
     pub files: Vec<PathBuf>,
     pub meta: Option<RecordingMeta>,
-    pub started: Option<DateTime<Local>>,
-    pub ended: Option<DateTime<Local>>,
+    pub started: Option<Timestamp>,
+    pub ended: Option<Timestamp>,
     pub raw_len: u64,
     pub size: u64,
     pub running: bool,
@@ -433,13 +439,13 @@ pub fn name_finished_session(entry: &Session, name: Option<String>) -> io::Resul
 }
 
 /// `started → ended`, the end without its date on the same day
-pub fn time_span(started: Option<DateTime<Local>>, ended: Option<DateTime<Local>>) -> String {
-    let day = |time: &DateTime<Local>| time.date_naive();
+pub fn time_span(started: Option<Timestamp>, ended: Option<Timestamp>) -> String {
+    let day = |time: Timestamp| clock::local(time).date();
     let ended = ended.map(|ended| match started {
-        Some(started) if day(&started) == day(&ended) => ended.format("%H:%M").to_string(),
-        _ => ended.format("%Y-%m-%d %H:%M").to_string(),
+        Some(started) if day(started) == day(ended) => clock::format(ended, "%H:%M"),
+        _ => clock::format(ended, "%Y-%m-%d %H:%M"),
     });
-    let started = started.map(|t| t.format("%Y-%m-%d %H:%M").to_string());
+    let started = started.map(|t| clock::format(t, "%Y-%m-%d %H:%M"));
     let or_unknown = |time: Option<String>| time.unwrap_or_else(|| "?".to_string());
     format!("{} → {}", or_unknown(started), or_unknown(ended))
 }
@@ -464,11 +470,11 @@ fn read_session(dir: &Path, stem: String, files: Vec<PathBuf>) -> Session {
     let folder = dir.join(&stem);
     let meta = RecordingMeta::read(&folder_file(&folder, "meta"));
     let started = match &meta {
-        Some(meta) => DateTime::from_timestamp(meta.started, 0).map(|t| t.with_timezone(&Local)),
+        Some(meta) => Timestamp::from_second(meta.started).ok(),
         None => stem
             .get(..15)
-            .and_then(|date| NaiveDateTime::parse_from_str(date, "%Y%m%d_%H%M%S").ok())
-            .and_then(|date| Local.from_local_datetime(&date).earliest()),
+            .and_then(|date| civil::DateTime::strptime("%Y%m%d_%H%M%S", date).ok())
+            .and_then(clock::from_local),
     };
     let raw = fs::metadata(folder_file(&folder, "raw")).ok();
     let raw_len = raw.as_ref().map_or(0, |raw| raw.len());
@@ -479,7 +485,8 @@ fn read_session(dir: &Path, stem: String, files: Vec<PathBuf>) -> Session {
         .sum();
     Session {
         running: is_running(&folder),
-        ended: raw.and_then(|raw| raw.modified().ok()).map(DateTime::from),
+        ended: (raw.and_then(|raw| raw.modified().ok()))
+            .and_then(|time| Timestamp::try_from(time).ok()),
         raw_len,
         size,
         meta,
@@ -541,11 +548,10 @@ pub fn find_last_session(
     device: &CaptureDevice,
     max_age: Option<Duration>,
 ) -> Option<Session> {
-    let is_recent = |ended: Option<DateTime<Local>>| {
+    let is_recent = |ended: Option<Timestamp>| {
         max_age.is_none_or(|max_age| {
             ended.is_some_and(|ended| {
-                SystemTime::now()
-                    .duration_since(ended.into())
+                Duration::try_from(Timestamp::now().duration_since(ended))
                     .is_ok_and(|age| age <= max_age)
             })
         })

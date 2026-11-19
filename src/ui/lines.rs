@@ -23,6 +23,7 @@ use crate::{
         selection::{CopySide, Reveal},
         types::{FocusTarget, LogEntry, PromptMap, RowChars, ScrollbarMap, TextRow},
     },
+    clock,
     configs::{
         KeywordHighlight, LineDisplayMode, Mode, SettingsConfig, ThemeConfig, WrapMode,
         settings::{BORDER_PARTIAL, BORDER_WRAP, PrefixWrapBehavior},
@@ -58,7 +59,7 @@ pub fn history_entry_to_line(
     if timestamp_in_line {
         // a line without a time keeps the column blank, so the text stays aligned (MAX-148)
         let formatted_timestamp = match entry.timestamp {
-            Some(time) => time.format(&settings.timestamp_format).to_string(),
+            Some(time) => clock::format(time, &settings.timestamp_format),
             None => " ".repeat(settings.timestamp_width()),
         };
         spans.push(Span::styled(
@@ -433,9 +434,7 @@ pub fn render_monitor(
         if app.settings().show_timestamps
             && let Some(partial_timestamp) = partial.timestamp
         {
-            let time = partial_timestamp
-                .format(&app.settings().timestamp_format)
-                .to_string();
+            let time = clock::format(partial_timestamp, &app.settings().timestamp_format);
             partial_spans.push(Span::styled(time, theme.line_mode.timestamp));
         }
 

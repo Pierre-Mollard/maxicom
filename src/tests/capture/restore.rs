@@ -2,11 +2,12 @@
 
 use super::*;
 use crate::capture::tests::temp_dir;
-use chrono::TimeZone;
+use crate::clock;
+use jiff::civil;
 use std::fs;
 
-fn ms(millis: i64) -> DateTime<Local> {
-    DateTime::from_timestamp_millis(millis).unwrap().into()
+fn ms(millis: i64) -> Timestamp {
+    Timestamp::from_millisecond(millis).unwrap()
 }
 
 /// MAX-175: the raw bytes are cut where each chunk's time starts; the bytes before the
@@ -99,7 +100,7 @@ fn text_tail_is_the_last_lines() {
 /// date on the same day.
 #[test]
 fn restore_separator_names_port_and_times() {
-    let day = |d, h| Local.with_ymd_and_hms(2026, 1, d, h, 15, 0).unwrap();
+    let day = |d, h| clock::from_local(civil::date(2026, 1, d).at(h, 15, 0, 0)).unwrap();
     let mut session = Session {
         stem: "20260101_101500_ttyUSB0".to_string(),
         folder: std::path::PathBuf::new(),

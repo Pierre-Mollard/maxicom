@@ -34,10 +34,9 @@ strip = true
 
 [dependencies]
 ansi-to-tui = "8.0.1"
-chrono = "0.4.45"
 crossterm = "0.29.0"
 dirs = "7.0.0"
-humantime-serde = "1.1.1"
+jiff = "1.0.1"
 libc = "0.2.189"
 memchr = "2.8.3"
 ratatui = { version = "0.30.2", features = ["unstable-rendered-line-info", "serde"] }

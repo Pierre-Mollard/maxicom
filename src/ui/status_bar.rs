@@ -198,12 +198,15 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
 };
 
+use jiff::Timestamp;
+
 use crate::{
     app::{
         App, InputContext,
         selection::CopySide,
         types::{ClickAction, ClickTarget},
     },
+    clock,
     configs::{
         KeyBindingAction, Mode, StatusBarConfig, StatusBarLayout, ThemeConfig, theme::PaletteColors,
     },
@@ -668,7 +671,7 @@ impl Var {
             }
             // a kind with neither, none yet
             Self::Framing => Ok(()),
-            Self::Time => write!(out, "{}", chrono::Local::now().format(time_format)),
+            Self::Time => write!(out, "{}", clock::format(Timestamp::now(), time_format)),
             Self::PanLeft => write!(out, "{}", pan_left_indicator(app).unwrap_or_default()),
             Self::PanRight => write!(out, "{}", pan_right_indicator(app).unwrap_or_default()),
             Self::ScrollPos => write!(out, "{}", scroll.position_display()),

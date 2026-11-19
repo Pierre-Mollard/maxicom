@@ -241,7 +241,7 @@ fn restore_takes_the_times_of_the_chunks() {
         b"",
     );
     std::fs::write(session.times_path().unwrap(), "0 1000\n3 2000\n").unwrap();
-    let second = |s| chrono::DateTime::from_timestamp(s, 0).map(Into::into);
+    let second = |s| jiff::Timestamp::from_second(s).ok();
 
     let mut app = app();
     app.terminal_mode.set_vt100_size(24, 80);
@@ -338,7 +338,7 @@ fn raw_recording_meta_starts_with_the_session_it_includes() {
     // the metas keep whole seconds of the wall clock, which a fixed sleep doesn't
     // guarantee to pass (WSL2 steps it back at times): wait on the clock itself
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while chrono::Local::now().timestamp() <= started {
+    while jiff::Timestamp::now().as_second() <= started {
         assert!(
             std::time::Instant::now() < deadline,
             "the clock didn't move"

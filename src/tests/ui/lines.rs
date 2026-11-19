@@ -1,7 +1,8 @@
 //! One history entry's line: the time column before the prefix and the content.
 
 use super::*;
-use chrono::{Local, TimeZone};
+use crate::clock;
+use jiff::civil;
 
 fn settings() -> SettingsConfig {
     let mut settings = SettingsConfig::default();
@@ -26,7 +27,7 @@ fn spans(entry: &LogEntry, settings: &SettingsConfig) -> Vec<(String, Style)> {
 #[test]
 fn entry_line_starts_with_its_time() {
     let theme = ThemeConfig::default();
-    let time = Local.with_ymd_and_hms(2026, 1, 1, 12, 34, 56).unwrap();
+    let time = clock::from_local(civil::date(2026, 1, 1).at(12, 34, 56, 0)).unwrap();
     let entry = LogEntry::new("hello".to_string(), time);
     let mut settings = settings();
     let line = spans(&entry, &settings);
@@ -45,7 +46,7 @@ fn entry_line_starts_with_its_time() {
 /// prefix and text line up with the timed ones.
 #[test]
 fn entry_without_time_has_a_blank_column() {
-    let time = Local.with_ymd_and_hms(2026, 1, 1, 12, 34, 56).unwrap();
+    let time = clock::from_local(civil::date(2026, 1, 1).at(12, 34, 56, 0)).unwrap();
     let mut entry = LogEntry::new("hello".to_string(), time);
     let settings = settings();
     let timed = spans(&entry, &settings);

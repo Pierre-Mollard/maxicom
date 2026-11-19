@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local};
+use jiff::Timestamp;
 use ratatui::{layout::Rect, style::Style};
 
 use crate::{
@@ -18,18 +18,18 @@ use crate::{
 #[derive(Debug, Default)]
 pub struct RxLineSplitter {
     line: Vec<u8>,
-    timestamp: Option<DateTime<Local>>,
+    timestamp: Option<Timestamp>,
     pending_carriage_return: bool,
 }
 
 impl RxLineSplitter {
-    pub fn push(&mut self, byte: u8, now: DateTime<Local>) -> bool {
+    pub fn push(&mut self, byte: u8, now: Timestamp) -> bool {
         self.push_at(byte, Some(now))
     }
 
     /// `push` for bytes received at `time`, none when it isn't known (a restored session's
     /// bytes without their times, MAX-175)
-    pub fn push_at(&mut self, byte: u8, time: Option<DateTime<Local>>) -> bool {
+    pub fn push_at(&mut self, byte: u8, time: Option<Timestamp>) -> bool {
         if self.line.is_empty() {
             self.timestamp = time;
         }
@@ -63,7 +63,7 @@ impl RxLineSplitter {
     }
 
     #[inline]
-    pub fn timestamp(&self) -> Option<DateTime<Local>> {
+    pub fn timestamp(&self) -> Option<Timestamp> {
         self.timestamp
     }
 
@@ -79,8 +79,8 @@ impl RxLineSplitter {
     }
 
     /// When the line started, now if nothing was received
-    pub fn take_timestamp(&mut self) -> DateTime<Local> {
-        self.timestamp.take().unwrap_or_else(Local::now)
+    pub fn take_timestamp(&mut self) -> Timestamp {
+        self.timestamp.take().unwrap_or_else(Timestamp::now)
     }
 }
 
@@ -92,12 +92,12 @@ pub struct LogEntry {
     /// invalid UTF-8): what was on the wire for the raw panel, raw search and raw yank (#20)
     pub wire: Option<Box<[u8]>>,
     /// None for a line restored from a session without a time to read back (MAX-148)
-    pub timestamp: Option<DateTime<Local>>,
+    pub timestamp: Option<Timestamp>,
 }
 
 impl LogEntry {
     /// A line typed or echoed locally: its bytes are its text
-    pub fn new(text: String, timestamp: DateTime<Local>) -> Self {
+    pub fn new(text: String, timestamp: Timestamp) -> Self {
         Self {
             text,
             wire: None,
@@ -107,7 +107,7 @@ impl LogEntry {
 
     /// A line restored from a session, with its time when it could be read back
     /// (MAX-148)
-    pub fn restored(text: String, timestamp: Option<DateTime<Local>>) -> Self {
+    pub fn restored(text: String, timestamp: Option<Timestamp>) -> Self {
         Self {
             text,
             wire: None,
@@ -116,7 +116,7 @@ impl LogEntry {
     }
 
     /// A line decoded from the bytes received, at `timestamp` when it is known
-    pub fn received(text: String, wire: &[u8], timestamp: Option<DateTime<Local>>) -> Self {
+    pub fn received(text: String, wire: &[u8], timestamp: Option<Timestamp>) -> Self {
         let wire = (wire != text.as_bytes()).then(|| wire.into());
         Self {
             text,

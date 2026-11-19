@@ -4,7 +4,7 @@ use super::*;
 use crate::configs::TextEncoding;
 
 fn received(encoding: TextEncoding, wire: &[u8]) -> LogEntry {
-    LogEntry::received(encoding.decode(wire), wire, Some(Local::now()))
+    LogEntry::received(encoding.decode(wire), wire, Some(jiff::Timestamp::now()))
 }
 
 /// Wire bytes are only stored when they differ from the text's UTF-8, and `wire_bytes`
@@ -24,7 +24,7 @@ fn wire_kept_only_when_it_differs() {
     assert_eq!(invalid.text, "\u{FFFD}");
     assert_eq!(invalid.wire_bytes(), [0xFF]);
 
-    let echoed = LogEntry::new(String::from("ls"), Local::now());
+    let echoed = LogEntry::new(String::from("ls"), jiff::Timestamp::now());
     assert_eq!(echoed.wire_bytes(), b"ls");
 }
 

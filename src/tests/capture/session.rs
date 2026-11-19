@@ -3,6 +3,8 @@
 use super::*;
 use crate::capture::Recorder;
 use crate::capture::tests::{device, record, temp_dir, write_test_session};
+use crate::clock;
+use std::time::SystemTime;
 
 /// MAX-173: the device marker of a text recording names the port, its line settings when
 /// known, and the encoding the text is decoded with from there.
@@ -427,7 +429,7 @@ fn last_session_matches_the_device() {
         Some(at(&dir, "20260102_000000_ttyUSB0.log").as_path())
     );
     assert_eq!(session.raw_len, 4);
-    assert_eq!(session.started.unwrap().timestamp(), 1_700_000_000);
+    assert_eq!(session.started.unwrap().as_second(), 1_700_000_000);
     assert_eq!(
         found_stem(&dir, &other_host, None).as_deref(),
         Some("20260103_000000_ttyUSB0")
@@ -513,24 +515,22 @@ fn sessions_in_one_second_stay_apart() {
 #[test]
 fn a_clock_gone_back_still_names_the_session_last() {
     let dir = temp_dir("clock_back");
-    let ahead = (Local::now() + TimeDelta::hours(1))
-        .format(STEM_TIME)
-        .to_string();
+    let ahead = clock::format(Timestamp::now() + SignedDuration::from_hours(1), STEM_TIME);
     put(&dir, &format!("{ahead}_x.raw"), "one\r\n");
     let second = write_test_session(&dir, "/dev/x", &CaptureFormat::default(), b"two\r\n", b"");
     let after =
-        NaiveDateTime::parse_from_str(&ahead, STEM_TIME).unwrap() + TimeDelta::milliseconds(1);
+        civil::DateTime::strptime(STEM_TIME, &ahead).unwrap() + SignedDuration::from_millis(1);
     assert!(
         second
             .stem
-            .starts_with(&after.format(STEM_TIME).to_string()),
+            .starts_with(&after.strftime(STEM_TIME).to_string()),
         "{} after {ahead}",
         second.stem
     );
     assert_eq!(list_sessions(&dir).unwrap()[0].stem, second.stem);
     let _ = fs::remove_dir_all(&dir);
 
-    let now = Local::now();
+    let now = Timestamp::now();
     assert_eq!(session_start(&dir, now), now);
     put(&dir, "20200101_120000000_x.raw", "old");
     assert_eq!(session_start(&dir, now), now);
@@ -593,7 +593,7 @@ fn sessions_are_listed() {
     assert_eq!(usb.text_path(), with_meta.text_path());
 
     assert_eq!(old.meta, None);
-    let old_start = Local.with_ymd_and_hms(2020, 1, 1, 12, 0, 0).unwrap();
+    let old_start = clock::from_local(civil::date(2020, 1, 1).at(12, 0, 0, 0)).unwrap();
     assert_eq!(old.started, Some(old_start));
     assert_eq!(old.size, 4 + 5);
     drop(running);

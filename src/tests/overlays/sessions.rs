@@ -9,8 +9,8 @@ use crate::{
     configs::TextEncoding,
     link::{Address, LinkConfig},
 };
-use chrono::{Local, NaiveDateTime, TimeZone};
 use crossterm::event::{KeyEvent, KeyModifiers};
+use jiff::civil;
 use std::path::Path;
 
 fn temp_dir(name: &str) -> PathBuf {
@@ -370,8 +370,8 @@ fn usage_against_the_limit() {
     let oldest = (browser.sessions.iter())
         .filter_map(|session| session.started)
         .min()
-        .unwrap()
-        .format("%Y-%m-%d");
+        .map(|oldest| crate::clock::format(oldest, "%Y-%m-%d"))
+        .unwrap();
     assert_eq!(browser.usage(), format!("{used} · oldest {oldest}"));
     let browser = browser.with_max_size(Some(200 << 20));
     assert_eq!(
@@ -387,9 +387,9 @@ fn usage_against_the_limit() {
 fn dated_browser() -> SessionBrowser {
     let usb = device("/dev/ttyUSB0");
     let session = |at: &str| {
-        let naive = NaiveDateTime::parse_from_str(at, "%Y-%m-%d %H:%M").unwrap();
-        let started = Local.from_local_datetime(&naive).earliest().unwrap();
-        let stem = format!("{}_ttyUSB0", started.format("%Y%m%d_%H%M%S%3f"));
+        let wall = civil::DateTime::strptime("%Y-%m-%d %H:%M", at).unwrap();
+        let started = crate::clock::from_local(wall).unwrap();
+        let stem = format!("{}_ttyUSB0", wall.strftime("%Y%m%d_%H%M%S%3f"));
         Session {
             folder: PathBuf::from(&stem),
             stem,

@@ -7,8 +7,11 @@ use std::{
     time::{Duration, Instant, UNIX_EPOCH},
 };
 
+use jiff::Timestamp;
+
 use crate::{
     app::{App, mash::Mash},
+    clock,
     commands::ArgValue,
     configs::{Mode, TextEncoding, links::SavedLink},
     inputs::{Action, AppAction, MarkAction, PendingMark, SearchModeAction},
@@ -123,11 +126,7 @@ pub fn download(app: &App, args: &[ArgValue]) -> Result<Action, String> {
         return Err("a mash runs (cancel stops it)".to_string());
     }
     let transfers = &app.settings().transfers;
-    let xmodem_name = || {
-        chrono::Local::now()
-            .format(&transfers.xmodem_name)
-            .to_string()
-    };
+    let xmodem_name = || clock::format(Timestamp::now(), &transfers.xmodem_name);
     let (folder, name) = match path.map(|path| expand_home(path)) {
         None => (expand_home(&transfers.dir), xmodem_name()),
         Some(path) if path.is_dir() || path.as_os_str().to_string_lossy().ends_with('/') => {

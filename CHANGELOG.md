@@ -87,6 +87,14 @@ remove or rename them. `byte_text` and `byte_invalid` are new.
   columns left. Past the last group of 8, by 1 %.
 - In terminal mode, the raw side panel first opens at the size that just
   fits 8 bytes a line in the dump, instead of `split_percent`.
+- Durations in `config.toml` and `plots.toml` read the same forms as before
+  (`"500ms"`, `"2h 30m"`, `"1day"`, `"1week"`), a day being 24 hours, but
+  months and years are refused: they have no fixed length. maxicom writes
+  them its new way, `"1d"` rather than `"1day"`.
+- In the strftime formats (`timestamp_format`, `time_format`, file names),
+  `%Z` gives the time zone's abbreviation (`CET`) instead of its offset (use
+  `%:z` for `+01:00`), and `%c` and `%x` write the date another way. The
+  other specifiers write what they did.
 
 ### Fixed
 

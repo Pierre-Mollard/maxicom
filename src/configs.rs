@@ -9,6 +9,7 @@ use serde::de::DeserializeOwned;
 use crate::paths::expand_home;
 
 pub mod comments;
+pub mod duration;
 pub mod highlights;
 pub mod keybindings;
 pub mod links;

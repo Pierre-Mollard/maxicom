@@ -19,7 +19,7 @@ pub const CONFIG_COMMENTS: &[(&str, &str)] = &[
             "\nA setting left out takes its default. Ctrl-a r reloads this file, except for ",
             "a few settings:\n",
             guide!("settings.html#settings-that-need-a-restart"),
-            "\nDurations are written \"500ms\", \"30s\", \"4h\" or \"1day\".",
+            "\nDurations are written \"500ms\", \"30s\", \"4h\" or \"1d\".",
             "\n\nPut a file elsewhere by adding, at the top of this file, theme_path,",
             "\nkeybindings_path, highlights_path, triggers_path, links_path or plots_path:",
             "\ntheme_path = \"~/maxicom/dark.toml\"",

@@ -694,7 +694,7 @@ fn replay_lays_its_session_profiles() {
     let raw = dir.join("rec.raw");
     std::fs::write(&raw, b"x").unwrap();
     let device = crate::capture::tests::device("/dev/ttyUSB0");
-    let mut meta = RecordingMeta::new(chrono::Local::now(), device, CaptureFormat::default());
+    let mut meta = RecordingMeta::new(jiff::Timestamp::now(), device, CaptureFormat::default());
     meta.profiles = vec!["board".to_string(), "gone".to_string()];
     meta.write(&RecordingMeta::path_of(&raw)).unwrap();
     let stack = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
@@ -754,7 +754,7 @@ fn open_during_a_replay_ends_it_first() {
         },
         TextEncoding::Cp437,
     );
-    RecordingMeta::new(chrono::Local::now(), device, CaptureFormat::default())
+    RecordingMeta::new(jiff::Timestamp::now(), device, CaptureFormat::default())
         .write(&RecordingMeta::path_of(&replayed))
         .unwrap();
     // the session files' raw bytes, the oldest first

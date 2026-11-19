@@ -1,5 +1,5 @@
 use super::session::Session;
-use chrono::{DateTime, Local};
+use jiff::Timestamp;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
@@ -12,7 +12,7 @@ const TAIL_CHUNK: u64 = 64 * 1024;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TimedChunk<'a> {
     pub bytes: &'a [u8],
-    pub time: Option<DateTime<Local>>,
+    pub time: Option<Timestamp>,
 }
 
 /// The end of the file at `path`, at most `max` bytes, and where it starts in the file. When
@@ -35,25 +35,25 @@ pub fn read_tail_bytes(path: &Path, max: u64) -> io::Result<(u64, Vec<u8>)> {
 
 /// A line of a session's `.times` file (MAX-175): where a received chunk starts in its `.raw`,
 /// and when it was received, in milliseconds since the Unix epoch
-pub fn times_line(offset: u64, time: DateTime<Local>) -> String {
-    format!("{offset} {}\n", time.timestamp_millis())
+pub fn times_line(offset: u64, time: Timestamp) -> String {
+    format!("{offset} {}\n", time.as_millisecond())
 }
 
-fn parse_times_line(line: &[u8]) -> Option<(u64, DateTime<Local>)> {
+fn parse_times_line(line: &[u8]) -> Option<(u64, Timestamp)> {
     let line = std::str::from_utf8(line).ok()?;
     let (offset, millis) = line.trim_end().split_once(' ')?;
-    let time = DateTime::from_timestamp_millis(millis.parse().ok()?)?;
-    Some((offset.parse().ok()?, time.with_timezone(&Local)))
+    let time = Timestamp::from_millisecond(millis.parse().ok()?).ok()?;
+    Some((offset.parse().ok()?, time))
 }
 
 /// The times of a session's chunks from raw offset `from` on, read back from the end of its
 /// `.times` file at `path`, the chunk holding `from` first (MAX-175). Read backwards by chunks,
 /// so a long session costs only its end; a line that doesn't parse is left out
-pub fn read_times(path: &Path, from: u64) -> io::Result<Vec<(u64, DateTime<Local>)>> {
+pub fn read_times(path: &Path, from: u64) -> io::Result<Vec<(u64, Timestamp)>> {
     read_times_by(path, from, TAIL_CHUNK)
 }
 
-fn read_times_by(path: &Path, from: u64, chunk: u64) -> io::Result<Vec<(u64, DateTime<Local>)>> {
+fn read_times_by(path: &Path, from: u64, chunk: u64) -> io::Result<Vec<(u64, Timestamp)>> {
     let mut file = File::open(path)?;
     let mut start = file.metadata()?.len();
     let mut tail: Vec<u8> = Vec::new();
@@ -92,7 +92,7 @@ fn read_times_by(path: &Path, from: u64, chunk: u64) -> io::Result<Vec<(u64, Dat
 pub fn timed_chunks<'a>(
     start: u64,
     raw: &'a [u8],
-    times: &[(u64, DateTime<Local>)],
+    times: &[(u64, Timestamp)],
 ) -> Vec<TimedChunk<'a>> {
     let end = start + raw.len() as u64;
     let at = |offset: u64| (offset.clamp(start, end) - start) as usize;

@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local};
+use jiff::Timestamp;
 use std::collections::VecDeque;
 use tui_input::Input;
 
@@ -146,7 +146,7 @@ impl LineMode {
 
     /// The received bytes cut into lines, a lone CR ending one with `add_lf` (MAX-181)
     pub fn feed_rx(&mut self, add_lf: bool, encoding: TextEncoding, bytes: &[u8]) {
-        self.feed_rx_at(add_lf, encoding, bytes, Some(Local::now()));
+        self.feed_rx_at(add_lf, encoding, bytes, Some(Timestamp::now()));
     }
 
     /// `feed_rx` for bytes received at `time`, none when it isn't known (MAX-175)
@@ -155,7 +155,7 @@ impl LineMode {
         add_lf: bool,
         encoding: TextEncoding,
         bytes: &[u8],
-        time: Option<DateTime<Local>>,
+        time: Option<Timestamp>,
     ) {
         for &b in bytes {
             if self.partial_line.ends_at_cr(b, add_lf) {

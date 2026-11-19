@@ -304,7 +304,7 @@ fn entry_display_and_map_use_received_bytes() {
     let entry = LogEntry::received(
         TextEncoding::Latin1.decode(wire),
         wire,
-        Some(chrono::Local::now()),
+        Some(jiff::Timestamp::now()),
     );
     assert_eq!(
         entry_display_text(&entry, LineDisplayMode::Hex),
@@ -321,7 +321,7 @@ fn entry_display_and_map_use_received_bytes() {
         [0, 1, 1, 2, 3]
     );
 
-    let utf8 = LogEntry::new(String::from("xéy\n"), chrono::Local::now());
+    let utf8 = LogEntry::new(String::from("xéy\n"), jiff::Timestamp::now());
     assert_eq!(
         entry_display_to_wire_map(&utf8, LineDisplayMode::Pretty),
         build_display_to_raw_byte_map("xéy\n".as_bytes(), LineDisplayMode::Pretty)

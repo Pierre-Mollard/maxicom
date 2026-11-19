@@ -10,7 +10,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::App,
-    commands,
+    clock, commands,
     configs::{
         KeyBindingAction, KeyPattern, LineDisplayMode, ThemeConfig,
         keybindings::KeyBindingDialogAction,
@@ -114,9 +114,8 @@ pub fn render_marks_popup(
             }
             let row_area = Rect::new(inner.x, inner.y + (idx - first) as u16, inner.width, 1);
             targets.push((row_area, PopupTarget::MarkRow(idx)));
-            let time = row.time.map_or(NO_TIME.to_string(), |time| {
-                time.format("%H:%M:%S").to_string()
-            });
+            let time =
+                (row.time).map_or(NO_TIME.to_string(), |time| clock::format(time, "%H:%M:%S"));
             // the line's own colors over the popup's, the selection reversed over them
             let text = cut_spans(text, text_room.min(TEXT_WIDTH));
             let pad = (inner.width as usize).saturating_sub(row_width(0) + text_width(&text));

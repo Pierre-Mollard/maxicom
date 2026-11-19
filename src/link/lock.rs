@@ -7,7 +7,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use jiff::Timestamp;
+
 use super::Address;
+use crate::clock;
 
 /// Why an open is refused: another program holds the port, named (MAX-186). The error of an
 /// `io::Error`, which the probe reads back
@@ -100,7 +103,7 @@ impl LinkLock {
             std::process::id(),
             user.unwrap_or_default(),
             crate::configs::links::this_host().unwrap_or_default(),
-            chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+            clock::format(Timestamp::now(), "%Y-%m-%d %H:%M:%S"),
         );
         let mut info = open_shared(&self.info_path, true, true)?;
         info.set_len(0)?;

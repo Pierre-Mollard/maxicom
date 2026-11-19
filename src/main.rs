@@ -30,6 +30,7 @@ use crate::{
 mod app;
 mod args;
 mod capture;
+mod clock;
 mod commands;
 mod configs;
 mod inputs;

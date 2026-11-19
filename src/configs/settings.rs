@@ -6,11 +6,12 @@ use std::{
     time::Duration,
 };
 
-use chrono::format::strftime::StrftimeItems;
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     capture::{DEFAULT_GROUP_BY, GroupLevel, SessionLimits},
+    clock,
     configs::comments::{CONFIG_COMMENTS, with_comments},
     link::serial::{FlowControl, Framing, LineLevel, LineSettings, Parity},
 };
@@ -561,7 +562,7 @@ impl Default for CaptureConfig {
 
 impl CaptureConfig {
     pub fn path_for(&self, name: &str) -> PathBuf {
-        self.dir.join(chrono::Local::now().format(name).to_string())
+        self.dir.join(clock::format(Timestamp::now(), name))
     }
 }
 
@@ -578,7 +579,7 @@ pub struct SessionsConfig {
     pub keep: usize,
     pub max_size: ByteSize,
     pub restore: RestoreMode,
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "super::duration")]
     pub restore_max_age: Duration,
     pub group_by: Vec<GroupLevel>,
 }
@@ -719,8 +720,7 @@ impl Default for TransfersConfig {
 impl ScreenshotConfig {
     /// The screenshot path without its extension, which comes with the format
     pub fn stem(&self) -> PathBuf {
-        let name = chrono::Local::now().format(&self.name);
-        self.dir.join(name.to_string())
+        self.dir.join(clock::format(Timestamp::now(), &self.name))
     }
 }
 
@@ -902,10 +902,8 @@ impl StatusBarConfig {
             });
         }
 
-        if let Err(err) = StrftimeItems::new(&self.time_format).parse() {
-            return Err(ConfigValidationError::InvalidStatusBarTimeFormat {
-                err: err.to_string(),
-            });
+        if let Err(err) = clock::check(&self.time_format) {
+            return Err(ConfigValidationError::InvalidStatusBarTimeFormat { err });
         }
 
         Ok(())
@@ -1085,7 +1083,7 @@ pub struct SettingsConfig {
     pub rx_buffer_size: usize,
     pub show_timestamps: bool,
     pub timestamp_format: String,
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "super::duration")]
     pub inactivity_detach_timeout: Duration,
     pub line_mode: LineModeConfig,
     pub terminal_mode: TerminalModeConfig,
@@ -1235,10 +1233,8 @@ impl SettingsConfig {
             }
         }
 
-        if let Err(err) = StrftimeItems::new(&self.timestamp_format).parse() {
-            return Err(ConfigValidationError::InvalidTimestampFormat {
-                err: err.to_string(),
-            });
+        if let Err(err) = clock::check(&self.timestamp_format) {
+            return Err(ConfigValidationError::InvalidTimestampFormat { err });
         };
 
         for (field, name) in [
@@ -1246,11 +1242,8 @@ impl SettingsConfig {
             ("screenshot.name", &self.screenshot.name),
             ("transfers.xmodem_name", &self.transfers.xmodem_name),
         ] {
-            if let Err(err) = StrftimeItems::new(name).parse() {
-                return Err(ConfigValidationError::InvalidCaptureName {
-                    field,
-                    err: err.to_string(),
-                });
+            if let Err(err) = clock::check(name) {
+                return Err(ConfigValidationError::InvalidCaptureName { field, err });
             }
         }
 
@@ -1269,9 +1262,7 @@ impl SettingsConfig {
     }
 
     pub fn refresh_timestamp_width(&mut self) {
-        let sample = chrono::Local::now()
-            .format(&self.timestamp_format)
-            .to_string();
+        let sample = clock::format(Timestamp::now(), &self.timestamp_format);
         self.timestamp_width = sample.chars().count();
     }
 

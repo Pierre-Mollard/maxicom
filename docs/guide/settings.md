@@ -230,7 +230,11 @@ session.
 The default file, section by section, with a link to where each setting is
 explained.
 
-Durations are written `"500ms"`, `"30s"`, `"4h"` or `"1day"`.
+Durations are written `"500ms"`, `"30s"`, `"4h"` or `"1d"` (a day is 24 hours; months and years have no fixed length and are refused).
+
+Times and file names use strftime formats: `%Y-%m-%d` for the date,
+`%H:%M:%S` for the time, `%.3f` for the milliseconds. The full list is
+[jiff's](https://docs.rs/jiff/latest/jiff/fmt/strtime/index.html#conversion-specifications).
 
 ### Top level
 

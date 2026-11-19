@@ -8758,7 +8758,7 @@ fn marks_popup_lists_and_jumps() {
     let (mut h, height) = marked_lines();
     h.app.update(KeyBindingAction::Marks.to_action(&h.app));
     let rows = h.draw();
-    let time = chrono::Local::now().format("%H:%M").to_string();
+    let time = crate::clock::format(jiff::Timestamp::now(), "%H:%M");
     let row_a = rows.iter().find(|row| row.contains("a  ")).cloned();
     let row_a = row_a.expect("a row for a");
     assert!(

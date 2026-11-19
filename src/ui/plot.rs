@@ -1,6 +1,5 @@
 //! The plot panel (MAX-222): the plot shown, in the side panel, placed by `[plot_side]` (MAX-230)
 
-use humantime_serde::re::humantime;
 use ratatui::{
     Frame,
     layout::{Alignment, Rect},
@@ -18,7 +17,9 @@ use crate::{
         plots::{Plot, PlotSeries},
         types::{ClickAction, ClickTarget},
     },
-    configs::{KeyBindingAction, ThemeConfig, plots::PlotWindow, settings::RawSideOrientation},
+    configs::{
+        KeyBindingAction, ThemeConfig, duration, plots::PlotWindow, settings::RawSideOrientation,
+    },
 };
 
 /// The title row's columns besides the name: `  ◀ ` and ` ▶`, a space at least, `✕ `
@@ -354,7 +355,7 @@ pub fn legend_entry(series: &PlotSeries, from: f64) -> String {
 /// The left end of the X axis: the window back from now
 fn window_label(window: PlotWindow) -> String {
     match window {
-        PlotWindow::Time(duration) => format!("-{}", humantime::format_duration(duration)),
+        PlotWindow::Time(duration) => format!("-{}", duration::format(duration)),
         PlotWindow::Samples(count) => format!("-{count}"),
     }
 }
