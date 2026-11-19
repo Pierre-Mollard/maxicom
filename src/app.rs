@@ -960,10 +960,14 @@ impl App {
             Action::App(action) => self.update_action_app(action),
             Action::TransmitRaw(bytes) => {
                 // refused while a protocol transfer owns the link: not echoed (MAX-162)
-                if self.settings.local_echo && self.settings.mode == Mode::Line && !self.link_busy()
-                {
-                    let text = String::from_utf8_lossy(&bytes).into_owned();
-                    self.line_mode.push_history(text);
+                if self.settings.local_echo && !self.link_busy() {
+                    match self.settings.mode {
+                        Mode::Line => {
+                            let text = String::from_utf8_lossy(&bytes).into_owned();
+                            self.line_mode.push_history(text);
+                        }
+                        Mode::Terminal => self.terminal_mode.echo(&bytes),
+                    }
                 }
                 UpdateEffect::Transmit(bytes)
             }
@@ -1003,7 +1007,25 @@ impl App {
                 self.take_screenshot(format);
                 UpdateEffect::None
             }
-            Action::Terminal(action) => self.terminal_mode.update_action_terminal(action),
+            Action::Terminal(action) => {
+                // local echo shows what is typed and pasted, not the keys sent as escape
+                // sequences (arrows, F keys, Alt): they would move the cursor (MAX-270)
+                let echo = self.settings.local_echo && !self.link_busy();
+                let paste = match &action {
+                    TerminalAction::Paste(text) if echo => Some(text.clone()),
+                    _ => None,
+                };
+                let key = matches!(action, TerminalAction::Key(_));
+                let effect = self.terminal_mode.update_action_terminal(action);
+                if let UpdateEffect::Transmit(bytes) = &effect {
+                    if let Some(text) = paste {
+                        self.terminal_mode.echo_paste(&text);
+                    } else if echo && key && bytes.first() != Some(&0x1b) {
+                        self.terminal_mode.echo(bytes);
+                    }
+                }
+                effect
+            }
             Action::History(action) => self.update_action_history(action),
             Action::CopyMode(action) => self.update_action_copy_mode(action),
             Action::Search(action) => self.update_action_search_mode(action),

@@ -1093,6 +1093,77 @@ fn the_alternate_screen_has_its_own_links() {
     assert_eq!(tm.written_at(0, TextEncoding::Utf8), Some(((0, 0), true)));
 }
 
+// ---- MAX-270: differences found against minicom ----
+
+/// MAX-270 step 0: vt100 keeps a zero-width char in the cell before it, and a variation
+/// selector widens its emoji to two cells; copy and search read the cell's whole text. The
+/// render fix (step 1) must not change either.
+/// How: "ab" ZWSP "cd", "x" soft hyphen "y", "a" heart VS16 "b"
+#[test]
+fn zero_width_chars_stay_in_their_cell() {
+    let mut tm = terminal(3);
+    tm.process_rx(TextEncoding::Utf8, "ab\u{200B}cd".as_bytes());
+    assert_eq!(first_cells(&tm, 4), ["a", "b\u{200B}", "c", "d"]);
+    assert_eq!(row_text(&mut tm, 0), "ab\u{200B}cd");
+
+    let mut tm = terminal(3);
+    tm.process_rx(TextEncoding::Utf8, "x\u{AD}y".as_bytes());
+    assert_eq!(first_cells(&tm, 2), ["x\u{AD}", "y"]);
+    assert_eq!(row_text(&mut tm, 0), "x\u{AD}y");
+
+    let mut tm = terminal(3);
+    tm.process_rx(TextEncoding::Utf8, "a\u{2764}\u{FE0F}b".as_bytes());
+    assert_eq!(first_cells(&tm, 4), ["a", "\u{2764}\u{FE0F}", "", "b"]);
+    assert!(tm.vt100_screen().cell(0, 1).unwrap().is_wide());
+    assert_eq!(row_text(&mut tm, 0), "a\u{2764}\u{FE0F}b");
+}
+
+/// MAX-270 step 0: Backspace sends DEL and Ctrl-h BS (xterm), Alt-Backspace ESC DEL; the
+/// backspace setting (step 3) keeps these as the default.
+/// How: the three keys
+#[test]
+fn backspace_bytes() {
+    let none = KeyModifiers::NONE;
+    assert_eq!(sent(KeyCode::Backspace, none, false), b"\x7f");
+    assert_eq!(
+        sent(KeyCode::Char('h'), KeyModifiers::CONTROL, false),
+        b"\x08"
+    );
+    assert_eq!(
+        sent(KeyCode::Backspace, KeyModifiers::ALT, false),
+        b"\x1b\x7f"
+    );
+}
+
+/// MAX-270 step 0: autowrap is on by default: a char past the last column goes to the next
+/// row, the row marked wrapped; a full row then CR LF makes no blank row; a wide char that
+/// doesn't fit on the last column goes whole to the next row. DECAWM (step 4) keeps this
+/// while the mode is set.
+/// How: 80 columns: 80 'x' "ab"; 80 'y' CR LF "z"; 79 'w' then a wide char
+#[test]
+fn autowrap_on_by_default() {
+    let mut tm = terminal(5);
+    let mut bytes = vec![b'x'; 80];
+    bytes.extend_from_slice(b"ab");
+    tm.process_rx(TextEncoding::Utf8, &bytes);
+    assert_eq!(row_text(&mut tm, 0), "x".repeat(80));
+    assert_eq!(row_text(&mut tm, 1), "ab");
+    assert!(tm.vt100_screen().row_wrapped(0));
+
+    let mut tm = terminal(5);
+    let mut bytes = vec![b'y'; 80];
+    bytes.extend_from_slice(b"\r\nz");
+    tm.process_rx(TextEncoding::Utf8, &bytes);
+    assert_eq!(row_text(&mut tm, 1), "z");
+
+    let mut tm = terminal(5);
+    let mut bytes = vec![b'w'; 79];
+    bytes.extend_from_slice("中".as_bytes());
+    tm.process_rx(TextEncoding::Utf8, &bytes);
+    assert_eq!(row_text(&mut tm, 0), "w".repeat(79));
+    assert_eq!(row_text(&mut tm, 1), "中");
+}
+
 // ---- MAX-256 benches: the byte trace's cost and coverage (ignored: run by hand, in release) ----
 //
 // cargo test --release trace_coverage_bench -- --ignored --nocapture

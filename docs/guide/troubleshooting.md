@@ -87,7 +87,7 @@ want.
 ### What I type doesn't show
 
 The device doesn't echo what it receives. Turn on local echo with
-`Ctrl-a e` (line mode).
+`Ctrl-a e`, in either mode.
 
 ### The device wants Enter as CR LF
 

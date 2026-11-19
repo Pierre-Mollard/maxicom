@@ -145,3 +145,63 @@ nd......
 1 7..8: Some(DarkGray) Some(Reset) NONE
 2 0..8: Some(DarkGray) Some(Reset) NONE
 "#;
+
+/// MAX-270: a cell's invisible chars (soft hyphen, zero-width space, joiner, variation
+/// selector) aren't written to the host, combining marks are; the cells keep their place: an
+/// emoji vt100 made wide still takes two cells.
+/// How: each case on a 1x10 screen, the first cells' symbols
+#[test]
+fn invisible_chars_are_not_drawn() {
+    let symbols = |text: &str, n: u16| zero_width_symbols(text, n, false);
+    assert_eq!(symbols("ab\u{200B}cd", 4), ["a", "b", "c", "d"]);
+    assert_eq!(symbols("x\u{AD}y", 2), ["x", "y"]);
+    assert_eq!(
+        symbols("a\u{2764}\u{FE0F}b", 4),
+        ["a", "\u{2764}", " ", "b"]
+    );
+    assert_eq!(
+        symbols("\u{1F468}\u{200D}\u{1F469}", 4),
+        ["\u{1F468}", " ", "\u{1F469}", " "]
+    );
+    assert_eq!(symbols("e\u{301}\u{200E}", 1), ["e\u{301}"]);
+}
+
+/// The first `n` cells' symbols of `text` drawn on a 1x10 screen, zero-width chars written
+/// or not
+fn zero_width_symbols(text: &str, n: u16, zero_width: bool) -> Vec<String> {
+    let mut parser = vt100::Parser::new(vt100_dim(1), vt100_dim(10), 0);
+    parser.process(text.as_bytes());
+    let area = Rect::new(0, 0, 10, 1);
+    let mut buf = Buffer::empty(area);
+    MaxicomTerminal::new(parser.screen())
+        .zero_width(zero_width)
+        .render(area, &mut buf);
+    (0..n).map(|x| buf[(x, 0)].symbol().to_string()).collect()
+}
+
+/// MAX-270: `draw_zero_width` writes each cell as vt100 holds it, joiners and selectors in.
+/// How: zero-width space, heart with VS16, a ZWJ sequence
+#[test]
+fn zero_width_chars_drawn_when_asked() {
+    let symbols = |text: &str, n: u16| zero_width_symbols(text, n, true);
+    assert_eq!(symbols("ab\u{200B}c", 3), ["a", "b\u{200B}", "c"]);
+    assert_eq!(
+        symbols("\u{2764}\u{FE0F}b", 3),
+        ["\u{2764}\u{FE0F}", " ", "b"]
+    );
+    assert_eq!(
+        symbols("\u{1F468}\u{200D}\u{1F469}", 3),
+        ["\u{1F468}\u{200D}", " ", "\u{1F469}"]
+    );
+}
+
+/// MAX-270: `drawn` borrows a cell without invisible chars, and keeps a cell's first char
+/// whatever it is.
+/// How: plain, combining, invisible only after the first, an invisible first char
+#[test]
+fn drawn_keeps_the_first_char() {
+    assert!(matches!(drawn("a"), Cow::Borrowed("a")));
+    assert!(matches!(drawn("e\u{301}"), Cow::Borrowed(_)));
+    assert_eq!(drawn("a\u{FE0F}\u{301}\u{200D}"), "a\u{301}");
+    assert_eq!(drawn("\u{200B}"), "\u{200B}");
+}

@@ -64,6 +64,15 @@ to get the new keys that scroll the raw side panel in your `keymap.toml`:
 
 ### Fixed
 
+- Local echo (`Ctrl-a e`) works in terminal mode: what you type, paste and
+  send shows on the screen, as in minicom. It only worked in line mode.
+- In terminal mode, invisible characters (soft hyphens, zero-width spaces,
+  emoji joiners and selectors) no longer shift the rest of the row or leave
+  stray characters on the screen: maxicom doesn't send them to your terminal,
+  which placed them its own way. Copy and search still have them. An emoji
+  with a selector shows in its plain form, a joined emoji as its parts;
+  `draw_zero_width = true` in `[terminal_mode]` sends them as before, for a
+  terminal that counts them as maxicom does.
 - In terminal mode, a `�` the device sends shows: it disappeared, so a `�`
   pasted to a shell never showed in its echo.
 - The line still coming in is decoded with the `encoding` setting, as the

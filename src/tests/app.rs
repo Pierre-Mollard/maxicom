@@ -2623,3 +2623,75 @@ fn address_lines_add_no_line() {
     let lines: Vec<_> = wire.split("\r\n").filter(|l| !l.is_empty()).collect();
     assert_eq!(texts(&app), lines);
 }
+
+/// MAX-270 step 0: line mode's local echo shows a submitted line and raw bytes sent (send-hex,
+/// mash) in the history, nothing when off. The terminal mode echo (step 2) must not change it.
+/// How: echo on, "hello" submitted and "raw" sent; echo off, "quiet" and "bytes"
+#[test]
+fn line_mode_local_echo() {
+    let mut app = app();
+    app.settings.mode = Mode::Line;
+    app.settings.local_echo = true;
+    let send = |app: &mut App, line: &str| {
+        app.update(Action::LineInput(LineInputAction::Paste(line.to_string())));
+        app.update(Action::LineInput(LineInputAction::Submit))
+    };
+    assert!(matches!(send(&mut app, "hello"), UpdateEffect::Transmit(_)));
+    app.update(Action::TransmitRaw(b"raw".to_vec()));
+    assert_eq!(texts(&app), ["hello", "raw"]);
+
+    app.settings.local_echo = false;
+    send(&mut app, "quiet");
+    app.update(Action::TransmitRaw(b"bytes".to_vec()));
+    assert_eq!(texts(&app), ["hello", "raw"]);
+}
+
+/// MAX-270: in terminal mode, local echo shows what is typed, pasted and sent raw on the
+/// screen, as maxicom's own bytes (not in the raw panel's stream): Enter as a new line,
+/// Backspace going back so the next char writes over, a paste without its markers; keys sent
+/// as escape sequences (arrows) aren't shown. Off, nothing shows.
+/// How: "hi" Enter "x" Backspace "Z" Up, a paste "a\nb" with bracketed paste on, raw "AT\r";
+/// then the same keys with echo off
+#[test]
+fn terminal_mode_local_echo() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let mut quiet = app();
+    quiet.settings.mode = Mode::Terminal;
+    let mut app = app();
+    app.settings.mode = Mode::Terminal;
+    app.settings.local_echo = true;
+    let key = |app: &mut App, code: KeyCode| {
+        let event = KeyEvent::new(code, KeyModifiers::NONE);
+        app.update(Action::Terminal(TerminalAction::Key(event)))
+    };
+    for code in [
+        KeyCode::Char('h'),
+        KeyCode::Char('i'),
+        KeyCode::Enter,
+        KeyCode::Char('x'),
+        KeyCode::Backspace,
+        KeyCode::Char('Z'),
+    ] {
+        assert!(matches!(key(&mut app, code), UpdateEffect::Transmit(_)));
+    }
+    match key(&mut app, KeyCode::Up) {
+        UpdateEffect::Transmit(bytes) => assert_eq!(bytes, b"\x1b[A"),
+        _ => panic!("expected the arrow sent"),
+    }
+    app.terminal_mode
+        .process_rx(TextEncoding::Utf8, b"\x1b[?2004h");
+    let paste = Action::Terminal(TerminalAction::Paste("a\nb".to_string()));
+    match app.update(paste) {
+        UpdateEffect::Transmit(bytes) => assert_eq!(bytes, b"\x1b[200~a\rb\x1b[201~"),
+        _ => panic!("expected the paste sent"),
+    }
+    app.update(Action::TransmitRaw(b"AT\r".to_vec()));
+    let screen = app.terminal_mode.vt100_screen();
+    assert_eq!(screen.contents(), "hi\nZa\nbAT");
+    assert_eq!(screen.cursor_position(), (3, 0));
+    assert_eq!(app.terminal_mode.dump().stream().end(), 0);
+
+    key(&mut quiet, KeyCode::Char('h'));
+    quiet.update(Action::TransmitRaw(b"AT\r".to_vec()));
+    assert_eq!(quiet.terminal_mode.vt100_screen().contents(), "");
+}

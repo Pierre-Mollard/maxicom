@@ -235,6 +235,27 @@ impl TerminalMode {
         self.process_rx_at(encoding, raw_bytes, Some(Local::now()), feed);
     }
 
+    /// Local echo (MAX-270): bytes sent shown on the screen as maxicom's own, not in the stream.
+    /// Enter's CR shows as CR LF, as minicom does, and a DEL (Backspace) as BS: the cursor goes
+    /// back, the next char writes over
+    pub fn echo(&mut self, sent: &[u8]) {
+        let mut shown = Vec::with_capacity(sent.len() + 1);
+        let mut bytes = sent.iter().peekable();
+        while let Some(&byte) = bytes.next() {
+            match byte {
+                b'\r' if bytes.peek() != Some(&&b'\n') => shown.extend_from_slice(b"\r\n"),
+                0x7f => shown.push(0x08),
+                _ => shown.push(byte),
+            }
+        }
+        self.process_rx(TextEncoding::Utf8, &shown);
+    }
+
+    /// Local echo of a paste: its text with the line breaks sent, without paste markers
+    pub fn echo_paste(&mut self, text: &str) {
+        self.echo(&terminal_paste_bytes(text, false));
+    }
+
     /// Bytes not from the device (maxicom's own, tests'): not in the stream, nothing recorded
     pub fn process_rx(&mut self, encoding: TextEncoding, raw_bytes: &[u8]) {
         self.process_rx_at(encoding, raw_bytes, Some(Local::now()), Feed::Own);

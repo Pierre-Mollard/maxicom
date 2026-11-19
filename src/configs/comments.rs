@@ -53,6 +53,10 @@ pub const CONFIG_COMMENTS: &[(&str, &str)] = &[
         "terminal_mode.byte_trace",
         "connects the screen and the raw side panel; false: no memory or time spent",
     ),
+    (
+        "terminal_mode.draw_zero_width",
+        "true: emoji joiners and selectors sent to your terminal, if it counts them as maxicom",
+    ),
     ("capture", guide!("capture.html#settings")),
     ("sessions", guide!("capture.html#settings")),
     ("sessions.keep", "0: no limit"),

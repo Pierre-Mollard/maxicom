@@ -237,7 +237,7 @@ Durations are written `"500ms"`, `"30s"`, `"4h"` or `"1day"`.
 | Setting | Default | |
 | --- | --- | --- |
 | `mode` | `"terminal"` | The mode at startup, `line` or `terminal`: [Introduction](introduction.md#two-modes) |
-| `local_echo` | `false` | Show the lines sent: [Line mode](line-mode.md#local-echo) |
+| `local_echo` | `false` | Show what you send: [Line mode](line-mode.md#local-echo), [Terminal mode](terminal-mode.md#local-echo) |
 | `add_cr`, `add_lf` | `false` | Read a lone LF / CR as CR LF: [Encoding and newlines](encoding-and-newlines.md#received-newlines) |
 | `encoding` | `"utf8"` | `utf8`, `ascii`, `cp437`, `latin1`: [Encoding and newlines](encoding-and-newlines.md#text-encoding) |
 | `dual_mode_buffering` | `"always_both"` | `always_both` or `active_only`: [Introduction](introduction.md#two-modes) |
@@ -282,6 +282,7 @@ See [Terminal mode](terminal-mode.md).
 | `answer_queries` | `true` | Answer the device's terminal queries |
 | `answer_groups` | `["status", "identity", "size", "modes"]` | Which queries |
 | `answerback` | `""` | Sent back on ENQ, nothing when empty |
+| `draw_zero_width` | `false` | Send the invisible characters a cell holds (emoji joiners and selectors, soft hyphens) to your terminal, see [Invisible characters](terminal-mode.md#invisible-characters) |
 | `byte_trace` | `true` | Record which received bytes drew which cells, to connect the screen and the raw side panel, see [The byte trace](raw-side-panel.md#the-byte-trace). Takes up to 256 bytes per `history_size` row (about 25 MB by default) and a little time on a fast link (TCP, a replay); `false` records nothing and gives the memory back |
 
 ### `[link]`

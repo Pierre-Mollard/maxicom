@@ -734,6 +734,10 @@ pub struct TerminalModeConfig {
     /// panel (MAX-256): about 256 B per `history_size` row at most, and some time on a fast link
     /// (TCP, a replay). Off: nothing recorded, the memory given back
     pub byte_trace: bool,
+    /// Send the zero-width chars a cell holds (emoji joiners and selectors, soft hyphens) to
+    /// the host terminal as received: only right when the host counts them as vt100 does,
+    /// else the screen drawn drifts (MAX-270). Copy and search always have them
+    pub draw_zero_width: bool,
 }
 
 impl Default for TerminalModeConfig {
@@ -749,6 +753,7 @@ impl Default for TerminalModeConfig {
             answer_groups: QueryGroup::ALL.to_vec(),
             answerback: String::new(),
             byte_trace: true,
+            draw_zero_width: false,
         }
     }
 }

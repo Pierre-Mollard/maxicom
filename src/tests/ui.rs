@@ -11438,3 +11438,20 @@ fn line_mode_ascii_keeps_colors() {
         ratatui::style::Color::Red
     );
 }
+
+/// MAX-270 step 0: a combining mark draws in its base char's cell and a wide char takes two
+/// cells; the zero-width fix (step 1) must keep both.
+/// How: "e" + combining acute, a wide char, "x"
+#[test]
+fn terminal_draws_combining_and_wide_chars() {
+    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 20, 5, |s| {
+        s.mode = Mode::Terminal;
+    });
+    h.app
+        .terminal_mode
+        .process_rx(TextEncoding::Utf8, "e\u{301}中x".as_bytes());
+    let rows = h.draw();
+    let buffer = h.terminal.backend().buffer();
+    let symbols: Vec<&str> = (0..4).map(|x| buffer[(x, 0)].symbol()).collect();
+    assert_eq!(symbols, ["e\u{301}", "中", " ", "x"], "{rows:?}");
+}
