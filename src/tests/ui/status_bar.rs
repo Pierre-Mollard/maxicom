@@ -1068,3 +1068,27 @@ fn add_cr_add_lf_conditions() {
     assert_eq!(Cond::from_name("add_cr"), Cond::AddCr);
     assert_eq!(Cond::from_name("ADD_LF"), Cond::AddLf);
 }
+
+/// MAX-275: `{device_title}` and `{device_icon_name}` give what the device set, empty before;
+/// `device_title` / `title` and `device_icon_name` hold once set; a click does nothing.
+/// How: a fresh app, then OSC 2 and OSC 1
+#[test]
+fn device_titles() {
+    let mut a = app(Mode::Terminal);
+    let shown = |a: &App, cond: &str| render(&format!("[T]({cond}?bold:hide)"), a).len();
+    let full = Fit {
+        compact: false,
+        drop_from: None,
+    };
+    assert_eq!(text_with("{device_title}", &a, full), "");
+    assert_eq!(shown(&a, "title"), 0);
+    a.terminal_mode.process_rx(
+        crate::configs::TextEncoding::Utf8,
+        b"\x1b]2;shell\x07\x1b]1;icon\x07",
+    );
+    assert_eq!(render("{device_title}", &a), [plain("shell")]);
+    assert_eq!(render("{device_icon_name}", &a), [plain("icon")]);
+    assert_eq!(shown(&a, "device_title"), 1);
+    assert_eq!(shown(&a, "icon_name"), 1);
+    assert_eq!(Var::DeviceTitle.click(), None);
+}

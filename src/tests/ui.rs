@@ -7600,6 +7600,60 @@ fn border_title_details() {
     assert_eq!(title(&mut h), " maxicom TERMINAL ");
 }
 
+/// MAX-275: the device's title goes after the name, in both modes; `show_device_title` off
+/// leaves it out; the icon name shows with its setting, once when it's the title's text; it's
+/// cut to the room left, the name and details kept; a char of unsure width shows as the marker.
+/// How: OSC 0 then OSC 1 at 120 columns, the settings toggled, then 40 columns, then U+3248
+#[test]
+fn border_title_device_title() {
+    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 120, 24, |s| {
+        s.ui.show_borders = true;
+        s.mode = Mode::Terminal;
+    });
+    let title = |h: &mut Harness| {
+        let rows = h.draw();
+        rows[0]
+            .trim_start_matches('┌')
+            .split('─')
+            .next()
+            .unwrap()
+            .to_string()
+    };
+    let osc = |h: &mut Harness, bytes: &[u8]| {
+        h.app.terminal_mode.process_rx(TextEncoding::Utf8, bytes);
+    };
+    assert_eq!(title(&mut h), " maxicom TERMINAL ");
+    osc(&mut h, b"\x1b]0;board shell\x07");
+    assert_eq!(title(&mut h), " maxicom TERMINAL | board shell ");
+    h.app.settings_mut().ui.show_device_icon_name = true;
+    assert_eq!(title(&mut h), " maxicom TERMINAL | board shell ");
+    osc(&mut h, b"\x1b]1;icon\x07");
+    assert_eq!(title(&mut h), " maxicom TERMINAL | board shell | icon ");
+    h.app.settings_mut().ui.show_device_title = false;
+    assert_eq!(title(&mut h), " maxicom TERMINAL | icon ");
+    h.app.settings_mut().ui.show_device_icon_name = false;
+    assert_eq!(title(&mut h), " maxicom TERMINAL ");
+
+    h.app.settings_mut().ui.show_device_title = true;
+    h.app.settings_mut().mode = Mode::Line;
+    assert_eq!(title(&mut h), " maxicom LINE | board shell ");
+    h.app.settings_mut().ui.title_details = true;
+    assert_eq!(
+        title(&mut h),
+        " maxicom LINE | board shell [VIEW 118x19 | LIVE] "
+    );
+    osc(&mut h, "\x1b]2;a\u{3248}b\x07".as_bytes());
+    h.app.settings_mut().ui.title_details = false;
+    assert_eq!(title(&mut h), " maxicom LINE | a\u{25AF}b ");
+
+    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 40, 24, |s| {
+        s.ui.show_borders = true;
+    });
+    osc(&mut h, b"\x1b]2;a very long title from the board\x07");
+    // 28 columns for the title: ` maxicom LINE ` takes 14, ` | ` 3, the title the 11 left
+    assert_eq!(title(&mut h), " maxicom LINE | a very long ");
+}
+
 /// MAX-137: a title that doesn't fit loses whole details from the last one, then the
 /// prefix, then everything but the name, and is gone without room for the name; it is never
 /// cut inside a word, and the border buttons stay.

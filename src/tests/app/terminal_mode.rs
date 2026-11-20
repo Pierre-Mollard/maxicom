@@ -1443,3 +1443,174 @@ fn trace_cost_bench() {
         }
     }
 }
+
+/// What vt100 dropped from `reads`, fed as the device's, collecting, the byte trace on or off
+fn dropped(reads: &[&[u8]], trace: bool) -> Vec<(DropKind, Vec<u8>)> {
+    let mut tm = TerminalMode::new(100, 5, 40);
+    tm.collect_dropped(true);
+    for read in reads {
+        tm.process_device_rx(TextEncoding::Utf8, read, false, false, trace);
+    }
+    let dropped = tm.take_dropped();
+    dropped.into_iter().map(|d| (d.kind, d.bytes)).collect()
+}
+
+/// MAX-264: each kind of thing vt100 doesn't use is listed with its bytes, from its callbacks
+/// and, for what has none (DEL, SO / SI, strings), from the tokenizer, trace on or off.
+/// How: one read per kind, each read alone, with the trace and without
+#[test]
+fn dropped_kinds_listed_with_their_bytes() {
+    let cases: [(&[u8], DropKind, &[u8]); 10] = [
+        (b"a\x00b", DropKind::Control, b"\x00"),
+        (b"a\x7fb", DropKind::Control, b"\x7f"),
+        (b"a\x0eb", DropKind::Control, b"\x0e"),
+        (b"a\xc2\x85b", DropKind::C1, b"\xc2\x85"),
+        (b"a\x1b#3b", DropKind::Escape, b"\x1b#3"),
+        (b"a\x1b[?2026hb", DropKind::Csi, b"\x1b[?2026h"),
+        (b"a\x1b[1;2:3$zb", DropKind::Csi, b"\x1b[1;2:3$z"),
+        (
+            b"a\x1b]7;file://h/x\x07b",
+            DropKind::Osc,
+            b"\x1b]7;file://h/x\x07",
+        ),
+        (b"a\x1bPq#0\x1b\\b", DropKind::String, b"\x1bPq#0\x1b\\"),
+        (b"a\x1b_apc\x1b\\b", DropKind::String, b"\x1b_apc\x1b\\"),
+    ];
+    for trace in [true, false] {
+        for (read, kind, bytes) in cases {
+            assert_eq!(
+                dropped(&[read], trace),
+                [(kind, bytes.to_vec())],
+                "{read:?} {trace}"
+            );
+        }
+    }
+}
+
+/// MAX-264: what maxicom answers or vt100 draws counts as used: nothing listed.
+/// How: ENQ, DA1, DSR, DECID, mode 2048 on and off, a title, colors, text and the controls
+/// vt100 runs
+#[test]
+fn answered_and_used_not_listed() {
+    let reads: [&[u8]; 9] = [
+        b"\x05",
+        b"\x1b[c",
+        b"\x1b[6n",
+        b"\x1bZ",
+        b"\x1b[?2048h\x1b[?2048l",
+        b"\x1b]0;title\x07",
+        b"\x1b[31mred\x1b[0m",
+        b"t\te\x08x\r\n\x07",
+        "é中".as_bytes(),
+    ];
+    for trace in [true, false] {
+        for read in reads {
+            assert_eq!(dropped(&[read], trace), [], "{read:?} {trace}");
+        }
+    }
+}
+
+/// MAX-264: a string cut between two reads is listed once, when it ends, with the bytes of
+/// the read it ends in; nothing is listed when not collecting.
+/// How: `ESC P q` then `#0 ESC \`, trace on and off; then a NUL without collecting
+#[test]
+fn dropped_string_across_reads_and_not_collecting() {
+    for trace in [true, false] {
+        let dropped = dropped(&[b"\x1bPq", b"#0\x1b\\"], trace);
+        assert_eq!(dropped.len(), 1, "{dropped:?}");
+        assert_eq!(dropped[0].0, DropKind::String);
+    }
+    let mut tm = TerminalMode::new(100, 5, 40);
+    tm.process_device_rx(TextEncoding::Utf8, b"\x00\x7f", false, false, true);
+    assert!(tm.take_dropped().is_empty());
+}
+
+/// The device's title and icon name after `reads`, fed as the device's
+fn titles(reads: &[&[u8]]) -> (Option<String>, Option<String>) {
+    let mut tm = TerminalMode::new(100, 5, 40);
+    for read in reads {
+        tm.process_device_rx(TextEncoding::Utf8, read, false, false, false);
+    }
+    let owned = |s: Option<&str>| s.map(str::to_string);
+    (owned(tm.device_title()), owned(tm.device_icon_name()))
+}
+
+/// MAX-275: OSC 0 sets the title and the icon name, OSC 2 and 1 one each; a title with `;`
+/// (vt100 doesn't take it) is kept whole; an empty one clears it.
+/// How: each sequence on a fresh terminal, then a set followed by a clear
+#[test]
+fn device_titles_from_osc() {
+    let some = |s: &str| Some(s.to_string());
+    assert_eq!(titles(&[b"\x1b]0;both\x07"]), (some("both"), some("both")));
+    assert_eq!(titles(&[b"\x1b]2;title\x1b\\"]), (some("title"), None));
+    assert_eq!(titles(&[b"\x1b]1;icon\x07"]), (None, some("icon")));
+    assert_eq!(titles(&[b"\x1b]2;a;b;c\x07"]), (some("a;b;c"), None));
+    assert_eq!(
+        titles(&[b"\x1b]0;x\x07", b"\x1b]2;\x07"]),
+        (None, some("x"))
+    );
+}
+
+/// MAX-275: a title is kept without its control chars, cut at 200 chars, invalid UTF-8 as
+/// `�`; a title isn't listed as dropped (MAX-264).
+/// How: tabs and a C1 in a title, a 300 char title, a broken byte, then collecting
+#[test]
+fn device_titles_cleaned() {
+    let (title, _) = titles(&[b"\x1b]2;a\tb\xc2\x85c\x07"]);
+    assert_eq!(title.as_deref(), Some("abc"));
+    let (title, _) = titles(&[b"\x1b]2;a\xffb\x07"]);
+    assert_eq!(title.as_deref(), Some("a\u{FFFD}b"));
+    let long = format!("\x1b]2;{}\x07", "x".repeat(300));
+    let (title, _) = titles(&[long.as_bytes()]);
+    assert_eq!(title.map(|t| t.chars().count()), Some(200));
+    assert_eq!(dropped(&[b"\x1b]0;t\x07\x1b]2;a;b\x07"], true), []);
+}
+
+/// MAX-275: clearing the history keeps the titles (the device still has them); a new
+/// terminal, as a link switch makes, has none.
+/// How: a title set, the history cleared, then a fresh `TerminalMode`
+#[test]
+fn device_titles_kept_on_clear_history() {
+    let mut tm = TerminalMode::new(100, 5, 40);
+    tm.process_device_rx(TextEncoding::Utf8, b"\x1b]0;board\x07", false, false, false);
+    tm.clear_history();
+    assert_eq!(tm.device_title(), Some("board"));
+    assert_eq!(tm.device_icon_name(), Some("board"));
+    assert_eq!(TerminalMode::new(100, 5, 40).device_title(), None);
+}
+
+/// MAX-275: an OSC 52 copy is kept until taken; the clipboard query is never answered and is
+/// listed as dropped (MAX-264), as is a copy too long; a restored session's copy is left out.
+/// How: a copy, the query while collecting, a 2 MB copy, then a restore holding a copy
+#[test]
+fn device_copies_kept_until_taken() {
+    let mut tm = TerminalMode::new(100, 5, 40);
+    tm.process_device_rx(
+        TextEncoding::Utf8,
+        b"\x1b]52;c;aGk=\x07",
+        false,
+        false,
+        false,
+    );
+    assert_eq!(tm.take_device_copy().as_deref(), Some(&b"aGk="[..]));
+    assert_eq!(tm.take_device_copy(), None);
+
+    assert_eq!(
+        dropped(&[b"\x1b]52;c;?\x07"], false),
+        [(DropKind::Osc, b"\x1b]52;c;?\x07".to_vec())]
+    );
+    let long = [&b"\x1b]52;c;"[..], &vec![b'A'; 2 << 20], b"\x07"].concat();
+    assert_eq!(
+        dropped(&[&long], false),
+        [(DropKind::Osc, b"\x1b]52;c;...\x07".to_vec())]
+    );
+
+    let mut tm = TerminalMode::new(100, 5, 40);
+    tm.restore(
+        TextEncoding::Utf8,
+        &untimed(b"\x1b]52;c;aGk=\x07"),
+        "",
+        false,
+    );
+    assert_eq!(tm.take_device_copy(), None);
+}

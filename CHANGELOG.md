@@ -23,6 +23,13 @@ remove or rename them. `byte_text` and `byte_invalid` are new.
 
 ### Added
 
+- The window title a program on the device sets shows in the history box's
+  title, after the name; `show_device_title = false` in `[ui]` leaves it out.
+  Its icon name too with `show_device_icon_name = true`. The status bar can
+  show them with `{device_title}` and `{device_icon_name}`.
+- `device_clipboard = true` in `[terminal_mode]` lets a program on the device
+  copy to your clipboard (OSC 52), with a notification each time. Off by
+  default.
 - `Ctrl-a R` and `Ctrl-a Ctrl-l` (the `redraw` command) clear your terminal
   and draw the whole screen again, for leftovers your terminal kept.
 - `disabled_mode = "line" | "terminal"` in `config.toml` turns a mode off:

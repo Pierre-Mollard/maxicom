@@ -52,6 +52,10 @@ pub const CONFIG_COMMENTS: &[(&str, &str)] = &[
     ),
     ("terminal_mode.backspace", "values: del, bs"),
     (
+        "terminal_mode.device_clipboard",
+        "true: the device can copy to your clipboard (OSC 52)",
+    ),
+    (
         "terminal_mode.byte_trace",
         "connects the screen and the raw side panel; false: no memory or time spent",
     ),

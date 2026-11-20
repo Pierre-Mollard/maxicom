@@ -122,6 +122,48 @@ ones terminals don't agree on the width of show as a dimmed `▯`. Copy and
 search still have them. [Characters drawn differently](drawn-characters.md)
 lists them, with the settings that draw them as received.
 
+## The device's title and clipboard
+
+### Window title
+
+A program on the device can name its window, the way a shell shows the
+current directory or `user@host` in your terminal's tab. maxicom keeps the
+last title the device set and shows it in the history box's title, after the
+name, in both modes:
+
+```text
+┌ maxicom TERMINAL | root@board: ~ ──────────────────────────[?][≡][×]┐
+```
+
+The device's title only takes the room the rest of the title leaves, and is
+cut to fit. It's kept until you switch to another link, and a device clears it
+with an empty title. Set `show_device_title = false` in `[ui]` to leave it
+out.
+
+The device can also set an icon name, a second, shorter title. The same
+sequence usually sets both to the same text, so it isn't shown by default:
+set `show_device_icon_name = true` in `[ui]` to show it after the title, when
+it differs.
+
+The [status bar](status-bar.md) can show both with `{device_title}` and
+`{device_icon_name}`, which the default bar doesn't use.
+
+A program asking for the title back never gets an answer, see
+[Never answered](#never-answered).
+
+### Copying from the device
+
+A program on the device can copy text to your clipboard, the same way maxicom
+copies (OSC 52): vim with a clipboard plugin, tmux on the device, a script.
+This is off by default: a device, or a binary file printed by mistake, could
+replace what you copied without you knowing.
+
+Set `device_clipboard = true` in `[terminal_mode]` to let it. Each copy then
+goes to your clipboard as maxicom's own do, and a notification says the device
+copied, even with `notify_copy` off. A replay or a restored session never
+copies. A program asking to read your clipboard never gets it, see
+[Never answered](#never-answered).
+
 ## Answering the device's queries
 
 A program on the device can't see its terminal. To learn something about it,

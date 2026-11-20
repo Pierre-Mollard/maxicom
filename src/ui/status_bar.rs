@@ -58,6 +58,8 @@
 //! | `{replay_size}`     | The file's size                                         | `9752`           |
 //! | `{plot}`            | The plot shown in the side panel (`plots.toml`), or empty | `pid`          |
 //! | `{profiles}`        | The link's profiles in stack order, empty when none     | `board, proj`    |
+//! | `{device_title}`    | The window title the device set (OSC 0 / 2), or empty   | `root@board: ~`  |
+//! | `{device_icon_name}`| The icon name the device set (OSC 0 / 1), or empty      | `board`          |
 //!
 //! ## Formats
 //! `{name:spec}` with spec `[<>^][0][width][h]`, close to Rust's and C's:
@@ -117,6 +119,8 @@
 //! | `plot`                          | `plotting`                                 | A plot is shown in the side panel (`plots.toml`)         |
 //! | `frozen`                        | `plot_frozen`                              | The plot is frozen (`plot-freeze`)                       |
 //! | `profiles`                      | `profile`                                  | The link has profiles laid over the config               |
+//! | `device_title`                  | `title`                                    | The device set a window title (`{device_title}`)         |
+//! | `device_icon_name`              | `icon_name`                                | The device set an icon name (`{device_icon_name}`)       |
 //!
 //! ## Style Keywords
 //! - **Modifiers**: `bold`, `dim`, `italic`, `underlined` (`underline`), `reversed` (`reverse`), `reset` (`default`), `crossed`, `slow_blink` (`sblink`), `rapid_blink` (`rblink`)
@@ -210,6 +214,7 @@ use crate::{
     configs::{
         KeyBindingAction, Mode, StatusBarConfig, StatusBarLayout, ThemeConfig, theme::PaletteColors,
     },
+    glyphs::drawn_text,
     link::LinkKind,
     ui::{
         common::{pan_left_indicator, pan_right_indicator},
@@ -476,6 +481,8 @@ enum Var {
     ReplaySize,
     Plot,
     Profiles,
+    DeviceTitle,
+    DeviceIconName,
 }
 
 impl Var {
@@ -512,6 +519,8 @@ impl Var {
             "replay_size" => Self::ReplaySize,
             "plot" => Self::Plot,
             "profiles" => Self::Profiles,
+            "device_title" => Self::DeviceTitle,
+            "device_icon_name" => Self::DeviceIconName,
             _ => return None,
         })
     }
@@ -544,7 +553,9 @@ impl Var {
             | Self::ReplayPercent
             | Self::ReplayRead
             | Self::ReplaySize
-            | Self::Profiles => return None,
+            | Self::Profiles
+            | Self::DeviceTitle
+            | Self::DeviceIconName => return None,
         };
         Some(ClickAction::Run(action))
     }
@@ -718,6 +729,17 @@ impl Var {
             Self::ReplayFile | Self::ReplayState => Ok(()),
             Self::Plot => write!(out, "{}", app.plot().map_or("", |plot| plot.name.as_str())),
             Self::Profiles => write!(out, "{}", app.profiles().join(", ")),
+            // drawn as the screen draws its cells (MAX-275)
+            Self::DeviceTitle | Self::DeviceIconName => {
+                let tm = &app.terminal_mode;
+                let text = match self {
+                    Self::DeviceTitle => tm.device_title(),
+                    _ => tm.device_icon_name(),
+                };
+                let ui = &app.settings().ui;
+                let text = drawn_text(text.unwrap_or(""), ui.draw_zero_width, ui.draw_unsure_width);
+                write!(out, "{text}")
+            }
             // the numbers, written by `write`
             Self::Baud
             | Self::RxBytes
@@ -795,6 +817,8 @@ enum Cond {
     Plot,
     PlotFrozen,
     Profiles,
+    DeviceTitle,
+    DeviceIconName,
     /// Unknown condition name, always false
     Unknown,
 }
@@ -838,6 +862,8 @@ impl Cond {
             "plot" | "plotting" => Self::Plot,
             "frozen" | "plot_frozen" => Self::PlotFrozen,
             "profiles" | "profile" => Self::Profiles,
+            "device_title" | "title" => Self::DeviceTitle,
+            "device_icon_name" | "icon_name" => Self::DeviceIconName,
             _ => Self::Unknown,
         }
     }
@@ -896,6 +922,8 @@ impl Cond {
             Self::Plot => app.plot().is_some(),
             Self::PlotFrozen => app.plot().is_some_and(|plot| plot.is_frozen()),
             Self::Profiles => !app.profiles().is_empty(),
+            Self::DeviceTitle => app.terminal_mode.device_title().is_some(),
+            Self::DeviceIconName => app.terminal_mode.device_icon_name().is_some(),
             Self::Unknown => false,
         }
     }

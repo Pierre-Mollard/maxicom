@@ -59,6 +59,30 @@ pub fn is_invisible(c: char) -> bool {
     )
 }
 
+/// A text from the device written into maxicom's own parts (a title, the status bar), as the
+/// screen draws its cells: invisible chars dropped unless `zero_width`, a char of unsure width
+/// as `UNSURE_MARKER` padded with spaces to its width unless `unsure_width` (MAX-275)
+pub fn drawn_text(text: &str, zero_width: bool, unsure_width: bool) -> Cow<'_, str> {
+    let hidden = |c: char| !zero_width && is_invisible(c);
+    let marked = |c: char| !unsure_width && is_unsure(c);
+    if !text.chars().any(|c| hidden(c) || marked(c)) {
+        return Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars().filter(|&c| !hidden(c)) {
+        if !marked(c) {
+            out.push(c);
+            continue;
+        }
+        let width = c.width().unwrap_or(0);
+        if width > 0 {
+            out.push_str(UNSURE_MARKER);
+            out.push_str(&" ".repeat(width - 1));
+        }
+    }
+    Cow::Owned(out)
+}
+
 /// The rows as written to the host terminal, as terminal mode draws its cells: invisible chars
 /// dropped unless `zero_width` (MAX-270), a char of unsure width drawn as the dimmed
 /// `UNSURE_MARKER` padded with spaces to its width unless `unsure_width` (MAX-271), so each row

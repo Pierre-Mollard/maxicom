@@ -36,6 +36,8 @@ pub enum Effect {
     CursorJump,
     /// A clear: ED 2 or 3, RIS (`ESC c`), the alternate screen in or out
     Clear,
+    /// A DCS, SOS, PM or APC string: vt100 drops it, no callback says so (MAX-264)
+    String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +74,8 @@ pub struct Tokenizer {
     utf8_next: (u8, u8),
     /// A CSI's parameter and intermediate bytes, for its effect
     csi: Vec<u8>,
+    /// The string being read is a DCS, SOS, PM or APC, not an OSC
+    string: bool,
 }
 
 impl Tokenizer {
@@ -88,6 +92,7 @@ impl Tokenizer {
             utf8_left: 0,
             utf8_next: (0x80, 0xBF),
             csi: Vec::new(),
+            string: false,
         }
     }
 
@@ -127,8 +132,14 @@ impl Tokenizer {
             State::Ground => self.ground(byte, at, out),
             State::Escape => match byte {
                 b'[' => self.enter(State::Csi),
-                b']' => self.state = State::Osc,
-                b'P' | b'X' | b'^' | b'_' => self.state = State::String,
+                b']' => {
+                    self.state = State::Osc;
+                    self.string = false;
+                }
+                b'P' | b'X' | b'^' | b'_' => {
+                    self.state = State::String;
+                    self.string = true;
+                }
                 0x20..=0x2F => self.state = State::EscapeIntermediate,
                 0x30..=0x7E => {
                     let effect = if byte == b'c' {
@@ -156,14 +167,14 @@ impl Tokenizer {
             State::Osc | State::String => match byte {
                 BEL if self.state == State::Osc => self.close(at + 1, Effect::Other, out),
                 ESC => self.state = State::StringEscape,
-                CAN | SUB => self.cancel(byte, at, out),
+                CAN | SUB => self.cancel(byte, at, self.string_effect(), out),
                 _ => {}
             },
             State::StringEscape => match byte {
-                b'\\' => self.close(at + 1, Effect::Other, out),
+                b'\\' => self.close(at + 1, self.string_effect(), out),
                 // the ESC started a new sequence: the string ended before it
                 _ => {
-                    self.close(at - 1, Effect::Other, out);
+                    self.close(at - 1, self.string_effect(), out);
                     self.start = at - 1;
                     self.state = State::Escape;
                     self.byte(byte, at, out);
@@ -246,9 +257,18 @@ impl Tokenizer {
         self.state = State::Ground;
     }
 
+    /// The effect of the OSC or string being read
+    fn string_effect(&self) -> Effect {
+        if self.string {
+            Effect::String
+        } else {
+            Effect::Other
+        }
+    }
+
     /// CAN and SUB cancel the sequence and are controls of their own
-    fn cancel(&mut self, byte: u8, at: u64, out: &mut Vec<Token>) {
-        self.close(at, Effect::Other, out);
+    fn cancel(&mut self, byte: u8, at: u64, effect: Effect, out: &mut Vec<Token>) {
+        self.close(at, effect, out);
         out.push(token(at, at + 1, Kind::Control(byte)));
     }
 
@@ -262,7 +282,7 @@ impl Tokenizer {
                 self.start = at;
                 self.state = State::Escape;
             }
-            CAN | SUB => self.cancel(byte, at, out),
+            CAN | SUB => self.cancel(byte, at, Effect::Other, out),
             0x00..=0x1F | 0x7F => {}
             _ => {
                 self.close(at, Effect::Other, out);

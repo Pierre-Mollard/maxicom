@@ -35,10 +35,10 @@ use crate::{
     overlays::MarkRow,
     raw_side::terminal::{
         Cell, Dump, DumpCopy, DumpResult, Write,
-        tokens::{Effect, Kind},
+        tokens::{Effect, Kind, Token, Tokenizer},
         writes::Run,
     },
-    terminal::{TerminalParser, new_parser, vt100_dim, vt100_size},
+    terminal::{DropKind, Dropped, TerminalParser, new_parser, vt100_dim, vt100_size},
 };
 
 /// The modes a restored session may have left set, reset (MAX-148): the scroll region,
@@ -144,6 +144,10 @@ pub struct TerminalMode {
     invalid_bytes: InvalidBytes,
     /// The device's bytes as received, the raw side panel's dump (MAX-252)
     dump: Dump,
+    /// The device's bytes cut into tokens while collecting what vt100 drops with the byte trace
+    /// off: DEL, SO / SI and strings have no callback (MAX-264). With the offset of the next
+    /// read: a token cut between two reads keeps its start
+    drop_tokenizer: Option<(Tokenizer, u64)>,
     /// The screen scrolled up from live when last reconciled: going back down sends the dump
     /// live too (MAX-256)
     screen_scrolled: bool,
@@ -201,6 +205,7 @@ impl TerminalMode {
             rx_after_cr: false,
             invalid_bytes: InvalidBytes::default(),
             dump: Dump::new(max_history_lines),
+            drop_tokenizer: None,
             rows_gone: 0,
             screen_scrolled: false,
             trace_ghosts: None,
@@ -274,6 +279,71 @@ impl TerminalMode {
         self.vt100_parser.process(&utf8_bytes);
     }
 
+    /// The window title the device set last (OSC 0 / 2), until a link switch (MAX-275)
+    pub fn device_title(&self) -> Option<&str> {
+        self.vt100_parser.callbacks().title.as_deref()
+    }
+
+    /// The icon name the device set last (OSC 0 / 1), a second title (MAX-275)
+    pub fn device_icon_name(&self) -> Option<&str> {
+        self.vt100_parser.callbacks().icon_name.as_deref()
+    }
+
+    /// Collect what vt100 doesn't use from now on, or stop and forget it (MAX-264)
+    #[cfg_attr(not(test), expect(dead_code, reason = "MAX-264 step 2 turns it on"))]
+    pub fn collect_dropped(&mut self, on: bool) {
+        let events = self.vt100_parser.callbacks_mut();
+        events.collect = on;
+        events.dropped.clear();
+        self.drop_tokenizer = None;
+    }
+
+    /// What vt100 didn't use since the last call, while collecting (MAX-264). The callbacks'
+    /// items keep their order, and so do the tokenizer's, but not the two between them
+    #[cfg_attr(not(test), expect(dead_code, reason = "MAX-264 step 2 reads it"))]
+    pub fn take_dropped(&mut self) -> Vec<Dropped> {
+        std::mem::take(&mut self.vt100_parser.callbacks_mut().dropped)
+    }
+
+    /// While collecting with the byte trace off, the read's tokens for `note_dropped`, from a
+    /// tokenizer of its own: the dump's only runs with the trace
+    fn tokens_for_drops(&mut self, encoding: TextEncoding, raw_bytes: &[u8]) {
+        if !self.vt100_parser.callbacks().collect {
+            return;
+        }
+        let (tokenizer, offset) = self
+            .drop_tokenizer
+            .get_or_insert_with(|| (Tokenizer::new(encoding), 0));
+        if tokenizer.encoding() != encoding {
+            *tokenizer = Tokenizer::new(encoding);
+        }
+        let start = *offset;
+        *offset += raw_bytes.len() as u64;
+        let mut tokens = Vec::new();
+        tokenizer.feed(raw_bytes, start, &mut tokens);
+        self.note_dropped(&tokens, raw_bytes, start);
+    }
+
+    /// The dropped items no callback reports, from the read's tokens (`offset` is the read's
+    /// first byte): DEL, SO, SI, and DCS, SOS, PM, APC strings, with the bytes of this read
+    fn note_dropped(&mut self, tokens: &[Token], raw_bytes: &[u8], offset: u64) {
+        let events = self.vt100_parser.callbacks_mut();
+        if !events.collect {
+            return;
+        }
+        for token in tokens {
+            let kind = match token.kind {
+                Kind::Control(0x0E | 0x0F | 0x7F) => DropKind::Control,
+                Kind::Sequence(Effect::String) => DropKind::String,
+                _ => continue,
+            };
+            let start = token.start.saturating_sub(offset) as usize;
+            let end = (token.end.saturating_sub(offset) as usize).min(raw_bytes.len());
+            let bytes = raw_bytes.get(start..end).unwrap_or_default().to_vec();
+            events.dropped.push(Dropped { kind, bytes });
+        }
+    }
+
     /// `feed` for the stream's bytes from `offset`, cut where a printable run starts: the cursor
     /// there is the cell its first char goes to, recorded with the run (MAX-256). After a run
     /// and only styles (colors), the next run starts where it ended: no cut needed
@@ -285,6 +355,7 @@ impl TerminalMode {
         newlines: (bool, bool),
     ) {
         let tokens = self.dump.tokens(encoding, raw_bytes, offset);
+        self.note_dropped(&tokens, raw_bytes, offset);
         let (rows, cols) = self.get_vt100_size();
         let wide = u64::from(cols.max(1));
         let mut done = 0;
@@ -643,7 +714,10 @@ impl TerminalMode {
                 offset: None,
                 add_cr,
                 add_lf,
-            } => self.feed(encoding, raw_bytes, (add_cr, add_lf)),
+            } => {
+                self.tokens_for_drops(encoding, raw_bytes);
+                self.feed(encoding, raw_bytes, (add_cr, add_lf));
+            }
             Feed::Own => self.feed(encoding, raw_bytes, (false, false)),
         }
         let evicted = std::mem::take(&mut self.vt100_parser.callbacks_mut().evicted);
@@ -848,7 +922,16 @@ impl TerminalMode {
     pub fn clear_history(&mut self) {
         let (rows, cols) = self.get_vt100_size();
 
-        self.vt100_parser = new_parser(rows, cols, self.max_history_lines);
+        // what the device set stays: the collecting, its titles
+        let old = std::mem::replace(
+            &mut self.vt100_parser,
+            new_parser(rows, cols, self.max_history_lines),
+        );
+        let old = old.callbacks();
+        let events = self.vt100_parser.callbacks_mut();
+        events.collect = old.collect;
+        events.title = old.title.clone();
+        events.icon_name = old.icon_name.clone();
         self.row_timestamps = VecDeque::from(vec![None; rows as usize]);
         self.dump.clear();
         self.forget_search_text();
@@ -1739,6 +1822,8 @@ impl TerminalMode {
             };
             self.process_rx_at(encoding, chunk.bytes, chunk.time, feed);
         }
+        // a restored session's copy is old: it never reaches the clipboard (MAX-275)
+        self.take_device_copy();
         // leaving it restores a saved cursor, so only when the session is in it
         if self.vt100_parser.screen().alternate_screen() {
             self.process_rx_at(TextEncoding::Utf8, b"\x1b[?1049l", None, Feed::Own);
@@ -1777,6 +1862,11 @@ impl TerminalMode {
     /// The replies to the queries received since the last call, to send or drop (MAX-151)
     pub fn take_answers(&mut self) -> Vec<Answer> {
         std::mem::take(&mut self.vt100_parser.callbacks_mut().answers)
+    }
+
+    /// The base64 text of the device's last OSC 52 copy since the last call (MAX-275)
+    pub fn take_device_copy(&mut self) -> Option<Vec<u8>> {
+        self.vt100_parser.callbacks_mut().clipboard.take()
     }
 
     /// The screen as it is now, and a flash to show it was taken

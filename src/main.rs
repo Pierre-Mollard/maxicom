@@ -15,7 +15,12 @@ use crossterm::{
 use ratatui::DefaultTerminal;
 
 use crate::{
-    app::{App, UpdateEffect, selection::copy_via_osc52, triggers::Trigger, types::SidePanel},
+    app::{
+        App, UpdateEffect,
+        selection::{copy_base64_via_osc52, copy_via_osc52},
+        triggers::Trigger,
+        types::SidePanel,
+    },
     args::{ParseOutcome, parse_args, print_help, print_version},
     configs::{
         AppConfig, ConfigsError, KeyResolver, KeywordHighlight, LinksConfig, PlotsConfig,
@@ -384,6 +389,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
         };
         needs_redraw |= link_redraw;
+        if let Some(copy) = app.take_device_copy() {
+            execute_device_copy(&mut app, &copy);
+            needs_redraw = true;
+        }
 
         // a link opened at runtime with another stack: laid over the config in use, its
         // files not read again (MAX-240)
@@ -582,6 +591,17 @@ fn lay_profiles(
             ));
             false
         }
+    }
+}
+
+/// The device's OSC 52 copy sent on as it came, base64 checked by vt100 (MAX-275)
+fn execute_device_copy(app: &mut App, base64: &[u8]) {
+    let sent = std::str::from_utf8(base64)
+        .map_err(std::io::Error::other)
+        .and_then(copy_base64_via_osc52);
+    match sent {
+        Err(e) => app.notify_keyed("copy", ToastLevel::Error, format!("Clipboard error: {e}")),
+        Ok(()) => app.notify_device_copy(base64.len()),
     }
 }
 

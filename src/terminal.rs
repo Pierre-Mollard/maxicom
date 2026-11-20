@@ -18,12 +18,67 @@ use crate::glyphs::{UNSURE_MARKER, drawn, invalid_bytes, unsure_width::is_unsure
 /// with the change of `scrollback_len` it gives how many rows a chunk pushed into scrollback
 /// (#13). `answers` are the replies to the remote's queries, in order, for the settings to send
 /// or drop (MAX-151). `size_reports` is mode 2048, which vt100 doesn't know: the remote app
-/// asked for its size in the stream on each change (MAX-159)
+/// asked for its size in the stream on each change (MAX-159). With `collect`, `dropped` lists
+/// what vt100 couldn't use, as its callbacks report it (MAX-264). `title` and `icon_name` are
+/// the last ones the device set, OSC 2 and 1, both with OSC 0; `clipboard` the base64 text of
+/// its last OSC 52 copy, until taken (MAX-275)
 #[derive(Default)]
 pub struct ParserEvents {
     pub evicted: usize,
     pub answers: Vec<Answer>,
     pub size_reports: bool,
+    pub collect: bool,
+    pub dropped: Vec<Dropped>,
+    pub title: Option<String>,
+    pub icon_name: Option<String>,
+    pub clipboard: Option<Vec<u8>>,
+}
+
+/// The longest OSC 52 copy taken, in base64: about 768 KB of text
+const CLIPBOARD_MAX: usize = 1 << 20;
+
+/// The most chars of a title kept: a binary dump can send a long one
+const TITLE_MAX: usize = 200;
+
+/// A title as kept: invalid bytes as `�` (their stand-ins, MAX-249), control chars left out,
+/// at most `TITLE_MAX` chars, none when empty (a device clears its title with an empty one)
+fn device_text(bytes: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(bytes);
+    let text: String = invalid_bytes::shown(&text)
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(TITLE_MAX)
+        .collect();
+    (!text.is_empty()).then_some(text)
+}
+
+/// Something received that vt100 didn't use (MAX-264), with its bytes: as received for the
+/// ones the tokenizer finds, rebuilt from the callback's arguments for the others
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Dropped {
+    pub kind: DropKind,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropKind {
+    /// A C0 control byte vt100 doesn't use, SO and SI included, or DEL
+    Control,
+    /// A C1 control, U+0080 to U+009F
+    C1,
+    Escape,
+    Csi,
+    Osc,
+    /// A DCS, SOS, PM or APC string
+    String,
+}
+
+impl ParserEvents {
+    fn drop(&mut self, kind: DropKind, bytes: Vec<u8>) {
+        if self.collect {
+            self.dropped.push(Dropped { kind, bytes });
+        }
+    }
 }
 
 impl vt100::Callbacks for ParserEvents {
@@ -52,22 +107,107 @@ impl vt100::Callbacks for ParserEvents {
             }
             self.size_reports = on;
         }
-        if let Some(answer) = answer_csi(screen, i1, i2, params, c, self.size_reports) {
-            self.answers.push(answer);
+        match answer_csi(screen, i1, i2, params, c, self.size_reports) {
+            Some(answer) => self.answers.push(answer),
+            None if decset && params.iter().any(|p| p.first() == Some(&SIZE_REPORTS)) => {}
+            None => self.drop(DropKind::Csi, csi_bytes(i1, i2, params, c)),
         }
     }
 
+    // a C1 control comes here too, as its code point (`0x85` for U+0085)
     fn unhandled_control(&mut self, _: &mut vt100::Screen, b: u8) {
-        if let Some(answer) = answer_control(b) {
-            self.answers.push(answer);
+        match answer_control(b) {
+            Some(answer) => self.answers.push(answer),
+            None if b >= 0x80 => self.drop(DropKind::C1, char::from(b).to_string().into_bytes()),
+            None => self.drop(DropKind::Control, vec![b]),
         }
     }
 
     fn unhandled_escape(&mut self, _: &mut vt100::Screen, i1: Option<u8>, i2: Option<u8>, b: u8) {
-        if let Some(answer) = answer_escape(i1, i2, b) {
-            self.answers.push(answer);
+        match answer_escape(i1, i2, b) {
+            Some(answer) => self.answers.push(answer),
+            // ST: the end of an OSC or a string vte read, not a sequence of its own
+            None if (i1, i2, b) == (None, None, b'\\') => {}
+            None => {
+                let bytes = [Some(0x1b), i1, i2, Some(b)]
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                self.drop(DropKind::Escape, bytes);
+            }
         }
     }
+
+    // vt100 also gives the U+FFFD it prints here: maxicom's stand-ins never reach it (MAX-249)
+    fn unhandled_char(&mut self, _: &mut vt100::Screen, c: char) {
+        if ('\u{80}'..'\u{A0}').contains(&c) {
+            self.drop(DropKind::C1, c.to_string().into_bytes());
+        }
+    }
+
+    fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
+        self.title = device_text(title);
+    }
+
+    fn set_window_icon_name(&mut self, _: &mut vt100::Screen, icon_name: &[u8]) {
+        self.icon_name = device_text(icon_name);
+    }
+
+    fn copy_to_clipboard(&mut self, _: &mut vt100::Screen, ty: &[u8], data: &[u8]) {
+        if data.len() <= CLIPBOARD_MAX {
+            self.clipboard = Some(data.to_vec());
+        } else {
+            self.drop(DropKind::Osc, osc52_bytes(ty, b"..."));
+        }
+    }
+
+    // never answered: maxicom can't read the host's clipboard, and it isn't the device's
+    fn paste_from_clipboard(&mut self, _: &mut vt100::Screen, ty: &[u8]) {
+        self.drop(DropKind::Osc, osc52_bytes(ty, b"?"));
+    }
+
+    fn unhandled_osc(&mut self, screen: &mut vt100::Screen, params: &[&[u8]]) {
+        // vt100 only takes a title without `;`: the parts after the number are the title
+        if let [kind @ (b"0" | b"1" | b"2"), rest @ ..] = params
+            && rest.len() > 1
+        {
+            let text = rest.join(&b';');
+            if *kind != b"1" {
+                self.set_window_title(screen, &text);
+            }
+            if *kind != b"2" {
+                self.set_window_icon_name(screen, &text);
+            }
+            return;
+        }
+        let mut bytes = b"\x1b]".to_vec();
+        bytes.extend(params.join(&b';'));
+        bytes.push(0x07);
+        self.drop(DropKind::Osc, bytes);
+    }
+}
+
+/// An OSC 52 written back, its data given
+fn osc52_bytes(ty: &[u8], data: &[u8]) -> Vec<u8> {
+    [b"\x1b]52;", ty, b";", data, b"\x07"].concat()
+}
+
+/// A CSI written back from what vt100 parsed: the private marker (`?`, `>`...) before the
+/// parameters, `:` between sub-parameters, the other intermediates before the final byte
+fn csi_bytes(i1: Option<u8>, i2: Option<u8>, params: &[&[u16]], c: char) -> Vec<u8> {
+    let marks = [i1, i2].into_iter().flatten();
+    let (private, intermediates): (Vec<u8>, Vec<u8>) =
+        marks.partition(|b| (b'<'..=b'?').contains(b));
+    let numbers: Vec<String> = params
+        .iter()
+        .map(|p| p.iter().map(u16::to_string).collect::<Vec<_>>().join(":"))
+        .collect();
+    let mut bytes = b"\x1b[".to_vec();
+    bytes.extend(private);
+    bytes.extend(numbers.join(";").into_bytes());
+    bytes.extend(intermediates);
+    bytes.extend(c.to_string().into_bytes());
+    bytes
 }
 
 pub type TerminalParser = vt100::Parser<ParserEvents>;

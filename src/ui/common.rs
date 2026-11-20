@@ -9,7 +9,7 @@ use ratatui::{
 
 use std::fmt::Write;
 
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     app::{
@@ -21,14 +21,68 @@ use crate::{
         KeyBindingAction, KeyBindingCopyAction, KeyBindingSearchAction, KeywordHighlight, Mode,
         ThemeConfig,
     },
+    glyphs::drawn_text,
     ui::popups::hint_spans,
 };
+
+/// The device's titles to show, as `show_device_title` and `show_device_icon_name` ask, drawn
+/// as the screen draws its cells; the icon name only when it differs from the title (OSC 0
+/// sets both) (MAX-275)
+fn device_titles(app: &App) -> Option<String> {
+    let ui = &app.settings().ui;
+    let tm = &app.terminal_mode;
+    let title = tm.device_title().filter(|_| ui.show_device_title);
+    let icon = (tm.device_icon_name())
+        .filter(|_| ui.show_device_icon_name)
+        .filter(|&icon| Some(icon) != title);
+    let parts: Vec<&str> = [title, icon].into_iter().flatten().collect();
+    if parts.is_empty() {
+        return None;
+    }
+    let text = parts.join(" | ");
+    Some(drawn_text(&text, ui.draw_zero_width, ui.draw_unsure_width).into_owned())
+}
+
+/// `text` cut to at most `width` columns, a wide char that doesn't fit whole left out
+fn cut_to_width(text: &str, width: usize) -> &str {
+    let mut used = 0;
+    for (i, c) in text.char_indices() {
+        used += c.width().unwrap_or(0);
+        if used > width {
+            return &text[..i];
+        }
+    }
+    text
+}
 
 /// The history box's title, ` maxicom LINE `; with `title_details` also the alerts (`!` for
 /// missed content, `● REC`), the sizes, the scroll, the pan and the prefix. What doesn't fit in
 /// `room` columns is left out whole, never cut: the details from the last one, then the
-/// prefix, then the alerts; without room for the name, no title (MAX-137)
+/// prefix, then the alerts; without room for the name, no title (MAX-137). The device's title
+/// goes after the name in the room left, cut to fit (MAX-275)
 pub fn monitor_title(app: &App, area: &Rect, room: u16) -> String {
+    let title = monitor_title_parts(app, area, room);
+    let Some(device) = device_titles(app) else {
+        return title;
+    };
+    let name = match app.settings().mode {
+        Mode::Terminal => "maxicom TERMINAL",
+        Mode::Line => "maxicom LINE",
+    };
+    let name_end = title.find(name).map(|at| at + name.len());
+    // ` | ` and at least one column of the device's title
+    let left = (room as usize).saturating_sub(title.width());
+    let (Some(at), true) = (name_end, left > 3) else {
+        return title;
+    };
+    let device = cut_to_width(&device, left - 3);
+    if device.is_empty() {
+        return title;
+    }
+    format!("{} | {device}{}", &title[..at], &title[at..])
+}
+
+fn monitor_title_parts(app: &App, area: &Rect, room: u16) -> String {
     let view = format!(
         "VIEW {}x{}",
         area.width.saturating_sub(2),

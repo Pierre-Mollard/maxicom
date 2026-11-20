@@ -191,6 +191,8 @@ pub struct App {
     restore_flag: Option<bool>,
     /// The replies to the remote's queries, for the loop to send (MAX-151)
     query_answers: Vec<u8>,
+    /// The device's last OSC 52 copy in base64, for the loop to send on (MAX-275)
+    device_copy: Option<Vec<u8>>,
     /// The rules of `triggers.toml` (MAX-6)
     triggers: Vec<Trigger>,
     /// The links of `links.toml`, or why it didn't load, and this machine's name, which picks
@@ -359,6 +361,7 @@ impl App {
             held_rx: None,
             restore_flag: None,
             query_answers: Vec::new(),
+            device_copy: None,
             triggers: Vec::new(),
             links: Ok(LinksConfig::default()),
             host: crate::configs::links::this_host(),
@@ -1473,7 +1476,29 @@ impl App {
                 let bytes = answer_bytes(answers, &self.settings.terminal_mode);
                 self.query_answers.extend(bytes);
             }
+            // a live link's, when allowed: never a replay's nor a held one's (MAX-275)
+            let copy = self.terminal_mode.take_device_copy();
+            if let Some(copy) = copy
+                && live
+                && self.link_kind().writes()
+                && self.settings.terminal_mode.device_clipboard
+            {
+                self.device_copy = Some(copy);
+            }
         }
+    }
+
+    /// The device's last OSC 52 copy to send on, base64, since the last call (MAX-275)
+    pub fn take_device_copy(&mut self) -> Option<Vec<u8>> {
+        self.device_copy.take()
+    }
+
+    /// The device copied to the clipboard: said every time, `notify_copy` or not, as the user
+    /// didn't ask for it (MAX-275)
+    pub fn notify_device_copy(&mut self, base64_len: usize) {
+        let bytes = base64_len / 4 * 3;
+        let msg = format!("The device copied about {bytes} bytes to your clipboard");
+        self.notify_keyed("copy", ToastLevel::Info, msg);
     }
 
     /// The replies to send to the remote's queries, received since the last call (MAX-151),

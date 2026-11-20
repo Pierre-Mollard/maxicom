@@ -795,6 +795,9 @@ pub struct TerminalModeConfig {
     /// panel (MAX-256): about 256 B per `history_size` row at most, and some time on a fast link
     /// (TCP, a replay). Off: nothing recorded, the memory given back
     pub byte_trace: bool,
+    /// Copy what the device asks to (OSC 52) to the clipboard, as maxicom's own copies go:
+    /// off, as a device or a binary dump could replace what the user copied (MAX-275)
+    pub device_clipboard: bool,
 }
 
 impl Default for TerminalModeConfig {
@@ -811,6 +814,7 @@ impl Default for TerminalModeConfig {
             answerback: String::new(),
             backspace: BackspaceByte::default(),
             byte_trace: true,
+            device_clipboard: false,
         }
     }
 }
@@ -982,6 +986,11 @@ impl LinkDefaults {
 pub struct UiConfig {
     pub show_borders: bool,
     pub title_details: bool,
+    /// The window title the device set (OSC 0 / 2) in the history's title, in the room left
+    /// (MAX-275)
+    pub show_device_title: bool,
+    /// The icon name the device set (OSC 0 / 1), a second title: mostly the same text, so off
+    pub show_device_icon_name: bool,
     pub show_scrollbar: bool,
     pub show_status_bar: bool,
     pub mouse: bool,
@@ -1039,6 +1048,8 @@ impl Default for UiConfig {
         Self {
             show_borders: true,
             title_details: false,
+            show_device_title: true,
+            show_device_icon_name: false,
             show_scrollbar: true,
             show_status_bar: true,
             mouse: true,

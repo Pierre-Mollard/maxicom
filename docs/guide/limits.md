@@ -133,9 +133,10 @@ answer:
 - **The colors.** maxicom draws with your terminal's own colors, so it
   doesn't know their values. Programs like vim then guess a light or dark
   background.
-- **The window title and the clipboard**, for safety. The device could
-  read your clipboard, or set a title holding a command and have it typed
-  back.
+- **The window title and the clipboard**, for safety. maxicom shows the
+  device's title, and can let it copy to your clipboard, but never sends
+  either back: the device could read your clipboard, or set a title holding
+  a command and have it typed back.
 - **The kitty keyboard protocol** and other richer key reports.
 
 See [Answering the device's queries](terminal-mode.md#answering-the-devices-queries).

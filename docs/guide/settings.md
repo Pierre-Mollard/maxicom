@@ -288,6 +288,7 @@ See [Terminal mode](terminal-mode.md).
 | `answer_groups` | `["status", "identity", "size", "modes"]` | Which queries |
 | `answerback` | `""` | Sent back on ENQ, nothing when empty |
 | `backspace` | `"del"` | What the Backspace key sends: `del` (`7f`) or `bs` (`08`), see [Backspace](terminal-mode.md#backspace) |
+| `device_clipboard` | `false` | Let the device copy to your clipboard, see [Copying from the device](terminal-mode.md#copying-from-the-device) |
 | `byte_trace` | `true` | Record which received bytes drew which cells, to connect the screen and the raw side panel, see [The byte trace](raw-side-panel.md#the-byte-trace). Takes up to 256 bytes per `history_size` row (about 25 MB by default) and a little time on a fast link (TCP, a replay); `false` records nothing and gives the memory back |
 
 ### `[link]`
@@ -328,6 +329,8 @@ Where `download` puts what it receives. See
 | `show_scrollbar` | `true` | The history's scrollbar |
 | `show_status_bar` | `true` | The status bar |
 | `title_details` | `false` | More in the history's title, see below |
+| `show_device_title` | `true` | The window title the device set, in the history's title, see [Window title](terminal-mode.md#window-title) |
+| `show_device_icon_name` | `false` | The icon name the device set, in the history's title, see [Window title](terminal-mode.md#window-title) |
 | `mouse` | `true` | Mouse support: [Copy mode and mouse](copy-mode-and-mouse.md#mouse) |
 | `middle_click_paste` | `true` | A middle click pastes the last copy, see [Middle-click paste](copy-mode-and-mouse.md#middle-click-paste) |
 | `focus_effects` | `true` | The gray border and cursor while the window isn't focused, see [Cursor](terminal-mode.md#cursor) |
@@ -350,6 +353,9 @@ By default the history box's title only shows ` maxicom LINE ` or
 With `title_details = true`, it also shows the alerts (`!`, `● REC`), the
 emulator and view sizes, the scroll, the pan and the prefix. What doesn't
 fit in the border is left out whole, never cut.
+
+The device's [window title](terminal-mode.md#window-title) goes after the
+name, in the room the rest leaves, cut to fit.
 
 A click on `SCROLL +n` goes back to the live output, and a click on
 `PAN +n` back to the left edge.

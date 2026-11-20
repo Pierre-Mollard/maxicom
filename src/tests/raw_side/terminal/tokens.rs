@@ -114,6 +114,31 @@ fn strings_end_with_bel_or_st() {
     }
 }
 
+/// MAX-264: a DCS, SOS, PM or APC string is a sequence of its own effect, vt100 drops it; an
+/// OSC isn't. The same when CAN cancels it or another ESC cuts it.
+/// How: each string with ST, a DCS cancelled by CAN, an APC cut by ESC[m, an OSC with ST
+#[test]
+fn strings_have_their_own_effect() {
+    const STRING: Kind = Kind::Sequence(Effect::String);
+    for bytes in [
+        &b"\x1bPq\x1b\\"[..],
+        b"\x1bXsos\x1b\\",
+        b"\x1b^pm\x1b\\",
+        b"\x1b_apc\x1b\\",
+    ] {
+        let (tokens, _) = tokens_of(TextEncoding::Utf8, bytes);
+        assert_eq!(
+            shown(bytes, &tokens),
+            [(STRING, bytes.to_vec())],
+            "{bytes:?}"
+        );
+    }
+    let bytes = b"\x1bPq\x18\x1b_a\x1b[m\x1b]0;t\x1b\\";
+    let (tokens, _) = tokens_of(TextEncoding::Utf8, bytes);
+    let kinds: Vec<Kind> = shown(bytes, &tokens).into_iter().map(|(k, _)| k).collect();
+    assert_eq!(kinds, [STRING, Kind::Control(0x18), STRING, STYLE, SEQ]);
+}
+
 /// CAN cancels a sequence and is a control of its own; ESC ESC ends the first one.
 /// How: ESC[3 CAN "x", then ESC ESC[m.
 #[test]

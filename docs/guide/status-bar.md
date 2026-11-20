@@ -122,6 +122,8 @@ layout = "border"
 | `{replay_read}` / `{replay_size}` | Bytes read / the file's size | `4096` |
 | `{plot}` | The [plot](plots.md) shown, empty when none | `pid` |
 | `{profiles}` | The link's profiles, in the order they're laid, empty when none | `board, proj` |
+| `{device_title}` | The window title the device set, empty when none, see [Window title](terminal-mode.md#window-title) | `root@board: ~` |
+| `{device_icon_name}` | The icon name the device set, empty when none | `board` |
 
 The default bar doesn't show `{copy_side}`: in copy mode the mode badge reads
 `COPY`, and its color tells the panel instead. To show it, add this block
@@ -183,6 +185,8 @@ otherwise. Conditions chain:
 | `plot` | `plotting` | A [plot](plots.md) is shown |
 | `frozen` | `plot_frozen` | The plot's chart is frozen |
 | `profiles` | `profile` | The link has profiles |
+| `device_title` | `title` | The device set a window title |
+| `device_icon_name` | `icon_name` | The device set an icon name |
 | `is_live` | `live`, `is_bottom`, `bottom`, `bot` | Following the live output |
 | `is_top` | `top` | Scrolled to the top |
 | `is_scrolled` | `scrolled`, `paused` | Scrolled up into the history |

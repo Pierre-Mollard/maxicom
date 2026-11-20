@@ -2143,6 +2143,24 @@ fn queries_answered_in_terminal_mode_only() {
     assert!(app.take_query_answers().is_empty());
 }
 
+/// MAX-275: the device's OSC 52 copy goes to the loop only with `device_clipboard` on, its
+/// base64 as received, the last one kept; off, it's dropped, not kept for later.
+/// How: a copy with the setting off, then on, then two copies in one read
+#[test]
+fn device_copy_follows_the_setting() {
+    let mut app = app();
+    app.feed_rx(b"\x1b]52;c;aGVsbG8=\x07");
+    assert_eq!(app.take_device_copy(), None);
+    app.settings.terminal_mode.device_clipboard = true;
+    app.feed_rx(b"x");
+    assert_eq!(app.take_device_copy(), None);
+    app.feed_rx(b"\x1b]52;c;aGVsbG8=\x07");
+    assert_eq!(app.take_device_copy().as_deref(), Some(&b"aGVsbG8="[..]));
+    assert_eq!(app.take_device_copy(), None);
+    app.feed_rx(b"\x1b]52;c;YQ==\x07\x1b]52;c;Yg==\x07");
+    assert_eq!(app.take_device_copy().as_deref(), Some(&b"Yg=="[..]));
+}
+
 /// MAX-256: `byte_trace` off (the settings popup's `L`) drops the trace kept and records no
 /// more; on again, the bytes received from then on are traced.
 /// How: terminal mode, "abc", off, "def", on, "ghi"

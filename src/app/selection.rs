@@ -676,7 +676,11 @@ pub fn copy_via_osc52(text: &str) -> io::Result<()> {
         }
     }
 
-    // write \x1b]52;c;<base64>\x07 to stdout
+    copy_base64_via_osc52(&encoded)
+}
+
+/// Writes `\x1b]52;c;<base64>\x07` to stdout: the host terminal puts the text in its clipboard
+pub fn copy_base64_via_osc52(encoded: &str) -> io::Result<()> {
     let mut stdout = io::stdout();
     write!(stdout, "\x1b]52;c;{encoded}\x07")?;
     stdout.flush()
