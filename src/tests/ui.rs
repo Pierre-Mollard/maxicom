@@ -1952,9 +1952,10 @@ fn bg_at(h: &Harness, (x, y): (u16, u16)) -> Option<ratatui::style::Color> {
 /// MAX-71: the panel the cursor is not in shows a ghost of it, and a selection made on the
 /// raw side covers its bytes, the ones the text does not show included. MAX-193: in the
 /// `selection_raw` style while the cursor is on the raw side, `selection` back on the text.
+/// MAX-262: the panel without the cursor shows it in the dim ghost of that hue.
 /// How: green "ok" and "abc", Hex panel. Copy mode on "abc": ghost on 61. Raw side, up to
 /// 1B: ghost on the "o" of "ok". Select 1B to 6D (the 5 bytes of ESC[32m): selected, 6F not;
-/// then the text side again
+/// then the text side again, the panel in the text hue's ghost
 #[test]
 fn copy_ghosts_and_raw_selection() {
     let ghost = h_theme().ui.cursor_ghost.bg;
@@ -1987,7 +1988,37 @@ fn copy_ghosts_and_raw_selection() {
     h.app.update(Action::CopyMode(CopyModeAction::ToggleSide));
     let rows = h.draw();
     let (x, y) = cell_of(&rows, "1B 5B 33 32 6D 6F");
-    assert_eq!(bg_at(&h, (x, y)), h_theme().ui.selection.bg);
+    assert_eq!(bg_at(&h, (x, y)), h_theme().ui.selection_ghost.bg);
+}
+
+/// MAX-262: in line mode the copy cursor's ghost sits on the selection's end, in the other
+/// panel: both backgrounds mixed, so its cell still reads as selected.
+/// How: "abc", Hex panel. Copy mode, select "ab": 61 in the text hue's ghost, 62 mixed with
+/// the cursor's ghost. Tab: the cursor in the panel, the "b" in the text mixed with the raw
+/// hue's ghost
+#[test]
+fn line_mode_ghost_mixes_with_the_selection() {
+    use ratatui::style::Color::Rgb;
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 12);
+    h.app.settings_mut().raw_side.view = RawSideView::Hex;
+    h.feed(b"abc\r\n");
+    h.draw();
+    let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
+    copy(&mut h, CopyModeAction::Enter);
+    copy(&mut h, CopyModeAction::Select);
+    copy(&mut h, CopyModeAction::MoveRight);
+    let rows = h.draw();
+    let (x, y) = cell_of(&rows, "61 62 63");
+    assert_eq!(bg_at(&h, (x, y)), h_theme().ui.selection_ghost.bg, "61");
+    // #5F3A5F and #4A4A5A averaged
+    assert_eq!(bg_at(&h, (x + 3, y)), Some(Rgb(0x54, 0x42, 0x5C)), "62");
+
+    copy(&mut h, CopyModeAction::ToggleSide);
+    let rows = h.draw();
+    let (x, y) = cell_of(&rows, "abc");
+    assert_eq!(bg_at(&h, (x, y)), h_theme().ui.selection_raw_ghost.bg, "a");
+    // #5F3434 and #4A4A5A averaged
+    assert_eq!(bg_at(&h, (x + 1, y)), Some(Rgb(0x54, 0x3F, 0x47)), "b");
 }
 
 fn h_theme() -> ThemeConfig {
@@ -1995,7 +2026,8 @@ fn h_theme() -> ThemeConfig {
 }
 
 /// MAX-127: `V` through the default keymap selects whole lines in line mode: every char of
-/// them is highlighted, in the text and in the raw panel, whatever the cursor's column.
+/// them is highlighted, in the text and in the raw panel (its ghost, MAX-262), whatever the
+/// cursor's column.
 /// How: copy mode on the last line, `l` twice, `V`, `k`: both lines are highlighted from
 /// their first char to their last, and their bytes in the panel.
 #[test]
@@ -2025,10 +2057,11 @@ fn select_line_key_highlights_whole_lines() {
         assert_eq!(bg_at(&h, (x + len - 1, y)), selection, "{text}");
     }
     // "fi" and "ne" of "first line", in the panel
+    let ghost = h_theme().ui.selection_ghost.bg;
     let (x, y) = cell_of(&rows, "66 69");
-    assert_eq!(bg_at(&h, (x, y)), selection);
+    assert_eq!(bg_at(&h, (x, y)), ghost);
     let (x, y) = cell_of(&rows, "6E 65");
-    assert_eq!(bg_at(&h, (x + 3, y)), selection);
+    assert_eq!(bg_at(&h, (x + 3, y)), ghost);
 }
 
 /// Rows of a frame drawn with `overlay` open and the `[dialog]` of `keymap`
@@ -10324,7 +10357,8 @@ fn help_commands_cut_with_an_ellipsis() {
 /// MAX-250: the copy cursor and a selection are drawn on the partial RX line, in the text and
 /// the raw panel, and stay on the same chars once its line end arrives.
 /// How: "first", then "prompt> ab" not ended, Hex panel. Copy mode, down: the cursor is on the
-/// "p". Select to the line end: "prompt> ab" and its bytes are selected. "cd" and the line end
+/// "p". Select to the line end: "prompt> ab" and its bytes are selected (the selection's
+/// ghost in the panel, MAX-262). "cd" and the line end
 /// arrive: "prompt> ab" still selected, "cd" not.
 #[test]
 fn copy_cursor_and_selection_on_the_partial_line() {
@@ -10345,9 +10379,10 @@ fn copy_cursor_and_selection_on_the_partial_line() {
     let (x, y) = cell_of(&rows, "prompt> ab");
     assert_eq!(bg_at(&h, (x, y)), selection);
     assert_eq!(bg_at(&h, (x + 9, y)), selection);
+    let ghost = h_theme().ui.selection_ghost.bg;
     let (x, y) = cell_of(&rows, "70 72");
-    assert_eq!(bg_at(&h, (x, y)), selection);
-    assert_eq!(bg_at(&h, cell_of(&rows, "61 62")), selection);
+    assert_eq!(bg_at(&h, (x, y)), ghost);
+    assert_eq!(bg_at(&h, cell_of(&rows, "61 62")), ghost);
 
     h.feed(b"cd\r\n");
     let rows = h.draw();
@@ -11044,7 +11079,7 @@ fn the_screen_follows_the_dump_cursor() {
 
 /// MAX-256 step 4: a selection on the screen shows in the dump as the bytes that make it: the
 /// selected chars' bytes and the sequences and line ends between them, not bytes that drew
-/// other text.
+/// other text. As the selection's ghost (MAX-262), the cursor's ghost on its end mixed with it.
 /// How: (after 48 bytes of CR LF) "a" ESC[31m "cd" is "ab" ESC[31m "cd" ESC[0m CR LF "xy": 'a'
 /// 48, 'b' 49, ESC[31m 50..55, 'c' 55, 'd' 56, ESC[0m 57..61, CR LF 61..63, 'x' 63, 'y' 64.
 /// Select "bc"; then from 'd' a line down. Then "a" ESC[5G "b" ESC[3G "c": 'a' 48, 'b' 53, 'c' 58
@@ -11061,13 +11096,14 @@ fn screen_selection_mirrors_in_the_dump() {
     copy(&mut h, CopyModeAction::Select);
     copy(&mut h, CopyModeAction::MoveRight);
     h.draw();
-    let selected = h_theme().ui.selection.bg;
-    let ghost = h_theme().ui.cursor_ghost.bg;
+    let selected = h_theme().ui.selection_ghost.bg;
+    // #5F3A5F and #4A4A5A averaged
+    let ghost = Some(ratatui::style::Color::Rgb(0x54, 0x42, 0x5C));
     let bg = |h: &Harness, offset| bg_at(h, dump_cell(h, offset).unwrap());
     for offset in [49, 50, 54] {
         assert_eq!(bg(&h, offset), selected, "{offset}");
     }
-    // the cursor's char: its ghost over the selection
+    // the cursor's char: its ghost mixed with the selection's
     assert_eq!(bg(&h, 55), ghost, "'c'");
     for offset in [48, 56] {
         assert_ne!(bg(&h, offset), selected, "{offset}");
@@ -11097,9 +11133,11 @@ fn screen_selection_mirrors_in_the_dump() {
 }
 
 /// MAX-256 step 4: a selection in the dump shows on the screen as the cells its bytes drew: in
-/// the dump selection's look while they show them, dimmer once written over.
+/// the dump selection's ghost while they show them (MAX-262), dimmer once written over: still
+/// selected.
 /// How: CR "10%" CR "20%" CR "30%" ('2' 53, '0' 54, '3' 57, '0' 58); copy mode on the '3', Tab,
-/// select "30"; then the dump cursor 4 left (on '2'), select "20"
+/// select "30" (the cursor's '0' mixed with its ghost, MAX-262); then the dump cursor 4 left
+/// (on '2'), select "20"
 #[test]
 fn dump_selection_mirrors_on_the_screen() {
     let copy = |h: &mut Harness, action| h.app.update(Action::CopyMode(action));
@@ -11114,7 +11152,11 @@ fn dump_selection_mirrors_on_the_screen() {
     h.draw();
     let theme = h_theme();
     let cell = |h: &Harness, col| bg_at(h, screen_cell(h, line, col).unwrap());
-    assert_eq!(cell(&h, 0), theme.ui.selection_raw.bg, "the '3'");
+    let ghost = theme.ui.selection_raw_ghost;
+    assert_eq!(cell(&h, 0), ghost.bg, "the '3'");
+    // the dump cursor's ghost on the selection's end: #5F3434 and #4A4A5A averaged
+    let mixed = Some(ratatui::style::Color::Rgb(0x54, 0x3F, 0x47));
+    assert_eq!(cell(&h, 1), mixed, "the '0', the cursor's");
 
     copy(&mut h, CopyModeAction::Select);
     for _ in 0..5 {
@@ -11123,16 +11165,14 @@ fn dump_selection_mirrors_on_the_screen() {
     copy(&mut h, CopyModeAction::Select);
     copy(&mut h, CopyModeAction::MoveRight);
     h.draw();
-    assert_eq!(
-        cell(&h, 0),
-        theme.ui.cursor_ghost_old.bg,
-        "the '2', written over"
+    let written_over = h.terminal.backend().buffer()[screen_cell(&h, line, 0).unwrap()].style();
+    assert_eq!(written_over.bg, ghost.bg, "the '2', written over");
+    assert!(
+        written_over
+            .add_modifier
+            .contains(ratatui::style::Modifier::DIM)
     );
-    assert_ne!(
-        cell(&h, 2),
-        theme.ui.selection_raw.bg,
-        "not selected: the '%'"
-    );
+    assert_ne!(cell(&h, 2), ghost.bg, "not selected: the '%'");
 }
 
 /// MAX-256 step 5: `Y` on a screen selection copies the bytes received for it, as the dump

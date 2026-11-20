@@ -25,6 +25,8 @@ written before keeps them the old way round.
 In `theme.toml`, `[raw_inspector]` drops `byte_sync` and `byte_ones`, and
 `byte_other` is now `byte_control`: maxicom warns about these keys until you
 remove or rename them. `byte_text` and `byte_invalid` are new.
+`[terminal]` drops `timestamp_del_empty`: `timestamp_del` styles the `│`
+after the times on every row, `DarkGray` like line mode's.
 
 ### Added
 
@@ -81,6 +83,11 @@ remove or rename them. `byte_text` and `byte_invalid` are new.
 
 ### Changed
 
+- In copy mode with the raw side panel shown, the panel without the cursor
+  shows the selection in a dimmer version of its color, the new
+  `selection_ghost` and `selection_raw_ghost` in the theme's `[ui]`: the
+  color tells which side the selection was made on, the brightness where
+  the cursor is. It showed in the same color in both panels.
 - In terminal mode, the raw side panel shows every byte received, in a dump
   like `xxd`'s: offsets, the bytes and their text, the same number of bytes
   on every line. It showed each screen row rebuilt by the emulator, so line
@@ -120,6 +127,13 @@ remove or rename them. `byte_text` and `byte_invalid` are new.
 
 ### Fixed
 
+- In terminal mode, the `│` after the timestamps is `DarkGray` on every row,
+  as in line mode. It was yellow next to a time, gray next to an empty row.
+- In copy mode, the cursor's ghost in the other panel mixes its color with
+  the selection's under it, when both are RGB colors as the defaults are: the
+  selection's last char looked unselected. In terminal mode, the screen
+  cells of a dump selection written over since stay in the selection's
+  color, dimmed. They turned gray.
 - The plot panel's `◀` and `▶` stay in place from one plot to the next: the
   name is centered in the width of the longest one in `plots.toml`.
 - In terminal mode, a program asking whether autowrap is on

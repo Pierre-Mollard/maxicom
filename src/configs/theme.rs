@@ -149,6 +149,8 @@ pub struct UiStyles {
     pub cursor_ghost_old: ConfigStyle,
     pub selection: ConfigStyle,
     pub selection_raw: ConfigStyle,
+    pub selection_ghost: ConfigStyle,
+    pub selection_raw_ghost: ConfigStyle,
     pub hover: ConfigStyle,
     pub status_bar: ConfigStyle,
     pub scrollbar_thumb: ConfigStyle,
@@ -168,6 +170,16 @@ impl UiStyles {
             *self.selection_raw
         } else {
             *self.selection
+        }
+    }
+
+    /// The copy mode selection in the panel without the copy cursor (MAX-262): the dim
+    /// version of its side's hue, `raw` when the selection was made in the raw side panel
+    pub fn selection_ghost_style(&self, raw: bool) -> Style {
+        if raw {
+            *self.selection_raw_ghost
+        } else {
+            *self.selection_ghost
         }
     }
 }
@@ -192,6 +204,16 @@ impl Default for UiStyles {
             ),
             selection: ConfigStyle::new(Style::default().bg(Color::Magenta).fg(Color::Black)),
             selection_raw: ConfigStyle::new(Style::default().bg(Color::Red).fg(Color::Black)),
+            selection_ghost: ConfigStyle::new(
+                Style::default()
+                    .bg(Color::Rgb(0x5f, 0x3a, 0x5f))
+                    .fg(Color::White),
+            ),
+            selection_raw_ghost: ConfigStyle::new(
+                Style::default()
+                    .bg(Color::Rgb(0x5f, 0x34, 0x34))
+                    .fg(Color::White),
+            ),
             hover: ConfigStyle::new(Style::new().add_modifier(Modifier::REVERSED)),
             status_bar: ConfigStyle::new(
                 Style::default()
@@ -269,7 +291,6 @@ pub struct TerminalStyles {
     pub term_outside: ConfigStyle,
     pub timestamp: ConfigStyle,
     pub timestamp_del: ConfigStyle,
-    pub timestamp_del_empty: ConfigStyle,
 }
 
 impl Default for TerminalStyles {
@@ -278,8 +299,7 @@ impl Default for TerminalStyles {
             term_inside: ConfigStyle::from_fg(Color::Reset),
             term_outside: ConfigStyle::from_fg(Color::DarkGray),
             timestamp: ConfigStyle::from_fg(Color::Yellow),
-            timestamp_del: ConfigStyle::from_fg(Color::Yellow),
-            timestamp_del_empty: ConfigStyle::from_fg(Color::DarkGray),
+            timestamp_del: ConfigStyle::from_fg(Color::DarkGray),
         }
     }
 }

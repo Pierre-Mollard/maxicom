@@ -18,7 +18,7 @@ use crate::{
     glyphs::invalid_bytes::{shown, shown_string},
     terminal::{MaxicomCursor, MaxicomTerminal, vt100_size},
     ui::{
-        common::{draw_scrollbar_marks, keyword_matches, render_search_bar, scrollbar},
+        common::{draw_scrollbar_marks, ghost_over, keyword_matches, render_search_bar, scrollbar},
         raw_side,
     },
 };
@@ -338,9 +338,13 @@ pub fn render_vt100_terminal(
                 continue;
             };
             if row < content_area.height as usize && col < content_area.width as usize {
+                // the dump selection's ghost, dimmer where written over: still selected (MAX-262)
                 let style = match shown {
-                    true => theme.ui.selection_style(true),
-                    false => *theme.ui.cursor_ghost_old,
+                    true => theme.ui.selection_ghost_style(true),
+                    false => theme
+                        .ui
+                        .selection_ghost_style(true)
+                        .add_modifier(Modifier::DIM),
                 };
                 buf[(content_area.x + col as u16, content_area.y + row as u16)].set_style(style);
             }
@@ -355,11 +359,17 @@ pub fn render_vt100_terminal(
                 .checked_sub(pan_x)
                 .filter(|&col| col < content_area.width as usize)
         {
-            let style = match shown {
+            let ghost = match shown {
                 true => *theme.ui.cursor_ghost,
                 false => *theme.ui.cursor_ghost_old,
             };
-            buf[(content_area.x + col as u16, content_area.y + row as u16)].set_style(style);
+            // on the dump selection's ghost when it covers the cell (MAX-262)
+            let cell = &mut buf[(content_area.x + col as u16, content_area.y + row as u16)];
+            let style = match mirror.iter().any(|&(at, _)| at == (line, col + pan_x)) {
+                true => ghost_over(cell.style(), ghost),
+                false => ghost,
+            };
+            cell.set_style(style);
         }
 
         // selection cursor
@@ -516,18 +526,18 @@ pub fn render_timestamp_gutter(app: &App, frame: &mut Frame, area: Rect, theme: 
 
         let row_has_text = app.terminal_mode.row_has_content(source_row as u16);
 
-        if row_has_text && let Some(ts) = maybe_ts {
-            let formatted = clock::format(ts, &app.settings().timestamp_format);
-            lines.push(Line::from(vec![
-                Span::styled(formatted, theme.terminal.timestamp),
-                Span::styled("│", theme.terminal.timestamp_del),
-            ]));
-        } else {
-            lines.push(Line::from(vec![
-                Span::raw(blank_ts.as_str()),
-                Span::styled("│", theme.terminal.timestamp_del_empty),
-            ]));
-        }
+        // the bar has one style on every row, as line mode's (MAX-273)
+        let time = match maybe_ts {
+            Some(ts) if row_has_text => Span::styled(
+                clock::format(ts, &app.settings().timestamp_format),
+                theme.terminal.timestamp,
+            ),
+            _ => Span::raw(blank_ts.as_str()),
+        };
+        lines.push(Line::from(vec![
+            time,
+            Span::styled("│", theme.terminal.timestamp_del),
+        ]));
     }
 
     let gutter = Paragraph::new(lines);

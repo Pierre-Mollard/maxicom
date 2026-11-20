@@ -225,3 +225,24 @@ fn overlapping_rules_over_several_spans() {
         .collect();
     assert_eq!(styles, expected);
 }
+
+/// MAX-262: a ghost on a selected cell averages both RGB backgrounds and keeps its own fg; with
+/// a named color on either side, the ghost alone
+#[test]
+fn ghost_over_mixes_rgb_backgrounds_only() {
+    let ghost = Style::default()
+        .fg(Color::White)
+        .bg(Color::Rgb(0x4a, 0x4a, 0x5a));
+    let selection = Style::default()
+        .fg(Color::Black)
+        .bg(Color::Rgb(0x5f, 0x3a, 0x5f));
+    let mixed = ghost_over(selection, ghost);
+    assert_eq!(mixed.bg, Some(Color::Rgb(0x54, 0x42, 0x5c)));
+    assert_eq!(mixed.fg, Some(Color::White));
+
+    let named = Style::default().bg(Color::Magenta);
+    assert_eq!(ghost_over(named, ghost), ghost);
+    assert_eq!(ghost_over(Style::default(), ghost), ghost);
+    let named_ghost = Style::default().bg(Color::DarkGray);
+    assert_eq!(ghost_over(selection, named_ghost), named_ghost);
+}

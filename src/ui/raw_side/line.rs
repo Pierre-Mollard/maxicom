@@ -18,6 +18,7 @@ use crate::{
     configs::{RawSideView, ThemeConfig, settings::raw_view_to_display_mode},
     raw_side::byte_classes,
     ui::{
+        common::ghost_over,
         layout::PreparedLayout,
         raw_side::{CharHighlight, format_raw_bytes_with_highlights, raw_panel_layout},
     },
@@ -218,7 +219,11 @@ pub fn render(
                             highlights.push(CharHighlight {
                                 start_col: raw_from_byte.saturating_sub(raw_byte_start),
                                 end_col: raw_to_byte.saturating_sub(raw_byte_start),
-                                style: theme.ui.selection_style(raw_side),
+                                // the ghost of a text selection (MAX-262)
+                                style: match raw_side {
+                                    true => theme.ui.selection_style(true),
+                                    false => theme.ui.selection_ghost_style(false),
+                                },
                             });
                         }
                     }
@@ -239,7 +244,14 @@ pub fn render(
                             highlights.push(CharHighlight {
                                 start_col: ghost_byte - raw_byte_start,
                                 end_col: ghost_byte - raw_byte_start + 1,
-                                style: *theme.ui.cursor_ghost,
+                                // on the selection's end when there is one (MAX-262)
+                                style: match copy_state.selection_anchor {
+                                    Some(_) => ghost_over(
+                                        theme.ui.selection_ghost_style(false),
+                                        *theme.ui.cursor_ghost,
+                                    ),
+                                    None => *theme.ui.cursor_ghost,
+                                },
                             });
                         }
                     }

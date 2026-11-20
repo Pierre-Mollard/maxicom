@@ -163,13 +163,18 @@ hand stays until the cursor moves again. Tab puts the cursor on its ghost:
 from the screen on the bytes the cell shows, from the dump on the cell its
 byte still shows.
 
-A selection shows in the other panel too, in its own look:
+A selection shows in the other panel too, as its ghost:
 
-- selected on the screen, the dump shows the bytes that make it: the
-  selected chars' bytes and what lies between them that draws nothing, the
-  colors and the line ends, but not bytes that drew other text;
-- selected in the dump, the screen shows the cells those bytes drew,
-  `cursor_ghost_old` where something was written over them.
+- selected on the screen, the dump shows the bytes that make it in
+  `selection_ghost`: the selected chars' bytes and what lies between them
+  that draws nothing, the colors and the line ends, but not bytes that drew
+  other text;
+- selected in the dump, the screen shows the cells those bytes drew in
+  `selection_raw_ghost`, dimmed where something was written over them: they
+  are still selected.
+
+The cursor's ghost on a selected byte or cell mixes its color with the
+selection's, see [Colors](copy-mode-and-mouse.md#colors).
 
 `Y` on a screen selection copies the bytes the dump shows for it, as the
 panel shows them, in hex when the panel is closed: the trace is kept either

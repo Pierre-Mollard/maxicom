@@ -113,7 +113,18 @@ paste.
 
 `[ui.selection]` in the theme styles the selection. While the cursor is in
 the raw side panel, `[ui.selection_raw]` is used instead, and the badge
-turns red. See [Theme](theme.md).
+turns red.
+
+With the [raw side panel](raw-side-panel.md) shown, the panel without the
+cursor shows the selection in a dimmer version of the same color:
+`[ui.selection_ghost]` for a selection made in the text,
+`[ui.selection_raw_ghost]` for one made in the panel. The color tells which
+side the selection belongs to, the brightness where the cursor is.
+
+The cursor's ghost in that panel sits on the selection's end. Its color is
+mixed with the selection's there, so the cell still reads as selected. This
+needs both colors as RGB values, like the defaults: with a named color such
+as `Magenta`, the ghost's own color is used. See [Theme](theme.md).
 
 ## Mouse
 

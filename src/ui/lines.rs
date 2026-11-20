@@ -32,8 +32,8 @@ use crate::{
     ui::{
         PostRenderEffect,
         common::{
-            apply_selection_to_spans, border_style_for, draw_scrollbar_marks, highlight_spans,
-            prompt_view, render_search_bar,
+            apply_selection_to_spans, border_style_for, draw_scrollbar_marks, ghost_over,
+            highlight_spans, prompt_view, render_search_bar,
         },
         data_display::format_entry_content,
         layout::{
@@ -133,9 +133,11 @@ pub fn render_monitor(
     let is_search_active = app.line_mode.search().shows_matches();
     let active_match_idx = app.line_mode.search().current_match;
     let copy_range = app.line_mode.copy_state().normalized_selection();
-    let selection_style = theme
-        .ui
-        .selection_style(app.line_mode.copy_state().side == CopySide::Raw);
+    // the copy cursor in the raw panel, the text shows the selection as its ghost (MAX-262)
+    let selection_style = match app.line_mode.copy_state().side {
+        CopySide::Raw => theme.ui.selection_ghost_style(true),
+        CopySide::Text => theme.ui.selection_style(false),
+    };
 
     let global_max_scroll = total_entries.saturating_sub(1);
 
@@ -944,8 +946,12 @@ pub fn render_monitor(
                         let buf = frame.buffer_mut();
                         if copy_state.side == CopySide::Raw {
                             // the real cursor is in the raw panel, the text shows its ghost
-                            // (MAX-71)
-                            buf[(screen_x, screen_y)].set_style(*theme.ui.cursor_ghost);
+                            // (MAX-71), on the selection's end when there is one (MAX-262)
+                            let ghost = match copy_state.selection_anchor {
+                                Some(_) => ghost_over(selection_style, *theme.ui.cursor_ghost),
+                                None => *theme.ui.cursor_ghost,
+                            };
+                            buf[(screen_x, screen_y)].set_style(ghost);
                         } else {
                             if !app.is_app_focused() {
                                 buf[(screen_x, screen_y)]

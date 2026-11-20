@@ -16,7 +16,10 @@ use crate::{
     },
     configs::{RawSideView, ThemeConfig},
     raw_side::{ByteClass, byte_classes},
-    ui::{common::scrollbar, raw_side::raw_panel_layout},
+    ui::{
+        common::{ghost_over, scrollbar},
+        raw_side::raw_panel_layout,
+    },
 };
 
 /// The dump's bytes per line come in groups of this many (MAX-252)
@@ -57,9 +60,9 @@ pub fn render(app: &mut App, frame: &mut Frame, raw_area: Rect, theme: &ThemeCon
     // the screen copy cursor's bytes (MAX-256), before the top line: the dump may follow them
     let encoding = app.settings().encoding;
     let (ghosts, follow) = app.terminal_mode.trace_ghosts(encoding);
-    // the screen copy selection's bytes, in its look (MAX-256)
+    // the screen copy selection's bytes, as its ghost (MAX-256, MAX-262)
     let mirror = app.terminal_mode.selection_bytes(encoding);
-    let mirror_style = theme.ui.selection_style(false);
+    let mirror_style = theme.ui.selection_ghost_style(false);
     let dump = app.terminal_mode.dump_mut();
     let layout = DumpLayout::fit(inner_area.width as usize, raw_view, dump.stream().end());
     let rows = inner_area.height as usize;
@@ -159,6 +162,13 @@ pub fn render(app: &mut App, frame: &mut Frame, raw_area: Rect, theme: &ThemeCon
                 let style = match i {
                     0 => *theme.ui.cursor_ghost,
                     _ => *theme.ui.cursor_ghost_old,
+                };
+                // on the selection's ghost when its bytes are selected (MAX-262)
+                let selected = (mirror.iter())
+                    .any(|range| range.start <= ghost.start && ghost.end <= range.end);
+                let style = match selected {
+                    true => ghost_over(mirror_style, style),
+                    false => style,
                 };
                 marks.push((local(ghost), style));
             }

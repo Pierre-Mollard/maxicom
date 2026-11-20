@@ -2,7 +2,7 @@ use ratatui::{
     Frame,
     buffer::Buffer,
     layout::Rect,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Scrollbar, ScrollbarOrientation},
 };
@@ -24,6 +24,19 @@ use crate::{
     glyphs::drawn_text,
     ui::popups::hint_spans,
 };
+
+/// A copy cursor's ghost drawn on a selected cell (MAX-262): its style with both backgrounds
+/// averaged, so the cell still reads as selected; the ghost alone when either isn't RGB (a
+/// named color has no value to mix)
+pub fn ghost_over(under: Style, ghost: Style) -> Style {
+    match (under.bg, ghost.bg) {
+        (Some(Color::Rgb(r1, g1, b1)), Some(Color::Rgb(r2, g2, b2))) => {
+            let mid = |a: u8, b: u8| ((u16::from(a) + u16::from(b)) / 2) as u8;
+            ghost.bg(Color::Rgb(mid(r1, r2), mid(g1, g2), mid(b1, b2)))
+        }
+        _ => ghost,
+    }
+}
 
 /// The device's titles to show, as `show_device_title` and `show_device_icon_name` ask, drawn
 /// as the screen draws its cells; the icon name only when it differs from the title (OSC 0

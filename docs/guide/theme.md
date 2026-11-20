@@ -79,6 +79,7 @@ these names too (`main`, `secondary`...).
 | `cursor_ghost` | `White` on `#4A4A5A` | The copy cursor's place in the other panel |
 | `cursor_ghost_old` | `Gray` on `#2C2C36` | In terminal mode, the copy cursor's ghost in the other panel when written over: the earlier bytes of its cell, the cell its byte no longer shows, see [The byte trace](raw-side-panel.md#the-byte-trace) |
 | `selection` / `selection_raw` | black on `Magenta` / on `Red` | The copy mode selection, in the text / in the raw panel |
+| `selection_ghost` / `selection_raw_ghost` | `White` on `#5F3A5F` / on `#5F3434` | The same selection in the panel without the cursor |
 | `hover` | reversed | What's under the mouse |
 | `status_bar` | `White` on `#1E232D` | The status bar's text; its background fills the `band` layout |
 | `scrollbar_thumb` / `scrollbar_track` | `DarkGray` / `#303038` | The scrollbar |
@@ -86,7 +87,10 @@ these names too (`main`, `secondary`...).
 | `mark` / `scrollbar_mark` | `Yellow` bold / `Yellow` | A mark's letter in the history's left column / on the scrollbar |
 
 The selection colors match the copy mode badge: magenta in the text, red
-while the cursor is in the raw side panel.
+while the cursor is in the raw side panel. The panel without the cursor
+shows the selection in its `_ghost` look, and a cursor ghost on a selected
+cell mixes its background with the selection's when both are RGB colors, see
+[Colors](copy-mode-and-mouse.md#colors).
 
 ### `[line_mode]`
 
@@ -102,7 +106,7 @@ while the cursor is in the raw side panel.
 | --- | --- | --- |
 | `term_inside` / `term_outside` | `Reset` / `DarkGray` | The emulated screen, the view around it (`empty_fill_char`) |
 | `timestamp` | `Yellow` | The times column |
-| `timestamp_del`, `timestamp_del_empty` | `Yellow`, `DarkGray` | The `│` after a time, after an empty one |
+| `timestamp_del` | `DarkGray` | The `│` after the times column, as line mode's `line_prefix` |
 
 ### `[search]`
 
