@@ -514,6 +514,9 @@ UNTRACED = {("terminal_mode", "byte_trace"): "false"}
 # every group of the unhandled notification (MAX-264), unknown to older versions: they warn
 ALL_UNHANDLED = {("terminal_mode", "notify_unhandled"):
                  '["controls", "c1", "escape", "csi", "osc", "strings", "shell"]'}
+# every group marked (MAX-253): the feed cut after each control and sequence
+ALL_MARKED = {("terminal_mode", "mark_unhandled"):
+              '["controls", "c1", "escape", "csi", "osc", "strings", "shell"]'}
 # v0.1.0's history sizes, raised in v0.1.1 (MAX-237: is that what halved the floods?)
 SMALL_HISTORY = {("line_mode", "history_size"): "1000", ("terminal_mode", "history_size"): "2500"}
 
@@ -558,6 +561,11 @@ SCENARIOS = [
     Scenario("ansi-terminal", BOTH, lambda run: flood(run, ansi_lines(40_000)),
              "log lines with every word colored, as fast as read: MB/s, CPU s per MB",
              TERMINAL),
+    Scenario("marked-terminal", MAXICOM, flood_10mb(),
+             "flood-terminal with every unhandled group marked", {**TERMINAL, **ALL_MARKED}),
+    Scenario("marked-ansi-terminal", MAXICOM, lambda run: flood(run, ansi_lines(40_000)),
+             "ansi-terminal with every unhandled group marked: a cut after each color",
+             {**TERMINAL, **ALL_MARKED}),
     Scenario("long-line", MAXICOM, lambda run: flood(run, long_lines(8_000)),
              "600 char lines that wrap, as fast as read: MB/s, CPU s per MB", LINE),
     Scenario("long-terminal", BOTH, lambda run: flood(run, long_lines(8_000)),

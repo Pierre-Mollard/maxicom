@@ -313,6 +313,8 @@ impl App {
             })
             .collect();
         let trace = self.settings.terminal_mode.byte_trace;
+        // its markers come back with its bytes (MAX-253)
+        self.sync_unhandled();
         (self.terminal_mode).restore(encoding, &shown_chunks, separator, trace);
     }
 

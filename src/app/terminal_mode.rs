@@ -25,7 +25,7 @@ use crate::{
     capture::{Screenshot, TimedChunk},
     configs::{
         LineDisplayMode, SettingsConfig, TerminalDimensionMode, TextEncoding,
-        settings::{BackspaceByte, RawSideView},
+        settings::{BackspaceByte, RawSideView, UnhandledGroup},
     },
     glyphs::invalid_bytes::{self, InvalidBytes, shown_string},
     inputs::{
@@ -150,6 +150,8 @@ pub struct TerminalMode {
     drop_tokenizer: Option<(Tokenizer, u64)>,
     /// What only the tokenizer finds (DEL, SO, SI, strings) is collected too (MAX-264)
     drop_tokens: bool,
+    /// The groups whose dropped items get a marker in their cell (MAX-253)
+    mark_groups: Vec<UnhandledGroup>,
     /// The screen scrolled up from live when last reconciled: going back down sends the dump
     /// live too (MAX-256)
     screen_scrolled: bool,
@@ -209,6 +211,7 @@ impl TerminalMode {
             dump: Dump::new(max_history_lines),
             drop_tokenizer: None,
             drop_tokens: false,
+            mark_groups: Vec::new(),
             rows_gone: 0,
             screen_scrolled: false,
             trace_ghosts: None,
@@ -292,6 +295,17 @@ impl TerminalMode {
         self.vt100_parser.callbacks().icon_name.as_deref()
     }
 
+    /// The groups marked in their cell (MAX-253)
+    pub fn marked_groups(&self) -> &[UnhandledGroup] {
+        &self.mark_groups
+    }
+
+    /// Mark the dropped items of these groups from now on, in the cell where they came: the
+    /// caller collects, with the tokenizer, while it isn't empty (MAX-253)
+    pub fn mark_dropped(&mut self, groups: &[UnhandledGroup]) {
+        self.mark_groups = groups.to_vec();
+    }
+
     /// Whether what vt100 doesn't use is collected, and what only the tokenizer finds (MAX-264)
     pub fn collecting_dropped(&self) -> (bool, bool) {
         (self.vt100_parser.callbacks().collect, self.drop_tokens)
@@ -338,7 +352,9 @@ impl TerminalMode {
         tokenizer.feed(raw_bytes, start, &mut tokens);
         let mut done = 0;
         for token in &tokens {
+            let listed = self.vt100_parser.callbacks().dropped.len();
             done = self.note_dropped(token, encoding, raw_bytes, start, done, newlines);
+            (done, _) = self.mark_token(token, encoding, raw_bytes, start, done, newlines, listed);
         }
         self.feed(encoding, &raw_bytes[done..], newlines);
     }
@@ -374,6 +390,40 @@ impl TerminalMode {
         start
     }
 
+    /// While marking, a control or sequence `token` fed through from `done`, then a marker for
+    /// each item of a marked group it dropped (listed from `listed` on), where the cursor is:
+    /// straight to vt100, never sent, not in the dump (MAX-253). Where the feed is up to, and
+    /// whether a marker was drawn (the cursor moved)
+    #[allow(clippy::too_many_arguments)]
+    fn mark_token(
+        &mut self,
+        token: &Token,
+        encoding: TextEncoding,
+        raw_bytes: &[u8],
+        offset: u64,
+        done: usize,
+        newlines: (bool, bool),
+        listed: usize,
+    ) -> (usize, bool) {
+        if self.mark_groups.is_empty()
+            || !matches!(token.kind, Kind::Control(_) | Kind::Sequence(_))
+        {
+            return (done, false);
+        }
+        let end = (token.end.saturating_sub(offset) as usize).clamp(done, raw_bytes.len());
+        self.feed(encoding, &raw_bytes[done..end], newlines);
+        let markers: String = (self.vt100_parser.callbacks().dropped.get(listed..))
+            .unwrap_or_default()
+            .iter()
+            .filter(|dropped| self.mark_groups.contains(&dropped.group()))
+            .map(crate::glyphs::marker)
+            .collect();
+        if !markers.is_empty() {
+            self.vt100_parser.process(markers.as_bytes());
+        }
+        (end, !markers.is_empty())
+    }
+
     /// `feed` for the stream's bytes from `offset`, cut where a printable run starts: the cursor
     /// there is the cell its first char goes to, recorded with the run (MAX-256). After a run
     /// and only styles (colors), the next run starts where it ended: no cut needed
@@ -390,8 +440,20 @@ impl TerminalMode {
         let mut done = 0;
         // where the next char goes when known without asking vt100: (row, column, alternate)
         let mut next: Option<(u64, u64, bool)> = None;
+        // nothing to note nor mark: no work on each token (MAX-253)
+        let watching = self.drop_tokens || !self.mark_groups.is_empty();
         for token in &tokens {
-            done = self.note_dropped(token, encoding, raw_bytes, offset, done, newlines);
+            if watching {
+                let listed = self.vt100_parser.callbacks().dropped.len();
+                done = self.note_dropped(token, encoding, raw_bytes, offset, done, newlines);
+                let marked;
+                (done, marked) =
+                    self.mark_token(token, encoding, raw_bytes, offset, done, newlines, listed);
+                // a marker took a cell: where the next run starts is vt100's to say
+                if marked {
+                    next = None;
+                }
+            }
             match token.kind {
                 Kind::Text => {}
                 Kind::Sequence(Effect::Style) => continue,

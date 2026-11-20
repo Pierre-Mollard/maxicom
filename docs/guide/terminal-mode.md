@@ -333,6 +333,43 @@ Each sequence is in one group only: `osc` doesn't count OSC 7, `shell`
 does. Leave `shell` out unless you want to see them: a modern shell sends
 some on every prompt.
 
+#### Markers on the screen
+
+The notification says what came, not where. `mark_unhandled` (in
+`[terminal_mode]`) takes the same groups and puts a marker in the cell where
+each one came:
+
+```text
+a␀b␡c◊d
+```
+
+That's a NUL, a DEL, then a sequence maxicom doesn't know, between the
+letters `a` to `d`. A control byte gets its control picture, everything else
+a diamond:
+
+| Unhandled | Marker |
+| --- | --- |
+| Control bytes, `controls` | `␀` (NUL) to `␟` (US), `␡` for DEL |
+| The other groups | `◊` |
+
+Like the notification, it's empty by default.
+
+A marker takes a cell: what comes after it on the line moves one column to
+the right. That's fine for a log or a file printed with `cat`. A full-screen
+program places its text with cursor moves, so with markers its screen is off
+by one where they are: turn them on to look, then off again.
+
+A change applies to what comes next; markers already drawn stay. A
+[restored session](capture.md#which-session-comes-back) gets its markers
+again. A copy and a text search see the markers as text, while the
+[byte search](search.md#byte-search) of the raw side panel finds the real
+bytes. Some fonts don't have the control pictures (Cascadia Mono does):
+your terminal then takes them from another font.
+
+Line mode has no markers: its `raw` display mode (`D` in the settings popup)
+already writes every control byte and sequence, see
+[Display mode](line-mode.md#display-mode).
+
 #### What each group holds
 
 The lists below are complete: anything not in them is handled, drawn or

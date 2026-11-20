@@ -290,6 +290,7 @@ See [Terminal mode](terminal-mode.md).
 | `enq_answer` | `""` | Sent back on ENQ (the answerback), nothing when empty |
 | `answer_groups` | `["status", "identity", "size", "modes"]` | Which queries are answered, none when empty, see [Answering the device's queries](terminal-mode.md#answering-the-devices-queries) |
 | `notify_unhandled` | `[]` | A notification counting what the terminal received but didn't handle, for these groups, see [What the terminal doesn't handle](terminal-mode.md#what-the-terminal-doesnt-handle) |
+| `mark_unhandled` | `[]` | A marker in the cell where something of these groups wasn't handled, see [Markers on the screen](terminal-mode.md#markers-on-the-screen) |
 
 ### `[link]`
 

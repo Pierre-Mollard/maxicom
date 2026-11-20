@@ -15,6 +15,8 @@ use ratatui::{
 use unicode_width::UnicodeWidthChar;
 use unsure_width::is_unsure;
 
+use crate::terminal::{DropKind, Dropped};
+
 /// Drawn, dimmed, for a cell whose first char hosts may draw at another width (MAX-271): one
 /// column in every width table. A wide cell's second column stays a cell of its own, written
 /// as a space
@@ -58,6 +60,22 @@ pub fn is_invisible(c: char) -> bool {
             | '\u{E0000}'..='\u{E0FFF}'
     )
 }
+
+/// What stands for something the emulator didn't handle, in the cell where it came (MAX-253):
+/// a control byte's Unicode control picture (`␀` to `␟`, `␡` for DEL), `◊` for the rest (C1,
+/// sequences, strings), all one column in every width table
+pub fn marker(dropped: &Dropped) -> char {
+    match (dropped.kind, dropped.bytes.first()) {
+        (DropKind::Control, Some(&b)) if b < 0x20 => {
+            char::from_u32(0x2400 + u32::from(b)).unwrap_or(OTHER_MARKER)
+        }
+        (DropKind::Control, Some(0x7F)) => '\u{2421}',
+        _ => OTHER_MARKER,
+    }
+}
+
+/// The marker of what has no control picture: in every common monospace font (MAX-253)
+pub const OTHER_MARKER: char = '\u{25CA}';
 
 /// A text from the device written into maxicom's own parts (a title, the status bar), as the
 /// screen draws its cells: invisible chars dropped unless `zero_width`, a char of unsure width

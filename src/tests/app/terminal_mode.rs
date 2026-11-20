@@ -1677,3 +1677,96 @@ fn every_c1_is_listed() {
         assert_eq!(kinds, [DropKind::C1; 32], "{trace}");
     }
 }
+
+/// The screen's first row after `read`, fed as the device's, the groups marked
+fn marked(read: &[u8], groups: &[UnhandledGroup], trace: bool) -> String {
+    let mut tm = TerminalMode::new(100, 3, 40);
+    tm.collect_dropped(true, true);
+    tm.mark_dropped(groups);
+    tm.process_device_rx(TextEncoding::Utf8, read, false, false, trace);
+    let row = tm
+        .vt100_screen()
+        .contents()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_string();
+    row.trim_end().to_string()
+}
+
+const ALL_GROUPS: [UnhandledGroup; 7] = [
+    UnhandledGroup::Controls,
+    UnhandledGroup::C1,
+    UnhandledGroup::Escape,
+    UnhandledGroup::Csi,
+    UnhandledGroup::Osc,
+    UnhandledGroup::Strings,
+    UnhandledGroup::Shell,
+];
+
+/// MAX-253: each kind not handled gets its marker in the cell where it came, the rest of the
+/// line after it: a control byte its control picture, the rest `◊`; the same with the byte
+/// trace on and off.
+/// How: one read per kind between `a` and `b`, every group marked
+#[test]
+fn unhandled_marked_in_place() {
+    let cases: [(&[u8], &str); 10] = [
+        (b"a\x00b", "a\u{2400}b"),
+        (b"a\x01\x1fb", "a\u{2401}\u{241f}b"),
+        (b"a\x7fb", "a\u{2421}b"),
+        (b"a\x0eb", "a\u{240e}b"),
+        (b"a\xc2\x85b", "a\u{25ca}b"),
+        (b"a\x1b#3b", "a\u{25ca}b"),
+        (b"a\x1b[5Wb", "a\u{25ca}b"),
+        (b"a\x1b]52;c;?\x07b", "a\u{25ca}b"),
+        (b"a\x1bPq\x1b\\b", "a\u{25ca}b"),
+        (b"a\x1b]7;x\x07b", "a\u{25ca}b"),
+    ];
+    for trace in [true, false] {
+        for (read, row) in cases {
+            assert_eq!(marked(read, &ALL_GROUPS, trace), row, "{read:?} {trace}");
+        }
+    }
+}
+
+/// MAX-253: only the listed groups are marked; none, nothing; what is handled never is.
+/// How: NUL and an unknown CSI with `controls` alone, `csi` alone, none; then text, colors,
+/// a tab and an answered query with every group
+#[test]
+fn unhandled_marked_by_group() {
+    let read = b"a\x00b\x1b[5Wc";
+    assert_eq!(
+        marked(read, &[UnhandledGroup::Controls], true),
+        "a\u{2400}bc"
+    );
+    assert_eq!(marked(read, &[UnhandledGroup::Csi], true), "ab\u{25ca}c");
+    assert_eq!(marked(read, &[], true), "abc");
+    let handled = b"a\x1b[31mb\x1b[0mc\td\x1b[6n\x1b]0;t\x07e";
+    assert_eq!(marked(handled, &ALL_GROUPS, true), "abc     de");
+}
+
+/// MAX-253: a marker after a style sequence or a cursor move is drawn at the cursor, and the
+/// text after it follows it, the byte trace's guess dropped.
+/// How: bold and an unknown SGR part between letters; a jump to column 5 then NUL
+#[test]
+fn unhandled_marker_moves_the_text() {
+    for trace in [true, false] {
+        assert_eq!(marked(b"a\x1b[1;9mbc", &ALL_GROUPS, trace), "a\u{25ca}bc");
+        assert_eq!(
+            marked(b"\x1b[1;5Hx\x00y", &ALL_GROUPS, trace),
+            "    x\u{2400}y"
+        );
+    }
+}
+
+/// MAX-253: a restored session gets its markers again, its bytes replayed.
+/// How: a restore holding NUL, every group marked
+#[test]
+fn unhandled_markers_restored() {
+    let mut tm = TerminalMode::new(100, 3, 40);
+    tm.collect_dropped(true, true);
+    tm.mark_dropped(&ALL_GROUPS);
+    tm.restore(TextEncoding::Utf8, &untimed(b"a\x00b\r\n"), "", false);
+    let lines = tm.all_text_lines();
+    assert!(lines.iter().any(|line| line == "a\u{2400}b"), "{lines:?}");
+}

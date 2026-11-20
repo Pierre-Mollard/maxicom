@@ -28,6 +28,9 @@ remove or rename them. `byte_text` and `byte_invalid` are new.
 
 ### Added
 
+- `mark_unhandled` in `[terminal_mode]`, with the same groups as
+  `notify_unhandled`, puts a marker where something wasn't handled: a control
+  byte's control picture (`␀`, `␡`), `◊` for a sequence. Empty by default.
 - `notify_unhandled` in `[terminal_mode]` lists groups (`controls`, `c1`,
   `escape`, `csi`, `osc`, `strings`, `shell`) to count in a notification what
   the terminal received but didn't handle: `Unhandled: NUL ×9, CSI ?2027h`.

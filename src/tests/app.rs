@@ -2196,6 +2196,30 @@ fn app_with_notify(groups: &[UnhandledGroup]) -> App {
     app
 }
 
+/// MAX-253: marking doesn't change the notification; marking alone leaves nothing collected
+/// behind; the setting rules each read.
+/// How: NUL and an unknown CSI notified for both groups and marked for `controls`; then
+/// `controls` marked only; then the list emptied
+#[test]
+fn unhandled_marked_and_notified() {
+    let mut app = app_with_notify(&ALL_BUT_SHELL);
+    app.settings.terminal_mode.mark_unhandled = vec![UnhandledGroup::Controls];
+    app.feed_rx(b"a\x00b\x1b[5Wc");
+    assert_eq!(toasts(&app), ["Unhandled: NUL, CSI 5W"]);
+    let screen = app.terminal_mode.vt100_screen().contents();
+    assert!(screen.starts_with("a\u{2400}bc"), "{screen:?}");
+
+    let mut app = app_with_notify(&[]);
+    app.settings.terminal_mode.mark_unhandled = vec![UnhandledGroup::Controls];
+    app.feed_rx(b"a\x00b");
+    assert!(app.terminal_mode.take_dropped().is_empty());
+    assert!(toasts(&app).is_empty());
+    app.settings.terminal_mode.mark_unhandled = Vec::new();
+    app.feed_rx(b"\x00c");
+    let screen = app.terminal_mode.vt100_screen().contents();
+    assert!(screen.starts_with("a\u{2400}bc"), "{screen:?}");
+}
+
 /// MAX-264: past six kinds, the notification shows the six seen most and how many more.
 /// How: NUL three times, then seven other C0 controls once each; then seven kinds once
 #[test]

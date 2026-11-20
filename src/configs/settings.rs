@@ -826,6 +826,10 @@ pub struct TerminalModeConfig {
     /// A notification counting what the emulator received and didn't handle, for these groups
     /// (MAX-264); none by default, an advanced notification
     pub notify_unhandled: Vec<UnhandledGroup>,
+    /// A marker in the cell where something of these groups wasn't handled, in both modes
+    /// (MAX-253); none by default, like minicom. It takes the cell: what comes after on the
+    /// line moves one column right
+    pub mark_unhandled: Vec<UnhandledGroup>,
 }
 
 impl Default for TerminalModeConfig {
@@ -843,6 +847,7 @@ impl Default for TerminalModeConfig {
             enq_answer: String::new(),
             answer_groups: QueryGroup::ALL.to_vec(),
             notify_unhandled: Vec::new(),
+            mark_unhandled: Vec::new(),
         }
     }
 }

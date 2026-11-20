@@ -139,6 +139,45 @@ fn strings_have_their_own_effect() {
     assert_eq!(kinds, [STRING, Kind::Control(0x18), STRING, STYLE, SEQ]);
 }
 
+/// MAX-253 lock: multibyte UTF-8 text stays one text run, whatever its length in bytes.
+/// How: two, three and four byte chars between ASCII letters
+#[test]
+fn utf8_text_is_one_run() {
+    let text = "a\u{e9}b\u{4e2d}c\u{20ac}d\u{1f600}e".as_bytes();
+    let (tokens, _) = tokens_of(TextEncoding::Utf8, text);
+    assert_eq!(merged(&tokens).len(), 1);
+    assert_eq!(merged(&tokens)[0].kind, Kind::Text);
+}
+
+/// MAX-253: a C1 control in UTF-8 (`C2 80` to `C2 9F`) is a control of its own, the text
+/// around it two runs; the other `C2` chars (U+00A0..U+00BF) are text.
+/// How: `a U+0085 b`, then `a U+00A9 b`, then a C1 cut between two reads
+#[test]
+fn utf8_c1_is_a_control() {
+    let bytes = b"a\xc2\x85b";
+    let (tokens, _) = tokens_of(TextEncoding::Utf8, bytes);
+    assert_eq!(
+        shown(bytes, &tokens),
+        [
+            (Kind::Text, b"a".to_vec()),
+            (Kind::Control(0x85), b"\xc2\x85".to_vec()),
+            (Kind::Text, b"b".to_vec()),
+        ]
+    );
+    let (tokens, _) = tokens_of(TextEncoding::Utf8, b"a\xc2\xa9b");
+    assert_eq!(merged(&tokens).len(), 1);
+
+    let mut tokenizer = Tokenizer::new(TextEncoding::Utf8);
+    let mut tokens = Vec::new();
+    tokenizer.feed(b"a\xc2", 0, &mut tokens);
+    tokenizer.feed(b"\x9bb", 2, &mut tokens);
+    assert!(tokens.contains(&Token {
+        start: 1,
+        end: 3,
+        kind: Kind::Control(0x9b)
+    }));
+}
+
 /// CAN cancels a sequence and is a control of its own; ESC ESC ends the first one.
 /// How: ESC[3 CAN "x", then ESC ESC[m.
 #[test]

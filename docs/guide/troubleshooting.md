@@ -134,7 +134,10 @@ times: `Unhandled: CSI ?2027h ×3, OSC 52`. Run the program again and watch
 it. The groups are explained in
 [What the terminal doesn't handle](terminal-mode.md#what-the-terminal-doesnt-handle),
 and [What maxicom doesn't do](limits.md) lists what isn't supported on
-purpose. Set it back to `[]` when you're done.
+purpose. To see where in the output, list the same groups in
+`mark_unhandled`: a marker shows in each cell where something wasn't
+handled, see [Markers on the screen](terminal-mode.md#markers-on-the-screen).
+Set both back to `[]` when you're done.
 
 ### The unhandled notification never stops
 

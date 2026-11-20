@@ -18,7 +18,8 @@ pub struct Token {
 pub enum Kind {
     /// Characters drawn on the screen
     Text,
-    /// A C0 control byte, DEL, or a C1 control byte in Latin1
+    /// A C0 control byte, DEL, or a C1 control: a byte in Latin1, U+0080..U+009F in UTF-8 (two
+    /// bytes, the code point's low byte here)
     Control(u8),
     /// An escape sequence, cancelled ones included
     Sequence(Effect),
@@ -72,6 +73,8 @@ pub struct Tokenizer {
     /// A UTF-8 char being read: the bytes still expected, and the range of the next one
     utf8_left: u8,
     utf8_next: (u8, u8),
+    /// The char being read started with `C2`: U+0080..U+00BF, the C1 controls among them
+    utf8_c2: bool,
     /// A CSI's parameter and intermediate bytes, for its effect
     csi: Vec<u8>,
     /// The string being read is a DCS, SOS, PM or APC, not an OSC
@@ -91,6 +94,7 @@ impl Tokenizer {
             text_start: None,
             utf8_left: 0,
             utf8_next: (0x80, 0xBF),
+            utf8_c2: false,
             csi: Vec::new(),
             string: false,
         }
@@ -189,7 +193,12 @@ impl Tokenizer {
             if (low..=high).contains(&byte) {
                 self.utf8_left -= 1;
                 self.utf8_next = (0x80, 0xBF);
-                if self.utf8_left == 0 {
+                // a C1 control is run by the emulator, never drawn: a control, not text, as in
+                // Latin1 (MAX-253: its marker goes where it was, not after the run)
+                if self.utf8_left == 0 && self.utf8_c2 && byte <= 0x9F {
+                    self.flush_text(self.start, out);
+                    out.push(token(self.start, at + 1, Kind::Control(byte)));
+                } else if self.utf8_left == 0 {
                     self.text_start.get_or_insert(self.start);
                 }
                 return;
@@ -227,6 +236,7 @@ impl Tokenizer {
                         self.start = at;
                         self.utf8_left = left;
                         self.utf8_next = next;
+                        self.utf8_c2 = byte == 0xC2;
                     }
                     None => self.invalid(at, at + 1, out),
                 },

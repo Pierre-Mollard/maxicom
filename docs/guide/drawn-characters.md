@@ -8,7 +8,9 @@ shift the rest of their row and leave pieces of old text behind.
 Only the screen changes. What maxicom keeps is always what was received: a
 copy, a search, highlights and triggers, the
 [raw side panel](raw-side-panel.md), captures and recordings all have the
-real characters.
+real characters. The one exception is the markers of
+[what the terminal doesn't handle](#what-the-terminal-doesnt-handle), which
+are written on the screen as text.
 
 | Received | Drawn as | Setting |
 | --- | --- | --- |
@@ -16,9 +18,10 @@ real characters.
 | [Invisible characters](#invisible-characters) | nothing | `draw_zero_width` in `[ui]` |
 | [Characters of uncertain width](#characters-of-uncertain-width) | a dimmed `▯` | `draw_unsure_width` in `[ui]` |
 | [A wide character cut by the edge](#a-wide-character-cut-by-the-edge) | a blank | none |
+| [What the terminal doesn't handle](#what-the-terminal-doesnt-handle) | nothing, or `␀`…`␡` and `◊` | `mark_unhandled` in `[terminal_mode]` |
 
-They apply to line mode and terminal mode alike. The settings are off by
-default, and the next sections say why to keep them that way.
+They apply to line mode and terminal mode alike, but the last one, terminal
+mode only. The settings are off by default, and the next sections say why.
 
 ## Why the screen can go wrong
 
@@ -119,6 +122,15 @@ recent enough to know it, set `draw_unsure_width = true` in `[ui]` to see the
 characters themselves. A row that shifts, or pieces of earlier lines left on
 the screen after a scroll, means your terminal counts them another way: turn
 it back off.
+
+## What the terminal doesn't handle
+
+Control bytes with no meaning on a screen (NUL, DEL…) and sequences maxicom
+doesn't know show nothing, as in minicom. In terminal mode,
+`mark_unhandled` can put a marker where each one came: `␀` for a NUL, `◊`
+for a sequence. A marker takes a cell and moves the rest of the line, and a
+copy gives the marker, not the byte. See
+[Markers on the screen](terminal-mode.md#markers-on-the-screen).
 
 ## A wide character cut by the edge
 

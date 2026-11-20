@@ -1466,19 +1466,15 @@ impl App {
             .record_rx(settings.add_lf, settings.encoding, timestamp_format, chunk);
 
         let (feed_line, feed_terminal) = self.fed_modes();
+        if feed_terminal {
+            self.sync_unhandled();
+        }
         let settings = &self.settings;
         if feed_line {
             self.line_mode
                 .feed_rx(settings.add_lf, settings.encoding, chunk);
         }
         if feed_terminal {
-            // the setting rules each read: a link switched to has a fresh terminal (MAX-264)
-            let groups = &self.settings.terminal_mode.notify_unhandled;
-            let notify = !groups.is_empty();
-            let wanted = (notify, groups.iter().any(|group| group.needs_tokens()));
-            if self.terminal_mode.collecting_dropped() != wanted {
-                self.terminal_mode.collect_dropped(wanted.0, wanted.1);
-            }
             (self.terminal_mode).process_device_rx(
                 settings.encoding,
                 chunk,
@@ -1491,8 +1487,11 @@ impl App {
                 let bytes = answer_bytes(answers, &self.settings.terminal_mode);
                 self.query_answers.extend(bytes);
             }
-            if notify {
+            if !self.settings.terminal_mode.notify_unhandled.is_empty() {
                 self.notify_unhandled();
+            } else {
+                // collected for the markers only: nothing left for later (MAX-253)
+                self.terminal_mode.take_dropped();
             }
             // a live link's, when allowed: never a replay's nor a held one's (MAX-275)
             let copy = self.terminal_mode.take_device_copy();
@@ -1503,6 +1502,24 @@ impl App {
             {
                 self.device_copy = Some(copy);
             }
+        }
+    }
+
+    /// Terminal mode collects what it doesn't handle while it's notified or marked, with the
+    /// tokenizer when a group needs it or anything is marked, and marks the groups of
+    /// `mark_unhandled`: the settings rule each read, as a link switched to has a fresh
+    /// terminal (MAX-264, MAX-253)
+    pub fn sync_unhandled(&mut self) {
+        let terminal = &self.settings.terminal_mode;
+        let (notify, marks) = (&terminal.notify_unhandled, &terminal.mark_unhandled);
+        let collect = !notify.is_empty() || !marks.is_empty();
+        let tokens = !marks.is_empty() || notify.iter().any(|group| group.needs_tokens());
+        if self.terminal_mode.collecting_dropped() != (collect, tokens) {
+            self.terminal_mode.collect_dropped(collect, tokens);
+        }
+        if self.terminal_mode.marked_groups() != marks.as_slice() {
+            let marks = marks.clone();
+            self.terminal_mode.mark_dropped(&marks);
         }
     }
 
