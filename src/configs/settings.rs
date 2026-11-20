@@ -468,6 +468,31 @@ impl QueryGroup {
     pub const ALL: [Self; 4] = [Self::Status, Self::Identity, Self::Size, Self::Modes];
 }
 
+/// The groups of what the emulator doesn't handle that `notify_unhandled` counts (MAX-264):
+/// each item is in one. `Shell` holds what modern shells and programs send and a terminal may
+/// ignore without harm (`Dropped::harmless`), not in `Osc`, `Csi` nor `Escape`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UnhandledGroup {
+    /// C0 controls, SO and SI included, and DEL
+    Controls,
+    C1,
+    Escape,
+    Csi,
+    Osc,
+    /// DCS, SOS, PM, APC
+    Strings,
+    Shell,
+}
+
+impl UnhandledGroup {
+    /// The groups only the tokenizer finds, no callback reporting them: a tokenizer of its own
+    /// runs for them with the byte trace off
+    pub const fn needs_tokens(self) -> bool {
+        matches!(self, Self::Controls | Self::Strings)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {
@@ -784,12 +809,6 @@ pub struct TerminalModeConfig {
     pub history_size: usize,
     pub empty_fill_char: String,
     pub unfocused_cursor_glyph: String,
-    /// Answer the remote's queries (cursor position, size, device attributes, modes), in
-    /// terminal mode only, for the groups of `answer_groups` (MAX-151)
-    pub answer_queries: bool,
-    pub answer_groups: Vec<QueryGroup>,
-    /// Sent back on ENQ (`0x05`), nothing when empty: `0x05` also shows up in binary data
-    pub answerback: String,
     pub backspace: BackspaceByte,
     /// Record which received bytes drew which cells, to connect the screen and the raw side
     /// panel (MAX-256): about 256 B per `history_size` row at most, and some time on a fast link
@@ -798,6 +817,15 @@ pub struct TerminalModeConfig {
     /// Copy what the device asks to (OSC 52) to the clipboard, as maxicom's own copies go:
     /// off, as a device or a binary dump could replace what the user copied (MAX-275)
     pub device_clipboard: bool,
+    /// Sent back on ENQ (`0x05`), the "answerback", with the `identity` group; nothing when
+    /// empty: `0x05` also shows up in binary data
+    pub enq_answer: String,
+    /// The groups of the remote's queries answered (cursor position, size, device attributes,
+    /// modes), in terminal mode only (MAX-151); none: no answers
+    pub answer_groups: Vec<QueryGroup>,
+    /// A notification counting what the emulator received and didn't handle, for these groups
+    /// (MAX-264); none by default, an advanced notification
+    pub notify_unhandled: Vec<UnhandledGroup>,
 }
 
 impl Default for TerminalModeConfig {
@@ -809,12 +837,12 @@ impl Default for TerminalModeConfig {
             history_size: 100_000,
             empty_fill_char: String::from("░"),
             unfocused_cursor_glyph: String::from("█"),
-            answer_queries: true,
-            answer_groups: QueryGroup::ALL.to_vec(),
-            answerback: String::new(),
             backspace: BackspaceByte::default(),
             byte_trace: true,
             device_clipboard: false,
+            enq_answer: String::new(),
+            answer_groups: QueryGroup::ALL.to_vec(),
+            notify_unhandled: Vec::new(),
         }
     }
 }

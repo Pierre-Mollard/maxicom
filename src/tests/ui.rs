@@ -2282,9 +2282,10 @@ fn settings_in_two_columns() {
     let order = [row_of("[U] Mouse"), row_of("[B] Byte"), row_of("[V] Plot")];
     assert_eq!(order, [order[0], order[0] + 1, order[0] + 2], "{rows:#?}");
 
-    let answers = h.app.settings().terminal_mode.answer_queries;
+    let answers = h.app.settings().terminal_mode.answer_groups.is_empty();
     click(&mut h, cell_of(&rows, "Query Answers"));
-    assert_eq!(h.app.settings().terminal_mode.answer_queries, !answers);
+    let now = h.app.settings().terminal_mode.answer_groups.is_empty();
+    assert_eq!(now, !answers);
     let mut eols = Vec::new();
     for _ in 0..3 {
         key_do(&mut h, Char('n'), KeyModifiers::NONE);

@@ -1447,7 +1447,7 @@ fn trace_cost_bench() {
 /// What vt100 dropped from `reads`, fed as the device's, collecting, the byte trace on or off
 fn dropped(reads: &[&[u8]], trace: bool) -> Vec<(DropKind, Vec<u8>)> {
     let mut tm = TerminalMode::new(100, 5, 40);
-    tm.collect_dropped(true);
+    tm.collect_dropped(true, true);
     for read in reads {
         tm.process_device_rx(TextEncoding::Utf8, read, false, false, trace);
     }
@@ -1510,6 +1510,32 @@ fn answered_and_used_not_listed() {
     }
 }
 
+/// MAX-264: the callbacks' items and the tokenizer's come in the order received, the feed
+/// cut at each item the tokenizer finds; the screen is the same as fed whole.
+/// How: NUL, DEL, an unknown CSI, a DCS, SOH and text, trace on and off, then the text drawn
+#[test]
+fn dropped_in_stream_order() {
+    let read: &[u8] = b"a\x00\x7fb\x1b[5W\x1bPq\x1b\\c\x01d";
+    for trace in [true, false] {
+        let kinds: Vec<(DropKind, Vec<u8>)> = dropped(&[read], trace);
+        assert_eq!(
+            kinds,
+            [
+                (DropKind::Control, b"\x00".to_vec()),
+                (DropKind::Control, b"\x7f".to_vec()),
+                (DropKind::Csi, b"\x1b[5W".to_vec()),
+                (DropKind::String, b"\x1bPq\x1b\\".to_vec()),
+                (DropKind::Control, b"\x01".to_vec()),
+            ],
+            "{trace}"
+        );
+        let mut tm = TerminalMode::new(100, 5, 40);
+        tm.collect_dropped(true, true);
+        tm.process_device_rx(TextEncoding::Utf8, read, false, false, trace);
+        assert_eq!(tm.vt100_screen().contents(), "abcd");
+    }
+}
+
 /// MAX-264: a string cut between two reads is listed once, when it ends, with the bytes of
 /// the read it ends in; nothing is listed when not collecting.
 /// How: `ESC P q` then `#0 ESC \`, trace on and off; then a NUL without collecting
@@ -1522,6 +1548,23 @@ fn dropped_string_across_reads_and_not_collecting() {
     }
     let mut tm = TerminalMode::new(100, 5, 40);
     tm.process_device_rx(TextEncoding::Utf8, b"\x00\x7f", false, false, true);
+    assert!(tm.take_dropped().is_empty());
+    // without `tokens`, only the callbacks' items: no DEL, no string, no tokenizer of its own
+    let mut tm = TerminalMode::new(100, 5, 40);
+    tm.collect_dropped(true, false);
+    tm.process_device_rx(
+        TextEncoding::Utf8,
+        b"\x7f\x1bPq\x1b\\\x00",
+        false,
+        false,
+        false,
+    );
+    let kinds: Vec<DropKind> = tm.take_dropped().into_iter().map(|d| d.kind).collect();
+    assert_eq!(kinds, [DropKind::Control]);
+    assert!(tm.drop_tokenizer.is_none());
+    // maxicom's own bytes, a local echo here, aren't the device's
+    tm.collect_dropped(true, true);
+    tm.echo(b"\x00\x1b[5W");
     assert!(tm.take_dropped().is_empty());
 }
 
@@ -1606,11 +1649,31 @@ fn device_copies_kept_until_taken() {
     );
 
     let mut tm = TerminalMode::new(100, 5, 40);
+    tm.collect_dropped(true, true);
     tm.restore(
         TextEncoding::Utf8,
-        &untimed(b"\x1b]52;c;aGk=\x07"),
+        &untimed(b"\x1b]52;c;aGk=\x07\x00"),
         "",
         false,
     );
     assert_eq!(tm.take_device_copy(), None);
+    // what a restored session dropped isn't news either (MAX-264)
+    assert!(tm.take_dropped().is_empty());
+}
+
+/// MAX-264: every C1 control, U+0080 to U+009F, is one `C1` item: in UTF-8 none starts a
+/// sequence (the 8-bit CSI, OSC, DCS are plain controls) and none is run.
+/// How: the 32 C1 chars, each after an `x`, trace on and off
+#[test]
+fn every_c1_is_listed() {
+    let read: String = (0x80..=0x9F_u32)
+        .flat_map(|c| ['x', char::from_u32(c).unwrap()])
+        .collect();
+    for trace in [true, false] {
+        let kinds: Vec<DropKind> = dropped(&[read.as_bytes()], trace)
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect();
+        assert_eq!(kinds, [DropKind::C1; 32], "{trace}");
+    }
 }

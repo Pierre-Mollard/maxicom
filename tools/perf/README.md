@@ -100,6 +100,9 @@ python3 -I tools/perf/perf.py --wip --against v0.1.2 --only flood-line,steady-li
 | `flood-line`, `flood-terminal` | maxicom (both), minicom (terminal) | 10 MB of log lines written as fast as the program reads them: MB/s until it's quiet again (drawing included), CPU seconds per MB, RSS and peak after |
 | `flood-line-small`, `flood-terminal-small` | maxicom | The same with v0.1.0's history sizes (line mode 1000 lines, terminal mode 2500 rows): what the bigger histories cost |
 | `flood-line-only` | maxicom | `flood-line` with `dual_mode_buffering = "active_only"`: without the terminal scrollback line mode fills too |
+| `flood-terminal-untraced` | maxicom | `flood-terminal` with `byte_trace = false` |
+| `unhandled-terminal` | maxicom | The same with every `notify_unhandled` group: the tokenizer of its own that `controls` and `strings` need without the byte trace (MAX-264). Older versions don't know the key: they warn and collect nothing |
+| `unhandled-terminal-traced` | maxicom | `flood-terminal` with every `notify_unhandled` group: the byte trace's tokens reused |
 | `memory-line`, `memory-terminal` | maxicom (both), minicom (terminal) | 250,000 log lines, enough to fill both default histories: RSS at start, after, and the peak |
 | `memory-line-only` | maxicom | The same in line mode with `dual_mode_buffering = "active_only"`: line mode's history alone |
 | `ansi-line`, `ansi-terminal` | maxicom (both), minicom (terminal) | 8.7 MB of log lines with each word in its own color, as fast as read: MB/s, CPU s per MB |

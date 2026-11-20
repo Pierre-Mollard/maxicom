@@ -209,8 +209,8 @@ fn query_groups() {
     );
 }
 
-/// `answer_queries` off sends nothing; a group left out of `answer_groups` is dropped; the
-/// answerback is sent when set, with the `identity` group.
+/// No group sends nothing; a group left out of `answer_groups` is dropped; `enq_answer` is
+/// sent when set, with the `identity` group.
 #[test]
 fn settings_filter_the_answers() {
     let answers = || {
@@ -222,11 +222,10 @@ fn settings_filter_the_answers() {
     };
     let mut config = TerminalModeConfig::default();
     assert_eq!(answer_bytes(answers(), &config), b"SZ");
-    config.answerback = "hi".to_string();
+    config.enq_answer = "hi".to_string();
     assert_eq!(answer_bytes(answers(), &config), b"ShiZ");
     config.answer_groups = vec![QueryGroup::Size, QueryGroup::Modes];
     assert_eq!(answer_bytes(answers(), &config), b"Z");
-    config.answer_groups = QueryGroup::ALL.to_vec();
-    config.answer_queries = false;
+    config.answer_groups = Vec::new();
     assert!(answer_bytes(answers(), &config).is_empty());
 }

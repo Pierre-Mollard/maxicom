@@ -110,6 +110,92 @@ maxicom named it at startup, or the reload's popup did.
 The device doesn't know the window's size. See
 [Serial shells](terminal-mode.md#serial-shells).
 
+## Escape sequences and binary data
+
+maxicom reads what the device sends as a terminal does: besides text, there
+are control bytes and escape sequences, and some of them are questions it
+[answers](terminal-mode.md#answering-the-devices-queries). Most of the time
+that's what you want. With binary data, or a program that does something
+unusual, these entries help.
+
+### A program on the device doesn't look right
+
+A screen drawn wrong, a color or a mode that doesn't take, a program that
+seems to wait for something: maxicom may not handle a sequence it sends.
+List the groups to watch in `notify_unhandled`, in `[terminal_mode]`, and
+reload with `Ctrl-a r`:
+
+```toml
+notify_unhandled = ["controls", "c1", "escape", "csi", "osc", "strings"]
+```
+
+A notification then names what came in and wasn't handled, with how many
+times: `Unhandled: CSI ?2027h ×3, OSC 52`. Run the program again and watch
+it. The groups are explained in
+[What the terminal doesn't handle](terminal-mode.md#what-the-terminal-doesnt-handle),
+and [What maxicom doesn't do](limits.md) lists what isn't supported on
+purpose. Set it back to `[]` when you're done.
+
+### The unhandled notification never stops
+
+Counts like `NUL ×95526` and a long list of kinds mean the device sends
+binary data, or the baud rate is wrong and the text arrives as garbage
+(check it with `Ctrl-a p`). The notification is right, but it isn't useful
+there: set `notify_unhandled = []`, or keep only the groups you're looking
+for.
+
+### The notification shows OSC 7, OSC 133 or ?2026 on every prompt
+
+Those are from your shell or your programs, and harmless when ignored: the
+current directory, prompt marks, synchronized drawing. They're in the
+`shell` group: take it out of `notify_unhandled`.
+
+### The notification shows nothing
+
+- `notify_unhandled` is empty by default: nothing is counted.
+- Only what the device sends counts. A restored session doesn't, nor what
+  maxicom writes itself, like the local echo.
+- What maxicom answers or uses isn't unhandled: the queries of the groups in
+  `answer_groups`, the device's title, its clipboard copies.
+- In line mode, the bytes reach the terminal only while both modes are fed,
+  the default `dual_mode_buffering = "always_both"`.
+
+### Characters appear at the device's prompt by themselves
+
+Something like `^[[0n`, `1;1R` or `^[[?62;22c` shows at the prompt, or a
+command fails on input you didn't type. Those are maxicom's answers to
+queries: a program asked and quit before reading the reply, or the device
+sent binary data where a few bytes read like a query.
+
+Press `A` in the settings popup (`Ctrl-a o`) to switch the answers off for
+the session, or empty `answer_groups` in `[terminal_mode]` to turn them off
+for good. To keep the useful ones, drop only a group: `status` and `size`
+answer the cursor and size queries `resize` needs. `enq_answer` is sent on
+each `0x05` byte: leave it empty with binary data.
+
+### Before sending binary data by hand
+
+A file sent as it is (`send-file`), or bytes pasted for a bootloader that
+waits for an upload, go to a device that may echo them back. maxicom then
+reads that echo as it reads everything:
+
+- answers to the queries it finds in it go to the device, in the middle of
+  your data: switch them off with `A` in the settings popup first, and back
+  on after;
+- keep `notify_unhandled` empty, or it counts the whole file;
+- keep `device_clipboard` off (the default), or a few bytes reading like a
+  copy could replace your clipboard.
+
+An [XMODEM or YMODEM upload](file-transfers.md#uploading-with-xmodem-or-ymodem)
+doesn't need this: the answers wait while the transfer runs.
+
+### A program waits a second before it starts
+
+vim, a shell's line editor or `resize` ask the terminal a question and wait
+for the reply, then give up after a timeout. With the answers off, or their
+group left out of `answer_groups`, they wait every time. Switch them back on
+with `A` in the settings popup, or put the groups back.
+
 ## Copying and the screen
 
 ### A copy doesn't reach the clipboard

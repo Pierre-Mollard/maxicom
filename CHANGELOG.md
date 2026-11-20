@@ -10,6 +10,11 @@ you says so in an "Upgrading" section.
 
 ### Upgrading
 
+In `[terminal_mode]`, `answer_queries` is gone: an empty `answer_groups = []`
+answers no query (`A` in the settings popup still switches the answers for
+the session), and `answerback` is now `enq_answer`. maxicom warns about the
+old keys until you remove or rename them.
+
 Run [`maxicom --write-config`](https://pierre-mollard.github.io/maxicom/settings.html#updating-the-files)
 to get the new keys that scroll the raw side panel in your `keymap.toml`:
 `Ctrl-a Shift-Up` / `Ctrl-a Shift-Down` and `Ctrl-a Shift-PageUp` /
@@ -23,6 +28,10 @@ remove or rename them. `byte_text` and `byte_invalid` are new.
 
 ### Added
 
+- `notify_unhandled` in `[terminal_mode]` lists groups (`controls`, `c1`,
+  `escape`, `csi`, `osc`, `strings`, `shell`) to count in a notification what
+  the terminal received but didn't handle: `Unhandled: NUL ×9, CSI ?2027h`.
+  Empty by default.
 - The window title a program on the device sets shows in the history box's
   title, after the name; `show_device_title = false` in `[ui]` leaves it out.
   Its icon name too with `show_device_icon_name = true`. The status bar can

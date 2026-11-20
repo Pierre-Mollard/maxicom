@@ -148,6 +148,8 @@ pub struct TerminalMode {
     /// off: DEL, SO / SI and strings have no callback (MAX-264). With the offset of the next
     /// read: a token cut between two reads keeps its start
     drop_tokenizer: Option<(Tokenizer, u64)>,
+    /// What only the tokenizer finds (DEL, SO, SI, strings) is collected too (MAX-264)
+    drop_tokens: bool,
     /// The screen scrolled up from live when last reconciled: going back down sends the dump
     /// live too (MAX-256)
     screen_scrolled: bool,
@@ -206,6 +208,7 @@ impl TerminalMode {
             invalid_bytes: InvalidBytes::default(),
             dump: Dump::new(max_history_lines),
             drop_tokenizer: None,
+            drop_tokens: false,
             rows_gone: 0,
             screen_scrolled: false,
             trace_ghosts: None,
@@ -289,26 +292,38 @@ impl TerminalMode {
         self.vt100_parser.callbacks().icon_name.as_deref()
     }
 
-    /// Collect what vt100 doesn't use from now on, or stop and forget it (MAX-264)
-    #[cfg_attr(not(test), expect(dead_code, reason = "MAX-264 step 2 turns it on"))]
-    pub fn collect_dropped(&mut self, on: bool) {
+    /// Whether what vt100 doesn't use is collected, and what only the tokenizer finds (MAX-264)
+    pub fn collecting_dropped(&self) -> (bool, bool) {
+        (self.vt100_parser.callbacks().collect, self.drop_tokens)
+    }
+
+    /// Collect what vt100 doesn't use from now on, with `tokens` what only the tokenizer finds
+    /// (DEL, SO, SI, strings: with the byte trace off, a tokenizer of its own runs for them),
+    /// or stop and forget it (MAX-264)
+    pub fn collect_dropped(&mut self, on: bool, tokens: bool) {
         let events = self.vt100_parser.callbacks_mut();
         events.collect = on;
         events.dropped.clear();
+        self.drop_tokens = on && tokens;
         self.drop_tokenizer = None;
     }
 
     /// What vt100 didn't use since the last call, while collecting (MAX-264). The callbacks'
     /// items keep their order, and so do the tokenizer's, but not the two between them
-    #[cfg_attr(not(test), expect(dead_code, reason = "MAX-264 step 2 reads it"))]
     pub fn take_dropped(&mut self) -> Vec<Dropped> {
         std::mem::take(&mut self.vt100_parser.callbacks_mut().dropped)
     }
 
-    /// While collecting with the byte trace off, the read's tokens for `note_dropped`, from a
-    /// tokenizer of its own: the dump's only runs with the trace
-    fn tokens_for_drops(&mut self, encoding: TextEncoding, raw_bytes: &[u8]) {
-        if !self.vt100_parser.callbacks().collect {
+    /// While collecting with the byte trace off: the read fed cut at what only the tokenizer
+    /// finds, from a tokenizer of its own (the dump's only runs with the trace)
+    fn feed_noting_drops(
+        &mut self,
+        encoding: TextEncoding,
+        raw_bytes: &[u8],
+        newlines: (bool, bool),
+    ) {
+        if !self.drop_tokens {
+            self.feed(encoding, raw_bytes, newlines);
             return;
         }
         let (tokenizer, offset) = self
@@ -321,27 +336,42 @@ impl TerminalMode {
         *offset += raw_bytes.len() as u64;
         let mut tokens = Vec::new();
         tokenizer.feed(raw_bytes, start, &mut tokens);
-        self.note_dropped(&tokens, raw_bytes, start);
+        let mut done = 0;
+        for token in &tokens {
+            done = self.note_dropped(token, encoding, raw_bytes, start, done, newlines);
+        }
+        self.feed(encoding, &raw_bytes[done..], newlines);
     }
 
-    /// The dropped items no callback reports, from the read's tokens (`offset` is the read's
-    /// first byte): DEL, SO, SI, and DCS, SOS, PM, APC strings, with the bytes of this read
-    fn note_dropped(&mut self, tokens: &[Token], raw_bytes: &[u8], offset: u64) {
+    /// When `token` is what only the tokenizer finds (DEL, SO, SI, a DCS / SOS / PM / APC
+    /// string) and it's collected: the bytes before it fed, from `done`, so the callbacks'
+    /// items come first, then it listed with the bytes of this read (`offset` is the read's
+    /// first byte). Where the feed is up to
+    fn note_dropped(
+        &mut self,
+        token: &Token,
+        encoding: TextEncoding,
+        raw_bytes: &[u8],
+        offset: u64,
+        done: usize,
+        newlines: (bool, bool),
+    ) -> usize {
+        let kind = match token.kind {
+            Kind::Control(0x0E | 0x0F | 0x7F) => DropKind::Control,
+            Kind::Sequence(Effect::String) => DropKind::String,
+            _ => return done,
+        };
+        if !self.drop_tokens {
+            return done;
+        }
+        // a string can start in an earlier read: its bytes there are fed already
+        let start = (token.start.saturating_sub(offset) as usize).max(done);
+        self.feed(encoding, &raw_bytes[done..start], newlines);
+        let end = (token.end.saturating_sub(offset) as usize).min(raw_bytes.len());
+        let bytes = raw_bytes.get(start..end).unwrap_or_default().to_vec();
         let events = self.vt100_parser.callbacks_mut();
-        if !events.collect {
-            return;
-        }
-        for token in tokens {
-            let kind = match token.kind {
-                Kind::Control(0x0E | 0x0F | 0x7F) => DropKind::Control,
-                Kind::Sequence(Effect::String) => DropKind::String,
-                _ => continue,
-            };
-            let start = token.start.saturating_sub(offset) as usize;
-            let end = (token.end.saturating_sub(offset) as usize).min(raw_bytes.len());
-            let bytes = raw_bytes.get(start..end).unwrap_or_default().to_vec();
-            events.dropped.push(Dropped { kind, bytes });
-        }
+        events.dropped.push(Dropped { kind, bytes });
+        start
     }
 
     /// `feed` for the stream's bytes from `offset`, cut where a printable run starts: the cursor
@@ -355,13 +385,13 @@ impl TerminalMode {
         newlines: (bool, bool),
     ) {
         let tokens = self.dump.tokens(encoding, raw_bytes, offset);
-        self.note_dropped(&tokens, raw_bytes, offset);
         let (rows, cols) = self.get_vt100_size();
         let wide = u64::from(cols.max(1));
         let mut done = 0;
         // where the next char goes when known without asking vt100: (row, column, alternate)
         let mut next: Option<(u64, u64, bool)> = None;
         for token in &tokens {
+            done = self.note_dropped(token, encoding, raw_bytes, offset, done, newlines);
             match token.kind {
                 Kind::Text => {}
                 Kind::Sequence(Effect::Style) => continue,
@@ -714,11 +744,14 @@ impl TerminalMode {
                 offset: None,
                 add_cr,
                 add_lf,
-            } => {
-                self.tokens_for_drops(encoding, raw_bytes);
-                self.feed(encoding, raw_bytes, (add_cr, add_lf));
+            } => self.feed_noting_drops(encoding, raw_bytes, (add_cr, add_lf)),
+            // maxicom's own bytes (an echo, a restore's resets) aren't the device's: what vt100
+            // drops of them isn't listed (MAX-264)
+            Feed::Own => {
+                let listed = self.vt100_parser.callbacks().dropped.len();
+                self.feed(encoding, raw_bytes, (false, false));
+                self.vt100_parser.callbacks_mut().dropped.truncate(listed);
             }
-            Feed::Own => self.feed(encoding, raw_bytes, (false, false)),
         }
         let evicted = std::mem::take(&mut self.vt100_parser.callbacks_mut().evicted);
         self.rows_gone += evicted as u64;
@@ -1822,8 +1855,10 @@ impl TerminalMode {
             };
             self.process_rx_at(encoding, chunk.bytes, chunk.time, feed);
         }
-        // a restored session's copy is old: it never reaches the clipboard (MAX-275)
+        // a restored session's copy is old: it never reaches the clipboard (MAX-275), and what
+        // it dropped isn't news (MAX-264)
         self.take_device_copy();
+        self.take_dropped();
         // leaving it restores a saved cursor, so only when the session is in it
         if self.vt100_parser.screen().alternate_screen() {
             self.process_rx_at(TextEncoding::Utf8, b"\x1b[?1049l", None, Feed::Own);

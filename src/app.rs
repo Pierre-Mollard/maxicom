@@ -26,7 +26,7 @@ use crate::{
     commands::{CommandError, Invocation, Target},
     configs::{
         AppConfig, DualBufferMode, KeyBindingAction, KeyResolver, LinksConfig, Mode, PlotsConfig,
-        RawSideView, SettingsConfig, StatusBarLayout, TextEncoding, WrapMode,
+        QueryGroup, RawSideView, SettingsConfig, StatusBarLayout, TextEncoding, WrapMode,
         settings::{
             PrefixPlace, PrefixWrapBehavior, RawSideOrientation, SPLIT_PERCENT_MAX,
             SPLIT_PERCENT_MIN, on_off,
@@ -191,8 +191,14 @@ pub struct App {
     restore_flag: Option<bool>,
     /// The replies to the remote's queries, for the loop to send (MAX-151)
     query_answers: Vec<u8>,
+    /// `answer_groups` put aside while the answers are switched off for the session (the
+    /// settings popup's `A`, `set answer-queries`), given back when switched on
+    answer_groups_off: Option<Vec<QueryGroup>>,
     /// The device's last OSC 52 copy in base64, for the loop to send on (MAX-275)
     device_copy: Option<Vec<u8>>,
+    /// What the emulator didn't use, by label with its count in first seen order, while its
+    /// notification is shown (MAX-264)
+    unhandled: Vec<(String, usize)>,
     /// The rules of `triggers.toml` (MAX-6)
     triggers: Vec<Trigger>,
     /// The links of `links.toml`, or why it didn't load, and this machine's name, which picks
@@ -361,7 +367,9 @@ impl App {
             held_rx: None,
             restore_flag: None,
             query_answers: Vec::new(),
+            answer_groups_off: None,
             device_copy: None,
+            unhandled: Vec::new(),
             triggers: Vec::new(),
             links: Ok(LinksConfig::default()),
             host: crate::configs::links::this_host(),
@@ -1464,6 +1472,13 @@ impl App {
                 .feed_rx(settings.add_lf, settings.encoding, chunk);
         }
         if feed_terminal {
+            // the setting rules each read: a link switched to has a fresh terminal (MAX-264)
+            let groups = &self.settings.terminal_mode.notify_unhandled;
+            let notify = !groups.is_empty();
+            let wanted = (notify, groups.iter().any(|group| group.needs_tokens()));
+            if self.terminal_mode.collecting_dropped() != wanted {
+                self.terminal_mode.collect_dropped(wanted.0, wanted.1);
+            }
             (self.terminal_mode).process_device_rx(
                 settings.encoding,
                 chunk,
@@ -1476,6 +1491,9 @@ impl App {
                 let bytes = answer_bytes(answers, &self.settings.terminal_mode);
                 self.query_answers.extend(bytes);
             }
+            if notify {
+                self.notify_unhandled();
+            }
             // a live link's, when allowed: never a replay's nor a held one's (MAX-275)
             let copy = self.terminal_mode.take_device_copy();
             if let Some(copy) = copy
@@ -1486,6 +1504,51 @@ impl App {
                 self.device_copy = Some(copy);
             }
         }
+    }
+
+    /// What the emulator didn't use in the last read, counted with what its notification
+    /// already shows: `Unhandled: CSI ?2026h ×3, NUL ×9`, the kinds seen most first past the
+    /// first few, only the groups of `notify_unhandled`; a new count once the notification is
+    /// gone
+    /// (MAX-264)
+    fn notify_unhandled(&mut self) {
+        let dropped = self.terminal_mode.take_dropped();
+        let groups = &self.settings.terminal_mode.notify_unhandled;
+        let mut new = (dropped.iter())
+            .filter(|dropped| groups.contains(&dropped.group()))
+            .peekable();
+        if new.peek().is_none() {
+            return;
+        }
+        let shown =
+            (self.notifications.active_toasts().iter()).any(|toast| toast.key == Some("unhandled"));
+        if !shown {
+            self.unhandled.clear();
+        }
+        for label in new.map(|dropped| dropped.label()) {
+            match self.unhandled.iter_mut().find(|(seen, _)| *seen == label) {
+                Some((_, count)) => *count += 1,
+                None => self.unhandled.push((label, 1)),
+            }
+        }
+        const SHOWN: usize = 6;
+        let mut kinds: Vec<&(String, usize)> = self.unhandled.iter().collect();
+        if kinds.len() > SHOWN {
+            kinds.sort_by_key(|&(_, count)| std::cmp::Reverse(*count));
+        }
+        let mut parts: Vec<String> = (kinds.iter().take(SHOWN))
+            .map(|(label, count)| match count {
+                1 => label.clone(),
+                _ => format!("{label} ×{count}"),
+            })
+            .collect();
+        match kinds.len().saturating_sub(SHOWN) {
+            0 => {}
+            1 => parts.push("1 more kind".to_string()),
+            more => parts.push(format!("{more} more kinds")),
+        }
+        let msg = format!("Unhandled: {}", parts.join(", "));
+        self.notify_keyed("unhandled", ToastLevel::Info, msg);
     }
 
     /// The device's last OSC 52 copy to send on, base64, since the last call (MAX-275)
@@ -1546,7 +1609,9 @@ impl App {
             SettingKey::LocalEcho => Some(self.settings.local_echo),
             SettingKey::DisplayTimestamp => Some(self.settings.show_timestamps),
             SettingKey::Mouse => Some(self.settings.ui.mouse),
-            SettingKey::AnswerQueries => Some(self.settings.terminal_mode.answer_queries),
+            SettingKey::AnswerQueries => {
+                Some(!self.settings.terminal_mode.answer_groups.is_empty())
+            }
             SettingKey::ByteTrace => Some(self.settings.terminal_mode.byte_trace),
             SettingKey::AddCr => Some(self.settings.add_cr),
             SettingKey::AddLf => Some(self.settings.add_lf),
@@ -2555,6 +2620,8 @@ impl App {
 
         settings.refresh_timestamp_width();
         self.settings = settings;
+        // the file's `answer_groups` rule now, what the switch kept aside goes
+        self.answer_groups_off = None;
         self.fit_mode_to_link();
         self.key_resolver = key_resolver;
         self.prefix_active = false;
@@ -2637,10 +2704,17 @@ impl App {
                 let mode = self.settings.terminal_mode.dimension_mode.as_str();
                 self.notify_setting("setting:size", format!("Terminal Size Mode is {mode}"));
             }
+            // off empties `answer_groups`, its list kept aside for on, all groups when none was
             SettingKey::AnswerQueries => {
-                let terminal = &mut self.settings.terminal_mode;
-                terminal.answer_queries = !terminal.answer_queries;
-                let state = on_off(terminal.answer_queries);
+                let groups = &mut self.settings.terminal_mode.answer_groups;
+                if groups.is_empty() {
+                    *groups = (self.answer_groups_off.take())
+                        .filter(|kept| !kept.is_empty())
+                        .unwrap_or_else(|| QueryGroup::ALL.to_vec());
+                } else {
+                    self.answer_groups_off = Some(std::mem::take(groups));
+                }
+                let state = on_off(!self.settings.terminal_mode.answer_groups.is_empty());
                 self.notify_setting("setting:answers", format!("Query answers {state}"));
             }
             // from the bytes received now on; off gives the memory back (MAX-256)

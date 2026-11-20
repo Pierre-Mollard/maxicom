@@ -56,6 +56,10 @@ pub const CONFIG_COMMENTS: &[(&str, &str)] = &[
         "true: the device can copy to your clipboard (OSC 52)",
     ),
     (
+        "terminal_mode.notify_unhandled",
+        "values: controls, c1, escape, csi, osc, strings, shell",
+    ),
+    (
         "terminal_mode.byte_trace",
         "connects the screen and the raw side panel; false: no memory or time spent",
     ),

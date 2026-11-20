@@ -284,12 +284,12 @@ See [Terminal mode](terminal-mode.md).
 | `history_size` | `100000` | Scrollback lines kept |
 | `empty_fill_char` | `"░"` | Fills the view outside the emulated screen |
 | `unfocused_cursor_glyph` | `"█"` | The cursor while unfocused |
-| `answer_queries` | `true` | Answer the device's terminal queries |
-| `answer_groups` | `["status", "identity", "size", "modes"]` | Which queries |
-| `answerback` | `""` | Sent back on ENQ, nothing when empty |
 | `backspace` | `"del"` | What the Backspace key sends: `del` (`7f`) or `bs` (`08`), see [Backspace](terminal-mode.md#backspace) |
-| `device_clipboard` | `false` | Let the device copy to your clipboard, see [Copying from the device](terminal-mode.md#copying-from-the-device) |
 | `byte_trace` | `true` | Record which received bytes drew which cells, to connect the screen and the raw side panel, see [The byte trace](raw-side-panel.md#the-byte-trace). Takes up to 256 bytes per `history_size` row (about 25 MB by default) and a little time on a fast link (TCP, a replay); `false` records nothing and gives the memory back |
+| `device_clipboard` | `false` | Let the device copy to your clipboard, see [Copying from the device](terminal-mode.md#copying-from-the-device) |
+| `enq_answer` | `""` | Sent back on ENQ (the answerback), nothing when empty |
+| `answer_groups` | `["status", "identity", "size", "modes"]` | Which queries are answered, none when empty, see [Answering the device's queries](terminal-mode.md#answering-the-devices-queries) |
+| `notify_unhandled` | `[]` | A notification counting what the terminal received but didn't handle, for these groups, see [What the terminal doesn't handle](terminal-mode.md#what-the-terminal-doesnt-handle) |
 
 ### `[link]`
 

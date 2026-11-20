@@ -75,7 +75,7 @@ pub fn render_settings_popup(
     };
 
     let mouse_str = on_off(app.settings().ui.mouse);
-    let answers_str = on_off(app.settings().terminal_mode.answer_queries);
+    let answers_str = on_off(!app.settings().terminal_mode.answer_groups.is_empty());
     let trace_str = on_off(app.settings().terminal_mode.byte_trace);
     let add_cr_str = on_off(app.settings().add_cr);
     let add_lf_str = on_off(app.settings().add_lf);

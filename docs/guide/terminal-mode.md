@@ -176,9 +176,13 @@ maxicom answers the common queries for the terminal it emulates.
 
 ### Turning it on or off
 
-`answer_queries` in `[terminal_mode]` (default `true`) turns the answers on.
-`A` in the settings popup toggles it, and `set answer-queries on|off` sets
-it.
+`answer_groups` in `[terminal_mode]` lists the [groups](#the-groups) of
+queries maxicom answers, all of them by default. An empty list,
+`answer_groups = []`, answers none.
+
+`A` in the settings popup, and `set answer-queries on|off`, switch all the
+answers off and on for this session: off sets the list aside, on gives it
+back (every group when it was empty). The file isn't changed.
 
 Only live data gets an answer, and only while you're in terminal mode. A
 query inside a restored session or a replay is old: it wasn't sent to this
@@ -222,7 +226,7 @@ where the prompt ends.
 | `ESC [ = c` | Your unit ID? | `ESC P ! \| 00000000 ESC \`: a zero ID |
 | `ESC [ > q` | Your name and version? | `ESC P > \| maxicom <version> ESC \` |
 | `ESC [ x` | Your line settings? | `ESC [ 2 ; 1 ; 1 ; 112 ; 112 ; 1 ; 0 x`: fixed values (8 bits, no parity, 9600 baud) |
-| ENQ, the byte `0x05` | Who are you? | The `answerback` text, nothing by default |
+| ENQ, the byte `0x05` | Who are you? | The `enq_answer` text, nothing by default |
 
 Every terminal answers `ESC [ c`, so programs send it last, after a query
 that may go unanswered: when its reply comes first, they know the other
@@ -231,8 +235,9 @@ query isn't supported.
 maxicom doesn't claim a model in `ESC [ > c`, because vim turns on xterm
 features when it reads an xterm version there.
 
-`answerback` in `[terminal_mode]` sets the text sent on ENQ. It's empty by
-default because `0x05` also shows up in binary data.
+`enq_answer` in `[terminal_mode]` sets the text sent on ENQ, what other
+terminals call the answerback. It's empty by default because `0x05` also
+shows up in binary data.
 
 #### `size`
 
@@ -288,12 +293,148 @@ answer is `0`, which they read as "not supported".
 ### When to turn answers off
 
 An answer is input to the device, as if you typed it. That's what a shell
-expects, but not every program on a serial line is a shell. Turn
-`answer_queries` off, or drop a group from `answer_groups`, when:
+expects, but not every program on a serial line is a shell. Empty
+`answer_groups`, or drop a group from it, when:
 
 - the device sends binary data, where a few bytes can read like a query;
 - the program reading the line takes any input as a command, like a
   bootloader waiting for an upload.
+
+### What the terminal doesn't handle
+
+Besides text, a device sends control bytes and escape sequences: move the
+cursor, change a color, clear the screen, ask a question. maxicom handles
+most of them, but not all: a sequence it doesn't know, a control byte with
+no meaning on a screen, or garbage from binary data or a wrong baud rate.
+Those are dropped without a trace on the screen.
+
+To know when that happens, list the groups to watch in `notify_unhandled`
+(in `[terminal_mode]`). One notification then counts what came in, by kind,
+and keeps counting while it's shown:
+
+```text
+Unhandled: NUL ×9, CSI ?2027h ×3, OSC 52
+```
+
+It's empty by default, so nothing is counted: it's a tool for finding out
+why a program on the device doesn't look right, or what is in a stream.
+
+| Group | What it counts | Names in the notification |
+| --- | --- | --- |
+| `controls` | Control bytes with no meaning on a screen: NUL, SOH… (not tab, backspace, newline and the others maxicom runs), DEL, and SO / SI, which switch character sets maxicom doesn't have | `NUL`, `DEL`, `SO` |
+| `c1` | The 8-bit control characters, U+0080 to U+009F | `C1 85` |
+| `escape` | Short escape sequences maxicom doesn't know | `ESC #3` |
+| `csi` | Longer ones (`ESC [ …`): modes, styles, queries maxicom doesn't answer | `CSI ?2027h` |
+| `osc` | Operating system commands (`ESC ] …`), the clipboard query among them | `OSC 52` |
+| `strings` | DCS, SOS, PM and APC strings: settings and data for other terminals | `DCS` |
+| `shell` | What modern shells and programs send to every terminal, harmless when ignored: the current directory, links, prompt marks, cursor blinking… | `OSC 7`, `CSI ?2026h` |
+
+Each sequence is in one group only: `osc` doesn't count OSC 7, `shell`
+does. Leave `shell` out unless you want to see them: a modern shell sends
+some on every prompt.
+
+#### What each group holds
+
+The lists below are complete: anything not in them is handled, drawn or
+answered.
+
+`controls`, each byte by its name in the notification:
+
+| Bytes | Names |
+| --- | --- |
+| `00` to `04` | `NUL`, `SOH`, `STX`, `ETX`, `EOT` |
+| `06` | `ACK` |
+| `0E`, `0F` | `SO`, `SI`: switch to a second character set, which maxicom doesn't have |
+| `10` to `1A` | `DLE`, `DC1` (XON), `DC2`, `DC3` (XOFF), `DC4`, `NAK`, `SYN`, `ETB`, `CAN`, `EM`, `SUB` |
+| `1C` to `1F` | `FS`, `GS`, `RS`, `US` |
+| `7F` | `DEL` |
+
+Never counted: `05` ENQ (answered with `enq_answer`), `07` BEL, `08` BS,
+`09` tab, `0A` LF, `0B` VT, `0C` FF, `0D` CR (all run), and `1B` ESC, which
+starts a sequence.
+
+`c1`: all of U+0080 to U+009F, named `C1 80` to `C1 9F`. In UTF-8 none of
+them is run: the 8-bit forms of CSI (`C1 9B`), OSC (`C1 9D`) and DCS
+(`C1 90`) don't start a sequence either. In `latin1`, the bytes `80` to `9F`
+are the same characters.
+
+`escape`: every `ESC` sequence but the ones maxicom runs or answers:
+
+| Handled | Does |
+| --- | --- |
+| `ESC 7`, `ESC 8` | Save, restore the cursor |
+| `ESC =`, `ESC >` | Keypad in application, normal mode |
+| `ESC M` | Cursor up a line, scrolling down at the top |
+| `ESC c` | Reset the terminal |
+| `ESC g` | Visual bell |
+| `ESC Z` | Answered, group `identity` |
+| `ESC \` | Ends a string, never counted |
+
+So, for example: `ESC D`, `ESC E`, `ESC H` (index, next line, tab stop),
+`ESC ( 0` (line drawing characters), `ESC # 8` (screen test). `ESC ( B`
+(back to ASCII) is in `shell`.
+
+`csi`: every `ESC [` sequence but the ones maxicom runs or answers:
+
+| Handled | Does |
+| --- | --- |
+| `A`, `B`, `C`, `D`, `E`, `F`, `G`, `H`, `f`, `d`, `` ` `` | Cursor moves |
+| `J`, `K`, `? J`, `? K` | Erase the screen, the line |
+| `@`, `L`, `M`, `P`, `X` | Insert, delete chars and lines |
+| `S`, `T` | Scroll up, down |
+| `b` | Repeat the last char |
+| `r` | Scroll region |
+| `m` | Styles: `0`, `1`, `2`, `3`, `4`, `7`, `22`, `23`, `24`, `27`, and the colors (`30`–`37`, `38`, `39`, `40`–`47`, `48`, `49`, `90`–`97`, `100`–`107`) |
+| `8 ; rows ; cols t` | Resize request |
+| `SP q` | Cursor shape |
+| `? h`, `? l` | Modes `1`, `6`, `9`, `25`, `47`, `1000`, `1002`, `1003`, `1005`, `1006`, `1049`, `2004` |
+| | The [queries maxicom answers](#the-groups), and mode `2048` |
+
+A style sequence with a part maxicom doesn't know counts whole, once for
+each such part: `CSI 1;9m`, bold then strikethrough, applies the bold and
+counts `CSI 1;9m` once for the line through. Others seen
+often: `CSI 5m` (blink), `CSI 4h` (insert mode), `CSI ?7l` (autowrap off,
+see [Terminal mode always wraps](limits.md#terminal-mode-always-wraps)).
+
+`osc`: every `ESC ]` command but `0`, `1`, `2` (the
+[title](#window-title)) and `52` copies (the
+[clipboard](#copying-from-the-device)). So, for example: `OSC 4`, `10`,
+`11`, `12` (colors), `OSC 52` asking for your clipboard, `OSC 104`,
+`OSC 1337`. `7`, `8` and `133` are in `shell`.
+
+`strings`: all of them, none is handled: DCS (`ESC P`: setting queries,
+terminfo queries, sixel images), SOS (`ESC X`), PM (`ESC ^`), APC (`ESC _`:
+kitty images).
+
+`shell`, all of them:
+
+| Sequence | Is |
+| --- | --- |
+| `OSC 7` | The current directory |
+| `OSC 8` | A link around some text: the text shows |
+| `OSC 133` | Prompt marks |
+| `CSI ? 1004 h`, `l` | Focus reports on, off |
+| `CSI ? 2026 h`, `l` | Synchronized drawing on, off |
+| `CSI ? 12 h`, `l` | Cursor blinking on, off |
+| `CSI ? 7 h` | Autowrap on: always on in maxicom |
+| `CSI 22 ; … t`, `CSI 23 ; … t` | Save, restore the window title (vim) |
+| `ESC ( B` | ASCII as the character set: already in use |
+
+What maxicom answers or uses counts as handled: the
+[queries it answers](#the-groups), the device's
+[title and copies](#the-devices-title-and-clipboard). What maxicom itself
+writes on the screen, like the [local echo](#local-echo), and a
+[restored session](capture.md#which-session-comes-back) are never counted.
+
+For example, to see everything but the shell's sequences:
+
+```toml
+[terminal_mode]
+notify_unhandled = ["controls", "c1", "escape", "csi", "osc", "strings"]
+```
+
+`controls` and `strings` need a little more work on each read when
+`byte_trace` is off. The others cost nothing until something comes in.
 
 ## Serial shells
 
@@ -390,7 +531,7 @@ prompt, and let neovim follow the size by itself.
 
 Size reports are part of the `size` group of
 [the answers](#answering-the-devices-queries). They're only sent live, in
-terminal mode. Remove `size` from `answer_groups`, or turn `answer_queries`
+terminal mode. Remove `size` from `answer_groups`, or switch the answers
 off, and maxicom no longer says it supports them, so programs don't turn
 them on.
 
@@ -413,5 +554,5 @@ Alt-r sends `stty rows R cols C; export LINES=R COLUMNS=C` with the
 emulator's size, the same size `resize` would get. In line mode, Alt-r sends
 the columns only.
 
-Without `answer_queries`, or on a device without `resize`, the size stays
+Without the `size` answers, or on a device without `resize`, the size stays
 wrong until you press Alt-r.

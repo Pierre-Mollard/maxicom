@@ -74,13 +74,18 @@ fn plot_side_from_toml() {
 fn answer_settings_parse() {
     let parse = |toml: &str| toml::from_str::<TerminalModeConfig>(toml);
     let config = parse("").unwrap();
-    assert!(config.answer_queries);
     assert_eq!(config.answer_groups, QueryGroup::ALL);
-    assert_eq!(config.answerback, "");
+    assert_eq!(config.enq_answer, "");
 
-    let config = parse("answer_groups = [\"size\", \"modes\"]\nanswerback = \"x\"").unwrap();
+    let config = parse("answer_groups = [\"size\", \"modes\"]\nenq_answer = \"x\"").unwrap();
     assert_eq!(config.answer_groups, [QueryGroup::Size, QueryGroup::Modes]);
-    assert_eq!(config.answerback, "x");
+    assert_eq!(config.enq_answer, "x");
+    assert!(
+        parse("answer_groups = []")
+            .unwrap()
+            .answer_groups
+            .is_empty()
+    );
     assert!(parse("answer_groups = [\"colors\"]").is_err());
 }
 

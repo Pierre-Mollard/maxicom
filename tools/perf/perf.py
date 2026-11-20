@@ -510,6 +510,10 @@ RAW_PANEL = {("raw_side", "view"): '"hex"'}
 # the default plot: every key=value pair, here the lines' n= and t=
 PLOT = {(None, "plot"): '"key-value"'}
 HIGHLIGHTS = {"highlights.toml": many_highlights()}
+UNTRACED = {("terminal_mode", "byte_trace"): "false"}
+# every group of the unhandled notification (MAX-264), unknown to older versions: they warn
+ALL_UNHANDLED = {("terminal_mode", "notify_unhandled"):
+                 '["controls", "c1", "escape", "csi", "osc", "strings", "shell"]'}
 # v0.1.0's history sizes, raised in v0.1.1 (MAX-237: is that what halved the floods?)
 SMALL_HISTORY = {("line_mode", "history_size"): "1000", ("terminal_mode", "history_size"): "2500"}
 
@@ -533,6 +537,14 @@ SCENARIOS = [
              {**LINE, **SMALL_HISTORY}),
     Scenario("flood-terminal-small", MAXICOM, flood_10mb(),
              "flood-terminal with v0.1.0's history sizes", {**TERMINAL, **SMALL_HISTORY}),
+    Scenario("flood-terminal-untraced", MAXICOM, flood_10mb(),
+             "flood-terminal with the byte trace off", {**TERMINAL, **UNTRACED}),
+    Scenario("unhandled-terminal", MAXICOM, flood_10mb(),
+             "flood-terminal, byte trace off, every unhandled group: its own tokenizer runs",
+             {**TERMINAL, **UNTRACED, **ALL_UNHANDLED}),
+    Scenario("unhandled-terminal-traced", MAXICOM, flood_10mb(),
+             "flood-terminal with every unhandled group, the byte trace's tokens reused",
+             {**TERMINAL, **ALL_UNHANDLED}),
     Scenario("flood-line-only", MAXICOM, flood_10mb(),
              "flood-line with line mode's history alone (active_only)", LINE_ONLY),
     Scenario("memory-line", MAXICOM, memory,

@@ -292,3 +292,76 @@ fn wide_char_cut_at_the_right_edge() {
     assert_eq!(symbols(5)[4], " ");
     assert_eq!(symbols(6)[4..], ["\u{4E2D}", " "]);
 }
+
+/// MAX-264: each dropped kind's label in the notification, a long sequence cut; the
+/// harmless sequences of shells known as such.
+/// How: one `Dropped` per kind, a 40 parameter CSI, then the allow list and its neighbours
+#[test]
+fn dropped_labels_and_harmless() {
+    let label = |kind, bytes: &[u8]| {
+        Dropped {
+            kind,
+            bytes: bytes.to_vec(),
+        }
+        .label()
+    };
+    assert_eq!(label(DropKind::Control, b"\x00"), "NUL");
+    assert_eq!(label(DropKind::Control, b"\x0e"), "SO");
+    assert_eq!(label(DropKind::Control, b"\x7f"), "DEL");
+    assert_eq!(label(DropKind::C1, "\u{85}".as_bytes()), "C1 85");
+    assert_eq!(label(DropKind::Escape, b"\x1b#3"), "ESC #3");
+    assert_eq!(label(DropKind::Csi, b"\x1b[?2026h"), "CSI ?2026h");
+    assert_eq!(label(DropKind::Osc, b"\x1b]52;c;?\x07"), "OSC 52");
+    assert_eq!(label(DropKind::String, b"\x1bPq\x1b\\"), "DCS");
+    assert_eq!(label(DropKind::String, b"\x1b_a\x1b\\"), "APC");
+    let long = [&b"\x1b["[..], "1;".repeat(20).as_bytes(), b"W"].concat();
+    assert_eq!(
+        label(DropKind::Csi, &long),
+        format!("CSI {}...", "1;".repeat(12))
+    );
+
+    let harmless = |kind, bytes: &[u8]| {
+        Dropped {
+            kind,
+            bytes: bytes.to_vec(),
+        }
+        .harmless()
+    };
+    assert!(harmless(DropKind::Osc, b"\x1b]7;file://h/x\x07"));
+    assert!(harmless(DropKind::Osc, b"\x1b]133;A\x07"));
+    assert!(harmless(DropKind::Osc, b"\x1b]8;;http://x\x07"));
+    assert!(harmless(DropKind::Csi, b"\x1b[?2026l"));
+    assert!(harmless(DropKind::Csi, b"\x1b[?1004h"));
+    assert!(!harmless(DropKind::Osc, b"\x1b]52;c;?\x07"));
+    assert!(!harmless(DropKind::Osc, b"\x1b]77;x\x07"));
+    assert!(!harmless(DropKind::Csi, b"\x1b[?2027h"));
+    assert!(harmless(DropKind::Csi, b"\x1b[22;0t"));
+    assert!(harmless(DropKind::Csi, b"\x1b[23;2t"));
+    assert!(harmless(DropKind::Csi, b"\x1b[?12l"));
+    assert!(harmless(DropKind::Csi, b"\x1b[?7h"));
+    assert!(!harmless(DropKind::Csi, b"\x1b[?7l"));
+    assert!(!harmless(DropKind::Csi, b"\x1b[24t"));
+    assert!(harmless(DropKind::Escape, b"\x1b(B"));
+    assert!(!harmless(DropKind::Escape, b"\x1b(0"));
+    assert!(!harmless(DropKind::Control, b"\x00"));
+
+    let group = |kind, bytes: &[u8]| {
+        Dropped {
+            kind,
+            bytes: bytes.to_vec(),
+        }
+        .group()
+    };
+    assert_eq!(group(DropKind::Osc, b"\x1b]7;x\x07"), UnhandledGroup::Shell);
+    assert_eq!(
+        group(DropKind::Osc, b"\x1b]52;c;?\x07"),
+        UnhandledGroup::Osc
+    );
+    assert_eq!(group(DropKind::Csi, b"\x1b[?2026h"), UnhandledGroup::Shell);
+    assert_eq!(group(DropKind::Csi, b"\x1b[5W"), UnhandledGroup::Csi);
+    assert_eq!(group(DropKind::Control, b"\x7f"), UnhandledGroup::Controls);
+    assert_eq!(
+        group(DropKind::String, b"\x1bPq\x1b\\"),
+        UnhandledGroup::Strings
+    );
+}

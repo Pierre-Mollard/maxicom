@@ -129,7 +129,7 @@ fn comments_keep_the_values() {
     settings.capture.tx_mark = String::from("'''");
     settings.line_mode.prompt_prefix = String::from("\"\"\"");
     settings.line_mode.prompt_vi_prefix = String::from("x = '''");
-    settings.terminal_mode.answerback = String::from("[fake]\nfake = 1\n'''\n\"\"\"\n");
+    settings.terminal_mode.enq_answer = String::from("[fake]\nfake = 1\n'''\n\"\"\"\n");
     settings.ui.status_bar.left = String::from("[a]\nb = '''\n");
     check_every_key_commented(&settings);
 }

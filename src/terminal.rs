@@ -11,6 +11,7 @@ use ratatui::{
 use crate::app::term_answers::{
     Answer, SIZE_REPORTS, answer_control, answer_csi, answer_escape, size_report,
 };
+use crate::configs::settings::UnhandledGroup;
 use crate::glyphs::{UNSURE_MARKER, drawn, invalid_bytes, unsure_width::is_unsure};
 
 /// What the parser reports besides the screen. `evicted` counts the main screen rows vt100 drops
@@ -71,6 +72,107 @@ pub enum DropKind {
     Osc,
     /// A DCS, SOS, PM or APC string
     String,
+}
+
+/// The C0 controls' names, by byte
+const C0_NAMES: [&str; 32] = [
+    "NUL", "SOH", "STX", "ETX", "EOT", "ENQ", "ACK", "BEL", "BS", "HT", "LF", "VT", "FF", "CR",
+    "SO", "SI", "DLE", "DC1", "DC2", "DC3", "DC4", "NAK", "SYN", "ETB", "CAN", "EM", "SUB", "ESC",
+    "FS", "GS", "RS", "US",
+];
+
+/// The longest sequence written whole in a label: a binary dump can send long ones
+const LABEL_MAX: usize = 24;
+
+impl Dropped {
+    /// How the notification names it: `NUL`, `DEL`, `C1 85`, `ESC #3`, `CSI ?2026h`, `OSC 7`,
+    /// `DCS` (MAX-264)
+    pub fn label(&self) -> String {
+        let text = |bytes: &[u8]| {
+            let text: String = String::from_utf8_lossy(bytes)
+                .chars()
+                .filter(|c| !c.is_control())
+                .collect();
+            match text.char_indices().nth(LABEL_MAX) {
+                Some((at, _)) => format!("{}...", &text[..at]),
+                None => text,
+            }
+        };
+        let after = |n: usize| self.bytes.get(n..).unwrap_or_default();
+        match self.kind {
+            DropKind::Control => match self.bytes.first() {
+                Some(&b) if b < 0x20 => C0_NAMES[b as usize].to_string(),
+                _ => "DEL".to_string(),
+            },
+            DropKind::C1 => {
+                let code = String::from_utf8_lossy(&self.bytes).chars().next();
+                format!("C1 {:02X}", code.map_or(0, u32::from))
+            }
+            DropKind::Escape => format!("ESC {}", text(after(1))),
+            DropKind::Csi => format!("CSI {}", text(after(2))),
+            DropKind::Osc => {
+                let number = after(2).split(|&b| b == b';').next().unwrap_or_default();
+                format!("OSC {}", text(number))
+            }
+            DropKind::String => match self.bytes.get(1) {
+                Some(b'P') => "DCS",
+                Some(b'X') => "SOS",
+                Some(b'^') => "PM",
+                _ => "APC",
+            }
+            .to_string(),
+        }
+    }
+
+    /// Its group in `notify_unhandled`: by kind, but the harmless ones in `Shell`
+    pub fn group(&self) -> UnhandledGroup {
+        match self.kind {
+            _ if self.harmless() => UnhandledGroup::Shell,
+            DropKind::Control => UnhandledGroup::Controls,
+            DropKind::C1 => UnhandledGroup::C1,
+            DropKind::Escape => UnhandledGroup::Escape,
+            DropKind::Csi => UnhandledGroup::Csi,
+            DropKind::Osc => UnhandledGroup::Osc,
+            DropKind::String => UnhandledGroup::Strings,
+        }
+    }
+
+    /// What modern shells and programs send and a terminal may ignore without harm: the
+    /// current directory (OSC 7), hyperlinks (OSC 8), prompt marks (OSC 133), focus reports and
+    /// synchronized output turned on or off (`?1004`, `?2026`), cursor blinking (`?12`),
+    /// autowrap turned on (`?7h`: always on), the title saved and restored (`22 t`, `23 t`),
+    /// ASCII chosen as the character set (`ESC ( B`: already in use)
+    /// TODO: implement some of them
+    pub fn harmless(&self) -> bool {
+        let bytes = self.bytes.as_slice();
+        match self.kind {
+            DropKind::Osc => {
+                let number = bytes.get(2..).unwrap_or_default();
+                let number = number.split(|&b| b == b';').next().unwrap_or_default();
+                matches!(number, b"7" | b"8" | b"133")
+            }
+            DropKind::Csi => {
+                let title_stack = [&b"\x1b[22"[..], b"\x1b[23"].iter().any(|op| {
+                    bytes.strip_prefix(*op).is_some_and(|rest| {
+                        rest == b"t" || (rest.starts_with(b";") && rest.ends_with(b"t"))
+                    })
+                });
+                title_stack
+                    || matches!(
+                        bytes,
+                        b"\x1b[?1004h"
+                            | b"\x1b[?1004l"
+                            | b"\x1b[?2026h"
+                            | b"\x1b[?2026l"
+                            | b"\x1b[?12h"
+                            | b"\x1b[?12l"
+                            | b"\x1b[?7h"
+                    )
+            }
+            DropKind::Escape => bytes == b"\x1b(B",
+            _ => false,
+        }
+    }
 }
 
 impl ParserEvents {

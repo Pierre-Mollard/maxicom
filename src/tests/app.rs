@@ -5,7 +5,10 @@ use crate::{
     app::capture::tests::asking_app,
     app::search::SearchDirection,
     capture::{CaptureFormat, RecordingMeta},
-    configs::{KeyBindingsConfig, settings::DisabledMode},
+    configs::{
+        KeyBindingsConfig,
+        settings::{DisabledMode, UnhandledGroup},
+    },
     inputs::{DialogAction, SearchModeAction},
 };
 
@@ -1570,7 +1573,7 @@ fn command_line_set_encoding_search_screenshot() {
         "set mouse off; set timestamps on; set answer-queries 0",
     );
     assert!(!app.settings.ui.mouse && app.settings.show_timestamps);
-    assert!(!app.settings.terminal_mode.answer_queries);
+    assert!(app.settings.terminal_mode.answer_groups.is_empty());
     assert!(parse_fails(&mut app, "set line-wrap on"));
 
     // MAX-247: `mode` sets the mode, nothing when it is so already
@@ -2143,6 +2146,74 @@ fn queries_answered_in_terminal_mode_only() {
     assert!(app.take_query_answers().is_empty());
 }
 
+/// MAX-264: with groups in `notify_unhandled`, one notification counts what the emulator
+/// didn't handle in those groups, by kind, across reads while it's shown; none by default.
+/// How: NUL and an unknown CSI with no group, then all but `shell` over two reads, then
+/// `csi` alone (no NUL nor DEL counted)
+#[test]
+fn unhandled_bytes_notified() {
+    let mut app = app();
+    app.feed_rx(b"a\x00b\x1b[5W");
+    assert!(toasts(&app).is_empty());
+    let mut app = app_with_notify(&ALL_BUT_SHELL);
+    app.feed_rx(b"a\x00b\x1b[5W");
+    assert_eq!(toasts(&app), ["Unhandled: NUL, CSI 5W"]);
+    app.feed_rx(b"\x00\x00\x7f");
+    assert_eq!(toasts(&app), ["Unhandled: NUL ×3, CSI 5W, DEL"]);
+
+    let mut app = app_with_notify(&[UnhandledGroup::Csi]);
+    app.feed_rx(b"\x00\x7f\x1b[5W\x1bPq\x1b\\");
+    assert_eq!(toasts(&app), ["Unhandled: CSI 5W"]);
+}
+
+/// MAX-264: the harmless sequences of shells are only in `shell`: `osc` and `csi` leave them
+/// out, `shell` alone counts them.
+/// How: OSC 7 and `?2026h` with all but `shell`, then with `shell` alone
+#[test]
+fn unhandled_shell_group() {
+    let shell_bytes = b"\x1b]7;file://board/root\x07\x1b[?2026h";
+    let mut app = app_with_notify(&ALL_BUT_SHELL);
+    app.feed_rx(shell_bytes);
+    assert!(toasts(&app).is_empty());
+    let mut app = app_with_notify(&[UnhandledGroup::Shell]);
+    app.feed_rx(shell_bytes);
+    assert_eq!(toasts(&app), ["Unhandled: OSC 7, CSI ?2026h"]);
+}
+
+const ALL_BUT_SHELL: [UnhandledGroup; 6] = [
+    UnhandledGroup::Controls,
+    UnhandledGroup::C1,
+    UnhandledGroup::Escape,
+    UnhandledGroup::Csi,
+    UnhandledGroup::Osc,
+    UnhandledGroup::Strings,
+];
+
+/// An app with these groups in `notify_unhandled`
+fn app_with_notify(groups: &[UnhandledGroup]) -> App {
+    let mut app = app();
+    app.settings.terminal_mode.notify_unhandled = groups.to_vec();
+    app
+}
+
+/// MAX-264: past six kinds, the notification shows the six seen most and how many more.
+/// How: NUL three times, then seven other C0 controls once each; then seven kinds once
+#[test]
+fn unhandled_kinds_capped() {
+    let mut app = app_with_notify(&[UnhandledGroup::Controls]);
+    app.feed_rx(b"\x00\x00\x00\x01\x02\x03\x04\x06\x10\x11");
+    assert_eq!(
+        toasts(&app),
+        ["Unhandled: NUL ×3, SOH, STX, ETX, EOT, ACK, 2 more kinds"]
+    );
+    let mut app = app_with_notify(&[UnhandledGroup::Controls]);
+    app.feed_rx(b"\x00\x01\x02\x03\x04\x06\x10");
+    assert_eq!(
+        toasts(&app),
+        ["Unhandled: NUL, SOH, STX, ETX, EOT, ACK, 1 more kind"]
+    );
+}
+
 /// MAX-275: the device's OSC 52 copy goes to the loop only with `device_clipboard` on, its
 /// base64 as received, the last one kept; off, it's dropped, not kept for later.
 /// How: a copy with the setting off, then on, then two copies in one read
@@ -2181,21 +2252,34 @@ fn byte_trace_follows_the_setting() {
 }
 
 /// MAX-151: the settings apply to what is received after them: the popup toggle turns the
-/// answers off and on, and the answerback answers ENQ once set.
+/// answers off and on, giving back the groups it put aside (all when none were), and
+/// `enq_answer` answers ENQ once set.
+/// How: DSR with the switch off then on; a custom list switched off and on; an empty list
+/// switched on; then ENQ
 #[test]
 fn query_answers_follow_the_settings() {
     let mut app = app();
     app.settings.mode = Mode::Terminal;
     app.toggle_setting(SettingKey::AnswerQueries);
+    assert!(app.settings.terminal_mode.answer_groups.is_empty());
     app.feed_rx(DSR);
     assert!(app.take_query_answers().is_empty());
     app.toggle_setting(SettingKey::AnswerQueries);
     app.feed_rx(DSR);
     assert_eq!(app.take_query_answers(), DSR_READY);
 
+    let size = vec![QueryGroup::Size];
+    app.settings.terminal_mode.answer_groups = size.clone();
+    app.toggle_setting(SettingKey::AnswerQueries);
+    app.toggle_setting(SettingKey::AnswerQueries);
+    assert_eq!(app.settings.terminal_mode.answer_groups, size);
+    app.settings.terminal_mode.answer_groups = Vec::new();
+    app.toggle_setting(SettingKey::AnswerQueries);
+    assert_eq!(app.settings.terminal_mode.answer_groups, QueryGroup::ALL);
+
     app.feed_rx(b"\x05");
     assert!(app.take_query_answers().is_empty());
-    app.settings.terminal_mode.answerback = "board-42".to_string();
+    app.settings.terminal_mode.enq_answer = "board-42".to_string();
     app.feed_rx(b"\x05");
     assert_eq!(app.take_query_answers(), b"board-42");
 }

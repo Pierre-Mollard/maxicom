@@ -2,9 +2,9 @@
 //!
 //! A program on the remote can't see the terminal: it writes a query (an escape sequence) to
 //! its tty and reads the reply, as if the user had typed it. With no reply it waits for a
-//! timeout, then guesses. `[terminal_mode] answer_queries` turns the answers off, and
-//! `answer_groups` keeps the groups below. vt100 answers none of them (it only draws the screen): they all come
-//! here through its `unhandled_*` callbacks. Notation: `CSI` = `ESC [`, `OSC` = `ESC ]`,
+//! timeout, then guesses. `[terminal_mode] answer_groups` lists the groups below that are
+//! answered, none when empty. vt100 answers none of them (it only draws the screen): they all
+//! come here through its `unhandled_*` callbacks. Notation: `CSI` = `ESC [`, `OSC` = `ESC ]`,
 //! `DCS` = `ESC P`, `ST` = `ESC \`. Rows and columns are 1-based, counted from the top left.
 //!
 //! Status (group `status`)
@@ -29,7 +29,7 @@
 //! * DECREQTPARM `CSI x`, "your line settings?": `CSI 2 ; 1 ; 1 ; 112 ; 112 ; 1 ; 0 x` = no
 //!   parity, 8 bits, 9600 baud. `CSI 1 x` gets `3` first instead of `2` (reports only when
 //!   asked). Only very old VT100 apps
-//! * ENQ (byte `0x05`), "answerback": the `answerback` string, none by default since `0x05`
+//! * ENQ (byte `0x05`), "answerback": the `enq_answer` string, none by default since `0x05`
 //!   also shows up in binary data
 //!
 //! Size (group `size`), from the emulator (where lines wrap), not the window
@@ -113,19 +113,16 @@ pub enum Answer {
     Answerback,
 }
 
-/// The bytes to send for `answers`: none when `answer_queries` is off, else the replies of the
-/// groups in `answer_groups`, and the answerback (group `identity`) when it isn't empty
+/// The bytes to send for `answers`: the replies of the groups in `answer_groups` (none when
+/// empty), and `enq_answer` (group `identity`) when it isn't empty
 pub fn answer_bytes(answers: Vec<Answer>, config: &TerminalModeConfig) -> Vec<u8> {
-    if !config.answer_queries {
-        return Vec::new();
-    }
     let groups = &config.answer_groups;
     let mut bytes = Vec::new();
     for answer in answers {
         match answer {
             Answer::Reply(group, reply) if groups.contains(&group) => bytes.extend(reply),
             Answer::Answerback if groups.contains(&QueryGroup::Identity) => {
-                bytes.extend(config.answerback.as_bytes());
+                bytes.extend(config.enq_answer.as_bytes());
             }
             _ => {}
         }

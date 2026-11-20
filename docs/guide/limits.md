@@ -17,8 +17,8 @@ The one exception is answering the questions a program on the device asks
 its terminal, like "where is the cursor?" or "what size are you?". A program
 can't see its terminal, so it writes a query and waits for the reply: that's
 how `resize` learns the size. maxicom answers these queries by default
-(`answer_queries = true` in `[terminal_mode]`, with every group in
-`answer_groups`), only live and only in terminal mode.
+(every group in `answer_groups`, in `[terminal_mode]`), only live and only in
+terminal mode.
 
 A program can also ask to be told the size each time it changes, and maxicom
 then sends it on every resize: see
