@@ -795,10 +795,6 @@ pub struct TerminalModeConfig {
     /// panel (MAX-256): about 256 B per `history_size` row at most, and some time on a fast link
     /// (TCP, a replay). Off: nothing recorded, the memory given back
     pub byte_trace: bool,
-    /// Send the zero-width chars a cell holds (emoji joiners and selectors, soft hyphens) to
-    /// the host terminal as received: only right when the host counts them as vt100 does,
-    /// else the screen drawn drifts (MAX-270). Copy and search always have them
-    pub draw_zero_width: bool,
 }
 
 impl Default for TerminalModeConfig {
@@ -815,7 +811,6 @@ impl Default for TerminalModeConfig {
             answerback: String::new(),
             backspace: BackspaceByte::default(),
             byte_trace: true,
-            draw_zero_width: false,
         }
     }
 }
@@ -1001,6 +996,15 @@ pub struct UiConfig {
     /// A notification after each copy, saying what was copied (MAX-269); off, only a clipboard
     /// error shows
     pub notify_copy: bool,
+    /// Send the zero-width chars a cell holds (emoji joiners and selectors, soft hyphens) to
+    /// the host terminal as received: only right when the host counts them as vt100 does,
+    /// else the screen drawn drifts (MAX-270). Copy and search always have them
+    pub draw_zero_width: bool,
+    /// Send the chars hosts may draw at another width (`unsure_width`) as received, instead
+    /// of a marker: only right when the host counts them as ratatui does, else the rest of the
+    /// row drifts and pieces of earlier lines stay on screen (MAX-271). Copy and search always
+    /// have them
+    pub draw_unsure_width: bool,
     /// Each part hides on a screen narrower or shorter than its `[cols, rows]`, a `0` side
     /// never (MAX-181): the borders first, the status bar last, as minicom always shows its own
     pub hide_borders_below: [u16; 2],
@@ -1042,6 +1046,8 @@ impl Default for UiConfig {
             middle_click_paste: true,
             transfer_row: true,
             notify_copy: true,
+            draw_zero_width: false,
+            draw_unsure_width: false,
             hide_borders_below: [60, 16],
             hide_scrollbar_below: [40, 10],
             hide_status_bar_below: [35, 6],

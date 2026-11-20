@@ -189,4 +189,7 @@ box, so a shell on the device wraps where line mode does. See
 ## See also
 
 How received newlines and the text encoding are handled, in both modes:
-[Encoding and newlines](encoding-and-newlines.md).
+[Encoding and newlines](encoding-and-newlines.md). The characters drawn
+differently than received, like a dimmed `▯` for one terminals don't agree on
+the width of, in both modes too:
+[Characters drawn differently](drawn-characters.md).

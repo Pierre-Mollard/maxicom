@@ -297,6 +297,9 @@ pub enum UpdateEffect {
     },
     ToggleAttach,
     ReloadConfig,
+    /// The host terminal cleared and every cell written again: what it shows drifted from
+    /// what maxicom drew (MAX-271)
+    Redraw,
     /// The profile stack for the loop to lay at once, `profile load` / `unload`'s (MAX-240)
     LayProfiles(Vec<String>),
     Quit,
@@ -1974,6 +1977,7 @@ impl App {
             AppAction::ToggleAttach if self.replaced_link().is_some() => UpdateEffect::StopReplay,
             AppAction::ToggleAttach => UpdateEffect::ToggleAttach,
             AppAction::ReloadConfig => UpdateEffect::ReloadConfig,
+            AppAction::Redraw => UpdateEffect::Redraw,
             AppAction::SideView(action) => self.update_side_view(action),
             AppAction::ResizeSidePanel(by) => {
                 self.resize_side_panel(by);

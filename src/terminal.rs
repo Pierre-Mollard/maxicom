@@ -1,5 +1,5 @@
 /// Terminal widget drawing a vt100 screen, custom from tui-term (which pins vt100 0.16, #29)
-use std::{borrow::Cow, num::NonZeroU16};
+use std::num::NonZeroU16;
 
 use ratatui::{
     buffer::{Buffer, Cell},
@@ -11,6 +11,7 @@ use ratatui::{
 use crate::app::term_answers::{
     Answer, SIZE_REPORTS, answer_control, answer_csi, answer_escape, size_report,
 };
+use crate::glyphs::{UNSURE_MARKER, drawn, invalid_bytes, unsure_width::is_unsure};
 
 /// What the parser reports besides the screen. `evicted` counts the main screen rows vt100 drops
 /// from the top of scrollback (`on_scroll` is only called for those, not for rows entering it):
@@ -129,6 +130,7 @@ pub struct MaxicomTerminal<'a> {
     outside_filling_style: Style,
     focused: bool,
     zero_width: bool,
+    unsure_width: bool,
 }
 
 impl<'a> MaxicomTerminal<'a> {
@@ -146,6 +148,7 @@ impl<'a> MaxicomTerminal<'a> {
             outside_filling_style: Style::default().fg(Color::DarkGray),
             focused: true,
             zero_width: false,
+            unsure_width: false,
         }
     }
 
@@ -209,6 +212,14 @@ impl<'a> MaxicomTerminal<'a> {
         self
     }
 
+    /// Write the chars hosts may draw at another width as received, not as `UNSURE_MARKER`
+    /// (MAX-271)
+    #[inline]
+    pub const fn unsure_width(mut self, unsure_width: bool) -> Self {
+        self.unsure_width = unsure_width;
+        self
+    }
+
     #[inline]
     #[must_use]
     pub const fn screen(&self) -> &vt100::Screen {
@@ -267,7 +278,11 @@ fn handle(term: &MaxicomTerminal, area: Rect, buf: &mut Buffer) {
             let source_row = row.saturating_add(term.y_offset);
             let cell = &mut buf[(buf_col, buf_row)];
             if let Some(screen_cell) = screen.cell(source_row, source_col) {
-                fill_buf_cell(screen_cell, cell, term.zero_width);
+                fill_buf_cell(screen_cell, cell, term.zero_width, term.unsure_width);
+                // a wide char in the area's last column would spill over its right border
+                if screen_cell.is_wide() && buf_col + 1 >= area_cols {
+                    cell.set_symbol(" ");
+                }
 
                 // Prevent loosing fg or bg if existing from the real data CSI
                 if let Some(base_style) = term.style {
@@ -337,19 +352,26 @@ fn visible_cursor_position(screen: &vt100::Screen) -> (u16, u16) {
 
 /// Copies a vt100 cell (contents, colors, modifiers) into a ratatui cell. An empty vt100 cell
 /// keeps the symbol already in the buffer, its style is always replaced. A stand-in for
-/// invalid bytes is drawn `�` (MAX-249), the cell's zero-width chars as `drawn` keeps them,
-/// all of them with `zero_width`
-fn fill_buf_cell(screen_cell: &vt100::Cell, buf_cell: &mut Cell, zero_width: bool) {
+/// invalid bytes is drawn `�` (MAX-249), a first char of unsure width as `UNSURE_MARKER`
+/// unless `unsure_width`, the chars after it as `drawn` keeps them
+fn fill_buf_cell(
+    screen_cell: &vt100::Cell,
+    buf_cell: &mut Cell,
+    zero_width: bool,
+    unsure_width: bool,
+) {
+    let mut modifier = Modifier::empty();
     if screen_cell.has_contents() {
-        let shown = crate::invalid_bytes::shown(screen_cell.contents());
-        if zero_width {
-            buf_cell.set_symbol(&shown);
+        let shown = invalid_bytes::shown(screen_cell.contents());
+        let first_unsure = shown.chars().next().is_some_and(is_unsure);
+        if first_unsure && !unsure_width {
+            buf_cell.set_symbol(UNSURE_MARKER);
+            modifier |= Modifier::DIM;
         } else {
-            buf_cell.set_symbol(&drawn(&shown));
+            buf_cell.set_symbol(&drawn(&shown, zero_width, unsure_width));
         }
     }
 
-    let mut modifier = Modifier::empty();
     if screen_cell.bold() {
         modifier |= Modifier::BOLD;
     }
@@ -370,43 +392,6 @@ fn fill_buf_cell(screen_cell: &vt100::Cell, buf_cell: &mut Cell, zero_width: boo
     let bg = map_color(screen_cell.bgcolor());
 
     buf_cell.set_style(Style::reset().fg(fg).bg(bg).add_modifier(modifier));
-}
-
-/// A cell's text as written to the host terminal: its first char and the marks combined with
-/// it, without the invisible ones vt100 keeps in the cell (soft hyphen, zero-width space and
-/// joiner, direction marks, variation selectors...). Hosts give those their own column or join
-/// chars around them, each its own way, and the screen drawn drifts from vt100's cells; copy and
-/// search still read them (MAX-270)
-fn drawn(text: &str) -> Cow<'_, str> {
-    let mut rest = text.chars();
-    let Some(first) = rest.next() else {
-        return Cow::Borrowed(text);
-    };
-    if !rest.clone().any(is_invisible) {
-        return Cow::Borrowed(text);
-    }
-    let kept = rest.filter(|&c| !is_invisible(c));
-    Cow::Owned(std::iter::once(first).chain(kept).collect())
-}
-
-/// Unicode's default ignorable code points that have no width, the Hangul fillers left out
-fn is_invisible(c: char) -> bool {
-    matches!(
-        c,
-        '\u{AD}'
-            | '\u{34F}'
-            | '\u{61C}'
-            | '\u{17B4}'..='\u{17B5}'
-            | '\u{180B}'..='\u{180F}'
-            | '\u{200B}'..='\u{200F}'
-            | '\u{202A}'..='\u{202E}'
-            | '\u{2060}'..='\u{206F}'
-            | '\u{FE00}'..='\u{FE0F}'
-            | '\u{FEFF}'
-            | '\u{1BCA0}'..='\u{1BCA3}'
-            | '\u{1D173}'..='\u{1D17A}'
-            | '\u{E0000}'..='\u{E0FFF}'
-    )
 }
 
 fn map_color(color: vt100::Color) -> Color {

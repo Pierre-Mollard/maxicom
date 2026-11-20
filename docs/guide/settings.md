@@ -288,7 +288,6 @@ See [Terminal mode](terminal-mode.md).
 | `answer_groups` | `["status", "identity", "size", "modes"]` | Which queries |
 | `answerback` | `""` | Sent back on ENQ, nothing when empty |
 | `backspace` | `"del"` | What the Backspace key sends: `del` (`7f`) or `bs` (`08`), see [Backspace](terminal-mode.md#backspace) |
-| `draw_zero_width` | `false` | Send the invisible characters a cell holds (emoji joiners and selectors, soft hyphens) to your terminal, see [Invisible characters](terminal-mode.md#invisible-characters) |
 | `byte_trace` | `true` | Record which received bytes drew which cells, to connect the screen and the raw side panel, see [The byte trace](raw-side-panel.md#the-byte-trace). Takes up to 256 bytes per `history_size` row (about 25 MB by default) and a little time on a fast link (TCP, a replay); `false` records nothing and gives the memory back |
 
 ### `[link]`
@@ -334,6 +333,8 @@ Where `download` puts what it receives. See
 | `focus_effects` | `true` | The gray border and cursor while the window isn't focused, see [Cursor](terminal-mode.md#cursor) |
 | `transfer_row` | `true` | The progress row while a file is sent, see [The progress row](file-transfers.md#the-progress-row) |
 | `notify_copy` | `true` | A notification after each copy, see [Where the copy goes](copy-mode-and-mouse.md#where-the-copy-goes) |
+| `draw_zero_width` | `false` | Send invisible characters (emoji joiners and selectors, soft hyphens) to your terminal, see [Invisible characters](drawn-characters.md#invisible-characters) |
+| `draw_unsure_width` | `false` | Send the characters terminals disagree on the width of to your terminal, not as `▯`, see [Characters of uncertain width](drawn-characters.md#characters-of-uncertain-width) |
 | `hide_borders_below` | `[60, 16]` | See below |
 | `hide_scrollbar_below` | `[40, 10]` | See below |
 | `hide_status_bar_below` | `[35, 6]` | See below |

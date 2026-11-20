@@ -129,6 +129,14 @@ selecting, which works in most terminals.
 The window is smaller than `hide_borders_below` or `hide_status_bar_below`.
 See [Small windows](settings.md#small-windows).
 
+### Leftover characters on the screen
+
+Pieces of old lines stay after a scroll, characters land on the borders, or a
+row is shifted, most often after binary data. Press `Ctrl-a R` to draw the
+whole screen again. Some characters are counted at different widths by your
+terminal and maxicom, see
+[Characters drawn differently](drawn-characters.md).
+
 ### Lines or glyphs drawn wrong on Windows
 
 Use Windows Terminal.

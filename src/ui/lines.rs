@@ -28,6 +28,7 @@ use crate::{
         KeywordHighlight, LineDisplayMode, Mode, SettingsConfig, ThemeConfig, WrapMode,
         settings::{BORDER_PARTIAL, BORDER_WRAP, PrefixWrapBehavior},
     },
+    glyphs::drawn_rows,
     ui::{
         PostRenderEffect,
         common::{
@@ -855,6 +856,8 @@ pub fn render_monitor(
     let last_row = (first_row + content_height).min(visible_rows.len());
     visible_rows.truncate(last_row);
     visible_rows.drain(..first_row);
+    let ui = &app.settings().ui;
+    let visible_rows = drawn_rows(visible_rows, ui.draw_zero_width, ui.draw_unsure_width);
     let history_paragraph = Paragraph::new(visible_rows)
         .style(*theme.line_mode.history)
         .scroll((0, line_x_offset.min(u16::MAX as usize) as u16));

@@ -15,7 +15,7 @@ use crate::{
     },
     clock,
     configs::{KeywordHighlight, Mode, ThemeConfig},
-    invalid_bytes::{shown, shown_string},
+    glyphs::invalid_bytes::{shown, shown_string},
     terminal::{MaxicomCursor, MaxicomTerminal, vt100_size},
     ui::{
         common::{draw_scrollbar_marks, keyword_matches, render_search_bar, scrollbar},
@@ -194,7 +194,8 @@ pub fn render_vt100_terminal(
         .style(*theme.terminal.term_inside)
         .filling_char(&app.settings().terminal_mode.empty_fill_char)
         .filling_char_style(*theme.terminal.term_outside)
-        .zero_width(app.settings().terminal_mode.draw_zero_width);
+        .zero_width(app.settings().ui.draw_zero_width)
+        .unsure_width(app.settings().ui.draw_unsure_width);
 
     frame.render_widget(term_widget, content_area);
     let pan = (

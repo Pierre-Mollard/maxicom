@@ -90,6 +90,7 @@ pub enum KeyBindingAction {
     PlotFreeze,
     PlotNext,
     PlotPrev,
+    Redraw,
     /// A command of the registry run without arguments (MAX-239)
     Command(&'static CommandSpec),
 }
@@ -1275,6 +1276,8 @@ impl Default for KeyBindingsConfig {
             "s"     => KeyBindingAction::Settings,
             "l"     => KeyBindingAction::Record,
             "r"     => KeyBindingAction::ReloadConfig,
+            "R"     => KeyBindingAction::Redraw,
+            "ctrl-l" => KeyBindingAction::Redraw,
             "W"     => KeyBindingAction::ResizeDialog,
             "E"     => KeyBindingAction::AutoResizeEmulator,
             "p"     => KeyBindingAction::LinkSettings,

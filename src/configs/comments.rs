@@ -55,10 +55,6 @@ pub const CONFIG_COMMENTS: &[(&str, &str)] = &[
         "terminal_mode.byte_trace",
         "connects the screen and the raw side panel; false: no memory or time spent",
     ),
-    (
-        "terminal_mode.draw_zero_width",
-        "true: emoji joiners and selectors sent to your terminal, if it counts them as maxicom",
-    ),
     ("capture", guide!("capture.html#settings")),
     ("sessions", guide!("capture.html#settings")),
     ("sessions.keep", "0: no limit"),
@@ -84,6 +80,14 @@ pub const CONFIG_COMMENTS: &[(&str, &str)] = &[
     ("link.dtr", "values: keep, on, off"),
     ("link.rts", "values: keep, on, off"),
     ("ui", guide!("settings.html#ui")),
+    (
+        "ui.draw_zero_width",
+        "true: emoji joiners and selectors sent to your terminal, if it counts them as maxicom",
+    ),
+    (
+        "ui.draw_unsure_width",
+        "true: chars terminals disagree on sent as received, not as ▯, if yours counts them as maxicom",
+    ),
     ("ui.hide_borders_below", "[cols, rows], 0 turns a side off"),
     (
         "ui.hide_scrollbar_below",

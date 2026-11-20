@@ -27,11 +27,11 @@ use crate::{
         LineDisplayMode, SettingsConfig, TerminalDimensionMode, TextEncoding,
         settings::{BackspaceByte, RawSideView},
     },
+    glyphs::invalid_bytes::{self, InvalidBytes, shown_string},
     inputs::{
         CopyModeAction, SideViewAction, TerminalAction, ViPending,
         local_dispatchers::dispatch_copy_key_vi,
     },
-    invalid_bytes::{self, InvalidBytes, shown_string},
     overlays::MarkRow,
     raw_side::terminal::{
         Cell, Dump, DumpCopy, DumpResult, Write,

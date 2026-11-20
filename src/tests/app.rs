@@ -1710,6 +1710,19 @@ fn reload_action_gives_the_effect() {
     assert!(matches!(effect, UpdateEffect::ReloadConfig));
 }
 
+/// MAX-271: the redraw action asks `main` to clear the host terminal; `redraw` names it.
+/// How: the action's effect, the name parsed as a keymap action
+#[test]
+fn redraw_action_gives_the_effect() {
+    let mut app = app();
+    let effect = app.update(Action::App(AppAction::Redraw));
+    assert!(matches!(effect, UpdateEffect::Redraw));
+    assert_eq!(
+        "redraw".parse::<KeyBindingAction>(),
+        Ok(KeyBindingAction::Redraw)
+    );
+}
+
 /// A reload takes the file's settings over the session toggles, the new keymap, and the
 /// new timestamp format's width; the view is laid out again and the prefix dropped.
 #[test]

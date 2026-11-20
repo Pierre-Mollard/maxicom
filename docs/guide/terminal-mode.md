@@ -114,25 +114,13 @@ devices only erase on BS (`08`), minicom's default: the character stays and
 `O` in the settings popup to switch it for this session. Ctrl-h sends BS
 either way, and Alt-Backspace sends ESC before the same byte.
 
-## Invisible characters
+## Characters drawn differently
 
-Some characters take no room on the screen: the soft hyphen (a place a word
-may be cut), the zero-width space, the joiner that makes one emoji out of
-several (👨 + joiner + 👩), and the selector that asks for an emoji's
-colored form (❤ + selector). maxicom keeps them with the character before
-them, and terminals don't agree on how many columns they take: one draws the
-soft hyphen in a column of its own, another makes a single two-column emoji
-out of a joined one. The rest of the row then lands one or two columns away
-from where maxicom put it, and characters stay on the screen after a clear.
-
-So maxicom doesn't send them to your terminal: an emoji with a selector shows
-in its plain form followed by a blank column, a joined emoji as its parts side
-by side, a soft hyphen not at all. Every row keeps its columns. Copy, search,
-highlights and the raw side panel still have them, as received.
-
-If your terminal counts them as maxicom does, set `draw_zero_width = true` in
-`[terminal_mode]` to see the emoji as sent. A row that shifts, or a character
-left behind after a clear, means it doesn't: turn it back off.
+A few kinds of characters are drawn differently than received, so that every
+row keeps its columns: invisible ones aren't sent to your terminal, and the
+ones terminals don't agree on the width of show as a dimmed `▯`. Copy and
+search still have them. [Characters drawn differently](drawn-characters.md)
+lists them, with the settings that draw them as received.
 
 ## Answering the device's queries
 

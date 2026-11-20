@@ -21,6 +21,7 @@
 - [Line mode](line-mode.md)
 - [Terminal mode](terminal-mode.md)
 - [Encoding and newlines](encoding-and-newlines.md)
+- [Characters drawn differently](drawn-characters.md)
 - [Copy mode and mouse](copy-mode-and-mouse.md)
 - [Search](search.md)
 - [Marks](marks.md)

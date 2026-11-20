@@ -1,0 +1,9 @@
+[package]
+name = "widths"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# keep the same version as maxicom's Cargo.lock: the table lists where it disagrees
+[dependencies]
+unicode-width = "=0.2.3"

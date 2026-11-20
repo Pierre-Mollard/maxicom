@@ -246,6 +246,7 @@ your own.
 | `Ctrl-a N` | `dismiss-notifications` | Close all the notifications |
 | `Ctrl-a O` | `toggle-text-encoding` | Cycle the text encoding |
 | `Ctrl-a P` | `profiles` | Open the profiles |
+| `Ctrl-a R`, `Ctrl-a Ctrl-l` | `redraw` | Draw the whole screen again, to clear leftovers |
 | `Ctrl-a T` | `triggers` | Open the triggers |
 | `Ctrl-a U` | `u-boot-toggle` | A named command: arm / disarm the `u-boot` trigger |
 | `Ctrl-a W` | `resize-dialog` | Set the terminal size |
@@ -430,6 +431,7 @@ command: see [Actions and commands](#actions-and-commands).
 | `exit-prefix` | Leave the prefix | — |
 | `toggle-attach` | Detach / attach the link | `Ctrl-a D` |
 | `reload-config` | Reload the config files | `Ctrl-a r` |
+| `redraw` | Draw the whole screen again, to clear leftovers | `Ctrl-a R`, `Ctrl-a Ctrl-l` |
 | `toggle-mouse` | Toggle mouse support | `Ctrl-a M` |
 | `command-line` | Open the command line | `Ctrl-a :` |
 | `cancel` | Stop the file transfer and queued commands | — |

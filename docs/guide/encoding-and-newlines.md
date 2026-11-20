@@ -53,6 +53,9 @@ In terminal mode, a character still incomplete at the end of what has
 arrived waits for the next byte, which says whether it is complete or
 broken.
 
+[Characters drawn differently](drawn-characters.md) lists the other
+characters the screen doesn't show as received.
+
 ## Received newlines
 
 Devices don't all end their lines the same way. A line break is normally

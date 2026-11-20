@@ -96,6 +96,28 @@ These scripts make a fake device with `socat`, and say how to open it.
   cargo run --bin maxicom -- --device tcp://127.0.0.1:4000
   ```
 
+## Generated character widths
+
+`src/glyphs/unsure_width.rs` is generated, never edited by hand. It lists the
+characters a host terminal may draw wider or narrower than ratatui counts
+them, which maxicom draws as a marker so the screen doesn't drift
+(`draw_unsure_width`). A Rust tool of its own writes it from the Unicode data
+files:
+
+```bash
+tools/widths/fetch.sh    # Unicode data files into target/ucd
+cargo run --release --manifest-path tools/widths/Cargo.toml --target-dir target/widths
+cargo run --release --manifest-path tools/widths/Cargo.toml --target-dir target/widths -- --list | less
+```
+
+The last command prints every character the table holds, with its name and
+why. Run the generator again when `unicode-width` changes in `Cargo.lock`
+(after a ratatui or vt100 update) or a new Unicode version comes out: see
+[tools/widths](tools/widths/README.md) for what to change and how the table is
+built.
+
+The tool itself was AI generated and not reviewed.
+
 ## Profiling
 
 A flame chart with [samply](https://github.com/mstange/samply):

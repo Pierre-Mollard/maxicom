@@ -333,6 +333,11 @@ pub static COMMANDS: &[CommandSpec] = {
         CommandSpec::action("exit-prefix", A::ExitPrefix, "Leave the prefix"),
         CommandSpec::action("toggle-attach", A::ToggleAttach, "Detach / attach the link"),
         CommandSpec::action("reload-config", A::ReloadConfig, "Reload the config files"),
+        CommandSpec::action(
+            "redraw",
+            A::Redraw,
+            "Draw the whole screen again, to clear leftovers",
+        ),
         CommandSpec::action("toggle-mouse", A::ToggleMouse, "Toggle mouse support"),
         CommandSpec::action("command-line", A::CommandLine, "Open the command line"),
         CommandSpec::action(

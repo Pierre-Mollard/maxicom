@@ -11631,6 +11631,48 @@ fn line_mode_ascii_keeps_colors() {
     );
 }
 
+/// MAX-271: line mode draws a char of unsure width as the dimmed marker padded to its width, so
+/// the rest of the row stays in the columns the layout counted; invisible chars aren't drawn.
+/// How: a 1 → 2 char, a wide 2 → 1 char, a zero-width space, on one line
+#[test]
+fn line_mode_draws_unsure_chars_as_marker() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 40, 6);
+    h.feed("a\u{3248}b \u{2630}c x\u{200B}y\r\n".as_bytes());
+    let rows = h.draw();
+    assert!(shows(&rows, "a\u{25AF}b \u{25AF} c xy"), "{rows:#?}");
+    let (x, y) = cell_of(&rows, "a\u{25AF}");
+    let buffer = h.terminal.backend().buffer();
+    assert!(
+        buffer[(x + 1, y)]
+            .modifier
+            .contains(ratatui::style::Modifier::DIM)
+    );
+    assert!(
+        !buffer[(x, y)]
+            .modifier
+            .contains(ratatui::style::Modifier::DIM)
+    );
+}
+
+/// MAX-271: `draw_unsure_width` and `draw_zero_width` draw line mode's text as received.
+/// How: the same line with both settings on
+#[test]
+fn line_mode_draws_unsure_chars_when_asked() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 40, 6);
+    h.app.settings_mut().ui.draw_unsure_width = true;
+    h.app.settings_mut().ui.draw_zero_width = true;
+    h.feed("a\u{3248}b x\u{200B}y\r\n".as_bytes());
+    let rows = h.draw();
+    assert!(shows(&rows, "a\u{3248}b"), "{rows:#?}");
+    let (x, y) = cell_of(&rows, "a\u{3248}");
+    let buffer = h.terminal.backend().buffer();
+    assert!(
+        !buffer[(x + 1, y)]
+            .modifier
+            .contains(ratatui::style::Modifier::DIM)
+    );
+}
+
 /// MAX-270 step 0: a combining mark draws in its base char's cell and a wide char takes two
 /// cells; the zero-width fix (step 1) must keep both.
 /// How: "e" + combining acute, a wide char, "x"

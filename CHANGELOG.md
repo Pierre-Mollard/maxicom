@@ -13,8 +13,9 @@ you says so in an "Upgrading" section.
 Run [`maxicom --write-config`](https://pierre-mollard.github.io/maxicom/settings.html#updating-the-files)
 to get the new keys that scroll the raw side panel in your `keymap.toml`:
 `Ctrl-a Shift-Up` / `Ctrl-a Shift-Down` and `Ctrl-a Shift-PageUp` /
-`Ctrl-a Shift-PageDown`. It also swaps `Ctrl-a <` and `Ctrl-a >`, now grow and
-shrink: a `keymap.toml` written before keeps them the old way round.
+`Ctrl-a Shift-PageDown`, and the redraw keys `Ctrl-a R` / `Ctrl-a Ctrl-l`. It
+also swaps `Ctrl-a <` and `Ctrl-a >`, now grow and shrink: a `keymap.toml`
+written before keeps them the old way round.
 
 In `theme.toml`, `[raw_inspector]` drops `byte_sync` and `byte_ones`, and
 `byte_other` is now `byte_control`: maxicom warns about these keys until you
@@ -22,6 +23,8 @@ remove or rename them. `byte_text` and `byte_invalid` are new.
 
 ### Added
 
+- `Ctrl-a R` and `Ctrl-a Ctrl-l` (the `redraw` command) clear your terminal
+  and draw the whole screen again, for leftovers your terminal kept.
 - `disabled_mode = "line" | "terminal"` in `config.toml` turns a mode off:
   switching to it only warns, and it receives nothing. `"none"` by default.
 - `notify_copy = false` in `[ui]` turns off the notification after each copy;
@@ -110,8 +113,18 @@ remove or rename them. `byte_text` and `byte_invalid` are new.
   stray characters on the screen: maxicom doesn't send them to your terminal,
   which placed them its own way. Copy and search still have them. An emoji
   with a selector shows in its plain form, a joined emoji as its parts;
-  `draw_zero_width = true` in `[terminal_mode]` sends them as before, for a
-  terminal that counts them as maxicom does.
+  `draw_zero_width = true` in `[ui]` sends them as before, for a terminal
+  that counts them as maxicom does. Line mode doesn't send them either now.
+- Characters that terminals count at different widths no longer shift the
+  rest of their row or leave pieces of earlier lines after a scroll (a `cat`
+  of a binary file did it), in both modes: they show as a dimmed `▯`, a wide
+  one followed by a blank. Copy and search still have them.
+  `draw_unsure_width = true` in `[ui]` draws them as received, for a terminal
+  that counts them as maxicom does. A new guide page,
+  [Characters drawn differently](https://pierre-mollard.github.io/maxicom/drawn-characters.html),
+  lists what is drawn differently and why.
+- In terminal mode, a wide character panned into the view's last column shows
+  as a blank: it spilled over the right border.
 - In terminal mode, a `�` the device sends shows: it disappeared, so a `�`
   pasted to a shell never showed in its echo.
 - The line still coming in is decoded with the `encoding` setting, as the

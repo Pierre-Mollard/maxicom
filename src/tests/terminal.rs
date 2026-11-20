@@ -169,14 +169,36 @@ fn invisible_chars_are_not_drawn() {
 /// The first `n` cells' symbols of `text` drawn on a 1x10 screen, zero-width chars written
 /// or not
 fn zero_width_symbols(text: &str, n: u16, zero_width: bool) -> Vec<String> {
+    drawn_cells(text, 10, zero_width, false)
+        .into_iter()
+        .take(n.into())
+        .map(|(symbol, _)| symbol)
+        .collect()
+}
+
+/// Each cell's symbol and whether it's dimmed, `text` drawn on a 1x10 screen into an area
+/// `width` cells wide
+fn drawn_cells(
+    text: &str,
+    width: u16,
+    zero_width: bool,
+    unsure_width: bool,
+) -> Vec<(String, bool)> {
     let mut parser = vt100::Parser::new(vt100_dim(1), vt100_dim(10), 0);
     parser.process(text.as_bytes());
-    let area = Rect::new(0, 0, 10, 1);
+    let area = Rect::new(0, 0, width, 1);
     let mut buf = Buffer::empty(area);
     MaxicomTerminal::new(parser.screen())
         .zero_width(zero_width)
+        .unsure_width(unsure_width)
         .render(area, &mut buf);
-    (0..n).map(|x| buf[(x, 0)].symbol().to_string()).collect()
+    (0..width)
+        .map(|x| {
+            let cell = &buf[(x, 0)];
+            let dim = cell.style().add_modifier.contains(Modifier::DIM);
+            (cell.symbol().to_string(), dim)
+        })
+        .collect()
 }
 
 /// MAX-270: `draw_zero_width` writes each cell as vt100 holds it, joiners and selectors in.
@@ -195,13 +217,78 @@ fn zero_width_chars_drawn_when_asked() {
     );
 }
 
-/// MAX-270: `drawn` borrows a cell without invisible chars, and keeps a cell's first char
-/// whatever it is.
-/// How: plain, combining, invisible only after the first, an invisible first char
+/// MAX-271: the chars every width table agrees on are drawn as received: accents, combining
+/// marks, Greek, box drawing, symbols, and the wide CJK and emoji over two cells.
+/// How: each case on a 1x10 screen, the first cells' symbols
 #[test]
-fn drawn_keeps_the_first_char() {
-    assert!(matches!(drawn("a"), Cow::Borrowed("a")));
-    assert!(matches!(drawn("e\u{301}"), Cow::Borrowed(_)));
-    assert_eq!(drawn("a\u{FE0F}\u{301}\u{200D}"), "a\u{301}");
-    assert_eq!(drawn("\u{200B}"), "\u{200B}");
+fn common_chars_drawn_as_received() {
+    let symbols = |text: &str, n: u16| zero_width_symbols(text, n, false);
+    assert_eq!(symbols("é\u{3b1}─°", 4), ["é", "\u{3b1}", "─", "°"]);
+    assert_eq!(symbols("e\u{301}\u{20AC}", 2), ["e\u{301}", "\u{20AC}"]);
+    assert_eq!(
+        symbols("\u{4E2D}a\u{1F600}", 5),
+        ["\u{4E2D}", " ", "a", "\u{1F600}", " "]
+    );
+}
+
+/// MAX-271: a cell starting with a char hosts may draw at another width is drawn as the dimmed
+/// marker, one column, a wide one keeping a space in its second column; the rest of the row
+/// stays where vt100 put it.
+/// How: 1 → 2 (U+3248), 2 → 1 (U+2630, wide), 1 → 0 (U+FFF9), each between letters
+#[test]
+fn unsure_chars_drawn_as_marker() {
+    let cells = |text| drawn_cells(text, 10, false, false);
+    let marker = (UNSURE_MARKER.to_string(), true);
+    let plain = |s: &str| (s.to_string(), false);
+    assert_eq!(
+        cells("a\u{3248}b")[..3],
+        [plain("a"), marker.clone(), plain("b")]
+    );
+    assert_eq!(
+        cells("a\u{2630}b")[..4],
+        [plain("a"), marker.clone(), plain(" "), plain("b")]
+    );
+    assert_eq!(cells("a\u{FFF9}b")[..3], [plain("a"), marker, plain("b")]);
+}
+
+/// MAX-271: a zero-width char of unsure width joined to a cell is dropped from what's written,
+/// the cell's own char kept, like an invisible char.
+/// How: `a` with U+0605 (host gives it a column) then `b`
+#[test]
+fn unsure_marks_are_not_drawn() {
+    let symbols: Vec<String> = drawn_cells("a\u{605}b", 10, false, false)
+        .into_iter()
+        .map(|(symbol, _)| symbol)
+        .collect();
+    assert_eq!(symbols[..2], ["a", "b"]);
+}
+
+/// MAX-271: `draw_unsure_width` writes the cells as vt100 holds them, no marker.
+/// How: the 1 → 2 and the wide 2 → 1 chars, a joined unsure mark
+#[test]
+fn unsure_chars_drawn_when_asked() {
+    let symbols = |text| -> Vec<String> {
+        drawn_cells(text, 10, false, true)
+            .into_iter()
+            .map(|(symbol, _)| symbol)
+            .collect()
+    };
+    assert_eq!(symbols("a\u{3248}")[..2], ["a", "\u{3248}"]);
+    assert_eq!(symbols("\u{2630}b")[..3], ["\u{2630}", " ", "b"]);
+    assert_eq!(symbols("a\u{605}")[..1], ["a\u{605}"]);
+}
+
+/// MAX-271: a wide char in the area's last column is drawn as a space, it would spill over the
+/// right border; one that fits is kept.
+/// How: `abcd中` in areas 5 and 6 cells wide
+#[test]
+fn wide_char_cut_at_the_right_edge() {
+    let symbols = |width| -> Vec<String> {
+        drawn_cells("abcd\u{4E2D}", width, false, false)
+            .into_iter()
+            .map(|(symbol, _)| symbol)
+            .collect()
+    };
+    assert_eq!(symbols(5)[4], " ");
+    assert_eq!(symbols(6)[4..], ["\u{4E2D}", " "]);
 }

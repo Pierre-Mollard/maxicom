@@ -107,6 +107,14 @@ nothing.
 Sixel and kitty graphics aren't drawn. Their bytes still show in line
 mode's [raw side panel](raw-side-panel.md).
 
+### Some characters aren't drawn as received
+
+maxicom can't know how many columns your terminal gives each character. The
+ones terminals disagree on show as a dimmed `▯`, invisible ones aren't sent,
+and a terminal with other width tables may still shift a row: `Ctrl-a R`
+draws the screen again. Copy and search always have the real characters. See
+[Characters drawn differently](drawn-characters.md).
+
 ### The byte trace loses text a full-screen program moves
 
 In terminal mode, the raw side panel shows every byte received with its own

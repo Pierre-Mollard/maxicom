@@ -33,8 +33,8 @@ mod capture;
 mod clock;
 mod commands;
 mod configs;
+mod glyphs;
 mod inputs;
-mod invalid_bytes;
 mod link;
 mod notification;
 mod overlays;
@@ -445,6 +445,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                             app.say_profiles();
                         }
                     }
+                    // ratatui forgets what it drew: the next frame writes every cell (MAX-271)
+                    UpdateEffect::Redraw => guard.terminal.clear()?,
                     UpdateEffect::ReloadConfig => {
                         match load_runtime_config(&config_path, app.profiles()) {
                             Ok((files, config)) => {

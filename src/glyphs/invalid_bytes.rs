@@ -226,5 +226,5 @@ pub fn shown_string(text: String) -> String {
 }
 
 #[cfg(test)]
-#[path = "tests/invalid_bytes.rs"]
+#[path = "../tests/glyphs/invalid_bytes.rs"]
 mod tests;
