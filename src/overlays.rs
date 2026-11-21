@@ -21,6 +21,7 @@ pub use link_form::{LinkForm, LinkFormField};
 pub use marks::{MarkBrowser, MarkRow};
 pub use menu::{ActionMenu, MenuRun};
 pub use misc::{ErrorDialog, FilePathDialog, ScreenshotDialog};
+pub use notices::NoticeBrowser;
 pub use profiles::ProfileBrowser;
 pub use reconfigure::{LineSettingField, LineSettingsDialog};
 pub use resize::{ResizeDialog, ResizeField};
@@ -35,6 +36,7 @@ pub mod link_form;
 pub mod marks;
 pub mod menu;
 pub mod misc;
+pub mod notices;
 pub mod profiles;
 pub mod reconfigure;
 pub mod resize;
@@ -62,6 +64,7 @@ pub enum Overlay {
     Triggers(TriggerBrowser),
     Profiles(ProfileBrowser),
     Marks(MarkBrowser),
+    Notices(NoticeBrowser),
     Directory(Directory),
     LinkForm(Box<LinkForm>),
     DeleteLink(SavedLink),
@@ -106,6 +109,8 @@ pub enum PopupTarget {
     MarkRow(usize),
     MarkJump,
     MarkDelete,
+    NoticeRow(usize),
+    NoticeCopy,
     ConfigPath(usize),
     DirectoryTab(DirectoryTab),
     DirectoryRow(usize),
@@ -238,6 +243,7 @@ impl Overlay {
             Overlay::Triggers(browser) => browser.handle_action(action),
             Overlay::Profiles(browser) => browser.handle_action(action),
             Overlay::Marks(browser) => browser.handle_action(action),
+            Overlay::Notices(browser) => browser.handle_action(action),
             Overlay::Directory(directory) => directory.handle_action(action),
             Overlay::LinkForm(form) => form.handle_action(action),
             Overlay::Error(_) => match action {

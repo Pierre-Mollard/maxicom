@@ -102,6 +102,7 @@ pub enum AppAction {
     StartMash(Box<Mash>),
     Mark(MarkAction),
     OpenMarks,
+    OpenNotices,
     Quit,
 }
 

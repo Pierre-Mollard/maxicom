@@ -82,6 +82,7 @@ pub enum KeyBindingAction {
     SideShrink5,
     DismissNotification,
     DismissNotifications,
+    Notifications,
     PrevMark,
     NextMark,
     Marks,

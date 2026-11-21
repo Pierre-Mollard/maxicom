@@ -378,6 +378,11 @@ pub static COMMANDS: &[CommandSpec] = {
             "Close all the notifications",
         ),
         CommandSpec::action(
+            "notifications",
+            A::Notifications,
+            "Open the notifications said since the start, to read one again",
+        ),
+        CommandSpec::action(
             "marks",
             A::Marks,
             "Open the marks: a letter jumps to its mark",

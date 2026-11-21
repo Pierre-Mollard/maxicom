@@ -63,6 +63,64 @@ command line, it tells you about something the device printed. See
 | The top one | `Ctrl-a n` |
 | All of them | `Ctrl-a N` |
 
+## Reading them again
+
+maxicom keeps what the notifications said, so you can read again one that
+went by too fast. Type `notifications` on the
+[command line](command-line.md#notifications) to open the list.
+
+No key opens it by default. If you use it often, give it one in
+`keymap.toml`, for example `Ctrl-a H`:
+
+```toml
+[prefixed]
+H = "notifications"
+```
+
+### The notifications popup
+
+Each row shows the level's icon, the time and the text. The newest is at the
+bottom, and it's selected when the popup opens. A text too long for its row
+is cut with `…`, and shows whole under the list when you select its row.
+
+On top of the [popup keys](popups.md):
+
+| Key | Does |
+| --- | --- |
+| Enter, `c` | Copies the selected text |
+
+A click selects a row, and the Copy button copies it too. The list is the one
+when the popup opened: a notification coming while it's open shows the next
+time.
+
+### What is kept
+
+The list keeps each message once:
+
+- a message said again while its box shows, counted `×2` in its title, isn't
+  added again;
+- in a box that follows an activity, like a file transfer or the link, each
+  new message is added;
+- a message is never added twice in a row, even from another box.
+
+A message that comes back after its box went is added again, with its new
+time. The list keeps the last 500.
+
+### In the session's folder
+
+The same lines go to a `.notices` file in the
+[session backup's folder](capture.md#the-files-of-a-session), so you can
+read them after maxicom quit:
+
+```text
+14:02:31 warn    Stopped sending fw.bin at 42%: no answer
+14:02:35 info    Reconnected to /dev/ttyUSB0
+```
+
+The file starts with the first notification. During a replay, the lines go
+to the session the replay set aside. Without a session backup, there's no
+file, but the popup still works.
+
 ## Levels
 
 Each level has its color in `[notification]` of the theme, and `border` is

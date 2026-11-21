@@ -131,6 +131,7 @@ fn action_index(action: KeyBindingAction) -> usize {
         A::PageSideUp => 63,
         A::PageSideDown => 64,
         A::Redraw => 65,
+        A::Notifications => 66,
         A::Command(spec) => unreachable!("{} is a built command", spec.name),
     }
 }
@@ -151,7 +152,7 @@ fn every_action_has_one_command() {
         })
         .collect();
     indexes.sort_unstable();
-    assert_eq!(indexes, (0..66).collect::<Vec<_>>());
+    assert_eq!(indexes, (0..67).collect::<Vec<_>>());
 }
 
 /// The help writes a required argument in angle brackets, an optional one in square ones

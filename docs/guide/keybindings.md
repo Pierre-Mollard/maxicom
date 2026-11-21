@@ -443,6 +443,7 @@ command: see [Actions and commands](#actions-and-commands).
 | `plot-prev` | Show the previous plot of plots.toml, the last before the first | — |
 | `dismiss-notification` | Close the top notification | `Ctrl-a n` |
 | `dismiss-notifications` | Close all the notifications | `Ctrl-a N` |
+| `notifications` | Open the notifications said since the start, to read one again | — |
 | `marks` | Open the marks: a letter jumps to its mark | `Ctrl-a '` |
 | `prev-mark` | Go to the mark above | `Ctrl-a (` |
 | `next-mark` | Go to the mark below | `Ctrl-a )` |

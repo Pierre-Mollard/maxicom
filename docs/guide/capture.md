@@ -26,10 +26,11 @@ A session, or a full recording, is a folder `<name>/` holding:
 | `<name>.times` | When each chunk of bytes came |
 | `<name>.meta` | What they were received on: the device, the line settings, the encoding, the terminal's size, the link's profiles |
 | `<name>.log` | The text, for you to read |
+| `<name>.notices` | A session only: what the [notifications](notifications.md#in-the-sessions-folder) said, once there was one |
 
 The `.raw`, `.times` and `.meta` together let a session replay and restore
-as it was: both modes are rebuilt from the `.raw`. The `.log` is never read
-back.
+as it was: both modes are rebuilt from the `.raw`. The `.log` and the
+`.notices` are never read back.
 
 A text recording is only the `.log`: decoded, split into lines, with times
 and marks added. That's why it can't be replayed.

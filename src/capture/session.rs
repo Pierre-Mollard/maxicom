@@ -293,8 +293,8 @@ pub fn prune_sessions(dir: &Path, limits: SessionLimits, current: &str) -> io::R
 }
 
 /// The session files in `dir` by stem, which starts with the date so they sort by age: the
-/// `.log`, `.raw`, `.meta` and `.times` files in the folder of each stem. A folder with none of them, and
-/// the files in `dir` itself, aren't sessions
+/// `.log`, `.raw`, `.meta`, `.times` and `.notices` (MAX-276) files in the folder of each stem. A
+/// folder with none of them, and the files in `dir` itself, aren't sessions
 fn session_files(dir: &Path) -> io::Result<BTreeMap<String, Vec<PathBuf>>> {
     let mut sessions: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
     for entry in fs::read_dir(dir)? {
@@ -305,7 +305,7 @@ fn session_files(dir: &Path) -> io::Result<BTreeMap<String, Vec<PathBuf>>> {
         if !entry.file_type()?.is_dir() {
             continue;
         }
-        let files: Vec<PathBuf> = ["log", "raw", "meta", "times"]
+        let files: Vec<PathBuf> = ["log", "raw", "meta", "times", "notices"]
             .iter()
             .map(|extension| session_file(dir, &stem, extension))
             .filter(|path| path.is_file())

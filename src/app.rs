@@ -44,8 +44,11 @@ use crate::{
         replay::Replay,
         serial::{LineControl, LineSettings},
     },
-    notification::{NotificationManager, ToastLevel},
-    overlays::{MarkBrowser, Overlay, OverlayResponse, PopupTarget, ScreenshotDialog, SettingKey},
+    notification::{Notice, NotificationManager, ToastLevel},
+    overlays::{
+        MarkBrowser, NoticeBrowser, Overlay, OverlayResponse, PopupTarget, ScreenshotDialog,
+        SettingKey,
+    },
     paths::{create_parent_dirs, expand_home},
     transfer::{FileTransfer, Step, modem::Protocol},
     ui::{layout::side_chunks, raw_side::terminal::DumpLayout},
@@ -2135,6 +2138,11 @@ impl App {
                 self.overlay = Some(Overlay::Marks(MarkBrowser::new(rows)));
                 UpdateEffect::None
             }
+            AppAction::OpenNotices => {
+                let notices = self.notifications.history().to_vec();
+                self.overlay = Some(Overlay::Notices(NoticeBrowser::new(notices)));
+                UpdateEffect::None
+            }
             AppAction::Mark(action) => {
                 self.update_mark(action);
                 UpdateEffect::None
@@ -3135,7 +3143,8 @@ impl App {
     fn notify(&mut self, level: ToastLevel, msg: impl Into<String>) {
         let msg = msg.into();
         let duration = toast_duration(level, &msg);
-        self.notifications.push(msg, level, duration);
+        let line = (self.notifications.push(msg, level, duration)).map(Notice::line);
+        self.write_notice(line);
     }
 
     /// A toast in the box of `key`: it takes the place of the box's last message, its time
@@ -3143,7 +3152,19 @@ impl App {
     pub fn notify_keyed(&mut self, key: &'static str, level: ToastLevel, msg: impl Into<String>) {
         let msg = msg.into();
         let duration = toast_duration(level, &msg);
-        self.notifications.push_keyed(key, msg, level, duration);
+        let line = (self.notifications.push_keyed(key, msg, level, duration)).map(Notice::line);
+        self.write_notice(line);
+    }
+
+    /// A new line of the notification history into the live session's `.notices` file, the
+    /// paused one's while a replay runs (MAX-276). A failed write isn't said: its toast would
+    /// fail the same way
+    fn write_notice(&mut self, line: Option<String>) {
+        if let Some(line) = line
+            && let Some(session) = self.live_session_mut()
+        {
+            let _ = session.write_notice(&line);
+        }
     }
 
     /// A copy made: what it was (`Copied the <what>: <text>`) or how many chars, in the copy's

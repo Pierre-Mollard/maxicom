@@ -742,3 +742,35 @@ fn text_recording_ends_the_line_cut_by_a_replay() {
     assert!(lines[3].starts_with("── device: "), "{lines:#?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// MAX-276: the toasts said go to the session's `.notices` file, a repeat once; while a replay
+/// runs, to the live link's session it paused. No session, no file and no error.
+/// How: a session in a temp folder, a warning twice and an info, a replay and another info,
+/// the file read back past the times; then an app without a session.
+#[test]
+fn notices_go_to_the_session_file() {
+    let dir = crate::capture::tests::temp_dir("notices");
+    let mut app = app();
+    app.start_session(Some(dir.clone()));
+    app.notify_warn("busy");
+    app.notify_warn("busy");
+    app.notify_info("done");
+    app.start_replay(PathBuf::from("/tmp/a.raw"), None);
+    app.notify_info("while replaying");
+    let sessions = crate::capture::list_sessions(&dir).unwrap();
+    let notices = sessions[0].raw_path().unwrap().with_extension("notices");
+    let text = std::fs::read_to_string(notices).unwrap();
+    let lines: Vec<&str> = text.lines().map(|line| &line[9..]).collect();
+    assert!(lines.contains(&"warn    busy"), "{text}");
+    assert_eq!(
+        lines.iter().filter(|line| line.ends_with(" busy")).count(),
+        1
+    );
+    assert!(lines.contains(&"info    done"), "{text}");
+    assert!(lines.contains(&"info    while replaying"), "{text}");
+
+    let mut none = super::tests::app();
+    none.notify_info("nowhere");
+    assert_eq!(none.notifications.history().len(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}

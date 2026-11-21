@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use ratatui::style::Color;
 use std::time::{Duration, Instant};
 
@@ -34,6 +35,16 @@ impl ToastLevel {
             Self::Info | Self::Success => 0,
             Self::Warn => 1,
             Self::Error => 2,
+        }
+    }
+
+    /// Its word in the notification history (MAX-276)
+    pub fn word(&self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Success => "success",
+            Self::Warn => "warn",
+            Self::Error => "error",
         }
     }
 
@@ -77,10 +88,34 @@ impl Toast {
 /// How many toasts are kept at once
 const MAX_TOASTS: usize = 4;
 
+/// A line of the notification history (MAX-276): what a toast said and when, to read again
+/// one that went too fast
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Notice {
+    pub time: Timestamp,
+    pub level: ToastLevel,
+    pub message: String,
+}
+
+impl Notice {
+    /// Its line in the session's `.notices` file: the local time, the level, the text on one
+    /// line
+    pub fn line(&self) -> String {
+        let time = crate::clock::format(self.time, "%H:%M:%S");
+        let message = self.message.replace(['\r', '\n'], " ");
+        format!("{time} {:<7} {message}", self.level.word())
+    }
+}
+
+/// How many lines the notification history keeps, the oldest dropped first
+const MAX_NOTICES: usize = 500;
+
 #[derive(Default)]
 pub struct NotificationManager {
     toasts: Vec<Toast>,
     next_id: u64,
+    /// What the toasts said, once each: a box counting a repeat (×N) adds nothing (MAX-276)
+    history: Vec<Notice>,
 }
 
 impl NotificationManager {
@@ -88,7 +123,14 @@ impl NotificationManager {
         Self::default()
     }
 
-    pub fn push(&mut self, message: impl Into<String>, level: ToastLevel, duration: Duration) {
+    /// A toast, or its box counting it again. The line it adds to the history, if any
+    /// (MAX-276)
+    pub fn push(
+        &mut self,
+        message: impl Into<String>,
+        level: ToastLevel,
+        duration: Duration,
+    ) -> Option<&Notice> {
         let message = message.into();
         // the same again while shown: its time renewed and counted, not a second box
         // (MAX-228)
@@ -98,37 +140,76 @@ impl NotificationManager {
         if let Some(toast) = self.toasts.iter_mut().find(same) {
             toast.count += 1;
             toast.renew(duration);
-            return;
+            return None;
         }
+        let added = self.record(level, &message);
         self.push_toast(None, message, level, duration);
+        self.added(added)
     }
 
     /// A toast of one activity (`key`, as `transfer`): it takes the place of the activity's
     /// toast still shown, its text, level and time renewed, so the activity's messages follow
-    /// each other in one box instead of piling up (MAX-228)
+    /// each other in one box instead of piling up (MAX-228). The line it adds to the history,
+    /// if any: none for the same message counted again (MAX-276)
     pub fn push_keyed(
         &mut self,
         key: &'static str,
         message: impl Into<String>,
         level: ToastLevel,
         duration: Duration,
-    ) {
+    ) -> Option<&Notice> {
         match self.toasts.iter_mut().find(|toast| toast.key == Some(key)) {
             // same place and id: a click on it still finds it
             Some(toast) => {
                 let message = message.into();
                 // the same message again counts, a new one starts over
-                toast.count = if toast.message == message {
-                    toast.count + 1
-                } else {
-                    1
-                };
+                let again = toast.message == message;
+                toast.count = if again { toast.count + 1 } else { 1 };
                 toast.message = message;
                 toast.level = level;
                 toast.renew(duration);
+                if again {
+                    return None;
+                }
+                let message = toast.message.clone();
+                let added = self.record(level, &message);
+                self.added(added)
             }
-            None => self.push_toast(Some(key), message.into(), level, duration),
+            None => {
+                let message = message.into();
+                let added = self.record(level, &message);
+                self.push_toast(Some(key), message, level, duration);
+                self.added(added)
+            }
         }
+    }
+
+    /// What a toast said into the history, unless the history's last line says the same
+    /// already: a burst spread over boxes gives one line (MAX-276). True if it added one
+    fn record(&mut self, level: ToastLevel, message: &str) -> bool {
+        let same = |last: &Notice| last.level == level && last.message == message;
+        if self.history.last().is_some_and(same) {
+            return false;
+        }
+        if self.history.len() >= MAX_NOTICES {
+            self.history.remove(0);
+        }
+        self.history.push(Notice {
+            time: Timestamp::now(),
+            level,
+            message: message.to_string(),
+        });
+        true
+    }
+
+    /// The history's new line, when `record` added one
+    fn added(&self, added: bool) -> Option<&Notice> {
+        self.history.last().filter(|_| added)
+    }
+
+    /// What the toasts said, oldest first (MAX-276)
+    pub fn history(&self) -> &[Notice] {
+        &self.history
     }
 
     fn push_toast(

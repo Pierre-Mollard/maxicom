@@ -266,6 +266,7 @@ See [Profiles](profiles.md).
 | Command | Does |
 | --- | --- |
 | `notify <info\|success\|warn\|error> <text>` | Shows a notification of yours: `notify warn "power-cycle the board"` |
+| `notifications` | Opens the notifications said so far, to read one again |
 
 It follows the rules of maxicom's own: see [Notifications](notifications.md).
 It sends nothing to the device, so a [trigger](triggers.md) or a

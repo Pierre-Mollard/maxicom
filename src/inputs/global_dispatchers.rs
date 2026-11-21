@@ -137,6 +137,7 @@ impl KeyBindingAction {
             KeyBindingAction::PlotPrev => Action::App(AppAction::StepPlot(false)),
             KeyBindingAction::DismissNotification => Action::App(AppAction::DismissToast(None)),
             KeyBindingAction::DismissNotifications => Action::App(AppAction::DismissToasts),
+            KeyBindingAction::Notifications => Action::App(AppAction::OpenNotices),
             KeyBindingAction::Marks => Action::App(AppAction::OpenMarks),
             KeyBindingAction::PrevMark => Action::App(AppAction::Mark(MarkAction::Adjacent(false))),
             KeyBindingAction::NextMark => Action::App(AppAction::Mark(MarkAction::Adjacent(true))),

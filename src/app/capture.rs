@@ -91,16 +91,21 @@ impl App {
     /// link's, paused while a replay runs. Its recording holds the meta, so it writes it, and a
     /// later write keeps the name (MAX-213)
     pub fn name_session(&mut self, name: &str) -> Result<(), String> {
-        let paused = (self.replay.as_mut())
-            .and_then(|run| run.replaced.as_deref_mut())
-            .and_then(|replaced| replaced.session.as_mut());
-        let Some(session) = self.recorder.session_mut().or(paused) else {
+        let Some(session) = self.live_session_mut() else {
             return Err("no session running".to_string());
         };
         let name = clean_session_name(name);
         (session.set_name(name.clone())).map_err(|err| err.to_string())?;
         self.notify_success(session_name_notice(name.as_deref()));
         Ok(())
+    }
+
+    /// The live link's session backup: the recorder's, or the one paused while a replay runs
+    pub fn live_session_mut(&mut self) -> Option<&mut RecordingWriter> {
+        let paused = (self.replay.as_mut())
+            .and_then(|run| run.replaced.as_deref_mut())
+            .and_then(|replaced| replaced.session.as_mut());
+        self.recorder.session_mut().or(paused)
     }
 
     /// The session backup `pause_session` set aside records again, the live link back

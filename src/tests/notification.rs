@@ -179,3 +179,64 @@ fn time_starts_when_first_drawn() {
     assert_eq!(manager.active_toasts()[0].expires_at, Some(expires));
     assert!(expires >= first + Duration::from_secs(60));
 }
+
+/// MAX-276: the history gets a line per toast said, not per repeat: a box counting the same
+/// text again (×N) adds none, a keyed box adds its new text, and a line saying the same as the
+/// last one (another box, the first one gone) is skipped. Back after another, it comes again.
+/// How: plain repeats, a keyed box changing and repeating, then the same text in a new box.
+#[test]
+fn history_keeps_what_was_said_once() {
+    let long = Duration::from_secs(60);
+    let mut manager = NotificationManager::new();
+    assert!(manager.push("busy", ToastLevel::Warn, long).is_some());
+    assert!(manager.push("busy", ToastLevel::Warn, long).is_none());
+    assert!(manager.push("busy", ToastLevel::Error, long).is_some());
+
+    let keyed = |manager: &mut NotificationManager, text: &str| {
+        manager
+            .push_keyed("link", text, ToastLevel::Info, long)
+            .is_some()
+    };
+    assert!(keyed(&mut manager, "lost"));
+    assert!(!keyed(&mut manager, "lost"));
+    assert!(keyed(&mut manager, "Reconnected"));
+    // a new box saying what the last line says
+    manager.dismiss_all();
+    assert!(!keyed(&mut manager, "Reconnected"));
+    assert!(
+        manager
+            .push("Reconnected", ToastLevel::Info, long)
+            .is_none()
+    );
+    // back after another one
+    assert!(manager.push("busy", ToastLevel::Warn, long).is_some());
+
+    let said: Vec<(&str, &str)> = (manager.history().iter())
+        .map(|notice| (notice.level.word(), notice.message.as_str()))
+        .collect();
+    let expected = [
+        ("warn", "busy"),
+        ("error", "busy"),
+        ("info", "lost"),
+        ("info", "Reconnected"),
+        ("warn", "busy"),
+    ];
+    assert_eq!(said, expected);
+}
+
+/// MAX-276: a history line is the local time, the level padded, the text on one line.
+/// How: a notice with a two-line text, its line checked past the time.
+#[test]
+fn notice_line_is_one_line() {
+    let notice = Notice {
+        time: jiff::Timestamp::now(),
+        level: ToastLevel::Warn,
+        message: "Stopped:\r\nno answer".to_string(),
+    };
+    let line = notice.line();
+    assert_eq!(
+        line.len(),
+        "00:00:00 ".len() + "warn    Stopped:  no answer".len()
+    );
+    assert!(line.ends_with(" warn    Stopped:  no answer"), "{line}");
+}

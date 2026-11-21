@@ -97,6 +97,11 @@ to send the focus reports.
   before its line end, in the text and the raw side panel. A selection on it
   stays when the rest of the line arrives. See
   [The line still coming in](https://pierre-mollard.github.io/maxicom/copy-mode-and-mouse.html#the-line-still-coming-in).
+- The `notifications` command opens the notifications said so far, to read
+  again one that went by too fast, and copy its text. Each message is kept
+  once, not each repeat, and also goes to a `.notices` file in the session's
+  folder. No key opens it by default. See
+  [Reading them again](https://pierre-mollard.github.io/maxicom/notifications.html#reading-them-again).
 
 ### Changed
 

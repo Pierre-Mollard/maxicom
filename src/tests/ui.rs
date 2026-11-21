@@ -11903,3 +11903,48 @@ fn terminal_draws_combining_and_wide_chars() {
     let symbols: Vec<&str> = (0..4).map(|x| buffer[(x, 0)].symbol()).collect();
     assert_eq!(symbols, ["e\u{301}", "中", " ", "x"], "{rows:?}");
 }
+
+/// MAX-276: the `notifications` command opens the history, no key bound to it by default:
+/// newest last and selected, a time on each row; a text too long for its row is cut, and whole
+/// under the list when selected. The room under the list stays when another row is selected.
+/// The popup is 76 columns at most.
+/// How: three notices (the last a long path), the toasts dismissed, the popup drawn on 100
+/// columns, then Up.
+#[test]
+fn notifications_popup() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 30);
+    let action = KeyBindingAction::Notifications;
+    assert!(h.app.key_resolver.action_keys(action).is_empty());
+    let long = format!("Received fw.bin into /home/user/{}/end", "deep/".repeat(30));
+    h.app.notify_warn("busy");
+    h.app.notify_info("done");
+    h.app.notify_error(long.clone());
+    h.app.notifications.dismiss_all();
+    h.app.update(action.to_action(&h.app));
+    let rows = h.draw();
+    let row = |text: &str| rows.iter().find(|row| row.contains(text)).unwrap();
+    // the level's icon then the time
+    let busy = row("busy");
+    assert!(busy.contains("◆ ") && busy.contains(':'), "{rows:#?}");
+    assert!(row("done").contains("ℹ "), "{rows:#?}");
+    assert!(has(&rows, "…"), "{rows:#?}");
+    let deep = |rows: &[String]| rows.iter().filter(|row| row.contains("deep/")).count();
+    // its row, then the text in full on lines of their own
+    assert!(deep(&rows) > 2, "{rows:#?}");
+    assert!(has(&rows, "/end "), "{rows:#?}");
+    // 76 columns at most, on a wider screen
+    let top_row = rows
+        .iter()
+        .find(|row| row.contains("Notifications"))
+        .unwrap();
+    assert_eq!(top_row.trim().chars().count(), 76, "{rows:#?}");
+    let top = rows.iter().position(|row| row.contains("Notifications"));
+
+    h.app.update(Action::Overlay(DialogAction::Up));
+    let rows = h.draw();
+    assert_eq!(deep(&rows), 1, "{rows:#?}");
+    assert_eq!(
+        rows.iter().position(|row| row.contains("Notifications")),
+        top
+    );
+}

@@ -98,6 +98,8 @@ pub struct RecordingWriter {
     raw_len: u64,
     text_path: PathBuf,
     raw_path: PathBuf,
+    /// The notification history's file, created at its first line (MAX-276)
+    notices_path: PathBuf,
     timestamp: Option<String>,
     tx_mark: Option<String>,
     started: Timestamp,
@@ -522,6 +524,7 @@ impl RecordingWriter {
             raw_len: 0,
             text_path,
             raw_path,
+            notices_path: path("notices"),
             timestamp: text.timestamp.clone(),
             tx_mark: text.tx_mark.clone(),
             started,
@@ -549,6 +552,16 @@ impl RecordingWriter {
         };
         meta.profiles = profiles.to_vec();
         let _ = meta.write(&RecordingMeta::path_of(&self.raw_path));
+    }
+
+    /// `line` appended to the `.notices` file, created with it (MAX-276). Written at once: a
+    /// few lines a minute at most, and they stay after a crash
+    pub fn write_notice(&self, line: &str) -> io::Result<()> {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.notices_path)?;
+        writeln!(file, "{line}")
     }
 
     /// The meta written again with `name` (MAX-213)

@@ -45,6 +45,7 @@ use crate::{
             help::render_help_popup,
             marks::render_marks_popup,
             menu::render_action_menu,
+            notices::render_notices_popup,
             notifications::render_notifications,
             profiles::render_profiles_popup,
             reconfigure::render_reconfigure_popup,
@@ -351,6 +352,9 @@ fn render_active_overlay(
         }
         Some(Overlay::Marks(browser)) => {
             render_marks_popup(app, browser, frame, theme, &mut targets)
+        }
+        Some(Overlay::Notices(browser)) => {
+            render_notices_popup(app, browser, frame, theme, &mut targets)
         }
         Some(Overlay::Directory(directory)) => {
             render_directory_popup(app, directory, frame, theme, &mut targets)
