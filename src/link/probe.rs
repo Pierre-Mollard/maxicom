@@ -15,9 +15,9 @@ use super::{
 };
 
 #[cfg(target_os = "linux")]
-use super::lock::lock_holder;
+use super::lock::flock_holder;
 #[cfg(unix)]
-use super::lock::{LOCK_DIRS, locked_by};
+use super::lock::{LOCK_DIRS, UucpHolder, locked_by};
 
 /// A TCP link's test gives up after this, its addresses all tried: within the directory's
 /// own timeout. Longer on Windows: a refused port there is only told after about 2 s of
@@ -62,31 +62,86 @@ pub fn probe(address: &Address) -> ProbeState {
     }
 }
 
-/// Whether `port` can be used (MAX-181), without opening it where the system tells otherwise:
-/// an open raises DTR and RTS, which resets a board with an auto-reset (ESP32, Arduino). First
-/// a maxicom's lock (MAX-186), on every system. On Linux a live UUCP lock file (minicom's),
-/// then a `flock` / `fcntl` lock in `/proc/locks` (picocom's, tio's, pyserial's, maxicom's):
-/// both seen whoever the user; then a process of the user's own holding it (its open files in
-/// `/proc`), then the permissions. On macOS the lock file and the permissions, a port with no
-/// lock said as such. On Windows only an open tells: one with the port's settings kept, closed
-/// at once
-pub fn probe_port(port: &str) -> ProbeState {
+/// Who holds a serial port: its PID when known, and its name as the directory and an open's
+/// refusal say it (`minicom (1234)`, `maxicom 1234 (pierre)`)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Holder {
+    pub pid: Option<u32>,
+    pub label: String,
+}
+
+impl Holder {
+    /// A maxicom, by its lock's info when it could be read
+    fn maxicom(info: Option<&LockInfo>) -> Self {
+        Self {
+            pid: info.map(|info| info.pid),
+            label: maxicom_label(info),
+        }
+    }
+
+    /// A process found by a lock of its own
+    #[cfg(unix)]
+    fn process(pid: libc::pid_t) -> Self {
+        Self {
+            pid: Some(pid as u32),
+            label: process_label(pid),
+        }
+    }
+
+    /// A UUCP lock file's holder; one with no PID named by its path, for the user to remove
+    /// when it's stale
+    #[cfg(unix)]
+    pub fn uucp(holder: UucpHolder) -> Self {
+        match holder {
+            UucpHolder::Process(pid) => Self::process(pid),
+            UucpHolder::NoPid(path) => Self {
+                pid: None,
+                label: format!(
+                    "a lock with no PID, {} (remove it if stale)",
+                    path.display()
+                ),
+            },
+        }
+    }
+}
+
+/// The first holder of the serial port `port` found without opening it (MAX-268), for the
+/// directory's test and before an open alike, this process included: a maxicom's lock
+/// (MAX-186), on every system; on Unix a live UUCP lock file (minicom's, lockdev's); on Linux
+/// a `flock` / `fcntl` lock in `/proc/locks` (picocom's, tio's, pyserial's, maxicom's): all
+/// seen whoever the user. Then on Linux a process of the user's own with the port open, with
+/// no lock (screen, cu), a pty's maker aside. Another user's program holding it without a lock
+/// can't be seen
+pub fn port_holder(port: &str) -> Option<Holder> {
     if let LockState::Held(info) = lock_state(&Address::Serial(port.to_string())) {
-        return held_state(info.as_ref());
+        return Some(Holder::maxicom(info.as_ref()));
+    }
+    #[cfg(unix)]
+    if let Some(holder) = locked_by(port, LOCK_DIRS) {
+        return Some(Holder::uucp(holder));
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(pid) = flock_holder(port, "/proc/locks") {
+        return Some(Holder::process(pid));
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(label) = open_holder(port, std::process::id()) {
+        return Some(Holder { pid: None, label });
+    }
+    None
+}
+
+/// Whether `port` can be used (MAX-181), without opening it where the system tells otherwise:
+/// an open raises DTR and RTS, which resets a board with an auto-reset (ESP32, Arduino). Its
+/// holder first (`port_holder`), then on Unix the permissions, a port with no holder said as
+/// such on macOS, where a program holding it without a lock can't be seen. On Windows only an
+/// open tells: one with the port's settings kept, closed at once
+pub fn probe_port(port: &str) -> ProbeState {
+    if let Some(holder) = port_holder(port) {
+        return holder_state(holder);
     }
     #[cfg(unix)]
     {
-        if let Some(pid) = locked_by(port, LOCK_DIRS) {
-            return pid_state(pid);
-        }
-        #[cfg(target_os = "linux")]
-        if let Some(pid) = lock_holder(port, "/proc/locks") {
-            return pid_state(pid);
-        }
-        #[cfg(target_os = "linux")]
-        if let Some(holder) = open_holder(port, std::process::id()) {
-            return ProbeState::Busy(Some(holder));
-        }
         let Ok(path) = std::ffi::CString::new(port) else {
             return ProbeState::Error("not a path".to_string());
         };
@@ -114,7 +169,7 @@ pub fn probe_port(port: &str) -> ProbeState {
 /// has for it, and the device sees a connection: only on the directory's `t`
 pub fn probe_tcp(addr: &str) -> ProbeState {
     if let LockState::Held(info) = lock_state(&Address::Tcp(addr.to_string())) {
-        return held_state(info.as_ref());
+        return holder_state(Holder::maxicom(info.as_ref()));
     }
     let Ok(sockets) = addr.to_socket_addrs() else {
         return ProbeState::UnknownHost;
@@ -136,21 +191,12 @@ pub fn probe_tcp(addr: &str) -> ProbeState {
     state
 }
 
-/// A maxicom's lock: this one's, or another's named
-fn held_state(info: Option<&LockInfo>) -> ProbeState {
-    match info {
-        Some(info) if info.pid == std::process::id() => ProbeState::InUse,
-        info => ProbeState::Busy(Some(maxicom_label(info))),
-    }
-}
-
-/// A lock's process: this one, or another named
-#[cfg(unix)]
-fn pid_state(pid: libc::pid_t) -> ProbeState {
-    if pid as u32 == std::process::id() {
+/// A holder: this maxicom, or another program named
+fn holder_state(holder: Holder) -> ProbeState {
+    if holder.pid == Some(std::process::id()) {
         ProbeState::InUse
     } else {
-        ProbeState::Busy(Some(process_label(pid)))
+        ProbeState::Busy(Some(holder.label))
     }
 }
 

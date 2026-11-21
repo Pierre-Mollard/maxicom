@@ -96,6 +96,41 @@ These scripts make a fake device with `socat`, and say how to open it.
   cargo run --bin maxicom -- --device tcp://127.0.0.1:4000
   ```
 
+## Port locks with another user
+
+`scripts/test_lock_minicom.sh` checks that maxicom refuses a port another
+user's minicom holds first. It needs docker and the musl target
+(`rustup target add x86_64-unknown-linux-musl`), and isn't part of
+`cargo test` or CI. In a container, user `other` runs minicom on a socat
+pty, then user `me` runs the ignored test `other_users_minicom_refused` from
+a static test binary built here:
+
+```bash
+./scripts/test_lock_minicom.sh                              # RHEL 9 (Rocky): minicom locks through lockdev
+./scripts/test_lock_minicom.sh rockylinux/rockylinux:10     # also almalinux:8, fedora:latest
+./scripts/test_lock_minicom.sh debian:stable                # Debian: minicom's own lock files
+./scripts/test_lock_minicom.sh debian:stable /dev/board     # minicom opens an alias in /dev
+```
+
+It prints the lock files minicom left, then the test's result. An alias
+outside `/dev` (`/tmp/myboard`) fails on purpose: on Debian minicom's lock
+file can't be led back to the port (see the guide's Port locks page), and on
+RHEL minicom refuses to start ("Cannot create lockfile"), so the port is
+free.
+
+`scripts/lock_matrix.sh` goes wider: in Rocky 9, Debian and Ubuntu
+containers (or the images given), maxicom first then minicom and the other
+way, the second program run by the same user, another user or root (as
+`sudo`), each one opening the port as the device, an alias in `/dev` or an
+alias outside `/dev`. It prints a grid telling, for each case, whether the
+second program was kept out (`ok`) or both hold the port (`BOTH`). It takes
+about 6 minutes:
+
+```bash
+./scripts/lock_matrix.sh
+./scripts/lock_matrix.sh fedora:latest almalinux:8
+```
+
 ## Generated character widths
 
 `src/glyphs/unsure_width.rs` is generated, never edited by hand. It lists the

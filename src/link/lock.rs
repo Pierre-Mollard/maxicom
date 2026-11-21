@@ -272,45 +272,169 @@ fn read_info(path: &Path) -> Option<LockInfo> {
     })
 }
 
-/// The lock folders of minicom, picocom and the other UUCP-style programs
+/// The lock folders of the UUCP-style programs: minicom's list, the first of them that exists
+/// being its own, and `/run/lock`. Each one's `lockdev/` is searched too (`lock_folders`)
 #[cfg(unix)]
-pub const LOCK_DIRS: &[&str] = &["/var/lock", "/run/lock", "/var/spool/lock"];
+pub const LOCK_DIRS: &[&str] = &[
+    "/etc/locks",
+    "/var/lock",
+    "/run/lock",
+    "/usr/spool/locks",
+    "/var/spool/locks",
+    "/var/spool/lock",
+    "/usr/spool/uucp",
+    "/var/spool/uucp",
+];
 
-/// The running process of a UUCP lock file for `port` in one of the lock folders `dirs`, the
-/// PID in it written as text, under any name a program gives it (`uucp_names`)
+/// The folders of `dirs` and their `lockdev/` (lockdev's: Fedora, RHEL) that exist, each
+/// once: `/var/lock` is often a link to `/run/lock`
 #[cfg(unix)]
-pub fn locked_by(port: &str, dirs: &[&str]) -> Option<libc::pid_t> {
-    let names = uucp_names(port);
-    (dirs.iter())
-        .flat_map(|dir| names.iter().map(move |name| Path::new(dir).join(name)))
-        .find_map(|path| live_pid(&path))
-}
-
-/// The names programs give a UUCP lock file for `port`, for the path given and the device it
-/// leads to: the last part (`LCK..ttyUSB0`: picocom, lockdev, maxicom), and minicom's, the
-/// path after `/dev/` with `_` for `/` (`LCK..pts_3`, `LCK..serial_by-id_usb-…`). The same for
-/// a plain `/dev/ttyUSB0`
-#[cfg(unix)]
-fn uucp_names(port: &str) -> Vec<String> {
-    let given = PathBuf::from(port);
-    let resolved = fs::canonicalize(port).ok();
-    let mut names = Vec::new();
-    for path in std::iter::once(&given).chain(resolved.as_ref()) {
-        let text = path.to_string_lossy();
-        let minicom = text
-            .strip_prefix("/dev/")
-            .map(|rest| rest.replace('/', "_"));
-        let last = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned());
-        for name in minicom.into_iter().chain(last) {
-            let name = format!("LCK..{name}");
-            if !names.contains(&name) {
-                names.push(name);
+fn lock_folders(dirs: &[&str]) -> Vec<PathBuf> {
+    let mut folders = Vec::new();
+    for dir in dirs {
+        for folder in [PathBuf::from(dir), Path::new(dir).join("lockdev")] {
+            if let Ok(folder) = fs::canonicalize(&folder)
+                && !folders.contains(&folder)
+            {
+                folders.push(folder);
             }
         }
     }
-    names
+    folders
+}
+
+/// Who holds a port by a UUCP lock file (MAX-268): its running process, or the lock file
+/// itself when no PID can be read in it (empty, garbage): another program's lock being
+/// written, or a broken one, which only the user can tell and remove
+#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UucpHolder {
+    Process(libc::pid_t),
+    NoPid(PathBuf),
+}
+
+/// The holder of a UUCP lock file for `port` in one of the lock folders `dirs` (MAX-268)
+#[cfg(unix)]
+pub fn locked_by(port: &str, dirs: &[&str]) -> Option<UucpHolder> {
+    locked_by_under(port, dirs, Path::new("/dev"))
+}
+
+/// [`locked_by`], the device folder `dev` given (a temp one in tests). A program names its
+/// lock file after the path it was given, an alias as well: each lock file is led back to the
+/// device it names (`UucpPort::names`)
+#[cfg(unix)]
+fn locked_by_under(port: &str, dirs: &[&str], dev: &Path) -> Option<UucpHolder> {
+    let port = UucpPort::new(port);
+    (lock_folders(dirs).iter())
+        .filter_map(|folder| fs::read_dir(folder).ok())
+        .flat_map(|entries| entries.flatten())
+        .filter(|entry| (entry.file_name().to_str()).is_some_and(|name| port.names(name, dev)))
+        .find_map(|entry| uucp_holder(&entry.path()))
+}
+
+/// A port as lock files may name it: the names programs give it for the path maxicom was
+/// given and the device it leads to, and that device
+#[cfg(unix)]
+struct UucpPort {
+    names: Vec<String>,
+    device: Option<fs::Metadata>,
+}
+
+#[cfg(unix)]
+impl UucpPort {
+    /// The names for `port`, path given and device: its last part (`LCK..ttyUSB0`: picocom,
+    /// maxicom, minicom outside `/dev`), and the path after `/dev/` with `_` for `/`
+    /// (minicom: `LCK..pts_3`) or `:` (lockdev: `LCK..pts:3`). On macOS a port is two
+    /// devices, `cu.X` and `tty.X`: each one's names hold the other's
+    fn new(port: &str) -> Self {
+        let given = PathBuf::from(port);
+        let resolved = fs::canonicalize(port).ok();
+        let mut names = Vec::new();
+        for path in std::iter::once(&given).chain(resolved.as_ref()) {
+            let text = path.to_string_lossy();
+            let under_dev = text.strip_prefix("/dev/");
+            let last = (path.file_name()).map(|name| name.to_string_lossy().into_owned());
+            let sibling = last.as_deref().and_then(|last| {
+                (last.strip_prefix("cu.").map(|rest| format!("tty.{rest}")))
+                    .or_else(|| last.strip_prefix("tty.").map(|rest| format!("cu.{rest}")))
+            });
+            let forms = [
+                under_dev.map(|rest| rest.replace('/', "_")),
+                under_dev.map(|rest| rest.replace('/', ":")),
+                last,
+                sibling,
+            ];
+            for name in forms.into_iter().flatten() {
+                let name = format!("LCK..{name}");
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+        }
+        let device = fs::metadata(port).ok();
+        Self { names, device }
+    }
+
+    /// Whether the lock file `file` is for this port: by one of its names, else by the device
+    /// its name leads to under `dev`, or for lockdev's `LK.<a>.<major>.<minor>` by its
+    /// numbers. lockdev's `LCK...<pid>` isn't a port's
+    fn names(&self, file: &str, dev: &Path) -> bool {
+        if self.names.iter().any(|name| name == file) {
+            return true;
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(numbers) = file.strip_prefix("LK.") {
+            return self.has_numbers(numbers);
+        }
+        let name = (file.strip_prefix("LCK..")).filter(|name| !name.starts_with('.'));
+        let Some(name) = name else {
+            return false;
+        };
+        let mut paths = vec![dev.join(name.replace(':', "/"))];
+        underscore_paths(dev, name, &mut paths);
+        (paths.iter()).any(|path| fs::metadata(path).is_ok_and(|meta| self.is(&meta)))
+    }
+
+    /// Whether `meta` is this port's device: the same device numbers, or for a file that
+    /// isn't a device (tests), the same file
+    fn is(&self, meta: &fs::Metadata) -> bool {
+        use std::os::unix::fs::{FileTypeExt, MetadataExt};
+        let Some(device) = &self.device else {
+            return false;
+        };
+        if device.file_type().is_char_device() && meta.file_type().is_char_device() {
+            device.rdev() == meta.rdev()
+        } else {
+            (device.dev(), device.ino()) == (meta.dev(), meta.ino())
+        }
+    }
+
+    /// Whether `numbers`, `<a>.<major>.<minor>` of a `LK.` name, are this port's device's
+    #[cfg(target_os = "linux")]
+    fn has_numbers(&self, numbers: &str) -> bool {
+        use std::os::unix::fs::MetadataExt;
+        let Some(device) = &self.device else {
+            return false;
+        };
+        let rdev = device.rdev();
+        let parts: Vec<Option<u32>> = numbers.split('.').map(|n| n.parse().ok()).collect();
+        matches!(parts.as_slice(), [Some(_), Some(major), Some(minor)]
+            if *major == libc::major(rdev) && *minor == libc::minor(rdev))
+    }
+}
+
+/// The paths a lock file's `name` may stand for under `dir`, minicom's `_` for `/` undone:
+/// the name as a file of `dir`, and for each `_` after a folder of `dir`, the rest in that
+/// folder (`serial_by-id_usb-Silicon_Labs_…` is `serial/by-id/usb-Silicon_Labs_…`)
+#[cfg(unix)]
+fn underscore_paths(dir: &Path, name: &str, paths: &mut Vec<PathBuf>) {
+    paths.push(dir.join(name));
+    for (at, _) in name.match_indices('_') {
+        let folder = dir.join(&name[..at]);
+        if folder.is_dir() {
+            underscore_paths(&folder, &name[at + 1..], paths);
+        }
+    }
 }
 
 /// A UUCP lock file's name for `port`: `LCK..` and the name of the device it leads to, so a
@@ -322,28 +446,37 @@ fn uucp_name(port: &str) -> Option<String> {
 }
 
 /// The PID a UUCP lock file holds, written as text first: the first word, as some programs
-/// write more after it
+/// write more after it. Else 4 bytes of a binary PID (Kermit's, old UUCP's: minicom reads it)
 #[cfg(unix)]
 fn lock_pid(path: &Path) -> Option<libc::pid_t> {
-    let text = fs::read_to_string(path).ok()?;
-    let first = text.split_whitespace().next()?;
-    first.parse::<libc::pid_t>().ok().filter(|&pid| pid > 0)
+    let bytes = fs::read(path).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    let pid = match text.split_whitespace().next().map(str::parse) {
+        Some(Ok(pid)) => pid,
+        _ => libc::pid_t::from_ne_bytes(bytes.try_into().ok()?),
+    };
+    Some(pid).filter(|&pid| pid > 0)
 }
 
-/// The PID a UUCP lock file holds, when that process runs
+/// Who holds the UUCP lock file `path`: the process of its PID while it runs, the file when
+/// it holds no PID; none when its process is gone (stale)
 #[cfg(unix)]
-fn live_pid(path: &Path) -> Option<libc::pid_t> {
-    let pid = lock_pid(path)?;
+fn uucp_holder(path: &Path) -> Option<UucpHolder> {
+    let Some(pid) = lock_pid(path) else {
+        return Some(UucpHolder::NoPid(path.to_path_buf()));
+    };
     // signal 0 only asks whether the process exists; EPERM: it does, someone else's
     let alive = unsafe { libc::kill(pid, 0) } == 0;
-    (alive || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)).then_some(pid)
+    (alive || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM))
+        .then_some(UucpHolder::Process(pid))
 }
 
-/// maxicom's UUCP lock file on a serial port it has open (MAX-186), for minicom, picocom and
-/// the other programs that look for one: `LCK..ttyUSB0` holding this PID, in the first lock
-/// folder this user can write in (Debian's and Ubuntu's; not Fedora's, skipped there). A stale
-/// one, its process gone (a crash), is replaced; removed when dropped while it's still this
-/// process's
+/// maxicom's UUCP lock file on a serial port (MAX-186), for minicom, picocom and the other
+/// programs that look for one: `LCK..ttyUSB0` holding this PID, in the first lock folder this
+/// user can write in (Debian's; on Fedora and RHEL `lockdev/` for a member of the `lock`
+/// group, none for the others). Taken before the port is opened, as the convention asks
+/// (MAX-268). A stale one, its process gone (a crash), is replaced; removed when dropped while
+/// it's still this process's
 #[cfg(unix)]
 pub struct UucpLock {
     path: PathBuf,
@@ -351,52 +484,82 @@ pub struct UucpLock {
 
 #[cfg(unix)]
 impl UucpLock {
-    /// The lock on `port` in the first lock folder that takes it
-    pub fn take(port: &str) -> Option<Self> {
-        let name = uucp_name(port)?;
-        (LOCK_DIRS.iter()).find_map(|dir| Self::take_in(Path::new(dir), &name).ok())
-    }
-
-    /// The lock file `name` in `dir`, refused with the PID of a live holder
-    pub fn take_in(dir: &Path, name: &str) -> Result<Self, Option<libc::pid_t>> {
-        use std::os::unix::fs::OpenOptionsExt;
-        let path = dir.join(name);
-        // a stale one removed, then made again: once
-        for _ in 0..2 {
-            let created = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .custom_flags(libc::O_NOFOLLOW)
-                .mode(0o644)
-                .open(&path);
-            match created {
-                Ok(mut file) => {
-                    // the HDB format: the PID right-aligned on 10 characters
-                    let written = writeln!(file, "{:>10}", std::process::id());
-                    return match written {
-                        Ok(()) => Ok(Self { path }),
-                        Err(_) => {
-                            let _ = fs::remove_file(&path);
-                            Err(None)
-                        }
-                    };
-                }
-                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-                    if let Some(pid) = live_pid(&path) {
-                        return Err(Some(pid));
-                    }
-                    // only a lock whose process is gone is stale: one that can't be read is
-                    // another program's, left
-                    if lock_pid(&path).is_none() {
-                        return Err(None);
-                    }
-                    let _ = fs::remove_file(&path);
-                }
-                Err(_) => return Err(None),
+    /// The lock on `port` in the first lock folder that takes it, none when none does;
+    /// refused with the holder of a lock found in one
+    pub fn take(port: &str) -> Result<Option<Self>, UucpHolder> {
+        let Some(name) = uucp_name(port) else {
+            return Ok(None);
+        };
+        for folder in lock_folders(LOCK_DIRS) {
+            match Self::take_in(&folder, &name) {
+                Ok(lock) => return Ok(Some(lock)),
+                Err(Some(holder)) => return Err(holder),
+                Err(None) => {}
             }
         }
-        Err(None)
+        Ok(None)
     }
+
+    /// The lock file `name` in `dir`, refused with its holder; none when this folder can't
+    /// take it. The PID is written in a file of its own, then hard-linked to the lock's name
+    /// (a second name of the same file, which stays when the first is removed): the link fails
+    /// when the name is taken, so two takers can't both have it, and the lock is never seen
+    /// empty
+    pub fn take_in(dir: &Path, name: &str) -> Result<Self, Option<UucpHolder>> {
+        let path = dir.join(name);
+        let temp = write_pid(dir).map_err(|_| None)?;
+        let taken = link_lock(&temp, &path);
+        let _ = fs::remove_file(&temp);
+        taken.map(|()| Self { path })
+    }
+}
+
+/// A new file in `dir` holding this PID in the HDB format (right-aligned on 10 characters),
+/// named `LTMP.<pid>.<n>`: never a lock's name, and one per take of this process
+#[cfg(unix)]
+fn write_pid(dir: &Path) -> io::Result<PathBuf> {
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static TAKES: AtomicU32 = AtomicU32::new(0);
+    let me = std::process::id();
+    let temp = dir.join(format!(
+        "LTMP.{me}.{}",
+        TAKES.fetch_add(1, Ordering::Relaxed)
+    ));
+    // a crash's, from a process of this PID before
+    let _ = fs::remove_file(&temp);
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .mode(0o644)
+        .open(&temp)?;
+    match writeln!(file, "{me:>10}") {
+        Ok(()) => Ok(temp),
+        Err(err) => {
+            let _ = fs::remove_file(&temp);
+            Err(err)
+        }
+    }
+}
+
+/// `temp` linked to the lock file `path`, refused with the holder of the one there; a stale
+/// one, its process gone, removed and linked again, once
+#[cfg(unix)]
+fn link_lock(temp: &Path, path: &Path) -> Result<(), Option<UucpHolder>> {
+    for _ in 0..2 {
+        match fs::hard_link(temp, path) {
+            Ok(()) => return Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => match uucp_holder(path) {
+                Some(holder) => return Err(Some(holder)),
+                None => {
+                    let _ = fs::remove_file(path);
+                }
+            },
+            Err(_) => return Err(None),
+        }
+    }
+    Err(None)
 }
 
 #[cfg(unix)]
@@ -413,7 +576,7 @@ impl Drop for UucpLock {
 /// The process with a `flock` or `fcntl` lock on `port` in `locks` (`/proc/locks`, which every
 /// user can read): its lines name the file by its filesystem's `major:minor` (hex) and inode
 #[cfg(target_os = "linux")]
-pub fn lock_holder(port: &str, locks: &str) -> Option<libc::pid_t> {
+pub fn flock_holder(port: &str, locks: &str) -> Option<libc::pid_t> {
     use std::os::unix::fs::MetadataExt;
     let meta = std::fs::metadata(port).ok()?;
     let dev = meta.dev();

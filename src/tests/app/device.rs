@@ -2073,7 +2073,7 @@ fn profiles_popup_toggles_and_moves() {
 #[cfg(target_os = "linux")]
 #[test]
 fn serial_open_and_attach_touch_no_line() {
-    use crate::{app::tests::Pty, link::lock::lock_holder};
+    use crate::{app::tests::Pty, link::lock::flock_holder};
     let pty = Pty::open();
     let mut app = app_on(&pty.path);
     let quiet = |app: &mut App| {
@@ -2089,7 +2089,7 @@ fn serial_open_and_attach_touch_no_line() {
     app.dispatch(Action::App(AppAction::ToggleAttach));
     assert!(!app.link.is_open());
     let start = Instant::now();
-    while lock_holder(&pty.path, "/proc/locks").is_some() {
+    while flock_holder(&pty.path, "/proc/locks").is_some() {
         assert!(start.elapsed() < Duration::from_secs(2), "flock kept");
         thread::sleep(Duration::from_millis(5));
     }

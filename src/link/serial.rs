@@ -7,19 +7,14 @@ use std::{
     time::Duration,
 };
 
-#[cfg(target_os = "linux")]
-use super::probe::open_holder;
 use super::{
     Address, LinkError,
     error::is_gone,
-    lock::{LinkLock, LockState, held_by, lock_state},
-    probe::maxicom_label,
+    lock::{LinkLock, held_by},
+    probe::port_holder,
 };
 #[cfg(unix)]
-use super::{
-    lock::{LOCK_DIRS, UucpLock, locked_by},
-    probe::process_label,
-};
+use super::{lock::UucpLock, probe::Holder};
 use serde::{Deserialize, Serialize};
 use serial2::{
     CharSize as S2CharSize, FlowControl as S2FlowControl, Parity as S2Parity, SerialPort,
@@ -348,29 +343,6 @@ pub struct SerialDevice {
     _uucp: Option<UucpLock>,
 }
 
-/// Who holds `device`, this process aside: another maxicom's lock in the shared folder, a UUCP
-/// lock file on Unix (minicom's), and on Linux a process of the user's own with a real port
-/// open, with no lock (screen, cu, `minicom -o`), a pty's maker aside (MAX-186). A `flock` holder is found by the open. Another user's
-/// program holding it without a lock can't be seen
-fn lock_holder(device: &str) -> Option<String> {
-    let me = std::process::id();
-    match lock_state(&Address::Serial(device.to_string())) {
-        LockState::Held(info) if info.as_ref().is_none_or(|info| info.pid != me) => {
-            return Some(maxicom_label(info.as_ref()));
-        }
-        _ => {}
-    }
-    #[cfg(unix)]
-    if let Some(pid) = locked_by(device, LOCK_DIRS).filter(|&pid| pid as u32 != me) {
-        return Some(process_label(pid));
-    }
-    #[cfg(target_os = "linux")]
-    if let Some(holder) = open_holder(device, me) {
-        return Some(holder);
-    }
-    None
-}
-
 /// The serial ports the system lists, sorted, to complete `open`'s address (MAX-168); none
 /// where it can't list them, or for a name that isn't UTF-8
 pub fn port_names() -> Vec<String> {
@@ -441,11 +413,18 @@ impl SerialDevice {
             baudrate: line.baud,
             source,
         };
-        // a port another program holds by a lock is refused before the open, which would
-        // raise its lines and may reset the board (MAX-186)
-        if let Some(holder) = lock_holder(device) {
-            return Err(failed(held_by(holder)));
+        // a port another program holds is refused before the open, which would raise its
+        // lines and may reset the board (MAX-186, MAX-268)
+        let me = Some(std::process::id());
+        if let Some(holder) = port_holder(device).filter(|holder| holder.pid != me) {
+            return Err(failed(held_by(holder.label)));
         }
+        // maxicom's UUCP lock file before the open, as the convention asks: its making is the
+        // one atomic step, so a holder that took it since the check above is refused here,
+        // and on any later error the file goes with `uucp`
+        #[cfg(unix)]
+        let uucp =
+            UucpLock::take(device).map_err(|holder| failed(held_by(Holder::uucp(holder).label)))?;
         let mut port = SerialPort::open(device, line.baud).map_err(failed)?;
 
         // Platform-specific exclusivity lock
@@ -479,7 +458,7 @@ impl SerialDevice {
             port,
             _lock: LinkLock::take(&Address::Serial(device.to_string())),
             #[cfg(unix)]
-            _uucp: UucpLock::take(device),
+            _uucp: uucp,
         };
         dev.reconfigure(line)?;
         dev.set_levels(line)?;
@@ -652,7 +631,8 @@ impl Drop for SerialDevice {
     fn drop(&mut self) {
         use std::os::unix::io::AsRawFd;
         let fd = self.port.as_raw_fd();
-        // Clear exclusive mode
+        // Clear exclusive mode: the flag is the tty's, which outlives this fd while another
+        // holds it open (a pty's master side, MAX-268)
         unsafe {
             libc::ioctl(fd, libc::TIOCNXCL as _);
         }

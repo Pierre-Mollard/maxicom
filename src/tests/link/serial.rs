@@ -54,17 +54,17 @@ fn framings() {
 #[cfg(target_os = "linux")]
 #[test]
 fn open_takes_a_flock() {
-    use crate::link::{lock::lock_holder, probe::port_state_of};
+    use crate::link::{lock::flock_holder, probe::port_state_of};
     use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
     use std::time::Instant;
     let pty = crate::app::tests::Pty::open();
     let me = std::process::id() as libc::pid_t;
     let line = LineSettings::default();
     let port = SerialDevice::open(&pty.path, &line).unwrap();
-    assert_eq!(lock_holder(&pty.path, "/proc/locks"), Some(me));
+    assert_eq!(flock_holder(&pty.path, "/proc/locks"), Some(me));
     drop(port);
     let start = Instant::now();
-    while lock_holder(&pty.path, "/proc/locks").is_some() {
+    while flock_holder(&pty.path, "/proc/locks").is_some() {
         assert!(
             start.elapsed() < Duration::from_secs(2),
             "flock kept after the close"
@@ -89,6 +89,38 @@ fn open_takes_a_flock() {
         crate::link::probe::ProbeState::Busy(None)
     );
     open().expect("TIOCEXCL left on the port");
+}
+
+/// MAX-268: a port another process holds with a `flock` (picocom, tio) is refused before
+/// it's opened, so its lines aren't touched, that process named in the error.
+/// How: util-linux's `flock` command locks a pty and runs `sleep`, the lock waited for in
+/// `/proc/locks`, then maxicom's open.
+#[cfg(target_os = "linux")]
+#[test]
+fn open_refuses_a_flock_before_opening() {
+    use crate::link::{
+        lock::flock_holder,
+        probe::{ProbeState, port_state_of},
+    };
+    use std::time::Instant;
+    let pty = crate::app::tests::Pty::open();
+    let mut holder = std::process::Command::new("flock")
+        .args(["-n", &pty.path, "sleep", "10"])
+        .spawn()
+        .unwrap();
+    let start = Instant::now();
+    while flock_holder(&pty.path, "/proc/locks").is_none() {
+        assert!(start.elapsed() < Duration::from_secs(2), "no flock taken");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let refused = SerialDevice::open(&pty.path, &LineSettings::default());
+    let _ = holder.kill();
+    let _ = holder.wait();
+    let Err(LinkError::OpenFailed { source, .. }) = refused else {
+        panic!("opened a port another process locks");
+    };
+    let label = format!("flock ({})", holder.id());
+    assert_eq!(port_state_of(&source), ProbeState::Busy(Some(label)));
 }
 
 /// MAX-186: a port another process of the user's has open without any lock (`minicom -o`,
@@ -210,10 +242,10 @@ fn sysfs_port_details() {
 /// may hold a copy of its fd a moment, until it execs (as in `open_takes_a_flock`)
 #[cfg(target_os = "linux")]
 fn open_when_free(path: &str, line: &LineSettings) -> Result<SerialDevice, LinkError> {
-    use crate::link::lock::lock_holder;
+    use crate::link::lock::flock_holder;
     use std::time::Instant;
     let start = Instant::now();
-    while lock_holder(path, "/proc/locks").is_some() {
+    while flock_holder(path, "/proc/locks").is_some() {
         assert!(start.elapsed() < Duration::from_secs(2), "flock kept");
         std::thread::sleep(Duration::from_millis(5));
     }
