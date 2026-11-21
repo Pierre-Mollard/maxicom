@@ -27,8 +27,8 @@ use crate::{
 };
 
 /// The loading popup's spinner, a step every `SPINNER_STEP`, and its gauge's width (MAX-272)
-const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-const SPINNER_STEP: Duration = Duration::from_millis(100);
+pub const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+pub const SPINNER_STEP: Duration = Duration::from_millis(100);
 const LOADING_GAUGE: usize = 30;
 
 /// What the disconnected and detached popups say for each kind of link (MAX-168): the
@@ -291,6 +291,12 @@ pub fn render_confirm_quit_popup(
     render_alert("Quit", tone, text, hints, frame, theme, targets)
 }
 
+/// The spinner's glyph `elapsed` after it started (MAX-272)
+pub fn spinner(elapsed: Duration) -> char {
+    let turn = elapsed.as_millis() / SPINNER_STEP.as_millis();
+    SPINNER[turn as usize % SPINNER.len()]
+}
+
 /// A group replay loading (MAX-272): a spinner with the mode and the session being read, the
 /// gauge, the bytes, the rate and the time left; the close key stops it
 pub fn render_loading_popup(
@@ -307,8 +313,7 @@ pub fn render_loading_popup(
         .fg(theme.palette.secondary)
         .add_modifier(Modifier::BOLD);
 
-    let turn = load.elapsed(now).as_millis() / SPINNER_STEP.as_millis();
-    let spinner = SPINNER[turn as usize % SPINNER.len()];
+    let spinner = spinner(load.elapsed(now));
     let (mode, session, of) = load.at();
     let mode = match mode {
         Mode::Line => "Line mode",

@@ -1,6 +1,7 @@
 use std::{
     collections::VecDeque,
     hash::{DefaultHasher, Hash, Hasher},
+    time::Instant,
 };
 
 use ratatui::{
@@ -38,11 +39,14 @@ use crate::{
         data_display::format_entry_content,
         layout::{
             LogicalLineLayout, PreparedLayout, byte_mode_rows, continuation_indent,
-            prepare_view_layout,
+            plain_line_rows, prepare_view_layout,
         },
         raw_side,
     },
 };
+
+/// The clock read once every that many heights counted, to end the frame's slice (MAX-272)
+const HEIGHTS_CHECK_EVERY: usize = 256;
 
 pub fn history_entry_to_line(
     entry: &LogEntry,
@@ -390,6 +394,8 @@ pub fn render_monitor(
     // - byte modes (Hex, Octal, Binary) with word wrap: by arithmetic from the byte count
     //   (`byte_mode_rows`), when the gutter ends with a space so it can't merge with the first
     //   byte (a prefix like "|" would); `None` from it falls back to laying out
+    // - text modes: one row for a printable ASCII line that fits beside the gutter
+    //   (`plain_line_rows`, MAX-272), most of a log; the others are laid out
     // - anything else: laid out like the window entries (after a width change in Pretty
     //   that is ~2 µs per entry, once)
     let byte_digits = match display_mode {
@@ -406,9 +412,21 @@ pub fn render_monitor(
             .line
             .ends_with(char::is_whitespace);
     let indent_width = continuation_indent(app.settings()).width();
+    // a slice a frame: a long history goes on being counted over the next frames, the busy
+    // indicator showing, the app answering (MAX-272)
+    let started = Instant::now();
+    let mut counted_now = 0;
+    let mut left = false;
     for (idx, height) in row_heights.iter_mut().enumerate() {
         if *height != 0 {
             continue;
+        }
+        counted_now += 1;
+        if counted_now % HEIGHTS_CHECK_EVERY == 0
+            && started.elapsed() >= app.line_mode.heights_slice()
+        {
+            left = true;
+            break;
         }
         let counted = match (wrap_mode, byte_digits) {
             (WrapMode::Truncate, _) => Some(1),
@@ -418,6 +436,13 @@ pub fn render_monitor(
                 content_width,
                 gutter_width,
                 indent_width,
+            ),
+            // a short plain line: one row (MAX-272, a group replay's million lines)
+            (_, None) => plain_line_rows(
+                &app.line_mode.history()[idx].text,
+                display_mode,
+                content_width,
+                gutter_width,
             ),
             _ => None,
         };
@@ -692,12 +717,15 @@ pub fn render_monitor(
     // row is the rows of the entries before the window plus `paragraph_y_offset`. From the
     // bottom of the history it is what is left below the view (0 when live; the partial RX line
     // is not counted, so it can only make that 0 sooner). The scrollbar, `Bot` / `%` and the
-    // title's `SCROLL +n` all read this
+    // title's `SCROLL +n` all read this. An entry not counted yet counts one row until it is
+    // (MAX-272)
+    app.line_mode.set_counting(left, started);
+    let rows_of = |height: u32| (height as usize).max(1);
     let rows_before_window: usize = row_heights
         .range(..start_idx)
-        .map(|&height| height as usize)
+        .map(|&height| rows_of(height))
         .sum();
-    let total_rows: usize = row_heights.iter().map(|&height| height as usize).sum();
+    let total_rows: usize = row_heights.iter().map(|&height| rows_of(height)).sum();
     let max_scroll = total_rows.saturating_sub(content_height);
     let view_top = rows_before_window + paragraph_y_offset;
     let offset_from_bottom = total_rows
@@ -715,7 +743,7 @@ pub fn render_monitor(
     let mut line = 0;
     for (_, mark_line) in &mut mark_rows {
         while line < *mark_line {
-            rows_above += heights.next().map_or(0, |&height| height as usize);
+            rows_above += heights.next().map_or(0, |&height| rows_of(height));
             line += 1;
         }
         *mark_line = rows_above;

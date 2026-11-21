@@ -1,5 +1,8 @@
 use jiff::Timestamp;
-use std::collections::VecDeque;
+use std::{
+    collections::VecDeque,
+    time::{Duration, Instant},
+};
 use tui_input::Input;
 
 use crate::{
@@ -24,6 +27,10 @@ use crate::{
     overlays::MarkRow,
     raw_side::line::{self, LineBytes},
 };
+
+/// The heights a frame counts at most, the next frames going on (MAX-272): a long history's
+/// first look or resize keeps the app answering
+const HEIGHTS_SLICE: Duration = Duration::from_millis(20);
 
 pub struct LineMode {
     /// Completed lines of device output (scrollback) String because already processed
@@ -60,6 +67,9 @@ pub struct LineMode {
     /// What `row_heights` were counted for (view width, wrap and display modes...): the render
     /// gives a new key when that changes, which resets every height to "not counted"
     row_heights_key: u64,
+    /// Since when heights are left to count: the render counts them a slice a frame (MAX-272)
+    counting_since: Option<Instant>,
+    heights_slice: Duration,
     /// Scroll position in rows, from the render (#5d)
     row_scroll_status: ScrollStatus,
     /// The raw side panel's pan, and what copy mode does on that side
@@ -122,6 +132,8 @@ impl LineMode {
             pending_scroll_rows: 0,
             row_heights: VecDeque::new(),
             row_heights_key: 0,
+            counting_since: None,
+            heights_slice: HEIGHTS_SLICE,
             row_scroll_status: ScrollStatus::default(),
             line_bytes: LineBytes::default(),
             vi_state_copymode: None,
@@ -848,6 +860,26 @@ impl LineMode {
     }
     pub fn put_row_heights(&mut self, row_heights: VecDeque<u32>) {
         self.row_heights = row_heights;
+    }
+
+    /// Whether the last frame left heights to count, the next frames counting on (MAX-272)
+    pub fn set_counting(&mut self, left: bool, now: Instant) {
+        self.counting_since = left.then(|| self.counting_since.unwrap_or(now));
+    }
+
+    /// Since when heights are left to count, none when they all are
+    pub fn counting_since(&self) -> Option<Instant> {
+        self.counting_since
+    }
+
+    /// How long a frame counts heights at most
+    pub fn heights_slice(&self) -> Duration {
+        self.heights_slice
+    }
+
+    #[cfg(test)]
+    pub fn set_heights_slice(&mut self, slice: Duration) {
+        self.heights_slice = slice;
     }
     #[inline]
     pub fn pan_to_right(&mut self, cols: usize) {

@@ -832,6 +832,43 @@ pub fn byte_mode_rows(
     Some(rows)
 }
 
+/// Rows a text line (Pretty, Clean, Raw) takes once wrapped, counted without laying it out
+/// (MAX-272): one when its shown text is printable ASCII and fits beside the gutter. `None`
+/// otherwise, so the caller lays the line out. Pretty and Clean show the text `walk_visible_line`
+/// gives (colors, other escape sequences and the line end left out: a colored log line counts
+/// too); Raw shows the text as it is, when it has no control char
+pub fn plain_line_rows(
+    text: &str,
+    mode: LineDisplayMode,
+    max_width: usize,
+    gutter_width: usize,
+) -> Option<usize> {
+    let printable = |shown: &str| shown.bytes().all(|byte| (0x20..0x7F).contains(&byte));
+    let room = max_width.checked_sub(gutter_width)?;
+    let fits = match mode {
+        LineDisplayMode::Pretty | LineDisplayMode::Clean => {
+            let line = text.trim_end_matches(['\r', '\n']);
+            if printable(line) {
+                line.len() <= room
+            } else if line.is_ascii() {
+                let (mut width, mut plain) = (0, true);
+                walk_visible_line(text, |piece| {
+                    if let Piece::Shown(shown, _) = piece {
+                        plain &= printable(shown);
+                        width += shown.len();
+                    }
+                });
+                plain && width <= room
+            } else {
+                false
+            }
+        }
+        LineDisplayMode::Raw => printable(text) && text.len() <= room,
+        LineDisplayMode::Hex | LineDisplayMode::Octal | LineDisplayMode::Binary => false,
+    };
+    fits.then_some(1)
+}
+
 pub fn prepare_view_layout(
     lines: Vec<Line<'static>>,
     settings: &SettingsConfig,

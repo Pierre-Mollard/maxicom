@@ -1731,9 +1731,20 @@ impl App {
             self.drag_scroll(now) || self.scrollbar_repeat(now) || self.click_repeat(now);
         let tested = self.poll_link_test();
         let loaded = self.load_group_slice(now);
+        // the line heights counted a slice a frame, the busy indicator turning (MAX-272)
+        let busy = self.busy().is_some();
         // a flash is redrawn until it's over, the last frame without it
         let flashing = self.terminal_mode.has_pending_flash() || self.mark_flash.is_some();
-        toasts_expired || flashing || drag_scrolled || tested || loaded
+        toasts_expired || flashing || drag_scrolled || tested || loaded || busy
+    }
+
+    /// Work left for the next frames, with since when, for the busy indicator: for now the line
+    /// heights of a long history, in line mode (MAX-272), maybe more later
+    pub fn busy(&self) -> Option<(&'static str, Instant)> {
+        let since = (self.settings.mode == Mode::Line)
+            .then(|| self.line_mode.counting_since())
+            .flatten()?;
+        Some(("Counting lines", since))
     }
 
     /// The left button is on a scrollbar, from its press to its release (MAX-142)

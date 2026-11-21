@@ -181,9 +181,29 @@ about 575 MB. Each line costs more than its text because the two modes' memory
 gets interleaved. With `dual_mode_buffering = "active_only"`, the same history
 takes about 40 MB.
 
-The first draw and each resize measure every line, which takes about 400 ms
-when the history is full. Lower `history_size` if resizing feels slow or
-memory is short.
+Lower `history_size` if memory is short.
+
+### Counting the rows
+
+The scrollbar needs to know how many rows the whole history takes. Line mode
+counts them on its first draw, and again when something changes how lines
+are laid out: a resize, a side panel, timestamps, the display or wrap mode.
+A line of plain ASCII text that fits on one row is counted at once, colors
+included: a full history of such lines takes a few milliseconds. The others
+(accents, symbols, lines that wrap) are measured one by one, about 2 µs
+each.
+
+When that takes longer than a frame, it goes on over the next frames and a
+small box top left says so:
+
+```text
+┌──────────────────┐
+│ ⠹ Counting lines │
+└──────────────────┘
+```
+
+The history shows and scrolls meanwhile; only the scrollbar is off until the
+count ends, and the box goes.
 
 ## When the device is a shell
 

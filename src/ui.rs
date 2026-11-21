@@ -46,7 +46,7 @@ use crate::{
             marks::render_marks_popup,
             menu::render_action_menu,
             notices::render_notices_popup,
-            notifications::render_notifications,
+            notifications::{render_busy, render_notifications},
             profiles::render_profiles_popup,
             reconfigure::render_reconfigure_popup,
             resize::render_resize_popup,
@@ -284,6 +284,9 @@ pub fn render(
         }
     }
 
+    if let Some((label, since)) = app.busy() {
+        render_busy(label, since, frame, theme);
+    }
     let toasts = render_notifications(&app.notifications, frame, theme);
     // their time starts when they're first seen (MAX-228)
     let ids: Vec<u64> = toasts.iter().map(|(_, id)| *id).collect();

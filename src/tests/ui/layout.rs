@@ -347,6 +347,107 @@ fn word_wrap_golden_rows() {
     }
 }
 
+/// MAX-272: a text line counted one row without its layout is one row once laid out: the
+/// shortcut never says one row for a line that wraps.
+/// How: plain lines (empty, words, trailing spaces, line ends), lines with a tab, escape codes,
+/// a CR or a control char, and one it must leave to the layout (accents) in Pretty / Clean /
+/// Raw, with and without timestamps
+/// and an indent prefix, word and char wrap, at widths 4-90: count vs `prepare_view_layout`.
+#[test]
+fn plain_line_rows_match_the_wrap() {
+    use crate::{app::types::LogEntry, configs::LineDisplayMode, ui::lines::history_entry_to_line};
+    let theme = ThemeConfig::default();
+    let texts = [
+        "",
+        "a",
+        "hello world",
+        "I (1234) app: sensor reading 42 temp=21.5 hum=40",
+        "trailing spaces   ",
+        "ends with a line end\r\n",
+        "a-very-long-word-without-any-space-at-all-that-must-be-cut-somewhere",
+        "tab\there",
+        "\x1b[0;32mI (1234) app: a colored log line\x1b[0m",
+        "\x1b[2Kerased, then \x1b[1mbold\x1b[0m text",
+        "progress 10%\rprogress 20%",
+        "bell\x07 inside",
+        "accentué",
+    ];
+    let mut counted = 0;
+    for mode in [
+        LineDisplayMode::Pretty,
+        LineDisplayMode::Clean,
+        LineDisplayMode::Raw,
+    ] {
+        for wrap in [WrapMode::Word, WrapMode::Char] {
+            for timestamps in [false, true] {
+                for indent in [PrefixWrapBehavior::None, PrefixWrapBehavior::Prefix] {
+                    let mut settings = SettingsConfig::default();
+                    settings.line_mode.prefix_place = crate::configs::settings::PrefixPlace::Inset;
+                    settings.line_mode.display_mode = mode;
+                    settings.line_mode.wrap_mode = wrap;
+                    settings.show_timestamps = timestamps;
+                    settings.line_mode.wrap_indent = indent;
+                    let prefix = settings.line_prefixes().line.to_string();
+                    let gutter = settings.line_gutter_width();
+                    for text in texts {
+                        let entry = LogEntry::received(
+                            text.to_string(),
+                            text.as_bytes(),
+                            Some(jiff::Timestamp::now()),
+                        );
+                        let line = history_entry_to_line(
+                            &entry,
+                            &settings,
+                            &[],
+                            &[],
+                            None,
+                            &theme,
+                            &prefix,
+                        );
+                        for width in 4..=90 {
+                            let Some(rows) = plain_line_rows(text, mode, width, gutter) else {
+                                continue;
+                            };
+                            let layout =
+                                prepare_view_layout(vec![line.clone()], &settings, &theme, width);
+                            let context = format!(
+                                "{mode:?} {wrap:?} ts {timestamps} {indent:?} {text:?} width {width}"
+                            );
+                            assert_eq!(rows, layout.visual_lines.len(), "{context}");
+                            counted += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // the plain lines that fit are counted
+    assert!(counted > 3000, "{counted}");
+    // a tab counts as the spaces it shows, up to column 8; a non-ASCII char is left to the
+    // layout, even when short
+    assert_eq!(
+        plain_line_rows("tab\there", LineDisplayMode::Pretty, 12, 0),
+        Some(1)
+    );
+    assert_eq!(
+        plain_line_rows("tab\there", LineDisplayMode::Pretty, 11, 0),
+        None
+    );
+    assert_eq!(
+        plain_line_rows("accentué", LineDisplayMode::Pretty, 90, 0),
+        None
+    );
+    // a colored line counts by its shown text, in Pretty and Clean but not Raw
+    let colored = "\x1b[0;32mI (1) ok\x1b[0m";
+    assert_eq!(
+        plain_line_rows(colored, LineDisplayMode::Pretty, 8, 0),
+        Some(1)
+    );
+    assert_eq!(plain_line_rows(colored, LineDisplayMode::Clean, 7, 0), None);
+    assert_eq!(plain_line_rows(colored, LineDisplayMode::Raw, 90, 0), None);
+    assert_eq!(plain_line_rows("line\r", LineDisplayMode::Raw, 90, 0), None);
+}
+
 /// The arithmetic row count of byte mode lines equals the rows the word wrap makes, when it
 /// gives a count (#5d).
 /// How: generated lines (0-60 bytes) in Hex / Octal / Binary, with and without timestamps

@@ -6,9 +6,12 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
 };
 
+use std::time::Instant;
+
 use crate::{
     configs::ThemeConfig,
     notification::{NotificationManager, ToastLevel},
+    ui::popups::alert::spinner,
 };
 
 const TOAST_MIN_WIDTH: u16 = 24;
@@ -21,6 +24,25 @@ const TOAST_MAX_CONTENT_LINES: usize = 5;
 const TOAST_RIGHT_MARGIN: u16 = 2;
 const TOAST_TOP_START_Y: u16 = 1;
 const TOAST_STACK_GAP_Y: u16 = 1;
+
+/// Work going on over several frames, in a small box top left, away from the toasts: a
+/// spinner and what it is, `⠹ Counting lines` (MAX-272)
+pub fn render_busy(label: &str, since: Instant, frame: &mut Frame, theme: &ThemeConfig) {
+    let screen = frame.area();
+    if screen.width < MIN_SCREEN_WIDTH || screen.height < MIN_SCREEN_HEIGHT {
+        return;
+    }
+    let text = format!(" {} {label} ", spinner(since.elapsed()));
+    let width = (text.chars().count() as u16 + 2).min(screen.width);
+    let area = Rect::new(TOAST_RIGHT_MARGIN, TOAST_TOP_START_Y, width, 3);
+    let color = ToastLevel::Info.color();
+    frame.render_widget(Clear, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(color))
+        .style(*theme.notification.info);
+    frame.render_widget(Paragraph::new(Line::from(text)).block(block), area);
+}
 
 /// Draws the toasts, top right, and gives the area and id of each one drawn (MAX-197)
 pub fn render_notifications(

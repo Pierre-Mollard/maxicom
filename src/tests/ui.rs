@@ -11986,3 +11986,48 @@ fn notifications_popup() {
         top
     );
 }
+
+/// MAX-272: line mode counts a long history's heights a slice a frame: meanwhile the busy
+/// indicator shows top left, the scrollbar counts what's left as one row each, and the app
+/// asks for the next frames; once all are counted, the indicator goes and the scroll status
+/// is the one counted in one go.
+/// How: 1000 lines that wrap on two rows, with an accent so each is laid out; a slice of 0
+/// (256 lines a frame), frames drawn until the count ends; then the same history counted in
+/// one frame.
+#[test]
+fn line_heights_counted_over_frames() {
+    let lines: String = (0..1000)
+        .map(|i| format!("ligne é {i:04} {}\r\n", "x".repeat(40)))
+        .collect();
+    let harness = |slice: std::time::Duration| {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 40, 10, |settings| {
+            settings.line_mode.history_size = 2000;
+        });
+        h.app.line_mode.set_heights_slice(slice);
+        h.feed(lines.as_bytes());
+        h
+    };
+
+    let mut h = harness(std::time::Duration::ZERO);
+    let rows = h.draw();
+    assert!(has(&rows, "⠋ Counting lines"), "{rows:#?}");
+    assert!(h.app.busy().is_some());
+    assert!(h.app.tick(), "the next frames are asked for");
+    let estimated = h.app.line_mode.scroll_status().max_scroll;
+    let mut frames = 1;
+    while h.app.busy().is_some() {
+        h.draw();
+        frames += 1;
+        assert!(frames < 10, "the count never ends");
+    }
+    assert!(frames >= 4, "{frames} frames");
+    let rows = h.draw();
+    assert!(!has(&rows, "Counting lines"), "{rows:#?}");
+
+    let mut at_once = harness(std::time::Duration::from_secs(60));
+    at_once.draw();
+    assert!(at_once.app.busy().is_none());
+    let counted = at_once.app.line_mode.scroll_status();
+    assert_eq!(h.app.line_mode.scroll_status(), counted);
+    assert!(estimated < counted.max_scroll, "{estimated} {counted:?}");
+}

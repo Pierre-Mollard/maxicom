@@ -112,6 +112,15 @@ to send the focus reports.
 - A group replay loads faster: each mode reads the lines its history holds,
   counted from the newest session back, instead of a fixed number of bytes
   per line. A group of short lines opens two to three times faster.
+- Line mode redraws a long history much faster when something changes how
+  its lines are laid out: a window resize, a side panel opened or resized,
+  timestamps turned on or off, another display or wrap mode, and the first
+  look after a group replay. A line that fits on one row is no longer laid
+  out to count its rows: on a million lines, about 15 ms instead of almost
+  2 s (100 ms for colored lines). Lines with non-ASCII characters are still
+  measured one by one, now over several frames: maxicom keeps answering, and
+  a small box top left says `Counting lines` until the scrollbar is right.
+  See [Counting the rows](https://pierre-mollard.github.io/maxicom/line-mode.html#counting-the-rows).
 - A `clear` in a restored session or in a group replay clears the screen but
   no longer erases the terminal's history: one session's `clear` wiped the
   sessions before it in terminal mode. Live, `clear` works as before. See
