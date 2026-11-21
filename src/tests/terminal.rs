@@ -329,9 +329,11 @@ fn dropped_labels_and_harmless() {
     };
     assert!(harmless(DropKind::Osc, b"\x1b]7;file://h/x\x07"));
     assert!(harmless(DropKind::Osc, b"\x1b]133;A\x07"));
-    assert!(harmless(DropKind::Osc, b"\x1b]8;;http://x\x07"));
+    // links are handled since MAX-277: no longer dropped
+    assert!(!harmless(DropKind::Osc, b"\x1b]8;;http://x\x07"));
     assert!(harmless(DropKind::Csi, b"\x1b[?2026l"));
-    assert!(harmless(DropKind::Csi, b"\x1b[?1004h"));
+    // focus reports are handled since MAX-277: no longer dropped
+    assert!(!harmless(DropKind::Csi, b"\x1b[?1004h"));
     assert!(!harmless(DropKind::Osc, b"\x1b]52;c;?\x07"));
     assert!(!harmless(DropKind::Osc, b"\x1b]77;x\x07"));
     assert!(!harmless(DropKind::Csi, b"\x1b[?2027h"));
@@ -364,4 +366,111 @@ fn dropped_labels_and_harmless() {
         group(DropKind::String, b"\x1bPq\x1b\\"),
         UnhandledGroup::Strings
     );
+}
+
+/// The links kept by a `rows` x `cols` parser with 100 rows of scrollback fed `bytes`
+fn links_of(rows: u16, cols: u16, bytes: &[u8]) -> Vec<Hyperlink> {
+    let mut parser = new_parser(rows, cols, 100);
+    parser.process(bytes);
+    parser.callbacks().links.iter().cloned().collect()
+}
+
+fn link(uri: &str, start: (u64, u16), end: (u64, u16), text: &str) -> Hyperlink {
+    Hyperlink {
+        uri: uri.to_string(),
+        start,
+        end,
+        text: text.to_string(),
+    }
+}
+
+/// MAX-277: an OSC 8 with a URI starts a link at the cursor, an empty one ends it: its cells
+/// and text are kept, with ST or BEL, its parameters skipped and a `;` in the URI kept. A link
+/// wrapped to the next row, and one ending on the last column (the wrap pending, the cursor
+/// past the edge), keep their whole text.
+/// How: "a" link "link" "b"; on 10 columns "12345678" then "abcdef" with `id=1` and `x;y`;
+/// on 5 columns "abcde" then "f"
+#[test]
+fn osc8_links_kept() {
+    let bytes = b"a\x1b]8;;http://x\x1b\\link\x1b]8;;\x1b\\b";
+    let found = links_of(4, 10, bytes);
+    assert_eq!(found, [link("http://x", (0, 1), (0, 5), "link")]);
+
+    let bytes = b"12345678\x1b]8;id=1;http://x;y\x07abcdef\x1b]8;;\x07";
+    let found = links_of(4, 10, bytes);
+    assert_eq!(found, [link("http://x;y", (0, 8), (1, 4), "abcdef")]);
+
+    let bytes = b"\x1b]8;;http://x\x07abcde\x1b]8;;\x07f";
+    let found = links_of(4, 5, bytes);
+    assert_eq!(found, [link("http://x", (0, 0), (0, 5), "abcde")]);
+}
+
+/// MAX-277: a link still open ends where the next starts; an end with no link open, a link
+/// never ended, an empty one, a URI with a control char and a link on the alternate screen
+/// keep nothing (vte already strips the C0 controls of an OSC, not U+0085); nor does OSC 8
+/// show as dropped.
+#[test]
+fn osc8_links_edges() {
+    let bytes = b"\x1b]8;;http://a\x07ab\x1b]8;;http://b\x07cd\x1b]8;;\x07";
+    let found = links_of(4, 10, bytes);
+    assert_eq!(
+        found,
+        [
+            link("http://a", (0, 0), (0, 2), "ab"),
+            link("http://b", (0, 2), (0, 4), "cd")
+        ]
+    );
+
+    for bytes in [
+        &b"\x1b]8;;\x07ab"[..],
+        b"\x1b]8;;http://a\x07ab",
+        b"\x1b]8;;http://a\x07\x1b]8;;\x07",
+        b"\x1b]8;;http://\xc2\x85a\x07ab\x1b]8;;\x07",
+        b"\x1b[?1049h\x1b]8;;http://a\x07ab\x1b]8;;\x07",
+    ] {
+        assert_eq!(links_of(4, 10, bytes), [], "{bytes:?}");
+    }
+
+    let mut parser = new_parser(4, 10, 0);
+    parser.callbacks_mut().collect = true;
+    parser.process(b"\x1b]8;;http://a\x07ab\x1b]8;;\x07");
+    assert!(parser.callbacks().dropped.is_empty());
+}
+
+/// MAX-277: a link's rows are absolute, counted from the first row ever, the rows in the
+/// scrollback and the ones evicted from it included; one whose start left the screen before
+/// it ended isn't kept. The text is read on the live screen, the view scrolled up or not.
+/// How: 2 rows; 3 lines then a link (row 3). No scrollback: 3 lines, then a link (row 3).
+/// A link over 3 lines: its start is gone. The view scrolled 1 up, a link on the live row
+#[test]
+fn osc8_links_rows() {
+    let bytes = b"x\r\nx\r\nx\r\n\x1b]8;;http://a\x07ab\x1b]8;;\x07";
+    assert_eq!(links_of(2, 10, bytes)[0].start, (3, 0));
+    let mut parser = new_parser(2, 10, 0);
+    parser.process(bytes);
+    assert_eq!(parser.callbacks().links[0].start, (3, 0));
+
+    let bytes = b"\x1b]8;;http://a\x07a\r\nb\r\nc\r\nd\x1b]8;;\x07";
+    assert_eq!(links_of(2, 10, bytes), []);
+
+    let mut parser = new_parser(2, 10, 100);
+    parser.process(b"x\r\nx\r\nx\r\n");
+    parser.screen_mut().set_scrollback(1);
+    parser.process(b"\x1b]8;;http://a\x07ab\x1b]8;;\x07");
+    assert_eq!(parser.callbacks().links[0].text, "ab");
+    assert_eq!(parser.screen().scrollback(), 1);
+}
+
+/// MAX-277: past `LINKS_MAX` links, the oldest goes.
+#[test]
+fn osc8_links_capped() {
+    let one = b"\x1b]8;;http://a\x07a\x1b]8;;\x07\r";
+    let mut parser = new_parser(2, 10, 0);
+    parser.process(b"\x1b]8;;http://first\x07a\x1b]8;;\x07\r");
+    for _ in 0..LINKS_MAX {
+        parser.process(one);
+    }
+    let links = &parser.callbacks().links;
+    assert_eq!(links.len(), LINKS_MAX);
+    assert_eq!(links[0].uri, "http://a");
 }

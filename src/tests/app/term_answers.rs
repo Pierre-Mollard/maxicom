@@ -183,6 +183,31 @@ fn size_reports_group() {
     assert_eq!(groups(b"\x1b[?2048$p\x1b[?2048h"), [Size, Size]);
 }
 
+/// Mode 1004 (MAX-277): `?1004h` turns the focus reports on, with nothing sent at once (the
+/// first goes out on the next focus change), even inside a list of modes; `?1004l` turns them
+/// off. DECRQM 1004 follows the state, in group `focus`, and the `h` / `l` are not reported as
+/// dropped.
+/// How: DECRQM, then `?25;1004h` (cursor shown, the mode), DECRQM, `?1004l`, DECRQM
+#[test]
+fn focus_reports_mode() {
+    let mut parser = parser();
+    parser.callbacks_mut().collect = true;
+    parser.process(b"\x1b[?1004$p");
+    assert_eq!(take(&mut parser), "\x1b[?1004;2$y");
+
+    parser.process(b"\x1b[?25;1004h");
+    assert!(parser.callbacks().focus_reports);
+    assert_eq!(take(&mut parser), "");
+    parser.process(b"\x1b[?1004$p");
+    assert_eq!(take(&mut parser), "\x1b[?1004;1$y");
+
+    parser.process(b"\x1b[?1004l\x1b[?1004$p");
+    assert_eq!(take(&mut parser), "\x1b[?1004;2$y");
+    assert!(!parser.callbacks().focus_reports);
+    assert!(parser.callbacks().dropped.is_empty());
+    assert_eq!(groups(b"\x1b[?1004$p"), [QueryGroup::Focus]);
+}
+
 /// The colors are the host terminal's, unknown to maxicom: their queries stay unanswered,
 /// DA1 after them tells the app.
 #[test]

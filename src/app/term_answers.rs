@@ -68,12 +68,24 @@
 //!   in the shell as typed text, as with any mode left on. RIS (`ESC c`, `reset`) doesn't
 //!   turn it off: vt100 handles RIS with no callback; `printf '\e[?2048l'` does
 //!
+//! Focus reports, mode 1004 (group `focus`, MAX-277)
+//! * vim, neovim and tmux turn private mode 1004 on with `CSI ? 1004 h` to hear when the
+//!   window gains focus (`CSI I`) or loses it (`CSI O`): neovim checks for files changed
+//!   meanwhile, tmux passes it on to its panes. `CSI ? 1004 l` turns it off.
+//! * vt100 doesn't know the mode: `ParserEvents.focus_reports` keeps the state, and nothing is
+//!   sent when it turns on (as xterm). The window is the host terminal's: its
+//!   `AppAction::FocusGained` queues a report in the parser's answers on each change while the
+//!   mode is on, taken with no RX like the size reports, so sent live in terminal mode only.
+//!   DECRQM `CSI ? 1004 $ p` is in group `focus` too, and a restored session turns the mode
+//!   off.
+//!
 //! Modes (group `modes`)
 //! * DECRQM `CSI ? mode $ p` (private modes) / `CSI mode $ p` (ANSI modes), "is this mode
 //!   on?": `CSI ? mode ; state $ y`, state 1 = set, 2 = reset, 0 = unknown mode. neovim and fzf
 //!   ask before using synchronized output (2026), bracketed paste (2004), mouse modes. Known:
 //!   the private modes vt100 tracks and shows, 7 (autowrap, permanently set: vt100 always
-//!   wraps, MAX-270) and 2048 (size reports, answered in group `size`, see above); see
+//!   wraps, MAX-270), 2048 (size reports, answered in group `size`, see above) and 1004
+//!   (focus reports, group `focus`); see
 //!   `private_mode_state`. No ANSI mode
 //!
 //! Left unanswered: the app falls back when DA1 comes first
@@ -105,6 +117,9 @@ const DA1: &str = "\x1b[?62;22c";
 /// Mode 2048, in-band resize reports (MAX-159)
 pub const SIZE_REPORTS: u16 = 2048;
 
+/// Mode 1004, focus reports (MAX-277)
+pub const FOCUS_REPORTS: u16 = 1004;
+
 /// A reply the parser queued, sent or dropped by the settings when taken: `Answerback` is the
 /// user's string for ENQ, read then
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,7 +146,8 @@ pub fn answer_bytes(answers: Vec<Answer>, config: &TerminalModeConfig) -> Vec<u8
 }
 
 /// The reply to the CSI sequence that vt100 doesn't handle, if it is a query maxicom answers.
-/// `screen` is as the stream left it at the query, `size_reports` the state of mode 2048
+/// `screen` is as the stream left it at the query, `size_reports` / `focus_reports` the state
+/// of modes 2048 / 1004
 pub fn answer_csi(
     screen: &Screen,
     i1: Option<u8>,
@@ -139,8 +155,9 @@ pub fn answer_csi(
     params: &[&[u16]],
     c: char,
     size_reports: bool,
+    focus_reports: bool,
 ) -> Option<Answer> {
-    use QueryGroup::{Identity, Modes, Size, Status};
+    use QueryGroup::{Focus, Identity, Modes, Size, Status};
 
     // a parameter's first value, 0 when left empty: no query uses sub-parameters (`:`)
     let params: Vec<u16> = params
@@ -202,13 +219,18 @@ pub fn answer_csi(
         // screen in cells: in xterm the whole monitor, the biggest the window could grow (an app
         // checks it before asking a resize). The remote can't get more than the emulator: the same
         (None, None, [19], 't') => (Size, format!("\x1b[9;{rows};{cols}t")),
-        // DECRQM private modes (`?`): is this mode set. Mode 2048 is in group `size`: with the
-        // group off it isn't answered, so the app never turns on reports that would be dropped
+        // DECRQM private modes (`?`): is this mode set. Modes 2048 and 1004 are in groups `size`
+        // and `focus`: with the group off they aren't answered, so the app never turns on
+        // reports that would be dropped
         (Some(b'?'), Some(b'$'), [mode], 'p') => (
-            if *mode == SIZE_REPORTS { Size } else { Modes },
+            match *mode {
+                SIZE_REPORTS => Size,
+                FOCUS_REPORTS => Focus,
+                _ => Modes,
+            },
             format!(
                 "\x1b[?{mode};{}$y",
-                private_mode_state(screen, *mode, size_reports)
+                private_mode_state(screen, *mode, size_reports, focus_reports)
             ),
         ),
         // DECRQM ANSI modes (no `?`), the standard ones: 4 insert (IRM), 20 newline (LNM, LF also
@@ -230,6 +252,13 @@ pub fn size_report(rows: u16, cols: u16) -> Answer {
     Answer::Reply(QueryGroup::Size, report.into_bytes())
 }
 
+/// The focus report of mode 1004 (MAX-277): `CSI I` when the window gains focus, `CSI O` when
+/// it loses it
+pub fn focus_report(focused: bool) -> Answer {
+    let report = if focused { "\x1b[I" } else { "\x1b[O" };
+    Answer::Reply(QueryGroup::Focus, report.as_bytes().to_vec())
+}
+
 /// The reply to the escape sequence that vt100 doesn't handle, if it is a query maxicom answers
 pub fn answer_escape(i1: Option<u8>, i2: Option<u8>, b: u8) -> Option<Answer> {
     match (i1, i2, b) {
@@ -246,12 +275,14 @@ pub fn answer_control(b: u8) -> Option<Answer> {
 
 /// The DECRQM state of a private mode: 1 set, 2 reset, 0 for a mode vt100 doesn't track (or
 /// keeps private, like origin mode 6). 47 and 1049 both tell the alternate screen. 2048 is
-/// maxicom's own, `size_reports`, which vt100 doesn't know. Autowrap (7) is 3, permanently set:
-/// vt100 always wraps, and a program that asks knows `CSI ? 7 l` does nothing (MAX-270)
-fn private_mode_state(screen: &Screen, mode: u16, size_reports: bool) -> u8 {
+/// maxicom's own, `size_reports`, which vt100 doesn't know, and 1004 `focus_reports` (MAX-277).
+/// Autowrap (7) is 3, permanently set: vt100 always wraps, and a program that asks knows
+/// `CSI ? 7 l` does nothing (MAX-270)
+fn private_mode_state(screen: &Screen, mode: u16, size_reports: bool, focus_reports: bool) -> u8 {
     let set = match mode {
         7 => return 3,
         SIZE_REPORTS => size_reports,
+        FOCUS_REPORTS => focus_reports,
         1 => screen.application_cursor(),
         25 => !screen.hide_cursor(),
         47 | 1049 => screen.alternate_screen(),

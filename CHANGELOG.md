@@ -28,8 +28,19 @@ remove or rename them. `byte_text` and `byte_invalid` are new.
 `[terminal]` drops `timestamp_del_empty`: `timestamp_del` styles the `│`
 after the times on every row, `DarkGray` like line mode's.
 
+A new `focus` group in `answer_groups`: add it to a list you wrote yourself
+to send the focus reports.
+
 ### Added
 
+- Links from the device (OSC 8, as `ls --hyperlink` and gcc send) are
+  underlined in terminal mode, with the new `link` entry of the theme's
+  `[terminal]`. A click on one, or `gx` on it in copy mode, copies its
+  address with a notification: maxicom never opens it.
+- Focus reports: vim, neovim and tmux can ask to hear when your window gains
+  or loses focus (`ESC [ ? 1004 h`), and maxicom tells them (`ESC [ I`,
+  `ESC [ O`), live in terminal mode. They're in the new `focus` group of
+  `answer_groups`, on by default.
 - `mark_unhandled` in `[terminal_mode]`, with the same groups as
   `notify_unhandled`, puts a marker where something wasn't handled: a control
   byte's control picture (`␀`, `␡`), `◊` for a sequence. Empty by default.

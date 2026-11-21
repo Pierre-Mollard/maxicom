@@ -151,6 +151,29 @@ fn push_row_cells(
     }
 }
 
+/// The links the device drew whose text is still there, in the `link` style (MAX-277)
+fn draw_links(
+    app: &App,
+    buf: &mut Buffer,
+    area: Rect,
+    (pan_x, pan_y): (u16, u16),
+    theme: &ThemeConfig,
+) {
+    for (_, cells) in app.terminal_mode.shown_links() {
+        for (row, cols) in cells {
+            let Some(y) = row.checked_sub(pan_y).filter(|&y| y < area.height) else {
+                continue;
+            };
+            for x in cols
+                .filter_map(|col| col.checked_sub(pan_x))
+                .filter(|&x| x < area.width)
+            {
+                buf[(area.x + x, area.y + y)].set_style(*theme.terminal.link);
+            }
+        }
+    }
+}
+
 pub fn render_vt100_terminal(
     app: &mut App,
     frame: &mut Frame,
@@ -204,6 +227,7 @@ pub fn render_vt100_terminal(
     );
     let screen = app.terminal_mode.vt100_screen();
     highlight_grid(frame.buffer_mut(), content_area, screen, pan, highlights);
+    draw_links(app, frame.buffer_mut(), content_area, pan, theme);
 
     let (grid_rows, cols) = app.terminal_mode.get_vt100_size();
     let max_sb = app.terminal_mode.get_max_scrollback();

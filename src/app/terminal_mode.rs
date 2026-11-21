@@ -9,6 +9,7 @@ use crossterm::event::KeyEvent;
 use jiff::Timestamp;
 use terminput::Encoding;
 use terminput_crossterm::to_terminput_key;
+use unicode_width::UnicodeWidthChar;
 
 use crate::{
     app::{
@@ -20,7 +21,7 @@ use crate::{
         selection::{
             CopyActionResult, CopyModeState, CopySide, LogicalPosition, Reveal, TextSource,
         },
-        term_answers::{Answer, size_report},
+        term_answers::{Answer, focus_report, size_report},
     },
     capture::{Screenshot, TimedChunk},
     configs::{
@@ -38,7 +39,7 @@ use crate::{
         tokens::{Effect, Kind, Token, Tokenizer},
         writes::Run,
     },
-    terminal::{DropKind, Dropped, TerminalParser, new_parser, vt100_dim, vt100_size},
+    terminal::{DropKind, Dropped, Hyperlink, TerminalParser, new_parser, vt100_dim, vt100_size},
 };
 
 /// The modes a restored session may have left set, reset (MAX-148): the scroll region,
@@ -112,6 +113,9 @@ enum Feed {
     Own,
 }
 
+/// A link's cells on the screen, as (screen row, columns) (MAX-277)
+pub type LinkCells = Vec<(u16, Range<u16>)>;
+
 pub struct TerminalMode {
     vt100_parser: TerminalParser,
     max_content_scrollback: usize,
@@ -155,9 +159,6 @@ pub struct TerminalMode {
     /// The screen scrolled up from live when last reconciled: going back down sends the dump
     /// live too (MAX-256)
     screen_scrolled: bool,
-    /// The main screen's rows dropped from the top of the scrollback so far: a world row plus
-    /// this is an absolute row, which scrolling doesn't change (MAX-256)
-    rows_gone: u64,
     /// The screen copy cursor's bytes in the dump, as last found (MAX-256)
     trace_ghosts: Option<Ghosts>,
     /// The screen copy cursor the dump last followed to its bytes
@@ -172,6 +173,8 @@ pub struct TerminalMode {
     mirror_cells: Option<MirrorCells>,
     /// `Y` on the screen copied the rebuilt bytes, and why: the app warns (MAX-256)
     untraced_yank: Option<UntracedYank>,
+    /// `gx` asked for the link under the copy cursor, none when there was none (MAX-277)
+    link_asked: Option<Option<String>>,
     /// Copy mode as a search found it when it opened, given back by Esc (MAX-252)
     search_from: Option<(CopyModeState, DumpCopy)>,
     /// The pan when copy mode started, given back when it ends (MAX-217)
@@ -212,7 +215,6 @@ impl TerminalMode {
             drop_tokenizer: None,
             drop_tokens: false,
             mark_groups: Vec::new(),
-            rows_gone: 0,
             screen_scrolled: false,
             trace_ghosts: None,
             trace_followed: None,
@@ -221,6 +223,7 @@ impl TerminalMode {
             mirror_bytes: None,
             mirror_cells: None,
             untraced_yank: None,
+            link_asked: None,
             search_from: None,
             copy_pan: None,
             copy_held: false,
@@ -506,15 +509,13 @@ impl TerminalMode {
     /// the history's rows, the cursor's), a grid row on the alternate one
     fn cursor_cell(&self) -> (u64, u64, bool) {
         let screen = self.vt100_parser.screen();
-        let (row, col) = screen.cursor_position();
-        let alternate = screen.alternate_screen();
-        let row = if alternate {
-            u64::from(row)
-        } else {
-            let evicted = self.vt100_parser.callbacks().evicted as u64;
-            self.rows_gone + evicted + screen.scrollback_len() as u64 + u64::from(row)
-        };
-        (row, u64::from(col), alternate)
+        match self.vt100_parser.callbacks().cursor_cell(screen) {
+            Some((row, col)) => (row, u64::from(col), false),
+            None => {
+                let (row, col) = screen.cursor_position();
+                (u64::from(row), u64::from(col), true)
+            }
+        }
     }
 
     /// The cell a world position is, as the writes count rows (MAX-256): on the alternate
@@ -524,7 +525,7 @@ impl TerminalMode {
         let row = if alternate {
             line_idx.saturating_sub(self.max_content_scrollback) as u64
         } else {
-            self.rows_gone + line_idx as u64
+            self.vt100_parser.callbacks().rows_gone + line_idx as u64
         };
         Cell {
             row,
@@ -541,7 +542,8 @@ impl TerminalMode {
             let row = usize::try_from(cell.row).ok().filter(|&row| row < rows)?;
             self.max_content_scrollback + row
         } else {
-            let line = usize::try_from(cell.row.checked_sub(self.rows_gone)?).ok()?;
+            let rows_gone = self.vt100_parser.callbacks().rows_gone;
+            let line = usize::try_from(cell.row.checked_sub(rows_gone)?).ok()?;
             (line < self.max_content_scrollback + rows).then_some(line)?
         };
         (alternate == cell.alternate).then_some((line, usize::from(cell.col)))
@@ -761,6 +763,27 @@ impl TerminalMode {
         cell
     }
 
+    /// The link `gx` asked for since the last call (MAX-277): `Some(None)` when the copy
+    /// cursor wasn't on one
+    pub fn take_link_asked(&mut self) -> Option<Option<String>> {
+        self.link_asked.take()
+    }
+
+    /// The URI of the link shown at a world position (MAX-277), none when no live link's text
+    /// is there
+    pub fn link_at(&self, line_idx: usize, col: usize) -> Option<String> {
+        let top_line = self
+            .max_content_scrollback
+            .saturating_sub(self.vt100_screen().scrollback());
+        let row = u16::try_from(line_idx.checked_sub(top_line)?).ok()?;
+        let col = u16::try_from(col).ok()?;
+        let shown = self.shown_links();
+        let (link, _) = shown.into_iter().find(|(_, cells)| {
+            (cells.iter()).any(|(at, cols)| *at == row && cols.contains(&col))
+        })?;
+        Some(link.uri.clone())
+    }
+
     /// Why the last `Y` on the screen copied the screen's rebuilt bytes, not the ones received
     /// (MAX-256), once
     pub fn take_untraced_yank(&mut self) -> Option<UntracedYank> {
@@ -815,8 +838,9 @@ impl TerminalMode {
                 self.vt100_parser.callbacks_mut().dropped.truncate(listed);
             }
         }
-        let evicted = std::mem::take(&mut self.vt100_parser.callbacks_mut().evicted);
-        self.rows_gone += evicted as u64;
+        let events = self.vt100_parser.callbacks_mut();
+        let evicted = std::mem::take(&mut events.evicted);
+        events.rows_gone += evicted as u64;
         self.search_text_changed(started_on_main, lines_before, evicted);
         self.update_live_bottom();
         self.content_cols = None;
@@ -1017,7 +1041,8 @@ impl TerminalMode {
     pub fn clear_history(&mut self) {
         let (rows, cols) = self.get_vt100_size();
 
-        // what the device set stays: the collecting, its titles
+        // what the device set stays: the collecting, its titles; the rows gone keep counting,
+        // the dump's absolute rows go on from them
         let old = std::mem::replace(
             &mut self.vt100_parser,
             new_parser(rows, cols, self.max_history_lines),
@@ -1025,6 +1050,7 @@ impl TerminalMode {
         let old = old.callbacks();
         let events = self.vt100_parser.callbacks_mut();
         events.collect = old.collect;
+        events.rows_gone = old.rows_gone + old.evicted as u64;
         events.title = old.title.clone();
         events.icon_name = old.icon_name.clone();
         self.row_timestamps = VecDeque::from(vec![None; rows as usize]);
@@ -1145,6 +1171,69 @@ impl TerminalMode {
     }
 
     #[inline]
+    /// The links the device drew on the rows vt100 shows now (MAX-277), with their cells on
+    /// them as (screen row, columns): the ones whose cells shown still show their text, char by
+    /// char from the link's start (a wide char on two cells, wrapped to the next row when it
+    /// doesn't fit, a line end to the next row's start). None on the alternate screen
+    pub fn shown_links(&self) -> Vec<(&Hyperlink, LinkCells)> {
+        let screen = self.vt100_screen();
+        if screen.alternate_screen() {
+            return Vec::new();
+        }
+        let (rows, cols) = self.get_vt100_size();
+        let events = self.vt100_parser.callbacks();
+        let top_line = self
+            .max_content_scrollback
+            .saturating_sub(screen.scrollback());
+        let top = events.rows_gone + top_line as u64;
+        let on_screen = |row: u64| {
+            (row.checked_sub(top))
+                .and_then(|row| u16::try_from(row).ok())
+                .filter(|&row| row < rows)
+        };
+        let mut shown = Vec::new();
+        for link in &events.links {
+            if link.end.0 < top || link.start.0 >= top + u64::from(rows) {
+                continue;
+            }
+            let (mut row, mut col) = link.start;
+            let mut cells = LinkCells::new();
+            let mut alive = true;
+            for ch in link.text.chars() {
+                if ch == '\n' {
+                    (row, col) = (row + 1, 0);
+                    continue;
+                }
+                let width = ch.width().unwrap_or(0) as u16;
+                if width == 0 {
+                    continue;
+                }
+                if col + width > cols {
+                    (row, col) = (row + 1, 0);
+                }
+                if let Some(screen_row) = on_screen(row) {
+                    let contents = screen.cell(screen_row, col).map(vt100::Cell::contents);
+                    let first = contents.and_then(|contents| contents.chars().next());
+                    if first.unwrap_or(' ') != ch {
+                        alive = false;
+                        break;
+                    }
+                    match cells.last_mut() {
+                        Some((last, range)) if *last == screen_row && range.end == col => {
+                            range.end = col + width;
+                        }
+                        _ => cells.push((screen_row, col..col + width)),
+                    }
+                }
+                col += width;
+            }
+            if alive && !cells.is_empty() {
+                shown.push((link, cells));
+            }
+        }
+        shown
+    }
+
     pub fn vt100_screen(&self) -> &vt100::Screen {
         self.vt100_parser.screen()
     }
@@ -1393,7 +1482,7 @@ impl TerminalMode {
         self.vt100_parser.set_size(vt100_dim(rows), vt100_dim(cols));
         let events = self.vt100_parser.callbacks_mut();
         let evicted = std::mem::take(&mut events.evicted);
-        self.rows_gone += evicted as u64;
+        events.rows_gone += evicted as u64;
         // the remote app asked for each new size (mode 2048), sent with the answers (MAX-159)
         if events.size_reports {
             events.answers.push(size_report(rows, cols));
@@ -1533,6 +1622,16 @@ impl TerminalMode {
         settings: &SettingsConfig,
     ) -> Option<String> {
         if let CopyModeAction::HandleKey(key) = action {
+            // `gx`: the link under the cursor, as vim's (it opens it, maxicom copies it)
+            if self.vi_pending_copy == Some(ViPending::Goto)
+                && key.code == crossterm::event::KeyCode::Char('x')
+                && self.dump_copy().is_none()
+            {
+                self.vi_pending_copy = None;
+                let cursor = self.copy_state.cursor;
+                self.link_asked = Some(self.link_at(cursor.line_idx, cursor.char_idx));
+                return None;
+            }
             let line_text = self.copy_line_text();
             if let Some(sub_action) = dispatch_copy_key_vi(
                 &mut self.vi_pending_copy,
@@ -1950,10 +2049,21 @@ impl TerminalMode {
         self.process_rx_at(TextEncoding::Utf8, end.as_bytes(), None, Feed::Own);
         // on the top row: its world row is the first after the scrollback
         self.restored_separator = Some(self.max_content_scrollback);
-        // the queries of a past session are not answered (MAX-151), and the size reports its
-        // app asked for are not this run's to send (MAX-159)
+        // the queries of a past session are not answered (MAX-151), and the size and focus
+        // reports its app asked for are not this run's to send (MAX-159, MAX-277)
         self.take_answers();
-        self.vt100_parser.callbacks_mut().size_reports = false;
+        let events = self.vt100_parser.callbacks_mut();
+        events.size_reports = false;
+        events.focus_reports = false;
+    }
+
+    /// The window gained or lost focus: a report queued with the answers when the remote app
+    /// asked for them (mode 1004, MAX-277), taken with no RX like the size reports
+    pub fn report_focus(&mut self, focused: bool) {
+        let events = self.vt100_parser.callbacks_mut();
+        if events.focus_reports {
+            events.answers.push(focus_report(focused));
+        }
     }
 
     /// The replies to the queries received since the last call, to send or drop (MAX-151)

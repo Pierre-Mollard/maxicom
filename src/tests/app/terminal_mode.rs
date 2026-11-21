@@ -1770,3 +1770,71 @@ fn unhandled_markers_restored() {
     let lines = tm.all_text_lines();
     assert!(lines.iter().any(|line| line == "a\u{2400}b"), "{lines:?}");
 }
+
+/// The links shown, each its URI and its cells as (screen row, columns)
+fn shown_links(tm: &TerminalMode) -> Vec<(String, LinkCells)> {
+    let shown = tm.shown_links();
+    shown
+        .into_iter()
+        .map(|(link, cells)| (link.uri.clone(), cells))
+        .collect()
+}
+
+/// A link to `uri` around `text`
+fn osc8(uri: &str, text: &str) -> Vec<u8> {
+    format!("\x1b]8;;{uri}\x07{text}\x1b]8;;\x07").into_bytes()
+}
+
+/// MAX-277: a link is shown on its cells while they show its text: the same text written
+/// again keeps it, other text kills it. A link wrapped to the next row has cells on both, a
+/// wide char takes two cells.
+/// How: "ab" then a link "link"; the same line written again; then "LINK" over it. 10
+/// columns: "12345678" then "abcdef". "a漢b"
+#[test]
+fn links_shown_while_their_text_is_there() {
+    let mut tm = terminal_with(100, 4);
+    let mut bytes = b"ab".to_vec();
+    bytes.extend(osc8("http://a", "link"));
+    tm.process_rx(TextEncoding::Utf8, &bytes);
+    let link = ("http://a".to_string(), vec![(0, 2..6)]);
+    assert_eq!(shown_links(&tm), std::slice::from_ref(&link));
+    tm.process_rx(TextEncoding::Utf8, b"\rablink");
+    assert_eq!(shown_links(&tm), [link]);
+    tm.process_rx(TextEncoding::Utf8, b"\rabLINK");
+    assert_eq!(shown_links(&tm), []);
+
+    let mut tm = TerminalMode::new(100, 4, 10);
+    let mut bytes = b"12345678".to_vec();
+    bytes.extend(osc8("http://b", "abcdef"));
+    tm.process_rx(TextEncoding::Utf8, &bytes);
+    let cells = vec![(0, 8..10), (1, 0..4)];
+    assert_eq!(shown_links(&tm), [("http://b".to_string(), cells)]);
+
+    let mut tm = terminal_with(100, 4);
+    tm.process_rx(TextEncoding::Utf8, &osc8("http://c", "a漢b"));
+    assert_eq!(
+        shown_links(&tm),
+        [("http://c".to_string(), vec![(0, 0..4)])]
+    );
+}
+
+/// MAX-277: a link follows its rows as they scroll: half of it gone above the screen, its
+/// other half is shown; in the scrollback it shows when the view goes back up to it.
+/// How: 2 rows of 4 columns, a link "abcdef" on both rows, then a line end: its "ef" on the
+/// top row. Two more lines: none on the screen; vt100's view 3 rows up: both rows
+#[test]
+fn links_follow_their_rows() {
+    let mut tm = TerminalMode::new(100, 2, 4);
+    tm.process_rx(TextEncoding::Utf8, &osc8("http://a", "abcdef"));
+    tm.process_rx(TextEncoding::Utf8, b"\r\nx");
+    assert_eq!(
+        shown_links(&tm),
+        [("http://a".to_string(), vec![(0, 0..2)])]
+    );
+
+    tm.process_rx(TextEncoding::Utf8, b"\r\ny\r\nz");
+    assert_eq!(shown_links(&tm), []);
+    tm.vt100_parser.screen_mut().set_scrollback(3);
+    let cells = vec![(0, 0..4), (1, 0..2)];
+    assert_eq!(shown_links(&tm), [("http://a".to_string(), cells)]);
+}

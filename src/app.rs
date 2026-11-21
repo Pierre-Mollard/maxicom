@@ -1892,6 +1892,9 @@ impl App {
                     (self.unfocused_press_at.take()).is_some_and(|at| at.elapsed() < FOCUS_CLICK);
                 self.focused_at =
                     (is_focused && !self.is_window_focused && !press_came_first).then(Instant::now);
+                if is_focused != self.is_window_focused {
+                    self.terminal_mode.report_focus(is_focused);
+                }
                 self.is_window_focused = is_focused;
                 UpdateEffect::None
             }
@@ -2331,8 +2334,14 @@ impl App {
             }
             CopyModeAction::MouseRelease => {
                 self.drag_hold = None;
-                if self.pending_press.take().is_some() {
-                    return UpdateEffect::None;
+                // a click with no drag: on a link's text, the link is copied (MAX-277)
+                if let Some((pos, side)) = self.pending_press.take() {
+                    let link = (side == CopySide::Text)
+                        .then(|| self.terminal_mode.link_at(pos.line_idx, pos.char_idx));
+                    return match link.flatten() {
+                        Some(uri) => self.copy_link(uri),
+                        None => UpdateEffect::None,
+                    };
                 }
                 action
             }
@@ -2342,12 +2351,32 @@ impl App {
         if matches!(action, CopyModeAction::MousePress(..)) && self.is_search_active() {
             self.close_search_for_click();
         }
-        match self.copy_action(action) {
+        let copied = self.copy_action(action);
+        if let Some(link) = self.terminal_mode.take_link_asked() {
+            return match link {
+                Some(uri) => self.copy_link(uri),
+                None => {
+                    self.notify_keyed("copy", ToastLevel::Warn, "No link under the cursor");
+                    UpdateEffect::None
+                }
+            };
+        }
+        match copied {
             Some(text) => {
                 self.paste_buffer = Some(text.clone());
                 UpdateEffect::CopyToClipboard(text)
             }
             None => UpdateEffect::None,
+        }
+    }
+
+    /// A link the device drew, copied: its URI to the clipboard and the paste buffer, said as
+    /// `Copied the link: <URI>` (MAX-277). maxicom never opens it
+    fn copy_link(&mut self, uri: String) -> UpdateEffect {
+        self.paste_buffer = Some(uri.clone());
+        UpdateEffect::CopyToClipboardAs {
+            text: uri,
+            what: "link".to_string(),
         }
     }
 

@@ -122,7 +122,7 @@ ones terminals don't agree on the width of show as a dimmed `▯`. Copy and
 search still have them. [Characters drawn differently](drawn-characters.md)
 lists them, with the settings that draw them as received.
 
-## The device's title and clipboard
+## The device's title, clipboard and links
 
 ### Window title
 
@@ -164,6 +164,31 @@ copied, even with `notify_copy` off. A replay or a restored session never
 copies. A program asking to read your clipboard never gets it, see
 [Never answered](#never-answered).
 
+### Links
+
+A program on the device can turn some text into a link, the way
+`ls --hyperlink`, gcc's error messages or systemd point to a file or a web
+page (OSC 8). maxicom underlines that text, and keeps its colors.
+
+maxicom never opens a link itself. It copies it, so you can open it where you
+want:
+
+- click the link's text: its address goes to your clipboard, and the
+  notification says `Copied the link: <address>`;
+- in [copy mode](copy-mode-and-mouse.md#copy-mode), put the cursor on it and
+  press `gx`.
+
+A drag over a link still selects text, as anywhere else. When a program on
+the device asks for the mouse, it gets the clicks, as usual: use `gx` then.
+
+A link lasts as long as its text. Once something is written over it, it's
+plain text again. maxicom keeps the last 4096 links, on the main screen only:
+links that full-screen programs like `less` draw aren't kept. `Ctrl-a C`
+(clear history) forgets them.
+
+The underline is the `link` entry of `[terminal]` in the
+[theme](theme.md#terminal).
+
 ## Answering the device's queries
 
 A program on the device can't see its terminal. To learn something about it,
@@ -190,12 +215,12 @@ run, so it isn't answered.
 
 ### The groups
 
-The queries come in four groups, and `answer_groups` lists the ones to
+The queries come in five groups, and `answer_groups` lists the ones to
 answer, all of them by default:
 
 ```toml
 [terminal_mode]
-answer_groups = ["status", "identity", "size", "modes"]
+answer_groups = ["status", "identity", "size", "modes", "focus"]
 ```
 
 The tables below write `ESC [` as you'd see it in a hex dump: the escape
@@ -275,9 +300,26 @@ The modes maxicom knows:
 | `1005`, `1006` | Mouse reports in UTF-8, in SGR form |
 | `2004` | Bracketed paste |
 | `2048` | [Size reports](#size-reports-from-programs). Its answer belongs to the `size` group, not `modes`. |
+| `1004` | Focus reports, see [`focus`](#focus). Its answer belongs to the `focus` group, not `modes`. |
 
 Programs like neovim and fzf ask before using a mode. For any other mode the
 answer is `0`, which they read as "not supported".
+
+#### `focus`
+
+| Query | Asks | maxicom answers |
+| --- | --- | --- |
+| `ESC [ ? 1004 h` | Tell me when the window gains or loses focus | `ESC [ I` when it gains it, `ESC [ O` when it loses it, from the next change on |
+| `ESC [ ? 1004 l` | Stop telling me | Nothing more is sent |
+
+vim, neovim and tmux turn these reports on. neovim reloads the files changed
+while you were away, and tmux passes the focus on to its panes. The window is
+your terminal's window: maxicom hears when it gains or loses focus.
+
+The reports are only sent live, while you're in terminal mode. A focus change
+while you're in line mode sends nothing, and nothing is sent when you come
+back. Like the size reports, they stay on when the program dies without
+turning them off: `printf '\e[?1004l'` on the device stops them.
 
 ### Never answered
 
@@ -434,10 +476,10 @@ often: `CSI 5m` (blink), `CSI 4h` (insert mode), `CSI ?7l` (autowrap off,
 see [Terminal mode always wraps](limits.md#terminal-mode-always-wraps)).
 
 `osc`: every `ESC ]` command but `0`, `1`, `2` (the
-[title](#window-title)) and `52` copies (the
+[title](#window-title)), `8` ([links](#links)) and `52` copies (the
 [clipboard](#copying-from-the-device)). So, for example: `OSC 4`, `10`,
 `11`, `12` (colors), `OSC 52` asking for your clipboard, `OSC 104`,
-`OSC 1337`. `7`, `8` and `133` are in `shell`.
+`OSC 1337`. `7` and `133` are in `shell`.
 
 `strings`: all of them, none is handled: DCS (`ESC P`: setting queries,
 terminfo queries, sixel images), SOS (`ESC X`), PM (`ESC ^`), APC (`ESC _`:
@@ -448,9 +490,7 @@ kitty images).
 | Sequence | Is |
 | --- | --- |
 | `OSC 7` | The current directory |
-| `OSC 8` | A link around some text: the text shows |
 | `OSC 133` | Prompt marks |
-| `CSI ? 1004 h`, `l` | Focus reports on, off |
 | `CSI ? 2026 h`, `l` | Synchronized drawing on, off |
 | `CSI ? 12 h`, `l` | Cursor blinking on, off |
 | `CSI ? 7 h` | Autowrap on: always on in maxicom |
@@ -459,7 +499,7 @@ kitty images).
 
 What maxicom answers or uses counts as handled: the
 [queries it answers](#the-groups), the device's
-[title and copies](#the-devices-title-and-clipboard). What maxicom itself
+[title, copies and links](#the-devices-title-clipboard-and-links). What maxicom itself
 writes on the screen, like the [local echo](#local-echo), and a
 [restored session](capture.md#which-session-comes-back) are never counted.
 

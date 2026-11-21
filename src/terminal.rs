@@ -1,5 +1,5 @@
 /// Terminal widget drawing a vt100 screen, custom from tui-term (which pins vt100 0.16, #29)
-use std::num::NonZeroU16;
+use std::{collections::VecDeque, num::NonZeroU16};
 
 use ratatui::{
     buffer::{Buffer, Cell},
@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 use crate::app::term_answers::{
-    Answer, SIZE_REPORTS, answer_control, answer_csi, answer_escape, size_report,
+    Answer, FOCUS_REPORTS, SIZE_REPORTS, answer_control, answer_csi, answer_escape, size_report,
 };
 use crate::configs::settings::UnhandledGroup;
 use crate::glyphs::{UNSURE_MARKER, drawn, invalid_bytes, unsure_width::is_unsure};
@@ -17,23 +17,49 @@ use crate::glyphs::{UNSURE_MARKER, drawn, invalid_bytes, unsure_width::is_unsure
 /// What the parser reports besides the screen. `evicted` counts the main screen rows vt100 drops
 /// from the top of scrollback (`on_scroll` is only called for those, not for rows entering it):
 /// with the change of `scrollback_len` it gives how many rows a chunk pushed into scrollback
-/// (#13). `answers` are the replies to the remote's queries, in order, for the settings to send
+/// (#13), then `rows_gone` sums them: a world row plus it is an absolute row, which scrolling
+/// doesn't change (MAX-256). `answers` are the replies to the remote's queries, in order, for the settings to send
 /// or drop (MAX-151). `size_reports` is mode 2048, which vt100 doesn't know: the remote app
-/// asked for its size in the stream on each change (MAX-159). With `collect`, `dropped` lists
+/// asked for its size in the stream on each change (MAX-159). `focus_reports` is mode 1004,
+/// unknown to vt100 too: the remote app asked to hear when the window gains or loses focus
+/// (MAX-277). With `collect`, `dropped` lists
 /// what vt100 couldn't use, as its callbacks report it (MAX-264). `title` and `icon_name` are
 /// the last ones the device set, OSC 2 and 1, both with OSC 0; `clipboard` the base64 text of
-/// its last OSC 52 copy, until taken (MAX-275)
+/// its last OSC 52 copy, until taken (MAX-275). `links` are the OSC 8 links drawn on the main
+/// screen, oldest first, `LINKS_MAX` at most, and `link_open` the one whose text is coming
+/// (MAX-277)
 #[derive(Default)]
 pub struct ParserEvents {
     pub evicted: usize,
+    pub rows_gone: u64,
     pub answers: Vec<Answer>,
     pub size_reports: bool,
+    pub focus_reports: bool,
     pub collect: bool,
     pub dropped: Vec<Dropped>,
     pub title: Option<String>,
     pub icon_name: Option<String>,
     pub clipboard: Option<Vec<u8>>,
+    pub links: VecDeque<Hyperlink>,
+    pub link_open: Option<(String, (u64, u16))>,
 }
+
+/// A link the device drew around some text with OSC 8 (MAX-277): its cells from `start` to
+/// before `end`, (absolute row, column) on the main screen, and the text they showed, which
+/// tells when it's been written over
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hyperlink {
+    pub uri: String,
+    pub start: (u64, u16),
+    pub end: (u64, u16),
+    pub text: String,
+}
+
+/// The most links kept: `ls --hyperlink` in a big folder sends one per file
+pub const LINKS_MAX: usize = 4096;
+
+/// The longest URI kept, in bytes: a longer one is no link
+const URI_MAX: usize = 4096;
 
 /// The longest OSC 52 copy taken, in base64: about 768 KB of text
 const CLIPBOARD_MAX: usize = 1 << 20;
@@ -138,18 +164,17 @@ impl Dropped {
     }
 
     /// What modern shells and programs send and a terminal may ignore without harm: the
-    /// current directory (OSC 7), hyperlinks (OSC 8), prompt marks (OSC 133), focus reports and
-    /// synchronized output turned on or off (`?1004`, `?2026`), cursor blinking (`?12`),
+    /// current directory (OSC 7), prompt marks (OSC 133), synchronized
+    /// output turned on or off (`?2026`), cursor blinking (`?12`),
     /// autowrap turned on (`?7h`: always on), the title saved and restored (`22 t`, `23 t`),
     /// ASCII chosen as the character set (`ESC ( B`: already in use)
-    /// TODO: implement some of them
     pub fn harmless(&self) -> bool {
         let bytes = self.bytes.as_slice();
         match self.kind {
             DropKind::Osc => {
                 let number = bytes.get(2..).unwrap_or_default();
                 let number = number.split(|&b| b == b';').next().unwrap_or_default();
-                matches!(number, b"7" | b"8" | b"133")
+                matches!(number, b"7" | b"133")
             }
             DropKind::Csi => {
                 let title_stack = [&b"\x1b[22"[..], b"\x1b[23"].iter().any(|op| {
@@ -160,13 +185,7 @@ impl Dropped {
                 title_stack
                     || matches!(
                         bytes,
-                        b"\x1b[?1004h"
-                            | b"\x1b[?1004l"
-                            | b"\x1b[?2026h"
-                            | b"\x1b[?2026l"
-                            | b"\x1b[?12h"
-                            | b"\x1b[?12l"
-                            | b"\x1b[?7h"
+                        b"\x1b[?2026h" | b"\x1b[?2026l" | b"\x1b[?12h" | b"\x1b[?12l" | b"\x1b[?7h"
                     )
             }
             DropKind::Escape => bytes == b"\x1b(B",
@@ -181,6 +200,61 @@ impl ParserEvents {
             self.dropped.push(Dropped { kind, bytes });
         }
     }
+
+    /// The cursor's cell as an absolute row (rows evicted so far, the scrollback's, the
+    /// cursor's) and a column, none on the alternate screen
+    pub fn cursor_cell(&self, screen: &vt100::Screen) -> Option<(u64, u16)> {
+        if screen.alternate_screen() {
+            return None;
+        }
+        let (row, col) = screen.cursor_position();
+        let rows = self.rows_gone + self.evicted as u64 + screen.scrollback_len() as u64;
+        Some((rows + u64::from(row), col))
+    }
+
+    /// An OSC 8 (MAX-277): `8 ; params ; URI` starts a link at the cursor, an empty URI ends
+    /// it. A link still open ends where the next one starts. A link ends on the main screen
+    /// with its start still on the screen, its text read there, or it's not kept
+    fn hyperlink(&mut self, screen: &mut vt100::Screen, uri: &[u8]) {
+        let at = self.cursor_cell(screen);
+        if let Some((uri, start)) = self.link_open.take()
+            && let Some(end) = at.filter(|&end| end > start)
+            && let Some(text) = link_text(screen, start, end)
+        {
+            if self.links.len() == LINKS_MAX {
+                self.links.pop_front();
+            }
+            self.links.push_back(Hyperlink {
+                uri,
+                start,
+                end,
+                text,
+            });
+        }
+        let uri = String::from_utf8_lossy(uri);
+        if let Some(at) = at
+            && !uri.is_empty()
+            && uri.len() <= URI_MAX
+            && !uri.chars().any(char::is_control)
+        {
+            self.link_open = Some((uri.into_owned(), at));
+        }
+    }
+}
+
+/// The text of a link's cells on the screen, from `start` to before `end`, the cursor's cell
+/// (absolute rows); none when its start has left the screen. Read with the view on the live
+/// screen, then put back
+fn link_text(screen: &mut vt100::Screen, start: (u64, u16), end: (u64, u16)) -> Option<String> {
+    let top = end.0.checked_sub(u64::from(screen.cursor_position().0))?;
+    let row = |abs: u64| u16::try_from(abs.checked_sub(top)?).ok();
+    let (start_row, end_row) = (row(start.0)?, row(end.0)?);
+    let scrolled = screen.scrollback();
+    screen.set_scrollback(0);
+    // `contents_between` stops before its end column
+    let text = screen.contents_between(start_row, start.1, end_row, end.1);
+    screen.set_scrollback(scrolled);
+    (!text.is_empty()).then_some(text)
 }
 
 impl vt100::Callbacks for ParserEvents {
@@ -201,7 +275,8 @@ impl vt100::Callbacks for ParserEvents {
         // a DECSET / DECRST comes here once per mode vt100 doesn't know, with all the modes of
         // the sequence (`?1049;2048h`): the report goes out once, when the mode turns on
         let decset = i1 == Some(b'?') && i2.is_none() && matches!(c, 'h' | 'l');
-        if decset && params.iter().any(|p| p.first() == Some(&SIZE_REPORTS)) {
+        let has = |mode| decset && params.iter().any(|p| p.first() == Some(&mode));
+        if has(SIZE_REPORTS) {
             let on = c == 'h';
             if on && !self.size_reports {
                 let (rows, cols) = vt100_size(screen);
@@ -209,9 +284,14 @@ impl vt100::Callbacks for ParserEvents {
             }
             self.size_reports = on;
         }
-        match answer_csi(screen, i1, i2, params, c, self.size_reports) {
+        // focus reports start with the next focus change, none at once (MAX-277)
+        if has(FOCUS_REPORTS) {
+            self.focus_reports = c == 'h';
+        }
+        let (size, focus) = (self.size_reports, self.focus_reports);
+        match answer_csi(screen, i1, i2, params, c, size, focus) {
             Some(answer) => self.answers.push(answer),
-            None if decset && params.iter().any(|p| p.first() == Some(&SIZE_REPORTS)) => {}
+            None if has(SIZE_REPORTS) || has(FOCUS_REPORTS) => {}
             None => self.drop(DropKind::Csi, csi_bytes(i1, i2, params, c)),
         }
     }
@@ -269,6 +349,11 @@ impl vt100::Callbacks for ParserEvents {
     }
 
     fn unhandled_osc(&mut self, screen: &mut vt100::Screen, params: &[&[u8]]) {
+        // a URI may hold `;`: the parts after the parameters are the URI
+        if let [b"8", _params, uri @ ..] = params {
+            self.hyperlink(screen, &uri.join(&b';'));
+            return;
+        }
         // vt100 only takes a title without `;`: the parts after the number are the title
         if let [kind @ (b"0" | b"1" | b"2"), rest @ ..] = params
             && rest.len() > 1

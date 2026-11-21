@@ -2347,9 +2347,48 @@ fn size_reports_on_each_resize() {
     assert!(app.take_query_answers().is_empty());
 }
 
+/// MAX-277: once the remote app turns mode 1004 on, the window losing focus sends `CSI O` and
+/// gaining it `CSI I`, taken with no RX; the same state again sends nothing; in line mode
+/// nothing is sent, now or on the way back; without the `focus` group, nothing; `?1004l`
+/// stops the reports.
+/// How: terminal mode, a focus change before `?1004h`; then out, out again, in; out in line
+/// mode, back; in with the groups without `focus`; then `l`
+#[test]
+fn focus_reports_on_focus_changes() {
+    use crate::configs::QueryGroup;
+    let mut app = app();
+    app.settings.mode = Mode::Terminal;
+    let focus = |app: &mut App, focused| {
+        app.update(Action::App(AppAction::FocusGained(focused)));
+        app.take_query_answers()
+    };
+    assert!(focus(&mut app, false).is_empty(), "not asked yet");
+    assert!(focus(&mut app, true).is_empty());
+
+    app.feed_rx(b"\x1b[?1004h");
+    assert!(app.take_query_answers().is_empty(), "none at once");
+    assert_eq!(focus(&mut app, false), b"\x1b[O");
+    assert!(focus(&mut app, false).is_empty(), "no change");
+    assert_eq!(focus(&mut app, true), b"\x1b[I");
+
+    app.settings.mode = Mode::Line;
+    assert!(focus(&mut app, false).is_empty());
+    app.settings.mode = Mode::Terminal;
+    assert!(app.take_query_answers().is_empty());
+
+    app.settings.terminal_mode.answer_groups = vec![QueryGroup::Status, QueryGroup::Size];
+    assert!(focus(&mut app, true).is_empty());
+    app.settings.terminal_mode.answer_groups = QueryGroup::ALL.to_vec();
+
+    app.feed_rx(b"\x1b[?1004l");
+    assert!(focus(&mut app, false).is_empty());
+}
+
 /// MAX-159: a restored session that turned mode 2048 on doesn't leave it on: a resize sends
-/// nothing and DECRQM says off, until the live app turns it on again.
-/// How: a session holding `?2048h`, restored, resized to 30x100, DECRQM 2048; then `h` live.
+/// nothing and DECRQM says off, until the live app turns it on again. The same for the focus
+/// reports, mode 1004 (MAX-277).
+/// How: a session holding `?2048h` and `?1004h`, restored, resized to 30x100, DECRQM 2048 and
+/// 1004; then `h` live.
 #[test]
 fn restored_size_reports_off() {
     let base = std::env::temp_dir().join(format!("maxicom_test_{}_reports", std::process::id()));
@@ -2358,7 +2397,7 @@ fn restored_size_reports_off() {
         &base,
         "/dev/ttyUSB0",
         &CaptureFormat::default(),
-        b"nvim\r\n\x1b[?2048h",
+        b"nvim\r\n\x1b[?2048h\x1b[?1004h",
         b"",
     );
     let mut app = app();
@@ -2366,8 +2405,8 @@ fn restored_size_reports_off() {
     app.restore_session(&session).unwrap();
     app.terminal_mode.set_vt100_size(30, 100);
     assert!(app.take_query_answers().is_empty());
-    app.feed_rx(b"\x1b[?2048$p");
-    assert_eq!(app.take_query_answers(), b"\x1b[?2048;2$y");
+    app.feed_rx(b"\x1b[?2048$p\x1b[?1004$p");
+    assert_eq!(app.take_query_answers(), b"\x1b[?2048;2$y\x1b[?1004;2$y");
 
     app.feed_rx(b"\x1b[?2048h");
     assert!(is_size_report(&app.take_query_answers(), 30, 100));

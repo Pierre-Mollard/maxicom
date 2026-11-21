@@ -107,6 +107,7 @@ cell mixes its background with the selection's when both are RGB colors, see
 | `term_inside` / `term_outside` | `Reset` / `DarkGray` | The emulated screen, the view around it (`empty_fill_char`) |
 | `timestamp` | `Yellow` | The times column |
 | `timestamp_del` | `DarkGray` | The `│` after the times column, as line mode's `line_prefix` |
+| `link` | underlined | The text of a [link](terminal-mode.md#links) the device drew |
 
 ### `[search]`
 

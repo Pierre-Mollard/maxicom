@@ -48,7 +48,7 @@ pub const CONFIG_COMMENTS: &[(&str, &str)] = &[
     ),
     (
         "terminal_mode.answer_groups",
-        "values: status, identity, size, modes",
+        "values: status, identity, size, modes, focus",
     ),
     ("terminal_mode.backspace", "values: del, bs"),
     (

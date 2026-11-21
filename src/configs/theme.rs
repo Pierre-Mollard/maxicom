@@ -291,6 +291,8 @@ pub struct TerminalStyles {
     pub term_outside: ConfigStyle,
     pub timestamp: ConfigStyle,
     pub timestamp_del: ConfigStyle,
+    /// The text of a link the device drew (OSC 8, MAX-277)
+    pub link: ConfigStyle,
 }
 
 impl Default for TerminalStyles {
@@ -300,6 +302,7 @@ impl Default for TerminalStyles {
             term_outside: ConfigStyle::from_fg(Color::DarkGray),
             timestamp: ConfigStyle::from_fg(Color::Yellow),
             timestamp_del: ConfigStyle::from_fg(Color::DarkGray),
+            link: ConfigStyle::new(Style::new().add_modifier(Modifier::UNDERLINED)),
         }
     }
 }

@@ -10882,6 +10882,79 @@ fn terminal_copy_mode_in_the_dump() {
     assert_eq!(h.app.copy_side(), Some(CopySide::Text));
 }
 
+/// MAX-277: a link's text is drawn in the `link` style, underlined by default, the text
+/// around it not; once written over, it's drawn as plain text.
+/// How: "a" then a link "link" then "b"; then a line end and "a" link "LINK" over it
+#[test]
+fn terminal_links_underlined() {
+    use ratatui::style::Modifier;
+    let mut h = terminal_raw_on(80, b"a\x1b]8;;http://x\x07link\x1b]8;;\x07b");
+    let rows = h.draw();
+    let (x, y) = cell_of(&rows, "alinkb");
+    let underlined = |h: &Harness, x| {
+        let cell = &h.terminal.backend().buffer()[(x, y)];
+        cell.style().add_modifier.contains(Modifier::UNDERLINED)
+    };
+    assert!(!underlined(&h, x), "a");
+    for x in x + 1..x + 5 {
+        assert!(underlined(&h, x), "{x}");
+    }
+    assert!(!underlined(&h, x + 5), "b");
+
+    h.app
+        .terminal_mode
+        .process_device_rx(TextEncoding::Utf8, b"\raLINK", false, false, true);
+    h.draw();
+    assert!(!underlined(&h, x + 1), "written over");
+}
+
+/// MAX-277: a plain click on a link's text copies its URI, said as the link copied; a click
+/// beside it only focuses, as before. In copy mode, `gx` on a link copies it and copy mode
+/// stays; off a link it copies nothing.
+/// How: "a" then a link "link" then "b". Click the "i", then the "a". Copy mode, the cursor
+/// on the "l": `g` `x`; on the "a": `g` `x`
+#[test]
+fn terminal_link_copied_by_click_and_gx() {
+    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
+        s.mode = Mode::Terminal;
+    });
+    h.app.feed_rx(b"a\x1b]8;;http://x/y\x07link\x1b]8;;\x07b");
+    let rows = h.draw();
+    let (x, y) = cell_of(&rows, "alinkb");
+    let is_link = |effect: UpdateEffect| {
+        matches!(effect, UpdateEffect::CopyToClipboardAs { text, what }
+            if text == "http://x/y" && what == "link")
+    };
+
+    mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), (x + 2, y));
+    let effect = mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), (x + 2, y));
+    assert!(is_link(effect));
+    assert_eq!(h.app.copy_side(), None);
+    mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), (x, y));
+    let effect = mouse_do(&mut h, MouseEventKind::Up(MouseButton::Left), (x, y));
+    assert!(matches!(effect, UpdateEffect::None));
+
+    let key = |h: &mut Harness, c| {
+        let event = Event::Key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char(c),
+            KeyModifiers::NONE,
+        ));
+        let action = crate::inputs::handle_event(event, &h.app);
+        h.app.update(action)
+    };
+    h.app.update(Action::CopyMode(CopyModeAction::Enter));
+    h.app.update(Action::CopyMode(CopyModeAction::StartOfLine));
+    h.app.update(Action::CopyMode(CopyModeAction::MoveRight));
+    key(&mut h, 'g');
+    assert!(is_link(key(&mut h, 'x')));
+    assert_eq!(h.app.copy_side(), Some(CopySide::Text));
+
+    h.app.update(Action::CopyMode(CopyModeAction::MoveLeft));
+    key(&mut h, 'g');
+    assert!(matches!(key(&mut h, 'x'), UpdateEffect::None));
+    assert_eq!(h.app.copy_side(), Some(CopySide::Text));
+}
+
 /// The screen cell of byte `offset`'s digits in the dump as last drawn, none when it isn't shown
 fn dump_cell(h: &Harness, offset: u64) -> Option<(u16, u16)> {
     let map = h.app.frame_map();

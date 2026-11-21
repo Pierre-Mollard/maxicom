@@ -49,6 +49,7 @@ device's cursor sits on an empty row.
 | `iw` `aw` `i"` `i(` `i[` `i{`... | Select a word, or what's inside quotes or brackets |
 | `y` or Enter | Copy the selection and leave |
 | `Y` | Copy the selection's bytes as the raw side panel shows them |
+| `gx` | In terminal mode, copy the [link](terminal-mode.md#links) under the cursor |
 | Tab | Move the cursor to the raw side panel and back |
 | `,` | Mark the cursor's line: then a letter, see [Marks](marks.md) |
 | `'` | Open the marks popup, a letter jumps there |
@@ -140,7 +141,7 @@ as `Magenta`, the ghost's own color is used. See [Theme](theme.md).
 
 - In line mode, a click enters copy mode on the cell you clicked.
 - In terminal mode, a click only gives the focus, so your typing still
-  reaches the device.
+  reaches the device. A click on a [link](terminal-mode.md#links) copies it.
 - In copy mode, a click moves the cursor.
 
 The click that brings maxicom's window to the front doesn't select anything.

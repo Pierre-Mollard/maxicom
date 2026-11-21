@@ -462,10 +462,17 @@ pub enum QueryGroup {
     Identity,
     Size,
     Modes,
+    Focus,
 }
 
 impl QueryGroup {
-    pub const ALL: [Self; 4] = [Self::Status, Self::Identity, Self::Size, Self::Modes];
+    pub const ALL: [Self; 5] = [
+        Self::Status,
+        Self::Identity,
+        Self::Size,
+        Self::Modes,
+        Self::Focus,
+    ];
 }
 
 /// The groups of what the emulator doesn't handle that `notify_unhandled` counts (MAX-264):
