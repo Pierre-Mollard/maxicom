@@ -428,38 +428,83 @@ def as_user_home(ansi, run):
 BRAILLE_FONTS = ["/mnt/c/Windows/Fonts/CascadiaMono.ttf",
                  "/usr/share/fonts/truetype/cascadia-code/CascadiaMono.ttf",
                  os.path.expanduser("~/Library/Fonts/CascadiaMono.ttf")]
+# freeze's own font, installed for librsvg to draw the SVG with
+MONO_FONTS = ["/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-Regular.ttf",
+              os.path.expanduser("~/.local/share/fonts/JetBrainsMono-Regular.ttf"),
+              os.path.expanduser("~/Library/Fonts/JetBrainsMono-Regular.ttf"),
+              "/Library/Fonts/JetBrainsMono-Regular.ttf"]
+FONT_SIZE = 14
+# the cell freeze lays its backgrounds on, read in its SVG: narrower than the font's characters
+# (8.4 px for JetBrains Mono at 14), so a background drifts left of its text by a cell every
+# 125 columns
+FREEZE_CELL = 25 / 3
+PAD = 10
 
 
-def braille_font():
-    """A monospace font file with braille, and its family name"""
-    given = os.environ.get("SHOTS_BRAILLE_FONT")
-    path = given or next((f for f in BRAILLE_FONTS if os.path.exists(f)), None)
+def font_file(env, candidates, missing):
+    given = os.environ.get(env)
+    path = given or next((f for f in candidates if os.path.exists(f)), None)
     if not path or not os.path.exists(path):
-        raise RuntimeError("no monospace font with braille: install fonts-cascadia-code, or "
-                           "set SHOTS_BRAILLE_FONT to one")
-    # a variable font lists its family once per instance
-    family = subprocess.run(["fc-query", "-f", "%{family[0]}\n", path], capture_output=True,
-                            text=True, check=True).stdout.split("\n")[0]
-    return path, family
+        raise RuntimeError(missing)
+    return path
 
 
-def freeze_braille(ans, png, run):
-    """freeze's PNG draws braille as boxes, its font has none and it doesn't fall back. So:
-    freeze's SVG, its font swapped for one with braille, drawn by ffmpeg's librsvg, which
-    finds that font through a fontconfig file of the run's"""
-    path, family = braille_font()
+def font_family(path):
+    """A font file's family name; a variable font lists it once per instance"""
+    return subprocess.run(["fc-query", "-f", "%{family[0]}\n", path], capture_output=True,
+                          text=True, check=True).stdout.split("\n")[0]
+
+
+def char_width(path):
+    """A monospace font's character width in em: its OS/2 average width, every character's in
+    a monospace font, over its head's units per em"""
+    data = open(path, "rb").read()
+    tables = {}
+    for i in range(int.from_bytes(data[4:6], "big")):
+        entry = data[12 + 16 * i:28 + 16 * i]
+        tables[entry[:4]] = int.from_bytes(entry[8:12], "big")
+    units = int.from_bytes(data[tables[b"head"] + 18:tables[b"head"] + 20], "big")
+    width = int.from_bytes(data[tables[b"OS/2"] + 2:tables[b"OS/2"] + 4], "big")
+    return width / units
+
+
+def on_text_grid(svg, advance):
+    """freeze's backgrounds, and the canvas, moved from its cell to the font's: each lines up
+    with its text in every column"""
+    scale = advance / FREEZE_CELL
+
+    def fix(match):
+        tag = match.group(0)
+        x = float(re.search(r' x="([0-9.]+)px"', tag).group(1))
+        if x == 0:  # the canvas
+            return tag
+        width = float(re.search(r' width="([0-9.]+)px"', tag).group(1))
+        tag = re.sub(r' x="[0-9.]+px"', f' x="{PAD + (x - PAD) * scale:.3f}px"', tag)
+        return re.sub(r' width="[0-9.]+px"', f' width="{width * scale:.3f}px"', tag)
+
+    svg = re.sub(r"<rect[^>]*>", fix, svg)
+    old = float(re.search(r'<svg width="([0-9.]+)"', svg).group(1))
+    new = f"{PAD + (old - PAD) * scale:.2f}"
+    svg = svg.replace(f'<svg width="{old:.2f}"', f'<svg width="{new}"', 1)
+    return svg.replace(f'<rect width="{old:.2f}"', f'<rect width="{new}"', 1)
+
+
+def freeze_svg(ans, png, run, font):
+    """freeze's SVG in `font`, its backgrounds on the font's grid (see FREEZE_CELL), drawn by
+    ffmpeg's librsvg, which finds the font through a fontconfig file of the run's"""
     svg = png[:-4] + ".svg"
     subprocess.run(["freeze", ans, "--language", "ansi", "--theme", "tokyonight-night", "-o",
-                    svg, "--window=false", "--padding", "10", "--margin", "0", "--font.size",
-                    "14", "--line-height", "1.2"], stdin=subprocess.DEVNULL,
-                   capture_output=True, check=True, timeout=60)
-    text = open(svg).read().replace('font-family="JetBrains Mono"', f'font-family="{family}"')
-    open(svg, "w").write(text)
+                    svg, "--window=false", "--padding", str(PAD), "--margin", "0",
+                    "--font.size", str(FONT_SIZE), "--line-height", "1.2"],
+                   stdin=subprocess.DEVNULL, capture_output=True, check=True, timeout=60)
+    text = open(svg).read().replace('font-family="JetBrains Mono"',
+                                    f'font-family="{font_family(font)}"')
+    open(svg, "w").write(on_text_grid(text, char_width(font) * FONT_SIZE))
     conf = f"{run}/fonts.conf"
     open(conf, "w").write(
         '<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "fonts.dtd">\n<fontconfig>\n'
         '  <include ignore_missing="yes">/etc/fonts/fonts.conf</include>\n'
-        f'  <dir>{os.path.dirname(path)}</dir>\n  <cachedir>{run}/fontcache</cachedir>\n'
+        f'  <dir>{os.path.dirname(font)}</dir>\n  <cachedir>{run}/fontcache</cachedir>\n'
         '</fontconfig>\n')
     subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-width", "2800",
                     "-keep_ar", "1", "-i", svg, png], env={**os.environ, "FONTCONFIG_FILE": conf},
@@ -472,16 +517,27 @@ def render(name, ansi, run, rows=None, braille=False):
         ansi = "\n".join(ansi.rstrip("\n").split("\n")[rows[0]:rows[1]])
     open(f"{run}/{name}.ans", "w").write(ansi)
     open(f"{run}/{name}.tn.ans", "w").write(recolor(ansi))
+    png = f"{run}/{name}.png"
     if braille:
-        freeze_braille(f"{run}/{name}.tn.ans", f"{run}/{name}.png", run)
+        # freeze's font has no braille and freeze doesn't fall back: another font's
+        font = font_file("SHOTS_BRAILLE_FONT", BRAILLE_FONTS,
+                         "no monospace font with braille: install fonts-cascadia-code, or "
+                         "set SHOTS_BRAILLE_FONT to one")
+        freeze_svg(f"{run}/{name}.tn.ans", png, run, font)
     else:
-        subprocess.run(["freeze", f"{run}/{name}.tn.ans", "--language", "ansi", "--theme",
-                        "tokyonight-night", "-o", f"{run}/{name}.png", "--window=false",
-                        "--padding", "10", "--margin", "0", "--font.size", "14",
-                        "--line-height", "1.2"], stdin=subprocess.DEVNULL,
-                       capture_output=True, check=True, timeout=60)
+        try:
+            font = font_file("SHOTS_MONO_FONT", MONO_FONTS, "no JetBrains Mono")
+            freeze_svg(f"{run}/{name}.tn.ans", png, run, font)
+        except RuntimeError:
+            print(f"{name}: JetBrains Mono not found (fonts-jetbrains-mono, or set "
+                  "SHOTS_MONO_FONT): freeze's PNG, its backgrounds off their text on the right")
+            subprocess.run(["freeze", f"{run}/{name}.tn.ans", "--language", "ansi", "--theme",
+                            "tokyonight-night", "-o", png, "--window=false", "--padding",
+                            str(PAD), "--margin", "0", "--font.size", str(FONT_SIZE),
+                            "--line-height", "1.2"], stdin=subprocess.DEVNULL,
+                           capture_output=True, check=True, timeout=60)
     os.makedirs(IMAGES, exist_ok=True)
-    trim_and_scale(f"{run}/{name}.png", f"{IMAGES}/{name}.png")
+    trim_and_scale(png, f"{IMAGES}/{name}.png")
 
 
 # ---- scenarios ----
@@ -561,7 +617,8 @@ def directory_links(devices):
             f'[[link]]\nname = "nucleo-f401"\naddress = "{nucleo.path}"\nbaud = 921600\n\n'
             f'[[link]]\nname = "gateway console"\naddress = "tcp://127.0.0.1:{tcp_listener()}"\n\n'
             f'[[link]]\nname = "router"\naddress = "tcp://127.0.0.1:{closed_port()}"\n\n'
-            f'[[link]]\nname = "lab psu"\naddress = "/dev/ttyUSB7"\nbaud = 9600\n')
+            f'[[link]]\nname = "lab psu"\naddress = '
+            f'"/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A50285BI-if00-port0"\nbaud = 9600\n')
 
 
 def browser_sessions(cache, devices):
@@ -611,8 +668,18 @@ SCENARIOS = {
     "raw-side-panel": lambda: scenario(
         "raw-side-panel", [esp()], [fed()], config={**LINE, ("raw_side", "view"): '"hex"'},
         links=esp_link, size=(130, ROWS)),
+    # terminal mode's dump next to the screen, an IP address selected in copy mode: its bytes
+    # lit in the dump, the color sequences around them too (MAX-267)
+    "terminal-dump": lambda: scenario(
+        "terminal-dump", [Pty(SHELL, 0.05)],
+        [fed(0.6), press("C-a", "<"), press("C-a", "b"), press(*["k"] * 11),
+         press("0", "w", "w", "v"), press(*["l"] * 11), wait(0.5)],
+        config={("raw_side", "view"): '"hex"'}, links=esp_link, size=(170, 30)),
     "directory": lambda: scenario(
-        "directory", [esp(), Pty()], [fed(), press("C-a", "d"), press("t"), wait(2.8)],
+        # the last row selected: its address cut in the middle, in full under the table
+        "directory", [esp(), Pty()],
+        [fed(), press("C-a", "d"), press("t"), wait(2.8), press("Down", "Down", "Down", "Down"),
+         wait(0.4)],
         links=directory_links),
     "session-browser": lambda: scenario(
         "session-browser", [esp()], [fed(), press("C-a", "j"), wait(0.6)],

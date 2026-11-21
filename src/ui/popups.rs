@@ -111,6 +111,39 @@ pub fn cut(text: &str, width: usize) -> String {
     cut
 }
 
+/// `text` cut to `width` columns in its middle, `…` between its start and its end (MAX-279):
+/// the end gets the larger half and any column the start leaves, being where a serial number,
+/// a part number or a port's suffix is. Nothing left for a width of 0
+pub fn cut_middle(text: &str, width: usize) -> String {
+    if text.width() <= width {
+        return text.to_string();
+    }
+    let Some(room) = width.checked_sub(1) else {
+        return String::new();
+    };
+    // the characters of one end that fit in `room` columns
+    let take = |chars: &mut dyn Iterator<Item = char>, room: usize| {
+        let mut kept = Vec::new();
+        let mut used = 0;
+        for c in chars {
+            let c_width = c.to_string().width();
+            if used + c_width > room {
+                break;
+            }
+            used += c_width;
+            kept.push(c);
+        }
+        (kept, used)
+    };
+    let (head, used) = take(&mut text.chars(), room / 2);
+    let (mut tail, _) = take(&mut text.chars().rev(), room - used);
+    tail.reverse();
+    let mut cut: String = head.into_iter().collect();
+    cut.push('…');
+    cut.extend(tail);
+    cut
+}
+
 /// A section header inside a popup
 pub fn section<'a>(title: &'a str, theme: &ThemeConfig) -> Line<'a> {
     Line::from(Span::styled(

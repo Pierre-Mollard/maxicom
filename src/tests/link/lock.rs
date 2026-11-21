@@ -309,7 +309,10 @@ fn lock_files() {
     // past the largest PID Linux and macOS give
     std::fs::write(&lock, "  99999999\n").unwrap();
     assert_eq!(locked_by("/dev/ttyUSB7", &dirs), None);
-    let no_pid = Some(UucpHolder::NoPid(lock.clone()));
+    // named in the folder it was read in, by its real path: the temp folder is under a link
+    // on macOS (`/var` to `/private/var`)
+    let read = fs::canonicalize(&dir).unwrap().join("LCK..ttyUSB7");
+    let no_pid = Some(UucpHolder::NoPid(read));
     std::fs::write(&lock, "garbage").unwrap();
     assert_eq!(locked_by("/dev/ttyUSB7", &dirs), no_pid);
     std::fs::write(&lock, "").unwrap();

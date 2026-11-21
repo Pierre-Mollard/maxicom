@@ -82,3 +82,26 @@ fn key_hints_spots_follow_the_line() {
         ]
     );
 }
+
+/// MAX-279: a middle cut keeps both ends of a long text, `…` between, in the width given:
+/// text that fits is left; the end gets the larger half (a `by-id` path keeps its port
+/// suffix); a wide character that doesn't fit leaves its column to the end; nothing fits in
+/// 0 columns, only `…` in 1, the last character joins it in 2.
+/// How: a `by-id` path in 20 columns; Japanese text (2 columns a character) in 9 and 8.
+#[test]
+fn middle_cut_keeps_both_ends() {
+    let path = "/dev/serial/by-id/usb-FTDI_FT232R_A50285BI-if00-port0";
+    assert_eq!(cut_middle("/dev/ttyUSB0", 20), "/dev/ttyUSB0");
+    let cut = cut_middle(path, 20);
+    assert_eq!(cut, "/dev/seri…if00-port0");
+    assert_eq!(cut.width(), 20);
+
+    let wide = "日本語のポート名です";
+    assert_eq!(cut_middle(wide, 9), "日本…です");
+    // 7 columns of room: one character in the start's 3, two in the end's 4 and the 1 left
+    assert_eq!(cut_middle(wide, 8), "日…です");
+
+    assert_eq!(cut_middle(path, 0), "");
+    assert_eq!(cut_middle(path, 1), "…");
+    assert_eq!(cut_middle(path, 2), "…0");
+}

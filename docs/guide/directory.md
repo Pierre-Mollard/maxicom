@@ -4,7 +4,7 @@ The directory lists everything you can open: your saved links, and the
 serial ports the system sees. Open it with `Ctrl-a d`, the `directory`
 command, or Directory in the right-click menu.
 
-![The directory on the Saved links tab, after a test: in use, free, reachable, refused, not found](images/directory.png)
+![The directory on the Saved links tab, after a test: in use, free, reachable, refused, not found; the selected row's long address cut in the middle, in full under the table](images/directory.png)
 
 ## The two tabs
 
@@ -30,6 +30,17 @@ The State column shows `in use`, `opening…`, or the result of a
 
 A column that is empty on every row is hidden. On a narrow screen, the
 address or the device column is shortened.
+
+A long name, address, device or state is shortened in its middle, so both
+its start and its end show: the end of a `by-id` path or a device name often
+holds the serial number or the part that tells two boards apart.
+
+```text
+board-with-a-v…ame-for-testing  /dev/serial/by…85BI-if00-port0
+```
+
+The selected row's shortened cells are written in full under the table, one
+per line after their column's name.
 
 ## Opening a link
 

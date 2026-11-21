@@ -28,6 +28,8 @@ It opens a serial port or a device over TCP, on Linux, macOS and Windows.
   `Ctrl-a z` for the help
 - Keys, colors and the status bar all configurable
 
+![Terminal mode with the hex dump: an address selected on the screen, its bytes lit in the dump](docs/guide/images/terminal-dump.png)
+
 ## Install
 
 Download a prebuilt binary for Linux, macOS or Windows from the

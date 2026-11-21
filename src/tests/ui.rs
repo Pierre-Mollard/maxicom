@@ -4511,8 +4511,8 @@ fn directory_test_marks_and_scrollbar() {
 /// MAX-188: each tab is a table under its headers, the state in its own column lined up;
 /// a column empty on every row isn't shown (no device or ID), the state's always is, as
 /// wide as its longest fixed state, so a test ending doesn't narrow the popup. A device
-/// longer than 30 columns is cut, `…` at its end, and in full under the table while its
-/// row is selected; a narrow screen cuts it more.
+/// longer than 30 columns is cut, `…` in its middle (MAX-279), and in full under the table
+/// while its row is selected; a narrow screen cuts it more.
 /// How: two ports, one with its USB details, one tested; the second selected; then no
 /// details nor test; then the first at 50 columns.
 #[test]
@@ -4537,7 +4537,7 @@ fn directory_columns() {
     for row in [
         "  Port          Device                          ID         State",
         "  /dev/ttyACM0                                             free",
-        "  /dev/ttyUSB1  Silicon Labs CP2102 USB to UA…  10c4:ea60",
+        "  /dev/ttyUSB1  Silicon Labs C…idge Controller  10c4:ea60",
     ] {
         assert!(has(&rows, row), "{row}: {rows:#?}");
     }
@@ -4556,7 +4556,53 @@ fn directory_columns() {
 
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 50, 24);
     let rows = open(&mut h, directory);
-    assert!(has(&rows, "/dev/ttyUSB1  Silic…  10c4:ea60"), "{rows:#?}");
+    assert!(has(&rows, "/dev/ttyUSB1  Si…ler  10c4:ea60"), "{rows:#?}");
+}
+
+/// MAX-279: a long name, address and state are each cut in their middle, both ends shown
+/// (a `by-id` path keeps its port suffix), so the popup keeps its width: the name and the
+/// address at 30 columns, the state at 24. Under the table, each cut cell of the selected row
+/// in full after its header, lined up; none for a row with nothing cut, the popup keeping
+/// its size.
+/// How: a saved link with a long name and a `by-id` address, its test a lock with no PID,
+/// and a short one, the harness's port, selected first; then the first one.
+#[test]
+fn directory_long_cells_cut_in_the_middle() {
+    use crate::link::probe::ProbeState;
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 24);
+    let address = "/dev/serial/by-id/usb-FTDI_FT232R_A50285BI-if00-port0";
+    let links = format!(
+        "[[link]]\nname = 'board-with-a-very-long-name-for-testing'\naddress = '{address}'\n\
+         [[link]]\nname = 'lab'\naddress = '/dev/ttyUSB0'\n"
+    );
+    h.app.set_links(Ok(toml::from_str(&links).unwrap()));
+    let mut directory = h.app.directory(vec![]);
+    let held = "a lock with no PID, /run/lock/LCK..ttyUSB0 (remove it if stale)";
+    let state = Some(ProbeState::Busy(Some(held.to_string())));
+    directory.tests.insert(address.to_string(), state);
+    let overlay = Overlay::Directory(directory);
+    h.app.update(Action::App(AppAction::OpenOverlay(overlay)));
+    let rows = h.draw();
+    let row = "board-with-a-v…ame-for-testing  /dev/serial/by…85BI-if00-port0  \
+               115200 8N1  busy: a loc…it if stale)";
+    assert!(has(&rows, row), "{rows:#?}");
+    let full = [
+        "  Name     board-with-a-very-long-name-for-testing",
+        &format!("  Address  {address}"),
+        &format!("  State    busy: {held}"),
+    ];
+    for line in full {
+        assert!(!has(&rows, line), "{line}: {rows:#?}");
+    }
+    let bottom = |rows: &[String]| rows.iter().rposition(|row| row.contains('┘'));
+    let before = bottom(&rows);
+
+    h.app.update(Action::Overlay(DialogAction::Up));
+    let rows = h.draw();
+    for line in full {
+        assert!(has(&rows, line), "{line}: {rows:#?}");
+    }
+    assert_eq!(bottom(&rows), before, "the popup's size changed: {rows:#?}");
 }
 
 /// MAX-163: in the trigger browser, j/k and Up/Down move; l/Right arm the selected one and

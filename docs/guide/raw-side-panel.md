@@ -6,10 +6,28 @@ text. It reveals what the decoding, the colors and the screen hide: a stray
 line next to its bytes; terminal mode shows every byte received in a dump,
 see [In terminal mode](#in-terminal-mode).
 
+![Line mode with the raw side panel in hex: each line next to its bytes](images/raw-side-panel.png)
+
+In terminal mode, the dump is linked to the screen. Select text on the screen
+and its bytes light up in the dump, with the escape sequences around them;
+put the cursor on a byte and the character it drew lights up on the screen.
+You see what the device sent behind each character, as a hex dump you can
+scroll, search and copy, without leaving the terminal or capturing the line
+with another tool.
+
+![Terminal mode with the dump in hex: the address 192.168.1.42 selected on the screen, its bytes and the color sequences around them lit in the dump](images/terminal-dump.png)
+
+It finds, among others:
+
+- lines ending in `\n` alone, or `\r\r\n`;
+- a logger's color codes or cursor moves that garble the screen;
+- what the screen can't show: a `0x00`, a `0xFF`, a broken UTF-8 character
+  after a baud rate mismatch;
+- binary data between the text, from a bootloader or a protocol;
+- the bytes a progress bar writes again and again on the same row.
+
 A [plot](plots.md) shows at the bottom, under this panel; set to the same side,
 it takes the panel's place while one is shown.
-
-![Line mode with the raw side panel in hex: each line next to its bytes](images/raw-side-panel.png)
 
 ## Showing it
 

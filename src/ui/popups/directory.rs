@@ -17,8 +17,8 @@ use crate::{
     ui::{
         common::popup_area,
         popups::{
-            Hints, cut, form_area, hint_spans, key_hints, popup_block, render_scrollbar, row_area,
-            section,
+            Hints, cut_middle, form_area, hint_spans, key_hints, popup_block, render_scrollbar,
+            row_area, section,
         },
     },
 };
@@ -123,8 +123,12 @@ pub fn render_directory_popup(
         let width = list_width
             .max(TEST_NOTE.width())
             .max(buttons(tab).0.width());
-        // a blank row and the selected row's long cell in full under a table cut
-        let full = if table.is_cut() { 2 } else { 0 };
+        // a blank row and the selected row's cut cells in full, one row each, as many as a
+        // row has at most (MAX-279)
+        let full = match table.most_cut() {
+            0 => 0,
+            cut => cut + 1,
+        };
         (width as u16, (listed + full) as u16 + HEADER)
     };
     let tab_widths: Vec<u16> = TABS.iter().map(|(_, t)| t.width() as u16 + 2).collect();
@@ -185,32 +189,40 @@ pub fn render_directory_popup(
         width: area.width - offset,
         ..area
     };
-    // the selected row's long cell in full on the last row, under a blank one, at the
-    // table's first column, when the table cuts it (the rows kept when another row's is cut)
+    // the selected row's cut cells in full on the last rows, under a blank one, at the
+    // table's first column, each after its header (MAX-279): the rows kept for the row with
+    // the most cut cells, so the popup doesn't change as the selection moves
     let selected = directory.selection();
-    if table.is_cut() {
-        inner.height = inner.height.saturating_sub(2);
+    let most_cut = table.most_cut();
+    if most_cut > 0 {
+        inner.height = inner.height.saturating_sub(most_cut as u16 + 1);
         let full = centered(Rect {
             y: inner.bottom() + 1,
-            height: 1,
+            height: most_cut as u16,
             ..inner
         })
         .intersection(area);
         let header = Style::default()
             .fg(theme.palette.text_muted)
             .add_modifier(Modifier::BOLD);
-        let long = (table.rows.get(selected))
-            .map(|row| &row.cells[1])
-            .filter(|cell| cell.width() > table.widths[1]);
-        if let Some(text) = long {
-            let label = format!("  {}  ", table.headers[1]);
-            let width = usize::from(full.width).saturating_sub(label.width());
-            let line = Line::from(vec![
-                Span::styled(label, header),
-                Span::styled(cut(text, width), Style::default().fg(theme.palette.text)),
-            ]);
-            frame.render_widget(Paragraph::new(line), full);
-        }
+        let label_width = table.headers.iter().map(|h| h.width()).max().unwrap_or(0);
+        let lines: Vec<Line> = (table.rows.get(selected).into_iter())
+            .flat_map(|row| table.cut_cells(row).into_iter().map(move |cut| (row, cut)))
+            .map(|(row, (column, text))| {
+                // the state in its own color, as in its row
+                let color = match (column, &row.state) {
+                    (3, Some((_, color))) => *color,
+                    _ => theme.palette.text,
+                };
+                let label = format!("  {:<label_width$}  ", table.headers[column]);
+                let width = usize::from(full.width).saturating_sub(label.width());
+                Line::from(vec![
+                    Span::styled(label, header),
+                    Span::styled(cut_middle(text, width), Style::default().fg(color)),
+                ])
+            })
+            .collect();
+        frame.render_widget(Paragraph::new(lines), full);
     }
     let header = Rect { height: 1, ..inner }.intersection(inner);
     frame.render_widget(Paragraph::new(table.header(theme)), centered(header));
@@ -251,8 +263,11 @@ const HEADER: u16 = 4;
 const GAP: usize = 2;
 /// The State column at least: its longest state but the ones naming who holds the port
 const STATE_WIDTH: usize = 12;
-/// The second column (address, device) at most: a longer cell is cut, in full under the table
-/// when its row is selected
+/// The State column at most: `busy: minicom (12345)` whole, a longer state cut in its middle,
+/// in full under the table when its row is selected (MAX-279)
+const STATE_MAX: usize = 24;
+/// The first and second columns (name or port, address or device) at most: a longer cell is
+/// cut in its middle, in full under the table when its row is selected (MAX-279)
 const LONG_WIDTH: usize = 30;
 
 /// A tab's row: a cell per column but the state, a saved link's color, whether it's the link in
@@ -267,7 +282,8 @@ struct Row {
 /// A tab's rows in columns under their headers (MAX-188): a saved link's name, address and
 /// line, a port's name, device and `vid:pid`, then the state of both. Each column as wide as
 /// its widest cell or header, none for a column empty on every row but the first and the
-/// state's; the state's as wide as `STATE_WIDTH` at least, the second `LONG_WIDTH` at most
+/// state's; the first two `LONG_WIDTH` at most, the state's between `STATE_WIDTH` and
+/// `STATE_MAX` (MAX-279)
 struct Table {
     headers: [&'static str; 4],
     rows: Vec<Row>,
@@ -289,10 +305,10 @@ impl Table {
             };
             let widest = rows.iter().map(cell).max().unwrap_or(0);
             *width = match i {
-                0 => widest.max(headers[i].width()),
+                0 => widest.min(LONG_WIDTH).max(headers[i].width()),
                 1 if widest > 0 => widest.min(LONG_WIDTH).max(headers[i].width()),
                 2 if widest > 0 => widest.max(headers[i].width()),
-                3 => widest.max(STATE_WIDTH),
+                3 => widest.clamp(STATE_WIDTH, STATE_MAX),
                 _ => 0,
             };
         }
@@ -309,9 +325,21 @@ impl Table {
         2 + shown.clone().sum::<usize>() + GAP * shown.count().saturating_sub(1)
     }
 
-    /// Whether a row's second cell is cut
-    fn is_cut(&self) -> bool {
-        (self.rows.iter()).any(|row| row.cells[1].width() > self.widths[1])
+    /// The cells of `row` too long for their column, with their column (MAX-279)
+    fn cut_cells<'r>(&self, row: &'r Row) -> Vec<(usize, &'r str)> {
+        let state = row.state.as_ref().map(|(state, _)| state.as_str());
+        let cells = row.cells.iter().map(String::as_str).chain(state);
+        (cells.enumerate())
+            .filter(|(i, cell)| self.widths[*i] > 0 && cell.width() > self.widths[*i])
+            .collect()
+    }
+
+    /// The most cells cut in one row, the rows kept under the table for them
+    fn most_cut(&self) -> usize {
+        (self.rows.iter())
+            .map(|row| self.cut_cells(row).len())
+            .max()
+            .unwrap_or(0)
     }
 
     /// The second column (address, device) narrowed to fit in `max`, to its header at least
@@ -323,7 +351,9 @@ impl Table {
         }
     }
 
-    /// The cells of a row padded to their columns, the gaps between them, all in `style`
+    /// The cells of a row padded to their columns, a longer one cut in its middle (MAX-279):
+    /// its end often tells two boards apart, a serial number or `-if00-port0`. The gaps
+    /// between them, all in `style`
     fn spans<'a>(&self, cells: [(&str, Style); 4], style: Style) -> Vec<Span<'a>> {
         let mut spans = Vec::new();
         let shown = (cells.into_iter().zip(self.widths)).filter(|(_, width)| *width > 0);
@@ -331,7 +361,7 @@ impl Table {
             if i > 0 {
                 spans.push(Span::styled(" ".repeat(GAP), style));
             }
-            let text = cut(text, width);
+            let text = cut_middle(text, width);
             let pad = width.saturating_sub(text.width());
             spans.push(Span::styled(
                 format!("{text}{}", " ".repeat(pad)),

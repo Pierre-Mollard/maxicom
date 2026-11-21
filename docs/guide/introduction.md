@@ -10,7 +10,8 @@ Beyond the basics, it gives you:
 - a scrollback with copy and search;
 - recordings, and a backup of every session that comes back at the next
   launch;
-- a panel showing the raw bytes;
+- a panel showing the raw bytes, and in terminal mode a hex dump linked to
+  the screen: select text and its bytes light up;
 - live plots of the numbers your device prints;
 - a command line, and triggers that answer boot prompts for you;
 - a status bar you can rewrite.

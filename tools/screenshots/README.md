@@ -17,7 +17,8 @@ Linux or macOS (the fake serial ports are ptys), with:
 | Python 3.8+ | The script; standard library only | Your system's package |
 | tmux | Running maxicom in a hidden window, and capturing it | `apt install tmux` |
 | [freeze](https://github.com/charmbracelet/freeze) | Rendering the captured text as an image | See below |
-| ffmpeg (with ffprobe) | Cropping and scaling the images | `apt install ffmpeg` |
+| ffmpeg (with ffprobe) | Drawing freeze's SVG (librsvg), cropping and scaling the images | `apt install ffmpeg` |
+| JetBrains Mono | The font the images are drawn in | `apt install fonts-jetbrains-mono` |
 
 freeze comes from Charm's apt repository (Debian, Ubuntu):
 
@@ -28,7 +29,7 @@ echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *
 sudo apt update && sudo apt install freeze
 ```
 
-On macOS: `brew install freeze tmux ffmpeg`.
+On macOS: `brew install freeze tmux ffmpeg font-jetbrains-mono`.
 
 ## Usage
 
@@ -64,7 +65,10 @@ For each scenario:
    (`tmux capture-pane -e`).
 4. **Render.**
    - The 16 basic colors are rewritten to the tokyonight-night palette, as RGB.
-   - `freeze` draws the text as a PNG, without a window frame.
+   - `freeze` writes the text as an SVG, without a window frame.
+   - Its backgrounds are moved onto the font's grid (see
+     [Backgrounds](#good-to-know) below), and ffmpeg draws the SVG with
+     librsvg.
    - ffmpeg crops the extra space freeze leaves at the bottom, and scales the
      image to 1400 px wide.
 
@@ -87,13 +91,14 @@ image.
 | `overview` | Terminal mode on a board's shell | Introduction |
 | `help` | The help popup | Introduction |
 | `settings-popup` | The settings popup | Popups |
-| `directory` | The directory after a test | The directory |
+| `directory` | The directory after a test, a long `by-id` address cut and in full under the table | The directory |
 | `line-settings` | The line settings popup | Links |
 | `line-mode` | An ESP32 boot log with timestamps, a line being typed | Line mode |
 | `terminal-mode` | A full-screen process viewer | Terminal mode |
 | `copy-mode` | A selection in copy mode | Copy mode and mouse |
 | `search` | A search and its matches | Search |
 | `raw-side-panel` | The hex panel next to the text, at 130 columns | Raw side panel |
+| `terminal-dump` | Terminal mode's dump at 16 bytes a line, an address selected and its bytes lit, at 170 columns | Raw side panel, README |
 | `command-line` | The completion list | Command line |
 | `triggers` | The trigger browser | Triggers |
 | `record-dialog` | The recording dialog | Capture |
@@ -141,10 +146,17 @@ Then reference the image in the guide:
 - **Long paths.** Popups that show a path in full (the session browser's
   folder) would show `target/screenshots/...`. The script shows it as
   `/home/me/...` in the image, with the same width so the popup's border stays.
+- **Backgrounds.** freeze lays the backgrounds (a selection, a highlighted row) on a
+  cell of 8.33 px, but draws the text in JetBrains Mono, whose characters are 8.4 px wide
+  at its size: a background drifts left of its text by a cell every 125 columns, visible
+  on the right of a wide shot. The script scales the backgrounds' positions and widths to
+  the font's width, read from the font file, then draws the SVG with that font: it must
+  be installed (`fonts-jetbrains-mono`, or `SHOTS_MONO_FONT=/path/to/JetBrainsMono-Regular.ttf`).
+  Without it, the script says so and falls back to freeze's own PNG, drift included.
 - **Braille, for the plots.** freeze's font has no braille, which the plot's lines are
   drawn with, and freeze doesn't fall back to another font: they come out as boxes. A
-  scenario with `braille=True` goes another way: freeze writes an SVG, its font is
-  swapped for Cascadia Mono (it has braille), and ffmpeg draws it with librsvg. The font
+  scenario with `braille=True` swaps the SVG's font for Cascadia Mono (it has braille),
+  its backgrounds moved onto that font's grid in the same way. The font
   is Windows Terminal's under WSL (`/mnt/c/Windows/Fonts`), `fonts-cascadia-code` on
   Debian and Ubuntu, `~/Library/Fonts` on macOS, or any monospace font with braille
   given as `SHOTS_BRAILLE_FONT=/path/to/font.ttf`. Without one, that scenario fails and
