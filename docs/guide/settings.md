@@ -265,6 +265,7 @@ See [Line mode](line-mode.md).
 | `wrap_indent` | `"timestamp"` | `timestamp`, `prefix`, `none` |
 | `history_size` | `250000` | Lines kept |
 | `send_history_size` | `1000` | Sent lines kept for Up / Down |
+| `shell_hint` | `true` | Tell once when the device looks like a shell: [Line mode](line-mode.md#the-shell-hint) |
 | `show_partial_rx` | `true` | Show the line still coming in |
 | `entry_spacing` | `0` | Blank rows between lines |
 | `prefix_place` | `"border"` | Row marks: `border`, `inset`, `none` |

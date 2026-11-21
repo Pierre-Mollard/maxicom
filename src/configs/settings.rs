@@ -767,6 +767,8 @@ pub struct LineModeConfig {
     /// `AlwaysBoth`, and a resize measures them all (MAX-214)
     pub history_size: usize,
     pub send_history_size: usize,
+    /// A notice when the device looks like a shell, once a link (MAX-255)
+    pub shell_hint: bool,
     pub show_partial_rx: bool,
     pub entry_spacing: usize,
     pub prefix_place: PrefixPlace,
@@ -787,6 +789,7 @@ impl Default for LineModeConfig {
             wrap_indent: PrefixWrapBehavior::default(),
             history_size: 250_000,
             send_history_size: 1000,
+            shell_hint: true,
             show_partial_rx: true,
             entry_spacing: 0,
             prefix_place: PrefixPlace::default(),

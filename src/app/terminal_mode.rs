@@ -55,6 +55,27 @@ const RESTORE_RESET: &str = concat!(
     "\x1b[0m\x1b[?25h",
 );
 
+/// What told that the device is a shell, weakest first (MAX-255): prompt marks (OSC 133),
+/// bracketed paste turned on (`?2004h`, bash and zsh at each prompt), a query (it expects a
+/// terminal to answer)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ShellSignal {
+    PromptMarks,
+    BracketedPaste,
+    Query,
+}
+
+impl ShellSignal {
+    /// What the device did, for the hint (MAX-255)
+    pub fn told(self) -> &'static str {
+        match self {
+            Self::PromptMarks => "it sent prompt marks",
+            Self::BracketedPaste => "it turned bracketed paste on",
+            Self::Query => "it sent a terminal query",
+        }
+    }
+}
+
 /// The earlier writes on the copy cursor's cell shown in the dump, past the one it shows: a
 /// progress bar's cell can have thousands (MAX-256)
 const OLD_GHOSTS: usize = 32;
@@ -183,6 +204,8 @@ pub struct TerminalMode {
     copy_held: bool,
     /// The marks on world rows (MAX-164)
     marks: Marks,
+    /// The strongest sign the device is a shell, from its live bytes (MAX-255)
+    shell_signal: Option<ShellSignal>,
 }
 
 impl TerminalMode {
@@ -228,6 +251,7 @@ impl TerminalMode {
             copy_pan: None,
             copy_held: false,
             marks: Marks::default(),
+            shell_signal: None,
         }
     }
 
@@ -247,7 +271,31 @@ impl TerminalMode {
             add_cr,
             add_lf,
         };
+        let asked = self.vt100_parser.callbacks().answers.len();
+        self.vt100_parser.callbacks_mut().prompt_marks = false;
         self.process_rx_at(encoding, raw_bytes, Some(Timestamp::now()), feed);
+        self.note_shell_signal(asked);
+    }
+
+    /// The strongest sign in the chunk just read kept, when stronger (MAX-255): its answers
+    /// past `asked`, bracketed paste left on, prompt marks. A restore's chunks don't count
+    fn note_shell_signal(&mut self, asked: usize) {
+        let events = self.vt100_parser.callbacks();
+        let query = (events.answers.get(asked..).unwrap_or_default().iter())
+            .any(|answer| matches!(answer, Answer::Reply(..)));
+        let signal = if query {
+            Some(ShellSignal::Query)
+        } else if self.vt100_parser.screen().bracketed_paste() {
+            Some(ShellSignal::BracketedPaste)
+        } else {
+            events.prompt_marks.then_some(ShellSignal::PromptMarks)
+        };
+        self.shell_signal = self.shell_signal.max(signal);
+    }
+
+    /// The strongest sign the device is a shell seen on this link, if any (MAX-255)
+    pub fn shell_signal(&self) -> Option<ShellSignal> {
+        self.shell_signal
     }
 
     /// Local echo (MAX-270): bytes sent shown on the screen as maxicom's own, not in the stream.

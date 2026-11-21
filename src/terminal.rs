@@ -27,7 +27,7 @@ use crate::glyphs::{UNSURE_MARKER, drawn, invalid_bytes, unsure_width::is_unsure
 /// the last ones the device set, OSC 2 and 1, both with OSC 0; `clipboard` the base64 text of
 /// its last OSC 52 copy, until taken (MAX-275). `links` are the OSC 8 links drawn on the main
 /// screen, oldest first, `LINKS_MAX` at most, and `link_open` the one whose text is coming
-/// (MAX-277)
+/// (MAX-277). `prompt_marks` is an OSC 133 seen since it was last reset: a shell (MAX-255)
 #[derive(Default)]
 pub struct ParserEvents {
     pub evicted: usize,
@@ -42,6 +42,7 @@ pub struct ParserEvents {
     pub clipboard: Option<Vec<u8>>,
     pub links: VecDeque<Hyperlink>,
     pub link_open: Option<(String, (u64, u16))>,
+    pub prompt_marks: bool,
 }
 
 /// A link the device drew around some text with OSC 8 (MAX-277): its cells from `start` to
@@ -366,6 +367,9 @@ impl vt100::Callbacks for ParserEvents {
                 self.set_window_icon_name(screen, &text);
             }
             return;
+        }
+        if params.first() == Some(&&b"133"[..]) {
+            self.prompt_marks = true;
         }
         let mut bytes = b"\x1b]".to_vec();
         bytes.extend(params.join(&b';'));

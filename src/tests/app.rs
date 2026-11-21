@@ -2855,6 +2855,161 @@ fn line_mode_local_echo() {
     assert_eq!(texts(&app), ["hello", "raw"]);
 }
 
+/// MAX-255 step 0: in line mode Up and Down walk the lines sent from maxicom only and send
+/// nothing, even when the device looks like a shell; the draft comes back past the newest.
+/// How: "ls" and "pwd" sent, a shell prompt received (bracketed paste on, DSR query, OSC 133),
+/// a draft typed, then Up x3 and Down x2
+#[test]
+fn line_mode_history_stays_local() {
+    let mut app = app();
+    app.settings.mode = Mode::Line;
+    let line = |app: &mut App, action: LineInputAction| app.update(Action::LineInput(action));
+    for sent in ["ls", "pwd"] {
+        line(&mut app, LineInputAction::Paste(sent.to_string()));
+        line(&mut app, LineInputAction::Submit);
+    }
+    app.feed_rx(b"\x1b]133;A\x07\x1b[?2004h\x1b[5nroot@board:~# ");
+    assert!(app.take_query_answers().is_empty());
+    line(&mut app, LineInputAction::Paste("draft".to_string()));
+
+    let steps = [
+        (LineInputAction::HistoryUp, "pwd"),
+        (LineInputAction::HistoryUp, "ls"),
+        (LineInputAction::HistoryUp, "ls"),
+        (LineInputAction::HistoryDown, "pwd"),
+        (LineInputAction::HistoryDown, "draft"),
+    ];
+    for (action, expected) in steps {
+        assert!(matches!(line(&mut app, action), UpdateEffect::None));
+        assert_eq!(app.line_mode.input().value(), expected);
+    }
+    assert!(app.take_query_answers().is_empty());
+}
+
+/// MAX-255: in line mode the terminal fed with `always_both` sees the device is a shell; with
+/// `active_only` it isn't fed, nothing is seen. A device switch's fresh screens forget it.
+/// How: a DSR query in line mode with each buffering, then the views cleared
+#[test]
+fn shell_signal_seen_in_line_mode() {
+    use crate::app::terminal_mode::ShellSignal;
+    let mut app = app();
+    app.settings.mode = Mode::Line;
+    app.feed_rx(b"\x1b[5n");
+    assert_eq!(app.terminal_mode.shell_signal(), Some(ShellSignal::Query));
+    app.clear_screen();
+    assert_eq!(app.terminal_mode.shell_signal(), None);
+
+    app.settings.dual_mode_buffering = DualBufferMode::ActiveOnly;
+    app.feed_rx(b"\x1b[5n");
+    assert_eq!(app.terminal_mode.shell_signal(), None);
+}
+
+/// The messages of the shell hint shown (MAX-255)
+fn shell_hints(app: &App) -> Vec<String> {
+    let toasts = app.notifications.active_toasts().iter();
+    toasts
+        .filter(|toast| toast.key == Some("shell"))
+        .map(|toast| toast.message.clone())
+        .collect()
+}
+
+fn line_key(app: &mut App, code: KeyCode) {
+    use crossterm::event::{KeyEvent, KeyModifiers};
+    let key = KeyEvent::new(code, KeyModifiers::NONE);
+    app.update(Action::LineInput(LineInputAction::HandleKey(key)));
+}
+
+/// MAX-255: in line mode a query shows the shell hint at once, naming it and the key that
+/// switches mode; once a link: dismissed, another query doesn't bring it back, a device
+/// switch's fresh screens do. In terminal mode a query shows nothing.
+/// How: DSR in terminal mode, then twice in line mode with the hints dismissed, then the
+/// views cleared and DSR again
+#[test]
+fn shell_hint_on_a_query() {
+    let mut app = app();
+    app.settings.mode = Mode::Terminal;
+    app.feed_rx(b"\x1b[5n");
+    assert_eq!(shell_hints(&app), Vec::<String>::new());
+
+    app.settings.mode = Mode::Line;
+    app.feed_rx(b"\x1b[5n");
+    let key = app.key_resolver.action_keys(KeyBindingAction::SKInputMode)[0].clone();
+    let hint = format!(
+        "The device looks like a shell (it sent a terminal query): {key} switches to terminal \
+         mode for its line editing and history"
+    );
+    assert_eq!(shell_hints(&app), std::slice::from_ref(&hint));
+    app.notifications.dismiss_all();
+    app.feed_rx(b"\x1b[5n");
+    assert_eq!(shell_hints(&app), Vec::<String>::new());
+
+    app.clear_screen();
+    app.feed_rx(b"\x1b[5n");
+    assert_eq!(shell_hints(&app), [hint]);
+}
+
+/// MAX-255: a weaker sign shows the hint only when Up or Down is pressed in line mode, naming
+/// it; with no sign Up and Down show nothing. Tab shows its own hint, sign or not.
+/// How: Up, Down and a char with no sign, then bracketed paste received and Down; a fresh app
+/// with Tab and no sign, one with prompt marks then Tab
+#[test]
+fn shell_hint_on_up_down_and_tab() {
+    let mut app = app();
+    app.settings.mode = Mode::Line;
+    app.update(Action::LineInput(LineInputAction::HistoryUp));
+    app.update(Action::LineInput(LineInputAction::HistoryDown));
+    line_key(&mut app, KeyCode::Char('x'));
+    app.feed_rx(b"\x1b[?2004h$ ");
+    assert_eq!(shell_hints(&app), Vec::<String>::new());
+    app.update(Action::LineInput(LineInputAction::HistoryDown));
+    let key = app.key_resolver.action_keys(KeyBindingAction::SKInputMode)[0].clone();
+    let hint = format!(
+        "The device shell keeps its own history (it turned bracketed paste on): {key} switches \
+         to terminal mode to use it"
+    );
+    assert_eq!(shell_hints(&app), [hint]);
+
+    let mut app = super::tests::app();
+    app.settings.mode = Mode::Line;
+    line_key(&mut app, KeyCode::Tab);
+    let key = app.key_resolver.action_keys(KeyBindingAction::SKInputMode)[0].clone();
+    let hint = format!("Tab completion is the device shell's: {key} switches to terminal mode");
+    assert_eq!(shell_hints(&app), std::slice::from_ref(&hint));
+
+    let mut app = super::tests::app();
+    app.settings.mode = Mode::Line;
+    app.feed_rx(b"\x1b]133;A\x07$ ");
+    line_key(&mut app, KeyCode::Tab);
+    assert_eq!(shell_hints(&app), [hint]);
+}
+
+/// MAX-255: no hint with `shell_hint = false`, nor when terminal mode is turned off, nor on a
+/// replay.
+/// How: `shell_hint` off with a query and Tab; `disabled_mode = terminal` with Tab; a replay
+/// in line mode receiving a query
+#[test]
+fn shell_hint_needs_terminal_mode_and_a_live_link() {
+    let mut app = app();
+    app.settings.mode = Mode::Line;
+    app.settings.line_mode.shell_hint = false;
+    app.feed_rx(b"\x1b[5n");
+    line_key(&mut app, KeyCode::Tab);
+    assert_eq!(shell_hints(&app), Vec::<String>::new());
+
+    let mut app = super::tests::app();
+    app.settings.mode = Mode::Line;
+    app.settings.disabled_mode = DisabledMode::Terminal;
+    line_key(&mut app, KeyCode::Tab);
+    assert_eq!(shell_hints(&app), Vec::<String>::new());
+
+    let mut app = super::tests::app();
+    app.start_replay(PathBuf::from("/tmp/shell.raw"), None);
+    app.settings.mode = Mode::Line;
+    app.feed_rx(b"\x1b[5n");
+    line_key(&mut app, KeyCode::Tab);
+    assert_eq!(shell_hints(&app), Vec::<String>::new());
+}
+
 /// MAX-270: in terminal mode, local echo shows what is typed, pasted and sent raw on the
 /// screen, as maxicom's own bytes (not in the raw panel's stream): Enter as a new line,
 /// Backspace going back so the next char writes over, a paste without its markers; keys sent

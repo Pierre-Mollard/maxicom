@@ -40,6 +40,10 @@ pub const CONFIG_COMMENTS: &[(&str, &str)] = &[
     ),
     ("line_mode.wrap_mode", "values: word, char, truncate"),
     ("line_mode.wrap_indent", "values: none, prefix, timestamp"),
+    (
+        "line_mode.shell_hint",
+        "a notice when the device looks like a shell: its history is in terminal mode",
+    ),
     ("line_mode.prefix_place", "values: inset, border, none"),
     ("terminal_mode", guide!("terminal-mode.html")),
     (

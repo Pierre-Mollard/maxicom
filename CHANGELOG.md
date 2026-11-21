@@ -33,6 +33,12 @@ to send the focus reports.
 
 ### Added
 
+- In line mode, a notification tells you once when the device looks like a
+  shell, whose history and Tab completion only work in terminal mode: at once
+  when it sends a terminal query, on Up or Down after it turned bracketed
+  paste on or sent prompt marks, and on Tab. `shell_hint = false` in
+  `[line_mode]` turns it off. See
+  [The shell hint](https://pierre-mollard.github.io/maxicom/line-mode.html#the-shell-hint).
 - Links from the device (OSC 8, as `ls --hyperlink` and gcc send) are
   underlined in terminal mode, with the new `link` entry of the theme's
   `[terminal]`. A click on one, or `gx` on it in copy mode, copies its

@@ -1838,3 +1838,39 @@ fn links_follow_their_rows() {
     let cells = vec![(0, 0..4), (1, 0..2)];
     assert_eq!(shown_links(&tm), [("http://a".to_string(), cells)]);
 }
+
+/// MAX-255: the device's bytes tell it's a shell by prompt marks, bracketed paste left on or a
+/// query, the strongest kept: a weaker one later, bracketed paste turned off or a size report
+/// queued by a resize don't lower it. Echoed and restored bytes don't count.
+/// How: each sign on a fresh terminal, in order, then the ones that must not count
+#[test]
+fn shell_signal_from_device_bytes() {
+    let device = |tm: &mut TerminalMode, bytes: &[u8]| {
+        tm.process_device_rx(TextEncoding::Utf8, bytes, false, false, false);
+    };
+    let mut tm = terminal(5);
+    device(&mut tm, b"plain text\r\n\x1b[1mbold\x1b[0m ");
+    assert_eq!(tm.shell_signal(), None);
+    device(&mut tm, b"\x1b]133;A\x07$ ");
+    assert_eq!(tm.shell_signal(), Some(ShellSignal::PromptMarks));
+    device(&mut tm, b"\x1b[?2004h$ ");
+    assert_eq!(tm.shell_signal(), Some(ShellSignal::BracketedPaste));
+    device(&mut tm, b"\x1b[?2004l\x1b]133;A\x07");
+    assert_eq!(tm.shell_signal(), Some(ShellSignal::BracketedPaste));
+    device(&mut tm, b"\x1b[6n");
+    assert_eq!(tm.shell_signal(), Some(ShellSignal::Query));
+    device(&mut tm, b"\x1b]133;A\x07");
+    assert_eq!(tm.shell_signal(), Some(ShellSignal::Query));
+
+    let mut own = terminal(5);
+    own.echo(b"\x1b[?2004h\x1b]133;A\x07\x1b[5n");
+    own.restore(
+        TextEncoding::Utf8,
+        &untimed(b"\x1b[?2004h\x1b]133;A\x07\x1b[5n"),
+        "-- restored --",
+        false,
+    );
+    assert_eq!(own.shell_signal(), None);
+    device(&mut own, b"after the restore ");
+    assert_eq!(own.shell_signal(), None);
+}

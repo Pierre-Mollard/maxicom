@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crossterm::event::KeyCode;
 use ratatui::layout::{Direction, Rect};
 
 use crate::{
@@ -17,6 +18,7 @@ use crate::{
         },
         selection::{ClickCounter, CopySide, LogicalPosition, MouseUnit},
         term_answers::answer_bytes,
+        terminal_mode::ShellSignal,
         triggers::Trigger,
         types::{FocusTarget, FrameAreas, FrameMap, ScrollbarMap, SidePanel, ViewportSize},
     },
@@ -48,6 +50,14 @@ use crate::{
     transfer::{FileTransfer, Step, modem::Protocol},
     ui::{layout::side_chunks, raw_side::terminal::DumpLayout},
 };
+
+/// What brought the shell hint (MAX-255): a query received, Up or Down after a sign of a shell
+/// (the hint names it), Tab (the key is reason enough)
+enum ShellHint {
+    Query,
+    History(ShellSignal),
+    Tab,
+}
 
 /// How soon after the window gains focus a press is the one that focused it
 const FOCUS_CLICK: Duration = Duration::from_millis(200);
@@ -196,6 +206,8 @@ pub struct App {
     answer_groups_off: Option<Vec<QueryGroup>>,
     /// The device's last OSC 52 copy in base64, for the loop to send on (MAX-275)
     device_copy: Option<Vec<u8>>,
+    /// The device was said to look like a shell: once a link, until a switch (MAX-255)
+    shell_hinted: bool,
     /// What the emulator didn't use, by label with its count in first seen order, while its
     /// notification is shown (MAX-264)
     unhandled: Vec<(String, usize)>,
@@ -369,6 +381,7 @@ impl App {
             query_answers: Vec::new(),
             answer_groups_off: None,
             device_copy: None,
+            shell_hinted: false,
             unhandled: Vec::new(),
             triggers: Vec::new(),
             links: Ok(LinksConfig::default()),
@@ -750,6 +763,7 @@ impl App {
     /// replay to play on (MAX-166) and for a device switched to (MAX-187)
     fn clear_screen(&mut self) -> (LineMode, TerminalMode, Stats) {
         self.clear_plot();
+        self.shell_hinted = false;
         let line_mode = LineMode::new(
             self.settings.line_mode.history_size,
             self.settings.line_mode.send_history_size,
@@ -824,6 +838,42 @@ impl App {
         if !shadowed.is_empty() {
             self.notify_warn(format!("Keymap: unreachable {}", shadowed.join(", ")));
         }
+    }
+
+    /// Says once a link that the device looks like a shell, its history and completion in
+    /// terminal mode (MAX-255), worded for what brought it. With `shell_hint`, in line mode on
+    /// a written link only, never when terminal mode is turned off
+    fn hint_shell(&mut self, hint: ShellHint) {
+        let line_mode = self.settings.mode == Mode::Line;
+        if self.shell_hinted
+            || !self.settings.line_mode.shell_hint
+            || !line_mode
+            || !self.settings.mode_enabled(Mode::Terminal)
+            || !self.link_kind().writes()
+        {
+            return;
+        }
+        self.shell_hinted = true;
+        let key = (self.key_resolver.action_keys(KeyBindingAction::SKInputMode))
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "toggle-input-mode".to_string());
+        let msg = match hint {
+            ShellHint::Query => format!(
+                "The device looks like a shell ({}): {key} switches to terminal mode for its \
+                 line editing and history",
+                ShellSignal::Query.told()
+            ),
+            ShellHint::History(signal) => format!(
+                "The device shell keeps its own history ({}): {key} switches to terminal mode \
+                 to use it",
+                signal.told()
+            ),
+            ShellHint::Tab => {
+                format!("Tab completion is the device shell's: {key} switches to terminal mode")
+            }
+        };
+        self.notify_keyed("shell", ToastLevel::Info, msg);
     }
 
     /// The next frames hide the borders, the scrollbar and the status bar each while the
@@ -1018,6 +1068,18 @@ impl App {
                     if self.is_search_active() {
                         self.update_action_search_mode(SearchModeAction::Cancel);
                     }
+                }
+                // the device's history and completion are in terminal mode: said once (MAX-255)
+                match (&action, self.terminal_mode.shell_signal()) {
+                    (LineInputAction::HistoryUp | LineInputAction::HistoryDown, Some(signal)) => {
+                        self.hint_shell(ShellHint::History(signal));
+                    }
+                    (LineInputAction::HandleKey(key), _)
+                        if key.code == KeyCode::Tab && key.modifiers.is_empty() =>
+                    {
+                        self.hint_shell(ShellHint::Tab);
+                    }
+                    _ => {}
                 }
                 let is_interrupt = matches!(action, LineInputAction::Interrupt);
                 let effect = self
@@ -1486,6 +1548,10 @@ impl App {
             if live && self.settings.mode == Mode::Terminal {
                 let bytes = answer_bytes(answers, &self.settings.terminal_mode);
                 self.query_answers.extend(bytes);
+            }
+            // unanswered in line mode, the device may give up on its line editing: said now
+            if live && self.terminal_mode.shell_signal() == Some(ShellSignal::Query) {
+                self.hint_shell(ShellHint::Query);
             }
             if !self.settings.terminal_mode.notify_unhandled.is_empty() {
                 self.notify_unhandled();

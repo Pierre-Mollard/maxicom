@@ -32,6 +32,10 @@ Up and Down (or Ctrl-p and Ctrl-n) walk through the lines you sent, newest
 first. `send_history_size` (default `1000`) sets how many are kept. The
 history lasts for the session only.
 
+This history is maxicom's own. The history of a shell on the device is only
+reachable in terminal mode, see
+[When the device is a shell](#when-the-device-is-a-shell).
+
 ### Special keys
 
 | Key | Does |
@@ -162,6 +166,7 @@ in the settings popup cycles it.
 | `entry_spacing` | `0` | Blank rows between two lines |
 | `history_size` | `250000` | Lines kept; older ones are dropped. Read at startup. See [History size](#history-size). |
 | `unfocused_cursor_glyph` | `█` | The cursor drawn while the input box isn't focused |
+| `shell_hint` | `true` | Tells you once when the device looks like a shell, see [The shell hint](#the-shell-hint) |
 
 ## History size
 
@@ -179,6 +184,61 @@ takes about 40 MB.
 The first draw and each resize measure every line, which takes about 400 ms
 when the history is full. Lower `history_size` if resizing feels slow or
 memory is short.
+
+## When the device is a shell
+
+A shell on the device (bash, busybox, an embedded console) edits its own
+line: it keeps its own history, completes words on Tab and redraws the line
+as you type. That only works in terminal mode, where each key goes to the
+device as you press it.
+
+Line mode sends whole lines. Up and Down walk maxicom's history, not the
+shell's, and Tab does nothing. Line mode never fakes the shell's history:
+the shell answers an Up key by redrawing its line, and the line would then be
+sent twice.
+
+### The shell hint
+
+maxicom watches what the device sends for signs of a shell. When it sees
+one, a notification tells you that `Ctrl-a m` switches to terminal mode, once
+per link.
+
+| Sign | Who sends it | The hint shows |
+| --- | --- | --- |
+| A terminal query, like `ESC [ 5 n` | Embedded consoles that check for a terminal, some busybox builds, recent systemd, full-screen programs | At once |
+| Bracketed paste turned on (`ESC [ ? 2004 h`) | bash 5.1 and later, zsh, fish, at each prompt | When you press Up or Down |
+| Prompt marks (OSC 133) | Shells set up for them | When you press Up or Down |
+| None | | When you press Tab |
+
+A query shows the hint at once because line mode doesn't answer it. A
+console that asks at startup and gets no answer may turn its line editing
+and history off until it restarts: switch to terminal mode, then restart the
+device.
+
+Tab needs no sign: it does nothing in line mode, so pressing it means you
+expect the device to complete.
+
+Some shells send none of these signs, like U-Boot, the MicroPython REPL or a
+login prompt. Only Tab brings the hint for them.
+
+The hint doesn't show:
+
+- with `shell_hint = false` in `[line_mode]`;
+- with `disabled_mode = "terminal"`, as there is nothing to switch to;
+- on a replay.
+
+The signs are read by terminal mode, which receives everything with the
+default `dual_mode_buffering = "always_both"`. With `"active_only"`, line mode
+sees none of them, and only Tab brings the hint.
+
+### Starting in terminal mode
+
+For a device that always runs a shell, let its link start in terminal mode
+with a [profile](profiles.md#running-commands):
+
+```toml
+on_load = "mode terminal"
+```
 
 ## Telling the device the width
 
