@@ -68,6 +68,8 @@ pub enum Overlay {
     Directory(Directory),
     LinkForm(Box<LinkForm>),
     DeleteLink(SavedLink),
+    /// A group replay loading (MAX-272): its state is the replay's. Close stops it
+    Loading,
 }
 
 /// A part of a popup the mouse picks (MAX-113)
@@ -223,6 +225,7 @@ impl Overlay {
                 | Overlay::DeviceDetached
                 | Overlay::NoDevice
                 | Overlay::RestoreSession(_)
+                | Overlay::Loading
         )
     }
 
@@ -300,6 +303,11 @@ impl Overlay {
                 _ => OverlayResponse::Handled,
             },
             Overlay::Settings(dialog) => dialog.handle_action(action, settings),
+            // stops the load and its replay: back to the live link (MAX-272)
+            Overlay::Loading => match action {
+                DialogAction::Close => OverlayResponse::StopReplay,
+                _ => OverlayResponse::Handled,
+            },
         }
     }
 }

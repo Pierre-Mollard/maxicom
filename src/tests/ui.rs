@@ -2809,6 +2809,33 @@ fn transfer_clock() {
     assert_eq!(clock(Duration::from_secs(3725)), "1:02:05");
 }
 
+/// MAX-272: the gauge the transfer row and the loading popup share fills by the percent, capped
+/// at full, always `width` cells inside.
+/// How: 0, 50 and past 100 percent on 10 cells.
+#[test]
+fn transfer_gauge_fills_by_percent() {
+    use crate::ui::transfer_row::gauge;
+    let text = |percent| -> String {
+        let style = ratatui::style::Style::default();
+        gauge(percent, 10, style, style)
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
+    };
+    assert_eq!(text(0), "[░░░░░░░░░░]");
+    assert_eq!(text(50), "[█████░░░░░]");
+    assert_eq!(text(250), "[██████████]");
+}
+
+#[test]
+fn transfer_rate_and_bytes_texts() {
+    use crate::ui::transfer_row::{bytes_text, rate_text};
+    assert_eq!(rate_text(11_500.0), "11K/s");
+    assert_eq!(rate_text(0.0), "0/s");
+    assert_eq!(bytes_text(70 * 1024, Some(131 * 1024)), "70K/131K");
+    assert_eq!(bytes_text(512, None), "512");
+}
+
 /// A text input popup types the keys that are not Esc, Enter, Tab or modified, so they
 /// are not hints there.
 /// How: Cancel bound to `q` only, then to `q` and Ctrl-q (`q` comes first in the order).
@@ -4849,7 +4876,9 @@ fn session_list_cuts_a_long_port() {
 
 /// MAX-202: `p` on a group from the browser replays it: the browser closes, the end of the group
 /// is in view in terminal mode, with its toast, and the status bar's file names the sessions.
-/// How: two past sessions on another port, a real draw, the group's row clicked then `p`.
+/// Meanwhile the loading popup says what loads, and how to stop it (MAX-272).
+/// How: two past sessions on another port, a real draw, the group's row clicked then `p`, a
+/// draw before the load's slices run, one after.
 #[test]
 fn session_browser_replays_a_group() {
     let dir =
@@ -4868,8 +4897,17 @@ fn session_browser_replays_a_group() {
     let p =
         crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('p'), KeyModifiers::NONE);
     h.app.dispatch(Action::Overlay(DialogAction::HandleKey(p)));
-    assert!(h.app.overlay().is_none());
     assert_eq!(h.app.replay_group(), Some(2));
+    let rows = h.draw();
+    assert!(has(&rows, "Loading 2 sessions"), "{rows:#?}");
+    assert!(has(&rows, "Line mode, session 1 of 2"), "{rows:#?}");
+    assert!(
+        has(&rows, "[░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░]   0%"),
+        "{rows:#?}"
+    );
+    assert!(has(&rows, "Esc Stop"), "{rows:#?}");
+    while h.app.load_group_slice(std::time::Instant::now()) {}
+    assert!(h.app.overlay().is_none());
     let rows = h.draw();
     assert!(has(&rows, "newer"), "{rows:#?}");
     assert!(has(&rows, "Loaded 2 sessions"), "{rows:#?}");

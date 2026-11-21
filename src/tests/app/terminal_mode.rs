@@ -507,6 +507,50 @@ fn an_explicit_size_applies_as_asked() {
     assert_eq!(tm.get_vt100_size(), (5, 40));
 }
 
+/// MAX-272: a restore skips the erases of the scrollback (`ESC[3J`, `ESC[?3J`), whole or cut
+/// between two feeds, and keeps everything else; live bytes still erase it.
+/// How: `keep_scrollback` on a clear, a DECSED, a cut one, a lone ESC at the end; then a restore
+/// whose `clear` comes in two chunks cut inside it, then the same bytes live.
+#[test]
+fn restore_keeps_the_scrollback() {
+    let mut held = Vec::new();
+    let kept = keep_scrollback(&mut held, b"a\x1b[H\x1b[2J\x1b[3Jb\x1b[?3Jc\x1b[1md");
+    assert_eq!(kept.as_ref(), b"a\x1b[H\x1b[2Jbc\x1b[1md");
+    assert_eq!(keep_scrollback(&mut held, b"plain").as_ref(), b"plain");
+    assert_eq!(keep_scrollback(&mut held, b"x\x1b[3").as_ref(), b"x");
+    assert_eq!(held, b"\x1b[3");
+    assert_eq!(keep_scrollback(&mut held, b"Jy").as_ref(), b"y");
+    assert_eq!(keep_scrollback(&mut held, b"z\x1b").as_ref(), b"z");
+    assert_eq!(keep_scrollback(&mut held, b"[0m").as_ref(), b"\x1b[0m");
+    assert!(held.is_empty());
+
+    let old: String = (0..30).map(|i| format!("old {i}\r\n")).collect();
+    let first = format!("{old}\x1b[H\x1b[2J\x1b[");
+    let chunks = [
+        TimedChunk {
+            bytes: first.as_bytes(),
+            time: None,
+        },
+        TimedChunk {
+            bytes: b"3Jnew\r\n",
+            time: None,
+        },
+    ];
+    let mut tm = TerminalMode::new(100, 10, 80);
+    tm.restore(TextEncoding::Utf8, &chunks, "-- restored --", false);
+    let lines = tm.all_text_lines();
+    assert!(lines.iter().any(|l| l == "old 0"), "{lines:?}");
+    assert!(lines.iter().any(|l| l == "new"), "{lines:?}");
+
+    let mut tm = TerminalMode::new(100, 10, 80);
+    tm.process_rx(
+        TextEncoding::Utf8,
+        format!("{old}\x1b[H\x1b[2J\x1b[3Jnew\r\n").as_bytes(),
+    );
+    let lines = tm.all_text_lines();
+    assert!(!lines.iter().any(|l| l == "old 0"), "{lines:?}");
+}
+
 /// MAX-148: a restore replays the raw bytes, then leaves a session that ended inside a
 /// full-screen program usable: main screen, normal cursor keys, no mouse reports, no
 /// bracketed paste, cursor shown. The separator follows on its own line, the restored rows

@@ -9,6 +9,7 @@ use ratatui::layout::{Direction, Rect};
 
 use crate::{
     app::{
+        capture::GroupLoad,
         mash::{Mash, MashStep},
         plots::Plot,
         scroller::ScrollStatus,
@@ -292,6 +293,8 @@ struct ReplayRun {
     ended: bool,
     /// How many sessions a group replay loaded at once (MAX-202)
     group: Option<usize>,
+    /// The group being loaded, a slice a loop turn, the loading popup open (MAX-272)
+    loading: Option<Box<GroupLoad>>,
     replaced: Option<Box<ReplacedLink>>,
 }
 
@@ -750,6 +753,7 @@ impl App {
             device: session.cloned(),
             ended: false,
             group: None,
+            loading: None,
             replaced,
         });
     }
@@ -1726,9 +1730,10 @@ impl App {
         let drag_scrolled =
             self.drag_scroll(now) || self.scrollbar_repeat(now) || self.click_repeat(now);
         let tested = self.poll_link_test();
+        let loaded = self.load_group_slice(now);
         // a flash is redrawn until it's over, the last frame without it
         let flashing = self.terminal_mode.has_pending_flash() || self.mark_flash.is_some();
-        toasts_expired || flashing || drag_scrolled || tested
+        toasts_expired || flashing || drag_scrolled || tested || loaded
     }
 
     /// The left button is on a scrollbar, from its press to its release (MAX-142)

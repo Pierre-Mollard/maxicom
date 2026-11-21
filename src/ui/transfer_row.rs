@@ -100,17 +100,9 @@ fn row_spans(
             Some(_) => Span::styled(format!(" {:>3}% ", transfer.percent()), text),
             None => Span::raw(""),
         };
-        let mut bytes = String::new();
-        write_human(&mut bytes, transfer.sent());
-        if let Some(size) = size {
-            bytes.push('/');
-            write_human(&mut bytes, size);
-        }
-        let rate = transfer.rate(now).map(|rate| {
-            let mut out = String::new();
-            write_human(&mut out, rate as u64);
-            Span::styled(format!(" {out}/s "), muted)
-        });
+        let bytes = bytes_text(transfer.sent(), size);
+        let rate =
+            (transfer.rate(now)).map(|rate| Span::styled(format!(" {} ", rate_text(rate)), muted));
         let eta =
             (transfer.eta(now)).map(|eta| Span::styled(format!(" ETA {} ", clock(eta)), muted));
         let retries = (transfer.retries())
@@ -163,7 +155,7 @@ fn row_spans(
 }
 
 /// `[████░░░░]`, `width` cells between the brackets
-fn gauge(percent: u64, width: usize, filled: Style, empty: Style) -> [Span<'static>; 4] {
+pub fn gauge(percent: u64, width: usize, filled: Style, empty: Style) -> [Span<'static>; 4] {
     let done = (percent.min(100) as usize * width) / 100;
     [
         Span::styled("[", empty),
@@ -182,4 +174,23 @@ pub fn clock(duration: Duration) -> String {
     } else {
         format!("{minutes}:{secs:02}")
     }
+}
+
+/// Bytes a second: `11K/s`
+pub fn rate_text(rate: f64) -> String {
+    let mut out = String::new();
+    write_human(&mut out, rate as u64);
+    out.push_str("/s");
+    out
+}
+
+/// Bytes through, of `total` when it is known: `70K/131K`, `70K`
+pub fn bytes_text(done: u64, total: Option<u64>) -> String {
+    let mut out = String::new();
+    write_human(&mut out, done);
+    if let Some(total) = total {
+        out.push('/');
+        write_human(&mut out, total);
+    }
+    out
 }

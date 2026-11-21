@@ -407,7 +407,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         // next frame is due (if one is pending) or IDLE_WAIT. Then drain what is already pending
         // (key bursts, pastes) before drawing, instead of one event per frame
         let since_draw = last_draw.map_or(Duration::MAX, |t| t.elapsed());
-        let mut poll_timeout = if rx_received {
+        // a group replay loading draws a frame per slice, no wait between (MAX-272)
+        let mut poll_timeout = if rx_received || app.group_load().is_some() {
             Duration::ZERO
         } else if needs_redraw {
             FRAME_INTERVAL.saturating_sub(since_draw).min(IDLE_WAIT)

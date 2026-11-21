@@ -189,8 +189,18 @@ impl LineMode {
     /// too, so the next one starts on its own
     pub fn restore_rx(&mut self, add_lf: bool, encoding: TextEncoding, chunks: &[TimedChunk]) {
         for chunk in chunks {
-            self.feed_rx_at(add_lf, encoding, chunk.bytes, chunk.time);
+            self.feed_restored_rx(add_lf, encoding, chunk);
         }
+        self.end_restored_rx(encoding);
+    }
+
+    /// A piece of `restore_rx`, for a session fed across loop turns (MAX-272)
+    pub fn feed_restored_rx(&mut self, add_lf: bool, encoding: TextEncoding, chunk: &TimedChunk) {
+        self.feed_rx_at(add_lf, encoding, chunk.bytes, chunk.time);
+    }
+
+    /// The end of `restore_rx`: its last line, even not ended
+    pub fn end_restored_rx(&mut self, encoding: TextEncoding) {
         if !self.partial_line.line().is_empty() {
             self.commit_partial_line(encoding);
             self.rebase_line_refs();

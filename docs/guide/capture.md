@@ -213,6 +213,10 @@ back.
 After the terminal part, any mode a full-screen program may have left on
 (alternate screen, cursor keys, mouse reports, scroll region) is reset.
 
+A `clear` in the session clears the screen but keeps what was above it: the
+restore skips the erase of the scrollback (`ESC [ 3 J`) that a shell's
+`clear` sends.
+
 The restored part isn't backed up again or counted in RX. So the next launch
 restores this session's own data, or the same old one again if this session
 received nothing.
@@ -352,10 +356,30 @@ from `{replay_state}` and `{replay_percent}`.
 ### Replaying a group
 
 `p` on a group in the [session browser](#session-browser) loads all its
-sessions at once, oldest first, so you can scroll and search a day or a week
-together. There's nothing to wait for and no pace to set, so the commands
-above don't apply to it, apart from `replay-stop`. A group holding the running
-session stops just before it.
+sessions, oldest first, so you can scroll and search a day or a week
+together. It isn't played at a pace: it opens already loaded, at its end. So
+the commands above don't apply to it, apart from `replay-stop`. A group
+holding the running session stops just before it.
+
+#### While it loads
+
+A big group takes a moment to load. A popup shows how it goes: which mode
+is being filled and which session, a gauge, the bytes read, the speed and the
+time left. Line mode's part loads first, then terminal mode's.
+
+```text
+┌ Loading 12 sessions ─────────────────────────┐
+│       ⠹ Terminal mode, session 3 of 12       │
+│                                              │
+│    [███████████░░░░░░░░░░░░░░░░░░░]  37%     │
+│          120M/322M  48M/s  ETA 0:01          │
+│                                              │
+│                   Esc Stop                   │
+└──────────────────────────────────────────────┘
+```
+
+Esc stops the load and goes back to the live link, as `replay-stop` does.
+Nothing of the group is kept: what was loaded so far is the older part.
 
 A line after each session marks where it ends:
 
@@ -378,10 +402,19 @@ A notification says when something doesn't fit:
 | `Loaded the last 9 of 31 sessions: line mode holds 1000000 lines` | The oldest sessions aren't loaded |
 | `Loaded 3 sessions without the start of the oldest: line mode holds 1000000 lines` | The oldest session is cut |
 
-Only what the two modes can hold is read, so a huge group takes no longer to
-open than a medium one. On a 50 MB group, it opened in about a second and used
-about 490 MB. Going back to the live link frees that for maxicom to reuse, but
-the system may not get it all back until maxicom quits.
+Only what the two modes can hold is read, counted in lines from the newest
+session back, so a huge group takes no longer to open than a medium one. A
+group of 105 MB of short lines opened in about half a second. Going back to
+the live link frees the replay's histories for maxicom to reuse, but the
+system may not get all that memory back until maxicom quits.
+
+#### A clear in a session
+
+A `clear` in one of the sessions clears the screen, but not the history above
+it: the sessions before stay in terminal mode, as in line mode. A shell's
+`clear` also erases the terminal's scrollback (`ESC [ 3 J`), and a group
+replay skips that part. A [restore](#restore) does the same. Live, and in the
+replay of a single session, `clear` erases the scrollback as usual.
 
 ### Back to the live link
 

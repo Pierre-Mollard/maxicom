@@ -2,6 +2,7 @@ use super::session::Session;
 use jiff::Timestamp;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
+use std::ops::Range;
 use std::path::Path;
 
 /// How much of a past session's raw bytes is restored to the terminal (MAX-148)
@@ -94,7 +95,22 @@ pub fn timed_chunks<'a>(
     raw: &'a [u8],
     times: &[(u64, Timestamp)],
 ) -> Vec<TimedChunk<'a>> {
-    let end = start + raw.len() as u64;
+    timed_ranges(start, raw.len(), times)
+        .into_iter()
+        .map(|(range, time)| TimedChunk {
+            bytes: &raw[range],
+            time,
+        })
+        .collect()
+}
+
+/// Where `timed_chunks` cuts `len` raw bytes read from offset `start`, each range with its time
+pub fn timed_ranges(
+    start: u64,
+    len: usize,
+    times: &[(u64, Timestamp)],
+) -> Vec<(Range<usize>, Option<Timestamp>)> {
+    let end = start + len as u64;
     let at = |offset: u64| (offset.clamp(start, end) - start) as usize;
     let cuts: Vec<_> = std::iter::once((0, None))
         .chain(times.iter().map(|&(offset, time)| (at(offset), Some(time))))
@@ -102,11 +118,8 @@ pub fn timed_chunks<'a>(
     cuts.iter()
         .enumerate()
         .filter_map(|(i, &(from, time))| {
-            let to = cuts.get(i + 1).map_or(raw.len(), |&(next, _)| next);
-            (to > from).then(|| TimedChunk {
-                bytes: &raw[from..to],
-                time,
-            })
+            let to = cuts.get(i + 1).map_or(len, |&(next, _)| next);
+            (to > from).then_some((from..to, time))
         })
         .collect()
 }
@@ -142,6 +155,37 @@ fn read_tail_lines_by(path: &Path, max: usize, chunk: u64) -> io::Result<Vec<u8>
         tail.splice(0..0, block);
         start = read_from;
     }
+}
+
+/// How much of the end of the file at `path`, at most `max` bytes, holds its last `lines`
+/// lines, read backwards by chunks without keeping them (MAX-272); and how many `\n` that is.
+/// The cut is just before a `\n`, which `read_tail_bytes` drops with the line it ends: what
+/// it gives back starts on a line. Less than `lines` in `max` bytes: all of them
+pub fn tail_lines_len(path: &Path, lines: usize, max: u64) -> io::Result<(u64, usize)> {
+    tail_lines_len_by(path, lines, max, TAIL_CHUNK)
+}
+
+fn tail_lines_len_by(path: &Path, lines: usize, max: u64, chunk: u64) -> io::Result<(u64, usize)> {
+    let mut file = File::open(path)?;
+    let len = file.metadata()?.len();
+    let floor = len.saturating_sub(max);
+    let mut block = vec![0; chunk as usize];
+    let (mut end, mut seen) = (len, 0);
+    while end > floor {
+        let start = end.saturating_sub(chunk).max(floor);
+        let block = &mut block[..(end - start) as usize];
+        file.seek(SeekFrom::Start(start))?;
+        file.read_exact(block)?;
+        for at in memchr::memrchr_iter(b'\n', block) {
+            // `lines` lines after this one's end, each ended by its `\n`
+            if seen >= lines {
+                return Ok((len - (start + at as u64), seen));
+            }
+            seen += 1;
+        }
+        end = start;
+    }
+    Ok((len - floor, seen))
 }
 
 /// The line that marks where a restored session ends and the live data starts

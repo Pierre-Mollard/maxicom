@@ -68,5 +68,6 @@ popup with the details. Esc or Enter closes it.
 | Marks | `Ctrl-a '` | [Marks](marks.md#the-marks-popup) |
 | Notifications | `notifications` on the command line | [Notifications](notifications.md#the-notifications-popup) |
 | Command line | `Ctrl-a :` | [Command line](command-line.md) |
+| Loading | `p` on a group in the session browser | [Capture](capture.md#while-it-loads) |
 | Right-click menu | A right click | [Copy mode and mouse](copy-mode-and-mouse.md#right-click-menu) |
 | Detached, Connection Lost, No device | Shown by the link | [Links](links.md#the-links-popups) |

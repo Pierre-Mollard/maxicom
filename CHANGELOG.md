@@ -105,6 +105,17 @@ to send the focus reports.
 
 ### Changed
 
+- A [group replay](https://pierre-mollard.github.io/maxicom/capture.html#replaying-a-group)
+  shows a popup while it loads, with a gauge, the speed and the time left, and
+  Esc stops it and goes back to the live link. maxicom froze until the whole
+  group was in.
+- A group replay loads faster: each mode reads the lines its history holds,
+  counted from the newest session back, instead of a fixed number of bytes
+  per line. A group of short lines opens two to three times faster.
+- A `clear` in a restored session or in a group replay clears the screen but
+  no longer erases the terminal's history: one session's `clear` wiped the
+  sessions before it in terminal mode. Live, `clear` works as before. See
+  [A clear in a session](https://pierre-mollard.github.io/maxicom/capture.html#a-clear-in-a-session).
 - In copy mode with the raw side panel shown, the panel without the cursor
   shows the selection in a dimmer version of its color, the new
   `selection_ghost` and `selection_raw_ghost` in the theme's `[ui]`: the

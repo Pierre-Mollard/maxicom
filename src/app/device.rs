@@ -641,7 +641,7 @@ impl App {
                 delay,
                 session,
             } => self.replay_file(path, delay, session),
-            UpdateEffect::ReplayGroup(sessions) => self.open_group_replay(&sessions),
+            UpdateEffect::ReplayGroup(sessions) => self.open_group_replay(sessions),
             UpdateEffect::StopReplay => self.stop_replay_link(),
             UpdateEffect::ToggleAttach => self.toggle_attach(),
             UpdateEffect::Transmit(bytes) => {
@@ -988,11 +988,11 @@ impl App {
         }
     }
 
-    /// A group of sessions in place of the link (MAX-202): loaded at once, so its replay starts
+    /// A group of sessions in place of the link (MAX-202): loaded, so its replay starts
     /// finished, on the newest session's file, device and profiles, in terminal mode as a
-    /// replay does.
-    /// Line mode holds it on a history of its own, which goes with the replay
-    fn open_group_replay(&mut self, sessions: &[Session]) {
+    /// replay does. Line mode holds it on a history of its own, which goes with the replay.
+    /// The loading popup shows while it loads, a slice a loop turn (MAX-272)
+    fn open_group_replay(&mut self, sessions: Vec<Session>) {
         let Some(newest) = sessions.last() else {
             return;
         };
@@ -1008,18 +1008,27 @@ impl App {
         self.start_replay(path.to_path_buf(), device);
         let profiles = (newest.meta.as_ref()).map(|meta| meta.profiles.clone());
         self.replay_profiles(profiles.unwrap_or_default(), &[]);
-        if let Some(run) = &mut self.replay {
-            run.ended = true;
-            run.group = Some(sessions.len());
-        }
+        let count = sessions.len();
         self.close_link_popups();
         let lines = GROUP_REPLAY_LINES.max(self.settings.line_mode.history_size);
-        self.load_group(sessions, lines);
+        let load = self.start_group_load(sessions, lines);
+        if let Some(run) = &mut self.replay {
+            run.ended = true;
+            run.group = Some(count);
+            run.loading = Some(Box::new(load));
+        }
+        self.open_overlay(Overlay::Loading);
     }
 
     /// The link the replay replaced opens again as at start, its popup if it doesn't; a replay
     /// from the command line just stops reading
     fn stop_replay_link(&mut self) {
+        // a group still loading stops where it is (MAX-272)
+        if let Some(run) = &mut self.replay
+            && run.loading.take().is_some()
+        {
+            self.notify_info("Group load stopped");
+        }
         self.link.close();
         if self.stop_replay() {
             self.begin_open(OpenFor::Start);

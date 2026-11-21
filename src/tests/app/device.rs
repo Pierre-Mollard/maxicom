@@ -1554,9 +1554,11 @@ fn group_of_three(name: &str) -> (std::path::PathBuf, Vec<crate::capture::Sessio
 
 /// MAX-202: a group replay takes the link's place at once, already ended so it reads nothing and
 /// says no `Replay finished`: terminal mode first, line mode holds every session in order with
-/// a separator after each, on a big history of its own. Going back gives the live link its
+/// a separator after each, on a big history of its own. It loads a slice a loop turn under the
+/// loading popup, which closes at the end (MAX-272). Going back gives the live link its
 /// histories back.
-/// How: a live TCP link with a line of its own, then three sessions replayed as a group.
+/// How: a live TCP link with a line of its own, then three sessions replayed as a group, the
+/// loop's slices run until none is left.
 #[test]
 fn group_replay_loads_at_once_and_gives_the_link_back() {
     let (dir, sessions) = group_of_three("group_replay");
@@ -1570,6 +1572,11 @@ fn group_replay_loads_at_once_and_gives_the_link_back() {
     assert_eq!(app.settings.mode, crate::configs::Mode::Terminal);
     assert!(app.is_replay_ended());
     assert_eq!(app.replay_group(), Some(3));
+    assert!(matches!(app.overlay(), Some(Overlay::Loading)));
+    assert!(app.group_load().is_some());
+    while app.load_group_slice(Instant::now()) {}
+    assert!(app.overlay().is_none());
+    assert!(app.group_load().is_none());
     app.poll_link(&mut [0; 256]).unwrap();
     let toasts = toasts(&app);
     assert!(!toasts.iter().any(|t| t == "Replay finished"), "{toasts:?}");
@@ -1608,23 +1615,27 @@ fn group_replay_loads_at_once_and_gives_the_link_back() {
 }
 
 /// MAX-202: what doesn't fit is said. Past line mode's history the oldest sessions go and the
-/// toast warns; past terminal mode's, the toast says line mode has them all.
-/// How: three sessions of two lines each (a line and a separator) in 3 lines, then a terminal
+/// toast warns; past terminal mode's, the toast says line mode has them all. Counted in lines,
+/// the oldest isn't even read: nothing is dropped (MAX-272).
+/// How: three sessions of two lines each (a line and a separator) in 4 lines, then a terminal
 /// history of 1 row.
 #[test]
 fn group_replay_says_what_does_not_fit() {
     let (dir, sessions) = group_of_three("group_replay_fit");
     let mut app = crate::app::tests::app();
-    app.load_group(&sessions, 3);
-    let lines = app.line_mode.history();
-    assert!(lines[0].text.starts_with("── end of session"));
-    assert_eq!(lines[1].text.trim_end(), "three");
-    assert_eq!(app.line_mode.dropped_lines(), 3);
+    app.load_group(&sessions, 4);
+    let lines: Vec<_> = (app.line_mode.history().iter())
+        .map(|entry| entry.text.trim_end().to_string())
+        .collect();
+    assert_eq!(lines[0], "two", "{lines:?}");
+    assert!(lines[1].starts_with("── end of session"), "{lines:?}");
+    assert_eq!(lines[2], "three", "{lines:?}");
+    assert_eq!(app.line_mode.dropped_lines(), 0);
     let shown = crate::app::tests::toasts(&app);
     assert!(
         shown
             .iter()
-            .any(|t| t == "Loaded the last 2 of 3 sessions: line mode holds 3 lines"),
+            .any(|t| t == "Loaded the last 2 of 3 sessions: line mode holds 4 lines"),
         "{shown:?}"
     );
 
@@ -2309,4 +2320,175 @@ fn on_load_runs_for_the_profiles_laid() {
     lay(&mut app, &["board", "off", "proj", "late", "bad"]);
     let said = ran(&mut app);
     assert!(said.iter().any(|t| t.starts_with("on_load: ")), "{said:?}");
+}
+
+/// MAX-272: a group loaded in slices, one piece per step, ends as loaded at once: the same
+/// lines in line mode, the same rows in terminal mode, the same toast.
+/// How: three sessions, the middle one bigger than a piece and ended by CRs only, with add LF on;
+/// once at once, once with a time already up so each step feeds one piece.
+#[test]
+fn group_load_in_slices_matches_one_go() {
+    let dir = crate::capture::tests::temp_dir("group_load_slices");
+    let text = CaptureFormat::default();
+    let big: Vec<u8> = (0..20_000)
+        .flat_map(|i| format!("big line {i}\r").into_bytes())
+        .collect();
+    let write = crate::capture::tests::write_test_session;
+    let sessions = vec![
+        write(&dir, "/dev/a", &text, b"one\r\ntwo\r\n", b""),
+        write(&dir, "/dev/a", &text, &big, b""),
+        write(&dir, "/dev/a", &text, b"\x1b[1mlast\x1b[0m\r\n", b""),
+    ];
+    let loaded = |sliced: bool| {
+        let mut app = crate::app::tests::app();
+        app.settings.add_lf = true;
+        if sliced {
+            let mut load = app.start_group_load(sessions.clone(), 100_000);
+            let mut steps = 0;
+            while !app.step_group_load(&mut load, Instant::now()) {
+                steps += 1;
+            }
+            app.end_group_load(&load);
+            assert!(steps > 4, "{steps} steps");
+        } else {
+            app.load_group(&sessions, 100_000);
+        }
+        let lines: Vec<_> = (app.line_mode.history().iter())
+            .map(|entry| (entry.text.clone(), entry.timestamp))
+            .collect();
+        let rows = app.terminal_mode.all_text_lines();
+        (lines, rows, crate::app::tests::toasts(&app))
+    };
+    let sliced = loaded(true);
+    assert_eq!(sliced, loaded(false));
+    let (lines, rows, _) = sliced;
+    assert!(
+        lines
+            .iter()
+            .any(|(line, _)| line.trim_end() == "big line 19999")
+    );
+    assert!(rows.iter().any(|row| row == "last"), "{rows:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-272: what the loading popup reads while a group loads: the mode and the session of its
+/// part being read, the bytes through of both parts, the rate and the time left once bytes
+/// went through, 100% at the end. The gauge weighs terminal mode's bytes more: line mode's
+/// whole part is a small share of it.
+/// How: a small session then one of several pieces, fed a piece at a time.
+#[test]
+fn group_load_progress() {
+    let dir = crate::capture::tests::temp_dir("group_load_progress");
+    let text = CaptureFormat::default();
+    let big: Vec<u8> = (0..20_000)
+        .flat_map(|i| format!("big line {i}\r\n").into_bytes())
+        .collect();
+    let write = crate::capture::tests::write_test_session;
+    let sessions = vec![
+        write(&dir, "/dev/a", &text, b"small\r\n", b""),
+        write(&dir, "/dev/a", &text, &big, b""),
+    ];
+    let mut app = crate::app::tests::app();
+    let mut load = app.start_group_load(sessions, 100_000);
+    let (done, total) = load.progress();
+    assert_eq!((done, total), (0, 2 * (7 + big.len() as u64)));
+    assert_eq!(load.sessions(), 2);
+    assert_eq!(load.at(), (crate::configs::Mode::Line, 1, 2));
+    assert_eq!(load.rate(Instant::now()), None);
+
+    // the small session, then the big one's first piece
+    app.step_group_load(&mut load, Instant::now());
+    app.step_group_load(&mut load, Instant::now());
+    assert_eq!(load.at(), (crate::configs::Mode::Line, 2, 2));
+    let percent = load.percent();
+    assert!(percent > 0 && percent < 50, "{percent}%");
+    std::thread::sleep(Duration::from_millis(2));
+    assert!(load.rate(Instant::now()).is_some());
+    assert!(load.eta(Instant::now()).is_some());
+
+    while load.at().0 == crate::configs::Mode::Line {
+        app.step_group_load(&mut load, Instant::now());
+    }
+    let percent = load.percent();
+    assert!(
+        percent > 0 && percent < 20,
+        "{percent}% after line mode's part"
+    );
+    while !app.step_group_load(&mut load, Instant::now()) {}
+    assert_eq!(load.at().0, crate::configs::Mode::Terminal);
+    assert_eq!(load.percent(), 100);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-272: the close key on the loading popup stops the load and its replay: the live link
+/// comes back with its histories, a toast says the load stopped, nothing more is loaded.
+/// How: a live TCP link with a line of its own, a group replayed, one slice fed, then Esc.
+#[test]
+fn group_load_stops_on_close() {
+    let (dir, sessions) = group_of_three("group_load_stop");
+    let (listener, address) = listener();
+    let (mut app, _peer) = connected(&listener, &address);
+    app.settings.mode = crate::configs::Mode::Line;
+    app.feed_rx(b"live line\r\n");
+
+    app.apply_link_effect(UpdateEffect::ReplayGroup(sessions));
+    assert!(matches!(app.overlay(), Some(Overlay::Loading)));
+    app.dispatch(Action::Overlay(crate::inputs::DialogAction::Close));
+    assert!(app.overlay().is_none());
+    assert!(app.group_load().is_none());
+    assert!(!app.load_group_slice(Instant::now()));
+    assert_eq!(app.replay_group(), None);
+    assert_eq!(
+        app.link_config().address,
+        address.parse::<Address>().unwrap()
+    );
+    assert_eq!(app.line_mode.history().len(), 1);
+    assert_eq!(app.line_mode.history()[0].text.trim_end(), "live line");
+    let toasts = toasts(&app);
+    assert!(
+        toasts.iter().any(|t| t == "Group load stopped"),
+        "{toasts:?}"
+    );
+    assert!(
+        !toasts.iter().any(|t| t.starts_with("Loaded")),
+        "{toasts:?}"
+    );
+    let _peer = listener.accept().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-272: a group with short lines reads what the histories hold, counted in lines, not a
+/// byte budget: line mode its lines (a separator taking one), terminal mode twice its rows;
+/// both still full.
+/// How: two sessions of 1000 lines of 10 bytes, 300 lines and 50 rows of history.
+#[test]
+fn group_load_reads_lines_not_bytes() {
+    let dir = crate::capture::tests::temp_dir("group_load_lines");
+    let text = CaptureFormat::default();
+    let lines = |name: &str| -> Vec<u8> {
+        (0..1000)
+            .flat_map(|i| format!("{name} {i:04}\r\n").into_bytes())
+            .collect()
+    };
+    let write = crate::capture::tests::write_test_session;
+    let sessions = vec![
+        write(&dir, "/dev/a", &text, &lines("aa"), b""),
+        write(&dir, "/dev/a", &text, &lines("bb"), b""),
+    ];
+    let mut app = crate::app::tests::app();
+    app.settings.terminal_mode.history_size = 50;
+    app.terminal_mode = crate::app::TerminalMode::new(50, 24, 80);
+    let load = app.start_group_load(sessions.clone(), 300);
+    // 299 lines of 9 bytes and the `\n` before them, the separator the 300th; 99 for terminal
+    // mode's 100
+    assert_eq!(load.progress().1, (299 * 9 + 1) + (99 * 9 + 1));
+    app.load_group(&sessions, 300);
+    let history = app.line_mode.history();
+    assert_eq!(history.len(), 300);
+    assert_eq!(history[0].text.trim_end(), "bb 0701");
+    assert_eq!(app.line_mode.dropped_lines(), 0);
+    let rows = app.terminal_mode.all_text_lines();
+    assert!(rows.iter().any(|row| row == "bb 0950"), "{rows:?}");
+    assert!(!rows.iter().any(|row| row == "aa 0999"), "{rows:?}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

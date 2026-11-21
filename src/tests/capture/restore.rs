@@ -96,6 +96,29 @@ fn text_tail_is_the_last_lines() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// MAX-272: the end holding the last lines is counted backwards across chunks: cut just
+/// before the `\n` that ends the line before them, so the raw tail drops that `\n` and starts on
+/// them; with the `\n` counted. Fewer lines than asked, or a byte cap first: all it may take.
+/// How: chunks of 3 bytes; a file with a last line ending, one without, a cap of 6 bytes.
+#[test]
+fn tail_length_by_lines() {
+    let dir = temp_dir("tail_lines_len");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("x.raw");
+    fs::write(&path, b"one\ntwo\nthree\nfour\n").unwrap();
+    let len = |lines, max| tail_lines_len_by(&path, lines, max, 3).unwrap();
+    assert_eq!(len(2, 100), (12, 2));
+    assert_eq!(read_tail_bytes(&path, 12).unwrap().1, b"three\nfour\n");
+    assert_eq!(len(3, 100), (16, 3));
+    assert_eq!(len(4, 100), (19, 4));
+    assert_eq!(len(9, 100), (19, 4));
+    assert_eq!(len(9, 6), (6, 2));
+    fs::write(&path, b"one\ntwo\nlast").unwrap();
+    assert_eq!(len(1, 100), (9, 1));
+    assert_eq!(read_tail_bytes(&path, 9).unwrap().1, b"two\nlast");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// MAX-148: the separator names the port and the session's times, the end without its
 /// date on the same day.
 #[test]

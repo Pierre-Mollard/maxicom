@@ -1,7 +1,11 @@
 //! The app's captures (MAX-172): the session backup it starts and switches, the past
 //! session it restores at startup, the recordings the user starts, and the session browser.
 //! `capture::Recorder` writes the files
-use std::path::{Path, PathBuf};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+    time::{Duration, Instant},
+};
 
 use jiff::Timestamp;
 
@@ -12,7 +16,7 @@ use crate::{
         CaptureDevice, CaptureFormat, CaptureSource, PruneReport, RESTORE_RAW_TAIL,
         RecordingWriter, Session, Stream, TerminalSize, TimedChunk, clean_session_name,
         find_last_session, group_separator, read_tail_bytes, read_times, restore_separator,
-        session_name_notice, timed_chunks,
+        session_name_notice, tail_lines_len, timed_chunks, timed_ranges,
     },
     configs::{Mode, settings::RestoreMode},
     overlays::{
@@ -28,6 +32,17 @@ const HELD_RX_MAX: usize = 4 << 20;
 /// past that it would be dropped anyway, so a big group costs no more than a small one (MAX-202)
 const GROUP_LINE_BYTES: u64 = 256;
 const GROUP_TERMINAL_BYTES_PER_ROW: u64 = 512;
+/// Within those, the lines read for each line line mode holds and each row terminal mode keeps:
+/// a line makes at least a row, but a full-screen program redraws rows in place, so terminal
+/// mode gets twice its rows in lines (MAX-272)
+const GROUP_TERMINAL_LINES_PER_ROW: usize = 2;
+/// The most a group load feeds at once, so a slice ends soon after its time is up (MAX-272)
+const GROUP_PIECE: usize = 64 * 1024;
+/// A loop turn's share of a group load, a frame drawn between two (MAX-272)
+const GROUP_SLICE: Duration = Duration::from_millis(25);
+/// A byte fed to terminal mode costs about this many fed to line mode (measured MAX-272: 51 MB
+/// in 1.05 s against 107 MB in 0.24 s), for the gauge and the time left
+const TERMINAL_WEIGHT: u64 = 8;
 
 impl App {
     /// Starts the session backup in `dir` when `sessions.enabled` is on. Without it, a toast
@@ -327,49 +342,190 @@ impl App {
     /// line mode can hold on a new history of `lines`, then the end that terminal mode can, with
     /// a separator after each session. Only that is read, however big the group. One mode after
     /// the other: fed in turns, they fragment the heap, as measured in MAX-214. A toast says what
-    /// doesn't fit
+    /// doesn't fit. All at once, for the tests: the app loads it a slice a loop turn
+    /// (`load_group_slice`, MAX-272)
+    #[cfg(test)]
     pub fn load_group(&mut self, sessions: &[Session], lines: usize) {
+        let mut load = self.start_group_load(sessions.to_vec(), lines);
+        let later = Instant::now() + Duration::from_secs(3600);
+        while !self.step_group_load(&mut load, later) {}
+        self.end_group_load(&load);
+    }
+
+    /// The group load running, the loading popup's (MAX-272)
+    pub fn group_load(&self) -> Option<&GroupLoad> {
+        self.replay.as_ref()?.loading.as_deref()
+    }
+
+    /// A loop turn's slice of the group being loaded (MAX-272): true when it fed some. Its end
+    /// closes the loading popup and says what was loaded
+    pub fn load_group_slice(&mut self, now: Instant) -> bool {
+        let Some(mut load) = self.replay.as_mut().and_then(|run| run.loading.take()) else {
+            return false;
+        };
+        if !self.step_group_load(&mut load, now + GROUP_SLICE) {
+            if let Some(run) = &mut self.replay {
+                run.loading = Some(load);
+            }
+            return true;
+        }
+        if matches!(self.overlay, Some(Overlay::Loading)) {
+            self.close_overlay();
+        }
+        self.end_group_load(&load);
+        true
+    }
+
+    /// A group load on a new line mode history of `lines`, nothing read yet (MAX-272)
+    pub fn start_group_load(&mut self, sessions: Vec<Session>, lines: usize) -> GroupLoad {
         let send_history = self.settings.line_mode.send_history_size;
         self.line_mode = LineMode::new(lines, send_history);
-        let (add_lf, encoding) = (self.settings.add_lf, self.settings.encoding);
-        let tail = group_tail(sessions, lines as u64 * GROUP_LINE_BYTES);
-        let mut ends = Vec::new();
-        for &(session, take) in &tail {
+        let rows = self.settings.terminal_mode.history_size;
+        let line_tail = group_tail(&sessions, lines, lines as u64 * GROUP_LINE_BYTES);
+        let terminal_tail = group_tail(
+            &sessions,
+            rows.saturating_mul(GROUP_TERMINAL_LINES_PER_ROW),
+            rows as u64 * GROUP_TERMINAL_BYTES_PER_ROW,
+        );
+        let total = (line_tail.iter().chain(&terminal_tail))
+            .map(|&(_, take)| take)
+            .sum();
+        GroupLoad {
+            sessions,
+            lines,
+            line_tail,
+            terminal_tail,
+            phase: Mode::Line,
+            next: 0,
+            feeding: None,
+            ends: Vec::new(),
+            done: 0,
+            total,
+            started: Instant::now(),
+        }
+    }
+
+    /// Feeds `load` piece by piece until `until`, at least one piece: true once it is all
+    /// loaded (MAX-272)
+    pub fn step_group_load(&mut self, load: &mut GroupLoad, until: Instant) -> bool {
+        loop {
+            if load.feeding.is_none() && !self.open_group_session(load) {
+                return true;
+            }
+            self.feed_group_piece(load);
+            if Instant::now() >= until {
+                return false;
+            }
+        }
+    }
+
+    /// The next session of the mode being loaded, line mode's then terminal mode's, read; one
+    /// that can't be read is passed. False when none is left
+    fn open_group_session(&mut self, load: &mut GroupLoad) -> bool {
+        loop {
+            let Some(&(index, take)) = load.tail().get(load.next) else {
+                if load.phase == Mode::Terminal {
+                    return false;
+                }
+                load.phase = Mode::Terminal;
+                load.next = 0;
+                continue;
+            };
+            load.next += 1;
+            let session = &load.sessions[index];
             let read = (session.raw_path()).and_then(|path| read_tail_bytes(path, take).ok());
             let Some((start, raw)) = read else {
+                load.done += take;
                 continue;
             };
             let times = session_times(session, start);
-            self.line_mode
-                .restore_rx(add_lf, encoding, &timed_chunks(start, &raw, &times));
+            let chunks = timed_ranges(start, raw.len(), &times);
+            if load.phase == Mode::Terminal {
+                if let Some(size) = session.meta.as_ref().and_then(|meta| meta.terminal) {
+                    self.terminal_mode.set_vt100_size(size.rows, size.cols);
+                }
+                // its markers come back with its bytes (MAX-253)
+                self.sync_unhandled();
+            }
+            load.feeding = Some(Feeding {
+                session: index,
+                take,
+                done_before: load.done,
+                raw,
+                chunks,
+                chunk: 0,
+                at: 0,
+                after_cr: false,
+            });
+            return true;
+        }
+    }
+
+    /// A piece of the session being fed, at most `GROUP_PIECE` bytes, its end once fed whole
+    fn feed_group_piece(&mut self, load: &mut GroupLoad) {
+        let Some(feeding) = &mut load.feeding else {
+            return;
+        };
+        if let Some((range, time)) = feeding.chunks.get(feeding.chunk) {
+            let from = feeding.at.max(range.start);
+            let to = range.end.min(from + GROUP_PIECE);
+            let chunk = TimedChunk {
+                bytes: &feeding.raw[from..to],
+                time: *time,
+            };
+            let settings = &self.settings;
+            let (add_cr, add_lf, encoding) = (settings.add_cr, settings.add_lf, settings.encoding);
+            if load.phase == Mode::Terminal {
+                // add CR / add LF as live, through all the chunks (MAX-181)
+                let shown = add_newlines(chunk.bytes, add_cr, add_lf, &mut feeding.after_cr);
+                let chunk = TimedChunk {
+                    bytes: &shown,
+                    ..chunk
+                };
+                let trace = settings.terminal_mode.byte_trace;
+                self.terminal_mode.feed_restored(encoding, &chunk, trace);
+            } else {
+                self.line_mode.feed_restored_rx(add_lf, encoding, &chunk);
+            }
+            feeding.at = to;
+            if to == range.end {
+                feeding.chunk += 1;
+            }
+            load.done = feeding.done_before + to as u64;
+            if feeding.chunk < feeding.chunks.len() {
+                return;
+            }
+        }
+
+        // the session's end
+        let session = &load.sessions[feeding.session];
+        load.done = feeding.done_before + feeding.take;
+        if load.phase == Mode::Terminal {
+            self.terminal_mode.end_restore(&group_separator(session));
+        } else {
+            self.line_mode.end_restored_rx(self.settings.encoding);
             let separator = LogEntry::restored(group_separator(session), None);
             self.line_mode.restore_entries([separator]);
-            ends.push(self.line_mode.history().len() + self.line_mode.dropped_lines());
+            (load.ends).push(self.line_mode.history().len() + self.line_mode.dropped_lines());
         }
+        load.feeding = None;
+    }
+
+    /// A group loaded: its end in view, and a toast saying what didn't fit (MAX-202)
+    pub fn end_group_load(&mut self, load: &GroupLoad) {
         let dropped = self.line_mode.dropped_lines();
+        let (sessions, ends) = (&load.sessions, &load.ends);
         let rows = self.settings.terminal_mode.history_size;
-        let terminal_tail = group_tail(sessions, rows as u64 * GROUP_TERMINAL_BYTES_PER_ROW);
         let fit = GroupFit {
             sessions: sessions.len(),
-            unreadable: tail.len() - ends.len(),
+            unreadable: load.line_tail.len() - ends.len(),
             kept: ends.iter().filter(|&&end| end > dropped).count(),
-            cut: dropped > 0 || tail_is_cut(sessions, &tail),
-            lines,
+            cut: dropped > 0 || tail_is_cut(sessions, &load.line_tail),
+            lines: load.lines,
             terminal_cut: rows < ends.last().copied().unwrap_or(0)
-                || tail_is_cut(sessions, &terminal_tail),
+                || tail_is_cut(sessions, &load.terminal_tail),
             terminal_rows: rows,
         };
-
-        for &(session, take) in &terminal_tail {
-            let read = (session.raw_path()).and_then(|path| read_tail_bytes(path, take).ok());
-            let Some((start, raw)) = read else {
-                continue;
-            };
-            let times = session_times(session, start);
-            let chunks = timed_chunks(start, &raw, &times);
-            let size = session.meta.as_ref().and_then(|meta| meta.terminal);
-            self.restore_terminal(size, &chunks, &group_separator(session));
-        }
         // the end of the group in view, not the empty screen under the last separator
         let (screen_rows, _) = self.terminal_mode.get_vt100_size();
         self.terminal_mode
@@ -514,29 +670,139 @@ impl App {
     }
 }
 
-/// The end of a group that fits in `budget` bytes, oldest first: each session with how much of
-/// its `.raw` to read (MAX-202)
-fn group_tail(sessions: &[Session], budget: u64) -> Vec<(&Session, u64)> {
-    let mut left = budget;
+/// The end of a group that fits in `lines` lines and `bytes` bytes, oldest first: each
+/// session's index with how much of its `.raw` to read (MAX-202). Lines are counted by their
+/// `\n`, backwards from the newest session, so short lines cost what the history holds and not
+/// a byte budget (MAX-272); the byte budget still caps data with few line ends
+fn group_tail(sessions: &[Session], lines: usize, bytes: u64) -> Vec<(usize, u64)> {
+    let (mut lines_left, mut bytes_left) = (lines, bytes);
     let mut tail = Vec::new();
-    for session in sessions.iter().rev() {
-        if left == 0 {
+    for (index, session) in sessions.iter().enumerate().rev() {
+        if lines_left == 0 || bytes_left == 0 {
             break;
         }
-        let take = session.raw_len.min(left);
-        left -= take;
-        tail.push((session, take));
+        // its separator is a line too, and one alone says nothing
+        lines_left -= 1;
+        if lines_left == 0 {
+            break;
+        }
+        let max = session.raw_len.min(bytes_left);
+        // one that can't be read is said unreadable when it's loaded
+        let (take, seen) = (session.raw_path())
+            .and_then(|path| tail_lines_len(path, lines_left, max).ok())
+            .unwrap_or((max, 0));
+        bytes_left -= take;
+        lines_left = lines_left.saturating_sub(seen);
+        tail.push((index, take));
     }
     tail.reverse();
     tail
 }
 
 /// Whether `tail` leaves out a session of `sessions`, or the start of its oldest
-fn tail_is_cut(sessions: &[Session], tail: &[(&Session, u64)]) -> bool {
+fn tail_is_cut(sessions: &[Session], tail: &[(usize, u64)]) -> bool {
     let whole_oldest = tail
         .first()
-        .is_none_or(|(oldest, take)| *take == oldest.raw_len);
+        .is_none_or(|&(oldest, take)| take == sessions[oldest].raw_len);
     tail.len() < sessions.len() || !whole_oldest
+}
+
+/// A group replay being loaded (MAX-272): line mode's part of the group, then terminal mode's,
+/// a session at a time, each fed a piece at a time so the loop draws between slices
+pub struct GroupLoad {
+    sessions: Vec<Session>,
+    lines: usize,
+    /// Each mode's end of the group: session index, bytes to read
+    line_tail: Vec<(usize, u64)>,
+    terminal_tail: Vec<(usize, u64)>,
+    /// The mode whose part is being fed: line mode's, then terminal mode's
+    phase: Mode,
+    /// The next entry of the tail being loaded
+    next: usize,
+    feeding: Option<Feeding>,
+    /// Where each session read ends in line mode's history, for the toast
+    ends: Vec<usize>,
+    done: u64,
+    total: u64,
+    started: Instant,
+}
+
+impl GroupLoad {
+    pub fn sessions(&self) -> usize {
+        self.sessions.len()
+    }
+
+    /// The mode being loaded, the session of its part being read (from 1) and how many that
+    /// part has: `(Line, 3, 12)`
+    pub fn at(&self) -> (Mode, usize, usize) {
+        let of = self.tail().len();
+        (self.phase, self.next.clamp(1, of.max(1)), of)
+    }
+
+    /// The part being fed
+    fn tail(&self) -> &[(usize, u64)] {
+        match self.phase {
+            Mode::Line => &self.line_tail,
+            Mode::Terminal => &self.terminal_tail,
+        }
+    }
+
+    /// Bytes fed so far, of both modes' parts, and their sum
+    pub fn progress(&self) -> (u64, u64) {
+        (self.done, self.total)
+    }
+
+    /// How much is done, the gauge's: terminal mode's bytes weigh `TERMINAL_WEIGHT` each
+    pub fn percent(&self) -> u64 {
+        let (done, total) = self.work();
+        (done * 100).checked_div(total).unwrap_or(100)
+    }
+
+    /// The work done and the whole, bytes weighed by what they cost: terminal mode's part,
+    /// loaded after line mode's, costs `TERMINAL_WEIGHT` times more per byte
+    fn work(&self) -> (u64, u64) {
+        let line_total = self.line_tail.iter().map(|&(_, take)| take).sum::<u64>();
+        let weigh =
+            |bytes: u64| bytes.min(line_total) + bytes.saturating_sub(line_total) * TERMINAL_WEIGHT;
+        (weigh(self.done), weigh(self.total))
+    }
+
+    /// Since the load started
+    pub fn elapsed(&self, now: Instant) -> Duration {
+        now.saturating_duration_since(self.started)
+    }
+
+    /// Bytes a second so far; none at the start
+    pub fn rate(&self, now: Instant) -> Option<f64> {
+        let secs = self.elapsed(now).as_secs_f64();
+        (secs > 0.0 && self.done > 0).then(|| self.done as f64 / secs)
+    }
+
+    /// The time left at the rate so far, by the work: the rate in bytes drops in terminal
+    /// mode's part
+    pub fn eta(&self, now: Instant) -> Option<Duration> {
+        let secs = self.elapsed(now).as_secs_f64();
+        let (done, total) = self.work();
+        let rate = (secs > 0.0 && done > 0).then(|| done as f64 / secs)?;
+        Some(Duration::from_secs_f64(
+            total.saturating_sub(done) as f64 / rate,
+        ))
+    }
+}
+
+/// The session of a group load being fed: its bytes read, cut where its chunks were received
+struct Feeding {
+    session: usize,
+    take: u64,
+    /// The load's bytes done when it started
+    done_before: u64,
+    raw: Vec<u8>,
+    chunks: Vec<(Range<usize>, Option<Timestamp>)>,
+    chunk: usize,
+    /// The next byte to feed
+    at: usize,
+    /// The last byte fed was a CR, for add LF (MAX-181)
+    after_cr: bool,
 }
 
 /// When a session's chunks from raw offset `start` on were received, none when it isn't known

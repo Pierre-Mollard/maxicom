@@ -396,7 +396,11 @@ fn on_names_lists_the_profiles_that_are_on() {
 #[test]
 fn profile_read_errors_keep_their_text() {
     let folder = Folder::new("profile-read-errors", "");
-    let head = "profile 'bad' (<dir>/profiles/bad.toml): invalid syntax:\nTOML parse error at ";
+    let path = folder.path("profiles").join("bad.toml");
+    let head = format!(
+        "profile 'bad' ({}): invalid syntax:\nTOML parse error at ",
+        path.display()
+    );
     let cases = [
         (
             "[highlights]\nREADY = \n",
@@ -417,11 +421,10 @@ fn profile_read_errors_keep_their_text() {
             "invalid type: integer `5`, expected a string",
         ),
     ];
-    let dir = folder.path("").display().to_string();
     for (text, error, listed) in cases {
         write(&folder, "bad", text);
         let said = load(&folder, "bad").err().unwrap().to_string();
-        assert_eq!(said.replace(&dir, "<dir>/"), format!("{head}{error}"));
+        assert_eq!(said, format!("{head}{error}"));
         let listed = Some(listed.to_string());
         assert_eq!(list(&folder.path("profiles"))[0].error, listed);
     }

@@ -165,6 +165,10 @@ pub struct TerminalMode {
     restored_separator: Option<usize>,
     /// The last byte from the device was a CR, for add CR / add LF across chunks (MAX-181)
     rx_after_cr: bool,
+    /// Restored bytes being fed, and the start of an erase of the scrollback they ended on:
+    /// a restore keeps every session's rows (MAX-272)
+    restoring: bool,
+    held_erase: Vec<u8>,
     /// Invalid UTF-8 as stand-ins vt100 draws, a char cut between two reads kept (MAX-249)
     invalid_bytes: InvalidBytes,
     /// The device's bytes as received, the raw side panel's dump (MAX-252)
@@ -233,6 +237,8 @@ impl TerminalMode {
             search_stale: false,
             restored_separator: None,
             rx_after_cr: false,
+            restoring: false,
+            held_erase: Vec::new(),
             invalid_bytes: InvalidBytes::default(),
             dump: Dump::new(max_history_lines),
             drop_tokenizer: None,
@@ -333,7 +339,12 @@ impl TerminalMode {
             TextEncoding::Ascii => invalid_bytes::ascii(&raw_bytes),
             TextEncoding::Latin1 | TextEncoding::Cp437 => encoding.to_utf8_bytes(&raw_bytes),
         };
-        self.vt100_parser.process(&utf8_bytes);
+        if self.restoring {
+            let kept = keep_scrollback(&mut self.held_erase, &utf8_bytes);
+            self.vt100_parser.process(&kept);
+        } else {
+            self.vt100_parser.process(&utf8_bytes);
+        }
     }
 
     /// The window title the device set last (OSC 0 / 2), until a link switch (MAX-275)
@@ -2056,14 +2067,31 @@ impl TerminalMode {
         trace: bool,
     ) {
         for chunk in chunks {
-            let offset = self.dump.push(chunk.bytes);
-            let feed = Feed::Device {
-                offset: trace.then_some(offset),
-                add_cr: false,
-                add_lf: false,
-            };
-            self.process_rx_at(encoding, chunk.bytes, chunk.time, feed);
+            self.feed_restored(encoding, chunk, trace);
         }
+        self.end_restore(separator);
+    }
+
+    /// A piece of `restore`, for a session fed across loop turns (MAX-272)
+    /// An erase of the scrollback (`ESC[3J`, the end of a shell's `clear`) is skipped: one
+    /// session's clear doesn't wipe the sessions before it, the screen's erase stays (MAX-272)
+    pub fn feed_restored(&mut self, encoding: TextEncoding, chunk: &TimedChunk, trace: bool) {
+        let offset = self.dump.push(chunk.bytes);
+        let feed = Feed::Device {
+            offset: trace.then_some(offset),
+            add_cr: false,
+            add_lf: false,
+        };
+        self.restoring = true;
+        self.process_rx_at(encoding, chunk.bytes, chunk.time, feed);
+        self.restoring = false;
+    }
+
+    /// The end of `restore`: the resets, the separator on the top row
+    pub fn end_restore(&mut self, separator: &str) {
+        // a session ending on the start of an erase: those bytes weren't one
+        let held = std::mem::take(&mut self.held_erase);
+        self.vt100_parser.process(&held);
         // a restored session's copy is old: it never reaches the clipboard (MAX-275), and what
         // it dropped isn't news (MAX-264)
         self.take_device_copy();
@@ -2264,6 +2292,41 @@ fn with_world_row<T>(
     }
 
     Some(value)
+}
+
+/// The erases of the scrollback a restore skips: ED 3 and DECSED 3 (MAX-272)
+const SCROLLBACK_ERASES: [&[u8]; 2] = [b"\x1b[3J", b"\x1b[?3J"];
+
+/// `bytes` without the erases of the scrollback, `held` the start of one cut at the end of the
+/// previous bytes: put back in front. Bytes ending on the start of one are held in turn
+pub fn keep_scrollback<'a>(held: &mut Vec<u8>, bytes: &'a [u8]) -> Cow<'a, [u8]> {
+    if held.is_empty() && memchr::memchr(0x1b, bytes).is_none() {
+        return Cow::Borrowed(bytes);
+    }
+    let mut all = std::mem::take(held);
+    all.extend_from_slice(bytes);
+    let mut kept = Vec::with_capacity(all.len());
+    let mut at = 0;
+    while at < all.len() {
+        let rest = &all[at..];
+        if rest[0] == 0x1b {
+            if let Some(erase) = SCROLLBACK_ERASES.iter().find(|e| rest.starts_with(e)) {
+                at += erase.len();
+                continue;
+            }
+            // the start of one, cut by the end of the bytes
+            if SCROLLBACK_ERASES
+                .iter()
+                .any(|e| e.len() > rest.len() && e.starts_with(rest))
+            {
+                held.extend_from_slice(rest);
+                break;
+            }
+        }
+        kept.push(rest[0]);
+        at += 1;
+    }
+    Cow::Owned(kept)
 }
 
 /// minicom's add CR (a lone LF made CR LF) and add LF (a CR made CR LF) for the emulator, the

@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     Frame,
@@ -8,18 +10,26 @@ use ratatui::{
 };
 
 use crate::{
+    app::capture::GroupLoad,
     capture::Session,
     configs::{
-        KeyPattern, KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction, links::SavedLink,
+        KeyPattern, KeyResolver, Mode, ThemeConfig, keybindings::KeyBindingDialogAction,
+        links::SavedLink,
     },
     link::LinkKind,
-    overlays::{ErrorDialog, PopupTarget},
+    overlays::{ErrorDialog, PopupTarget, sessions::sessions as sessions_count},
     ui::{
         common::popup_area,
         popups::{FORM_WIDTH, Hints, hint_spans, key_hints},
         status_bar::write_human,
+        transfer_row::{bytes_text, clock, gauge, rate_text},
     },
 };
+
+/// The loading popup's spinner, a step every `SPINNER_STEP`, and its gauge's width (MAX-272)
+const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const SPINNER_STEP: Duration = Duration::from_millis(100);
+const LOADING_GAUGE: usize = 30;
 
 /// What the disconnected and detached popups say for each kind of link (MAX-168): the
 /// headline, the address between the words before and after it, the next line
@@ -279,6 +289,68 @@ pub fn render_confirm_quit_popup(
 
     let tone = theme.palette.main;
     render_alert("Quit", tone, text, hints, frame, theme, targets)
+}
+
+/// A group replay loading (MAX-272): a spinner with the mode and the session being read, the
+/// gauge, the bytes, the rate and the time left; the close key stops it
+pub fn render_loading_popup(
+    load: &GroupLoad,
+    resolver: &KeyResolver,
+    frame: &mut Frame,
+    theme: &ThemeConfig,
+    targets: &mut Vec<(Rect, PopupTarget)>,
+) -> Rect {
+    let now = Instant::now();
+    let text = Style::default().fg(theme.palette.text);
+    let muted = Style::default().fg(theme.palette.text_muted);
+    let accent = Style::default()
+        .fg(theme.palette.secondary)
+        .add_modifier(Modifier::BOLD);
+
+    let turn = load.elapsed(now).as_millis() / SPINNER_STEP.as_millis();
+    let spinner = SPINNER[turn as usize % SPINNER.len()];
+    let (mode, session, of) = load.at();
+    let mode = match mode {
+        Mode::Line => "Line mode",
+        Mode::Terminal => "Terminal mode",
+    };
+    let (done, total) = load.progress();
+    let percent = load.percent();
+    let mut gauge_line = gauge(percent, LOADING_GAUGE, accent, muted).to_vec();
+    gauge_line.push(Span::styled(format!(" {percent:>3}%"), text));
+    let mut numbers = vec![Span::styled(bytes_text(done, Some(total)), muted)];
+    if let Some(rate) = load.rate(now) {
+        numbers.push(Span::styled(format!("  {}", rate_text(rate)), muted));
+    }
+    if let Some(eta) = load.eta(now) {
+        numbers.push(Span::styled(format!("  ETA {}", clock(eta)), muted));
+    }
+    let lines = vec![
+        Line::from(vec![
+            Span::styled(format!("{spinner} "), accent),
+            Span::styled(format!("{mode}, session {session} of {of}"), text),
+        ]),
+        Line::from(""),
+        Line::from(gauge_line),
+        Line::from(numbers),
+        Line::from(""),
+    ];
+    let hints = key_hints(
+        resolver,
+        false,
+        &[(&[KeyBindingDialogAction::Close], "Stop")],
+        theme,
+    );
+    let title = format!("Loading {}", sessions_count(load.sessions()));
+    render_alert(
+        &title,
+        theme.palette.main,
+        lines,
+        hints,
+        frame,
+        theme,
+        targets,
+    )
 }
 
 /// Whether to delete a saved link (MAX-185): its name and address, yes or no

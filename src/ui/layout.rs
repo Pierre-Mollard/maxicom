@@ -9,10 +9,11 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::{
     app::{
         App,
+        data_processing::{Piece, walk_visible_line},
         types::{FocusTarget, SidePanel},
     },
     configs::{
-        Mode, RawSideView, SettingsConfig, StatusBarLayout, ThemeConfig, WrapMode,
+        LineDisplayMode, Mode, RawSideView, SettingsConfig, StatusBarLayout, ThemeConfig, WrapMode,
         settings::{PrefixWrapBehavior, RawSideOrientation, SPLIT_PERCENT_MAX, SPLIT_PERCENT_MIN},
     },
 };

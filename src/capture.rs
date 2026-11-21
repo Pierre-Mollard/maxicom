@@ -12,7 +12,7 @@ mod tree;
 pub use recorder::{Recorder, RecordingWriter, Stream};
 pub use restore::{
     RESTORE_RAW_TAIL, TimedChunk, group_separator, read_tail_bytes, read_tail_lines, read_times,
-    restore_separator, timed_chunks,
+    restore_separator, tail_lines_len, timed_chunks, timed_ranges,
 };
 pub use screenshot::{Screenshot, ScreenshotFormat};
 pub use session::{
