@@ -1,3 +1,4 @@
+use crate::configs::read_toml;
 use std::{
     collections::BTreeMap,
     fs,
@@ -130,8 +131,9 @@ impl TriggersConfig {
                 source: err,
             })?;
 
-            let config: TriggersConfig =
-                toml::from_str(&content).map_err(|err| TriggersFileError::TomlParse {
+            // a rule takes no unknown key: none is left to say
+            let (config, _): (TriggersConfig, _) =
+                read_toml(&content).map_err(|err| TriggersFileError::TomlParse {
                     path: path.to_path_buf(),
                     source: err,
                 })?;

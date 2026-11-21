@@ -1,3 +1,4 @@
+use crate::configs::read_toml;
 use std::{
     collections::BTreeMap,
     fs,
@@ -202,7 +203,9 @@ impl PlotsConfig {
         Ok(())
     }
 
-    pub fn load_or_create_default<P: AsRef<Path>>(path: P) -> Result<Self, PlotsFileError> {
+    pub fn load_or_create_default<P: AsRef<Path>>(
+        path: P,
+    ) -> Result<(Self, Vec<String>), PlotsFileError> {
         let path = path.as_ref();
 
         if path.exists() {
@@ -211,8 +214,8 @@ impl PlotsConfig {
                 source: err,
             })?;
 
-            let config: PlotsConfig =
-                toml::from_str(&content).map_err(|err| PlotsFileError::TomlParse {
+            let (config, unknown): (PlotsConfig, _) =
+                read_toml(&content).map_err(|err| PlotsFileError::TomlParse {
                     path: path.to_path_buf(),
                     source: err,
                 })?;
@@ -222,7 +225,7 @@ impl PlotsConfig {
                 source: err,
             })?;
 
-            return Ok(config);
+            return Ok((config, unknown));
         }
 
         let default_config = PlotsConfig::default();
@@ -247,7 +250,7 @@ impl PlotsConfig {
             }
         })?;
 
-        Ok(default_config)
+        Ok((default_config, Vec::new()))
     }
 }
 

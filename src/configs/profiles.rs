@@ -17,7 +17,7 @@ use serde::Deserialize;
 
 use super::{
     AppConfig, HighlightConfig, KeyBindingsConfig, KeyPattern, KeyResolver, PlotsConfig,
-    TriggersConfig, keybindings::NamedCommandConfig, unknown_keys,
+    TriggersConfig, keybindings::NamedCommandConfig, read_toml,
 };
 
 /// A profile file as written. Its keymap sections are empty unless written, unlike the
@@ -106,8 +106,8 @@ impl Profile {
             return Err(error("no such file".to_string()));
         }
         let text = fs::read_to_string(&path).map_err(|err| error(err.to_string()))?;
-        let file: ProfileFile =
-            toml::from_str(&text).map_err(|err| error(format!("invalid syntax:\n{err}")))?;
+        let (file, unknown): (ProfileFile, _) =
+            read_toml(&text).map_err(|err| error(format!("invalid syntax:\n{err}")))?;
         // off: nothing of it is used, so nothing more to check
         if !file.enabled {
             return Ok(Self {
@@ -123,7 +123,6 @@ impl Profile {
         if let Some(plots) = &file.plots {
             plots.check().map_err(|err| error(err.to_string()))?;
         }
-        let unknown = unknown_keys::<ProfileFile>(&text);
         let warnings = (!unknown.is_empty())
             .then(|| format!("Unknown keys in profile '{name}': {}", unknown.join(", ")))
             .into_iter()
@@ -168,7 +167,9 @@ pub fn list(dir: &Path) -> Vec<Listed> {
             let name = path.file_stem()?.to_str()?.to_string();
             let file = fs::read_to_string(&path).map_err(|err| err.to_string());
             let file = file.and_then(|text| {
-                toml::from_str::<ProfileFile>(&text).map_err(|err| err.message().to_string())
+                read_toml::<ProfileFile>(&text)
+                    .map(|(file, _)| file)
+                    .map_err(|err| err.message().to_string())
             });
             Some(match file {
                 Ok(file) => Listed {

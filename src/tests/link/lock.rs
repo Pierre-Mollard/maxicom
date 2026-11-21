@@ -509,3 +509,26 @@ fn flock_holders() {
     assert_eq!(flock_holder(locked.to_str().unwrap(), "/proc/locks"), None);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// MAX-268 (CI failure 2026-11-21): a binary PID whose first byte is an ASCII digit, followed
+/// by a byte that reads as whitespace, is still read as binary: PID 3127 is `37 0C 00 00`
+/// little-endian, `'7'` and a form feed, once read as the text PID 7. A short text PID of 4
+/// bytes stays text.
+/// How: the bytes of such PIDs, and `"123\n"`, read as a lock file.
+#[cfg(unix)]
+#[test]
+fn binary_pid_starting_with_a_digit() {
+    let dir = temp_dir("binary_digit_locks");
+    let file = dir.join("LCK..ttyFAKE");
+    let read = |bytes: &[u8]| {
+        fs::write(&file, bytes).unwrap();
+        lock_pid(&file)
+    };
+    for pid in [3127, 0x0A_0D_31, 0x20_39, 0x3030] {
+        let pid: libc::pid_t = pid;
+        assert_eq!(read(&pid.to_ne_bytes()), Some(pid), "{pid:#x}");
+    }
+    assert_eq!(read(b"123\n"), Some(123));
+    assert_eq!(read(b"   4567\n"), Some(4567));
+    let _ = fs::remove_dir_all(&dir);
+}

@@ -1,5 +1,4 @@
 use std::{
-    fs,
     path::{Path, PathBuf},
     sync::OnceLock,
 };
@@ -65,28 +64,33 @@ pub struct AppConfig {
     pub warnings: Vec<String>,
 }
 
-/// The keys of `text` that `T` doesn't read: a typo or a renamed key takes its default without a
-/// word otherwise, as the settings use `#[serde(default)]` (MAX-209). None for a file that
-/// doesn't load, the loader says why. A style's own fields aren't checked
-fn unknown_keys<T: DeserializeOwned>(text: &str) -> Vec<String> {
+/// `text` read as `T`, with the keys `T` doesn't read: a typo or a renamed key takes its default
+/// without a word otherwise, as the settings use `#[serde(default)]` (MAX-209). A style's own
+/// fields aren't checked. The one way a config file is read (MAX-248): `serde_ignored` wraps
+/// the TOML deserializer in a type of its own, so reading the file with `toml::from_str` too
+/// would compile each config type's deserialize code twice. Its errors are `toml::from_str`'s,
+/// line and column included
+pub fn read_toml<T: DeserializeOwned>(text: &str) -> Result<(T, Vec<String>), toml::de::Error> {
     let mut keys = Vec::new();
-    let Ok(deserializer) = toml::Deserializer::parse(text) else {
-        return keys;
-    };
-    let loaded: Result<T, _> =
-        serde_ignored::deserialize(deserializer, |path| keys.push(path.to_string()));
-    if loaded.is_err() {
-        keys.clear();
-    }
+    let deserializer = toml::Deserializer::parse(text)?;
+    // one callback type for every `T`: `serde_ignored` is generic over it, so a closure of its
+    // own per `T` would compile a type found in two files (a profile's triggers) twice
+    let mut found = |path: serde_ignored::Path| keys.push(path.to_string());
+    let found: &mut dyn FnMut(serde_ignored::Path) = &mut found;
+    let value = serde_ignored::deserialize(deserializer, found)?;
     // sorted, the TOML parser keeping the file's order (MAX-216)
     keys.sort();
-    keys
+    Ok((value, keys))
 }
 
-/// A warning naming the keys of the file that `T` doesn't read, none when it reads them all
-fn unknown_keys_warning<T: DeserializeOwned>(path: &Path) -> Option<String> {
-    let text = fs::read_to_string(path).ok()?;
-    let keys = unknown_keys::<T>(&text);
+/// The keys of `text` that `T` doesn't read, none for a file that doesn't load: the loader says
+/// why
+fn unknown_keys<T: DeserializeOwned>(text: &str) -> Vec<String> {
+    read_toml::<T>(text).map_or_else(|_| Vec::new(), |(_, keys)| keys)
+}
+
+/// A warning naming `keys`, the keys of the file at `path` that it doesn't read, none without
+fn unknown_keys_warning(path: &Path, keys: &[String]) -> Option<String> {
     let name = path.file_name()?.to_string_lossy();
     (!keys.is_empty()).then(|| format!("Unknown keys in {name}: {}", keys.join(", ")))
 }
@@ -96,16 +100,17 @@ impl AppConfig {
     pub fn load_or_create_default<P: AsRef<Path>>(path: P) -> Result<Self, ConfigsError> {
         let path = path.as_ref();
 
-        let settings =
+        let (settings, settings_unknown) =
             SettingsConfig::load_or_create_default(path).map_err(ConfigsError::Settings)?;
 
         let theme_path = Self::active_theme_path(&settings);
-        let theme =
+        let (theme, theme_unknown) =
             ThemeConfig::load_or_create_default(&theme_path).map_err(ConfigsError::Theme)?;
 
         let keybindings_path = Self::active_keybindings_path(&settings);
-        let keybindings = KeyBindingsConfig::load_or_create_default(&keybindings_path)
-            .map_err(|err| ConfigsError::Keymap(Box::new(err)))?;
+        let (keybindings, keybindings_unknown) =
+            KeyBindingsConfig::load_or_create_default(&keybindings_path)
+                .map_err(|err| ConfigsError::Keymap(Box::new(err)))?;
 
         let highlights_path = Self::active_highlight_path(&settings);
         let highlights = HighlightConfig::load_or_create_default(&highlights_path)
@@ -116,7 +121,7 @@ impl AppConfig {
             .map_err(ConfigsError::Triggers)?;
 
         let plots_path = Self::active_plots_path(&settings);
-        let plots =
+        let (plots, plots_unknown) =
             PlotsConfig::load_or_create_default(&plots_path).map_err(ConfigsError::Plots)?;
 
         let links =
@@ -129,10 +134,10 @@ impl AppConfig {
             .map(|err| format!("Profiles not written in {}: {err}", profiles_dir.display()));
 
         let warnings = [
-            unknown_keys_warning::<SettingsConfig>(path),
-            unknown_keys_warning::<ThemeConfig>(&theme_path),
-            unknown_keys_warning::<PlotsConfig>(&plots_path),
-            unknown_keys_warning::<KeyBindingsConfig>(&keybindings_path),
+            unknown_keys_warning(path, &settings_unknown),
+            unknown_keys_warning(&theme_path, &theme_unknown),
+            unknown_keys_warning(&plots_path, &plots_unknown),
+            unknown_keys_warning(&keybindings_path, &keybindings_unknown),
             profiles,
         ];
 

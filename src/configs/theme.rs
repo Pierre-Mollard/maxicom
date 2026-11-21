@@ -1,3 +1,4 @@
+use crate::configs::read_toml;
 use ratatui::style::{Color, Modifier, Style};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -409,7 +410,11 @@ impl SessionBrowserColors {
 }
 
 impl ThemeConfig {
-    pub fn load_or_create_default<P: AsRef<Path>>(path: P) -> Result<Self, ThemeError> {
+    /// The theme at `path`, with the keys it doesn't read (MAX-248); the default one written
+    /// there when there's none
+    pub fn load_or_create_default<P: AsRef<Path>>(
+        path: P,
+    ) -> Result<(Self, Vec<String>), ThemeError> {
         let path = path.as_ref();
 
         if path.exists() {
@@ -418,12 +423,12 @@ impl ThemeConfig {
                 source: err,
             })?;
 
-            let theme: ThemeConfig = toml::from_str(&content).map_err(|err| ThemeError::Parse {
+            let loaded = read_toml(&content).map_err(|err| ThemeError::Parse {
                 path: path.to_path_buf(),
                 source: err,
             })?;
 
-            return Ok(theme);
+            return Ok(loaded);
         }
 
         let default_theme = ThemeConfig::default();
@@ -447,7 +452,7 @@ impl ThemeConfig {
             }
         })?;
 
-        Ok(default_theme)
+        Ok((default_theme, Vec::new()))
     }
 
     /// The color of a byte in the raw panels: of its class in the encoding (MAX-265)

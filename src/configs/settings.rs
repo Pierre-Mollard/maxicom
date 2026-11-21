@@ -1,3 +1,4 @@
+use crate::configs::read_toml;
 use std::{
     borrow::Cow,
     fmt::Display,
@@ -1208,8 +1209,11 @@ impl Default for SettingsConfig {
 }
 
 impl SettingsConfig {
-    /// Loads configuration from path, creating default file if it doesn't exist
-    pub fn load_or_create_default<P: AsRef<Path>>(path: P) -> Result<Self, SettingsError> {
+    /// Loads configuration from path, creating default file if it doesn't exist; with the keys
+    /// of the file it doesn't read (MAX-248)
+    pub fn load_or_create_default<P: AsRef<Path>>(
+        path: P,
+    ) -> Result<(Self, Vec<String>), SettingsError> {
         let path = path.as_ref();
 
         let app_config = if path.exists() {
@@ -1217,8 +1221,8 @@ impl SettingsConfig {
                 path: path.to_path_buf(),
                 source: e,
             })?;
-            let mut config: SettingsConfig =
-                toml::from_str(&content).map_err(|e| SettingsError::Parse {
+            let (mut config, unknown): (SettingsConfig, _) =
+                read_toml(&content).map_err(|e| SettingsError::Parse {
                     path: path.to_path_buf(),
                     source: e,
                 })?;
@@ -1227,7 +1231,7 @@ impl SettingsConfig {
                 source: err,
             })?;
             config.refresh_timestamp_width();
-            config
+            (config, unknown)
         } else {
             let default_config = SettingsConfig::default();
 
@@ -1251,7 +1255,7 @@ impl SettingsConfig {
                 }
             })?;
 
-            default_config
+            (default_config, Vec::new())
         };
 
         Ok(app_config)

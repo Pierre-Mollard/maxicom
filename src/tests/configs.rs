@@ -1,4 +1,5 @@
 use super::*;
+use std::fs;
 
 /// A temporary folder with a settings file pointing every other file into it, so a test
 /// never reads nor writes the real config folder
@@ -260,20 +261,130 @@ fn unknown_keys_none_in_generated_files() {
 
 /// MAX-209: the warning names the file as it's really called, and says nothing without an
 /// unknown key.
-/// How: a settings file given another name in a temporary folder, then a clean one.
+/// How: the keys of a settings file given another name, then none.
 #[test]
 fn unknown_keys_warning_names_the_file() {
-    let dir = std::env::temp_dir().join(format!("maxicom-unknown-{}", std::process::id()));
-    fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("board.toml");
-
-    fs::write(&path, "mdoe = \"line\"\nkep = 1\n").unwrap();
+    let path = Path::new("/somewhere/board.toml");
+    let (_, keys) = read_toml::<SettingsConfig>("mdoe = \"line\"\nkep = 1\n").unwrap();
     assert_eq!(
-        unknown_keys_warning::<SettingsConfig>(&path).as_deref(),
+        unknown_keys_warning(path, &keys).as_deref(),
         Some("Unknown keys in board.toml: kep, mdoe")
     );
-    fs::write(&path, "mode = \"line\"\n").unwrap();
-    assert_eq!(unknown_keys_warning::<SettingsConfig>(&path), None);
+    assert_eq!(unknown_keys_warning(path, &[]), None);
+}
 
-    fs::remove_dir_all(&dir).unwrap();
+/// MAX-248 step 0: the errors of a file that doesn't load, each file kind: a syntax error and
+/// a value of the wrong type, with their line and column, as said today. A `links.toml` error
+/// doesn't stop the load, it's kept.
+/// How: each file broken in a folder alone, the error's text with the folder's path replaced.
+#[test]
+fn load_errors_keep_their_text() {
+    let cases = [
+        ("config.toml", "broken = \n"),
+        ("config.toml", "rx_buffer_size = \"big\"\n"),
+        ("theme.toml", "[palette]\nbroken = \n"),
+        ("theme.toml", "[palette]\ntext = 5\n"),
+        ("keymap.toml", "[prefixed]\nbroken = \n"),
+        ("keymap.toml", "prefix = 5\n"),
+        ("highlights.toml", "READY = \"Green\"\nbroken = \n"),
+        ("highlights.toml", "READY = 5\n"),
+        ("triggers.toml", "[r]\nbroken = \n"),
+        ("triggers.toml", "[r]\nmatch = 5\nrun = \"send x\"\n"),
+        ("plots.toml", "[temp]\nbroken = \n"),
+        ("plots.toml", "[temp]\nseparator = 5\n"),
+        ("links.toml", "[[link]]\nbroken = \n"),
+        ("links.toml", "[[link]]\nname = 3\naddress = \"COM3\"\n"),
+    ];
+    let mut said = Vec::new();
+    for (i, (file, text)) in cases.iter().enumerate() {
+        let folder = Folder::new(&format!("load-errors-{i}"), "");
+        if *file == "config.toml" {
+            let settings = folder.read("config.toml");
+            folder.write(file, &(settings + text));
+        } else {
+            folder.write(file, text);
+        }
+        let error = match folder.load() {
+            Ok(config) => config.links.err().unwrap(),
+            Err(err) => err.to_string(),
+        };
+        said.push(error.replace(&folder.path("").display().to_string(), "<dir>/"));
+    }
+    // the settings file starts with the folder's 6 paths; a trigger's bad value points at
+    // its table, `[triggers]` being flattened
+    let expected = [
+        "invalid settings syntax in '<dir>/config.toml':\nTOML parse error at line 7, column 10\n  |\n7 | broken = \n  |          ^\nstring values must be quoted, expected literal string\n",
+        "invalid settings syntax in '<dir>/config.toml':\nTOML parse error at line 7, column 18\n  |\n7 | rx_buffer_size = \"big\"\n  |                  ^^^^^\ninvalid type: string \"big\", expected usize\n",
+        "invalid theme in '<dir>/theme.toml':\nTOML parse error at line 2, column 10\n  |\n2 | broken = \n  |          ^\nstring values must be quoted, expected literal string\n",
+        "invalid theme in '<dir>/theme.toml':\nTOML parse error at line 2, column 8\n  |\n2 | text = 5\n  |        ^\nFailed to parse Colors: data did not match any variant of untagged enum ColorFormat\n\n",
+        "invalid syntax in keymap file '<dir>/keymap.toml':\nTOML parse error at line 2, column 10\n  |\n2 | broken = \n  |          ^\nstring values must be quoted, expected literal string\n",
+        "invalid syntax in keymap file '<dir>/keymap.toml':\nTOML parse error at line 1, column 10\n  |\n1 | prefix = 5\n  |          ^\ninvalid type: integer `5`, expected a string\n",
+        "invalid highlight in '<dir>/highlights.toml':\nTOML parse error at line 2, column 10\n  |\n2 | broken = \n  |          ^\nstring values must be quoted, expected literal string\n",
+        "invalid highlight in '<dir>/highlights.toml':\nTOML parse error at line 1, column 9\n  |\n1 | READY = 5\n  |         ^\ndata did not match any variant of untagged enum EntryDef\n",
+        "invalid syntax in '<dir>/triggers.toml':\nTOML parse error at line 2, column 10\n  |\n2 | broken = \n  |          ^\nstring values must be quoted, expected literal string\n",
+        "invalid syntax in '<dir>/triggers.toml':\nTOML parse error at line 1, column 1\n  |\n1 | [r]\n  | ^\ninvalid type: integer `5`, expected a string\n",
+        "invalid syntax in '<dir>/plots.toml':\nTOML parse error at line 2, column 10\n  |\n2 | broken = \n  |          ^\nstring values must be quoted, expected literal string\n",
+        "invalid syntax in '<dir>/plots.toml':\nTOML parse error at line 2, column 13\n  |\n2 | separator = 5\n  |             ^\ninvalid type: integer `5`, expected a string\n",
+        "invalid syntax in '<dir>/links.toml':\nTOML parse error at line 2, column 10\n  |\n2 | broken = \n  |          ^\nstring values must be quoted, expected literal string\n",
+        "invalid syntax in '<dir>/links.toml':\nTOML parse error at line 2, column 8\n  |\n2 | name = 3\n  |        ^\ninvalid type: integer `3`, expected a string\n",
+    ];
+    assert_eq!(said.len(), expected.len());
+    for (said, expected) in said.iter().zip(expected) {
+        assert_eq!(said, expected);
+    }
+}
+
+/// MAX-248 step 0: the keys a file doesn't read are named in one warning per file, settings,
+/// theme, plots then keymap, sorted; the values around them still load. Highlights, triggers
+/// and links aren't checked.
+/// How: one or two unknown keys in each file, next to known ones, loaded.
+#[test]
+fn unknown_key_warnings_of_each_file() {
+    let folder = Folder::new("unknown-each", "mdoe = \"line\"\nrx_buffer_size = 1024\n");
+    folder.write(
+        "theme.toml",
+        "[palette]\ntext = \"Red\"\ntxet = \"Red\"\n[nope]\na = 1\n",
+    );
+    folder.write("plots.toml", "[temp]\nseparator = \"=\"\ncolour = 1\n");
+    folder.write(
+        "keymap.toml",
+        "prefx = \"ctrl-b\"\n[prefixed]\nq = \"quit\"\n",
+    );
+    folder.write("highlights.toml", "READY = \"Green\"\n");
+    let config = folder.load().unwrap();
+    assert_eq!(
+        config.warnings,
+        [
+            "Unknown keys in config.toml: mdoe",
+            "Unknown keys in theme.toml: nope, palette.txet",
+            "Unknown keys in plots.toml: temp.colour",
+            "Unknown keys in keymap.toml: prefx",
+        ]
+    );
+    assert_eq!(config.settings.rx_buffer_size, 1024);
+    assert_eq!(config.theme.palette.text, ratatui::style::Color::Red);
+    assert_eq!(config.plots.names(), ["temp"]);
+    assert_eq!(config.keybindings.prefix_actions["q"], "quit");
+}
+
+/// MAX-248: the one read gives the values `toml::from_str` gives, and no unknown key, on each
+/// file maxicom writes itself, comments included.
+/// How: each config type's default written as maxicom writes it, read both ways.
+#[test]
+fn read_toml_reads_as_from_str() {
+    fn same<T>(value: &T, comments: &[(&str, &str)])
+    where
+        T: serde::Serialize + DeserializeOwned + PartialEq + std::fmt::Debug,
+    {
+        let text = toml::to_string_pretty(value).unwrap();
+        let text = comments::with_comments(&text, comments);
+        let plain: T = toml::from_str(&text).unwrap();
+        assert_eq!(read_toml::<T>(&text).unwrap(), (plain, Vec::new()));
+    }
+    same(&SettingsConfig::default(), comments::CONFIG_COMMENTS);
+    same(&ThemeConfig::default(), comments::THEME_COMMENTS);
+    same(&KeyBindingsConfig::default(), comments::KEYMAP_COMMENTS);
+    same(&HighlightConfig::default(), comments::HIGHLIGHTS_COMMENTS);
+    same(&TriggersConfig::default(), comments::TRIGGERS_COMMENTS);
+    same(&PlotsConfig::default(), comments::PLOTS_COMMENTS);
 }

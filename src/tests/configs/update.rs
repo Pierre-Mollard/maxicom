@@ -234,3 +234,33 @@ fn reset_targets_skip_the_links() {
     assert_eq!(targets[6], Path::new("/elsewhere/profiles/arduino.toml"));
     assert_eq!(targets.len(), 6 + BUILT_IN.len());
 }
+
+/// MAX-248 step 0: each file updated names the keys it dropped, under its line; a file with
+/// none is up to date.
+/// How: an unknown key in the settings, the theme, the keymap and the plots, updated.
+#[test]
+fn update_names_unknown_keys_of_each_file() {
+    let folder = Folder::new("update-unknown-each", "mdoe = \"line\"\n");
+    folder.write("theme.toml", "[palette]\ntxet = \"Red\"\n");
+    folder.write("plots.toml", "[temp]\nseparator = \"=\"\ncolour = 1\n");
+    folder.write("keymap.toml", "prefx = \"ctrl-b\"\n");
+    let dir = folder.path("").display().to_string();
+    let report: Vec<String> = (update(&folder).unwrap().iter())
+        .map(|line| line.replace(&dir, "<dir>/"))
+        .collect();
+    assert_eq!(
+        report,
+        [
+            "<dir>/config.toml: updated, the old file is <dir>/config.toml.bak",
+            "  unknown keys dropped: mdoe",
+            "<dir>/theme.toml: updated, the old file is <dir>/theme.toml.bak",
+            "  unknown keys dropped: palette.txet",
+            "<dir>/keymap.toml: updated, the old file is <dir>/keymap.toml.bak",
+            "  unknown keys dropped: prefx",
+            "<dir>/highlights.toml: up to date",
+            "<dir>/triggers.toml: up to date",
+            "<dir>/plots.toml: updated, the old file is <dir>/plots.toml.bak",
+            "  unknown keys dropped: temp.colour",
+        ]
+    );
+}

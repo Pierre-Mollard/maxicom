@@ -389,3 +389,40 @@ fn on_names_lists_the_profiles_that_are_on() {
     );
     assert!(on_names(&folder.path("nowhere")).is_empty());
 }
+
+/// MAX-248 step 0: a profile that doesn't read says why with the line and column; the
+/// profiles popup's list says the reason alone. A trigger's bad value points at its table.
+/// How: a syntax error, a value of the wrong type, a trigger's, loaded then listed.
+#[test]
+fn profile_read_errors_keep_their_text() {
+    let folder = Folder::new("profile-read-errors", "");
+    let head = "profile 'bad' (<dir>/profiles/bad.toml): invalid syntax:\nTOML parse error at ";
+    let cases = [
+        (
+            "[highlights]\nREADY = \n",
+            "line 2, column 9\n  |\n2 | READY = \n  |         ^\n\
+             string values must be quoted, expected literal string\n",
+            "string values must be quoted, expected literal string",
+        ),
+        (
+            "description = 5\n",
+            "line 1, column 15\n  |\n1 | description = 5\n  |               ^\n\
+             invalid type: integer `5`, expected a string\n",
+            "invalid type: integer `5`, expected a string",
+        ),
+        (
+            "[triggers.r]\nmatch = 5\nrun = \"send x\"\n",
+            "line 1, column 2\n  |\n1 | [triggers.r]\n  |  ^^^^^^^^\n\
+             invalid type: integer `5`, expected a string\n",
+            "invalid type: integer `5`, expected a string",
+        ),
+    ];
+    let dir = folder.path("").display().to_string();
+    for (text, error, listed) in cases {
+        write(&folder, "bad", text);
+        let said = load(&folder, "bad").err().unwrap().to_string();
+        assert_eq!(said.replace(&dir, "<dir>/"), format!("{head}{error}"));
+        let listed = Some(listed.to_string());
+        assert_eq!(list(&folder.path("profiles"))[0].error, listed);
+    }
+}

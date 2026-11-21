@@ -1,3 +1,4 @@
+use crate::configs::read_toml;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -244,8 +245,9 @@ impl HighlightConfig {
                 source: err,
             })?;
 
-            let config: HighlightConfig =
-                toml::from_str(&content).map_err(|err| HighlightError::Parse {
+            // its unknown keys aren't said: a key is a word to light
+            let (config, _): (HighlightConfig, _) =
+                read_toml(&content).map_err(|err| HighlightError::Parse {
                     path: path.to_path_buf(),
                     source: err,
                 })?;

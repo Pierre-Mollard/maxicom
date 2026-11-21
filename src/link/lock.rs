@@ -445,15 +445,21 @@ fn uucp_name(port: &str) -> Option<String> {
     Some(format!("LCK..{}", path.file_name()?.to_string_lossy()))
 }
 
-/// The PID a UUCP lock file holds, written as text first: the first word, as some programs
-/// write more after it. Else 4 bytes of a binary PID (Kermit's, old UUCP's: minicom reads it)
+/// The PID a UUCP lock file holds: 4 bytes holding a NUL are a binary PID (Kermit's, old
+/// UUCP's: minicom reads it), else the text's first word, as some programs write more after
+/// it. Text never holds a NUL, and a binary PID always does: PIDs stay below 2^24 (Linux's
+/// most is 2^22), so its top byte is 0 whatever the byte order. Read as text first, PID 3127
+/// (`37 0C 00 00`) was the text `7` and a form feed
 #[cfg(unix)]
 fn lock_pid(path: &Path) -> Option<libc::pid_t> {
     let bytes = fs::read(path).ok()?;
-    let text = String::from_utf8_lossy(&bytes);
-    let pid = match text.split_whitespace().next().map(str::parse) {
-        Some(Ok(pid)) => pid,
-        _ => libc::pid_t::from_ne_bytes(bytes.try_into().ok()?),
+    let pid = match <[u8; 4]>::try_from(bytes.as_slice()) {
+        Ok(binary) if binary.contains(&0) => libc::pid_t::from_ne_bytes(binary),
+        _ => String::from_utf8_lossy(&bytes)
+            .split_whitespace()
+            .next()?
+            .parse()
+            .ok()?,
     };
     Some(pid).filter(|&pid| pid > 0)
 }

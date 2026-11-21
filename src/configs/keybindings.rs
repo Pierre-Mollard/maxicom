@@ -1,3 +1,4 @@
+use crate::configs::read_toml;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -1457,7 +1458,11 @@ impl Default for KeyBindingsConfig {
 }
 
 impl KeyBindingsConfig {
-    pub fn load_or_create_default<P: AsRef<Path>>(path: P) -> Result<Self, KeymapFileError> {
+    /// The keymap at `path`, with the keys it doesn't read (MAX-248); the default one written
+    /// there when there's none
+    pub fn load_or_create_default<P: AsRef<Path>>(
+        path: P,
+    ) -> Result<(Self, Vec<String>), KeymapFileError> {
         let path = path.as_ref();
 
         if path.exists() {
@@ -1466,8 +1471,8 @@ impl KeyBindingsConfig {
                 source: err,
             })?;
 
-            let keymap: KeyBindingsConfig =
-                toml::from_str(&content).map_err(|err| KeymapFileError::TomlParse {
+            let (keymap, unknown): (KeyBindingsConfig, _) =
+                read_toml(&content).map_err(|err| KeymapFileError::TomlParse {
                     path: path.to_path_buf(),
                     source: err,
                 })?;
@@ -1477,7 +1482,7 @@ impl KeyBindingsConfig {
                 source: err,
             })?;
 
-            return Ok(keymap);
+            return Ok((keymap, unknown));
         }
 
         let default_keymap = KeyBindingsConfig::default();
@@ -1502,7 +1507,7 @@ impl KeyBindingsConfig {
             }
         })?;
 
-        Ok(default_keymap)
+        Ok((default_keymap, Vec::new()))
     }
 }
 
