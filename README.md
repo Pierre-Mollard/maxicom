@@ -20,8 +20,9 @@ It opens a serial port or a device over TCP, on Linux, macOS and Windows.
   plotter format), next to the text
 - Every session backed up and restored at the next launch; recordings and
   replays
-- Saved links and a dialing directory, TCP links (ser2net, ESP32 bridges,
-  QEMU), port locks shared with minicom and picocom
+- Saved links and a dialing directory, TCP links raw, telnet or RFC 2217
+  (ser2net, ESP32 bridges, `esp_rfc2217_server`, QEMU), port locks shared with
+  minicom and picocom
 - A command line (`send`, `dtr`, `break`, `mash`...), named command lines on
   keys, triggers that answer boot prompts
 - minicom's keys and options: `maxicom -D /dev/ttyUSB0 -b 115200`, then

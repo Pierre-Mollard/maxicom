@@ -49,8 +49,8 @@ You rarely need to edit the file by hand. In the directory:
 In the form, move between the fields and change the bits, parity, stop bits,
 flow, and [DTR and RTS on open](links.md#dtr-and-rts-on-open) with the
 [popup keys](popups.md). Enter saves, and Esc goes back to
-the directory. A TCP address greys out the line settings, since its bridge
-sets them.
+the directory. A raw or telnet TCP address greys out the line settings,
+since its bridge sets them.
 
 `x` or `Del` in the directory deletes the selected link, after a confirmation.
 
@@ -77,7 +77,8 @@ When saved from the app:
 
 - a serial port is for this machine only, since a path belongs to one
   machine;
-- a TCP link is for every machine.
+- a TCP link is for every machine, with its line settings when it's an
+  `rfc2217://` one.
 
 Two links can share a name as long as no machine sees both. So
 `maxicom board` can open `/dev/ttyUSB0` on one machine and `COM3` on

@@ -33,6 +33,15 @@ to send the focus reports.
 
 ### Added
 
+- `telnet://host:port` links speak telnet, for ser2net's telnet ports,
+  serial device servers and console servers in telnet mode: the negotiation
+  is answered and never shown, and a `0xFF` byte goes through as it is.
+- `rfc2217://host:port` links set the remote port as a serial one: baud rate,
+  framing, flow control, DTR and RTS on open, `dtr`, `rts` and `break`, from
+  esptool's `esp_rfc2217_server`, pyserial's `rfc2217_server.py` or ser2net's
+  `telnet(rfc2217)`. The ESP32 profile's reset keys work on a remote board.
+  See [TCP links](https://pierre-mollard.github.io/maxicom/tcp-links.html).
+
 - In line mode, a notification tells you once when the device looks like a
   shell, whose history and Tab completion only work in terminal mode: at once
   when it sends a terminal query, on Up or Down after it turned bracketed

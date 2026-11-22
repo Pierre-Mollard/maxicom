@@ -66,11 +66,21 @@ impl ByteSource {
         }
     }
 
-    /// Sets a control line (MAX-12), a serial port's only
+    /// Sets a control line (MAX-12): a serial port's, or an RFC 2217 server's (MAX-161)
     pub fn control(&mut self, control: LineControl) -> Result<(), LinkError> {
         match self {
             ByteSource::Serial(dev) => dev.control(control),
-            ByteSource::Tcp(_) | ByteSource::Replay(_) => Err(LinkError::NoControlLines),
+            ByteSource::Tcp(dev) => dev.control(control),
+            ByteSource::Replay(_) => Err(LinkError::NoControlLines),
+        }
+    }
+
+    /// What went wrong with RFC 2217 since the last call (MAX-161): the server refused it, or
+    /// set another value than asked
+    pub fn take_warnings(&mut self) -> Vec<String> {
+        match self {
+            ByteSource::Tcp(dev) => dev.take_warnings(),
+            ByteSource::Serial(_) | ByteSource::Replay(_) => Vec::new(),
         }
     }
 
@@ -87,7 +97,8 @@ impl ByteSource {
     pub fn end_break(&mut self) -> Result<(), LinkError> {
         match self {
             ByteSource::Serial(dev) => dev.end_break(),
-            ByteSource::Tcp(_) | ByteSource::Replay(_) => Ok(()),
+            ByteSource::Tcp(dev) => dev.end_break(),
+            ByteSource::Replay(_) => Ok(()),
         }
     }
 }
@@ -119,11 +130,11 @@ impl LinkKind {
         self != LinkKind::Replay
     }
 
-    /// Whether maxicom sets the link's line settings (baud, framing, flow control): a serial
-    /// port does; a TCP link doesn't, its bridge owns them, nor does a replayed file. Later
-    /// RFC 2217 will
+    /// Whether maxicom sets the link's line settings (baud, framing, flow control) and control
+    /// lines (DTR, RTS, break): a serial port's, and an RFC 2217 server's port (MAX-161); a raw
+    /// or telnet TCP link doesn't, its bridge owns them, nor does a replayed file
     pub fn has_line_settings(self) -> bool {
-        self == LinkKind::Serial
+        matches!(self, LinkKind::Serial | LinkKind::Tcp(Protocol::Rfc2217))
     }
 
     /// What a link without line settings shows in place of its baud and framing, read together
@@ -133,12 +144,12 @@ impl LinkKind {
         match self {
             LinkKind::Tcp(Protocol::Raw) => Some(["raw", "TCP"]),
             LinkKind::Tcp(Protocol::Telnet) => Some(["telnet", "TCP"]),
-            LinkKind::Serial | LinkKind::Replay => None,
+            LinkKind::Serial | LinkKind::Tcp(Protocol::Rfc2217) | LinkKind::Replay => None,
         }
     }
 
-    /// Whether the link is a TCP connection, raw or telnet: it connects in a thread, says it
-    /// connects, and is saved for every machine
+    /// Whether the link is a TCP connection, whatever it speaks: it connects in a thread, says
+    /// it connects, and is saved for every machine
     pub fn is_tcp(self) -> bool {
         matches!(self, LinkKind::Tcp(_))
     }
@@ -155,16 +166,18 @@ impl LinkKind {
 }
 
 /// Opens the link `config.address` names, waiting for it: a serial port, or a TCP
-/// connection, raw or telnet
+/// connection, raw, telnet or RFC 2217 with `config.line`
 pub fn open(config: &LinkConfig) -> Result<ByteSource, LinkError> {
     match &config.address {
         Address::Serial(device) => SerialDevice::open(device, &config.line).map(ByteSource::Serial),
-        Address::Tcp(addr, protocol) => TcpDevice::connect(addr, *protocol, CONNECT_TIMEOUT)
-            .map(ByteSource::Tcp)
-            .map_err(|source| LinkError::ConnectFailed {
-                addr: addr.clone(),
-                source,
-            }),
+        Address::Tcp(addr, protocol) => {
+            TcpDevice::connect(addr, *protocol, &config.line, CONNECT_TIMEOUT)
+                .map(ByteSource::Tcp)
+                .map_err(|source| LinkError::ConnectFailed {
+                    addr: addr.clone(),
+                    source,
+                })
+        }
         // the loop opens a replay's file itself: a link never reopens as one
         Address::Replay(_) => Err(LinkError::OpenFailed {
             port: config.address.to_string(),

@@ -23,8 +23,9 @@ fn wait(opener: &mut Opener) -> Result<ByteSource, LinkError> {
 }
 
 /// MAX-166: what each kind does: a replay is never written, keeps no session, never
-/// reopens and has no line settings; a serial port and a TCP link do the first three, only a
-/// serial port has line settings. A TCP link shows "raw TCP" or "telnet TCP" in their place.
+/// reopens and has no line settings; a serial port and a TCP link do the first three, a
+/// serial port and an RFC 2217 link have line settings (MAX-161). A raw or telnet TCP link
+/// shows "raw TCP" or "telnet TCP" in their place.
 /// How: the answers of each kind. The kind each address names is `address`'s test.
 #[test]
 fn link_kinds() {
@@ -37,9 +38,10 @@ fn link_kinds() {
         ]
     };
     assert_eq!(answers(LinkKind::Serial), [true; 4]);
-    for protocol in Protocol::ALL {
+    for protocol in [Protocol::Raw, Protocol::Telnet] {
         assert_eq!(answers(LinkKind::Tcp(protocol)), [true, true, true, false]);
     }
+    assert_eq!(answers(LinkKind::Tcp(Protocol::Rfc2217)), [true; 4]);
     assert_eq!(answers(LinkKind::Replay), [false; 4]);
     assert_eq!(
         LinkKind::Tcp(Protocol::Raw).line_stand_in(),
@@ -49,6 +51,7 @@ fn link_kinds() {
         LinkKind::Tcp(Protocol::Telnet).line_stand_in(),
         Some(["telnet", "TCP"])
     );
+    assert_eq!(LinkKind::Tcp(Protocol::Rfc2217).line_stand_in(), None);
     assert_eq!(LinkKind::Serial.line_stand_in(), None);
     assert_eq!(LinkKind::Replay.line_stand_in(), None);
 }

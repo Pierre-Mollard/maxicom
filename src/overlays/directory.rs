@@ -6,7 +6,7 @@ use crate::{
     configs::links::SavedLink,
     inputs::DialogAction,
     link::{
-        Address, LinkConfig, LinkKind,
+        Address, LinkConfig, LinkKind, Protocol,
         probe::ProbeState,
         serial::{self, PortDetails},
     },
@@ -227,7 +227,9 @@ impl Directory {
             };
             self.opening = Some(config.address.to_string());
             return match config.address.kind() {
-                LinkKind::Tcp(_) => OverlayResponse::Open(config.address),
+                LinkKind::Tcp(Protocol::Raw | Protocol::Telnet) => {
+                    OverlayResponse::Open(config.address)
+                }
                 _ => OverlayResponse::OpenLink(config),
             };
         }

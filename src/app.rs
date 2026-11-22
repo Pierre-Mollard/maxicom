@@ -671,13 +671,14 @@ impl App {
         self.link.kind()
     }
 
-    /// The line settings the status bar and the settings dialog show (MAX-166): a serial port's,
-    /// a replayed serial session's from its meta; none for a TCP link nor a plain file
+    /// The line settings the status bar and the settings dialog show (MAX-166): a serial port's
+    /// or an RFC 2217 link's, a replayed serial session's from its meta; none for a raw or
+    /// telnet TCP link nor a plain file
     pub fn line_settings(&self) -> Option<CaptureLine> {
         match self.link_kind() {
-            LinkKind::Serial => Some(CaptureLine::of(&self.link.config().line)),
-            LinkKind::Tcp(_) => None,
             LinkKind::Replay => self.recorded_line(),
+            kind if kind.has_line_settings() => Some(CaptureLine::of(&self.link.config().line)),
+            _ => None,
         }
     }
 

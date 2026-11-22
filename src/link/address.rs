@@ -11,32 +11,35 @@ use super::LinkKind;
 pub enum Address {
     /// A device path, `/dev/ttyUSB0`, or a port name, `COM3`
     Serial(String),
-    /// `host:port`, written `tcp://host:port` or `telnet://host:port`
+    /// `host:port`, written `tcp://host:port`, `telnet://host:port` or `rfc2217://host:port`
     Tcp(String, Protocol),
     /// The file a replay reads, written `file://path`
     Replay(PathBuf),
 }
 
-/// What a TCP link speaks (MAX-161): the device's bytes as they are, or telnet around them
+/// What a TCP link speaks (MAX-161): the device's bytes as they are, telnet around them, or
+/// telnet with RFC 2217, which sets the server's serial port
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Protocol {
     Raw,
     Telnet,
+    Rfc2217,
 }
 
 impl Protocol {
-    pub const ALL: [Protocol; 2] = [Protocol::Raw, Protocol::Telnet];
+    pub const ALL: [Protocol; 3] = [Protocol::Raw, Protocol::Telnet, Protocol::Rfc2217];
 
-    /// The address prefix without `://`: `tcp`, `telnet`
+    /// The address prefix without `://`: `tcp`, `telnet`, `rfc2217`
     pub fn scheme(self) -> &'static str {
         match self {
             Protocol::Raw => "tcp",
             Protocol::Telnet => "telnet",
+            Protocol::Rfc2217 => "rfc2217",
         }
     }
 }
 
-/// `tcp://host:port` and `telnet://host:port` are TCP links, `file://path` a replay, anything
+/// `tcp://host:port`, `telnet://host:port` and `rfc2217://host:port` are TCP links, `file://path` a replay, anything
 /// else a serial device.
 /// The prefixes are lowercase only: `FILE://x` is a device name. Refused: an empty device or
 /// path, and a TCP address that isn't `host:port`, as it would never open
@@ -102,7 +105,7 @@ impl Address {
     /// The tag kept to the characters safe in a file name: `/dev/ttyUSB0` gives `ttyUSB0`,
     /// `tcp://192.168.1.50:4000` gives `192.168.1.50_4000` (no `:` on Windows). For the
     /// session names (MAX-156) and the lock files (MAX-186): one lock for a server's port,
-    /// raw or telnet
+    /// whatever it speaks
     pub fn file_tag(&self) -> String {
         (self.tag().chars())
             .map(|c| {

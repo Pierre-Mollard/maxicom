@@ -59,24 +59,24 @@ pub struct SavedLink {
 }
 
 impl SavedLink {
-    /// `config` saved under `name`: a serial port for `host` only (a path is one machine's),
-    /// with all its line settings; a TCP link for every machine, without any
+    /// `config` saved under `name`: a serial port for `host` only (a path is one machine's), a
+    /// TCP link for every machine; with all its line settings when it has some (not raw or
+    /// telnet TCP)
     pub fn from_config(name: String, config: &LinkConfig, host: Option<&str>) -> Self {
-        let address = config.address.to_string();
-        if config.address.kind().is_tcp() {
-            return Self {
-                name,
-                address,
-                ..Self::default()
-            };
-        }
+        let kind = config.address.kind();
         let link = Self {
             name,
-            hosts: host.map(str::to_string).into_iter().collect(),
-            address,
+            hosts: (host.filter(|_| !kind.is_tcp()).map(str::to_string))
+                .into_iter()
+                .collect(),
+            address: config.address.to_string(),
             ..Self::default()
         };
-        link.with_line(&config.line)
+        if kind.has_line_settings() {
+            link.with_line(&config.line)
+        } else {
+            link
+        }
     }
 
     /// All of `line`'s settings written on the link
@@ -143,7 +143,8 @@ impl SavedLink {
             return Err("a host is empty".to_string());
         }
         let address: Address = self.address.parse()?;
-        if address.kind().is_tcp() && self.has_line_fields() {
+        if address.kind().is_tcp() && !address.kind().has_line_settings() && self.has_line_fields()
+        {
             return Err("a TCP link has no line settings: its bridge sets the line".to_string());
         }
         // `[link]`'s checks, on this link's fields over valid ones

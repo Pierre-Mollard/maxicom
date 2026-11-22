@@ -98,8 +98,8 @@ layout = "border"
 | --- | --- | --- |
 | `{mode}` | `TERM` or `LINE`, `COPY` while copy mode is on, `SRCH` while you type a search, `MARK` while a mark waits for its letter | `TERM` |
 | `{port}` | Device address, a saved link's name, or the device and count of a [group replay](capture.md#replaying-a-group) | `/dev/ttyUSB0`, `tcp://192.168.1.50:4000`, `board`, `ttyUSB0 · 12 sessions` |
-| `{baud}` | Baud rate; `raw` for a raw TCP link | `115200` |
-| `{framing}` | Serial framing; `TCP` for a TCP link | `8N1` |
+| `{baud}` | Baud rate; `raw` or `telnet` for a raw or telnet TCP link | `115200` |
+| `{framing}` | Serial framing; `TCP` for a raw or telnet TCP link | `8N1` |
 | `{rx_bytes}` / `{tx_bytes}` | Received / transmitted bytes count | `1024` |
 | `{time}` | Local time, in `time_format` | `21:45:00` |
 | `{pan_left}` / `{pan_right}` | Left / right pan amount | `◀ (3)`, `!(2) ▶` |
@@ -174,7 +174,7 @@ otherwise. Conditions chain:
 | `mouse` | | Mouse support is on |
 | `rec` | `logging` | A recording runs |
 | `session` | `backup` | The session backup runs |
-| `line_settings` | `serial` | The link has line settings: a serial port, not a TCP link whose bridge sets them |
+| `line_settings` | `serial` | The link has line settings: a serial port or an RFC 2217 link, not a raw or telnet TCP link whose bridge sets them |
 | `add_cr` / `add_lf` | | Add CR / add LF is on |
 | `app_cursor` | `decckm` | Terminal mode, and the remote turned on the application cursor keys (`APP`) |
 | `sending` | `send_file` | A file is being sent (`send-file`, `upload`) |

@@ -577,7 +577,14 @@ fn open_takes_an_address() {
     };
     assert_eq!(
         values(&complete("open ")),
-        ["tcp://", "telnet://", "file://", "/dev/ttyUSB0", "COM3"]
+        [
+            "tcp://",
+            "telnet://",
+            "rfc2217://",
+            "file://",
+            "/dev/ttyUSB0",
+            "COM3"
+        ]
     );
     assert_eq!(values(&complete("open t")), ["tcp://", "telnet://"]);
     assert_eq!(values(&complete("open te")), ["telnet://"]);
@@ -603,6 +610,7 @@ fn open_takes_an_address() {
             "router\\ console",
             "tcp://",
             "telnet://",
+            "rfc2217://",
             "file://",
             "/dev/ttyUSB0",
             "COM3"

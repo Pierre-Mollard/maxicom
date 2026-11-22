@@ -47,6 +47,7 @@ test column, or on the shell at startup.
 | `failed to open serial port '<port>' at <baud> baud: <reason>` | Any other open failure | The reason comes from the system |
 | `could not connect to '<address>': <reason>` | A TCP host refused, or can't be reached | Check the host and port. See [TCP links](tcp-links.md). |
 | `<label> is open in <holder> too` | A TCP link another maxicom also has open (warning only) | Nothing, if the server takes several clients |
+| `the server refuses RFC 2217: no line settings` | An `rfc2217://` server that doesn't speak RFC 2217, such as a plain telnet port | Use `telnet://`, or turn RFC 2217 on in the server. See [TCP links](tcp-links.md#line-settings-on-an-rfc-2217-link). |
 | `Failed to reattach: <reason>` | `Ctrl-a D` couldn't open the port again; the link stays detached | Free the port, then `Ctrl-a D` again |
 
 ## While a link runs
@@ -59,6 +60,7 @@ test column, or on the shell at startup.
 | `Serial port read error` | Reading failed; the link is treated as lost | |
 | `break: <reason>` | The port refused the break | |
 | `The port is detached: it opens with these settings` | New line settings while detached; they apply at the next attach | |
+| `the server set <value>, asked <value>` | An RFC 2217 server answered a line setting or control line with another value than the one asked | Pick a value the remote port supports |
 | Popup "Serial Conf Rejected" | The driver refused the new line settings, and the port kept its old ones. The details name the fields. | Pick settings the adapter supports |
 | `A file transfer is running: cancel stops it` | A key typed during an `upload`, which owns the link; said once per upload | Wait for the end, or `cancel`. See [While it runs](file-transfers.md#while-it-runs). |
 
@@ -77,7 +79,7 @@ See [Command line](command-line.md).
 | `unclosed quote`, `bad escape '<text>'` | The line itself doesn't parse. See [Writing arguments](command-line.md#writing-arguments). |
 | `a replay has no link to send to` | A command that sends, during a replay |
 | `the port isn't open (detached or reconnecting)` | A command that needs the open port |
-| `a TCP link has no <settings>, its bridge sets them` | `baud`, `dtr`, `break` and the like on a TCP link |
+| `a TCP link has no <settings>, its bridge sets them` | `baud`, `dtr`, `break` and the like on a raw or telnet TCP link |
 | `hardware flow control drives RTS (flow none first)` | `rts` with `flow rtscts` |
 | `a file is being sent already (cancel stops it)` | A second `send-file`, `upload` or `download` |
 | `<path> isn't a folder: YMODEM files come with their names` | `download ymodem` with a file path. See [Where the files go](file-transfers.md#where-the-files-go). |

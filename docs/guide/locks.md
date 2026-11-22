@@ -94,7 +94,9 @@ those run with `sudo`, which the system lets through.
 ## TCP links
 
 A TCP link that another maxicom has open still opens, because some servers
-accept several clients. maxicom warns you and names the other one.
+accept several clients. maxicom warns you and names the other one. The
+lock is the server's port: `tcp://`, `telnet://` and `rfc2217://` on the same
+`host:port` count as one.
 
 ## After a crash
 

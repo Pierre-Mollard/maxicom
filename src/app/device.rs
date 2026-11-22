@@ -749,6 +749,10 @@ impl App {
                 }
             }
         }
+        // what the RFC 2217 server answered wrong (MAX-161)
+        for warning in self.link.take_warnings() {
+            self.notify_warn(warning);
+        }
         Ok(())
     }
 

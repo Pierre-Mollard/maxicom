@@ -187,13 +187,13 @@ fn open_file(path: &Path) -> Result<(File, String, u64), String> {
     Ok((file, name, metadata.len()))
 }
 
-/// None when the link is a serial port, else why it has no `what` (line settings, control
-/// lines): a replay, a TCP link whose bridge owns them
+/// None when the link is a serial port or an RFC 2217 one, else why it has no `what` (line
+/// settings, control lines): a replay, a TCP link whose bridge owns them
 fn serial_only(app: &App, what: &str) -> Result<(), String> {
     match app.link_kind() {
-        LinkKind::Serial => Ok(()),
-        LinkKind::Tcp(_) => Err(format!("a TCP link has no {what}, its bridge sets them")),
+        kind if kind.has_line_settings() => Ok(()),
         LinkKind::Replay => Err(format!("a replay has no {what}")),
+        _ => Err(format!("a TCP link has no {what}, its bridge sets them")),
     }
 }
 
@@ -314,10 +314,10 @@ pub fn open(app: &App, args: &[ArgValue]) -> Result<Action, String> {
         _ if app.link_kind() == LinkKind::Replay => {
             Err("a replay can't open a link (replay-stop ends it)".to_string())
         }
-        // a TCP link has no line: its bridge sets it
+        // a raw or telnet TCP link has no line: its bridge sets it
         address
             if let Some(line) = line
-                && !address.kind().is_tcp() =>
+                && address.kind().has_line_settings() =>
         {
             Ok(Action::App(AppAction::OpenLink(LinkConfig {
                 address,

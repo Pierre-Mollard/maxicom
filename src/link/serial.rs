@@ -301,6 +301,24 @@ impl LineSettings {
     pub fn bytes_per_sec(&self) -> f64 {
         f64::from(self.baud) / f64::from(self.framing.bits_per_char())
     }
+
+    /// DTR and RTS as asked after an open, one line at a time (MAX-9): RTS off before DTR
+    /// moves and on after, as one line moved alone can reset a board. RTS is left to the
+    /// driver under hardware flow control. For Windows and RFC 2217, which can't set both at
+    /// once
+    pub fn level_controls(&self) -> Vec<LineControl> {
+        let dtr = self.dtr.level();
+        let rts = (self.rts.level()).filter(|_| self.flow_control != FlowControl::RtsCts);
+        let mut controls = Vec::new();
+        if rts == Some(false) {
+            controls.push(LineControl::Rts(false));
+        }
+        controls.extend(dtr.map(LineControl::Dtr));
+        if rts == Some(true) {
+            controls.push(LineControl::Rts(true));
+        }
+        controls
+    }
 }
 
 /// 115200 8N1, no flow control, DTR and RTS as the OS puts them
@@ -497,16 +515,8 @@ impl SerialDevice {
             }
         }
         #[cfg(not(unix))]
-        {
-            if rts == Some(false) {
-                self.port.set_rts(false).map_err(LinkError::ControlFailed)?;
-            }
-            if let Some(on) = dtr {
-                self.port.set_dtr(on).map_err(LinkError::ControlFailed)?;
-            }
-            if rts == Some(true) {
-                self.port.set_rts(true).map_err(LinkError::ControlFailed)?;
-            }
+        for control in line.level_controls() {
+            self.control(control)?;
         }
         Ok(())
     }

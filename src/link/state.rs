@@ -167,24 +167,31 @@ impl LinkState {
         }
     }
 
-    /// New line settings: set on the open port, or kept for a detached one, which opens with
-    /// them (MAX-12)
+    /// New line settings: set on the open port or RFC 2217 server (MAX-161), or kept for a
+    /// detached one, which opens with them (MAX-12)
     pub fn reconfigure(&mut self, line: LineSettings) -> Reconfigured {
-        let reopens = self.kind().reopens();
-        match self.device.as_mut() {
-            Some(ByteSource::Serial(dev)) => match dev.reconfigure(&line) {
-                Ok(()) => {
-                    self.config.line = line;
-                    Reconfigured::Applied
-                }
-                Err(e) => Reconfigured::Refused(e),
-            },
-            None if reopens => {
+        let kind = self.kind();
+        let result = match self.device.as_mut() {
+            Some(ByteSource::Serial(dev)) => dev.reconfigure(&line),
+            Some(ByteSource::Tcp(dev)) if kind.has_line_settings() => dev.reconfigure(&line),
+            None if kind.reopens() => {
                 self.config.line = line;
-                Reconfigured::Kept
+                return Reconfigured::Kept;
             }
-            _ => Reconfigured::Ignored,
+            _ => return Reconfigured::Ignored,
+        };
+        match result {
+            Ok(()) => {
+                self.config.line = line;
+                Reconfigured::Applied
+            }
+            Err(e) => Reconfigured::Refused(e),
         }
+    }
+
+    /// What went wrong with RFC 2217 since the last call (MAX-161)
+    pub fn take_warnings(&mut self) -> Vec<String> {
+        (self.device.as_mut()).map_or_else(Vec::new, ByteSource::take_warnings)
     }
 
     /// Starts opening the link for `why`: the open running is dropped, but an attach takes its

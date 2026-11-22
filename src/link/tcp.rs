@@ -2,8 +2,9 @@
 //! ser2net or socat sharing a port, a serial device server in raw mode, QEMU's
 //! `-serial tcp::…`. Raw bytes, or telnet around them (MAX-161): the telnet layer is taken off
 //! the reads and put on the writes here, so what comes out and goes in is the device's bytes.
-//! No line settings, the bridge owns the baud. Reads and writes behave like `SerialDevice`'s,
-//! so the loop treats both alike
+//! No line settings, the bridge owns the baud, but with RFC 2217 (esptool's and pyserial's
+//! servers, ser2net's `telnet(rfc2217)`): the line and the control lines are set as on a serial
+//! port. Reads and writes behave like `SerialDevice`'s, so the loop treats both alike
 use std::{
     io::{self, ErrorKind, Read, Write},
     net::{SocketAddr, TcpStream, ToSocketAddrs},
@@ -17,7 +18,8 @@ use super::{
     error::is_gone,
     lock::{LinkLock, LockState, lock_state},
     probe::maxicom_label,
-    telnet::Telnet,
+    serial::{LineControl, LineSettings},
+    telnet::{ComPort, Telnet},
 };
 
 /// A read waits at most this, like the serial port's: the loop idles in the input poll
@@ -41,8 +43,14 @@ pub struct TcpDevice {
 
 impl TcpDevice {
     /// Connects to `addr` (`host:port`), trying each address the host resolves to for at most
-    /// `timeout`. The name lookup itself has no timeout. Telnet sends its requests at once
-    pub fn connect(addr: &str, protocol: Protocol, timeout: Duration) -> io::Result<Self> {
+    /// `timeout`. The name lookup itself has no timeout. Telnet sends its requests at once;
+    /// RFC 2217 sets `line` once the server agrees, as a serial open does
+    pub fn connect(
+        addr: &str,
+        protocol: Protocol,
+        line: &LineSettings,
+        timeout: Duration,
+    ) -> io::Result<Self> {
         let mut last_error = None;
         for socket in addr.to_socket_addrs()? {
             match Self::connect_to(socket, timeout) {
@@ -56,7 +64,11 @@ impl TcpDevice {
                         }
                         _ => None,
                     };
-                    let mut telnet = (protocol == Protocol::Telnet).then(Telnet::start);
+                    let mut telnet = match protocol {
+                        Protocol::Raw => None,
+                        Protocol::Telnet => Some(Telnet::start()),
+                        Protocol::Rfc2217 => Some(rfc2217(line)),
+                    };
                     if let Some(telnet) = &mut telnet {
                         stream.write_all(&telnet.take_replies())?;
                     }
@@ -106,10 +118,7 @@ impl TcpDevice {
             return Ok(read);
         };
         let len = telnet.decode(&mut buffer[..read]);
-        let replies = telnet.take_replies();
-        if !replies.is_empty() {
-            send(&mut self.stream, &replies)?;
-        }
+        self.flush()?;
         Ok(len)
     }
 
@@ -135,6 +144,67 @@ impl TcpDevice {
             None => send(&mut self.stream, buffer),
         }
     }
+
+    /// New line settings for the RFC 2217 server's port: DTR and RTS levels wait for the next
+    /// open, as on a serial port
+    pub fn reconfigure(&mut self, line: &LineSettings) -> Result<(), LinkError> {
+        let telnet = self.com_port().ok_or_else(|| {
+            LinkError::ConfigFailed(io::Error::other("the server refuses RFC 2217"))
+        })?;
+        for command in ComPort::line(line) {
+            telnet.set(command);
+        }
+        self.flush()
+    }
+
+    /// Sets DTR or RTS, or starts a break, on the RFC 2217 server's port: ending it is the
+    /// caller's, `end_break`
+    pub fn control(&mut self, control: LineControl) -> Result<(), LinkError> {
+        let telnet = self.com_port().ok_or(LinkError::NoControlLines)?;
+        telnet.set(control.into());
+        self.flush()
+    }
+
+    pub fn end_break(&mut self) -> Result<(), LinkError> {
+        let telnet = self.com_port().ok_or(LinkError::NoControlLines)?;
+        telnet.set(ComPort::Break(false));
+        self.flush()
+    }
+
+    /// What went wrong with RFC 2217 since the last call
+    pub fn take_warnings(&mut self) -> Vec<String> {
+        (self.telnet.as_mut()).map_or_else(Vec::new, Telnet::take_warnings)
+    }
+
+    /// The telnet layer when it speaks RFC 2217, the server not having refused it
+    fn com_port(&mut self) -> Option<&mut Telnet> {
+        self.telnet.as_mut().filter(|telnet| telnet.has_com_port())
+    }
+
+    /// Sends what the telnet layer has for the server
+    fn flush(&mut self) -> Result<(), LinkError> {
+        let Some(telnet) = &mut self.telnet else {
+            return Ok(());
+        };
+        let replies = telnet.take_replies();
+        if replies.is_empty() {
+            return Ok(());
+        }
+        send(&mut self.stream, &replies)
+    }
+}
+
+/// RFC 2217 with `line` set as a serial open sets it: the line settings, then DTR and RTS as
+/// asked, one at a time. Held until the server agrees
+fn rfc2217(line: &LineSettings) -> Telnet {
+    let mut telnet = Telnet::rfc2217();
+    for command in ComPort::line(line) {
+        telnet.set(command);
+    }
+    for control in line.level_controls() {
+        telnet.set(control.into());
+    }
+    telnet
 }
 
 /// A reset or broken connection is a lost link, as on a read (MAX-199)

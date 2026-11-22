@@ -106,8 +106,9 @@ sends `b` first. See [File transfers](file-transfers.md).
 They work like the [line settings popup](links.md#line-settings). On a
 detached port, they are kept for when it opens.
 
-The control lines, `break` and these three need a serial port: a TCP link
-(whose bridge owns the lines and settings) and a replay refuse them.
+The control lines, `break` and these three need a serial port or an
+RFC 2217 link: a raw or telnet TCP link (whose bridge owns the lines and
+settings) and a replay refuse them.
 
 ### While the port isn't open
 

@@ -50,12 +50,18 @@ A maxicom shows one link at a time, with no tabs or split views. To watch
 two devices, run two maxicoms. They can't open the same port: see
 [Port locks](locks.md).
 
-### No telnet, RFC 2217 or SSH
+### No SSH or TLS
 
-A TCP link carries raw bytes only. There is no telnet option negotiation,
-and no RFC 2217, so the baud rate of a remote port can't be set from
-maxicom. To reach a device behind SSH, forward a port with `ssh -L`. See
-[TCP links](tcp-links.md).
+maxicom is a serial terminal, so it has no SSH or TLS of its own. To reach
+a bridge over an encrypted link, forward its port with `ssh -L`. See
+[Through an SSH tunnel](tcp-links.md#through-an-ssh-tunnel).
+
+### RFC 2217: settings only
+
+An `rfc2217://` link sets the remote port's line and control lines, but
+doesn't show the state of its input lines (CTS, DSR, CD, RI) and ignores
+the server's flow control pauses. A plain `telnet://` link can't send a
+break.
 
 ### No modem dialing
 

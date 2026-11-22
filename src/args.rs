@@ -327,7 +327,7 @@ fn parse_args_from(
     line.rts = rts.unwrap_or(line.rts);
     if address
         .as_ref()
-        .is_some_and(|address| address.kind().is_tcp())
+        .is_some_and(|address| address.kind().is_tcp() && !address.kind().has_line_settings())
         && let Some(option) = line_options.first()
     {
         return Err(ParseError::BadFormat(format!(

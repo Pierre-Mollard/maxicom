@@ -123,9 +123,13 @@ fn open_links_hold_the_lock() {
     let Address::Tcp(addr, protocol) = &address else {
         unreachable!()
     };
-    let device =
-        super::super::tcp::TcpDevice::connect(addr, *protocol, std::time::Duration::from_secs(1))
-            .unwrap();
+    let device = super::super::tcp::TcpDevice::connect(
+        addr,
+        *protocol,
+        &Default::default(),
+        std::time::Duration::from_secs(1),
+    )
+    .unwrap();
     assert!(matches!(lock_state(&address), LockState::Held(Some(_))));
     drop(device);
     assert_eq!(lock_state(&address), LockState::Free);

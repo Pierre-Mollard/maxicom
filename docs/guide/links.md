@@ -37,9 +37,12 @@ it: `--baudrate=9600`, `-b9600`.
 ```bash
 maxicom tcp://192.168.1.50:4000
 maxicom --tcp 192.168.1.50:4000
+maxicom telnet://192.168.1.50:2000
+maxicom rfc2217://192.168.1.50:3335 -b 9600
 ```
 
-See [TCP links](tcp-links.md).
+`tcp://` is raw bytes, `telnet://` a telnet server, and `rfc2217://` a
+telnet server that lets maxicom set the line. See [TCP links](tcp-links.md).
 
 ### A saved link
 
@@ -110,8 +113,9 @@ framing in the status bar opens it too. It sets:
 Enter applies the changes. For a rate that isn't in the list, use `-b` at
 startup or the `baud` command.
 
-A TCP link has no line settings, since its bridge sets them: the popup only
-shows its address.
+A raw or telnet TCP link has no line settings, since its bridge sets them:
+the popup only shows its address. An RFC 2217 link has them, as a serial
+port does.
 
 ### From the command line
 
@@ -124,8 +128,8 @@ The same settings have commands, for the
 | `framing <8N1>` | The data bits (5 to 8), the parity (`N`, `E`, `O`) and the stop bits (1, 2): `framing 7E1` |
 | `flow none\|hw\|sw` | The flow control |
 
-On a detached port, they are kept for when it opens. A TCP link and a replay
-refuse them.
+On a detached port, they are kept for when it opens. A raw or telnet TCP
+link and a replay refuse them.
 
 ### DTR and RTS on open
 

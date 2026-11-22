@@ -1,5 +1,6 @@
 //! The TCP source against a local listener: connect, both directions, the close, refusal.
 use super::*;
+use crate::link::serial::LineLevel;
 use std::net::TcpListener;
 use std::time::Instant;
 
@@ -29,7 +30,8 @@ fn read_exactly(device: &mut TcpDevice, len: usize) -> Vec<u8> {
 #[test]
 fn bytes_go_both_ways() {
     let (listener, addr) = listener();
-    let mut device = TcpDevice::connect(&addr, Protocol::Raw, TIMEOUT).unwrap();
+    let mut device =
+        TcpDevice::connect(&addr, Protocol::Raw, &LineSettings::default(), TIMEOUT).unwrap();
     let (mut peer, _) = listener.accept().unwrap();
 
     let start = Instant::now();
@@ -50,7 +52,8 @@ fn bytes_go_both_ways() {
 #[test]
 fn peer_close_is_input_closed() {
     let (listener, addr) = listener();
-    let mut device = TcpDevice::connect(&addr, Protocol::Raw, TIMEOUT).unwrap();
+    let mut device =
+        TcpDevice::connect(&addr, Protocol::Raw, &LineSettings::default(), TIMEOUT).unwrap();
     drop(listener.accept().unwrap());
 
     let start = Instant::now();
@@ -69,7 +72,8 @@ fn peer_close_is_input_closed() {
 #[test]
 fn peer_reset_is_input_closed() {
     let (listener, addr) = listener();
-    let mut device = TcpDevice::connect(&addr, Protocol::Raw, TIMEOUT).unwrap();
+    let mut device =
+        TcpDevice::connect(&addr, Protocol::Raw, &LineSettings::default(), TIMEOUT).unwrap();
     let (peer, _) = listener.accept().unwrap();
     SockRef::from(&peer)
         .set_linger(Some(Duration::ZERO))
@@ -93,10 +97,11 @@ fn peer_reset_is_input_closed() {
 fn refused_then_reconnects() {
     let (listener, addr) = listener();
     drop(listener);
-    assert!(TcpDevice::connect(&addr, Protocol::Raw, TIMEOUT).is_err());
+    assert!(TcpDevice::connect(&addr, Protocol::Raw, &LineSettings::default(), TIMEOUT).is_err());
 
     let listener = TcpListener::bind(&addr).unwrap();
-    let mut device = TcpDevice::connect(&addr, Protocol::Raw, TIMEOUT).unwrap();
+    let mut device =
+        TcpDevice::connect(&addr, Protocol::Raw, &LineSettings::default(), TIMEOUT).unwrap();
     let (mut peer, _) = listener.accept().unwrap();
     peer.write_all(b"again").unwrap();
     assert_eq!(read_exactly(&mut device, 5), b"again");
@@ -106,8 +111,24 @@ fn refused_then_reconnects() {
 /// How: a malformed port.
 #[test]
 fn bad_address_is_an_error() {
-    assert!(TcpDevice::connect("127.0.0.1:notaport", Protocol::Raw, TIMEOUT).is_err());
-    assert!(TcpDevice::connect("127.0.0.1", Protocol::Raw, TIMEOUT).is_err());
+    assert!(
+        TcpDevice::connect(
+            "127.0.0.1:notaport",
+            Protocol::Raw,
+            &LineSettings::default(),
+            TIMEOUT
+        )
+        .is_err()
+    );
+    assert!(
+        TcpDevice::connect(
+            "127.0.0.1",
+            Protocol::Raw,
+            &LineSettings::default(),
+            TIMEOUT
+        )
+        .is_err()
+    );
 }
 
 /// MAX-161: a telnet link sends its requests on connect, takes the server's commands off what
@@ -124,7 +145,8 @@ fn telnet_link_speaks_telnet() {
     const ECHO: u8 = 1;
     const SGA: u8 = 3;
     let (listener, addr) = listener();
-    let mut device = TcpDevice::connect(&addr, Protocol::Telnet, TIMEOUT).unwrap();
+    let mut device =
+        TcpDevice::connect(&addr, Protocol::Telnet, &LineSettings::default(), TIMEOUT).unwrap();
     let (mut peer, _) = listener.accept().unwrap();
     peer.set_read_timeout(Some(TIMEOUT)).unwrap();
     let mut requests = [0; 12];
@@ -151,4 +173,70 @@ fn telnet_link_speaks_telnet() {
     let mut written = [0; 3];
     peer.read_exact(&mut written).unwrap();
     assert_eq!(written, *b"\xff\xff\r");
+}
+
+/// An RFC 2217 link offers COM-PORT-OPTION after the telnet requests, and sets the line once
+/// the server agrees: masks, line settings, then DTR before RTS on. Control lines go at once,
+/// an answer with another value is a warning, a raw link has no control lines.
+#[test]
+fn rfc2217_link_sets_the_line() {
+    const IAC: u8 = 255;
+    const DO: u8 = 253;
+    const WILL: u8 = 251;
+    const SB: u8 = 250;
+    const SE: u8 = 240;
+    const COM_PORT: u8 = 44;
+    let (server, addr) = listener();
+    let line = LineSettings {
+        baud: 9600,
+        dtr: LineLevel::Off,
+        rts: LineLevel::On,
+        ..LineSettings::default()
+    };
+    let mut device = TcpDevice::connect(&addr, Protocol::Rfc2217, &line, TIMEOUT).unwrap();
+    let (mut peer, _) = server.accept().unwrap();
+    peer.set_read_timeout(Some(TIMEOUT)).unwrap();
+    let mut requests = [0; 15];
+    peer.read_exact(&mut requests).unwrap();
+    assert_eq!(requests[12..], [IAC, WILL, COM_PORT]);
+
+    // a device byte after the answer: once read, the answer was too
+    peer.write_all(&[IAC, DO, COM_PORT, b'x']).unwrap();
+    assert_eq!(read_exactly(&mut device, 1), b"x");
+    #[rustfmt::skip]
+    let commands = [
+        IAC, SB, COM_PORT, 10, 0, IAC, SE,
+        IAC, SB, COM_PORT, 11, 0, IAC, SE,
+        IAC, SB, COM_PORT, 1, 0, 0, 37, 128, IAC, SE,
+        IAC, SB, COM_PORT, 2, 8, IAC, SE,
+        IAC, SB, COM_PORT, 3, 1, IAC, SE,
+        IAC, SB, COM_PORT, 4, 1, IAC, SE,
+        IAC, SB, COM_PORT, 5, 1, IAC, SE,
+        IAC, SB, COM_PORT, 5, 9, IAC, SE,
+        IAC, SB, COM_PORT, 5, 11, IAC, SE,
+    ];
+    let mut sent = [0; 66];
+    peer.read_exact(&mut sent).unwrap();
+    assert_eq!(sent, commands);
+
+    device.control(LineControl::Dtr(true)).unwrap();
+    let mut sent = [0; 7];
+    peer.read_exact(&mut sent).unwrap();
+    assert_eq!(sent, [IAC, SB, COM_PORT, 5, 8, IAC, SE]);
+
+    peer.write_all(&[IAC, SB, COM_PORT, 101, 0, 1, 194, 0, IAC, SE, b'a'])
+        .unwrap();
+    assert_eq!(read_exactly(&mut device, 1), b"a");
+    assert_eq!(
+        device.take_warnings(),
+        ["the server set 115200 baud, asked 9600 baud"]
+    );
+
+    let (raw_server, addr) = listener();
+    let mut raw = TcpDevice::connect(&addr, Protocol::Raw, &line, TIMEOUT).unwrap();
+    drop(raw_server);
+    assert!(matches!(
+        raw.control(LineControl::Dtr(true)),
+        Err(LinkError::NoControlLines)
+    ));
 }
