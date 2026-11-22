@@ -1996,6 +1996,10 @@ impl App {
                 self.overlay = Some(overlay);
                 UpdateEffect::None
             }
+            AppAction::CloseOverlay => {
+                self.close_overlay();
+                UpdateEffect::None
+            }
             AppAction::Quit => {
                 self.overlay = Some(Overlay::ConfirmQuit);
                 UpdateEffect::None

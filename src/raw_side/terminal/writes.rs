@@ -4,8 +4,6 @@
 
 use std::{collections::VecDeque, ops::Range};
 
-// NOTE: review here
-
 /// The alternate screen's flag, in a packed run's column
 const ALTERNATE: u16 = 1 << 15;
 

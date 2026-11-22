@@ -2262,8 +2262,8 @@ fn settings_and_help_copy_the_config_folder() {
     assert!(matches!(h.app.overlay(), Some(Overlay::Help(_))));
 }
 
-/// MAX-274: a file path too long for the settings popup is cut in its middle, so the row
-/// keeps its end, the file's name; a click still copies the whole path.
+/// MAX-274: a file path too long for the settings popup is cut in its middle between whole
+/// folders, so the row keeps the file's name whole; a click still copies the whole path.
 /// How: a theme set to a long path out of the config folder, the popup drawn at 80x24.
 #[test]
 fn settings_cut_a_long_path_in_its_middle() {
@@ -2278,7 +2278,7 @@ fn settings_cut_a_long_path_in_its_middle() {
     assert!(
         has(
             &rows,
-            "[1] Theme         : /srv/shared/maxicom/t…ark-high-contrast.toml"
+            "[1] Theme         : /srv/…/themes/dark-high-contrast.toml"
         ),
         "{rows:#?}"
     );
@@ -6823,6 +6823,133 @@ fn ctrl_c_goes_to_the_device() {
     let toasts = h.app.notifications.active_toasts();
     assert!(toasts.iter().any(|t| t.message == "^C sent"));
     assert!(h.app.overlay().is_none());
+}
+
+/// MAX-274: the quit key leaves from anywhere, three presses at most: over a popup that closes
+/// (the help, its filter typed in, the settings, a text field, the command line) it closes it,
+/// then asks, then quits; over an alert that doesn't close, and where the keys aren't a popup's
+/// (the history, the search bar, copy mode, a mark waiting for its letter, the prefix), it
+/// asks at once. After the prefix, `q` asks too.
+/// How: each context set up on a fresh app through the default keymap, then Ctrl-q until it
+/// quits.
+#[test]
+fn quit_key_quits_from_anywhere() {
+    use crossterm::event::KeyCode::Char;
+    let ctrl = KeyModifiers::CONTROL;
+    let none = KeyModifiers::NONE;
+    let open = |h: &mut Harness, overlay| {
+        h.app.update(Action::App(AppAction::OpenOverlay(overlay)));
+    };
+    // what puts the keys in a context, from a fresh app, and whether that's a popup it closes
+    type Setup = Box<dyn Fn(&mut Harness)>;
+    let contexts: Vec<(&str, bool, Setup)> = vec![
+        ("the history", false, Box::new(|_: &mut Harness| {})),
+        (
+            "help",
+            true,
+            Box::new(move |h: &mut Harness| open(h, Overlay::Help(HelpDialog::new()))),
+        ),
+        (
+            "help filter",
+            true,
+            Box::new(move |h: &mut Harness| {
+                open(h, Overlay::Help(HelpDialog::new()));
+                key_do(h, Char('/'), KeyModifiers::NONE);
+                key_do(h, Char('x'), KeyModifiers::NONE);
+            }),
+        ),
+        (
+            "settings",
+            true,
+            Box::new(move |h: &mut Harness| open(h, Overlay::Settings(SettingsDialog::new()))),
+        ),
+        (
+            "text field",
+            true,
+            Box::new(move |h: &mut Harness| {
+                let file = FilePathDialog::new(Stream::Text, "log.txt".into());
+                open(h, Overlay::FilePath(file));
+            }),
+        ),
+        (
+            "command line",
+            true,
+            Box::new(|h: &mut Harness| {
+                key_do(h, Char('a'), KeyModifiers::CONTROL);
+                key_do(h, Char(':'), KeyModifiers::NONE);
+                key_do(h, Char('s'), KeyModifiers::NONE);
+            }),
+        ),
+        (
+            "no device alert",
+            false,
+            Box::new(move |h: &mut Harness| open(h, Overlay::NoDevice)),
+        ),
+        (
+            "search",
+            false,
+            Box::new(|h: &mut Harness| {
+                key_do(h, Char('a'), KeyModifiers::CONTROL);
+                key_do(h, Char('/'), KeyModifiers::NONE);
+            }),
+        ),
+        (
+            "copy mode",
+            false,
+            Box::new(|h: &mut Harness| {
+                h.app.update(Action::CopyMode(CopyModeAction::Enter));
+            }),
+        ),
+        (
+            "mark",
+            false,
+            Box::new(|h: &mut Harness| {
+                h.app.update(Action::CopyMode(CopyModeAction::Enter));
+                key_do(h, Char(','), KeyModifiers::NONE);
+                assert!(h.app.pending_mark().is_some());
+            }),
+        ),
+        (
+            "prefix",
+            false,
+            Box::new(|h: &mut Harness| {
+                key_do(h, Char('a'), KeyModifiers::CONTROL);
+            }),
+        ),
+    ];
+    for (name, popup, setup) in contexts {
+        let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+        h.feed(b"one\r\n");
+        setup(&mut h);
+        h.draw();
+        if popup {
+            assert!(
+                !matches!(key_do(&mut h, Char('q'), ctrl), UpdateEffect::Quit),
+                "{name}"
+            );
+            assert!(h.app.overlay().is_none(), "{name}");
+        }
+        assert!(
+            !matches!(key_do(&mut h, Char('q'), ctrl), UpdateEffect::Quit),
+            "{name}"
+        );
+        assert!(
+            matches!(h.app.overlay(), Some(Overlay::ConfirmQuit)),
+            "{name}"
+        );
+        assert!(
+            matches!(key_do(&mut h, Char('q'), ctrl), UpdateEffect::Quit),
+            "{name}"
+        );
+    }
+
+    // the prefixed quit key asks too, in the search bar as elsewhere
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+    key_do(&mut h, Char('a'), ctrl);
+    key_do(&mut h, Char('/'), none);
+    key_do(&mut h, Char('a'), ctrl);
+    key_do(&mut h, Char('q'), none);
+    assert!(matches!(h.app.overlay(), Some(Overlay::ConfirmQuit)));
 }
 
 /// MAX-125: quitting asks first, by key or by mouse: Esc or `n` cancels; Enter, `y`, the

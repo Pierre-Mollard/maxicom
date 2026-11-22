@@ -129,8 +129,6 @@ impl Tokenizer {
         }
     }
 
-    // NOTE: review from here
-
     fn byte(&mut self, byte: u8, at: u64, out: &mut Vec<Token>) {
         match self.state {
             State::Ground => self.ground(byte, at, out),

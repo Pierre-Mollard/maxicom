@@ -116,10 +116,14 @@ pub fn cut(text: &str, width: usize) -> String {
 
 /// `text` cut to `width` columns in its middle, `…` between its start and its end (MAX-279):
 /// the end gets the larger half and any column the start leaves, being where a serial number,
-/// a part number or a port's suffix is. Nothing left for a width of 0
+/// a part number or a port's suffix is. A path is cut between whole folders, its file name
+/// kept whole, when that fits (MAX-274, `cut_path`). Nothing left for a width of 0
 pub fn cut_middle(text: &str, width: usize) -> String {
     if text.width() <= width {
         return text.to_string();
+    }
+    if let Some(cut) = cut_path(text, width) {
+        return cut;
     }
     let Some(room) = width.checked_sub(1) else {
         return String::new();
@@ -145,6 +149,34 @@ pub fn cut_middle(text: &str, width: usize) -> String {
     cut.push('…');
     cut.extend(tail);
     cut
+}
+
+/// A path cut between whole folders (MAX-274): its first folder, `…`, then as many of its last
+/// folders as fit and its file name whole, `/srv/…/themes/dark.toml`. `None` for text that
+/// isn't a path (`/`, `~`, `.`, `\\` or a drive letter first: not `tcp://host`), or when its
+/// first folder, `…` and its name don't fit
+fn cut_path(text: &str, width: usize) -> Option<String> {
+    let bytes = text.as_bytes();
+    let drive = bytes.first().is_some_and(u8::is_ascii_alphabetic)
+        && matches!(bytes.get(1..3), Some(b":\\" | b":/"));
+    if !text.starts_with(['/', '~', '.', '\\']) && !drive {
+        return None;
+    }
+    let separator = |c: char| matches!(c, '/' | '\\');
+    let separators: Vec<usize> = (text.char_indices())
+        .filter(|&(_, c)| separator(c))
+        .map(|(at, _)| at)
+        .collect();
+    // the head ends with the separator after the first folder: `/srv/`, `~/`, `C:\`
+    let head = 1 + *separators
+        .iter()
+        .find(|&&at| text[..at].contains(|c: char| !separator(c)))?;
+    let fits = |at: usize| text[..head].width() + 1 + text[at..].width() <= width;
+    // the tail from a separator: the name, then a folder more while it fits
+    let tail = (separators.iter().rev())
+        .take_while(|&&at| at >= head && fits(at))
+        .last()?;
+    Some(format!("{}…{}", &text[..head], &text[*tail..]))
 }
 
 /// A section header inside a popup

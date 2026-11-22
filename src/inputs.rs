@@ -106,6 +106,7 @@ pub enum AppAction {
     Mark(MarkAction),
     OpenMarks,
     OpenNotices,
+    CloseOverlay,
     Quit,
 }
 
@@ -331,6 +332,24 @@ pub fn handle_event(event: Event, app: &App) -> Action {
     let resolver = &app.key_resolver;
     let ctx = app.input_context();
 
+    // the quit key leaves from anywhere (MAX-274): it closes a popup that closes (a text field's
+    // and the help's filter with it), then asks, and asked, it quits (MAX-125): three presses at
+    // most. Over the link's alerts, the restore question or the loading, and in the search bar,
+    // copy mode or a mark waiting for its letter, it asks at once. The direct one, or the
+    // prefixed one after the prefix
+    let quit = Some(&KeyBindingAction::Quit);
+    if resolver.direct_actions.get(&pattern) == quit
+        || (app.is_prefix_active() && resolver.prefix_actions.get(&pattern) == quit)
+    {
+        return match app.overlay() {
+            Some(Overlay::ConfirmQuit) => Action::Overlay(DialogAction::Confirm),
+            Some(overlay) if overlay.closes_on_click_outside() => {
+                Action::App(AppAction::CloseOverlay)
+            }
+            _ => Action::App(AppAction::Quit),
+        };
+    }
+
     // the key after an add or jump mark key is its letter (MAX-164)
     if let Some(pending) = app.pending_mark()
         && ctx != InputContext::Overlay
@@ -341,12 +360,6 @@ pub fn handle_event(event: Event, app: &App) -> Action {
     // Actions using or ignoring with prefix
     match ctx {
         InputContext::Overlay => {
-            // a quit key again confirms the quit: Ctrl-Q twice quits fast (MAX-125)
-            if matches!(app.overlay(), Some(Overlay::ConfirmQuit))
-                && resolver.direct_actions.get(&pattern) == Some(&KeyBindingAction::Quit)
-            {
-                return Action::Overlay(DialogAction::Confirm);
-            }
             let is_text_input = app.overlay().map_or_else(|| false, |o| o.is_text_input());
 
             // the marks popup jumps on a letter, `q` and `j` too (MAX-164)

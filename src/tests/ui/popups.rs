@@ -117,3 +117,31 @@ fn middle_cut_keeps_both_ends() {
     assert_eq!(cut_middle(path, 1), "…");
     assert_eq!(cut_middle(path, 2), "…0");
 }
+
+/// MAX-274: a path cut in its middle keeps its file name whole: its first folder, `…`, then
+/// as many of its last folders as fit. A name too long for that, or text that isn't a path
+/// (an address), takes the plain middle cut.
+/// How: a long theme path in 40 columns, a `~` path in 20, a Windows path in 18, a by-id
+/// port, a short name in too little room, a `tcp://` address.
+#[test]
+fn path_cut_keeps_the_file_name() {
+    let theme = "/srv/shared/maxicom/teams/firmware-bring-up/themes/dark-high-contrast.toml";
+    assert_eq!(
+        cut_middle(theme, 40),
+        "/srv/…/themes/dark-high-contrast.toml"
+    );
+    assert_eq!(
+        cut_middle("~/.config/maxicom/theme.toml", 20),
+        "~/…/theme.toml"
+    );
+    assert_eq!(
+        cut_middle(r"C:\Users\me\logs\boot.raw", 18),
+        r"C:\…\logs\boot.raw"
+    );
+    // the name alone is longer than the room: the middle cut, its end kept
+    let by_id = "/dev/serial/by-id/usb-FTDI_FT232R_A50285BI-if00-port0";
+    assert_eq!(cut_middle(by_id, 20), "/dev/seri…if00-port0");
+    assert_eq!(cut_middle("/a/verylongname.toml", 8), "/a/…toml");
+    // not a path
+    assert_eq!(cut_middle("tcp://192.168.1.50:4000", 12), "tcp:/…0:4000");
+}

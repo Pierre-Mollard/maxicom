@@ -143,6 +143,13 @@ The keys of `[prefixed]` and `[direct]` do nothing in copy mode and search. A
 `[direct]` key bound to a named command is the exception: it runs in copy
 mode too, unless a `[copy_mode]` key takes it.
 
+The quit key is the other exception, and it works everywhere. Over a popup,
+its text fields included, it closes the popup; elsewhere (copy mode, the
+search bar) it asks whether to quit, and pressed again it quits. So
+pressing `Ctrl-q` three times always leaves maxicom. Over the link's alerts
+and the restore question, which don't just close, it asks at once. After
+the prefix, `Ctrl-a q` and `Ctrl-a x` do the same.
+
 The sections are named after the help's tabs. Up to 0.1.2, `[prefixed]`,
 `[direct]` and `[dialog]` were `[prefix_actions]`, `[direct_actions]` and
 `[dialog_actions]`: a file still using these names gets a warning, and its

@@ -8,6 +8,8 @@ you says so in an "Upgrading" section.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-22
+
 ### Upgrading
 
 The default status bar changed (see Changed). A `config.toml` written before
@@ -120,6 +122,22 @@ to send the focus reports.
 
 ### Changed
 
+- The help popup's rows are `key  help    name`: the key, what it does,
+  and the action's name at the end, muted. A `/` filter lists the matching
+  keys of every tab, and each key tab says where its keys work. The
+  command line's Ctrl-n and Ctrl-p walk the history like Down and Up, and
+  Esc hides its completion list before closing it.
+- Cut texts keep their end (a port's suffix, a serial number), and a path
+  keeps its file name. The settings popup's `[key] Change` hint leads its
+  footer, and the error popups and search bar say `Close` and `Cancel`.
+- The quit key works everywhere: over a popup (the help, a text field) it
+  closes it, elsewhere (the search bar, copy mode, a mark waiting for its
+  letter) it asks whether to quit, and pressed again it quits. Three
+  `Ctrl-q` always leave maxicom; it got stuck in the help until Esc.
+- A path too long for its place keeps its file name whole, cut between whole
+  folders: `/srv/…/themes/dark.toml` in the settings popup, the session
+  browser, the directory and the command line's completion. Other long text
+  is cut in its middle and keeps its end (a port's suffix, a serial number).
 - The default status bar keeps what needs you at its right end: `● REC`,
   `⟳ mash`, a replay and its `« live` button, then the scroll position. A
   narrow bar now drops RX / TX before them (the replay went first). `?` and
@@ -682,7 +700,8 @@ The first release. Everything below is described in the
   [status bar](https://pierre-mollard.github.io/maxicom/status-bar.html),
   reloaded while it runs (`Ctrl-a r`).
 
-[Unreleased]: https://github.com/Pierre-Mollard/maxicom/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/Pierre-Mollard/maxicom/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/Pierre-Mollard/maxicom/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Pierre-Mollard/maxicom/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Pierre-Mollard/maxicom/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Pierre-Mollard/maxicom/compare/v0.1.0...v0.1.1

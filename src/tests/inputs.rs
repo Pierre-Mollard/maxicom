@@ -160,7 +160,8 @@ fn search_from_copy_mode_takes_the_keys() {
 }
 
 /// In search mode the global navigation keys (direct and after the prefix) scroll and pan;
-/// other global actions are not reachable, and the other keys still edit the query.
+/// other global actions are not reachable but quit (MAX-274), and the other keys still edit
+/// the query.
 #[test]
 fn navigation_keys_work_in_search_mode() {
     let mut app = app();
@@ -179,12 +180,9 @@ fn navigation_keys_work_in_search_mode() {
         typed,
         Action::Search(SearchModeAction::HandleKey(_))
     ));
-    // ctrl-q is a direct action, but not navigation: it edits the query
+    // ctrl-q is a direct action, not navigation, but the quit key: it asks to quit (MAX-274)
     let quit = handle_event(ctrl('q'), &app);
-    assert!(matches!(
-        quit,
-        Action::Search(SearchModeAction::HandleKey(_))
-    ));
+    assert!(matches!(quit, Action::App(AppAction::Quit)));
 
     let prefix = handle_event(ctrl('a'), &app);
     assert!(matches!(prefix, Action::App(AppAction::SetPrefix(true))));
@@ -201,9 +199,9 @@ fn navigation_keys_work_in_search_mode() {
         side,
         Action::App(AppAction::SideView(SideViewAction::PanRight(2)))
     ));
-    // not navigation: dropped, not Quit
+    // not navigation, but the quit key: it asks to quit there too (MAX-274)
     let quit = handle_event(plain(KeyCode::Char('q')), &app);
-    assert!(matches!(quit, Action::App(AppAction::SetPrefix(false))));
+    assert!(matches!(quit, Action::App(AppAction::Quit)));
     // prefix twice: to the query, not the TX input
     let twice = handle_event(ctrl('a'), &app);
     assert!(matches!(
@@ -376,6 +374,7 @@ fn default_keymap_per_context() {
             "C => History(Clear)",
             "Ctrl-a => TransmitRaw([1])",
             "Ctrl-l => App(Redraw)",
+            "Ctrl-q => App(Quit)",
             "D => App(ToggleAttach)",
             "Down => History(ScrollDown(1))",
             "E => Terminal(AutoResizeEmulatorToViewer)",
@@ -444,6 +443,7 @@ fn default_keymap_per_context() {
             "? => Search(Start(Backward))",
             "Ctrl-a => App(SetPrefix(true))",
             "Ctrl-e => CopyMode(ScrollView(ScrollDown(1)))",
+            "Ctrl-q => App(Quit)",
             "Ctrl-y => CopyMode(ScrollView(ScrollUp(1)))",
             "Down => CopyMode(MoveDown)",
             "Enter => CopyMode(Yank)",
@@ -483,6 +483,7 @@ fn default_keymap_per_context() {
             "Ctrl-a => App(SetPrefix(true))",
             "Ctrl-n => Search(Next)",
             "Ctrl-p => Search(Previous)",
+            "Ctrl-q => App(Quit)",
             "Down => Search(History(false))",
             "Enter => Search(Confirm)",
             "Esc => Search(Cancel)",
@@ -504,6 +505,7 @@ fn default_keymap_per_context() {
         [
             "Ctrl-n => Overlay(CycleNext)",
             "Ctrl-p => Overlay(CyclePrev)",
+            "Ctrl-q => App(CloseOverlay)",
             "Enter => Overlay(Confirm)",
             "Esc => Overlay(Close)",
             "Shift-Tab => Overlay(CyclePrev)",
@@ -521,6 +523,7 @@ fn default_keymap_per_context() {
             "Ctrl-d => Overlay(PageDown)",
             "Ctrl-n => Overlay(CycleNext)",
             "Ctrl-p => Overlay(CyclePrev)",
+            "Ctrl-q => App(CloseOverlay)",
             "Ctrl-u => Overlay(PageUp)",
             "Down => Overlay(Down)",
             "End => Overlay(End)",

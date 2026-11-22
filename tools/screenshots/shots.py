@@ -704,7 +704,7 @@ SCENARIOS = {
         config=LINE, links=esp_link),
     # added: one per chapter that shows a popup or a state the text describes
     "help": lambda: scenario(
-        "help", [esp()], [fed(), press("C-a", "?"), wait(0.5)], config=LINE, links=esp_link),
+        "help", [esp()], [fed(), press("C-a", "z"), wait(0.5)], config=LINE, links=esp_link),
     "triggers": lambda: scenario(
         "triggers", [esp()], [fed(), press("C-a", "T"), press("Down"), wait(0.5)],
         config=LINE, links=esp_link, triggers=TRIGGERS),

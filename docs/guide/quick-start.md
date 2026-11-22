@@ -68,7 +68,8 @@ its line settings under a name. Next time, `maxicom <name>` opens it. See
 ## 10. Quit
 
 Press `Ctrl-a q` (or `Ctrl-q`), then `y`. Pressing `Ctrl-q` twice also
-quits.
+quits. From a popup, the first press closes it: three presses leave maxicom
+from anywhere.
 
 ## Lost?
 
