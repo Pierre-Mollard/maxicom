@@ -192,7 +192,7 @@ fn open_file(path: &Path) -> Result<(File, String, u64), String> {
 fn serial_only(app: &App, what: &str) -> Result<(), String> {
     match app.link_kind() {
         LinkKind::Serial => Ok(()),
-        LinkKind::Tcp => Err(format!("a TCP link has no {what}, its bridge sets them")),
+        LinkKind::Tcp(_) => Err(format!("a TCP link has no {what}, its bridge sets them")),
         LinkKind::Replay => Err(format!("a replay has no {what}")),
     }
 }
@@ -291,7 +291,7 @@ fn link_open(app: &App) -> Result<(), String> {
     }
 }
 
-/// `open <name | port | tcp://host:port | file://path>`: the link switches to it; the rest of
+/// `open <name | port | tcp://host:port | telnet://host:port | file://path>`: the link switches to it; the rest of
 /// the line waits for it to be open. A saved link's name first (MAX-185), which opens with its
 /// line settings; a port keeps the ones in use. A `file://` is a replay, without delay
 pub fn open(app: &App, args: &[ArgValue]) -> Result<Action, String> {
@@ -317,7 +317,7 @@ pub fn open(app: &App, args: &[ArgValue]) -> Result<Action, String> {
         // a TCP link has no line: its bridge sets it
         address
             if let Some(line) = line
-                && address.kind() != LinkKind::Tcp =>
+                && !address.kind().is_tcp() =>
         {
             Ok(Action::App(AppAction::OpenLink(LinkConfig {
                 address,

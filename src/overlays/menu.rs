@@ -36,7 +36,7 @@ impl ActionMenu {
         };
         // a replay started while running goes back to the live link (MAX-168)
         let attach = match link {
-            LinkKind::Serial | LinkKind::Tcp => "Detach / attach",
+            LinkKind::Serial | LinkKind::Tcp(_) => "Detach / attach",
             LinkKind::Replay => "Back to live",
         };
         let record = if recording {

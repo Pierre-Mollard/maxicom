@@ -5,13 +5,15 @@
 //! * serial port, `serial`: `/dev/ttyUSB0`, `COM3`. Has line settings (baud, framing)
 //! * raw TCP, `tcp` (MAX-156): `tcp://host:port`. A bridge (ESP32 firmware, ser2net, socat,
 //!   a serial device server, QEMU) owns the line settings
+//! * telnet, `telnet` (MAX-161): `telnet://host:port`, a TCP link with telnet around the bytes:
+//!   ser2net's telnet ports, serial device servers and console servers in telnet mode
 //! * replay, `replay`: `file://path`, a raw capture played back. Never written, no session
 //!
 //! The address is an `Address`, read once from its text (MAX-166). What each kind can do is
 //! its `LinkKind`'s, so a check asks the kind, never the address's text.
 //!
-//! Planned: telnet `telnet://host:port` (MAX-161, no line settings), RFC 2217
-//! `rfc2217://host:port` (line settings set remotely), Unix sockets and Windows named pipes
+//! Planned: RFC 2217 `rfc2217://host:port` (MAX-161, line settings set remotely), Unix
+//! sockets and Windows named pipes
 pub mod address;
 pub mod config;
 pub mod error;
@@ -21,6 +23,7 @@ pub mod replay;
 pub mod serial;
 pub mod state;
 pub mod tcp;
+pub mod telnet;
 
 use std::{
     io,
@@ -29,7 +32,7 @@ use std::{
     time::Duration,
 };
 
-pub use address::Address;
+pub use address::{Address, Protocol};
 pub use config::LinkConfig;
 pub use error::LinkError;
 use replay::Replay;
@@ -93,7 +96,7 @@ impl ByteSource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkKind {
     Serial,
-    Tcp,
+    Tcp(Protocol),
     Replay,
 }
 
@@ -117,18 +120,27 @@ impl LinkKind {
     }
 
     /// Whether maxicom sets the link's line settings (baud, framing, flow control): a serial
-    /// port does; a raw TCP link doesn't, its bridge owns them, nor does a replayed file. Later
-    /// RFC 2217 will, telnet won't
+    /// port does; a TCP link doesn't, its bridge owns them, nor does a replayed file. Later
+    /// RFC 2217 will
     pub fn has_line_settings(self) -> bool {
         self == LinkKind::Serial
     }
 
     /// What a link without line settings shows in place of its baud and framing, read together
-    /// as "raw TCP": in the status bar and the session browser. None for a replay, whose stand-in
-    /// is its state, which the status bar writes
+    /// as "raw TCP" or "telnet TCP": in the status bar, the session browser and the directory.
+    /// None for a replay, whose stand-in is its state, which the status bar writes
     pub fn line_stand_in(self) -> Option<[&'static str; 2]> {
-        // TODO: (MAX-161) "telnet TCP" for telnet://, and the later kinds without line settings
-        (self == LinkKind::Tcp).then_some(["raw", "TCP"])
+        match self {
+            LinkKind::Tcp(Protocol::Raw) => Some(["raw", "TCP"]),
+            LinkKind::Tcp(Protocol::Telnet) => Some(["telnet", "TCP"]),
+            LinkKind::Serial | LinkKind::Replay => None,
+        }
+    }
+
+    /// Whether the link is a TCP connection, raw or telnet: it connects in a thread, says it
+    /// connects, and is saved for every machine
+    pub fn is_tcp(self) -> bool {
+        matches!(self, LinkKind::Tcp(_))
     }
 
     /// What the popups, notices and menu call the link at the start of a label: "Serial port
@@ -136,18 +148,18 @@ impl LinkKind {
     pub fn name(self) -> &'static str {
         match self {
             LinkKind::Serial => "Serial port",
-            LinkKind::Tcp => "TCP connection",
+            LinkKind::Tcp(_) => "TCP connection",
             LinkKind::Replay => "Replay",
         }
     }
 }
 
 /// Opens the link `config.address` names, waiting for it: a serial port, or a TCP
-/// connection
+/// connection, raw or telnet
 pub fn open(config: &LinkConfig) -> Result<ByteSource, LinkError> {
     match &config.address {
         Address::Serial(device) => SerialDevice::open(device, &config.line).map(ByteSource::Serial),
-        Address::Tcp(addr) => TcpDevice::connect(addr, CONNECT_TIMEOUT)
+        Address::Tcp(addr, protocol) => TcpDevice::connect(addr, *protocol, CONNECT_TIMEOUT)
             .map(ByteSource::Tcp)
             .map_err(|source| LinkError::ConnectFailed {
                 addr: addr.clone(),
@@ -180,7 +192,7 @@ impl Opener {
             return;
         }
         let (sender, receiver) = mpsc::channel();
-        if let Address::Tcp(_) = config.address {
+        if let Address::Tcp(..) = config.address {
             let config = config.clone();
             thread::spawn(move || {
                 let _ = sender.send(open(&config));

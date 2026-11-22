@@ -18,7 +18,12 @@ fn rows_follow_the_state() {
     assert!(labels(&line).contains(&"Serial port"));
     assert!(labels(&line).contains(&"Detach / attach"));
 
-    let term = ActionMenu::new((0, 0), Mode::Terminal, LinkKind::Tcp, true);
+    let term = ActionMenu::new(
+        (0, 0),
+        Mode::Terminal,
+        LinkKind::Tcp(crate::link::Protocol::Raw),
+        true,
+    );
     assert!(labels(&term).contains(&"Switch to LINE"));
     assert!(labels(&term).contains(&"Stop recording"));
     assert!(!labels(&term).contains(&"Record…"));

@@ -314,7 +314,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         _ if pick_from.is_some() => None,
         // connected in the loop, like a reconnect, so the UI is up and says it's connecting.
         // The arguments refused a malformed address
-        Address::Tcp(_) => None,
+        Address::Tcp(..) => None,
         // opened by the app below, as the `replay` command does (MAX-168)
         Address::Replay(_) => None,
         Address::Serial(_) => match link::open(&link_config) {

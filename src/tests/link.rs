@@ -24,7 +24,7 @@ fn wait(opener: &mut Opener) -> Result<ByteSource, LinkError> {
 
 /// MAX-166: what each kind does: a replay is never written, keeps no session, never
 /// reopens and has no line settings; a serial port and a TCP link do the first three, only a
-/// serial port has line settings. A TCP link shows "raw TCP" in their place.
+/// serial port has line settings. A TCP link shows "raw TCP" or "telnet TCP" in their place.
 /// How: the answers of each kind. The kind each address names is `address`'s test.
 #[test]
 fn link_kinds() {
@@ -37,9 +37,18 @@ fn link_kinds() {
         ]
     };
     assert_eq!(answers(LinkKind::Serial), [true; 4]);
-    assert_eq!(answers(LinkKind::Tcp), [true, true, true, false]);
+    for protocol in Protocol::ALL {
+        assert_eq!(answers(LinkKind::Tcp(protocol)), [true, true, true, false]);
+    }
     assert_eq!(answers(LinkKind::Replay), [false; 4]);
-    assert_eq!(LinkKind::Tcp.line_stand_in(), Some(["raw", "TCP"]));
+    assert_eq!(
+        LinkKind::Tcp(Protocol::Raw).line_stand_in(),
+        Some(["raw", "TCP"])
+    );
+    assert_eq!(
+        LinkKind::Tcp(Protocol::Telnet).line_stand_in(),
+        Some(["telnet", "TCP"])
+    );
     assert_eq!(LinkKind::Serial.line_stand_in(), None);
     assert_eq!(LinkKind::Replay.line_stand_in(), None);
 }

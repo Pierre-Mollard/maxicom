@@ -3,7 +3,7 @@ use std::{env, path::PathBuf, time::Duration};
 use crate::{
     configs::{LinkDefaults, TextEncoding, links::SavedLink},
     link::{
-        Address, LinkKind,
+        Address,
         serial::{CharSize, FlowControl, LineLevel, LineSettings, Parity, StopBits},
     },
 };
@@ -327,7 +327,7 @@ fn parse_args_from(
     line.rts = rts.unwrap_or(line.rts);
     if address
         .as_ref()
-        .is_some_and(|address| address.kind() == LinkKind::Tcp)
+        .is_some_and(|address| address.kind().is_tcp())
         && let Some(option) = line_options.first()
     {
         return Err(ParseError::BadFormat(format!(
@@ -373,8 +373,8 @@ Usage:
   LINK                     A saved link's name (links.toml), opened with its line
                            settings, the options over them
   DEVICE                   A serial port (/dev/ttyUSB0, COM3), a TCP link
-                           (tcp://192.168.1.50:4000) or a file to replay
-                           (file://boot.raw), same as --device
+                           (tcp://192.168.1.50:4000, telnet://host:port) or a
+                           file to replay (file://boot.raw), same as --device
 
 Options:
   -D, --device <DEVICE>    Device to open, never a saved name [default: [link]

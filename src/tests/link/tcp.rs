@@ -29,7 +29,7 @@ fn read_exactly(device: &mut TcpDevice, len: usize) -> Vec<u8> {
 #[test]
 fn bytes_go_both_ways() {
     let (listener, addr) = listener();
-    let mut device = TcpDevice::connect(&addr, TIMEOUT).unwrap();
+    let mut device = TcpDevice::connect(&addr, Protocol::Raw, TIMEOUT).unwrap();
     let (mut peer, _) = listener.accept().unwrap();
 
     let start = Instant::now();
@@ -50,7 +50,7 @@ fn bytes_go_both_ways() {
 #[test]
 fn peer_close_is_input_closed() {
     let (listener, addr) = listener();
-    let mut device = TcpDevice::connect(&addr, TIMEOUT).unwrap();
+    let mut device = TcpDevice::connect(&addr, Protocol::Raw, TIMEOUT).unwrap();
     drop(listener.accept().unwrap());
 
     let start = Instant::now();
@@ -69,7 +69,7 @@ fn peer_close_is_input_closed() {
 #[test]
 fn peer_reset_is_input_closed() {
     let (listener, addr) = listener();
-    let mut device = TcpDevice::connect(&addr, TIMEOUT).unwrap();
+    let mut device = TcpDevice::connect(&addr, Protocol::Raw, TIMEOUT).unwrap();
     let (peer, _) = listener.accept().unwrap();
     SockRef::from(&peer)
         .set_linger(Some(Duration::ZERO))
@@ -93,10 +93,10 @@ fn peer_reset_is_input_closed() {
 fn refused_then_reconnects() {
     let (listener, addr) = listener();
     drop(listener);
-    assert!(TcpDevice::connect(&addr, TIMEOUT).is_err());
+    assert!(TcpDevice::connect(&addr, Protocol::Raw, TIMEOUT).is_err());
 
     let listener = TcpListener::bind(&addr).unwrap();
-    let mut device = TcpDevice::connect(&addr, TIMEOUT).unwrap();
+    let mut device = TcpDevice::connect(&addr, Protocol::Raw, TIMEOUT).unwrap();
     let (mut peer, _) = listener.accept().unwrap();
     peer.write_all(b"again").unwrap();
     assert_eq!(read_exactly(&mut device, 5), b"again");
@@ -106,6 +106,49 @@ fn refused_then_reconnects() {
 /// How: a malformed port.
 #[test]
 fn bad_address_is_an_error() {
-    assert!(TcpDevice::connect("127.0.0.1:notaport", TIMEOUT).is_err());
-    assert!(TcpDevice::connect("127.0.0.1", TIMEOUT).is_err());
+    assert!(TcpDevice::connect("127.0.0.1:notaport", Protocol::Raw, TIMEOUT).is_err());
+    assert!(TcpDevice::connect("127.0.0.1", Protocol::Raw, TIMEOUT).is_err());
+}
+
+/// MAX-161: a telnet link sends its requests on connect, takes the server's commands off what
+/// it reads and answers them on the socket, and escapes what it writes.
+/// How: the listener plays a telnet server: it reads the requests, agrees to them, offers
+/// ECHO (refused) around the device's bytes with a doubled `0xFF`, then reads a write.
+#[test]
+fn telnet_link_speaks_telnet() {
+    const IAC: u8 = 255;
+    const DONT: u8 = 254;
+    const DO: u8 = 253;
+    const WILL: u8 = 251;
+    const BINARY: u8 = 0;
+    const ECHO: u8 = 1;
+    const SGA: u8 = 3;
+    let (listener, addr) = listener();
+    let mut device = TcpDevice::connect(&addr, Protocol::Telnet, TIMEOUT).unwrap();
+    let (mut peer, _) = listener.accept().unwrap();
+    peer.set_read_timeout(Some(TIMEOUT)).unwrap();
+    let mut requests = [0; 12];
+    peer.read_exact(&mut requests).unwrap();
+    assert_eq!(
+        requests,
+        [
+            IAC, WILL, BINARY, IAC, DO, BINARY, IAC, WILL, SGA, IAC, DO, SGA
+        ]
+    );
+
+    let agreed = [
+        IAC, WILL, BINARY, IAC, DO, BINARY, IAC, WILL, SGA, IAC, DO, SGA,
+    ];
+    peer.write_all(&agreed).unwrap();
+    peer.write_all(&[IAC, WILL, ECHO]).unwrap();
+    peer.write_all(b"boot \xff\xff\r\n").unwrap();
+    assert_eq!(read_exactly(&mut device, 8), b"boot \xff\r\n");
+    let mut reply = [0; 3];
+    peer.read_exact(&mut reply).unwrap();
+    assert_eq!(reply, [IAC, DONT, ECHO]);
+
+    device.write(b"\xff\r").unwrap();
+    let mut written = [0; 3];
+    peer.read_exact(&mut written).unwrap();
+    assert_eq!(written, *b"\xff\xff\r");
 }

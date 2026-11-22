@@ -227,7 +227,7 @@ impl Directory {
             };
             self.opening = Some(config.address.to_string());
             return match config.address.kind() {
-                LinkKind::Tcp => OverlayResponse::Open(config.address),
+                LinkKind::Tcp(_) => OverlayResponse::Open(config.address),
                 _ => OverlayResponse::OpenLink(config),
             };
         }

@@ -11,13 +11,33 @@ use super::LinkKind;
 pub enum Address {
     /// A device path, `/dev/ttyUSB0`, or a port name, `COM3`
     Serial(String),
-    /// `host:port`, written `tcp://host:port`
-    Tcp(String),
+    /// `host:port`, written `tcp://host:port` or `telnet://host:port`
+    Tcp(String, Protocol),
     /// The file a replay reads, written `file://path`
     Replay(PathBuf),
 }
 
-/// `tcp://host:port` is a TCP link, `file://path` a replay, anything else a serial device.
+/// What a TCP link speaks (MAX-161): the device's bytes as they are, or telnet around them
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Protocol {
+    Raw,
+    Telnet,
+}
+
+impl Protocol {
+    pub const ALL: [Protocol; 2] = [Protocol::Raw, Protocol::Telnet];
+
+    /// The address prefix without `://`: `tcp`, `telnet`
+    pub fn scheme(self) -> &'static str {
+        match self {
+            Protocol::Raw => "tcp",
+            Protocol::Telnet => "telnet",
+        }
+    }
+}
+
+/// `tcp://host:port` and `telnet://host:port` are TCP links, `file://path` a replay, anything
+/// else a serial device.
 /// The prefixes are lowercase only: `FILE://x` is a device name. Refused: an empty device or
 /// path, and a TCP address that isn't `host:port`, as it would never open
 impl FromStr for Address {
@@ -28,9 +48,11 @@ impl FromStr for Address {
                 return Err("file:// needs a path".to_string());
             }
             Ok(Address::Replay(PathBuf::from(path)))
-        } else if let Some(addr) = text.strip_prefix("tcp://") {
+        } else if let Some((addr, protocol)) = (Protocol::ALL.into_iter())
+            .find_map(|p| Some((text.strip_prefix(p.scheme())?.strip_prefix("://")?, p)))
+        {
             check_host_port(addr)?;
-            Ok(Address::Tcp(addr.to_string()))
+            Ok(Address::Tcp(addr.to_string(), protocol))
         } else if text.is_empty() {
             Err("the device is empty".to_string())
         } else {
@@ -51,7 +73,7 @@ impl Address {
     pub fn kind(&self) -> LinkKind {
         match self {
             Address::Serial(_) => LinkKind::Serial,
-            Address::Tcp(_) => LinkKind::Tcp,
+            Address::Tcp(_, protocol) => LinkKind::Tcp(*protocol),
             Address::Replay(_) => LinkKind::Replay,
         }
     }
@@ -69,7 +91,7 @@ impl Address {
     pub fn tag(&self) -> Cow<'_, str> {
         match self {
             Address::Serial(device) => Cow::Borrowed(last_part(device)),
-            Address::Tcp(addr) => Cow::Borrowed(addr),
+            Address::Tcp(addr, _) => Cow::Borrowed(addr),
             Address::Replay(path) => match path.to_string_lossy() {
                 Cow::Borrowed(text) => Cow::Borrowed(last_part(text)),
                 Cow::Owned(text) => Cow::Owned(last_part(&text).to_string()),
@@ -79,7 +101,8 @@ impl Address {
 
     /// The tag kept to the characters safe in a file name: `/dev/ttyUSB0` gives `ttyUSB0`,
     /// `tcp://192.168.1.50:4000` gives `192.168.1.50_4000` (no `:` on Windows). For the
-    /// session names (MAX-156) and the lock files (MAX-186)
+    /// session names (MAX-156) and the lock files (MAX-186): one lock for a server's port,
+    /// raw or telnet
     pub fn file_tag(&self) -> String {
         (self.tag().chars())
             .map(|c| {
@@ -103,7 +126,7 @@ impl fmt::Display for Address {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Address::Serial(device) => write!(f, "{device}"),
-            Address::Tcp(addr) => write!(f, "tcp://{addr}"),
+            Address::Tcp(addr, protocol) => write!(f, "{}://{addr}", protocol.scheme()),
             Address::Replay(path) => write!(f, "file://{}", path.display()),
         }
     }

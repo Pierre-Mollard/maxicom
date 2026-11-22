@@ -12,7 +12,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::{
     app::App,
     configs::{KeyPattern, KeyResolver, ThemeConfig, keybindings::KeyBindingDialogAction},
-    link::{Address, LinkConfig, LinkKind, probe::ProbeState},
+    link::{Address, LinkConfig, probe::ProbeState},
     overlays::{Directory, DirectoryTab, LinkForm, LinkFormField, PopupTarget},
     ui::{
         common::popup_area,
@@ -464,11 +464,11 @@ fn rows(app: &App, directory: &Directory, tab: DirectoryTab, theme: &ThemeConfig
         .collect()
 }
 
-/// A link's line settings as a row shows them: `115200 8N1`, `raw TCP` for TCP
+/// A link's line settings as a row shows them: `115200 8N1`, `raw TCP` or `telnet TCP` for TCP
 fn line(config: &LinkConfig) -> String {
-    match config.address.kind() {
-        LinkKind::Tcp => "raw TCP".to_string(),
-        _ => format!("{} {}", config.line.baud, config.line.framing),
+    match config.address.kind().line_stand_in() {
+        Some(stand_in) => stand_in.join(" "),
+        None => format!("{} {}", config.line.baud, config.line.framing),
     }
 }
 

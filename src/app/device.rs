@@ -74,7 +74,7 @@ impl App {
         if self.link.is_open() {
             return;
         }
-        if self.link_kind() == LinkKind::Tcp {
+        if self.link_kind().is_tcp() {
             self.begin_open(OpenFor::Start);
         } else if matches!(self.overlay(), Some(Overlay::RestoreSession(_))) {
             self.disconnected_after_restore = true;
@@ -925,7 +925,7 @@ impl App {
     /// Starts opening the link for `why`; a TCP link says it connects, which takes a while
     fn begin_open(&mut self, why: OpenFor) {
         self.link.begin_open(why);
-        if self.link_kind() == LinkKind::Tcp {
+        if self.link_kind().is_tcp() {
             let message = format!("Connecting to {}", self.link_label());
             self.notify_link(ToastLevel::Info, message);
         }

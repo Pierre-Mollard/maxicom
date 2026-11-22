@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     configs::LinkDefaults,
     link::{
-        Address, LinkConfig, LinkKind,
+        Address, LinkConfig,
         serial::{FlowControl, LineLevel, LineSettings, Parity},
     },
     paths::create_parent_dirs,
@@ -63,7 +63,7 @@ impl SavedLink {
     /// with all its line settings; a TCP link for every machine, without any
     pub fn from_config(name: String, config: &LinkConfig, host: Option<&str>) -> Self {
         let address = config.address.to_string();
-        if config.address.kind() == LinkKind::Tcp {
+        if config.address.kind().is_tcp() {
             return Self {
                 name,
                 address,
@@ -143,7 +143,7 @@ impl SavedLink {
             return Err("a host is empty".to_string());
         }
         let address: Address = self.address.parse()?;
-        if address.kind() == LinkKind::Tcp && self.has_line_fields() {
+        if address.kind().is_tcp() && self.has_line_fields() {
             return Err("a TCP link has no line settings: its bridge sets the line".to_string());
         }
         // `[link]`'s checks, on this link's fields over valid ones
@@ -255,7 +255,7 @@ pub fn default_name(address: &Address) -> String {
     };
     match address {
         Address::Serial(device) => file_name(Path::new(device), false),
-        Address::Tcp(host_port) => Some(host_port.clone()),
+        Address::Tcp(host_port, _) => Some(host_port.clone()),
         Address::Replay(path) => file_name(path, true),
     }
     .unwrap_or_else(|| address.to_string())

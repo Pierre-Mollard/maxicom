@@ -676,7 +676,7 @@ impl App {
     pub fn line_settings(&self) -> Option<CaptureLine> {
         match self.link_kind() {
             LinkKind::Serial => Some(CaptureLine::of(&self.link.config().line)),
-            LinkKind::Tcp => None,
+            LinkKind::Tcp(_) => None,
             LinkKind::Replay => self.recorded_line(),
         }
     }

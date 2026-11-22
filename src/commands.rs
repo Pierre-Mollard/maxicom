@@ -4,7 +4,11 @@
 use std::path::{Path, PathBuf};
 
 use crate::{
-    app::App, configs::KeyBindingAction, inputs::Action, link::Address, paths::expand_home,
+    app::App,
+    configs::KeyBindingAction,
+    inputs::Action,
+    link::{Address, Protocol},
+    paths::expand_home,
 };
 
 pub mod build;
@@ -462,7 +466,7 @@ pub static COMMANDS: &[CommandSpec] = {
             "open",
             &[arg("address", ArgKind::Address)],
             build::open,
-            "Switch to a saved link, a port (its settings kept), tcp://host:port or file://path",
+            "Switch to a saved link, a port (its settings kept), tcp:// or telnet://host:port or file://path",
         ),
         CommandSpec::build(
             "link-save",
@@ -901,19 +905,21 @@ fn path_candidates(prefix: &str) -> Vec<String> {
     candidates
 }
 
-/// An address's completion (MAX-168): the saved links' names (MAX-185), the `tcp://` and
-/// `file://` schemes and the serial ports starting like it, then the disk's entries for a path
-/// being typed. After `file://`, the paths only; after `tcp://`, nothing (no host is known)
+/// An address's completion (MAX-168): the saved links' names (MAX-185), the `tcp://`,
+/// `telnet://` and `file://` schemes and the serial ports starting like it, then the disk's
+/// entries for a path being typed. After `file://`, the paths only; after a TCP scheme, nothing
+/// (no host is known)
 fn address_candidates(prefix: &str, link_names: &[String], ports: &[String]) -> Vec<String> {
     if let Some(path) = prefix.strip_prefix("file://") {
         return (path_candidates(path).into_iter())
             .map(|path| format!("file://{path}"))
             .collect();
     }
-    if prefix.starts_with("tcp://") {
+    let tcp_schemes = Protocol::ALL.map(|protocol| format!("{}://", protocol.scheme()));
+    if tcp_schemes.iter().any(|scheme| prefix.starts_with(scheme)) {
         return Vec::new();
     }
-    let schemes = ["tcp://", "file://"].into_iter().map(String::from);
+    let schemes = tcp_schemes.into_iter().chain(["file://".to_string()]);
     let mut candidates: Vec<String> = (link_names.iter().map(|name| escape_word(name)))
         .chain(schemes)
         .chain(ports.iter().map(|port| escape_word(port)))

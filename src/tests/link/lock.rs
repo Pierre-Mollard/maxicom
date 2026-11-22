@@ -120,11 +120,12 @@ fn open_links_hold_the_lock() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = format!("tcp://{}", listener.local_addr().unwrap());
     let address: Address = address.parse().unwrap();
-    let Address::Tcp(addr) = &address else {
+    let Address::Tcp(addr, protocol) = &address else {
         unreachable!()
     };
     let device =
-        super::super::tcp::TcpDevice::connect(addr, std::time::Duration::from_secs(1)).unwrap();
+        super::super::tcp::TcpDevice::connect(addr, *protocol, std::time::Duration::from_secs(1))
+            .unwrap();
     assert!(matches!(lock_state(&address), LockState::Held(Some(_))));
     drop(device);
     assert_eq!(lock_state(&address), LockState::Free);

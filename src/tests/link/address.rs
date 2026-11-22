@@ -17,15 +17,21 @@ fn address_forms() {
         ("TCP://host:1", LinkKind::Serial, "TCP://host:1", "host:1"),
         (
             "tcp://192.168.1.50:4000",
-            LinkKind::Tcp,
+            LinkKind::Tcp(Protocol::Raw),
             "tcp://192.168.1.50:4000",
             "192.168.1.50:4000",
         ),
         (
-            "tcp://localhost:23",
-            LinkKind::Tcp,
-            "tcp://localhost:23",
+            "telnet://localhost:23",
+            LinkKind::Tcp(Protocol::Telnet),
+            "telnet://localhost:23",
             "localhost:23",
+        ),
+        (
+            "TELNET://host:1",
+            LinkKind::Serial,
+            "TELNET://host:1",
+            "host:1",
         ),
         (
             "file:///tmp/logs/x.raw",
@@ -49,7 +55,12 @@ fn address_forms() {
     }
     assert_eq!(
         "tcp://192.168.1.50:4000".parse(),
-        Ok(Address::Tcp("192.168.1.50:4000".to_string()))
+        Ok(Address::Tcp("192.168.1.50:4000".to_string(), Protocol::Raw))
+    );
+    assert_eq!(
+        "telnet://h:23".parse::<Address>().unwrap().file_tag(),
+        "tcp://h:23".parse::<Address>().unwrap().file_tag(),
+        "one lock and session tag for a server's port, raw or telnet"
     );
     assert_eq!(
         "file:///tmp/x.raw".parse(),

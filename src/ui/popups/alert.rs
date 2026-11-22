@@ -49,7 +49,7 @@ impl LinkAlert {
                 after: " was closed or unplugged.",
                 next: "Waiting for it to come back...",
             },
-            LinkKind::Tcp => Self {
+            LinkKind::Tcp(_) => Self {
                 headline: "◆ TCP CONNECTION LOST ◆",
                 before: "",
                 after: " closed the connection or stopped answering.",
@@ -73,7 +73,7 @@ impl LinkAlert {
                 after: " was released.",
                 next: "Other programs can open it now.",
             },
-            LinkKind::Tcp => Self {
+            LinkKind::Tcp(_) => Self {
                 headline: "◆ TCP CONNECTION DETACHED ◆",
                 before: "The connection to ",
                 after: " was closed.",

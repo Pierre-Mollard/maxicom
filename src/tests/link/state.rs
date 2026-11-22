@@ -4,7 +4,10 @@ use std::{net::TcpListener, thread};
 use super::*;
 
 fn tcp(listener: &TcpListener) -> Address {
-    Address::Tcp(listener.local_addr().unwrap().to_string())
+    Address::Tcp(
+        listener.local_addr().unwrap().to_string(),
+        crate::link::Protocol::Raw,
+    )
 }
 
 fn link_on(address: Address) -> LinkState {

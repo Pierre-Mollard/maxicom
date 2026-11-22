@@ -545,13 +545,17 @@ fn complete_paths() {
 
 /// MAX-168: `open`'s address is checked when the line is read, and completes with the
 /// schemes and the listed ports, then paths after `file://` or a `/`, nothing after
-/// `tcp://`.
+/// `tcp://` or `telnet://` (MAX-161).
 /// How: good and bad addresses; completions with two fake ports and a temporary folder.
 #[test]
 fn open_takes_an_address() {
     assert_eq!(
         parse("open tcp://h:1").unwrap()[0].args,
         [ArgValue::Address("tcp://h:1".parse().unwrap())]
+    );
+    assert_eq!(
+        parse("open telnet://h:1").unwrap()[0].args,
+        [ArgValue::Address("telnet://h:1".parse().unwrap())]
     );
     for (line, reason) in [
         ("open tcp://host", "'host' is not host:port"),
@@ -573,11 +577,13 @@ fn open_takes_an_address() {
     };
     assert_eq!(
         values(&complete("open ")),
-        ["tcp://", "file://", "/dev/ttyUSB0", "COM3"]
+        ["tcp://", "telnet://", "file://", "/dev/ttyUSB0", "COM3"]
     );
-    assert_eq!(values(&complete("open t")), ["tcp://"]);
+    assert_eq!(values(&complete("open t")), ["tcp://", "telnet://"]);
+    assert_eq!(values(&complete("open te")), ["telnet://"]);
     assert_eq!(values(&complete("open C")), ["COM3"]);
     assert!(complete("open tcp://192.").candidates.is_empty());
+    assert!(complete("open telnet://").candidates.is_empty());
     // MAX-185: this machine's saved links first, escaped; `link-delete` takes them only
     let names = ["esp32".to_string(), "router console".to_string()];
     let saved = |line: &str| {
@@ -596,6 +602,7 @@ fn open_takes_an_address() {
             "esp32",
             "router\\ console",
             "tcp://",
+            "telnet://",
             "file://",
             "/dev/ttyUSB0",
             "COM3"

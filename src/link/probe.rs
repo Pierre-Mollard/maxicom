@@ -56,7 +56,7 @@ pub enum ProbeState {
 pub fn probe(address: &Address) -> ProbeState {
     match address {
         Address::Serial(port) => probe_port(port),
-        Address::Tcp(addr) => probe_tcp(addr),
+        Address::Tcp(addr, _) => probe_tcp(address, addr),
         Address::Replay(path) if path.is_file() => ProbeState::Free,
         Address::Replay(_) => ProbeState::Missing,
     }
@@ -164,11 +164,11 @@ pub fn probe_port(port: &str) -> ProbeState {
     }
 }
 
-/// Whether the TCP link `addr` (`host:port`) answers: a maxicom's lock first, then a connect
+/// Whether the TCP link `address`, `addr` (`host:port`), answers: a maxicom's lock first, then a connect
 /// to each address the name gives, closed at once. A one-client bridge may drop the client it
 /// has for it, and the device sees a connection: only on the directory's `t`
-pub fn probe_tcp(addr: &str) -> ProbeState {
-    if let LockState::Held(info) = lock_state(&Address::Tcp(addr.to_string())) {
+pub fn probe_tcp(address: &Address, addr: &str) -> ProbeState {
+    if let LockState::Held(info) = lock_state(address) {
         return holder_state(Holder::maxicom(info.as_ref()));
     }
     let Ok(sockets) = addr.to_socket_addrs() else {
