@@ -253,7 +253,7 @@ pub fn render_error_popup(
                 KeyBindingDialogAction::Close,
                 KeyBindingDialogAction::Confirm,
             ],
-            "Dismiss",
+            "Close",
         )],
         theme,
     );

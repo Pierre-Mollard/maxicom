@@ -1,7 +1,8 @@
 # Command line
 
-`Ctrl-a :` opens a `:` prompt where you type commands. Enter runs the line,
-Esc closes the prompt.
+`Ctrl-a :` opens a `:` prompt where you type commands. Enter runs the line.
+Esc hides the completion list when one is shown, and closes the prompt
+otherwise.
 
 Every action of the [keybindings](keybindings.md#actions) is a command
 (`toggle-local-echo`, `record`...), and the command line adds commands that
@@ -38,7 +39,8 @@ As you type, the completions of the word before the cursor are listed:
 command names with their help, then the values the argument accepts. The
 selected command's usage and full help show under the list.
 
-- Tab, Shift-Tab, Up and Down put each completion in place in turn.
+- Tab, Shift-Tab, Up and Down put each completion in place in turn, and so do
+  Ctrl-n and Ctrl-p.
 - The mouse wheel scrolls the list.
 - A single completion, or a click on one, is taken with a space after it.
 
@@ -47,8 +49,9 @@ press Tab (which lists without picking) or type.
 
 ## History
 
-When no completion list is shown, Up and Down walk through the lines that
-ran, newest first, back to the line being typed. Only the lines starting
+When no completion list is shown, Up and Down (or Ctrl-p and Ctrl-n, as in a
+shell) walk through the lines that ran, newest first, back to the line being
+typed. Only the lines starting
 with what you typed are shown: type `send`, then Up, to walk the `send`
 lines.
 

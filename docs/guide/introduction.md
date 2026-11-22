@@ -49,7 +49,7 @@ To use only one mode, set `disabled_mode` to the other one (`"line"` or
 
 | Part | What it shows |
 | --- | --- |
-| History box | The device's output, in the current mode. Its title says the mode: ` maxicom LINE ` or ` maxicom TERMINAL `. |
+| History box | The device's output, in the current mode. The status bar says which: `LINE` or `TERM`. |
 | Input box | Line mode only: the line you are writing. |
 | Status bar | In the bottom border by default: the mode, the link and its settings, what's running (a recording, a file being sent, armed triggers), the scroll position, RX / TX counts, the time, and `?` / `≡` for the help and the settings. Most of its blocks react to a click. See [Status bar](status-bar.md). |
 | Raw side panel | Off by default (`Ctrl-a B`): the bytes as received, in hex, octal or binary. See [Raw side panel](raw-side-panel.md). |

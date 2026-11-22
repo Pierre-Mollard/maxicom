@@ -147,14 +147,19 @@ isn't written. A click on a setting does the same.
 | Key | Setting | Key | Setting |
 | --- | --- | --- | --- |
 | `M` | Mode (line / terminal) | `E` | Local echo |
-| `X` | Text encoding | `T` | Timestamps |
-| `U` | Mouse | `B` | Raw side panel view |
-| `V` | The next [plot](plots.md) | `R` | Add CR |
-| `F` | Add LF | `N` | Line Enter (`tx_eol`) |
+| `O` | Text encoding | `T` | Timestamps |
+| `Z` | Mouse | `B` | Raw side panel view |
+| `V` | The next [plot](plots.md) | `U` | Add CR |
+| `A` | Add LF | `N` | Line Enter (`tx_eol`) |
 | `W` | Line wrap | `I` | Wrap indent |
 | `P` | Row marks (`prefix_place`) | `D` | Display mode |
-| `S` | Dimension mode | `A` | Answer queries |
-| `Y` | Byte trace | `O` | Backspace (DEL / BS) |
+| `S` | Dimension mode | `R` | Answer queries |
+| `Y` | Byte trace | `X` | Backspace (DEL / BS) |
+
+Where it can, a setting has the letter of its key after the prefix: `M`,
+`E`, `T`, `B`, `W`, `U` and `A` here are `Ctrl-a m`, `e`, `t`, `B`, `w`,
+`u` and `a`, and `O` is `Ctrl-a O`. Mouse is the exception: `Ctrl-a M`
+switches it, but the popup doesn't tell `m` from `M`, and `M` is the mode.
 
 ### Setting a value directly
 
@@ -191,13 +196,13 @@ screen it uses one column, and it scrolls when the screen is too short.
 | Tab | Lists |
 | --- | --- |
 | Prefixed | The keys after `Ctrl-a` |
-| Directs | The keys without prefix |
+| Direct | The keys without prefix |
 | Commands | The [command line](command-line.md)'s commands, and the keys bound to a line |
 | Copy | Copy mode's keys |
 | Search | The search bar's keys |
 | Line | Line mode's keys |
-| Terminal | Terminal mode's keys |
-| Dialogs | The [popup keys](popups.md) |
+| Term | Terminal mode's keys |
+| Dialog | The [popup keys](popups.md) |
 
 It shows the keymap in use, your changes included. Each tab starts with
 where its keys work, and the key that gets you there.
@@ -366,11 +371,12 @@ Where `download` puts what it receives. See
 
 #### Title details
 
-By default the history box's title only shows ` maxicom LINE ` or
-` maxicom TERMINAL `.
+By default the history box's title only shows ` maxicom `: the status bar
+already says the mode.
 
 With `title_details = true`, it also shows the alerts (`!`, `● REC`), the
-emulator and view sizes, the scroll, the pan and the prefix. What doesn't
+mode, the emulator and view sizes, the scroll, the pan and the prefix, as in
+` maxicom [LINE | VIEW 118x19 | LIVE] `. What doesn't
 fit in the border is left out whole, never cut.
 
 The device's [window title](terminal-mode.md#window-title) goes after the

@@ -719,3 +719,47 @@ fn mark_keys_wait_for_a_letter() {
         assert!(app.is_copy_mode_active());
     }
 }
+
+/// MAX-274: in the command line, Ctrl-n and Ctrl-p (cycle keys other than Tab) come as Down and
+/// Up, which walk the history when nothing is listed, and move in a list shown; Tab and
+/// Shift-Tab still cycle. In another text popup, Ctrl-n still cycles.
+/// How: the default keymap, the command line opened, each key's action; then the screenshot
+/// popup's name field.
+#[test]
+fn command_line_ctrl_n_p_are_down_up() {
+    use crate::overlays::{CommandLine, ScreenshotDialog};
+    let mut app = app();
+    let open = Overlay::CommandLine(Box::new(CommandLine::new(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    )));
+    app.update(Action::App(AppAction::OpenOverlay(open)));
+    let arrow = |code| Action::Overlay(DialogAction::HandleKey(KeyEvent::from(code)));
+    let action = |app: &App, event| format!("{:?}", handle_event(event, app));
+    assert_eq!(
+        action(&app, ctrl('n')),
+        format!("{:?}", arrow(KeyCode::Down))
+    );
+    assert_eq!(action(&app, ctrl('p')), format!("{:?}", arrow(KeyCode::Up)));
+    let cycle = |next| {
+        Action::Overlay(if next {
+            DialogAction::CycleNext
+        } else {
+            DialogAction::CyclePrev
+        })
+    };
+    assert_eq!(
+        action(&app, plain(KeyCode::Tab)),
+        format!("{:?}", cycle(true))
+    );
+    let backtab = key(KeyCode::BackTab, KeyModifiers::SHIFT);
+    assert_eq!(action(&app, backtab), format!("{:?}", cycle(false)));
+
+    let mut app = self::app();
+    let shot = crate::capture::Screenshot::default();
+    let dialog = ScreenshotDialog::new(crate::capture::ScreenshotFormat::Text, "shot", shot);
+    let open = Overlay::Screenshot(dialog);
+    app.update(Action::App(AppAction::OpenOverlay(open)));
+    assert_eq!(action(&app, ctrl('n')), format!("{:?}", cycle(true)));
+}

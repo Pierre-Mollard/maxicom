@@ -42,14 +42,14 @@ written that way:
 
 ```toml
 right = '''
-[{scroll_pos_up} ](has_scroll?muted:hide prio=2)\
-    [RX: {rx_bytes:4h}](muted prio=3)\
+[RX: {rx_bytes:4h}](muted prio=3)\
     [ | ](muted prio=3)\
+    [TX: {tx_bytes:4h}](muted prio=3)\
     ...'''
 ```
 
 The next line's indentation is dropped, but a space before the `\` stays,
-as between `[{time}](...)` and `[?](...)` below.
+as between `[{time}](...)` and `[| ](...)` below.
 
 ## The default
 
@@ -67,30 +67,54 @@ left = '''
     [ |](term?muted:hide prio=4)\
     [ {cursor_keys}](term?muted:hide prio=4)'''
 center = '''
-[◎ {trigger_count} ](armed?primary:hide)\
-    [⟳ mash ](mashing?(fg=secondary bold):hide click=cancel)\
-    [▷ {replay_state} {replay_percent:>3}% ](replaying?(fg=secondary bold):hide prio=5)\
-    [∿ {plot} ](plot?(frozen?(fg=warn bold):(fg=secondary)):hide prio=5)\
-    [« live ](replaced?(fg=main bold):hide click=toggle-attach)\
-    [+CR ](add_cr?(fg=warn bold):hide click=toggle-add-cr)\
-    [+LF ](add_lf?(fg=warn bold):hide click=toggle-add-lf)\
-    [● REC ](rec?(fg=warn bold):hide click=record)\
-    [◀ ](wide?(pan_left?secondary:muted):hide click=pan-left)\
+[◎ {trigger_count}](armed?primary:hide)\
+    [ ](armed?muted:hide)\
+    [∿ {plot}](plot?(frozen?(fg=warn bold):(fg=secondary)):hide prio=5)\
+    [ ](plot?muted:hide prio=5)\
+    [+CR](add_cr?(fg=warn bold):hide click=toggle-add-cr)\
+    [ ](add_cr?muted:hide)\
+    [+LF](add_lf?(fg=warn bold):hide click=toggle-add-lf)\
+    [ ](add_lf?muted:hide)\
+    [◀](wide?(pan_left?secondary:muted):hide click=pan-left)\
+    [ ](wide?muted:hide)\
     [{pan_offset:>3}/{pan_max:<3}](wide?muted:hide)\
-    [ ▶](wide?(pan_alert?(fg=warn bold):(pan_right?secondary:muted)):hide click=pan-right)'''
+    [ ](wide?muted:hide)\
+    [▶](wide?(pan_alert?(fg=warn bold):(pan_right?secondary:muted)):hide click=pan-right)'''
 right = '''
-[{scroll_pos_up} ](has_scroll?muted:hide prio=2)\
-    [RX: {rx_bytes:4h}](muted prio=3)\
+[RX: {rx_bytes:4h}](muted prio=3)\
     [ | ](muted prio=3)\
     [TX: {tx_bytes:4h}](muted prio=3)\
     [ | ](muted prio=4)\
     [{time}](secondary prio=4) \
-    [?](muted click=help hover=(bg=primary fg=black)) \
-    [≡](muted click=settings hover=(bg=secondary fg=black)) '''
+    [| ](rec?muted:mashing?muted:replaying?muted:has_scroll?muted:hide prio=3)\
+    [● REC](rec?(fg=warn bold):hide click=record prio=1)\
+    [ ](rec?muted:hide prio=1)\
+    [⟳ mash](mashing?(fg=secondary bold):hide click=cancel prio=1)\
+    [ ](mashing?muted:hide prio=1)\
+    [▷ {replay_state} {replay_percent:>3}%](replaying?(fg=secondary bold):hide prio=2)\
+    [ ](replaying?muted:hide prio=2)\
+    [« live](replaced?(fg=main bold):hide click=toggle-attach prio=1)\
+    [ ](replaced?muted:hide prio=1)\
+    [{scroll_pos_up}](has_scroll?muted:hide prio=2)\
+    [ ](has_scroll?muted:hide prio=2)\
+    [?](borders?hide:muted click=help hover=(bg=primary fg=black))\
+    [ ](borders?hide:muted)\
+    [≡](borders?hide:muted click=settings hover=(bg=secondary fg=black))\
+    [ ](borders?hide:muted)'''
 time_format = "%H:%M:%S"
 hover = "reversed"
 layout = "border"
 ```
+
+What needs you sits at the right end: a recording (`● REC`), a `mash` you
+can cancel, a replay and its `« live` button, after a `|` when one of them
+or the scroll position shows. When the bar is too narrow,
+those stay after RX / TX are gone (see [When it doesn't fit](#when-it-doesnt-fit)).
+The center keeps the states you set: armed triggers, the plot, `+CR`, `+LF`
+and the pan.
+
+`?` and `≡` show only without borders: with borders, the top border has
+`[?][≡][×]`.
 
 ## Variables
 
@@ -171,6 +195,7 @@ otherwise. Conditions chain:
 | `search` | | The search bar is open |
 | `overlay` | `popup` | A popup is open |
 | `focused` | | The window has the desktop's focus |
+| `borders` | `border` | The borders are drawn: on, and the window not under `hide_borders_below` |
 | `mouse` | | Mouse support is on |
 | `rec` | `logging` | A recording runs |
 | `session` | `backup` | The session backup runs |
@@ -241,6 +266,14 @@ Blocks without `hover=` take `hover` from `[ui.status_bar]` (default
 
 `click=` and `hover=` aren't part of the style: they stay the same in both
 branches of a condition.
+
+The hover covers the whole block, spaces included. Put a block's spacing in
+a block of its own with the same condition, as the default bar does, so the
+hover takes the text only:
+
+```text
+[● REC](rec?(fg=warn bold):hide click=record)[ ](rec?muted:hide)
+```
 
 ## When it doesn't fit
 

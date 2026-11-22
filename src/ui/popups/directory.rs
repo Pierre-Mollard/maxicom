@@ -31,12 +31,12 @@ const TABS: [(DirectoryTab, &str); 2] = [
 /// What an empty list shows
 const EMPTY: &str = "No serial port found: plug one in, then r";
 const NO_LINK: &str = "No saved link for this machine";
-/// Under the tabs: what the test does, a port opened on Windows, which may reset a board, and a
-/// TCP link connected to (MAX-186)
+/// Under the tabs, over a list: what the test does, a port opened on Windows, which may reset a
+/// board, and a TCP link connected to (MAX-186), in words (MAX-274)
 #[cfg(windows)]
-pub const TEST_NOTE: &str = "  t opens each port briefly (a board may reset), connects TCP";
+pub const TEST_NOTE: &str = "  t opens each port briefly (a board may reset) and tries TCP";
 #[cfg(not(windows))]
-pub const TEST_NOTE: &str = "  t finds who holds each port without opening it, connects TCP";
+pub const TEST_NOTE: &str = "  t shows who holds each port, without opening it, and tries TCP";
 
 /// The directory (MAX-181): its tabs on top (MAX-185), then the tab's rows, `●` and "in use"
 /// on the link in use, "opening…" or the last test's result in its State column. Each tab a
@@ -173,7 +173,10 @@ pub fn render_directory_popup(
         Span::styled(t, key),
         Span::styled(rest, muted),
     ]);
-    frame.render_widget(Paragraph::new(line), note);
+    // nothing to test in an empty tab (MAX-274)
+    if !table.rows.is_empty() {
+        frame.render_widget(Paragraph::new(line), note);
+    }
     inner.y += HEADER;
     inner.height = inner.height.saturating_sub(HEADER);
 

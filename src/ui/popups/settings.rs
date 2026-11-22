@@ -1,7 +1,7 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::Style,
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Clear, Paragraph},
 };
@@ -99,10 +99,10 @@ pub fn render_settings_popup(
             ),
             (
                 SettingKey::TextEncoding,
-                row("X", "Rx Encoding", encoding_str),
+                row("O", "Rx Encoding", encoding_str),
             ),
             // the side panels' rows together (MAX-230)
-            (SettingKey::Mouse, row("U", "Mouse", mouse_str)),
+            (SettingKey::Mouse, row("Z", "Mouse", mouse_str)),
             (
                 SettingKey::DisplayRaw,
                 row("B", "Byte Inspect", raw_display_str),
@@ -114,8 +114,8 @@ pub fn render_settings_popup(
     let newlines = group(
         "Newlines",
         vec![
-            (SettingKey::AddCr, row("R", "Add CR", add_cr_str)),
-            (SettingKey::AddLf, row("F", "Add LF", add_lf_str)),
+            (SettingKey::AddCr, row("U", "Add CR", add_cr_str)),
+            (SettingKey::AddLf, row("A", "Add LF", add_lf_str)),
             (SettingKey::TxEol, row("N", "Line Enter", tx_eol_str)),
         ],
     );
@@ -143,10 +143,10 @@ pub fn render_settings_popup(
             ),
             (
                 SettingKey::AnswerQueries,
-                row("A", "Query Answers", answers_str),
+                row("R", "Query Answers", answers_str),
             ),
             (SettingKey::ByteTrace, row("Y", "Byte Trace", trace_str)),
-            (SettingKey::Backspace, row("O", "Backspace", backspace_str)),
+            (SettingKey::Backspace, row("X", "Backspace", backspace_str)),
         ],
     );
     // General and Newlines on the left, Line Mode and Terminal Mode on the right, when the
@@ -229,12 +229,27 @@ pub fn render_settings_popup(
         rows.push((whole(target), line));
     }
 
-    let hints = key_hints(
+    // a setting's letter or a click changes it: `[key] Change` first, as the rows show their
+    // letter, the keys' hints after it (MAX-274)
+    let mut hints = key_hints(
         &app.key_resolver,
         false,
-        &[(&[KeyBindingDialogAction::Close], "Return")],
+        &[(&[KeyBindingDialogAction::Close], "Close")],
         theme,
     );
+    let key_style = Style::default()
+        .fg(theme.palette.secondary)
+        .add_modifier(Modifier::BOLD);
+    let change = [
+        Span::styled("[key]", key_style),
+        Span::styled(" Change", Style::default().fg(theme.palette.text_muted)),
+        Span::styled(" · ", Style::default().fg(theme.palette.text_muted)),
+    ];
+    let shift: u16 = change.iter().map(|span| span.width() as u16).sum();
+    hints.line.spans.splice(0..0, change);
+    for (col, _, _) in &mut hints.spots {
+        *col += shift;
+    }
     let block = popup_block("Settings", &hints, theme);
 
     let area = form_area(frame.area(), width, rows.len());

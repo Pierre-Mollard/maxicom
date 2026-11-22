@@ -485,10 +485,11 @@ fn session_condition() {
 }
 
 /// Default center and right templates: hidden blocks are omitted, counters and time filled.
-/// How: golden spans in terminal mode, time format set to a literal.
+/// MAX-274: `?` and `≡` only without borders, the top border has them then.
+/// How: golden spans in terminal mode, time format set to a literal; borders on, then off.
 #[test]
 fn default_center_and_right() {
-    let a = app(Mode::Terminal);
+    let mut a = app(Mode::Terminal);
     let d = StatusBarConfig::default();
     assert!(render(&d.center, &a).is_empty());
     assert_eq!(
@@ -500,10 +501,17 @@ fn default_center_and_right() {
             span(" | ", MUTED, BG, "NONE"),
             span("TIME", "Some(Yellow)", BG, "NONE"),
             plain(" "),
+        ]
+    );
+    a.settings_mut().ui.show_borders = false;
+    let right = render(&d.right, &a);
+    assert_eq!(
+        right[right.len() - 4..],
+        [
             span("?", MUTED, BG, "NONE"),
-            plain(" "),
+            span(" ", MUTED, BG, "NONE"),
             span("≡", MUTED, BG, "NONE"),
-            plain(" "),
+            span(" ", MUTED, BG, "NONE"),
         ]
     );
 }
@@ -535,7 +543,7 @@ fn armed_triggers() {
     assert_eq!(text_with("{trigger_names}", &a, compact), "");
 
     a.update(Action::App(AppAction::ToggleTriggers));
-    assert_eq!(texts(&a), ["◎ 2 "]);
+    assert_eq!(texts(&a), ["◎ 2", " "]);
     assert_eq!(render("{trigger_names}", &a), [plain("login, u-boot")]);
     assert_eq!(text_with("{trigger_names}", &a, compact), "login +1");
     assert_eq!(render("{trigger_count:02}", &a), [plain("02")]);
@@ -595,7 +603,10 @@ fn plot_shown_and_frozen() {
     let secondary = format!("Some({:?})", theme.palette.secondary);
     assert_eq!(
         render(&center, &a),
-        [span("∿ serial-plotter ", &secondary, BG, "NONE")]
+        [
+            span("∿ serial-plotter", &secondary, BG, "NONE"),
+            span(" ", MUTED, BG, "NONE")
+        ]
     );
     assert_eq!(render("{plot}", &a), [plain("serial-plotter")]);
     assert_eq!(render("[x](frozen?bold:hide)", &a), Vec::<String>::new());
@@ -604,7 +615,10 @@ fn plot_shown_and_frozen() {
     let warn = format!("Some({:?})", theme.palette.text_warn);
     assert_eq!(
         render(&center, &a),
-        [span("∿ serial-plotter ", &warn, BG, "BOLD")]
+        [
+            span("∿ serial-plotter", &warn, BG, "BOLD"),
+            span(" ", MUTED, BG, "NONE")
+        ]
     );
 
     a.show_plot(None);
@@ -708,34 +722,30 @@ fn malformed_markup() {
 }
 
 /// Where a template's clickable blocks are (start column, width) and what they run
-/// A replay over a live link has a `« live` button in the default center part, whose click
-/// goes back to that link (`toggle-attach`); none without a replay.
-/// How: the default center on the live link, then replaying a file over it.
+/// A replay over a live link has a `« live` button in the default right part (MAX-274: at its
+/// end, which a narrow bar keeps), whose click goes back to that link (`toggle-attach`); none
+/// without a replay.
+/// How: the default right part on the live link, then replaying a file over it.
 #[test]
 fn replay_has_a_back_to_live_button() {
     let d = StatusBarConfig::default();
     let mut a = app(Mode::Terminal);
-    let live = |a: &App| render(&d.center, a).iter().any(|s| s.starts_with("« live"));
+    let live = |a: &App| render(&d.right, a).iter().any(|s| s.starts_with("« live|"));
     let back = |a: &App| {
-        clicks(&d.center, a)
+        clicks(&d.right, a)
             .iter()
             .any(|(_, _, click)| *click == ClickAction::Run(KeyBindingAction::ToggleAttach))
     };
     assert!(!live(&a) && !back(&a));
     a.start_replay(std::path::PathBuf::from("/tmp/logs/boot.raw"), None);
-    assert!(live(&a), "{:?}", render(&d.center, &a));
-    // a column before what comes next, the pan arrows
-    let center = render(&d.center, &a);
-    assert!(
-        center.iter().any(|s| s.starts_with("« live ")),
-        "{center:?}"
-    );
+    assert!(live(&a), "{:?}", render(&d.right, &a));
     assert!(back(&a));
 }
 
 /// A flag of the default bar's center keeps a column before what comes next: the other flags or
-/// the pan arrows.
-/// How: +CR and +LF on, in the bar's center.
+/// the pan arrows. MAX-274: the column is a block of its own, so a click and the hover take
+/// the flag's text only, as for the right part's `● REC`.
+/// How: +CR and +LF on, in the bar's center; a recording's block in the right part.
 #[test]
 fn center_flags_keep_a_space() {
     let d = StatusBarConfig::default();
@@ -743,9 +753,16 @@ fn center_flags_keep_a_space() {
     a.settings_mut().add_cr = true;
     a.settings_mut().add_lf = true;
     let center = render(&d.center, &a);
-    for flag in ["+CR ", "+LF "] {
-        assert!(center.iter().any(|s| s.starts_with(flag)), "{center:?}");
+    for flag in ["+CR|", "+LF|"] {
+        let at = center.iter().position(|s| s.starts_with(flag));
+        let next = at.and_then(|at| center.get(at + 1));
+        assert!(next.is_some_and(|s| s.starts_with(" |")), "{center:?}");
     }
+    let widths: Vec<u16> = clicks(&d.center, &a)
+        .iter()
+        .map(|(_, width, _)| *width)
+        .collect();
+    assert_eq!(widths, [3, 3], "{:?}", clicks(&d.center, &a));
 }
 
 /// The theme's colors a template can name: the frame's, the bar's background, the search

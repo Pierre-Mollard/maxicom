@@ -15,7 +15,8 @@ use crate::{
 /// word before the cursor listed: Tab, Shift-Tab, Up and Down put a candidate in its place; a
 /// lone one or a click takes it and moves on to the next word. An empty line, or one recalled
 /// from the history, lists nothing until Tab or typing (MAX-163); without a list, Up and Down
-/// walk the lines that ran starting with the text typed. The wheel scrolls the list (MAX-190)
+/// (and Ctrl-p, Ctrl-n) walk the lines that ran starting with the text typed. The wheel scrolls
+/// the list (MAX-190). Esc hides a list shown, then closes (MAX-274)
 #[derive(Debug, Clone, Default)]
 pub struct CommandLine {
     pub input: Input,
@@ -216,6 +217,12 @@ impl CommandLine {
 
     pub fn handle_action(&mut self, action: DialogAction) -> OverlayResponse {
         match action {
+            // a list shown goes first, then the line (MAX-274)
+            DialogAction::Close if !self.completion.candidates.is_empty() => {
+                self.listed = false;
+                self.refresh();
+                OverlayResponse::Handled
+            }
             DialogAction::Close => OverlayResponse::Close,
             DialogAction::Confirm => match commands::parse_with(self.input.value(), &self.named) {
                 Ok(invocations) if invocations.is_empty() => OverlayResponse::Close,

@@ -68,8 +68,9 @@ fn cut_to_width(text: &str, width: usize) -> &str {
     text
 }
 
-/// The history box's title, ` maxicom LINE `; with `title_details` also the alerts (`!` for
-/// missed content, `● REC`), the sizes, the scroll, the pan and the prefix. What doesn't fit in
+/// The history box's title, ` maxicom `; with `title_details` also the alerts (`!` for missed
+/// content, `● REC`), the mode (MAX-274: the status bar says it already), the sizes, the
+/// scroll, the pan and the prefix. What doesn't fit in
 /// `room` columns is left out whole, never cut: the details from the last one, then the
 /// prefix, then the alerts; without room for the name, no title (MAX-137). The device's title
 /// goes after the name in the room left, cut to fit (MAX-275)
@@ -78,10 +79,7 @@ pub fn monitor_title(app: &App, area: &Rect, room: u16) -> String {
     let Some(device) = device_titles(app) else {
         return title;
     };
-    let name = match app.settings().mode {
-        Mode::Terminal => "maxicom TERMINAL",
-        Mode::Line => "maxicom LINE",
-    };
+    let name = "maxicom";
     let name_end = title.find(name).map(|at| at + name.len());
     // ` | ` and at least one column of the device's title
     let left = (room as usize).saturating_sub(title.width());
@@ -102,13 +100,12 @@ fn monitor_title_parts(app: &App, area: &Rect, room: u16) -> String {
         area.height.saturating_sub(2)
     );
     let logging = app.recording().is_some();
-    let (mode, mut details, missed, scroll_offset, pan_offset) = match app.settings().mode {
+    let (mut details, missed, scroll_offset, pan_offset) = match app.settings().mode {
         Mode::Terminal => {
             let tm = &app.terminal_mode;
             let (rows, cols) = tm.vt100_screen().size();
             (
-                "TERMINAL",
-                vec![format!("VT {cols}x{rows}"), view],
+                vec!["TERMINAL".to_string(), format!("VT {cols}x{rows}"), view],
                 tm.is_new_content_missed(),
                 tm.vt100_screen().scrollback(),
                 tm.pan_offset(),
@@ -117,22 +114,21 @@ fn monitor_title_parts(app: &App, area: &Rect, room: u16) -> String {
         Mode::Line => {
             let lm = &app.line_mode;
             (
-                "LINE",
-                vec![view],
+                vec!["LINE".to_string(), view],
                 lm.is_new_content_missed(),
                 lm.scroll_status().offset_from_bottom,
                 lm.x_offset(),
             )
         }
     };
-    let name = format!("maxicom {mode}");
+    let name = "maxicom";
     let compose = |alerts: &[&str], details: &[String], prefix: bool| {
         let mut title = String::from(" ");
         for alert in alerts {
             title.push_str(alert);
             title.push(' ');
         }
-        title.push_str(&name);
+        title.push_str(name);
         if !details.is_empty() {
             let _ = write!(title, " [{}]", details.join(" | "));
         }
@@ -334,7 +330,10 @@ pub fn render_search_bar(
                     .collect(),
                 "Match",
             ),
-            (first_key(KeyBindingSearchAction::Cancel).collect(), "Exit"),
+            (
+                first_key(KeyBindingSearchAction::Cancel).collect(),
+                "Cancel",
+            ),
             (first_key(KeyBindingSearchAction::Confirm).collect(), "Go"),
             (first_key(KeyBindingSearchAction::Kind).collect(), "Mode"),
         ]

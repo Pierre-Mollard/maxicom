@@ -2106,8 +2106,45 @@ fn popup_hints_follow_the_keymap() {
         "{rows:#?}"
     );
 
+    // MAX-274: the settings say first that a setting's letter changes it
     let rows = popup_rows(Overlay::Settings(SettingsDialog::new()), &[("x", "close")]);
-    assert!(has(&rows, "x Return"), "{rows:#?}");
+    assert!(has(&rows, "[key] Change · x Close"), "{rows:#?}");
+}
+
+/// MAX-274: the settings popup's letters are the prefixed keys' where they can be: `u` Add CR
+/// (`Ctrl-a u`), `a` Add LF (`Ctrl-a a`), `O` Rx Encoding (`Ctrl-a O`); the settings they
+/// pushed out moved: `r` Query Answers, `x` Backspace, `z` Mouse.
+/// How: the popup open, each letter pressed, its setting compared before and after.
+#[test]
+fn settings_letters_follow_the_prefixed_keys() {
+    use crossterm::event::KeyCode::Char;
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+    let overlay = Overlay::Settings(SettingsDialog::new());
+    h.app.update(Action::App(AppAction::OpenOverlay(overlay)));
+    h.draw();
+    let state = |h: &Harness| {
+        let s = h.app.settings();
+        (
+            s.add_cr,
+            s.add_lf,
+            s.encoding.as_str(),
+            s.terminal_mode.answer_groups.is_empty(),
+            s.terminal_mode.backspace.as_str(),
+            s.ui.mouse,
+        )
+    };
+    let before = state(&h);
+    for letter in ['u', 'a', 'O', 'r', 'x', 'z'] {
+        key_do(&mut h, Char(letter), KeyModifiers::NONE);
+    }
+    let after = state(&h);
+    assert_ne!(after.0, before.0, "add cr");
+    assert_ne!(after.1, before.1, "add lf");
+    assert_ne!(after.2, before.2, "encoding");
+    assert_ne!(after.3, before.3, "answers");
+    assert_ne!(after.4, before.4, "backspace");
+    assert_ne!(after.5, before.5, "mouse");
+    assert!(h.app.overlay().is_some());
 }
 
 /// MAX-256: every key the settings popup shows works in both cases: none is one of the popups'
@@ -2318,7 +2355,7 @@ fn settings_in_two_columns() {
         "[M] Input Mode    : Line          [W] Line Wrap     : Word-Wrap",
         "[B] Byte Inspect  : Off           Terminal Mode",
         "[V] Plot          : Off           [S] Size Mode     : Grow Only",
-        "                                  [A] Query Answers : On",
+        "                                  [R] Query Answers : On",
         "Newlines",
         "[N] Line Enter    : LF",
         "Files",
@@ -2343,7 +2380,7 @@ fn settings_in_two_columns() {
     }
     // Mouse, then the side panels' rows together (MAX-230)
     let row_of = |text| rows.iter().position(|row| row.contains(text)).unwrap();
-    let order = [row_of("[U] Mouse"), row_of("[B] Byte"), row_of("[V] Plot")];
+    let order = [row_of("[Z] Mouse"), row_of("[B] Byte"), row_of("[V] Plot")];
     assert_eq!(order, [order[0], order[0] + 1, order[0] + 2], "{rows:#?}");
 
     let answers = h.app.settings().terminal_mode.answer_groups.is_empty();
@@ -2918,7 +2955,7 @@ fn alert_hints_follow_the_keymap() {
 
     let error = ErrorDialog::new("Oops", "it broke");
     let rows = popup_rows(Overlay::Error(error), &[("x", "close")]);
-    assert!(has(&rows, "x Dismiss"), "{rows:#?}");
+    assert!(has(&rows, "x Close"), "{rows:#?}");
 }
 
 /// MAX-163: an alert's border and title take its tone: the link and error alerts warn,
@@ -3108,10 +3145,16 @@ fn help_lists_the_commands() {
 
 /// MAX-12: the help popup takes four fifths of the screen, 74 columns at least; MAX-239:
 /// 100 at most, room for the actions' help. Every tab fits from 99 columns, no arrow; at 80
-/// the last ones hide behind `▶`.
+/// the last ones hide behind `▶` (MAX-274: from 80 they all fit, at 60 they hide).
 #[test]
 fn help_popup_widens() {
-    for (width, popup, arrow) in [(200, 100, false), (99, 79, false), (80, 74, true)] {
+    // MAX-274: the tabs fit from 80 columns (Direct, Term, Dialog), hide below
+    for (width, popup, arrow) in [
+        (200, 100, false),
+        (99, 79, false),
+        (80, 74, false),
+        (60, 60, true),
+    ] {
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, width, 24);
         h.app
             .update(Action::App(AppAction::OpenOverlay(Overlay::Help(
@@ -3120,7 +3163,7 @@ fn help_popup_widens() {
         let rows = h.draw();
         let top = rows.iter().find(|row| row.contains("┌ Help")).unwrap();
         assert_eq!(top.trim().chars().count(), popup, "{rows:#?}");
-        assert_eq!(has(&rows, "Dialogs"), !arrow, "{rows:#?}");
+        assert_eq!(has(&rows, "Dialog"), !arrow, "{rows:#?}");
         assert_eq!(has(&rows, "▶"), arrow, "{rows:#?}");
     }
 }
@@ -3143,7 +3186,7 @@ fn help_lists_the_popup_bindings() {
     h.app.update(Action::Overlay(DialogAction::CyclePrev));
     let rows = h.draw();
 
-    assert!(has(&rows, "Dialogs"), "{rows:#?}");
+    assert!(has(&rows, "Dialog"), "{rows:#?}");
     let bound_to_close = |rows: &[String], key: &str| {
         let line = rows.iter().find(|row| row.contains(&format!(" {key} ")));
         line.is_some_and(|row| names(row, "close"))
@@ -3674,7 +3717,7 @@ fn search_bar_hint_follows_the_keymap() {
         assert!(
             has(
                 &rows,
-                "Ctrl-n/Ctrl-p Match · Esc Exit · Enter Go · Tab Mode"
+                "Ctrl-n/Ctrl-p Match · Esc Cancel · Enter Go · Tab Mode"
             ),
             "{rows:#?}"
         );
@@ -3692,12 +3735,12 @@ fn search_bar_hint_follows_the_keymap() {
         };
         h.app.key_resolver = KeyResolver::try_new(&config).unwrap();
         let rows = h.draw();
-        assert!(has(&rows, "F3/Shift-F3 Match · Ctrl-g Exit"), "{rows:#?}");
+        assert!(has(&rows, "F3/Shift-F3 Match · Ctrl-g Cancel"), "{rows:#?}");
         assert!(!has(&rows, "Tab"), "{rows:#?}");
     }
 
-    // a narrow bar shows the hints that fit whole, Match first: Esc Exit would end on
-    // column 43
+    // a narrow bar shows the hints that fit whole, Match first: Esc Cancel would end on
+    // column 45
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 40, 10);
     h.feed(b"hi there\r\n");
     search(&mut h, "hi");
@@ -4164,6 +4207,9 @@ fn directory_lists_and_opens_the_ports() {
         has(&rows, "No serial port found: plug one in, then r"),
         "{rows:#?}"
     );
+    // MAX-274: no test note over an empty tab
+    let note = crate::ui::popups::directory::TEST_NOTE;
+    assert!(!has(&rows, note.trim()), "{rows:#?}");
 }
 
 /// MAX-185 step 0: the directory's title and buttons; a click on a row selects it, a click
@@ -5794,27 +5840,56 @@ fn status_bar_fits_by_steps() {
     assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
 }
 
-/// MAX-166: the default bar's replay block is the first one left out when the bar doesn't
-/// fit: wherever it shows, the file name, the replay's state and RX/TX show too, and it
-/// shows on a wide screen.
+/// MAX-274: a recording's `● REC` is at the default bar's right end, after a `|`, and goes after
+/// RX/TX when the bar doesn't fit: wherever RX shows, it does; and on a narrow bar too.
+/// How: a text recording started through its popup, the bar drawn at every width from 120
+/// down to 40.
+#[test]
+fn status_bar_keeps_the_recording_longest() {
+    let dir = std::env::temp_dir().join(format!("maxicom_test_{}_bar_rec", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("rec.log").display().to_string();
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 120, 10);
+    let record = Overlay::FilePath(FilePathDialog::new(Stream::Text, path));
+    h.app.update(Action::App(AppAction::OpenOverlay(record)));
+    h.app.update(Action::Overlay(DialogAction::Confirm));
+    assert!(h.app.recording().is_some());
+    let mut narrow = false;
+    for width in (40..=120).rev() {
+        h.terminal.backend_mut().resize(width, 10);
+        let bar = h.draw()[9].clone();
+        if bar.contains("RX:") {
+            // a `|` after TX and the time, before it
+            assert!(bar.contains(" | ● REC"), "{width}: {bar:?}");
+        } else {
+            narrow |= bar.contains("● REC");
+        }
+    }
+    assert!(narrow, "REC kept after RX/TX went");
+    h.app.update(Action::App(AppAction::ToggleRecording));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-166 then MAX-274: the default bar's replay block is at the right part's end and goes
+/// after RX/TX when the bar doesn't fit: wherever RX shows, the replay's state shows too, and
+/// on a wide screen the file name with them.
 /// How: a replay of a long session file name in terminal mode, every width from 60 to 200.
 #[test]
-fn status_bar_replay_block_goes_first() {
+fn status_bar_replay_block_stays_longest() {
     let name = "20260101_000000000_ttyFAKE.raw";
-    let mut shown = false;
+    let mut full = false;
     for width in 60..=200 {
         let mut h = Harness::line_mode(LineDisplayMode::Pretty, width, 10);
         h.app
             .start_replay(std::path::PathBuf::from(format!("/tmp/{name}")), None);
         let bar = h.draw()[9].clone();
-        if bar.contains('▷') {
-            shown = true;
-            for text in [name, "replay RUN", "RX:"] {
-                assert!(bar.contains(text), "{width}: {bar:?}");
-            }
+        if bar.contains("RX:") {
+            assert!(bar.contains("▷ RUN"), "{width}: {bar:?}");
         }
+        full |= bar.contains(name) && bar.contains("▷ RUN") && bar.contains("RX:");
     }
-    assert!(shown);
+    assert!(full);
 }
 
 /// MAX-163: the center part goes in the middle of the room the left and right parts
@@ -5873,7 +5948,12 @@ fn status_bar_parts_never_overlap() {
                 let rows = h.draw();
                 let bar = rows.iter().rev().find(|row| row.contains(label));
                 let bar = bar.unwrap_or_else(|| panic!("{layout:?} {width}: {rows:#?}"));
-                assert!(bar.contains("? ≡"), "{mode:?} {layout:?} {width}: {bar:?}");
+                // MAX-274: with borders drawn, `?` and `≡` are in the top border instead
+                if h.app.show_borders() {
+                    assert!(!bar.contains('≡'), "{mode:?} {layout:?} {width}: {bar:?}");
+                } else {
+                    assert!(bar.contains("? ≡"), "{mode:?} {layout:?} {width}: {bar:?}");
+                }
             }
         }
     }
@@ -7191,11 +7271,11 @@ fn search_hints_and_border_buttons_hover() {
         let mode = cell_of(&rows, "Mode");
         moved(&mut h, mode);
         assert!(reversed(&h, mode), "borders {borders}");
-        assert!(!reversed(&h, cell_of(&rows, "Exit")), "borders {borders}");
+        assert!(!reversed(&h, cell_of(&rows, "Cancel")), "borders {borders}");
         click(&mut h, mode);
         assert_eq!(h.app.line_mode.search().mode_kind, SearchModeKind::RawBytes);
         let rows = h.draw();
-        click(&mut h, cell_of(&rows, "Exit"));
+        click(&mut h, cell_of(&rows, "Cancel"));
         assert!(!h.app.line_mode.search().active, "borders {borders}");
 
         if borders {
@@ -7270,8 +7350,8 @@ fn status_bar_hover() {
 /// plain text is on the UI background unless the layout is `band`, with or without borders.
 /// The mode pill in copy mode and the hover keep their bg, and clicks and hovers land on
 /// the moved blocks.
-/// How: line mode with borders, the cells around the bar, copy mode, a hover on `?` and
-/// clicks on `≡` and `LINE`; then borders off, and `band` with each.
+/// How: line mode with borders, the cells around the bar, copy mode, a hover and a click on
+/// `LINE`; then borders off, and `band` with each, `≡` in the bar only without borders.
 #[test]
 fn status_bar_inset_and_background() {
     use crate::configs::StatusBarLayout;
@@ -7312,14 +7392,18 @@ fn status_bar_inset_and_background() {
     );
     h.app.update(Action::CopyMode(CopyModeAction::Exit));
 
+    // MAX-274: with borders `?` and `≡` are in the top border, not in the bar: the hover is
+    // the mode's, `reversed` by default
     let rows = h.draw();
-    let help = status_cell(&rows, "?");
-    moved(&mut h, help);
-    assert_eq!(bg_at(&h, help), Some(h.theme.palette.main));
-    click(&mut h, status_cell(&rows, "≡"));
-    assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
-    h.app.close_overlay();
-    click(&mut h, status_cell(&rows, "LINE"));
+    assert!(!rows[23].contains('≡'), "{:?}", rows[23]);
+    let mode = status_cell(&rows, "LINE");
+    moved(&mut h, mode);
+    let reversed = h.terminal.backend().buffer()[mode].modifier;
+    assert!(
+        reversed.contains(ratatui::style::Modifier::REVERSED),
+        "{reversed:?}"
+    );
+    click(&mut h, mode);
     assert_eq!(h.app.settings().mode, Mode::Terminal);
 
     h.app.settings_mut().mode = Mode::Line;
@@ -7341,6 +7425,7 @@ fn status_bar_inset_and_background() {
             assert_eq!(bg_at(&h, (x, 23)), Some(bg), "{borders} {layout:?}");
         }
         assert_eq!(bg_at(&h, status_cell(&rows, "/dev/")), Some(bg));
+        assert_eq!(rows[23].contains('≡'), !borders, "{borders} {layout:?}");
     }
 }
 
@@ -7349,7 +7434,8 @@ fn status_bar_inset_and_background() {
 /// parts stay, a space apart from the text, and the clicks work there. Borders off, it is
 /// the `line` layout.
 /// How: line mode at 80x24 with `line` then `border`: where the TX box starts, its bottom
-/// row, clicks on `≡` and `LINE`; then borders off with each.
+/// row, a click on `LINE`; then borders off with each, and a click on `≡` (MAX-274: the bar
+/// has `?` and `≡` only without borders).
 #[test]
 fn status_bar_in_the_tx_border() {
     use crate::configs::StatusBarLayout;
@@ -7371,9 +7457,8 @@ fn status_bar_in_the_tx_border() {
     let background = h.theme.ui.background.bg;
     assert_eq!(bg_at(&h, status_cell(&rows, "/dev/")), background);
 
-    click(&mut h, status_cell(&rows, "≡"));
-    assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
-    h.app.close_overlay();
+    // MAX-274: `?` and `≡` are in the top border with borders on, not in the bar
+    assert!(!bottom.contains('≡'), "{bottom:?}");
     click(&mut h, status_cell(&rows, "LINE"));
     assert_eq!(h.app.settings().mode, Mode::Terminal);
 
@@ -7382,13 +7467,16 @@ fn status_bar_in_the_tx_border() {
     let border_rows = h.draw();
     h.app.settings_mut().ui.status_bar.layout = StatusBarLayout::Line;
     assert_eq!(border_rows, h.draw());
+    // without borders the bar has them, and they click
+    click(&mut h, status_cell(&border_rows, "≡"));
+    assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
 }
 
 /// MAX-135: in terminal mode, the `border` layout draws the status bar in the history's
 /// bottom border, without the pan arrows. MAX-218: a search keeps it there, the search bar
 /// on the history's last row above it, and the remote isn't resized.
 /// How: terminal mode with `border`, the last rows before, during and after a search, then
-/// a click on `≡`.
+/// a click on `TERM` (MAX-274: no `≡` in the bar with borders).
 #[test]
 fn status_bar_in_the_history_border() {
     use crate::configs::StatusBarLayout;
@@ -7401,7 +7489,9 @@ fn status_bar_in_the_history_border() {
     let bottom = &rows[23];
     assert!(bottom.starts_with("└─ TERM "), "{bottom:?}");
     assert!(bottom.ends_with(" ─┘"), "{bottom:?}");
-    let settings = status_cell(&rows, "≡");
+    // MAX-274: `?` and `≡` are in the top border with borders on, not in the bar
+    assert!(!bottom.contains('≡'), "{bottom:?}");
+    let rx = status_cell(&rows, "RX:");
 
     let grid = h.app.terminal_mode.get_vt100_size();
 
@@ -7415,14 +7505,14 @@ fn status_bar_in_the_history_border() {
         rows[22]
     );
     assert!(rows[23].starts_with("└─ SRCH "), "{:?}", rows[23]);
-    assert_eq!(status_cell(&rows, "≡"), settings);
+    assert_eq!(status_cell(&rows, "RX:"), rx);
     assert_eq!(h.app.terminal_mode.get_vt100_size(), grid);
 
     h.app.update(Action::Search(SearchModeAction::Cancel));
     let rows = h.draw();
     assert!(rows[23].starts_with("└─ TERM "), "{:?}", rows[23]);
-    click(&mut h, settings);
-    assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
+    click(&mut h, status_cell(&rows, "TERM"));
+    assert_eq!(h.app.settings().mode, Mode::Line);
 }
 
 /// MAX-139: the pan shows once, in the status bar's center as `◀ offset/max ▶`, the numbers
@@ -7713,12 +7803,18 @@ fn status_bar_box_layout() {
         let x = rows[22].rfind(text).unwrap();
         (rows[22][..x].chars().count() as u16, 22)
     };
-    let help = bar_cell("?");
-    moved(&mut h, help);
-    assert_eq!(bg_at(&h, help), Some(h.theme.palette.main));
-    click(&mut h, bar_cell("≡"));
-    assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
-    h.app.close_overlay();
+    // MAX-274: `?` and `≡` are in the top border, not in the box: the mode's hover and click
+    assert!(!rows[22].contains('≡'), "{:?}", rows[22]);
+    let mode = bar_cell("LINE");
+    moved(&mut h, mode);
+    let reversed = h.terminal.backend().buffer()[mode].modifier;
+    assert!(
+        reversed.contains(ratatui::style::Modifier::REVERSED),
+        "{reversed:?}"
+    );
+    click(&mut h, mode);
+    assert_eq!(h.app.settings().mode, Mode::Terminal);
+    h.app.settings_mut().mode = Mode::Line;
 
     h.app.settings_mut().ui.show_borders = false;
     let box_rows = h.draw();
@@ -7839,8 +7935,8 @@ fn border_buttons() {
     assert!(h.app.overlay().is_none());
 }
 
-/// MAX-137: the history's title is ` maxicom LINE ` / ` maxicom TERMINAL `; with
-/// `title_details` the sizes, scroll and prefix follow.
+/// MAX-137: the history's title is ` maxicom `; with `title_details` the mode (MAX-274: out of
+/// the name, the status bar says it), sizes, scroll and prefix follow.
 /// How: line then terminal mode at 120x24, details off then on, the prefix active.
 #[test]
 fn border_title_details() {
@@ -7856,23 +7952,23 @@ fn border_title_details() {
             .unwrap()
             .to_string()
     };
-    assert_eq!(title(&mut h), " maxicom LINE ");
+    assert_eq!(title(&mut h), " maxicom ");
     h.app.settings_mut().ui.title_details = true;
-    assert_eq!(title(&mut h), " maxicom LINE [VIEW 118x19 | LIVE] ");
+    assert_eq!(title(&mut h), " maxicom [LINE | VIEW 118x19 | LIVE] ");
     h.app.update(Action::App(AppAction::SetPrefix(true)));
     assert_eq!(
         title(&mut h),
-        " maxicom LINE [VIEW 118x19 | LIVE] | PREFIX "
+        " maxicom [LINE | VIEW 118x19 | LIVE] | PREFIX "
     );
 
     h.app.update(Action::App(AppAction::SetPrefix(false)));
     h.app.settings_mut().mode = Mode::Terminal;
     assert_eq!(
         title(&mut h),
-        " maxicom TERMINAL [VT 118x24 | VIEW 118x22 | LIVE] "
+        " maxicom [TERMINAL | VT 118x24 | VIEW 118x22 | LIVE] "
     );
     h.app.settings_mut().ui.title_details = false;
-    assert_eq!(title(&mut h), " maxicom TERMINAL ");
+    assert_eq!(title(&mut h), " maxicom ");
 }
 
 /// MAX-275: the device's title goes after the name, in both modes; `show_device_title` off
@@ -7897,36 +7993,36 @@ fn border_title_device_title() {
     let osc = |h: &mut Harness, bytes: &[u8]| {
         h.app.terminal_mode.process_rx(TextEncoding::Utf8, bytes);
     };
-    assert_eq!(title(&mut h), " maxicom TERMINAL ");
+    assert_eq!(title(&mut h), " maxicom ");
     osc(&mut h, b"\x1b]0;board shell\x07");
-    assert_eq!(title(&mut h), " maxicom TERMINAL | board shell ");
+    assert_eq!(title(&mut h), " maxicom | board shell ");
     h.app.settings_mut().ui.show_device_icon_name = true;
-    assert_eq!(title(&mut h), " maxicom TERMINAL | board shell ");
+    assert_eq!(title(&mut h), " maxicom | board shell ");
     osc(&mut h, b"\x1b]1;icon\x07");
-    assert_eq!(title(&mut h), " maxicom TERMINAL | board shell | icon ");
+    assert_eq!(title(&mut h), " maxicom | board shell | icon ");
     h.app.settings_mut().ui.show_device_title = false;
-    assert_eq!(title(&mut h), " maxicom TERMINAL | icon ");
+    assert_eq!(title(&mut h), " maxicom | icon ");
     h.app.settings_mut().ui.show_device_icon_name = false;
-    assert_eq!(title(&mut h), " maxicom TERMINAL ");
+    assert_eq!(title(&mut h), " maxicom ");
 
     h.app.settings_mut().ui.show_device_title = true;
     h.app.settings_mut().mode = Mode::Line;
-    assert_eq!(title(&mut h), " maxicom LINE | board shell ");
+    assert_eq!(title(&mut h), " maxicom | board shell ");
     h.app.settings_mut().ui.title_details = true;
     assert_eq!(
         title(&mut h),
-        " maxicom LINE | board shell [VIEW 118x19 | LIVE] "
+        " maxicom | board shell [LINE | VIEW 118x19 | LIVE] "
     );
     osc(&mut h, "\x1b]2;a\u{3248}b\x07".as_bytes());
     h.app.settings_mut().ui.title_details = false;
-    assert_eq!(title(&mut h), " maxicom LINE | a\u{25AF}b ");
+    assert_eq!(title(&mut h), " maxicom | a\u{25AF}b ");
 
     let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 40, 24, |s| {
         s.ui.show_borders = true;
     });
     osc(&mut h, b"\x1b]2;a very long title from the board\x07");
-    // 28 columns for the title: ` maxicom LINE ` takes 14, ` | ` 3, the title the 11 left
-    assert_eq!(title(&mut h), " maxicom LINE | a very long ");
+    // 28 columns for the title: ` maxicom ` takes 9, ` | ` 3, the title the 16 left
+    assert_eq!(title(&mut h), " maxicom | a very long titl ");
 }
 
 /// MAX-137: a title that doesn't fit loses whole details from the last one, then the
@@ -7947,21 +8043,22 @@ fn border_title_fits_whole() {
         let title = rows[0].trim_start_matches('┌').split('─').next().unwrap();
         title.to_string()
     };
-    let full = " maxicom LINE [VIEW 118x19 | LIVE] | PREFIX ";
+    let full = " maxicom [LINE | VIEW 118x19 | LIVE] | PREFIX ";
     assert_eq!(title_at(120), full);
     for width in 20..=120 {
         let title = title_at(width);
         assert!(
             title.is_empty()
-                || [" maxicom LINE ", "] ", "] | PREFIX ", "LINE | PREFIX "]
+                || [" maxicom ", "] ", "] | PREFIX ", "maxicom | PREFIX "]
                     .iter()
                     .any(|end| title.ends_with(end)),
             "{width}: {title:?}"
         );
     }
-    // 40 columns leave 28 for the title: the details go before the prefix
-    assert_eq!(title_at(40), " maxicom LINE | PREFIX ");
-    assert_eq!(title_at(30), " maxicom LINE ");
+    // 40 columns leave 28 for the title: the details go before the prefix, the mode last
+    assert_eq!(title_at(40), " maxicom [LINE] | PREFIX ");
+    assert_eq!(title_at(30), " maxicom | PREFIX ");
+    assert_eq!(title_at(29), " maxicom ");
     assert_eq!(title_at(20), "");
 }
 
@@ -8261,6 +8358,13 @@ fn mouse_clicks_on_popup_hints() {
     press(&mut h, cell_of(&rows, "Close"));
     assert!(h.app.overlay().is_none());
 
+    // MAX-274: the settings' `[key] Change` before it doesn't move the Close target
+    let rows = open(&mut h, Overlay::Settings(SettingsDialog::new()));
+    press(&mut h, cell_of(&rows, "Change"));
+    assert!(h.app.overlay().is_some());
+    press(&mut h, cell_of(&rows, "Close"));
+    assert!(h.app.overlay().is_none());
+
     let rows = open(
         &mut h,
         Overlay::FilePath(FilePathDialog::new(Stream::Text, "x".into()).with_session_backup()),
@@ -8333,19 +8437,21 @@ fn mouse_clicks_in_popups() {
         h.draw()
     };
 
+    // the tabs overflow below 80 columns (MAX-274): at 70 only the last one hides
+    h.terminal.backend_mut().resize(70, 24);
     let rows = open(&mut h, Overlay::Help(HelpDialog::new()));
     click(&mut h, cell_of(&rows, "Search"));
     assert!(
         matches!(h.app.overlay(), Some(Overlay::Help(d)) if d.category == HelpCategory::Search)
     );
     // the tabs overflow the popup: the arrow picks the hidden one past it (MAX-12)
-    assert!(!has(&rows, "Dialogs"), "{rows:#?}");
+    assert!(!has(&rows, "Dialog"), "{rows:#?}");
     click(&mut h, cell_of(&rows, "▶"));
     assert!(
         matches!(h.app.overlay(), Some(Overlay::Help(d)) if d.category == HelpCategory::Dialog)
     );
     let rows = h.draw();
-    assert!(has(&rows, "Dialogs") && !has(&rows, "▶"), "{rows:#?}");
+    assert!(has(&rows, "Dialog") && !has(&rows, "▶"), "{rows:#?}");
     let (x, y) = cell_of(&rows, "Copy");
     click(&mut h, (x + 3, y));
     assert!(
@@ -8358,6 +8464,7 @@ fn mouse_clicks_in_popups() {
     );
     click(&mut h, (0, 0));
     assert!(h.app.overlay().is_none());
+    h.terminal.backend_mut().resize(80, 24);
 
     let rows = open(&mut h, Overlay::Settings(SettingsDialog::new()));
     assert!(!h.app.settings().local_echo);

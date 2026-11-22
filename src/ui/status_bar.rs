@@ -819,6 +819,7 @@ enum Cond {
     Profiles,
     DeviceTitle,
     DeviceIconName,
+    Borders,
     /// Unknown condition name, always false
     Unknown,
 }
@@ -864,6 +865,7 @@ impl Cond {
             "profiles" | "profile" => Self::Profiles,
             "device_title" | "title" => Self::DeviceTitle,
             "device_icon_name" | "icon_name" => Self::DeviceIconName,
+            "borders" | "border" => Self::Borders,
             _ => Self::Unknown,
         }
     }
@@ -924,6 +926,8 @@ impl Cond {
             Self::Profiles => !app.profiles().is_empty(),
             Self::DeviceTitle => app.terminal_mode.device_title().is_some(),
             Self::DeviceIconName => app.terminal_mode.device_icon_name().is_some(),
+            // drawn: on, and the screen not under `hide_borders_below` (MAX-274)
+            Self::Borders => app.show_borders(),
             Self::Unknown => false,
         }
     }

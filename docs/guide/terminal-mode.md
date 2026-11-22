@@ -111,7 +111,7 @@ character shows twice: turn it off.
 The Backspace key sends DEL (`7f`), as xterm and Linux consoles do. Some
 devices only erase on BS (`08`), minicom's default: the character stays and
 `^?` may show instead. Set `backspace = "bs"` in `[terminal_mode]`, or press
-`O` in the settings popup to switch it for this session. Ctrl-h sends BS
+`X` in the settings popup to switch it for this session. Ctrl-h sends BS
 either way, and Alt-Backspace sends ESC before the same byte.
 
 ## Characters drawn differently
@@ -132,7 +132,7 @@ last title the device set and shows it in the history box's title, after the
 name, in both modes:
 
 ```text
-┌ maxicom TERMINAL | root@board: ~ ──────────────────────────[?][≡][×]┐
+┌ maxicom | root@board: ~ ───────────────────────────────────[?][≡][×]┐
 ```
 
 The device's title only takes the room the rest of the title leaves, and is
@@ -205,7 +205,7 @@ maxicom answers the common queries for the terminal it emulates.
 queries maxicom answers, all of them by default. An empty list,
 `answer_groups = []`, answers none.
 
-`A` in the settings popup, and `set answer-queries on|off`, switch all the
+`R` in the settings popup, and `set answer-queries on|off`, switch all the
 answers off and on for this session: off sets the list aside, on gives it
 back (every group when it was empty). The file isn't changed.
 

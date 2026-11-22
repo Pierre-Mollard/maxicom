@@ -170,7 +170,7 @@ command fails on input you didn't type. Those are maxicom's answers to
 queries: a program asked and quit before reading the reply, or the device
 sent binary data where a few bytes read like a query.
 
-Press `A` in the settings popup (`Ctrl-a o`) to switch the answers off for
+Press `R` in the settings popup (`Ctrl-a o`) to switch the answers off for
 the session, or empty `answer_groups` in `[terminal_mode]` to turn them off
 for good. To keep the useful ones, drop only a group: `status` and `size`
 answer the cursor and size queries `resize` needs. `enq_answer` is sent on
@@ -183,7 +183,7 @@ waits for an upload, go to a device that may echo them back. maxicom then
 reads that echo as it reads everything:
 
 - answers to the queries it finds in it go to the device, in the middle of
-  your data: switch them off with `A` in the settings popup first, and back
+  your data: switch them off with `R` in the settings popup first, and back
   on after;
 - keep `notify_unhandled` empty, or it counts the whole file;
 - keep `device_clipboard` off (the default), or a few bytes reading like a
@@ -197,7 +197,7 @@ doesn't need this: the answers wait while the transfer runs.
 vim, a shell's line editor or `resize` ask the terminal a question and wait
 for the reply, then give up after a timeout. With the answers off, or their
 group left out of `answer_groups`, they wait every time. Switch them back on
-with `A` in the settings popup, or put the groups back.
+with `R` in the settings popup, or put the groups back.
 
 ## Copying and the screen
 

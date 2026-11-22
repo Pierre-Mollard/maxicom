@@ -38,6 +38,8 @@ impl SettingsDialog {
             DialogAction::PageUp => self.scroll_to(self.scroll.saturating_sub(5)),
             DialogAction::Home => self.scroll_to(0),
             DialogAction::End => self.scroll_to(max),
+            // the letters of the prefixed keys where they can be (MAX-274): Add CR `u`, Add LF
+            // `a`, Rx Encoding `O`; Mouse can't (`m` is the input mode's, the case doesn't count)
             DialogAction::HandleKey(key) => match key.code {
                 KeyCode::Char('e' | 'E') => toggle(SettingKey::LocalEcho),
                 KeyCode::Char('w' | 'W') => toggle(SettingKey::LineWrap),
@@ -47,21 +49,21 @@ impl SettingsDialog {
                 KeyCode::Char('d' | 'D') => toggle(SettingKey::DisplayMode),
                 KeyCode::Char('b' | 'B') => toggle(SettingKey::DisplayRaw),
                 KeyCode::Char('t' | 'T') => toggle(SettingKey::DisplayTimestamp),
-                KeyCode::Char('x' | 'X') => toggle(SettingKey::TextEncoding),
-                KeyCode::Char('u' | 'U') => toggle(SettingKey::Mouse),
+                KeyCode::Char('x' | 'X') => toggle(SettingKey::Backspace),
+                KeyCode::Char('z' | 'Z') => toggle(SettingKey::Mouse),
                 KeyCode::Char('c' | 'C') => copy_config_path(settings, 0),
                 // the files out of the config folder, numbered after it (MAX-163)
                 KeyCode::Char(digit @ '1'..='9') => {
                     copy_config_path(settings, digit as usize - '0' as usize)
                 }
                 KeyCode::Char('s' | 'S') => toggle(SettingKey::DimensionMode),
-                KeyCode::Char('a' | 'A') => toggle(SettingKey::AnswerQueries),
+                KeyCode::Char('r' | 'R') => toggle(SettingKey::AnswerQueries),
                 // not `l`: the popups' right (h j k l)
                 KeyCode::Char('y' | 'Y') => toggle(SettingKey::ByteTrace),
-                KeyCode::Char('r' | 'R') => toggle(SettingKey::AddCr),
-                KeyCode::Char('f' | 'F') => toggle(SettingKey::AddLf),
+                KeyCode::Char('u' | 'U') => toggle(SettingKey::AddCr),
+                KeyCode::Char('a' | 'A') => toggle(SettingKey::AddLf),
                 KeyCode::Char('n' | 'N') => toggle(SettingKey::TxEol),
-                KeyCode::Char('o' | 'O') => toggle(SettingKey::Backspace),
+                KeyCode::Char('o' | 'O') => toggle(SettingKey::TextEncoding),
                 // not `g`: the popups' Home (MAX-222)
                 KeyCode::Char('v' | 'V') => toggle(SettingKey::Plot),
                 _ => OverlayResponse::Handled,

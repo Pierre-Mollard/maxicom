@@ -19,7 +19,7 @@ characters.
 
 To change it:
 
-- `Ctrl-a O`, or `X` in the settings popup, cycles through them;
+- `Ctrl-a O`, or `O` in the settings popup, cycles through them;
 - `encoding cp437` on the [command line](command-line.md) sets one;
 - `-R cp437` sets it at startup.
 

@@ -15,7 +15,10 @@ use crate::{
     },
     capture::ScreenshotFormat,
     commands::Invocation,
-    configs::{KeyBindingAction, KeyPattern, Mode, TextEncoding, links::SavedLink},
+    configs::{
+        KeyBindingAction, KeyPattern, Mode, TextEncoding, keybindings::KeyBindingDialogAction,
+        links::SavedLink,
+    },
     inputs::mouse::handle_mouse,
     link::{
         Address, LinkConfig,
@@ -361,6 +364,20 @@ pub fn handle_event(event: Event, app: &App) -> Action {
                     && let Some(dialog_action_binding) = resolver.dialog_actions.get(&pattern)
                     && dialog_action_binding.is_text_input_action()
                 {
+                    // in the command line a cycle key other than Tab (Ctrl-n, Ctrl-p) is Down or
+                    // Up: the next candidate when listed, else the history, as in a shell (MAX-274)
+                    let arrow = match dialog_action_binding {
+                        KeyBindingDialogAction::CycleNext => Some(KeyCode::Down),
+                        KeyBindingDialogAction::CyclePrev => Some(KeyCode::Up),
+                        _ => None,
+                    };
+                    if let Some(arrow) = arrow
+                        && !matches!(key_event.code, KeyCode::Tab | KeyCode::BackTab)
+                        && matches!(app.overlay(), Some(Overlay::CommandLine(_)))
+                    {
+                        let key = KeyEvent::new(arrow, KeyModifiers::NONE);
+                        return Action::Overlay(DialogAction::HandleKey(key));
+                    }
                     return dialog_action_binding.to_action();
                 }
                 // force typing text for input fields

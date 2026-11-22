@@ -198,7 +198,7 @@ popups' fields, tabs and buttons, and the notifications.
 ### Turning the mouse off
 
 `mouse` in `[ui]` (default `true`) turns mouse support on. `Ctrl-a M`, or
-`U` in the settings popup, switches it.
+`Z` in the settings popup, switches it.
 
 With the mouse off, your terminal's own selection works as usual. Many
 terminals also give you their own selection while you hold Shift, even with

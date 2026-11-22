@@ -10,8 +10,14 @@ you says so in an "Upgrading" section.
 
 ### Upgrading
 
+The default status bar changed (see Changed). A `config.toml` written before
+holds the old `center` and `right` in `[ui.status_bar]`, and
+`--write-config` keeps them as your values: delete the two to get the new
+default, or copy them from
+[The default](https://pierre-mollard.github.io/maxicom/status-bar.html#the-default).
+
 In `[terminal_mode]`, `answer_queries` is gone: an empty `answer_groups = []`
-answers no query (`A` in the settings popup still switches the answers for
+answers no query (`R` in the settings popup still switches the answers for
 the session), and `answerback` is now `enq_answer`. maxicom warns about the
 old keys until you remove or rename them.
 
@@ -114,6 +120,23 @@ to send the focus reports.
 
 ### Changed
 
+- The default status bar keeps what needs you at its right end: `● REC`,
+  `⟳ mash`, a replay and its `« live` button, then the scroll position. A
+  narrow bar now drops RX / TX before them (the replay went first). `?` and
+  `≡` show only without borders, as the top border has them; the new
+  `borders` condition tells. See
+  [The default](https://pierre-mollard.github.io/maxicom/status-bar.html#the-default).
+- The help's tabs are `Direct`, `Term` and `Dialog` (were `Directs`,
+  `Terminal`, `Dialogs`): all eight fit an 80-column screen. The directory
+  says what `t` does in words, and only over a list it can test.
+- The history box's title reads ` maxicom `: the status bar already says the
+  mode. With `title_details = true`, the mode leads the details, as in
+  ` maxicom [LINE | VIEW 118x19 | LIVE] `.
+- The settings popup's keys follow the keys after the prefix where they can:
+  Add CR is `U` (`Ctrl-a u`), Add LF `A` (`Ctrl-a a`) and the text encoding
+  `O` (`Ctrl-a O`). The settings they pushed out moved: the query answers to
+  `R`, Backspace to `X`, the mouse to `Z`. See
+  [The settings popup](https://pierre-mollard.github.io/maxicom/settings.html#the-settings-popup).
 - A [group replay](https://pierre-mollard.github.io/maxicom/capture.html#replaying-a-group)
   shows a popup while it loads, with a gauge, the speed and the time left, and
   Esc stops it and goes back to the live link. maxicom froze until the whole

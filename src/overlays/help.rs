@@ -34,16 +34,17 @@ impl HelpCategory {
         Self::Dialog,
     ];
 
+    /// Short enough for the eight tabs to fit an 80-column screen (MAX-274)
     pub fn title(self) -> &'static str {
         match self {
             Self::Prefix => "Prefixed",
-            Self::Direct => "Directs",
+            Self::Direct => "Direct",
             Self::Commands => "Commands",
             Self::CopyMode => "Copy",
             Self::Search => "Search",
             Self::LineMode => "Line",
-            Self::TerminalMode => "Terminal",
-            Self::Dialog => "Dialogs",
+            Self::TerminalMode => "Term",
+            Self::Dialog => "Dialog",
         }
     }
 

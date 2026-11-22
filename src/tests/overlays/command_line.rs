@@ -240,3 +240,22 @@ fn take_a_folder() {
     command_line.handle_action(DialogAction::CycleNext);
     assert_eq!(value(&command_line), "x logs/");
 }
+
+/// MAX-274: Esc hides the list shown first, the line stays; then it closes. Typing lists
+/// again.
+/// How: "se" typed (listed), Esc, a letter, Esc twice.
+#[test]
+fn esc_hides_the_list_then_closes() {
+    let mut command_line = line("se");
+    assert!(!command_line.completion.candidates.is_empty());
+    let response = command_line.handle_action(DialogAction::Close);
+    assert!(matches!(response, OverlayResponse::Handled));
+    assert!(command_line.completion.candidates.is_empty());
+    assert_eq!(value(&command_line), "se");
+
+    command_line.handle_action(key(KeyCode::Char('n')));
+    assert!(!command_line.completion.candidates.is_empty());
+    command_line.handle_action(DialogAction::Close);
+    let response = command_line.handle_action(DialogAction::Close);
+    assert!(matches!(response, OverlayResponse::Close));
+}
