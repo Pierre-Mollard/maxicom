@@ -15,7 +15,7 @@ use crate::{
     overlays::{NoticeBrowser, PopupTarget},
     ui::{
         common::popup_area,
-        popups::{Hints, hint_spans, popup_block, render_scrollbar},
+        popups::{Hints, cut, hint_spans, popup_block, render_scrollbar},
     },
 };
 
@@ -164,16 +164,6 @@ pub fn render_notices_popup(
 /// A notice's text on one line
 fn text(notice: &Notice) -> String {
     notice.message.replace(['\r', '\n'], " ")
-}
-
-/// `text` cut to `width` columns, `…` in the last one when it's cut
-fn cut(text: &str, width: usize) -> String {
-    if text.width() <= width {
-        return text.to_string();
-    }
-    let mut first = (wrap(text, width.saturating_sub(1)).into_iter().next()).unwrap_or_default();
-    first.push('…');
-    first
 }
 
 /// `text` in lines of `width` columns at most, cut anywhere: a path has no spaces to wrap at

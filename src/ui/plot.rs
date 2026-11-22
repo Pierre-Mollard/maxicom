@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Axis, Block, Borders, Chart, Clear, Dataset, GraphType, Paragraph},
 };
 
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::{
@@ -20,6 +20,7 @@ use crate::{
     configs::{
         KeyBindingAction, ThemeConfig, duration, plots::PlotWindow, settings::RawSideOrientation,
     },
+    ui::popups::cut,
 };
 
 /// The title row's columns besides the name: `  ◀ ` and ` ▶`, a space at least, `✕ `
@@ -61,7 +62,7 @@ pub fn render_plot_panel(
     let button_style = Style::default().fg(theme.palette.secondary);
     let frozen = if plot.is_frozen() { " frozen" } else { "" };
     let room = (inner.width as usize).saturating_sub(TITLE_FIXED_WIDTH + frozen.len());
-    let name = shorten(&plot.name, room.max(3));
+    let name = cut(&plot.name, room.max(3));
     let longest = (app.plots().plots.iter())
         .map(|(name, _)| name.width())
         .max()
@@ -305,25 +306,6 @@ pub fn legend_rows(graph: Rect, entries: &[(String, Color)]) -> Option<Vec<Rect>
             .chain((1..).zip(widths).map(|(y, width)| row(y, width)))
             .collect(),
     )
-}
-
-/// `text` in `width` columns at most, cut with `…` when it's longer
-pub fn shorten(text: &str, width: usize) -> String {
-    if text.width() <= width {
-        return text.to_string();
-    }
-    let mut out = String::new();
-    let mut used = 0;
-    for c in text.chars() {
-        let w = c.width().unwrap_or(0);
-        if used + w + 1 > width {
-            break;
-        }
-        out.push(c);
-        used += w;
-    }
-    out.push('…');
-    out
 }
 
 /// Each series' color: its own from `colors`, else the next of the theme's link colors

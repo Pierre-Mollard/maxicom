@@ -30,15 +30,6 @@ fn value_labels() {
     }
 }
 
-/// A text cut to its width with `…`, wide characters counted as two columns.
-#[test]
-fn shortened() {
-    assert_eq!(shorten("pid", 10), "pid");
-    assert_eq!(shorten("0123456789", 10), "0123456789");
-    assert_eq!(shorten("0123456789a", 10), "012345678…");
-    assert_eq!(shorten("温度温度温度", 6), "温度…");
-}
-
 /// The name, last, lowest and highest value shown; the name alone without a point.
 #[test]
 fn legend_entries() {

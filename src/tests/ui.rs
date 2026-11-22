@@ -2101,7 +2101,7 @@ fn popup_hints_follow_the_keymap() {
     assert!(
         has(
             &rows,
-            "Left/Right Category · Up/Down Move · c Config folder · Esc Close"
+            "Left/Right Tab · Up/Down Move · / Filter · c Config folder · Esc Close"
         ),
         "{rows:#?}"
     );
@@ -2223,6 +2223,37 @@ fn settings_and_help_copy_the_config_folder() {
         folder_copy
     );
     assert!(matches!(h.app.overlay(), Some(Overlay::Help(_))));
+}
+
+/// MAX-274: a file path too long for the settings popup is cut in its middle, so the row
+/// keeps its end, the file's name; a click still copies the whole path.
+/// How: a theme set to a long path out of the config folder, the popup drawn at 80x24.
+#[test]
+fn settings_cut_a_long_path_in_its_middle() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+    let path = "/srv/shared/maxicom/teams/firmware-bring-up/themes/dark-high-contrast.toml";
+    h.app.settings_mut().theme_path = Some(path.into());
+    h.app
+        .update(Action::App(AppAction::OpenOverlay(Overlay::Settings(
+            SettingsDialog::new(),
+        ))));
+    let rows = h.draw();
+    assert!(
+        has(
+            &rows,
+            "[1] Theme         : /srv/shared/maxicom/t…ark-high-contrast.toml"
+        ),
+        "{rows:#?}"
+    );
+    let press = mouse_do(
+        &mut h,
+        MouseEventKind::Down(MouseButton::Left),
+        cell_of(&rows, "[1] Theme"),
+    );
+    assert!(matches!(
+        press,
+        UpdateEffect::CopyToClipboardAs { ref text, .. } if text == path
+    ));
 }
 
 /// MAX-163: on a screen too short for the settings, the popup scrolls with a scrollbar; the
@@ -3029,19 +3060,26 @@ fn help_lists_the_commands() {
     let row_of = |rows: &[String], text: &str| rows.iter().position(|row| row.contains(text));
     let named = row_of(&rows, "Named commands, [commands] in keymap.toml:").expect("named");
     let expected = [
-        " board-reset   dtr off; sleep 100; dtr on",
+        " board-reset    dtr off; sleep 100; dtr on",
         "     Pulse DTR, which resets most boards",
-        " ctrl-c        send-hex 03",
+        " ctrl-c         send-hex 03",
         "     Send Ctrl-c, which stops the program running",
-        " ctrl-d        send-hex 04",
+        " ctrl-d         send-hex 04",
         "     Send Ctrl-d: the end of the input, or a shell's logout",
-        " u-boot-toggle trigger toggle u-boot",
+        " u-boot-toggle  trigger toggle u-boot",
         "     Arm / disarm the u-boot trigger",
     ];
+    // a blank row under the header, as under the other tabs' title (MAX-274)
+    assert!(
+        rows[named + 1]
+            .trim_matches([' ', '│', '█', '▲'])
+            .is_empty(),
+        "{rows:#?}"
+    );
     for (i, text) in expected.into_iter().enumerate() {
-        assert!(rows[named + 1 + i].contains(text), "{text}: {rows:#?}");
+        assert!(rows[named + 2 + i].contains(text), "{text}: {rows:#?}");
     }
-    assert!(!has(&rows, "Ctrl-a + "), "{rows:#?}");
+    assert!(!has(&rows, "Ctrl-a, then:"), "{rows:#?}");
     assert!(!has(&rows, "copy mode "), "{rows:#?}");
     assert!(has(&rows, "on the command line (Ctrl-a :)"), "{rows:#?}");
 
@@ -3108,7 +3146,7 @@ fn help_lists_the_popup_bindings() {
     assert!(has(&rows, "Dialogs"), "{rows:#?}");
     let bound_to_close = |rows: &[String], key: &str| {
         let line = rows.iter().find(|row| row.contains(&format!(" {key} ")));
-        line.is_some_and(|row| row.contains("-> close"))
+        line.is_some_and(|row| names(row, "close"))
     };
     // the letters come first, the named keys and the Ctrl ones below the view
     assert!(bound_to_close(&rows, "q"), "{rows:#?}");
@@ -3116,11 +3154,14 @@ fn help_lists_the_popup_bindings() {
     let rows = h.draw();
     assert!(bound_to_close(&rows, "Esc"), "{rows:#?}");
     assert!(bound_to_close(&rows, "Ctrl-x"), "{rows:#?}");
-    assert!(has(&rows, "-> cycle-next"), "{rows:#?}");
+    assert!(rows.iter().any(|row| names(row, "cycle-next")), "{rows:#?}");
 }
 
 /// MAX-155: the prefix tab's actions start on one column, past the longest key
-/// (`Shift-Right`, one char wider than the old fixed column).
+/// (`Shift-Right`, one char wider than the old fixed column). MAX-274: the prefix is said
+/// once above the keys, each row has its key alone; the help comes first. The one-character
+/// keys come first, their help right after them; the longer keys after a blank row and a
+/// dimmed title, their help on a column of their own.
 /// How: the default keymap, every page of the tab, `Shift-Right` sorting in the middle.
 #[test]
 fn help_prefix_actions_align() {
@@ -3130,21 +3171,130 @@ fn help_prefix_actions_align() {
             HelpDialog::new(),
         ))));
     let mut rows = h.draw();
-    for _ in 0..10 {
+    for _ in 0..20 {
         h.app.update(Action::Overlay(DialogAction::PageDown));
         rows.extend(h.draw());
     }
     assert!(has(&rows, "Shift-Right"), "{rows:#?}");
-    let mut columns: Vec<usize> = rows.iter().filter_map(|row| row.find("-> ")).collect();
-    columns.sort_unstable();
-    columns.dedup();
-    assert_eq!(columns.len(), 1, "{rows:#?}");
+    assert!(has(&rows, "│  Named keys and combinations:"), "{rows:#?}");
+    assert!(has(&rows, " Ctrl-a, then:"), "{rows:#?}");
+    assert!(!has(&rows, "Ctrl-a + "), "{rows:#?}");
+    // where the help starts, after a key at the row's start and the spaces padding it
+    let help_column = |key: &str| {
+        let start = format!("│  {key} ");
+        let row = rows.iter().find(|row| row.contains(&start))?;
+        let after = row.find(&start)? + start.len();
+        Some(after + row[after..].find(|c| c != ' ')?)
+    };
+    let same = |columns: &[Option<usize>]| columns.iter().all(|c| c.is_some() && *c == columns[0]);
+    let short = ["a", "e", "'", "z"].map(help_column);
+    let long = ["Ctrl-l", "Shift-Right", "Shift-PageDown"].map(help_column);
+    assert!(same(&short) && same(&long), "{rows:#?}");
+    // the letters' help two columns after them, the long keys' further
+    assert!(has(&rows, "│  a  Read a received CR"), "{rows:#?}");
+    assert!(short[0] < long[0], "{rows:#?}");
 }
 
-/// MAX-239: every help tab lists its keys as `key -> name  help`. The keys bound to a command
+/// MAX-274: `/` types a filter in the help: the rows of every tab holding it, under the tab's
+/// name; `j` or `q` type while it takes the keys, the footer says how to leave it. Enter keeps
+/// it and gives the keys back (`j` scrolls); Esc clears it, a second Esc closes the help; a
+/// tab picked leaves it; no match says so.
+/// How: the default keymap, keys through the input routing; "mark", Enter, Esc twice; then
+/// "zq" and Left.
+#[test]
+fn help_filter_lists_matches_of_every_tab() {
+    use crossterm::event::KeyCode::{Char, Enter, Esc, Left};
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 30);
+    h.app
+        .update(Action::App(AppAction::OpenOverlay(Overlay::Help(
+            HelpDialog::new(),
+        ))));
+    h.draw();
+    let help = |h: &Harness| match h.app.overlay() {
+        Some(Overlay::Help(help)) => Some(help.clone()),
+        _ => None,
+    };
+    let typed = |h: &mut Harness, text: &str| {
+        for c in text.chars() {
+            key_do(h, Char(c), KeyModifiers::NONE);
+        }
+    };
+    typed(&mut h, "/mark");
+    let rows = h.draw();
+    assert!(has(&rows, "│  / mark "), "{rows:#?}");
+    assert!(has(&rows, "Prefixed · Ctrl-a, then:"), "{rows:#?}");
+    assert!(has(&rows, "  Commands "), "{rows:#?}");
+    assert!(has(&rows, "Go to the mark above"), "{rows:#?}");
+    assert!(!has(&rows, "Read a received CR"), "{rows:#?}");
+    assert!(has(&rows, "Enter Keep · Esc Clear"), "{rows:#?}");
+
+    key_do(&mut h, Enter, KeyModifiers::NONE);
+    key_do(&mut h, Char('j'), KeyModifiers::NONE);
+    let state = help(&h).expect("help open");
+    assert_eq!(
+        (state.query(), state.typing, state.scroll),
+        (Some("mark"), false, 1)
+    );
+    let rows = h.draw();
+    assert!(has(&rows, "/ Filter"), "{rows:#?}");
+
+    key_do(&mut h, Esc, KeyModifiers::NONE);
+    let state = help(&h).expect("help open");
+    assert!(state.filter.is_none(), "{state:?}");
+    let rows = h.draw();
+    assert!(has(&rows, "Read a received CR"), "{rows:#?}");
+    key_do(&mut h, Esc, KeyModifiers::NONE);
+    assert!(help(&h).is_none());
+
+    h.app
+        .update(Action::App(AppAction::OpenOverlay(Overlay::Help(
+            HelpDialog::new(),
+        ))));
+    typed(&mut h, "/zq");
+    let rows = h.draw();
+    assert!(has(&rows, "/ zq"), "{rows:#?}");
+    assert!(has(&rows, "Nothing matches"), "{rows:#?}");
+    key_do(&mut h, Enter, KeyModifiers::NONE);
+    key_do(&mut h, Left, KeyModifiers::NONE);
+    let state = help(&h).expect("help open");
+    assert!(state.filter.is_none(), "{state:?}");
+    assert_eq!(state.category, crate::overlays::HelpCategory::Dialog);
+}
+
+/// MAX-274: each tab of keys starts with where they work and the key that gets there, from
+/// the keymap in use; the commands tab has its own headers.
+/// How: the default keymap, each tab drawn in turn on a wide screen.
+#[test]
+fn help_tabs_say_where_their_keys_work() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 130, 24);
+    h.app
+        .update(Action::App(AppAction::OpenOverlay(Overlay::Help(
+            HelpDialog::new(),
+        ))));
+    for title in [
+        Some("Ctrl-a, then:"),
+        Some("Without the prefix, in both modes, never sent:"),
+        None,
+        Some("In copy mode (Ctrl-a b):"),
+        Some("In the search bar (Ctrl-a /):"),
+        Some("In line mode (Ctrl-a m), while typing:"),
+        Some("In terminal mode (Ctrl-a m), before the key is sent:"),
+        Some("In the popups:"),
+    ] {
+        let rows = h.draw();
+        match title {
+            Some(title) => assert!(has(&rows, &format!("│  {title} ")), "{title}: {rows:#?}"),
+            None => assert!(has(&rows, "Named commands"), "{rows:#?}"),
+        }
+        h.app.update(Action::Overlay(DialogAction::CycleNext));
+    }
+}
+
+/// MAX-239: every help tab lists its keys with their help and name (MAX-274: `key  help  name`,
+/// the name at the row's end). The keys bound to a command
 /// without its arguments (`mark`, `break`, `plot`, `replay-stop`) are actions, and the keys
 /// bound to a named command (`board-reset`, `u-boot-toggle`) are in their own tab too; the
-/// commands tab lists no key. A help too long for the popup is cut with `…`.
+/// commands tab lists no key. On 80 columns, the letters' helps fit whole beside their name.
 /// How: the default keymap on a wide screen, each tab in turn, paged down to its end; then
 /// the prefix tab on 80 columns.
 #[test]
@@ -3180,28 +3330,22 @@ fn help_tabs_list_keys_and_names() {
     };
     let bound = |rows: &[String], key: &str, name: &str| {
         rows.iter()
-            .any(|row| row.contains(&format!(" {key} ")) && row.contains(&format!("-> {name}")))
+            .any(|row| row.contains(&format!(" {key}  ")) && names(row, name))
     };
     let described = |rows: &[String], key: &str, help: &str| {
-        rows.iter().any(|row| {
-            row.contains(&format!(" {key} "))
-                && row.trim_end_matches([' ', '│', '█', '▼']).ends_with(help)
-        })
+        rows.iter()
+            .any(|row| row.contains(&format!(" {key}  ")) && row.contains(&format!("  {help}")))
     };
     for (rows, key, help) in [
-        (prefix, "Ctrl-a + e", "Toggle local echo"),
-        (
-            prefix,
-            "Ctrl-a + f",
-            "Hold the line in break, 250 ms by default",
-        ),
-        (prefix, "Ctrl-a + h", "Pulse DTR, which resets most boards"),
+        (prefix, "e", "Toggle local echo"),
+        (prefix, "f", "Hold the line in break, 250 ms by default"),
+        (prefix, "h", "Pulse DTR, which resets most boards"),
         (direct, "Ctrl-q", "Quit maxicom"),
         (copy, "k", "Cursor up"),
         (
             copy,
             ",",
-            "Mark the cursor's line, waits for its letter (Ente…",
+            "Mark the cursor's line, waits for its letter (Enter: the first free one)",
         ),
         (copy, "Ctrl-y", "Scroll the view up a line"),
         (search, "Ctrl-n", "Next match"),
@@ -3212,29 +3356,28 @@ fn help_tabs_list_keys_and_names() {
         assert!(described(rows, key, help), "{key}: {rows:#?}");
     }
     for (key, name) in [
-        ("Ctrl-a + e", "toggle-local-echo"),
-        ("Ctrl-a + '", "marks"),
-        ("Ctrl-a + G", "plot-freeze"),
-        ("Ctrl-a + ,", "mark"),
-        ("Ctrl-a + f", "break"),
-        ("Ctrl-a + g", "plot"),
-        ("Ctrl-a + L", "replay-stop"),
-        ("Ctrl-a + h", "board-reset"),
-        ("Ctrl-a + U", "u-boot-toggle"),
+        ("e", "toggle-local-echo"),
+        ("'", "marks"),
+        ("G", "plot-freeze"),
+        (",", "mark"),
+        ("f", "break"),
+        ("g", "plot"),
+        ("L", "replay-stop"),
+        ("h", "board-reset"),
+        ("U", "u-boot-toggle"),
     ] {
         assert!(bound(prefix, key, name), "{key}: {prefix:#?}");
     }
     assert!(bound(direct, "Ctrl-q", "quit"), "{direct:#?}");
-    for key in [
-        "Ctrl-a + h",
-        "Ctrl-a + U",
-        "Ctrl-a + ,",
-        "Ctrl-a + f",
-        "Ctrl-a + g",
-        "Ctrl-a + L",
-        "copy mode ,",
+    // the commands tab lists no key
+    assert!(!has(commands, "Ctrl-a, then:"), "{commands:#?}");
+    assert!(!has(commands, " copy mode , "), "{commands:#?}");
+    for (key, help) in [
+        ("h", "Pulse DTR"),
+        ("f", "Hold the line"),
+        ("g", "Show a plot"),
     ] {
-        assert!(!has(commands, &format!(" {key} ")), "{key}: {commands:#?}");
+        assert!(!described(commands, key, help), "{key}: {commands:#?}");
     }
     assert!(bound(copy, "k", "up"), "{copy:#?}");
     assert!(bound(copy, ",", "mark"), "{copy:#?}");
@@ -3252,11 +3395,22 @@ fn help_tabs_list_keys_and_names() {
             HelpDialog::new(),
         ))));
     let rows = h.draw();
-    let directory = rows
-        .iter()
-        .find(|row| row.contains(" Ctrl-a + d "))
-        .unwrap();
-    assert!(directory.contains("Open the direc…│"), "{directory}");
+    // MAX-274: on 80 columns, room for these helps whole beside their name (the cut is
+    // `key_row_puts_the_name_last`'s)
+    let row = |key: &str| {
+        rows.iter()
+            .find(|row| row.contains(&format!("│  {key}  ")))
+            .unwrap()
+    };
+    let directory = row("d");
+    assert!(
+        directory.contains("the serial ports to switch to "),
+        "{directory}"
+    );
+    assert!(names(directory, "directory"), "{directory}");
+    let plot = row("g");
+    assert!(plot.contains("or the next one "), "{plot}");
+    assert!(names(plot, "plot"), "{plot}");
 }
 
 /// MAX-239: a key bound to a named command shows in its section's tab with the command's
@@ -3301,13 +3455,13 @@ fn help_lists_named_keys_in_their_tab() {
         row.cloned().unwrap_or_default()
     };
     let (direct, copy, line, terminal) = (&tabs[1], &tabs[3], &tabs[5], &tabs[6]);
-    assert!(row(direct, "F5").contains("-> ctrl-c"), "{direct:#?}");
+    assert!(names(&row(direct, "F5"), "ctrl-c"), "{direct:#?}");
     assert!(row(direct, "F5").contains("Send Ctrl-c"), "{direct:#?}");
-    assert!(row(line, "F7").contains("-> bell"), "{line:#?}");
+    assert!(names(&row(line, "F7"), "bell"), "{line:#?}");
     assert!(row(line, "F7").contains("send-hex 07"), "{line:#?}");
-    assert!(row(terminal, "F7").contains("-> ctrl-c"), "{terminal:#?}");
-    assert!(row(copy, "F5").contains("-> ctrl-c"), "{copy:#?}");
-    assert!(row(copy, "F8").contains("-> bell"), "{copy:#?}");
+    assert!(names(&row(terminal, "F7"), "ctrl-c"), "{terminal:#?}");
+    assert!(names(&row(copy, "F5"), "ctrl-c"), "{copy:#?}");
+    assert!(names(&row(copy, "F8"), "bell"), "{copy:#?}");
 }
 
 /// Rows inside the popup frame (between its top and bottom borders), without the borders
@@ -3336,13 +3490,11 @@ fn help_lists_the_copy_scroll_keys_apart() {
     assert!(last.is_empty(), "{rows:#?}");
     let header = row_of("Scrolling moves the view").expect("the scroll header");
     assert!(
-        row_of("-> down").is_none_or(|row| row < header),
+        (rows.iter().position(|row| names(row, "down"))).is_none_or(|row| row < header),
         "{rows:#?}"
     );
     for scroll in ["scroll-up", "scroll-down", "scroll-to-top", "page-up"] {
-        let below = rows[header..]
-            .iter()
-            .any(|row| row.contains(&format!("-> {scroll}")));
+        let below = rows[header..].iter().any(|row| names(row, scroll));
         assert!(below, "{scroll}: {rows:#?}");
     }
     // `PageUp` moves the copy cursor, the direct `Shift-PageUp` scrolls (MAX-155)
@@ -3351,6 +3503,12 @@ fn help_lists_the_copy_scroll_keys_apart() {
         "{rows:#?}"
     );
     assert!(row_of("Ctrl-y").is_some(), "{rows:#?}");
+}
+
+/// Whether a help row ends with the action or command name `name`, the scrollbar trimmed
+/// (MAX-274: the name is dimmed at the row's right end)
+fn names(row: &str, name: &str) -> bool {
+    (row.trim_end_matches([' ', '│', '█', '▲', '▼'])).ends_with(&format!(" {name}"))
 }
 
 fn popup_inside(rows: &[String]) -> Vec<String> {
@@ -4855,7 +5013,7 @@ fn session_browser_tree_rows() {
 }
 
 /// MAX-202: in the list view, a port too long for the row is cut with a `…`, its full name
-/// in the details.
+/// in the details. The `…` is in its middle, so the row keeps the name's end (MAX-274).
 /// How: a session on a long port name, at 80 columns.
 #[test]
 fn session_list_cuts_a_long_port() {
@@ -4868,8 +5026,7 @@ fn session_list_cuts_a_long_port() {
     h.app.start_session(Some(dir.clone()));
     open_session_list(&mut h);
     let rows = h.draw();
-    let row = rows.iter().find(|row| row.contains("serial-"));
-    assert!(row.is_some_and(|row| row.contains('…')), "{rows:#?}");
+    assert!(has(&rows, "ser…name "), "{rows:#?}");
     assert!(!has(&rows, "adapter-name "), "{rows:#?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -10420,8 +10577,9 @@ fn help_commands_cut_with_an_ellipsis() {
         .iter()
         .find(|row| row.contains(" long "))
         .expect("long");
+    // a column left free before the scrollbar's
     assert!(
-        row.contains("on and on past the") && row.contains("…│"),
+        row.contains("on and on past the") && row.contains("… │"),
         "{row}"
     );
     assert!(!row.contains("popup'"), "{row}");

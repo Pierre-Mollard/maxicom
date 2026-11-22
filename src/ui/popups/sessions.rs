@@ -8,6 +8,7 @@ use ratatui::{
     widgets::{Clear, Paragraph},
 };
 use std::time::Duration;
+use unicode_width::UnicodeWidthStr;
 
 use crate::{
     capture::{NodeKind, Session, SessionNode},
@@ -22,7 +23,10 @@ use crate::{
     ui::{
         common::popup_area,
         data_display::format_line_content,
-        popups::{Hints, filepath::field_view, hint_spans, popup_block, render_scrollbar, section},
+        popups::{
+            Hints, cut_middle, filepath::field_view, hint_spans, popup_block, render_scrollbar,
+            section,
+        },
     },
 };
 
@@ -324,8 +328,8 @@ fn tree_row<'a>(
     let indent = 1 + 2 * row.depth;
     let left = 1 + indent + 2;
     let right = count.chars().count() + size_pad + size_text.chars().count();
-    let label = cut(&node.label, width.saturating_sub(left + right + 1));
-    let pad = width.saturating_sub(left + label.chars().count() + right);
+    let label = cut_middle(&node.label, width.saturating_sub(left + right + 1));
+    let pad = width.saturating_sub(left + label.width() + right);
     let cell = |text: String, color| Span::styled(text, Style::default().fg(color));
     let gap = |width: usize| cell(" ".repeat(width), theme.palette.text);
     Line::from(vec![
@@ -339,15 +343,6 @@ fn tree_row<'a>(
         gap(size_pad),
         cell(size_text, theme.session_browser.size_color(node.size)),
     ])
-}
-
-/// `text` in `room` columns, a `…` for the part cut
-fn cut(text: &str, room: usize) -> String {
-    if text.chars().count() <= room {
-        return text.to_string();
-    }
-    let kept = text.chars().take(room.saturating_sub(1));
-    kept.chain((room > 0).then_some('…')).collect()
 }
 
 /// A row of the list, its mark first. Its columns are colored as `lsd -l` does (MAX-153): the
@@ -387,7 +382,7 @@ fn list_row<'a>(
         gap(pad),
         cell(size_text, theme.session_browser.size_color(session.size)),
         gap(1),
-        cell(cut(&port, room), browser.link_color(session, theme)),
+        cell(cut_middle(&port, room), browser.link_color(session, theme)),
     ])
 }
 

@@ -16,7 +16,8 @@ use crate::{
     overlays::{PopupTarget, SettingKey, SettingsDialog},
     paths::shorten_home,
     ui::popups::{
-        FORM_WIDTH, form_area, key_hints, popup_block, render_scrollbar, row_area, section,
+        FORM_WIDTH, cut, cut_middle, form_area, key_hints, popup_block, render_scrollbar, row_area,
+        section,
     },
 };
 
@@ -56,9 +57,9 @@ pub fn render_settings_popup(
     let raw_display_str = app.settings().raw_side.view.as_str();
     let dimension_str = app.settings().terminal_mode.dimension_mode.as_str();
 
-    let plot_str = app.plot().map_or("Off".to_string(), |plot| {
-        crate::ui::plot::shorten(&plot.name, VALUE_WIDTH)
-    });
+    let plot_str = app
+        .plot()
+        .map_or("Off".to_string(), |plot| cut(&plot.name, VALUE_WIDTH));
     let row = |key: &'static str, label: &'static str, value: &str| {
         Line::from(vec![
             Span::styled(
@@ -148,35 +149,6 @@ pub fn render_settings_popup(
             (SettingKey::Backspace, row("O", "Backspace", backspace_str)),
         ],
     );
-    // the config folder, then the files out of it; a click copies one (MAX-163)
-    let mut files = vec![(None, section("Files", theme))];
-    for (index, (what, path)) in AppConfig::config_paths(app.settings())
-        .into_iter()
-        .enumerate()
-    {
-        // "theme file" is `Theme`, the folder `[C] Config`
-        let name = what.split(' ').next().unwrap_or(what);
-        let mut chars = name.chars();
-        let label: String = chars
-            .next()
-            .into_iter()
-            .flat_map(char::to_uppercase)
-            .chain(chars)
-            .collect();
-        // `c` copies the folder, a digit the file of that number (MAX-163)
-        let key = if index == 0 {
-            "[C] ".to_string()
-        } else {
-            format!("[{index}] ")
-        };
-        let line = Line::from(vec![
-            Span::styled(key, Style::default().fg(theme.palette.secondary)),
-            Span::raw(format!("{label:<14}: ")),
-            Span::styled(shorten_home(&path), Style::default().fg(theme.palette.main)),
-        ]);
-        files.push((Some(PopupTarget::ConfigPath(index)), line));
-    }
-
     // General and Newlines on the left, Line Mode and Terminal Mode on the right, when the
     // screen has room (MAX-184); else one column, as before
     let blank = || (None, Line::from(""));
@@ -218,6 +190,40 @@ pub fn render_settings_popup(
         }
         FORM_WIDTH
     };
+    // the config folder, then the files out of it; a click copies one (MAX-163). A path cut in
+    // its middle keeps its end: the popup's width less its borders, padding and label
+    let path_room = usize::from(width.min(frame.area().width)).saturating_sub(4 + LABEL_WIDTH);
+    let mut files = vec![(None, section("Files", theme))];
+    for (index, (what, path)) in AppConfig::config_paths(app.settings())
+        .into_iter()
+        .enumerate()
+    {
+        // "theme file" is `Theme`, the folder `[C] Config`
+        let name = what.split(' ').next().unwrap_or(what);
+        let mut chars = name.chars();
+        let label: String = chars
+            .next()
+            .into_iter()
+            .flat_map(char::to_uppercase)
+            .chain(chars)
+            .collect();
+        // `c` copies the folder, a digit the file of that number (MAX-163)
+        let key = if index == 0 {
+            "[C] ".to_string()
+        } else {
+            format!("[{index}] ")
+        };
+        let line = Line::from(vec![
+            Span::styled(key, Style::default().fg(theme.palette.secondary)),
+            Span::raw(format!("{label:<14}: ")),
+            Span::styled(
+                cut_middle(&shorten_home(&path), path_room),
+                Style::default().fg(theme.palette.main),
+            ),
+        ]);
+        files.push((Some(PopupTarget::ConfigPath(index)), line));
+    }
+
     rows.push((Vec::new(), Line::from("")));
     for (target, line) in files {
         rows.push((whole(target), line));
@@ -275,6 +281,9 @@ type Spot = (u16, u16, PopupTarget);
 
 /// Between the two columns
 const GAP: usize = 4;
+
+/// A file row's `[C] Config        : ` before its path: the key, the label in 14, `: `
+const LABEL_WIDTH: usize = 20;
 
 /// The longest setting value: `Match View`, `Fixed Cols`
 const VALUE_WIDTH: usize = 10;

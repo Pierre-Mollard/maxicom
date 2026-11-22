@@ -95,7 +95,8 @@ pub fn render_scrollbar(
     frame.render_stateful_widget(scrollbar, bar, &mut state);
 }
 
-/// `text` cut to `width` columns, `…` in its last one when it's cut
+/// `text` cut to `width` columns, `…` in its last one when it's cut, for prose: its start says
+/// the most. A path, an address or a device name says the most at its end: `cut_middle`
 pub fn cut(text: &str, width: usize) -> String {
     if text.width() <= width {
         return text.to_string();
@@ -108,6 +109,7 @@ pub fn cut(text: &str, width: usize) -> String {
         }
         cut.push(c);
     }
+    cut.truncate(cut.trim_end().len());
     cut.push('…');
     cut
 }

@@ -199,8 +199,25 @@ screen it uses one column, and it scrolls when the screen is too short.
 | Terminal | Terminal mode's keys |
 | Dialogs | The [popup keys](popups.md) |
 
-It shows the keymap in use, your changes included. `c` copies the config
-folder's path.
+It shows the keymap in use, your changes included. Each tab starts with
+where its keys work, and the key that gets you there.
+
+On top of the popup keys:
+
+| Key | Does |
+| --- | --- |
+| `/` | Filter: type a word to list the keys and commands of every tab holding it |
+| `c` | Copy the config folder's path |
+
+### Filtering the help
+
+`/` opens a field under the list. As you type, the help lists every key and
+command whose key, name or description holds the text, from all the tabs,
+each under its tab's name. Case doesn't matter.
+
+While you type, every key goes to the field. Enter keeps the filter and
+gives the keys back to the list, so you can scroll the matches. Esc clears
+the filter; a second Esc closes the help. Picking another tab clears it too.
 
 ## Reload
 

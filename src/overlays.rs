@@ -76,6 +76,8 @@ pub enum Overlay {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PopupTarget {
     HelpTab(HelpCategory),
+    /// The help's `/` hint: types a filter (MAX-274)
+    HelpFilter,
     Setting(SettingKey),
     LineField(LineSettingField),
     LinePrev(LineSettingField),
@@ -210,6 +212,7 @@ impl Overlay {
                 | Overlay::CommandLine(_)
                 | Overlay::LinkForm(_)
         ) || matches!(self, Overlay::Sessions(browser) if browser.naming.is_some())
+            || matches!(self, Overlay::Help(help) if help.typing)
     }
 
     /// A plain letter key goes to the popup before the popup keys (`q`, `j`...): the marks

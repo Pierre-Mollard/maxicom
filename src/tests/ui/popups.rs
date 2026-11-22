@@ -83,6 +83,18 @@ fn key_hints_spots_follow_the_line() {
     );
 }
 
+/// MAX-274: an end cut keeps the start of a long text, `…` in its last column, wide characters
+/// counted as two columns; no space is left before the `…` (the help's descriptions did that).
+/// How: texts that fit, one column too long, Japanese text, a cut that lands after a space.
+#[test]
+fn end_cut_keeps_the_start() {
+    assert_eq!(cut("pid", 10), "pid");
+    assert_eq!(cut("0123456789", 10), "0123456789");
+    assert_eq!(cut("0123456789a", 10), "012345678…");
+    assert_eq!(cut("温度温度温度", 6), "温度…");
+    assert_eq!(cut("Hold the line in break", 15), "Hold the line…");
+}
+
 /// MAX-279: a middle cut keeps both ends of a long text, `…` between, in the width given:
 /// text that fits is left; the end gets the larger half (a `by-id` path keeps its port
 /// suffix); a wide character that doesn't fit leaves its column to the end; nothing fits in

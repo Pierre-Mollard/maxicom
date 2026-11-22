@@ -19,7 +19,7 @@ use crate::{
     ui::{
         common::{popup_area, prompt_view},
         layout::wrap_line_by_words,
-        popups::{cut, key_hints, popup_block, render_scrollbar, row_area},
+        popups::{cut, cut_middle, key_hints, popup_block, render_scrollbar, row_area},
     },
 };
 
@@ -227,7 +227,8 @@ fn render_completion_list(
         } else {
             *theme.command_line.text
         };
-        let value = cut(&format!("{:<value_width$}", candidate.value), width);
+        let (value, pad) = (cut_middle(&candidate.value, width), value_width.min(width));
+        let value = format!("{value:<pad$}");
         let room = width.saturating_sub(value_width + 2);
         let mut spans = vec![Span::styled(value, style)];
         if !candidate.help.is_empty() && room > 0 {

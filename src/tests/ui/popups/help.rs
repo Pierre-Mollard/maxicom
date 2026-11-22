@@ -20,3 +20,35 @@ fn tab_window_follows_the_selection() {
     // a tab wider than the room is still the one shown
     assert_eq!(tab_window(&widths, 1, 0, 5), 1..2);
 }
+
+/// MAX-274: a key's row is ` key  help    name`, the name at the room's end less a column for
+/// the scrollbar; a name that would leave the help under `MIN_HELP` columns is left out, and
+/// the help takes its room, cut with `…`; a row without help shows the name.
+/// How: one row in 60 columns, then in 40; a row with no help.
+#[test]
+fn key_row_puts_the_name_last() {
+    let theme = ThemeConfig::default();
+    let row = KeyRow {
+        key: "e".to_string(),
+        name: "toggle-display-timestamp".to_string(),
+        help: "Show or hide each line's receive time".to_string(),
+        order: (0, 0, 0, false),
+    };
+    let text = |line: Line| line.to_string();
+    let wide = text(row.line(3, 70, &theme));
+    assert_eq!(wide.width(), 69, "{wide:?}");
+    assert!(wide.starts_with(" e    Show or hide"), "{wide:?}");
+    assert!(wide.ends_with("time  toggle-display-timestamp"), "{wide:?}");
+
+    let narrow = text(row.line(3, 40, &theme));
+    assert_eq!(narrow, " e    Show or hide each line's receive…");
+
+    let bare = KeyRow {
+        help: String::new(),
+        ..row
+    };
+    assert_eq!(
+        text(bare.line(3, 40, &theme)),
+        " e    toggle-display-timestamp"
+    );
+}
