@@ -22,6 +22,7 @@ use crate::{
         types::SidePanel,
     },
     args::{ParseOutcome, parse_args, print_help, print_version},
+    commands::Origin,
     configs::{
         AppConfig, ConfigsError, KeyResolver, KeywordHighlight, LinksConfig, PlotsConfig,
         RawSideView, SettingsConfig, ThemeConfig, profiles::with_profiles,
@@ -401,7 +402,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             needs_redraw = true;
         }
         // once the link's stack is laid, so they're that stack's (MAX-9, MAX-247)
-        app.run_profile_lines();
+        app.run_profile_hooks();
 
         // the input poll is the loop's only idle wait: none while RX flows, otherwise until the
         // next frame is due (if one is pending) or IDLE_WAIT. Then drain what is already pending
@@ -419,30 +420,30 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         };
         let mut handled_events = 0;
         while running && handled_events < MAX_EVENTS_PER_FRAME {
-            let action = match inputs::poll_event(poll_timeout) {
+            let next_action = match inputs::poll_event(poll_timeout) {
                 Ok(Some(event)) => {
                     let action = inputs::handle_event(event, &app);
                     // the mouse capture reports every move: one that does nothing draws nothing
                     needs_redraw |= !matches!(action, inputs::Action::Ignore);
-                    action
+                    (Origin::Input, action)
                 }
-                // no event: a command line chain paused by a `sleep` or a `break` goes on
-                // once its time is up (MAX-12)
+                // no event: a chain paused by a `sleep` or a `break` goes on once its time is
+                // up (MAX-12)
                 _ => match app.next_command_action(Instant::now()) {
-                    Some(action) => {
+                    Some(next_action) => {
                         needs_redraw = true;
-                        action
+                        next_action
                     }
                     None => break,
                 },
             };
             poll_timeout = Duration::ZERO;
             handled_events += 1;
-            // the action, then the queued commands of a command line chain one at a time, each
-            // effect applied before the next is built (MAX-12)
-            let mut next = Some(action);
-            while let Some(action) = next.take() {
-                match app.dispatch(action) {
+            // the action, then the queued commands of a chain one at a time, each effect
+            // applied before the next is built (MAX-12)
+            let mut next = Some(next_action);
+            while let Some((origin, action)) = next.take() {
+                match app.dispatch_from(&origin, action) {
                     UpdateEffect::Quit => running = false,
                     UpdateEffect::CopyToClipboard(text) => {
                         execute_clipboard_copy(&mut app, &text, None);
@@ -450,7 +451,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     UpdateEffect::CopyToClipboardAs { text, what } => {
                         execute_clipboard_copy(&mut app, &text, Some(&what));
                     }
-                    // `profile load` / `unload`, at once: the next command of the line sees it
+                    // `profile load` / `unload`, at once: the next command of the chain sees it
                     UpdateEffect::LayProfiles(profiles) => {
                         let laid = lay_profiles(&mut app, &global, &mut highlight_rules, profiles);
                         if laid {

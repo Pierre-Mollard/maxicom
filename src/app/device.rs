@@ -1,6 +1,6 @@
 //! The app driving its link (MAX-168): what the link does, said as notices and popups, the
-//! command line chain resumed or failed, the session backup switched. `LinkState` keeps the link's
-//! own rules. The loop calls `start_link` once, `poll_link` each turn and `dispatch` for each
+//! chain resumed or failed, the session backup switched. `LinkState` keeps the link's own
+//! rules. The loop calls `start_link` once, `poll_link` each turn and `dispatch_from` for each
 //! action
 use std::{
     io,
@@ -15,6 +15,7 @@ use ratatui::style::Color;
 use super::{App, UpdateEffect, triggers::Trigger};
 use crate::{
     capture::{CaptureDevice, RecordingMeta, Session, recording_raw},
+    commands::Origin,
     configs::{
         AppConfig, KeyResolver, LinksConfig, PlotsConfig,
         links::{SavedLink, default_name},
@@ -298,31 +299,33 @@ impl App {
             .find_map(|profile| profile.file.on_open)
     }
 
-    /// The profiles' lines that are due, before the commands waiting (the rest of an `open`
-    /// or a `profile load` line), a line that doesn't parse said:
+    /// The profiles' hooks that are due, each a chain, before the commands waiting (the rest
+    /// of an `open` or a `profile load` chain), a hook that doesn't parse said:
     /// - the `on_load` of the profiles just laid (MAX-247), first: settings before the board
     ///   talks;
     /// - the stack's `on_open` once a link opened (MAX-9): at start, on an attach and on an
     ///   open, not on a reopen after a lost port (a board's native USB port drops on its
     ///   reset, it would loop), nor on a replay.
-    pub fn run_profile_lines(&mut self) {
-        let mut lines: Vec<(&str, String)> = (std::mem::take(&mut self.on_load_due).into_iter())
-            .map(|line| ("on_load", line))
+    pub fn run_profile_hooks(&mut self) {
+        let mut hooks: Vec<(&str, String)> = (std::mem::take(&mut self.on_load_due).into_iter())
+            .map(|chain| ("on_load", chain))
             .collect();
         if std::mem::take(&mut self.on_open_due)
-            && let Some(line) = self.on_open.clone()
+            && let Some(chain) = self.on_open.clone()
         {
-            lines.push(("on_open", line));
+            hooks.push(("on_open", chain));
         }
         let mut invocations = Vec::new();
-        for (key, line) in lines {
-            match crate::commands::parse_with(&line, &self.key_resolver.commands) {
-                Ok(line) => invocations.extend(line),
-                Err(err) => self.notify_warn(format!("{key}: {err}")),
+        for (hook, chain) in hooks {
+            match crate::commands::parse_with(&chain, &self.key_resolver.commands) {
+                Ok(chain) => {
+                    invocations.extend(chain.into_iter().map(|i| (Origin::Profile(hook), i)))
+                }
+                Err(err) => self.notify_warn(format!("{hook}: {err}")),
             }
         }
-        for invocation in invocations.into_iter().rev() {
-            self.pending_commands.push_front(invocation);
+        for queued in invocations.into_iter().rev() {
+            self.pending_commands.push_front(queued);
         }
     }
 
@@ -620,10 +623,10 @@ impl App {
         Ok(turn)
     }
 
-    /// The action, then the link effect it gives applied to the link: what is left (quit,
-    /// clipboard, reload) is the loop's
-    pub fn dispatch(&mut self, action: Action) -> UpdateEffect {
-        let effect = self.update(action);
+    /// The action from `origin` (MAX-165), then the link effect it gives applied to the link:
+    /// what is left (quit, clipboard, reload) is the loop's
+    pub fn dispatch_from(&mut self, origin: &Origin, action: Action) -> UpdateEffect {
+        let effect = self.update_from(origin, action);
         let effect = self.apply_link_effect(effect);
         self.restore_link_popup();
         effect
@@ -936,7 +939,7 @@ impl App {
     }
 
     /// The current link closes and the new one opens as a reconnect does, without waiting: the rest
-    /// of the command line waits for its result (MAX-12). A replay that set the live link aside
+    /// of the chain waits for its result (MAX-12). A replay that set the live link aside
     /// ends first, so the switch starts from the live link, its session backup and its encoding
     /// (MAX-171)
     fn open_link(&mut self, config: LinkConfig) {
@@ -985,7 +988,7 @@ impl App {
         Ok(())
     }
 
-    /// A replay asked while running: a file that doesn't open stops the command line chain
+    /// A replay asked while running: a file that doesn't open stops the chain
     fn replay_file(&mut self, path: PathBuf, delay: Duration, session: Option<CaptureDevice>) {
         if let Err(e) = self.open_replay(path.clone(), delay, session.as_ref(), &[]) {
             self.fail_commands(format!("replay: {}: {e}", path.display()));
@@ -1062,7 +1065,7 @@ impl App {
         }
     }
 
-    /// New line settings: a port that refuses them stops the command line chain, the dialog
+    /// New line settings: a port that refuses them stops the chain, the dialog
     /// says why (MAX-12)
     /// New line settings; DTR and RTS changed on an open port wait for its next open (MAX-9)
     fn reconfigure_link(&mut self, line: LineSettings) {

@@ -148,7 +148,7 @@ fn tab_lines(
                 lines.push(Line::from(""));
             };
 
-            // the named commands of `[commands]` (MAX-239): the name and the line it runs,
+            // the named commands of `[commands]` (MAX-239): the name and the chain it runs,
             // its help under them, as the commands with arguments
             if !resolver.commands.is_empty() {
                 header(&mut lines, " Named commands, [commands] in keymap.toml:");

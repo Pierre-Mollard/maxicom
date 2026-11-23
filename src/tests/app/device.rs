@@ -15,6 +15,13 @@ use crate::{
     link::{Address, LinkConfig, state::REOPEN_EVERY},
 };
 
+impl App {
+    /// `dispatch_from` for the user's own input, as most tests run their actions
+    pub fn dispatch(&mut self, action: Action) -> UpdateEffect {
+        self.dispatch_from(&Origin::Input, action)
+    }
+}
+
 fn app_on(address: &str) -> App {
     App::new(
         SettingsConfig::default(),
@@ -485,7 +492,7 @@ fn switch_commands_wait_for_the_restore_answer() {
     app.settings.sessions.restore = RestoreMode::Ask;
     app.start_session(Some(sessions.clone()));
     let run = |app: &mut App| {
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             app.dispatch(action);
         }
     };
@@ -821,7 +828,7 @@ fn replay_controls() {
     let run = |app: &mut App, line: &str| {
         let invocations = crate::commands::parse(line).unwrap();
         app.dispatch(Action::App(AppAction::QueueCommands(invocations)));
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             app.dispatch(action);
         }
         toasts(app).last().cloned().unwrap_or_default()
@@ -1962,7 +1969,7 @@ fn profile_load_and_unload() {
         app.dispatch(KeyBindingAction::CommandLine.to_action(app));
         app.dispatch(Action::Overlay(DialogAction::Paste(line.to_string())));
         let mut effects = vec![app.dispatch(Action::Overlay(DialogAction::Confirm))];
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             effects.push(app.dispatch(action));
         }
         effects.into_iter().find_map(|effect| match effect {
@@ -2148,7 +2155,7 @@ fn levels_changed_on_an_open_port_wait_for_the_next_open() {
 /// The later profile that has one wins, an off profile's is left out, and a stack laid
 /// later brings its own; a line that doesn't parse is said.
 /// How: `on_open` lines of `send` in a temp profiles folder, a TCP link; the loop's
-/// `run_profile_lines` called after each poll, the queued commands taken one by one.
+/// `run_profile_hooks` called after each poll, the queued commands taken one by one.
 #[test]
 fn on_open_runs_once_after_an_open() {
     let dir = crate::capture::tests::temp_dir("on_open");
@@ -2163,9 +2170,9 @@ fn on_open_runs_once_after_an_open() {
     write("bad", "on_open = 'nope'");
     let stack = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
     let sent = |app: &mut App| {
-        app.run_profile_lines();
+        app.run_profile_hooks();
         let mut sent = Vec::new();
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             if let UpdateEffect::Transmit(bytes) = app.update(action) {
                 sent.push(String::from_utf8(bytes).unwrap());
             }
@@ -2257,7 +2264,7 @@ fn laying_profiles_keeps_the_settings() {
 /// nor when one is taken off; an off profile's not at all. When a link opened too, the
 /// `on_load` lines run before `on_open`. A line that doesn't parse is said.
 /// How: `notify` lines in a temp profiles folder, so the notices tell what ran and in which
-/// order; a TCP link; `run_profile_lines` as the loop calls it, the queue drained.
+/// order; a TCP link; `run_profile_hooks` as the loop calls it, the queue drained.
 #[test]
 fn on_load_runs_for_the_profiles_laid() {
     let dir = crate::capture::tests::temp_dir("on_load");
@@ -2284,8 +2291,8 @@ fn on_load_runs_for_the_profiles_laid() {
     };
     let ran = |app: &mut App| {
         app.notifications.dismiss_all();
-        app.run_profile_lines();
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        app.run_profile_hooks();
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             app.update(action);
         }
         toasts(app)

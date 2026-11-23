@@ -61,44 +61,6 @@ fn set_link_open(app: &mut App, open: bool) {
     }));
 }
 
-/// MAX-12: the command line runs its chain one action at a time, in order, each effect
-/// returned for the loop to apply, and closes; a line that doesn't parse runs nothing,
-/// warns and stays open.
-/// How: a chain toggling a setting then giving two effects, then a chain with a typo.
-#[test]
-fn command_line_runs_its_chain_in_order() {
-    let mut app = app();
-    let run_line = |app: &mut App, line: &str| {
-        app.update(KeyBindingAction::CommandLine.to_action(app));
-        app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
-        app.update(Action::Overlay(DialogAction::Confirm))
-    };
-    let echo = app.settings.local_echo;
-    let effect = run_line(&mut app, "toggle-local-echo; reload-config; toggle-attach");
-    assert!(matches!(effect, UpdateEffect::None));
-    assert!(app.overlay().is_none());
-    let mut effects = Vec::new();
-    while let Some(action) = app.next_command_action(Instant::now()) {
-        effects.push(app.update(action));
-    }
-    assert!(matches!(
-        effects[..],
-        [
-            UpdateEffect::None,
-            UpdateEffect::ReloadConfig,
-            UpdateEffect::ToggleAttach
-        ]
-    ));
-    assert_ne!(app.settings.local_echo, echo);
-
-    run_line(&mut app, "toggle-local-echo; nope");
-    assert!(matches!(app.overlay(), Some(Overlay::CommandLine(_))));
-    assert!(app.next_command_action(Instant::now()).is_none());
-    assert_ne!(app.settings.local_echo, echo);
-    let toast = app.notifications.active_toasts().last().unwrap();
-    assert_eq!(toast.message, "unknown command 'nope'");
-}
-
 /// MAX-239: a named command of `[commands]` runs from the command line as its line, alone or
 /// in a chain; given arguments it runs nothing and says why.
 /// How: `twice` toggling local echo twice then detaching.
@@ -118,7 +80,7 @@ fn command_line_runs_a_named_command() {
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
         let mut effects = Vec::new();
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             effects.push(app.update(action));
         }
         effects
@@ -180,7 +142,7 @@ fn saved_links_on_the_command_line() {
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
         let mut effects = Vec::new();
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             effects.push(app.update(action));
         }
         effects
@@ -247,7 +209,7 @@ fn name_the_running_session() {
         app.update(KeyBindingAction::CommandLine.to_action(app));
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             app.update(action);
         }
     };
@@ -296,7 +258,7 @@ fn command_line_send() {
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
         let mut effects = Vec::new();
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             effects.push(app.update(action));
         }
         effects
@@ -359,7 +321,7 @@ fn triggers_fire_on_live_bytes() {
     app.set_triggers(config.compile().unwrap());
     let effects = |app: &mut App| {
         let mut effects = Vec::new();
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             effects.push(app.update(action));
         }
         effects
@@ -417,7 +379,7 @@ fn trigger_mark_command_marks_the_last_line() {
     app.set_triggers(config.compile().unwrap());
     let fed = |app: &mut App, bytes: &[u8]| {
         app.feed_rx(bytes);
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             app.update(action);
         }
     };
@@ -515,7 +477,7 @@ fn trigger_counts() {
     let run = |app: &mut App, line: &str| {
         let invocations = crate::commands::parse(line).unwrap();
         app.update(Action::App(AppAction::QueueCommands(invocations)));
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             app.update(action);
         }
         let toasts = app.notifications.active_toasts();
@@ -583,7 +545,7 @@ fn arming_triggers() {
         app.update(Action::App(AppAction::QueueCommands(
             crate::commands::parse(line).unwrap(),
         )));
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             app.update(action);
         }
     };
@@ -656,7 +618,7 @@ fn mash_until_its_text() {
     // the chain's actions built at `now`, their effects
     let run = |app: &mut App, now: Instant| {
         let mut effects = Vec::new();
-        while let Some(action) = app.next_command_action(now) {
+        while let Some((_, action)) = app.next_command_action(now) {
             effects.push(app.update(action));
         }
         effects
@@ -822,7 +784,7 @@ fn commands_on_the_wire() {
     let mut run = |app: &mut App, line: &str| {
         let invocations = crate::commands::parse(line).unwrap();
         app.update(Action::App(AppAction::QueueCommands(invocations)));
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             match app.update(action) {
                 UpdateEffect::Transmit(bytes) => device.write(&bytes).unwrap(),
                 UpdateEffect::Reconfigure(line) => match device.reconfigure(&line) {
@@ -896,7 +858,7 @@ fn mash_on_the_wire() {
         if let Some(bytes) = app.next_mash_bytes(Instant::now()) {
             device.write(&bytes).unwrap();
         }
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             match app.update(action) {
                 UpdateEffect::Transmit(bytes) => device.write(&bytes).unwrap(),
                 UpdateEffect::None => {}
@@ -966,7 +928,7 @@ fn command_line_send_file() {
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
         let mut effects = Vec::new();
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             effects.push(app.update(action));
         }
         effects
@@ -1060,7 +1022,7 @@ fn command_line_upload() {
         app.update(KeyBindingAction::CommandLine.to_action(app));
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             app.update(action);
         }
     };
@@ -1190,7 +1152,7 @@ fn command_line_serial_lines() {
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
         let mut controls = Vec::new();
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             match app.update(action) {
                 UpdateEffect::Reconfigure(line) => set_line(app, line),
                 UpdateEffect::LineControl(control) => controls.push(control),
@@ -1265,135 +1227,33 @@ fn command_line_serial_lines() {
     assert_eq!(app.link_config().line.baud, 9600);
 }
 
-/// MAX-12: `sleep` pauses the rest of the chain, which goes on once its time is up; the
-/// pause the loop sets for a break does the same. A failure drops a paused chain, pause
-/// and all.
-/// How: the actions taken one by one, at chosen times.
+/// MAX-165 (A1 step 1): only the user's own input acts as typing. A command from a trigger
+/// keeps the prefix the user pressed and lets a mash go on; the same actions as input end
+/// the prefix and stop the mash.
+/// How: each action from a trigger, then as input.
 #[test]
-fn command_line_sleep() {
+fn only_input_acts_as_typing() {
     let mut app = app();
-    let queue_line = |app: &mut App, line: &str| {
-        app.update(KeyBindingAction::CommandLine.to_action(app));
-        app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
-        app.update(Action::Overlay(DialogAction::Confirm));
-    };
-    let sent = |app: &mut App, action: Option<Action>| match app.update(action.unwrap()) {
-        UpdateEffect::Transmit(bytes) => bytes,
-        _ => panic!("expected a transmit"),
-    };
+    let trigger = Origin::Trigger("boot".to_string());
+    app.update(Action::App(AppAction::SetPrefix(true)));
+    app.update_from(&trigger, KeyBindingAction::ScrollToBottom.to_action(&app));
+    assert!(app.prefix_active);
+    app.update(KeyBindingAction::ScrollToBottom.to_action(&app));
+    assert!(!app.prefix_active);
 
-    queue_line(&mut app, "send a; sleep 100; send b");
-    let now = Instant::now();
-    let action = app.next_command_action(now);
-    assert_eq!(sent(&mut app, action), b"a");
-    let sleep = app.next_command_action(now).unwrap();
-    app.update(sleep);
-    assert!(app.next_command_action(Instant::now()).is_none());
-    let later = Instant::now() + Duration::from_millis(150);
-    let action = app.next_command_action(later);
-    assert_eq!(sent(&mut app, action), b"b");
-    assert!(app.next_command_action(later).is_none());
-
-    // the loop pauses the chain for a break
-    queue_line(&mut app, "send c");
-    app.pause_commands(later + Duration::from_millis(100));
-    assert!(app.next_command_action(later).is_none());
-    app.fail_commands("break: failed".to_string());
-    assert!(
-        app.next_command_action(later + Duration::from_secs(1))
-            .is_none()
-    );
-    queue_line(&mut app, "send d");
-    let action = app.next_command_action(Instant::now());
-    assert_eq!(sent(&mut app, action), b"d");
-    assert!(parse_fails(&mut app, "sleep"));
-    assert!(parse_fails(&mut app, "sleep 60001"));
-}
-
-/// MAX-12: a line starting with `cancel` runs it at once, not behind the commands waiting:
-/// it drops them, pause and all, and stops the file being sent, then the rest of its line
-/// runs.
-/// How: a chain paused by `sleep`, then a transfer and a paused chain together.
-#[test]
-fn command_line_cancel() {
-    use crate::transfer::FileTransfer;
-    let mut app = app();
-    let queue_line = |app: &mut App, line: &str| {
-        app.update(KeyBindingAction::CommandLine.to_action(app));
-        app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
-        app.update(Action::Overlay(DialogAction::Confirm));
-    };
-    let last_toast = |app: &App| {
-        app.notifications
-            .active_toasts()
-            .last()
-            .unwrap()
-            .message
-            .clone()
-    };
-
-    queue_line(&mut app, "cancel");
-    assert_eq!(last_toast(&app), "Nothing to cancel");
-
-    queue_line(&mut app, "sleep 1000; send a");
-    let sleep = app.next_command_action(Instant::now()).unwrap();
-    app.update(sleep);
-    queue_line(&mut app, "cancel; send b");
-    assert_eq!(last_toast(&app), "Dropped 1 waiting command");
-    let send = app.next_command_action(Instant::now()).unwrap();
-    assert!(matches!(app.update(send), UpdateEffect::Transmit(b) if b == b"b"));
-
-    let transfer = FileTransfer::raw(
-        Box::new(std::io::Cursor::new(vec![b'x'; 10])),
-        "fw.bin".to_string(),
-        10,
-        960.0,
-        Duration::ZERO,
-        Instant::now(),
-    );
-    app.update(Action::App(AppAction::StartTransfer(Box::new(transfer))));
-    queue_line(&mut app, "sleep 1000; send c; send d");
-    let sleep = app.next_command_action(Instant::now()).unwrap();
-    app.update(sleep);
-    queue_line(&mut app, "cancel");
-    // the transfer in its own box, "Cancelled" (MAX-228), the commands apart
-    assert_eq!(last_toast(&app), "Dropped 2 waiting commands");
-    let toasts = app.notifications.active_toasts();
-    let transfer = toasts.iter().find(|toast| toast.key == Some("transfer"));
-    let transfer = transfer.map(|toast| toast.message.as_str());
-    assert_eq!(transfer, Some("Cancelled: fw.bin at 0%"));
-    assert!(app.transfer().is_none());
-    assert!(
-        app.next_command_action(Instant::now() + Duration::from_secs(2))
-            .is_none()
-    );
-}
-
-/// MAX-12: a command line bound to a key runs as a typed one, but stays out of the command
-/// history; it waits behind a waiting line, unless it starts with `cancel`.
-#[test]
-fn bound_line_runs_as_typed() {
-    let mut app = app();
-    let line = |text: &str| crate::commands::parse(text).unwrap();
-    app.update(Action::App(AppAction::QueueCommands(line(
-        "send a; sleep 1000; send b",
-    ))));
-    let now = Instant::now();
-    let send = app.next_command_action(now).unwrap();
-    assert!(matches!(app.update(send), UpdateEffect::Transmit(a) if a == b"a"));
-    let sleep = app.next_command_action(now).unwrap();
-    app.update(sleep);
-    app.update(Action::App(AppAction::QueueCommands(line(
-        "cancel; send c",
-    ))));
-    let send = app.next_command_action(Instant::now()).unwrap();
-    assert!(matches!(app.update(send), UpdateEffect::Transmit(c) if c == b"c"));
-    assert!(app.next_command_action(Instant::now()).is_none());
-    assert!(app.command_history().is_empty());
+    let mash = crate::commands::parse("mash ' ' '=> '").unwrap();
+    app.update(Action::App(AppAction::QueueCommands(mash)));
+    let (origin, action) = app.next_command_action(Instant::now()).unwrap();
+    app.update_from(&origin, action);
+    let key = crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('a'));
+    app.update_from(&trigger, Action::LineInput(LineInputAction::HandleKey(key)));
+    assert!(app.mash().is_some());
+    app.update(Action::LineInput(LineInputAction::HandleKey(key)));
+    assert!(app.mash().is_none());
 }
 
 /// The line doesn't parse: the command line stays open
-fn parse_fails(app: &mut App, line: &str) -> bool {
+pub fn parse_fails(app: &mut App, line: &str) -> bool {
     app.update(KeyBindingAction::CommandLine.to_action(app));
     app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
     app.update(Action::Overlay(DialogAction::Confirm));
@@ -1426,7 +1286,7 @@ fn command_line_open() {
     let now = Instant::now();
 
     queue_line(&mut app, "open /dev/ttyUSB9; send x");
-    let open = app.next_command_action(now).unwrap();
+    let open = app.next_command_action(now).unwrap().1;
     assert!(
         matches!(app.update(open), UpdateEffect::Open(address) if address == "/dev/ttyUSB9".parse::<Address>().unwrap())
     );
@@ -1436,7 +1296,7 @@ fn command_line_open() {
     assert!(app.next_command_action(now).is_none());
     set_link_open(&mut app, true);
     app.resume_commands();
-    let send = app.next_command_action(now).unwrap();
+    let send = app.next_command_action(now).unwrap().1;
     assert!(matches!(app.update(send), UpdateEffect::Transmit(x) if x == b"x"));
 
     set_link_open(&mut app, false);
@@ -1458,7 +1318,7 @@ fn command_line_open() {
 
     set_link_open(&mut app, true);
     queue_line(&mut app, "open file:///tmp/x.raw");
-    let open = app.next_command_action(now).unwrap();
+    let open = app.next_command_action(now).unwrap().1;
     assert!(
         matches!(app.update(open), UpdateEffect::Replay { path, delay, session: None }
             if path == Path::new("/tmp/x.raw") && delay.is_zero())
@@ -1497,7 +1357,7 @@ fn command_line_replay() {
         app.update(KeyBindingAction::CommandLine.to_action(app));
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
-        let action = app.next_command_action(now)?;
+        let (_, action) = app.next_command_action(now)?;
         Some(app.update(action))
     };
     let home = dirs::home_dir().unwrap();
@@ -1526,7 +1386,7 @@ fn command_line_replay() {
     ));
     let action = crate::inputs::handle_event(event, &app);
     app.update(action);
-    let action = app.next_command_action(now).expect("replay-stop queued");
+    let (_, action) = app.next_command_action(now).expect("replay-stop queued");
     assert!(matches!(app.update(action), UpdateEffect::StopReplay));
     app.stop_replay();
     app.link
@@ -1549,7 +1409,7 @@ fn command_line_set_encoding_search_screenshot() {
         app.update(KeyBindingAction::CommandLine.to_action(app));
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             app.update(action);
         }
     };
@@ -1627,7 +1487,7 @@ fn command_line_history() {
         app.update(KeyBindingAction::CommandLine.to_action(&app));
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             app.update(action);
         }
         app.close_overlay();
@@ -1859,7 +1719,7 @@ fn add_cr_and_add_lf_on_the_screen() {
         app.update(KeyBindingAction::CommandLine.to_action(&app));
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             app.update(action);
         }
         assert_eq!(app.setting_is_on(SettingKey::AddCr), Some(on), "{line}");
@@ -2462,7 +2322,7 @@ fn mark_commands() {
         app.update(KeyBindingAction::CommandLine.to_action(app));
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             app.update(action);
         }
         let toasts = app.notifications.active_toasts();
@@ -2721,7 +2581,7 @@ fn command_line_notify() {
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
         let mut effects = Vec::new();
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             effects.push(app.update(action));
         }
         effects
@@ -2771,7 +2631,7 @@ fn trigger_runs_notify() {
     let fire = |app: &mut App| {
         app.feed_rx(b"[   12.345] Kernel panic - not syncing");
         let mut effects = Vec::new();
-        while let Some(action) = app.next_command_action(Instant::now()) {
+        while let Some((_, action)) = app.next_command_action(Instant::now()) {
             effects.push(app.update(action));
         }
         effects
@@ -2789,7 +2649,7 @@ fn trigger_runs_notify() {
     app.update(Action::App(AppAction::QueueCommands(
         crate::commands::parse("trigger on panic").unwrap(),
     )));
-    while let Some(action) = app.next_command_action(Instant::now()) {
+    while let Some((_, action)) = app.next_command_action(Instant::now()) {
         app.update(action);
     }
     app.notifications.dismiss_all();
@@ -3108,4 +2968,211 @@ fn copy_notification_can_be_turned_off() {
     app.notify_copied("hello", None);
     app.notify_copied("~/.config/maxicom", Some("config path"));
     assert!(messages(&app).is_empty());
+}
+
+/// What a command line shows once its chain ran through `dispatch`, as one line: the effects
+/// left for the loop (`effect Reload`), the popup it opens (`popup Help`), its toasts
+/// (`warn [slot] text`), joined by ` | `
+fn shown_after(app: &mut App, line: &str) -> String {
+    app.update(KeyBindingAction::CommandLine.to_action(app));
+    app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
+    app.update(Action::Overlay(DialogAction::Confirm));
+    let mut shown = Vec::new();
+    while let Some((origin, action)) = app.next_command_action(Instant::now()) {
+        let effect = match app.dispatch_from(&origin, action) {
+            UpdateEffect::None => continue,
+            UpdateEffect::Quit => "Quit",
+            UpdateEffect::CopyToClipboard(_) => "Copy",
+            UpdateEffect::CopyToClipboardAs { .. } => "CopyAs",
+            UpdateEffect::ReloadConfig => "Reload",
+            UpdateEffect::Redraw => "Redraw",
+            UpdateEffect::LayProfiles(_) => "LayProfiles",
+            _ => "link (not applied by dispatch)",
+        };
+        shown.push(format!("effect {effect}"));
+    }
+    if let Some(overlay) = app.overlay() {
+        let debug = format!("{overlay:?}");
+        let name = debug.split(['(', ' ', '{']).next().unwrap_or_default();
+        shown.push(format!("popup {name}"));
+    }
+    for toast in app.notifications.active_toasts() {
+        let level = format!("{:?}", toast.level).to_lowercase();
+        let slot = toast.key.map(|key| format!(" [{key}]")).unwrap_or_default();
+        shown.push(format!("{level}{slot} {}", toast.message));
+    }
+    shown.join(" | ")
+}
+
+/// MAX-165 (A1 step 0): what every command shows today when it runs alone from the command
+/// line on a live link: its toasts (level, slot, text), the popup it opens, the effects left
+/// for the loop. The explicit results of A1 step 3 move every `notify_*` behind the command's
+/// result: this table must not change then. A new command needs its row.
+/// How: each line on a fresh app, the files it writes in a temporary folder.
+#[test]
+fn every_command_shows_what_it_did() {
+    let dir = std::env::temp_dir().join(format!("maxicom_test_{}_shown", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // forward slashes: a backslash escapes on the command line (Windows paths)
+    let slashed = |path: &Path| path.display().to_string().replace('\\', "/");
+    let file = dir.join("f.bin");
+    std::fs::write(&file, b"ab").unwrap();
+    let file = slashed(&file);
+    let raw = dir.join("r.raw");
+    std::fs::write(&raw, b"ab").unwrap();
+    let raw = slashed(&raw);
+    let shot = slashed(&dir.join("s"));
+
+    let mut rows: Vec<(String, String)> = [
+        ("quit", "popup ConfirmQuit"),
+        ("toggle-input-mode", ""),
+        ("toggle-local-echo", ""),
+        ("toggle-line-wrap", "warn Line wrap: line mode only"),
+        ("toggle-add-cr", "info [setting:add-cr] Add CR On"),
+        ("toggle-add-lf", "info [setting:add-lf] Add LF On"),
+        ("toggle-display-timestamp", ""),
+        (
+            "toggle-text-encoding",
+            "info [setting:encoding] Rx Text Encoding is ASCII",
+        ),
+        ("toggle-indent-wrap", ""),
+        (
+            "toggle-display-mode",
+            "info [setting:display] Display Mode is Clean",
+        ),
+        (
+            "toggle-display-raw",
+            "info [setting:raw] Raw SideView is Hex",
+        ),
+        ("screenshot-bytes", "popup Screenshot"),
+        ("screenshot-text", "popup Screenshot"),
+        ("help", "popup Help"),
+        ("settings", "popup Settings"),
+        ("record", "popup FilePath"),
+        ("resize-dialog", "popup TerminalSize"),
+        ("auto-resize-remote", ""),
+        ("auto-resize-remote-line", ""),
+        ("auto-resize-emulator", ""),
+        ("link-settings", "popup LinkSettings"),
+        ("enter-copy-mode", ""),
+        ("enter-search", ""),
+        ("enter-search-backward", ""),
+        ("scroll-up", ""),
+        ("scroll-down", ""),
+        ("scroll-to-bottom", ""),
+        ("scroll-to-top", ""),
+        ("page-up", ""),
+        ("page-down", ""),
+        ("pan-right", ""),
+        ("pan-left", ""),
+        ("pan-home", ""),
+        ("pan-end", ""),
+        ("pan-side-right", ""),
+        ("pan-side-left", ""),
+        ("scroll-side-up", ""),
+        ("scroll-side-down", ""),
+        ("page-side-up", ""),
+        ("page-side-down", ""),
+        ("side-grow", "warn SideView is Off"),
+        ("side-shrink", "warn SideView is Off"),
+        ("side-grow-5", "warn SideView is Off"),
+        ("side-shrink-5", "warn SideView is Off"),
+        ("clear", ""),
+        ("clear-history", ""),
+        ("sessions", "warn No session folder"),
+        ("directory", "popup Directory"),
+        ("exit-prefix", ""),
+        (
+            "toggle-attach",
+            "popup DeviceDetached | warn [link] Serial port detached",
+        ),
+        ("reload-config", "effect Reload"),
+        ("redraw", "effect Redraw"),
+        ("toggle-mouse", "info [setting:mouse] Mouse capture Off"),
+        ("command-line", "popup CommandLine"),
+        ("cancel", "info Nothing to cancel"),
+        ("toggle-triggers", "warn triggers.toml has no trigger"),
+        ("triggers", "popup Triggers"),
+        ("profiles", "popup Profiles"),
+        ("plot-freeze", "warn [plot] No plot shown"),
+        ("plot-next", "info [plot] Plot key-value"),
+        ("plot-prev", "info [plot] Plot tagged"),
+        ("dismiss-notification", ""),
+        ("dismiss-notifications", ""),
+        ("notifications", "popup Notices"),
+        ("marks", "popup Marks"),
+        ("prev-mark", "info no mark above"),
+        ("next-mark", "info no mark below"),
+        // waits for its letter as the next key, no popup
+        ("mark", ""),
+        ("jump-mark", ""),
+        ("delete-mark a", "warn mark a is not set"),
+        ("send x", ""),
+        ("send-hex 41", ""),
+        ("download xmodem", ""),
+        ("open /dev/ttyUSB9", "info [link] Opening /dev/ttyUSB9"),
+        ("link-save", "success Saved link 'ttyUSB0'"),
+        (
+            "link-delete nope",
+            "error link-delete: no saved link 'nope'",
+        ),
+        ("session-name", "error session-name: no session running"),
+        ("replay-stop", "error replay-stop: no replay runs"),
+        ("replay-pause", "info Replay paused"),
+        (
+            "replay-resume",
+            "error replay-resume: the replay isn't paused",
+        ),
+        ("replay-speed 10", "info Replay delay 10 ms"),
+        ("replay-restart", "info Replay restarted"),
+        ("sleep 1", ""),
+        ("dtr on", "error DTR on: the link has no control lines"),
+        ("rts on", "error RTS on: the link has no control lines"),
+        (
+            "break",
+            "error break of 250 ms: the link has no control lines",
+        ),
+        ("baud 9600", ""),
+        ("framing 8N1", ""),
+        ("set local-echo on", ""),
+        ("mode terminal", ""),
+        (
+            "encoding latin1",
+            "info [setting:encoding] Rx Text Encoding is Latin1",
+        ),
+        ("notify info hi", "info hi"),
+        ("search x", ""),
+        ("mash x y", "info Mashing until 'y'"),
+        ("trigger on", "error trigger: triggers.toml has no trigger"),
+        ("plot", "info [plot] Plot key-value"),
+        ("profile", "info [profiles] No profile laid"),
+        ("flow hw", ""),
+    ]
+    .into_iter()
+    .map(|(line, shown)| (line.to_string(), shown.to_string()))
+    .collect();
+    rows.extend([
+        (format!("send-file {file}"), String::new()),
+        (format!("upload xmodem {file}"), String::new()),
+        (format!("replay {raw}"), format!("info Replaying {raw}")),
+        (
+            format!("screenshot {shot}"),
+            format!("success Screenshot saved to {shot}.txt"),
+        ),
+    ]);
+
+    for spec in crate::commands::COMMANDS {
+        let has_row = rows
+            .iter()
+            .any(|(line, _)| line.split(' ').next() == Some(spec.name));
+        assert!(has_row, "no row for '{}'", spec.name);
+    }
+    for (line, expected) in &rows {
+        let mut app = app();
+        app.settings.links_path = Some(dir.join("links.toml"));
+        app.settings.plots_path = Some(dir.join("plots.toml"));
+        assert_eq!(&shown_after(&mut app, line), expected, "{line}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }

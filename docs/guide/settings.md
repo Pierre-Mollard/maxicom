@@ -197,7 +197,7 @@ screen it uses one column, and it scrolls when the screen is too short.
 | --- | --- |
 | Prefixed | The keys after `Ctrl-a` |
 | Direct | The keys without prefix |
-| Commands | The [command line](command-line.md)'s commands, and the keys bound to a line |
+| Commands | The [command line](command-line.md)'s commands, and the keys bound to a command line |
 | Copy | Copy mode's keys |
 | Search | The search bar's keys |
 | Line | Line mode's keys |

@@ -1,7 +1,7 @@
 //! Profiles (MAX-240): a file of settings laid over the global config while a link uses it,
 //! `profiles/<name>.toml`. It holds a description, keys and named commands in the sections of
 //! `keymap.toml`, and highlights, triggers and plots under `[highlights]`, `[triggers]` and
-//! `[plots]` in the formats of their files, `on_open`, a command line run once the link
+//! `[plots]` in the formats of their files, `on_open`, a chain run once the link
 //! opens (MAX-9), and `on_load`, one run when the profile is laid (MAX-247); all optional. No line settings: those are the
 //! saved link's. A board's or a project's knowledge lives in profiles, never in the code. A
 //! stack of profiles is laid in order over the global config, a later one winning, and

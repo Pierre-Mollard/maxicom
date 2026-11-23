@@ -26,7 +26,7 @@ use crate::{
     capture::{
         CaptureDevice, CaptureLine, Recorder, RecordingWriter, ScreenshotFormat, Session, Stream,
     },
-    commands::{CommandError, Invocation, Target},
+    commands::{Invocation, Origin},
     configs::{
         AppConfig, DualBufferMode, KeyBindingAction, KeyResolver, LinksConfig, Mode, PlotsConfig,
         QueryGroup, RawSideView, SettingsConfig, StatusBarLayout, TextEncoding, WrapMode,
@@ -69,6 +69,7 @@ const FOCUS_CLICK: Duration = Duration::from_millis(200);
 pub mod capture;
 pub mod data_processing;
 pub mod device;
+pub mod jobs;
 pub mod line_mode;
 pub mod marks;
 pub mod mash;
@@ -188,9 +189,9 @@ pub struct App {
     /// runs again
     click_hold: Option<(KeyBindingAction, ratatui::layout::Rect)>,
     click_repeat_at: Option<Instant>,
-    /// The commands of a command line chain still to run, one after the other (MAX-12), and
-    /// when they go on after a `sleep` or a `break`
-    pending_commands: VecDeque<Invocation>,
+    /// The commands of a chain still to run, one after the other (MAX-12), each with who
+    /// started it (MAX-165), and when they go on after a `sleep` or a `break`
+    pending_commands: VecDeque<(Origin, Invocation)>,
     commands_resume_at: Option<Instant>,
     /// The command lines that ran, the oldest first (MAX-12)
     command_history: VecDeque<String>,
@@ -545,111 +546,6 @@ impl App {
         }
     }
 
-    /// The next action of a command line chain (MAX-12). Each is built when its turn comes, on
-    /// the state the previous ones left, and the loop applies its effect before the next
-    /// A command that refuses (the link can't do it) stops the chain, with the error. None
-    /// either while the chain is paused (before `now`) or the restore dialog asks, as the
-    /// device an `open` switched to may (MAX-187)
-    pub fn next_command_action(&mut self, now: Instant) -> Option<Action> {
-        if matches!(self.overlay, Some(Overlay::RestoreSession(_))) {
-            return None;
-        }
-        if let Some(resume_at) = self.commands_resume_at {
-            if now < resume_at {
-                return None;
-            }
-            self.commands_resume_at = None;
-        }
-        let invocation = self.pending_commands.pop_front()?;
-        let built = match invocation.spec.target {
-            Target::Action(action) => Ok(action.to_action(self)),
-            Target::Build(build) => build(self, &invocation.args),
-        };
-        built
-            .map_err(|reason| {
-                let error = CommandError::Failed {
-                    command: invocation.spec.name,
-                    reason,
-                };
-                self.fail_commands(error.to_string());
-            })
-            .ok()
-    }
-
-    /// A command failed with `message`, here or where the loop applied its effect: the rest of
-    /// its chain is dropped, the error says how much
-    pub fn fail_commands(&mut self, message: String) {
-        match self.drop_pending_commands() {
-            0 => self.notify_error(message),
-            n => self.notify_error(format!("{message} ({n} more not run)")),
-        }
-    }
-
-    /// Drops the rest of a command line chain, quietly: how many commands it had
-    pub fn drop_pending_commands(&mut self) -> usize {
-        self.commands_resume_at = None;
-        std::mem::take(&mut self.pending_commands).len()
-    }
-
-    /// A command line to run, typed or bound to a key (MAX-12): after the commands waiting, but
-    /// a line starting with `cancel` stops them instead of waiting behind them
-    fn queue_commands(&mut self, mut invocations: Vec<Invocation>) {
-        let cancels = invocations.first().is_some_and(|invocation| {
-            matches!(
-                invocation.spec.target,
-                Target::Action(KeyBindingAction::CancelCommands)
-            )
-        });
-        if cancels {
-            invocations.remove(0);
-            self.cancel();
-        }
-        self.pending_commands.extend(invocations);
-    }
-
-    /// `cancel` (MAX-12): stops the file being sent and drops the commands waiting
-    fn cancel(&mut self) {
-        // the transfer says it in its own box, "Cancelled", where a failure says "Stopped"
-        // (MAX-228)
-        let transfer_cancelled = self.transfer.is_some();
-        if let Some(mut transfer) = self.transfer.take() {
-            // a protocol's receiver is told to stop too
-            let cans = transfer.cancel();
-            if !cans.is_empty() {
-                self.write_link(&cans, false);
-                self.recancel_until = Some(Instant::now() + RECANCEL_FOR);
-            }
-            self.notify_transfer(ToastLevel::Warn, cancelled_text(&transfer));
-        }
-        let mut stopped = Vec::new();
-        if self.mash.take().is_some() {
-            stopped.push("Stopped mashing".to_string());
-        }
-        match self.drop_pending_commands() {
-            0 => {}
-            1 => stopped.push("dropped 1 waiting command".to_string()),
-            n => stopped.push(format!("dropped {n} waiting commands")),
-        }
-        if !stopped.is_empty() {
-            let mut message = stopped.join(", ");
-            message[..1].make_ascii_uppercase();
-            self.notify_warn(message);
-        } else if !transfer_cancelled {
-            self.notify_info("Nothing to cancel");
-        }
-    }
-
-    /// The rest of a command line chain waits until `until` (a `sleep`, the end of a `break`,
-    /// an `open` at the latest)
-    pub fn pause_commands(&mut self, until: Instant) {
-        self.commands_resume_at = Some(until);
-    }
-
-    /// The rest of a command line chain goes on now: the link `open` waited for is open
-    pub fn resume_commands(&mut self) {
-        self.commands_resume_at = None;
-    }
-
     /// Whether the link is open: the commands that need it refuse otherwise (MAX-12)
     pub fn is_link_open(&self) -> bool {
         self.link.is_open()
@@ -1002,44 +898,17 @@ impl App {
         self.overlay = None;
     }
 
+    /// An action of the user's own input
     pub fn update(&mut self, action: Action) -> UpdateEffect {
-        // the prefix stays after a line or pan move, the side panel's too: the key again moves
-        // again (MAX-252 for the side panel)
-        let is_repeatable_history = self.prefix_active
-            && matches!(
-                action,
-                Action::History(
-                    HistoryAction::ScrollUp(_)
-                        | HistoryAction::ScrollDown(_)
-                        | HistoryAction::PanLeft(_)
-                        | HistoryAction::PanRight(_)
-                ) | Action::App(AppAction::SideView(_))
-            );
+        self.update_from(&Origin::Input, action)
+    }
 
-        // a mouse move (ignored, or a hover) between the prefix and its key keeps it (MAX-131)
-        let keeps_prefix = matches!(
-            action,
-            Action::App(AppAction::SetPrefix(true) | AppAction::Hover(..)) | Action::Ignore
-        );
-        if !keeps_prefix && !is_repeatable_history {
-            self.prefix_active = false;
+    /// An action from `origin` (MAX-165): only the user's input acts as typing, so a trigger's
+    /// command neither ends a prefix the user pressed nor stops a mash
+    pub fn update_from(&mut self, origin: &Origin, action: Action) -> UpdateEffect {
+        if *origin == Origin::Input {
+            self.input_takes_over(&action);
         }
-
-        // the user takes over: a mash stops at the first key typed for the device (MAX-6)
-        let typed = matches!(
-            action,
-            Action::Terminal(TerminalAction::Key(_) | TerminalAction::Paste(_))
-                | Action::LineInput(
-                    LineInputAction::HandleKey(_)
-                        | LineInputAction::Paste(_)
-                        | LineInputAction::Submit
-                        | LineInputAction::Interrupt
-                )
-        );
-        if typed {
-            self.stop_mash("a key was typed");
-        }
-
         match action {
             Action::App(action) => self.update_action_app(action),
             Action::TransmitRaw(bytes) => {
@@ -1156,7 +1025,7 @@ impl App {
                         }
                         OverlayResponse::QueueCommands { line, invocations } => {
                             self.push_command_history(line);
-                            self.queue_commands(invocations);
+                            self.queue_chain(Origin::CommandLine, invocations);
                             UpdateEffect::None
                         }
                         OverlayResponse::StartCapture {
@@ -1331,6 +1200,46 @@ impl App {
         }
     }
 
+    /// What the user's input does before its action: it ends the prefix and stops a mash
+    fn input_takes_over(&mut self, action: &Action) {
+        // the prefix stays after a line or pan move, the side panel's too: the key again moves
+        // again (MAX-252 for the side panel)
+        let is_repeatable_history = self.prefix_active
+            && matches!(
+                action,
+                Action::History(
+                    HistoryAction::ScrollUp(_)
+                        | HistoryAction::ScrollDown(_)
+                        | HistoryAction::PanLeft(_)
+                        | HistoryAction::PanRight(_)
+                ) | Action::App(AppAction::SideView(_))
+            );
+
+        // a mouse move (ignored, or a hover) between the prefix and its key keeps it (MAX-131)
+        let keeps_prefix = matches!(
+            action,
+            Action::App(AppAction::SetPrefix(true) | AppAction::Hover(..)) | Action::Ignore
+        );
+        if !keeps_prefix && !is_repeatable_history {
+            self.prefix_active = false;
+        }
+
+        // the user takes over: a mash stops at the first key typed for the device (MAX-6)
+        let typed = matches!(
+            action,
+            Action::Terminal(TerminalAction::Key(_) | TerminalAction::Paste(_))
+                | Action::LineInput(
+                    LineInputAction::HandleKey(_)
+                        | LineInputAction::Paste(_)
+                        | LineInputAction::Submit
+                        | LineInputAction::Interrupt
+                )
+        );
+        if typed {
+            self.stop_mash("a key was typed");
+        }
+    }
+
     /// Live RX, a replay's too. The plot reads it as it comes, before the restore question
     /// holds it back (MAX-222)
     pub fn feed_rx(&mut self, chunk: &[u8]) {
@@ -1500,18 +1409,19 @@ impl App {
         }
     }
 
-    /// The `fired` triggers run their command line, queued as a typed one, with a notice
-    /// (MAX-6), once their chunk is fed
+    /// The `fired` triggers run their chain, queued with the trigger as its origin, with a
+    /// notice (MAX-6), once their chunk is fed
     fn run_fired(&mut self, fired: &[(usize, usize)]) {
         for &(i, _) in fired {
             let trigger = &self.triggers[i];
             let notice = format!("Trigger {}: {}", trigger.name, trigger.run);
             let invocations = trigger.invocations.clone();
-            // a silent one leaves it to its command line (`notify`, MAX-228)
+            let origin = Origin::Trigger(trigger.name.clone());
+            // a silent one leaves it to its chain (`notify`, MAX-228)
             if !trigger.silent {
                 self.notify_info(notice);
             }
-            self.queue_commands(invocations);
+            self.queue_chain(origin, invocations);
         }
     }
 
@@ -2064,7 +1974,7 @@ impl App {
             AppAction::LineControl(control) => UpdateEffect::LineControl(control),
             AppAction::Open(port) => UpdateEffect::Open(port),
             AppAction::OpenLink(config) => UpdateEffect::OpenLink(config),
-            // `link-save` and `link-delete` (MAX-185): a refusal stops the command line
+            // `link-save` and `link-delete` (MAX-185): a refusal stops the chain
             AppAction::SaveLink(link) => {
                 if let Err(err) = self.store_link(&link, None) {
                     self.fail_commands(format!("link-save: {err}"));
@@ -2107,7 +2017,7 @@ impl App {
                 UpdateEffect::None
             }
             AppAction::QueueCommands(invocations) => {
-                self.queue_commands(invocations);
+                self.queue_chain(Origin::KeyBinding, invocations);
                 UpdateEffect::None
             }
             AppAction::CancelCommands => {

@@ -65,6 +65,24 @@ pub enum Target {
     Build(fn(&App, &[ArgValue]) -> Result<Action, String>),
 }
 
+/// Who started an action or a chain (MAX-165): `Input` is the user's own keys, clicks,
+/// pastes and popup answers; `CommandLine` a chain entered in the command line popup;
+/// `KeyBinding` a chain a key runs (a named command, or a command bound alone); `Trigger` a
+/// trigger's chain, by its name; `Profile` a profile hook's chain, `on_load` or `on_open`.
+/// Only `Input` acts as typing: it ends the prefix and stops a mash
+// TODO: (MAX-284) a `Client` origin for each API connection (A2.1), the reason this enum
+// exists now: a client's chains run next to the user's and the triggers', and its results go
+// back to it, not to a toast (MAX-165 steps 2-3). The CLI (MAX-285) and the MCP server
+// (MAX-149) are clients too
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Origin {
+    Input,
+    CommandLine,
+    KeyBinding,
+    Trigger(String),
+    Profile(&'static str),
+}
+
 #[derive(Debug)]
 pub struct CommandSpec {
     pub name: &'static str,
@@ -739,7 +757,7 @@ pub fn find_by_action(action: KeyBindingAction) -> Option<&'static CommandSpec> 
 }
 
 /// A command line saved under a name in `[commands]` of `keymap.toml` (MAX-239), a command
-/// of its own without arguments: its line is parsed when the keymap loads
+/// of its own without arguments: its chain is parsed when the keymap loads
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NamedCommand {
     pub name: String,
@@ -749,7 +767,7 @@ pub struct NamedCommand {
 }
 
 impl NamedCommand {
-    /// Its help, else its line
+    /// Its help, else its chain
     pub fn description(&self) -> &str {
         if self.help.is_empty() {
             &self.run
@@ -1023,7 +1041,7 @@ pub fn parse(line: &str) -> Result<Vec<Invocation>, CommandError> {
     parse_with(line, &[])
 }
 
-/// The same, a command of `named` (`[commands]`, MAX-239) run as its line's commands
+/// The same, a command of `named` (`[commands]`, MAX-239) run as its chain's commands
 pub fn parse_with(line: &str, named: &[NamedCommand]) -> Result<Vec<Invocation>, CommandError> {
     let mut invocations = Vec::new();
     for words in tokenizer::split(line, is_path_word)? {

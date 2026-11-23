@@ -258,7 +258,7 @@ pub fn rts(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     control(app, LineControl::Rts(*on))
 }
 
-/// `break [ms]`: the line held in break that long, 250 ms by default; the rest of the line
+/// `break [ms]`: the line held in break that long, 250 ms by default; the rest of the chain
 /// waits for its end
 pub fn line_break(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     let ms = match args {
@@ -269,7 +269,7 @@ pub fn line_break(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     control(app, LineControl::Break(Duration::from_millis(ms)))
 }
 
-/// `sleep <ms>`: the commands pause, the rest of the line waits that long; the screen doesn't
+/// `sleep <ms>`: the commands pause, the rest of the chain waits that long; the screen doesn't
 pub fn pause_commands(_app: &App, args: &[ArgValue]) -> Result<Action, String> {
     let [ArgValue::Int(ms)] = args else {
         unreachable!("sleep takes a duration");
@@ -292,7 +292,7 @@ fn link_open(app: &App) -> Result<(), String> {
 }
 
 /// `open <name | port | tcp://host:port | telnet://host:port | file://path>`: the link switches to it; the rest of
-/// the line waits for it to be open. A saved link's name first (MAX-185), which opens with its
+/// the chain waits for it to be open. A saved link's name first (MAX-185), which opens with its
 /// line settings; a port keeps the ones in use. A `file://` is a replay, without delay
 pub fn open(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     let [ArgValue::Address(address)] = args else {
@@ -521,7 +521,7 @@ pub fn search(_app: &App, args: &[ArgValue]) -> Result<Action, String> {
 
 /// `mash <text> <until> [every-ms] [timeout-ms]` (MAX-6): sends the text at once, then every
 /// `every-ms` (50 by default), until `until` comes in or `timeout-ms` (15 s) is up; the rest
-/// of the line waits for `until`
+/// of the chain waits for `until`
 pub fn mash(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     let (text, until, every, timeout) = match args {
         [ArgValue::Bytes(text), ArgValue::Bytes(until), rest @ ..] => {

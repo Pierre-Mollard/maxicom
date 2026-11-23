@@ -1,4 +1,4 @@
-//! Triggers: a command line run when a text comes in (MAX-6)
+//! Triggers: a chain run when a text comes in (MAX-6)
 //!
 //! The text is matched on the received bytes as they come, not on finished lines: U-Boot
 //! redraws its countdown with `\b` and only ends the line when it runs out, a line matcher
@@ -8,7 +8,7 @@ use memchr::memmem::Finder;
 
 use crate::commands::Invocation;
 
-/// A rule of `triggers.toml`, compiled: while it is armed, its command line runs when its text
+/// A rule of `triggers.toml`, compiled: while it is armed, its chain runs when its text
 /// comes in. Unless it rearms, it disarms when it fires
 #[derive(Debug, Clone)]
 pub struct Trigger {
