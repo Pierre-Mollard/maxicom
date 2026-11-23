@@ -38,6 +38,7 @@ use crate::{
             SPLIT_PERCENT_MIN, on_off,
         },
     },
+    event::Event,
     inputs::{
         Action, AppAction, ClickHoldAction, CopyModeAction, HistoryAction, LineInputAction,
         MarkAction, PendingMark, ScrollbarAction, ScrollbarId, SearchModeAction, SideHandleAction,
@@ -58,11 +59,12 @@ use crate::{
     ui::{layout::side_chunks, raw_side::terminal::DumpLayout},
 };
 
-/// What brought the shell hint (MAX-255): a query received, Up or Down after a sign of a shell
-/// (the hint names it), Tab (the key is reason enough)
+/// What brought the shell hint in the line input (MAX-255); a terminal query received says
+/// it as an event (`Event::ShellSeen`)
 enum ShellHint {
-    Query,
+    /// Up or Down in the line input, after a sign of a shell
     History(ShellSignal),
+    /// Tab in the line input
     Tab,
 }
 
@@ -474,8 +476,8 @@ impl App {
         let outcome = transfer.outcome();
         // by name as they come: the folder is said once, at the end (MAX-228)
         for (path, size) in received {
-            let message = format!("Received {} ({size} bytes)", file_name(&path));
-            self.notify_transfer(ToastLevel::Success, message);
+            let name = file_name(&path);
+            self.emit(Event::FileReceived { name, size });
         }
         match outcome {
             None => {}
@@ -483,51 +485,28 @@ impl App {
                 let Some(transfer) = self.transfer.take() else {
                     return step;
                 };
-                if transfer.is_download() {
-                    self.notify_received(&transfer);
+                let done = if transfer.is_download() {
+                    received_event(&transfer)
                 } else {
-                    let protocol = transfer.protocol().map(|p| format!(", {}", p.name()));
-                    let message = format!(
-                        "Sent {} ({} bytes{})",
-                        transfer.name(),
-                        transfer.size().unwrap_or_default(),
-                        protocol.unwrap_or_default()
-                    );
-                    self.notify_transfer(ToastLevel::Success, message);
-                }
+                    Event::Sent {
+                        name: transfer.name(),
+                        size: transfer.size().unwrap_or_default(),
+                        protocol: transfer.protocol().map(Protocol::name),
+                    }
+                };
+                self.emit(done);
             }
             Some(Err(failure)) => self.stop_transfer(&failure.to_string()),
         }
         step
     }
 
-    /// The end of a download, in the transfer's box: the file or how many, and the folder
-    /// once (MAX-228). A YMODEM batch can hold none
-    fn notify_received(&mut self, transfer: &FileTransfer) {
-        let folder = transfer.folder().map(|folder| folder.display().to_string());
-        let folder = folder.unwrap_or_default();
-        let message = match (transfer.received_count(), transfer.last_received()) {
-            (0, _) => "Nothing received: the sender sent no file".to_string(),
-            (1, Some((path, size))) => {
-                format!("Received {} ({size} bytes) into {folder}", file_name(path))
-            }
-            (count, _) => format!(
-                "Received {count} files ({} bytes) into {folder}",
-                transfer.received_total()
-            ),
-        };
-        let level = match transfer.received_count() {
-            0 => ToastLevel::Info,
-            _ => ToastLevel::Success,
-        };
-        self.notify_transfer(level, message);
-    }
-
     /// Ends the file going through, the link can't take it (`why`)
     pub fn stop_transfer(&mut self, why: &str) {
         if let Some(transfer) = self.transfer.take() {
-            let message = format!("{}: {why}", stopped_text(&transfer));
-            self.notify_transfer(ToastLevel::Error, message);
+            let stopped = stopped_text(&transfer);
+            let why = why.to_string();
+            self.emit(Event::TransferStopped { stopped, why });
         }
     }
 
@@ -707,7 +686,7 @@ impl App {
     /// The replay read its whole file: said once, its screen left as it is (MAX-166)
     pub fn end_replay(&mut self) {
         self.set_replay_ended(true);
-        self.notify_info("Replay finished");
+        self.emit(Event::ReplayFinished);
     }
 
     pub fn is_replay_ended(&self) -> bool {
@@ -740,10 +719,11 @@ impl App {
     }
 
     /// A warning for the keymap's keys that never reach their mode section (MAX-155)
-    fn warn_shadowed_keys(&mut self) {
+    pub fn warn_shadowed_keys(&mut self) {
         let shadowed = self.key_resolver.shadowed_keys();
         if !shadowed.is_empty() {
-            self.notify_warn(format!("Keymap: unreachable {}", shadowed.join(", ")));
+            let text = format!("Keymap: unreachable {}", shadowed.join(", "));
+            self.emit(Event::ConfigWarning { text });
         }
     }
 
@@ -751,26 +731,8 @@ impl App {
     /// terminal mode (MAX-255), worded for what brought it. With `shell_hint`, in line mode on
     /// a written link only, never when terminal mode is turned off
     fn hint_shell(&mut self, hint: ShellHint) -> Option<Note> {
-        let line_mode = self.settings.mode == Mode::Line;
-        if self.shell_hinted
-            || !self.settings.line_mode.shell_hint
-            || !line_mode
-            || !self.settings.mode_enabled(Mode::Terminal)
-            || !self.link_kind().writes()
-        {
-            return None;
-        }
-        self.shell_hinted = true;
-        let key = (self.key_resolver.action_keys(KeyBindingAction::SKInputMode))
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| "toggle-input-mode".to_string());
+        let key = self.shell_hint_key()?;
         let msg = match hint {
-            ShellHint::Query => format!(
-                "The device looks like a shell ({}): {key} switches to terminal mode for its \
-                 line editing and history",
-                ShellSignal::Query.told()
-            ),
             ShellHint::History(signal) => format!(
                 "The device shell keeps its own history ({}): {key} switches to terminal mode \
                  to use it",
@@ -781,6 +743,24 @@ impl App {
             }
         };
         Some(Note::info(msg).in_slot("shell"))
+    }
+
+    /// The key that switches to terminal mode, when the shell hint is due: once a link, with
+    /// `shell_hint`, in line mode on a written link, never when terminal mode is turned off
+    fn shell_hint_key(&mut self) -> Option<String> {
+        let line_mode = self.settings.mode == Mode::Line;
+        if self.shell_hinted
+            || !self.settings.line_mode.shell_hint
+            || !line_mode
+            || !self.settings.mode_enabled(Mode::Terminal)
+            || !self.link_kind().writes()
+        {
+            return None;
+        }
+        self.shell_hinted = true;
+        let keys = self.key_resolver.action_keys(KeyBindingAction::SKInputMode);
+        let key = keys.into_iter().next();
+        Some(key.unwrap_or_else(|| "toggle-input-mode".to_string()))
     }
 
     /// The next frames hide the borders, the scrollbar and the status bar each while the
@@ -940,7 +920,7 @@ impl App {
                     _ => false,
                 };
                 if sends && self.link_busy() {
-                    self.say_link_busy();
+                    report.notes.extend(self.say_link_busy());
                     return (UpdateEffect::None, report);
                 }
                 // a click in the input leaves the history for it (MAX-113), a right-click
@@ -1044,7 +1024,7 @@ impl App {
                             stream,
                             include_session,
                         } => {
-                            self.start_capture(&path, stream, include_session);
+                            report.extend(self.start_capture(&path, stream, include_session));
                             UpdateEffect::None
                         }
                         OverlayResponse::HandledNotify { message, warn } => {
@@ -1161,11 +1141,10 @@ impl App {
                             UpdateEffect::OpenLink(config)
                         }
                         OverlayResponse::NameRunningSession(name) => {
-                            if let Err(err) = self.name_session(&name) {
-                                report
-                                    .notes
-                                    .push(Note::warn(format!("Session not named: {err}")));
-                            }
+                            report.notes.push(match self.name_session(&name) {
+                                Ok(named) => named,
+                                Err(err) => Note::warn(format!("Session not named: {err}")),
+                            });
                             if let Overlay::Sessions(browser) = &mut overlay {
                                 browser.reload();
                             }
@@ -1174,7 +1153,7 @@ impl App {
                         }
                         OverlayResponse::NameLink(address) => {
                             self.overlay = Some(overlay);
-                            self.name_link(address);
+                            report.notes.extend(self.name_link(address));
                             UpdateEffect::None
                         }
                         OverlayResponse::SaveLink { link, replaces } => {
@@ -1327,7 +1306,8 @@ impl App {
     /// running without them (MAX-185)
     pub fn set_links(&mut self, links: Result<LinksConfig, String>) {
         if let Err(err) = &links {
-            self.notify_warn(err.clone());
+            let text = err.clone();
+            self.emit(Event::ConfigWarning { text });
         }
         self.links = links;
     }
@@ -1431,13 +1411,14 @@ impl App {
     fn run_fired(&mut self, fired: &[(usize, usize)]) {
         for &(i, _) in fired {
             let trigger = &self.triggers[i];
-            let notice = format!("Trigger {}: {}", trigger.name, trigger.run);
+            let fired = Event::TriggerFired {
+                name: trigger.name.clone(),
+                run: trigger.run.clone(),
+                silent: trigger.silent,
+            };
             let invocations = trigger.invocations.clone();
             let origin = Origin::Trigger(trigger.name.clone());
-            // a silent one leaves it to its chain (`notify`, MAX-228)
-            if !trigger.silent {
-                self.notify_info(notice);
-            }
+            self.emit(fired);
             for note in self.queue_chain(origin, invocations).notes {
                 self.show_note(note);
             }
@@ -1489,12 +1470,12 @@ impl App {
             // unanswered in line mode, the device may give up on its line editing: said now
             if live
                 && self.terminal_mode.shell_signal() == Some(ShellSignal::Query)
-                && let Some(note) = self.hint_shell(ShellHint::Query)
+                && let Some(key) = self.shell_hint_key()
             {
-                self.show_note(note);
+                self.emit(Event::ShellSeen { key });
             }
             if !self.settings.terminal_mode.notify_unhandled.is_empty() {
-                self.notify_unhandled();
+                self.emit_unhandled();
             } else {
                 // collected for the markers only: nothing left for later (MAX-253)
                 self.terminal_mode.take_dropped();
@@ -1534,7 +1515,7 @@ impl App {
     /// first few, only the groups of `notify_unhandled`; a new count once the notification is
     /// gone
     /// (MAX-264)
-    fn notify_unhandled(&mut self) {
+    fn emit_unhandled(&mut self) {
         let dropped = self.terminal_mode.take_dropped();
         let groups = &self.settings.terminal_mode.notify_unhandled;
         let mut new = (dropped.iter())
@@ -1559,32 +1540,14 @@ impl App {
         if kinds.len() > SHOWN {
             kinds.sort_by_key(|&(_, count)| std::cmp::Reverse(*count));
         }
-        let mut parts: Vec<String> = (kinds.iter().take(SHOWN))
-            .map(|(label, count)| match count {
-                1 => label.clone(),
-                _ => format!("{label} ×{count}"),
-            })
-            .collect();
-        match kinds.len().saturating_sub(SHOWN) {
-            0 => {}
-            1 => parts.push("1 more kind".to_string()),
-            more => parts.push(format!("{more} more kinds")),
-        }
-        let msg = format!("Unhandled: {}", parts.join(", "));
-        self.notify_keyed("unhandled", ToastLevel::Info, msg);
+        let more = kinds.len().saturating_sub(SHOWN);
+        let kinds = kinds.into_iter().take(SHOWN).cloned().collect();
+        self.emit(Event::Unhandled { kinds, more });
     }
 
     /// The device's last OSC 52 copy to send on, base64, since the last call (MAX-275)
     pub fn take_device_copy(&mut self) -> Option<Vec<u8>> {
         self.device_copy.take()
-    }
-
-    /// The device copied to the clipboard: said every time, `notify_copy` or not, as the user
-    /// didn't ask for it (MAX-275)
-    pub fn notify_device_copy(&mut self, base64_len: usize) {
-        let bytes = base64_len / 4 * 3;
-        let msg = format!("The device copied about {bytes} bytes to your clipboard");
-        self.notify_keyed("copy", ToastLevel::Info, msg);
     }
 
     /// The replies to send to the remote's queries, received since the last call (MAX-151),
@@ -1927,7 +1890,7 @@ impl App {
                 UpdateEffect::None
             }
             AppAction::ToggleRecording => {
-                self.toggle_recording();
+                report.notes.extend(self.toggle_recording());
                 UpdateEffect::None
             }
             AppAction::OpenOverlay(overlay) => {
@@ -1943,7 +1906,7 @@ impl App {
                 UpdateEffect::None
             }
             AppAction::OpenSessions => {
-                self.open_session_browser();
+                report.notes.extend(self.open_session_browser());
                 UpdateEffect::None
             }
             AppAction::Notify(level, text) => {
@@ -2021,8 +1984,9 @@ impl App {
                 UpdateEffect::None
             }
             AppAction::NameSession(name) => {
-                if let Err(err) = self.name_session(&name) {
-                    report.fail(format!("session-name: {err}"));
+                match self.name_session(&name) {
+                    Ok(named) => report.notes.push(named),
+                    Err(err) => report.fail(format!("session-name: {err}")),
                 }
                 UpdateEffect::None
             }
@@ -2671,8 +2635,12 @@ impl App {
 
     /// Applies reloaded config files (MAX-112): their settings win over the session toggles,
     /// except the ones only read at startup (history sizes, emulator size, logging), which keep
-    /// their running value and are named in the notice
-    pub fn apply_reload(&mut self, mut settings: SettingsConfig, key_resolver: KeyResolver) {
+    /// their running value and are named in the note it gives
+    pub fn apply_reload(
+        &mut self,
+        mut settings: SettingsConfig,
+        key_resolver: KeyResolver,
+    ) -> Note {
         let old = &self.settings;
         let mut restart_needed = Vec::new();
         let mut keep = |name: &'static str, is_changed: bool| {
@@ -2724,14 +2692,11 @@ impl App {
         self.update_viewport(self.viewport);
 
         if restart_needed.is_empty() {
-            self.notify_info("Config reloaded");
+            Note::info("Config reloaded")
         } else {
-            self.notify_warn(format!(
-                "Config reloaded; restart to apply: {}",
-                restart_needed.join(", ")
-            ));
+            let restart = restart_needed.join(", ");
+            Note::warn(format!("Config reloaded; restart to apply: {restart}"))
         }
-        self.warn_shadowed_keys();
     }
 
     fn toggle_setting(&mut self, key: SettingKey) -> Option<Note> {
@@ -3136,20 +3101,23 @@ impl App {
         }
     }
 
-    pub fn notify_info(&mut self, msg: impl Into<String>) {
-        self.notify(ToastLevel::Info, msg);
-    }
-
-    pub fn notify_success(&mut self, msg: impl Into<String>) {
+    // TODO: (MAX-165) gone with step 3: mash's end becomes its command's result
+    fn notify_success(&mut self, msg: impl Into<String>) {
         self.notify(ToastLevel::Success, msg);
     }
 
-    pub fn notify_warn(&mut self, msg: impl Into<String>) {
-        self.notify(ToastLevel::Warn, msg);
+    /// The presenter's own error toast (`present`, `fail_commands`): a toast comes from
+    /// `present` or `emit` only (MAX-165)
+    fn notify_error(&mut self, msg: impl Into<String>) {
+        self.notify(ToastLevel::Error, msg);
     }
 
-    pub fn notify_error(&mut self, msg: impl Into<String>) {
-        self.notify(ToastLevel::Error, msg);
+    /// An event published (MAX-165): its note shown, unless it is a silent one. A client's
+    /// subscription gets it here too (MAX-284)
+    pub fn emit(&mut self, event: Event) {
+        if let Some(note) = event.note() {
+            self.show_note(note);
+        }
     }
 
     /// What an action reported (MAX-165), shown: in its slot's box when it has one
@@ -3169,7 +3137,7 @@ impl App {
 
     /// A toast in the box of `key`: it takes the place of the box's last message, its time
     /// renewed, so what follows on from it, or is cycled through, shows in one box (MAX-234)
-    pub fn notify_keyed(&mut self, key: &'static str, level: ToastLevel, msg: impl Into<String>) {
+    fn notify_keyed(&mut self, key: &'static str, level: ToastLevel, msg: impl Into<String>) {
         let msg = msg.into();
         let duration = toast_duration(level, &msg);
         let line = (self.notifications.push_keyed(key, msg, level, duration)).map(Notice::line);
@@ -3187,28 +3155,17 @@ impl App {
         }
     }
 
-    /// A copy made: what it was (`Copied the <what>: <text>`) or how many chars, in the copy's
-    /// box; nothing with `notify_copy` off, a clipboard error still shows (MAX-269)
-    pub fn notify_copied(&mut self, text: &str, what: Option<&str>) {
+    /// A copy made, its note: what it was (`Copied the <what>: <text>`) or how many chars, in
+    /// the copy's box; none with `notify_copy` off, a clipboard error still shows (MAX-269)
+    pub fn copied_note(&self, text: &str, what: Option<&str>) -> Option<Note> {
         if !self.settings.ui.notify_copy {
-            return;
+            return None;
         }
         let msg = match what {
             Some(what) => format!("Copied the {what}: {text}"),
             None => format!("Copied {} chars to clipboard", text.chars().count()),
         };
-        self.notify_keyed("copy", ToastLevel::Success, msg);
-    }
-
-    /// A file transfer's toast: its messages follow each other in one box (MAX-228)
-    pub fn notify_transfer(&mut self, level: ToastLevel, msg: impl Into<String>) {
-        self.notify_keyed("transfer", level, msg);
-    }
-
-    /// The link's toast, the same way: connecting then connected, lost then reconnected,
-    /// detached then attached (MAX-228)
-    pub fn notify_link(&mut self, level: ToastLevel, msg: impl Into<String>) {
-        self.notify_keyed("link", level, msg);
+        Some(Note::new(ToastLevel::Success, msg).in_slot("copy"))
     }
 }
 
@@ -3265,6 +3222,26 @@ fn cancelled_text(transfer: &FileTransfer) -> String {
 
 /// What a transfer stopped by a failure says, before why: how far a send got, the partial
 /// file a download keeps
+/// The end of a download (MAX-228): the file or how many, and the folder once. A YMODEM
+/// batch can hold none
+fn received_event(transfer: &FileTransfer) -> Event {
+    let folder = transfer.folder().map(|folder| folder.display().to_string());
+    let folder = folder.unwrap_or_default();
+    match (transfer.received_count(), transfer.last_received()) {
+        (0, _) => Event::NothingReceived,
+        (1, Some((path, size))) => Event::ReceivedFile {
+            name: file_name(path),
+            size: *size,
+            folder,
+        },
+        (count, _) => Event::ReceivedFiles {
+            count,
+            size: transfer.received_total(),
+            folder,
+        },
+    }
+}
+
 fn stopped_text(transfer: &FileTransfer) -> String {
     if !transfer.is_download() {
         return format!(

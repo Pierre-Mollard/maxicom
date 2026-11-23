@@ -18,7 +18,10 @@ use crate::{
         find_last_session, group_separator, read_tail_bytes, read_times, restore_separator,
         session_name_notice, tail_lines_len, timed_chunks, timed_ranges,
     },
+    commands::report::{Failure, Note, Report},
     configs::{Mode, settings::RestoreMode},
+    event::Event,
+    notification::ToastLevel,
     overlays::{
         ErrorDialog, FilePathDialog, Overlay, SessionBrowser,
         sessions::{sessions as session_count, size},
@@ -63,9 +66,15 @@ impl App {
             None => Err(std::io::Error::other("no cache folder")),
         };
         match result {
-            Ok(report) if report.removed > 0 => self.notify_info(pruned_message(&report)),
+            Ok(report) if report.removed > 0 => {
+                let message = pruned_message(&report);
+                self.emit(Event::SessionsPruned { message });
+            }
             Ok(_) => {}
-            Err(err) => self.notify_warn(format!("Session backup off: {err}")),
+            Err(err) => {
+                let error = err.to_string();
+                self.emit(Event::BackupOff { error });
+            }
         }
     }
 
@@ -104,15 +113,15 @@ impl App {
 
     /// The running session named, or its name taken away when `name` leaves nothing: the live
     /// link's, paused while a replay runs. Its recording holds the meta, so it writes it, and a
-    /// later write keeps the name (MAX-213)
-    pub fn name_session(&mut self, name: &str) -> Result<(), String> {
+    /// later write keeps the name (MAX-213). With what to say; why not else
+    pub fn name_session(&mut self, name: &str) -> Result<Note, String> {
         let Some(session) = self.live_session_mut() else {
             return Err("no session running".to_string());
         };
         let name = clean_session_name(name);
         (session.set_name(name.clone())).map_err(|err| err.to_string())?;
-        self.notify_success(session_name_notice(name.as_deref()));
-        Ok(())
+        let notice = session_name_notice(name.as_deref());
+        Ok(Note::new(ToastLevel::Success, notice))
     }
 
     /// The live link's session backup: the recorder's, or the one paused while a replay runs
@@ -141,7 +150,7 @@ impl App {
         match self.recorder.recording().filter(|_| changed) {
             Some(Stream::Full) => {
                 self.recorder.stop();
-                self.notify_warn("Full recording stopped: the device changed");
+                self.emit(Event::RecordingStopped);
             }
             Some(Stream::Text) => {
                 let source = self.capture_source();
@@ -248,7 +257,7 @@ impl App {
         }
         if asking {
             self.close_overlay();
-            self.notify_warn("Session not restored: too much data came in while asking");
+            self.emit(Event::RestoreOverflowed);
         }
         self.release_held_rx();
         false
@@ -272,9 +281,13 @@ impl App {
         match self.restore_session(session) {
             Ok(()) => {
                 self.restored_session = Some(session.stem.clone());
-                self.notify_info(format!("Restored the session of {}", session.time_span()));
+                let span = session.time_span();
+                self.emit(Event::SessionRestored { span });
             }
-            Err(err) => self.notify_warn(format!("Session not restored: {err}")),
+            Err(err) => {
+                let error = err.to_string();
+                self.emit(Event::RestoreFailed { error });
+            }
         }
     }
 
@@ -532,22 +545,21 @@ impl App {
             .scroll_up(usize::from(screen_rows.saturating_sub(1)));
 
         let (message, warn) = fit.message();
-        if warn {
-            self.notify_warn(message);
-        } else {
-            self.notify_info(message);
-        }
+        self.emit(Event::GroupLoaded { message, warn });
     }
 
     /// Stops the recording, or opens the recording dialog on the mode's stream when none runs
     /// (MAX-175: one recording at a time, the dialog picks text or full)
-    pub fn toggle_recording(&mut self) {
+    pub fn toggle_recording(&mut self) -> Option<Note> {
         match self.recorder.recording() {
             Some(stream) => {
                 self.recorder.stop();
-                self.notify_info(format!("Stopped recording {}", stream.as_str()));
+                Some(Note::info(format!("Stopped recording {}", stream.as_str())))
             }
-            None => self.open_capture_dialog(self.mode_stream()),
+            None => {
+                self.open_capture_dialog(self.mode_stream());
+                None
+            }
         }
     }
 
@@ -602,52 +614,58 @@ impl App {
     /// gets a meta file when its device is known, so its replay decodes and shows its line
     /// settings as a session's does: the live link's, or while replaying the replayed
     /// session's (a plain file's isn't). A failure opens the error popup
-    pub fn start_capture(&mut self, path: &Path, stream: Stream, include_session: bool) {
+    pub fn start_capture(&mut self, path: &Path, stream: Stream, include_session: bool) -> Report {
         let path = expand_home(path);
         match stream {
             Stream::Text => {
                 let mut file = path.into_os_string();
                 file.push(Stream::Text.suffix());
-                self.start_text_capture(Path::new(&file), include_session);
+                self.start_text_capture(Path::new(&file), include_session)
             }
             Stream::Full => {
                 let source = self.capture_source();
                 let text = self.capture_format();
                 let result = (self.recorder).start_full(&path, include_session, source, &text);
-                self.report_capture_start(result, stream);
+                self.report_capture_start(result, stream)
             }
         }
     }
 
     /// Starts the text recording in the file `file` as it's named, as minicom's `-C` does
     /// (MAX-181)
-    pub fn start_text_capture(&mut self, file: &Path, include_session: bool) {
+    pub fn start_text_capture(&mut self, file: &Path, include_session: bool) -> Report {
         let file = expand_home(file);
         let source = self.capture_source();
         let result = (self.recorder).start_text(&file, include_session, source);
-        self.report_capture_start(result, Stream::Text);
+        self.report_capture_start(result, Stream::Text)
     }
 
-    fn report_capture_start(&mut self, result: std::io::Result<()>, stream: Stream) {
+    /// A recording started, or its failure shown in the error popup
+    fn report_capture_start(&mut self, result: std::io::Result<()>, stream: Stream) -> Report {
         match result {
             Ok(()) => {
-                self.notify_success(format!("Started recording {}", stream.as_str()));
+                let started = format!("Started recording {}", stream.as_str());
+                Report::from(Note::new(ToastLevel::Success, started))
             }
             Err(e) => {
+                let message = format!("Could not open file for writing: {e}");
                 self.open_overlay(Overlay::Error(
                     ErrorDialog::new("Capture Failed", "Could not open file for writing")
                         .with_details(e),
                 ));
+                Report {
+                    notes: Vec::new(),
+                    failure: Some(Failure::Shown(message)),
+                }
             }
         }
     }
 
     /// The session browser on the session folder, the session restored into the history marked
     /// (MAX-148, MAX-202)
-    pub fn open_session_browser(&mut self) {
+    pub fn open_session_browser(&mut self) -> Option<Note> {
         let Some(dir) = self.sessions_dir.clone() else {
-            self.notify_warn("No session folder");
-            return;
+            return Some(Note::warn("No session folder"));
         };
         let max_size = self.settings.sessions.limits().max_size;
         // the live link's session backup, the one a replay paused while it runs
@@ -667,6 +685,7 @@ impl App {
             browser = browser.with_live(paused_raw.clone());
         }
         self.open_overlay(Overlay::Sessions(Box::new(browser)));
+        None
     }
 }
 

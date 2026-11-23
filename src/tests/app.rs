@@ -36,7 +36,7 @@ pub fn texts(app: &App) -> Vec<String> {
 
 /// A full recording to the folder `path` started and stopped at once, for its meta file
 pub fn record_full_meta(app: &mut App, path: &Path, include_session: bool) {
-    app.start_capture(path, crate::capture::Stream::Full, include_session);
+    let _ = app.start_capture(path, crate::capture::Stream::Full, include_session);
     app.recorder.stop();
 }
 
@@ -1236,7 +1236,7 @@ fn only_input_acts_as_typing() {
     let mut app = app();
     let trigger = Origin::Trigger("boot".to_string());
     app.update(Action::App(AppAction::SetPrefix(true)));
-    app.update_from(&trigger, KeyBindingAction::ScrollToBottom.to_action(&app));
+    let _ = app.update_from(&trigger, KeyBindingAction::ScrollToBottom.to_action(&app));
     assert!(app.prefix_active);
     app.update(KeyBindingAction::ScrollToBottom.to_action(&app));
     assert!(!app.prefix_active);
@@ -1244,9 +1244,9 @@ fn only_input_acts_as_typing() {
     let mash = crate::commands::parse("mash ' ' '=> '").unwrap();
     app.update(Action::App(AppAction::QueueCommands(mash)));
     let (origin, action) = app.next_command_action(Instant::now()).unwrap();
-    app.update_from(&origin, action);
+    let _ = app.update_from(&origin, action);
     let key = crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('a'));
-    app.update_from(&trigger, Action::LineInput(LineInputAction::HandleKey(key)));
+    let _ = app.update_from(&trigger, Action::LineInput(LineInputAction::HandleKey(key)));
     assert!(app.mash().is_some());
     app.update(Action::LineInput(LineInputAction::HandleKey(key)));
     assert!(app.mash().is_none());
@@ -1606,7 +1606,7 @@ fn reload_takes_the_files_settings() {
         prefix: "ctrl-b".to_string(),
         ..Default::default()
     };
-    app.apply_reload(settings, KeyResolver::try_new(&keymap).unwrap());
+    let reloaded = app.apply_reload(settings, KeyResolver::try_new(&keymap).unwrap());
 
     assert_eq!(app.settings.mode, Mode::Line);
     assert!(!app.settings.local_echo);
@@ -1616,7 +1616,7 @@ fn reload_takes_the_files_settings() {
     assert!(!app.is_prefix_active());
     let scroller = app.line_mode.scroller();
     assert_eq!((scroller.view_width, scroller.view_height), (100, 30));
-    assert_eq!(toasts(&app), ["Config reloaded"]);
+    assert_eq!(reloaded, Note::info("Config reloaded"));
 }
 
 /// MAX-168: a link that isn't written is shown in terminal mode, whatever the settings say:
@@ -1637,12 +1637,12 @@ fn replay_keeps_terminal_mode() {
 
     let mut app = App::new(line_settings(), keys(), on("file:///tmp/boot.raw"));
     assert_eq!(app.settings.mode, Mode::Terminal);
-    app.apply_reload(line_settings(), keys());
+    let _ = app.apply_reload(line_settings(), keys());
     assert_eq!(app.settings.mode, Mode::Terminal);
 
     let mut app = App::new(line_settings(), keys(), on("/dev/ttyUSB0"));
     assert_eq!(app.settings.mode, Mode::Line);
-    app.apply_reload(line_settings(), keys());
+    let _ = app.apply_reload(line_settings(), keys());
     assert_eq!(app.settings.mode, Mode::Line);
 }
 
@@ -1658,7 +1658,7 @@ fn reload_keeps_startup_only_settings() {
     settings.inactivity_detach_timeout = Duration::from_secs(9);
     settings.rx_buffer_size = 512;
     settings.encoding.toggle();
-    app.apply_reload(
+    let reloaded = app.apply_reload(
         settings,
         KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap(),
     );
@@ -1677,11 +1677,11 @@ fn reload_keeps_startup_only_settings() {
     assert_eq!(app.settings.rx_buffer_size, 512);
     assert_ne!(app.settings.encoding, defaults.encoding);
     assert_eq!(
-        toasts(&app),
-        [
+        reloaded,
+        Note::warn(
             "Config reloaded; restart to apply: line_mode.history_size, terminal_mode.rows, \
-              sessions.enabled"
-        ]
+             sessions.enabled"
+        )
     );
 }
 
@@ -1729,7 +1729,7 @@ fn add_cr_and_add_lf_on_the_screen() {
     app.settings.mode = Mode::Line;
     app.settings.capture.timestamp = false;
     app.settings.add_lf = true;
-    app.start_text_capture(&dir.join("rx.txt"), false);
+    let _ = app.start_text_capture(&dir.join("rx.txt"), false);
     app.feed_rx(b"a\rb\r");
     app.feed_rx(b"c");
     app.recorder.stop();
@@ -1809,11 +1809,11 @@ fn cycling_shows_one_box() {
     app.notifications.dismiss_all();
     app.set_plots(crate::configs::plots::tests::demo_plots());
     for _ in 0..3 {
-        app.step_plot(true);
+        app.update(Action::App(AppAction::StepPlot(true)));
     }
-    app.toggle_plot_freeze();
+    app.update(Action::App(AppAction::TogglePlotFreeze));
     assert_eq!(toasts(&app), ["Plot sensors frozen"]);
-    app.show_plot(None);
+    app.update(Action::App(AppAction::ShowPlot(None)));
     assert_eq!(toasts(&app), ["Plot off"]);
 }
 
@@ -2977,24 +2977,21 @@ fn backspace_setting_toggles_the_byte_sent() {
 #[test]
 fn copy_notification_can_be_turned_off() {
     let mut app = app();
-    let messages = |app: &App| -> Vec<String> {
-        (app.notifications.active_toasts().iter())
-            .map(|toast| toast.message.clone())
-            .collect()
-    };
-    app.notify_copied("hello", None);
-    assert_eq!(messages(&app), ["Copied 5 chars to clipboard"]);
-    app.notify_copied("~/.config/maxicom", Some("config path"));
+    let text = |note: Option<Note>| note.map(|note| note.text);
+    let chars = text(app.copied_note("hello", None));
+    assert_eq!(chars.as_deref(), Some("Copied 5 chars to clipboard"));
+    let named = text(app.copied_note("~/.config/maxicom", Some("config path")));
     assert_eq!(
-        messages(&app),
-        ["Copied the config path: ~/.config/maxicom"]
+        named.as_deref(),
+        Some("Copied the config path: ~/.config/maxicom")
     );
 
-    app.notifications.dismiss_all();
     app.settings.ui.notify_copy = false;
-    app.notify_copied("hello", None);
-    app.notify_copied("~/.config/maxicom", Some("config path"));
-    assert!(messages(&app).is_empty());
+    assert_eq!(app.copied_note("hello", None), None);
+    assert_eq!(
+        app.copied_note("~/.config/maxicom", Some("config path")),
+        None
+    );
 }
 
 /// What a command line shows once its chain ran through `dispatch`, as one line: the effects

@@ -22,11 +22,15 @@ use crate::{
         types::SidePanel,
     },
     args::{ParseOutcome, parse_args, print_help, print_version},
-    commands::Origin,
+    commands::{
+        Origin,
+        report::{Failure, Note, Report},
+    },
     configs::{
         AppConfig, ConfigsError, KeyResolver, KeywordHighlight, LinksConfig, PlotsConfig,
         RawSideView, SettingsConfig, ThemeConfig, profiles::with_profiles,
     },
+    event::Event,
     link::{Address, ByteSource, LinkConfig, LinkError},
     notification::ToastLevel,
     overlays::{ErrorDialog, Overlay},
@@ -39,6 +43,7 @@ mod capture;
 mod clock;
 mod commands;
 mod configs;
+mod event;
 mod glyphs;
 mod inputs;
 mod link;
@@ -342,7 +347,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     app.set_links(links);
     app.set_plots(plots);
     app.show_start_plot();
-    warnings.into_iter().for_each(|w| app.notify_warn(w));
+    for text in warnings {
+        app.emit(Event::ConfigWarning { text });
+    }
     app.set_restore_flag(restore);
     if let Some(ports) = pick_from {
         app.start_in_directory(ports, AppConfig::default_sessions_dir());
@@ -372,8 +379,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     } else if !picking {
         app.start_link(device);
     }
+    // a failure has its popup already
     if let Some(file) = capture_file {
-        app.start_text_capture(&file, false);
+        let started = app.start_text_capture(&file, false);
+        started
+            .notes
+            .into_iter()
+            .for_each(|note| app.show_note(note));
     }
 
     let mut guard = TerminalGuard::init()?;
@@ -401,7 +413,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         // a link opened at runtime with another stack: laid over the config in use, its
         // files not read again (MAX-240)
         if let Some(profiles) = app.take_profiles_due() {
-            lay_profiles(&mut app, &global, &mut highlight_rules, profiles);
+            // its failure has its dialog: no command waits for it
+            let _ = lay_profiles(&mut app, &global, &mut highlight_rules, profiles);
             needs_redraw = true;
         }
         // once the link's stack is laid, so they're that stack's (MAX-9, MAX-247)
@@ -448,18 +461,26 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             while let Some((origin, action)) = next.take() {
                 match app.dispatch_from(&origin, action) {
                     UpdateEffect::Quit => running = false,
+                    // what an effect gives is reported to who started its action (MAX-165)
                     UpdateEffect::CopyToClipboard(text) => {
-                        execute_clipboard_copy(&mut app, &text, None);
+                        let copied = execute_clipboard_copy(&app, &text, None);
+                        app.present(&origin, copied);
                     }
                     UpdateEffect::CopyToClipboardAs { text, what } => {
-                        execute_clipboard_copy(&mut app, &text, Some(&what));
+                        let copied = execute_clipboard_copy(&app, &text, Some(&what));
+                        app.present(&origin, copied);
                     }
                     // `profile load` / `unload`, at once: the next command of the chain sees it
                     UpdateEffect::LayProfiles(profiles) => {
                         let laid = lay_profiles(&mut app, &global, &mut highlight_rules, profiles);
-                        if laid {
-                            app.show_note(app.profiles_note());
-                        }
+                        let report = match laid {
+                            Ok(()) => Report::from(app.profiles_note()),
+                            Err(message) => Report {
+                                notes: Vec::new(),
+                                failure: Some(Failure::Shown(message)),
+                            },
+                        };
+                        app.present(&origin, report);
                     }
                     // ratatui forgets what it drew: the next frame writes every cell (MAX-271)
                     UpdateEffect::Redraw => guard.terminal.clear()?,
@@ -474,17 +495,30 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                                 app.set_links(config.links);
                                 app.set_plots(config.plots);
                                 status_bar = config.status_bar;
-                                app.apply_reload(config.settings, config.key_resolver);
-                                config.warnings.into_iter().for_each(|w| app.notify_warn(w));
+                                let reloaded =
+                                    app.apply_reload(config.settings, config.key_resolver);
+                                app.present(&origin, Report::from(reloaded));
+                                app.warn_shadowed_keys();
+                                for text in config.warnings {
+                                    app.emit(Event::ConfigWarning { text });
+                                }
                             }
                             // the running config stays
-                            Err(err) => app.open_overlay(Overlay::Error(
-                                ErrorDialog::new(
-                                    "Config Reload Failed",
-                                    "The config files were not applied",
-                                )
-                                .with_details(err),
-                            )),
+                            Err(err) => {
+                                let message = format!("The config files were not applied: {err}");
+                                app.open_overlay(Overlay::Error(
+                                    ErrorDialog::new(
+                                        "Config Reload Failed",
+                                        "The config files were not applied",
+                                    )
+                                    .with_details(err),
+                                ));
+                                let failed = Report {
+                                    notes: Vec::new(),
+                                    failure: Some(Failure::Shown(message)),
+                                };
+                                app.present(&origin, failed);
+                            }
                         }
                     }
                     _ => {}
@@ -524,7 +558,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 last_layout_warnings.clear();
             }
             PostRenderEffect::_CopyToClipboard(text) => {
-                execute_clipboard_copy(&mut app, &text, None)
+                let copied = execute_clipboard_copy(&app, &text, None);
+                app.present(&Origin::Input, copied);
             }
             PostRenderEffect::LayoutWarnings(current_warnings) => {
                 for warn in &current_warnings {
@@ -557,7 +592,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                                 )
                             }
                         };
-                        app.notify_warn(msg);
+                        app.emit(Event::ScreenWarning { text: msg });
                         needs_redraw = true;
                     }
                 }
@@ -569,18 +604,16 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Copies `text` and says so: the copy of `what` with the text itself, else its char count;
-/// copies one after the other say it in one box (MAX-234)
 /// `profiles` laid over the config files `global`, which aren't read again (MAX-240): the
 /// parts a profile changes given to the app, the highlight rules here, and the profiles'
-/// warnings said. True when laid; when one doesn't load, its error in a dialog and the stack
-/// in use stays
+/// warnings said. When one doesn't load, its error in a dialog and the stack in use stays,
+/// the error given back too
 fn lay_profiles(
     app: &mut App,
     global: &AppConfig,
     highlight_rules: &mut Vec<KeywordHighlight>,
     profiles: Vec<String>,
-) -> bool {
+) -> Result<(), String> {
     match with_profiles(global, &AppConfig::profiles_dir(), &profiles) {
         Ok(laid) => {
             let known = global.warnings.len();
@@ -588,15 +621,17 @@ fn lay_profiles(
             *highlight_rules = config.highlight_rules;
             let (keys, triggers) = (config.key_resolver, config.triggers);
             app.apply_profiles(profiles, keys, triggers, config.plots);
-            let warnings = config.warnings.into_iter().skip(known);
-            warnings.for_each(|w| app.notify_warn(w));
-            true
+            for text in config.warnings.into_iter().skip(known) {
+                app.emit(Event::ConfigWarning { text });
+            }
+            Ok(())
         }
         Err(err) => {
+            let message = format!("A profile didn't load: {err}");
             app.open_overlay(Overlay::Error(
                 ErrorDialog::new("Profiles Not Applied", "A profile didn't load").with_details(err),
             ));
-            false
+            Err(message)
         }
     }
 }
@@ -606,15 +641,25 @@ fn execute_device_copy(app: &mut App, base64: &[u8]) {
     let sent = std::str::from_utf8(base64)
         .map_err(std::io::Error::other)
         .and_then(copy_base64_via_osc52);
-    match sent {
-        Err(e) => app.notify_keyed("copy", ToastLevel::Error, format!("Clipboard error: {e}")),
-        Ok(()) => app.notify_device_copy(base64.len()),
-    }
+    let copied = match sent {
+        Err(e) => Event::DeviceCopyFailed {
+            error: e.to_string(),
+        },
+        Ok(()) => Event::DeviceCopied {
+            base64_len: base64.len(),
+        },
+    };
+    app.emit(copied);
 }
 
-fn execute_clipboard_copy(app: &mut App, text: &str, what: Option<&str>) {
+/// Copies `text`, with what to say: the copy of `what` with the text itself, else its char
+/// count, copies one after the other in one box (MAX-234); a clipboard error in that box too
+fn execute_clipboard_copy(app: &App, text: &str, what: Option<&str>) -> Report {
     match copy_via_osc52(text) {
-        Err(e) => app.notify_keyed("copy", ToastLevel::Error, format!("Clipboard error: {e}")),
-        Ok(()) => app.notify_copied(text, what),
+        Err(e) => {
+            let error = format!("Clipboard error: {e}");
+            Report::from(Note::new(ToastLevel::Error, error).in_slot("copy"))
+        }
+        Ok(()) => Report::from(Vec::from_iter(app.copied_note(text, what))),
     }
 }

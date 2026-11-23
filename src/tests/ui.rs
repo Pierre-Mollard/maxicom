@@ -8,11 +8,13 @@ use crate::{
         selection::{CopySide, LogicalPosition},
     },
     capture::{Screenshot, ScreenshotFormat, Stream},
+    commands::report::Note,
     configs::{
         KeyBindingsConfig, KeyResolver, LineDisplayMode, RawSideView, SettingsConfig, TextEncoding,
     },
     inputs::{Action, AppAction, CopyModeAction, DialogAction, HistoryAction, SearchModeAction},
     link::{Address, LinkConfig},
+    notification::ToastLevel,
     overlays::{
         CommandLine, ErrorDialog, FilePathDialog, HelpDialog, LineSettingsDialog, ResizeDialog,
         ScreenshotDialog, SettingsDialog,
@@ -317,7 +319,7 @@ fn plot_title_arrows_and_long_names() {
 #[test]
 fn plot_frozen_title() {
     let mut h = plot_harness(80, 16, b"temp=20\n");
-    h.app.toggle_plot_freeze();
+    let _ = h.app.toggle_plot_freeze();
     h.app.notifications.dismiss_all();
     let screen = h.draw().join("\n");
     assert!(screen.contains("│  ◀   key-value    ▶ frozen "), "{screen}");
@@ -2840,9 +2842,9 @@ fn transfer_row_download() {
 #[test]
 fn repeated_notification_counts() {
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 10);
-    h.app.notify_warn("a warning");
+    h.app.show_note(Note::warn("a warning"));
     assert!(has(&h.draw(), "┌ Warning ─"));
-    h.app.notify_warn("a warning");
+    h.app.show_note(Note::warn("a warning"));
     let rows = h.draw();
     assert!(has(&rows, "┌ Warning ×2 ─"), "{rows:#?}");
     assert_eq!(
@@ -2857,12 +2859,14 @@ fn repeated_notification_counts() {
 fn notification_time_starts_when_drawn() {
     let expires = |h: &Harness| h.app.notifications.active_toasts()[0].expires_at;
     let mut small = Harness::line_mode(LineDisplayMode::Pretty, 20, 5);
-    small.app.notify_error("not seen yet");
+    small
+        .app
+        .show_note(Note::new(ToastLevel::Error, "not seen yet"));
     small.draw();
     assert_eq!(expires(&small), None);
 
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 10);
-    h.app.notify_info("seen");
+    h.app.show_note(Note::info("seen"));
     assert_eq!(expires(&h), None);
     h.draw();
     assert!(expires(&h).is_some());
@@ -3836,8 +3840,8 @@ fn mouse_wheel_scrolls_and_pans() {
 #[test]
 fn click_dismisses_a_toast() {
     let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
-    h.app.notify_info("first toast");
-    h.app.notify_warn("second toast");
+    h.app.show_note(Note::info("first toast"));
+    h.app.show_note(Note::warn("second toast"));
     h.app
         .update(Action::App(AppAction::OpenOverlay(Overlay::Help(
             HelpDialog::new(),
@@ -3856,7 +3860,7 @@ fn click_dismisses_a_toast() {
     assert!(!has(&rows, "second toast"), "{rows:#?}");
     assert!(matches!(h.app.overlay(), Some(Overlay::Help(_))));
 
-    h.app.notify_info("third toast");
+    h.app.show_note(Note::info("third toast"));
     h.draw();
     click(&mut h, (0, 23));
     let rows = h.draw();
@@ -12346,9 +12350,9 @@ fn notifications_popup() {
     let action = KeyBindingAction::Notifications;
     assert!(h.app.key_resolver.action_keys(action).is_empty());
     let long = format!("Received fw.bin into /home/user/{}/end", "deep/".repeat(30));
-    h.app.notify_warn("busy");
-    h.app.notify_info("done");
-    h.app.notify_error(long.clone());
+    h.app.show_note(Note::warn("busy"));
+    h.app.show_note(Note::info("done"));
+    h.app.show_note(Note::new(ToastLevel::Error, long.clone()));
     h.app.notifications.dismiss_all();
     h.app.update(action.to_action(&h.app));
     let rows = h.draw();

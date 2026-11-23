@@ -183,7 +183,7 @@ fn failed_writes_are_said_once() {
     assert!(app.link.is_open() && app.overlay().is_none());
 
     // said again, in the link's box (MAX-228)
-    assert!(app.transmit(b"x"));
+    assert_eq!(app.transmit(b"x"), Ok(()));
     app.notifications.dismiss_all();
     app.write_failed(&failed());
     assert_eq!(said(&app), 1);
@@ -202,7 +202,7 @@ fn gone_write_closes_the_link() {
     drop(peer);
 
     let start = Instant::now();
-    while app.transmit(b"x") {
+    while app.transmit(b"x").is_ok() {
         assert!(
             start.elapsed() < Duration::from_secs(5),
             "writes kept going"
@@ -595,7 +595,7 @@ fn reconfigure_keeps_settings_for_a_detached_port() {
         baud: 9600,
         ..app.link_config().line
     };
-    app.apply_link_effect(UpdateEffect::Reconfigure(line));
+    let _ = app.apply_link_effect(UpdateEffect::Reconfigure(line));
     assert_eq!(app.link_config().line.baud, 115_200);
 }
 
@@ -1575,7 +1575,7 @@ fn group_replay_loads_at_once_and_gives_the_link_back() {
     app.settings.mode = crate::configs::Mode::Line;
     app.feed_rx(b"live line\r\n");
 
-    app.apply_link_effect(UpdateEffect::ReplayGroup(sessions.clone()));
+    let _ = app.apply_link_effect(UpdateEffect::ReplayGroup(sessions.clone()));
     assert_eq!(app.link_kind(), LinkKind::Replay);
     assert_eq!(app.settings.mode, crate::configs::Mode::Terminal);
     assert!(app.is_replay_ended());
@@ -1738,7 +1738,7 @@ fn group_replay_has_no_controls() {
     use crate::commands::build::{replay_pause, replay_restart, replay_resume};
     let (dir, sessions) = group_of_three("group_replay_controls");
     let mut app = crate::app::tests::app();
-    app.apply_link_effect(UpdateEffect::ReplayGroup(sessions));
+    let _ = app.apply_link_effect(UpdateEffect::ReplayGroup(sessions));
     for command in [replay_pause, replay_resume, replay_restart] {
         let refused = command(&app, &[]).err();
         assert_eq!(
@@ -2439,7 +2439,7 @@ fn group_load_stops_on_close() {
     app.settings.mode = crate::configs::Mode::Line;
     app.feed_rx(b"live line\r\n");
 
-    app.apply_link_effect(UpdateEffect::ReplayGroup(sessions));
+    let _ = app.apply_link_effect(UpdateEffect::ReplayGroup(sessions));
     assert!(matches!(app.overlay(), Some(Overlay::Loading)));
     app.dispatch(Action::Overlay(crate::inputs::DialogAction::Close));
     assert!(app.overlay().is_none());

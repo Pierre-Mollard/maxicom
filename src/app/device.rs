@@ -24,6 +24,7 @@ use crate::{
         links::{SavedLink, default_name},
         profiles,
     },
+    event::{Event, Opened},
     inputs::Action,
     link::{
         Address, ByteSource, CONNECT_TIMEOUT, LinkConfig, LinkError, LinkKind, OpenFor,
@@ -169,13 +170,14 @@ impl App {
     }
 
     /// The link form on a link to save (MAX-185), the directory staying when it can't be
-    pub fn name_link(&mut self, address: Option<Address>) {
+    pub fn name_link(&mut self, address: Option<Address>) -> Option<Note> {
         match self.link_to_save(address) {
             Ok(link) => {
                 let form = LinkForm::new(link, &self.settings().link);
                 self.open_overlay(Overlay::LinkForm(Box::new(form)));
+                None
             }
-            Err(err) => self.notify_warn(err),
+            Err(err) => Some(Note::warn(err)),
         }
     }
 
@@ -328,7 +330,10 @@ impl App {
                 Ok(chain) => {
                     invocations.extend(chain.into_iter().map(|i| (Origin::Profile(hook), i)))
                 }
-                Err(err) => self.notify_warn(format!("{hook}: {err}")),
+                Err(err) => {
+                    let text = format!("{hook}: {err}");
+                    self.emit(Event::ConfigWarning { text });
+                }
             }
         }
         for queued in invocations.into_iter().rev() {
@@ -606,13 +611,16 @@ impl App {
                 && self.link.is_open()
                 && !self.link_busy()
             {
-                self.transmit(&answers);
+                // never busy here, and a failed write says itself (its event)
+                let _ = self.transmit(&answers);
             }
         }
 
         // the break ends on time, the input poll waking the loop often enough (MAX-12)
         if let Some(Err(e)) = self.link.end_break_if_due(Instant::now()) {
-            self.notify_error(format!("break: {e}"));
+            self.emit(Event::BreakFailed {
+                error: e.to_string(),
+            });
         }
         self.send_due(&mut turn);
 
@@ -620,8 +628,8 @@ impl App {
             let timeout = self.settings.inactivity_detach_timeout;
             if self.link.detach_if_idle(timeout) {
                 self.show_detached();
-                let message = format!("Device idle for {}s: port detached", timeout.as_secs());
-                self.notify_link(ToastLevel::Warn, message);
+                let secs = timeout.as_secs();
+                self.emit(Event::LinkIdle { secs });
                 turn.redraw = true;
             }
         } else if let Some((why, result)) = self.link.poll_open() {
@@ -660,12 +668,13 @@ impl App {
             UpdateEffect::ReplayGroup(sessions) => self.open_group_replay(sessions),
             UpdateEffect::StopReplay => self.stop_replay_link(),
             UpdateEffect::ToggleAttach => self.toggle_attach(),
-            UpdateEffect::Transmit(bytes) => {
-                if self.transmit(&bytes) {
+            UpdateEffect::Transmit(bytes) => match self.transmit(&bytes) {
+                Ok(()) => {
                     self.link.note_activity();
+                    Report::default()
                 }
-                Report::default()
-            }
+                Err(note) => Report::from(Vec::from_iter(note)),
+            },
             UpdateEffect::Reconfigure(line) => self.reconfigure_link(line),
             UpdateEffect::LineControl(control) => self.line_control(control),
             other => return (other, Report::default()),
@@ -673,24 +682,25 @@ impl App {
         (UpdateEffect::None, report)
     }
 
-    /// Writes `bytes` to the link, counted and recorded (not in a replay). True when written;
-    /// false when the link is closed, lost by this write, or the write failed: said once, not
-    /// per key typed into it (MAX-199). Refused while a protocol transfer owns the link, said
-    /// once too (MAX-162): a key, `send`, a terminal answer would break a packet
-    pub fn transmit(&mut self, bytes: &[u8]) -> bool {
+    /// Writes `bytes` to the link, counted and recorded (not in a replay). Not written when the
+    /// link is closed, lost by this write, or the write failed: said once by its event, not per
+    /// key typed into it (MAX-199). Refused while a protocol transfer owns the link, with a note
+    /// the first time (MAX-162): a key, `send`, a terminal answer would break a packet
+    pub fn transmit(&mut self, bytes: &[u8]) -> Result<(), Option<Note>> {
         if self.link_busy() {
-            self.say_link_busy();
-            return false;
+            return Err(self.say_link_busy());
         }
-        self.write_link(bytes, true)
+        match self.write_link(bytes, true) {
+            true => Ok(()),
+            false => Err(None),
+        }
     }
 
     /// A write refused while a protocol transfer owns the link, said once per transfer
-    pub fn say_link_busy(&mut self) {
-        if !std::mem::replace(&mut self.busy_said, true) {
-            let message = "A file transfer is running: cancel stops it";
-            self.notify_transfer(ToastLevel::Warn, message);
-        }
+    pub fn say_link_busy(&mut self) -> Option<Note> {
+        let said = std::mem::replace(&mut self.busy_said, true);
+        let message = "A file transfer is running: cancel stops it";
+        (!said).then(|| Note::warn(message).in_slot("transfer"))
     }
 
     /// `transmit` without the busy check, for the transfer's own bytes; `record` false keeps
@@ -723,8 +733,11 @@ impl App {
     /// or the link opens again (MAX-199)
     fn write_failed(&mut self, e: &LinkError) {
         if !std::mem::replace(&mut self.write_failing, true) {
-            let message = format!("{}: {e}", self.link_kind().name());
-            self.notify_link(ToastLevel::Error, message);
+            let link = self.link_kind().name();
+            self.emit(Event::WriteFailed {
+                link,
+                error: e.to_string(),
+            });
         }
     }
 
@@ -733,8 +746,8 @@ impl App {
     fn lose_link(&mut self, reason: Option<String>) {
         self.lost_reason = reason;
         self.show_disconnected();
-        let message = format!("{} lost", self.link_kind().name());
-        self.notify_link(ToastLevel::Warn, message);
+        let link = self.link_kind().name();
+        self.emit(Event::LinkLost { link });
     }
 
     /// Everything already waiting, instead of one buffer per frame, for `RX_DRAIN_BUDGET` at
@@ -760,15 +773,15 @@ impl App {
                     break;
                 }
                 Err(e) => {
-                    let message = format!("{} read error", self.link_kind().name());
-                    self.notify_link(ToastLevel::Error, message);
+                    let link = self.link_kind().name();
+                    self.emit(Event::ReadFailed { link });
                     return Err(e);
                 }
             }
         }
         // what the RFC 2217 server answered wrong (MAX-161)
-        for warning in self.link.take_warnings() {
-            self.notify_warn(warning);
+        for text in self.link.take_warnings() {
+            self.emit(Event::LinkWarning { text });
         }
         Ok(())
     }
@@ -840,7 +853,10 @@ impl App {
         if self.mash().is_some() {
             if self.link.is_open() {
                 if let Some(bytes) = self.next_mash_bytes(Instant::now()) {
-                    if !self.transmit(&bytes) {
+                    if let Err(note) = self.transmit(&bytes) {
+                        if let Some(note) = note {
+                            self.show_note(note);
+                        }
                         self.stop_mash("the write failed");
                     }
                     turn.redraw = true;
@@ -860,21 +876,22 @@ impl App {
         // some servers take several clients: said, not refused (MAX-186); in a box of its own,
         // as the link's box says it opened right after
         if let Some(holder) = self.link.shared_with() {
-            self.notify_warn(format!("{label} is open in {holder} too"));
+            let (label, holder) = (label.clone(), holder.to_string());
+            self.emit(Event::LinkShared { label, holder });
         }
         if !matches!(why, OpenFor::Retry) {
             self.on_open_due = true;
         }
+        let how = match why {
+            OpenFor::Start => Opened::Connected,
+            OpenFor::Attach | OpenFor::Retry => Opened::Reconnected,
+            OpenFor::Open { .. } => Opened::Switched,
+        };
+        self.emit(Event::LinkOpened { label, how });
         match why {
-            OpenFor::Start => {
-                self.notify_link(ToastLevel::Success, format!("Connected to {label}"))
-            }
-            OpenFor::Attach => {
-                self.notify_link(ToastLevel::Success, format!("Reconnected to {label}"));
-                self.close_overlay();
-            }
+            OpenFor::Start => {}
+            OpenFor::Attach => self.close_overlay(),
             OpenFor::Retry => {
-                self.notify_link(ToastLevel::Success, format!("Reconnected to {label}"));
                 if let Some(Overlay::DeviceDisconnected) = self.overlay() {
                     self.close_overlay();
                 }
@@ -883,7 +900,6 @@ impl App {
                 let switched = previous.address != self.link.config().address;
                 let profiles = self.opening_profiles.take().unwrap_or_default();
                 self.set_profiles_due(profiles);
-                self.notify_link(ToastLevel::Success, format!("Opened {label}"));
                 if let Some(Overlay::Directory(_)) = self.overlay() {
                     self.close_overlay();
                 }
@@ -913,7 +929,9 @@ impl App {
         match why {
             // what a missing port does at start, after the restore question
             OpenFor::Start => {
-                self.notify_link(ToastLevel::Warn, e.to_string());
+                self.emit(Event::LinkNotOpened {
+                    error: e.to_string(),
+                });
                 if matches!(self.overlay(), Some(Overlay::RestoreSession(_))) {
                     self.disconnected_after_restore = true;
                 } else {
@@ -922,7 +940,9 @@ impl App {
             }
             // still detached, its popup back: no quiet retries of a port held elsewhere
             OpenFor::Attach => {
-                self.notify_link(ToastLevel::Error, format!("Failed to reattach: {e}"));
+                self.emit(Event::ReattachFailed {
+                    error: e.to_string(),
+                });
                 self.link.detach();
                 if self.overlay.is_none() {
                     self.show_detached();
@@ -1195,7 +1215,7 @@ impl App {
     }
 }
 
-/// A note in the link's box, as `notify_link` shows it: connecting then connected, lost then
+/// A note in the link's box, as the link's events go: connecting then connected, lost then
 /// reconnected, detached then attached (MAX-228)
 fn link_note(level: ToastLevel, text: impl Into<String>) -> Note {
     Note::new(level, text).in_slot("link")

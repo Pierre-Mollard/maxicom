@@ -95,7 +95,7 @@ fn queued_commands_carry_their_origin() {
     let chain = crate::commands::parse("trigger on panic").unwrap();
     app.update(Action::App(AppAction::QueueCommands(chain)));
     while let Some((origin, action)) = app.next_command_action(Instant::now()) {
-        app.update_from(&origin, action);
+        let _ = app.update_from(&origin, action);
     }
     app.feed_rx(b"[   12.345] Kernel panic - not syncing");
     assert_eq!(next_origin(&mut app), Origin::Trigger("panic".to_string()));

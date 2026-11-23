@@ -202,6 +202,28 @@ its chapter, and in [CHANGELOG.md](CHANGELOG.md) under Unreleased.
 - **Visibility is private or `pub`.** No `pub(crate)` or `pub(super)`: a
   child module already sees its parent's private items.
 
+### Telling the user something: reports and events
+
+A message to the user comes from one of two places, never from a `notify_*`
+call deep in the code:
+
+- **An action reports.** A key, a click, a popup's answer and each command of
+  a command line are actions. What an action says comes back as a
+  `commands::report::Report`: its notes, then its failure if it failed. A
+  function that does one thing returns its `Note` or its `Report`. The
+  functions that dispatch actions (`update_from`, `update_action_app`, copy
+  mode, search) add them to the `&mut Report` of the action they run.
+  `App::present` then shows the report for whoever started the action (its
+  `Origin`): toasts, and a failed command stops the rest of its command line.
+- **Something that happens on its own is an event.** The link lost, a
+  transfer done, a trigger fired: nobody asked for it right then, so nobody
+  waits for an answer. It is an `event::Event`, published with `App::emit`.
+  Each event writes its own note, so its wording lives in `src/event.rs`.
+
+A command whose result comes later, like an `open` that connects or a `mash`
+that waits for its text, still reports to the command line that waits for
+it. What everyone sees meanwhile, "Opened /dev/ttyUSB0", is an event.
+
 ### Adding a setting
 
 A setting is a field and its default in its struct, in `src/configs/`. Serde

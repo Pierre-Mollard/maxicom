@@ -6,6 +6,7 @@ use crate::notification::ToastLevel;
 /// A notice of an action, shown as a toast: in the box of `slot` when it has one, where it
 /// takes the place of the last message (`notify_keyed`)
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use = "a note is for the user: show it or add it to the action's report"]
 pub struct Note {
     pub level: ToastLevel,
     pub slot: Option<&'static str>,
@@ -50,6 +51,7 @@ pub enum Failure {
 
 /// What an action reports: its notes in the order they came, then its failure if it failed
 #[derive(Debug, Default, PartialEq, Eq)]
+#[must_use = "a report is for who started the action: present it or add it to its report"]
 pub struct Report {
     pub notes: Vec<Note>,
     pub failure: Option<Failure>,

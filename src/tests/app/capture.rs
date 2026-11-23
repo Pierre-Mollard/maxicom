@@ -440,7 +440,7 @@ fn full_recording_stops_when_the_device_changes() {
             && last.as_deref() == Some("Full recording stopped: the device changed")
     };
     let start = |app: &mut App, name: &str| {
-        app.start_capture(&dir.join(name), Stream::Full, false);
+        let _ = app.start_capture(&dir.join(name), Stream::Full, false);
         assert!(app.recording() == Some(Stream::Full));
     };
 
@@ -486,7 +486,7 @@ fn text_capture_to_the_named_file() {
     let dir = crate::capture::tests::temp_dir("text_named");
     let mut app = app();
     app.settings.capture.timestamp = false;
-    app.start_text_capture(&dir.join("boot.cap"), false);
+    let _ = app.start_text_capture(&dir.join("boot.cap"), false);
     assert_eq!(app.recording(), Some(Stream::Text));
     app.feed_rx(b"a\r\n");
     app.recorder.stop();
@@ -494,7 +494,7 @@ fn text_capture_to_the_named_file() {
     assert_eq!(text.lines().collect::<Vec<_>>(), ["a"]);
     assert!(!dir.join("boot.cap.log").exists());
 
-    app.start_capture(&dir.join("rec"), Stream::Text, false);
+    let _ = app.start_capture(&dir.join("rec"), Stream::Text, false);
     app.recorder.stop();
     assert!(dir.join("rec.log").exists());
     let _ = std::fs::remove_dir_all(&dir);
@@ -511,7 +511,7 @@ fn text_recording_marks_device_changes() {
     let mut app = app();
     let port = app.link_config().address.clone();
     app.settings.capture.timestamp = false;
-    app.start_capture(&dir.join("rec"), Stream::Text, false);
+    let _ = app.start_capture(&dir.join("rec"), Stream::Text, false);
     app.feed_rx(b"a\r\n");
 
     let mut line = app.link_config().line;
@@ -725,7 +725,7 @@ fn text_recording_ends_the_line_cut_by_a_replay() {
     let path = dir.join("rec.log");
     let mut app = app();
     app.settings.capture.timestamp = false;
-    app.start_capture(&dir.join("rec"), Stream::Text, false);
+    let _ = app.start_capture(&dir.join("rec"), Stream::Text, false);
     app.feed_rx(b"hal");
     let session = crate::capture::tests::device("/dev/ttyUSB1");
     app.start_replay(dir.join("old.raw"), Some(&session));
@@ -752,11 +752,11 @@ fn notices_go_to_the_session_file() {
     let dir = crate::capture::tests::temp_dir("notices");
     let mut app = app();
     app.start_session(Some(dir.clone()));
-    app.notify_warn("busy");
-    app.notify_warn("busy");
-    app.notify_info("done");
+    app.show_note(Note::warn("busy"));
+    app.show_note(Note::warn("busy"));
+    app.show_note(Note::info("done"));
     app.start_replay(PathBuf::from("/tmp/a.raw"), None);
-    app.notify_info("while replaying");
+    app.show_note(Note::info("while replaying"));
     let sessions = crate::capture::list_sessions(&dir).unwrap();
     let notices = sessions[0].raw_path().unwrap().with_extension("notices");
     let text = std::fs::read_to_string(notices).unwrap();
@@ -770,7 +770,7 @@ fn notices_go_to_the_session_file() {
     assert!(lines.contains(&"info    while replaying"), "{text}");
 
     let mut none = super::tests::app();
-    none.notify_info("nowhere");
+    none.show_note(Note::info("nowhere"));
     assert_eq!(none.notifications.history().len(), 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
