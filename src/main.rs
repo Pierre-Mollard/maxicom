@@ -359,12 +359,15 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         let path = path.clone();
         // `--profile`'s over the session's own (MAX-240)
         let extra = app.profiles().to_vec();
-        if let Err(err) = app.open_replay(path.clone(), replay_delay, None, &extra) {
-            eprintln!(
-                "maxicom: could not open replay file {}: {err}",
-                path.display()
-            );
-            return Ok(ExitCode::FAILURE);
+        match app.open_replay(path.clone(), replay_delay, None, &extra) {
+            Ok(notes) => notes.into_iter().for_each(|note| app.show_note(note)),
+            Err(err) => {
+                eprintln!(
+                    "maxicom: could not open replay file {}: {err}",
+                    path.display()
+                );
+                return Ok(ExitCode::FAILURE);
+            }
         }
     } else if !picking {
         app.start_link(device);
@@ -455,7 +458,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     UpdateEffect::LayProfiles(profiles) => {
                         let laid = lay_profiles(&mut app, &global, &mut highlight_rules, profiles);
                         if laid {
-                            app.say_profiles();
+                            app.show_note(app.profiles_note());
                         }
                     }
                     // ratatui forgets what it drew: the next frame writes every cell (MAX-271)

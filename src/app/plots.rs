@@ -10,6 +10,7 @@ use std::{
 
 use crate::{
     app::App,
+    commands::report::Note,
     configs::{
         PlotsConfig, TextEncoding,
         plots::{MAX_SERIES, PlotDef, PlotWindow},
@@ -479,7 +480,7 @@ impl App {
                     let name = plot.name.clone();
                     self.plot = None;
                     let msg = format!("Plot {name} is gone from plots.toml: plot off");
-                    self.notify_plot(ToastLevel::Warn, msg);
+                    self.show_note(plot_note(ToastLevel::Warn, msg));
                 }
                 Some(def) if def != plot.def() => {
                     self.plot = Some(Plot::new(plot.name.clone(), def));
@@ -506,40 +507,34 @@ impl App {
         let Some(name) = self.settings.plot.clone() else {
             return;
         };
-        if self.plots.get(&name).is_some() {
-            self.show_plot(Some(&name));
+        let note = if self.plots.get(&name).is_some() {
+            self.show_plot(Some(&name))
         } else {
             let msg = format!("No plot named '{name}' in plots.toml: plot off");
-            self.notify_plot(ToastLevel::Warn, msg);
+            Some(plot_note(ToastLevel::Warn, msg))
+        };
+        if let Some(note) = note {
+            self.show_note(note);
         }
     }
 
-    /// Shows the plot named, on fresh series, or none (`plot off`). The plot shown already
-    /// keeps its points
-    pub fn show_plot(&mut self, name: Option<&str>) {
+    /// Shows the plot named, on fresh series, or none (`plot off`), with what to say. The plot
+    /// shown already keeps its points
+    pub fn show_plot(&mut self, name: Option<&str>) -> Option<Note> {
         let Some(name) = name else {
-            if self.plot.take().is_some() {
-                self.notify_plot(ToastLevel::Info, "Plot off");
-            }
-            return;
+            let shown = self.plot.take().is_some();
+            return shown.then(|| plot_note(ToastLevel::Info, "Plot off"));
         };
         if self.plot.as_ref().is_some_and(|plot| plot.name == name) {
-            return;
+            return None;
         }
         let Some(def) = self.plots.get(name) else {
             let msg = format!("No plot named '{name}' in plots.toml");
-            self.notify_plot(ToastLevel::Warn, msg);
-            return;
+            return Some(plot_note(ToastLevel::Warn, msg));
         };
         self.plot = Some(Plot::new(name.to_string(), def));
         self.plot_started = Instant::now();
-        self.notify_plot(ToastLevel::Info, format!("Plot {name}"));
-    }
-
-    /// The plot's toast: showing, switching, freezing and closing it follow each other in one
-    /// box (MAX-234)
-    pub fn notify_plot(&mut self, level: ToastLevel, msg: impl Into<String>) {
-        self.notify_keyed("plot", level, msg);
+        Some(plot_note(ToastLevel::Info, format!("Plot {name}")))
     }
 
     /// The plot after the one shown in the file's order, off after the last: what `plot`
@@ -555,11 +550,10 @@ impl App {
     /// `plot-next` / `plot-prev` and the panel's arrows: the next or previous plot, from the
     /// last back to the first and the other way, never off (MAX-230): the panel's `✕`,
     /// `plot off` and `plot` turn it off
-    pub fn step_plot(&mut self, forward: bool) {
+    pub fn step_plot(&mut self, forward: bool) -> Option<Note> {
         let names = &self.plots.plots;
         if names.is_empty() {
-            self.notify_plot(ToastLevel::Warn, "plots.toml has no plot");
-            return;
+            return Some(plot_note(ToastLevel::Warn, "plots.toml has no plot"));
         }
         let shown = (self.plot.as_ref())
             .and_then(|plot| names.iter().position(|(name, _)| *name == plot.name));
@@ -571,7 +565,7 @@ impl App {
             (Some(at), false) => (at + count - 1) % count,
         };
         let name = names[index].0.clone();
-        self.show_plot(Some(&name));
+        self.show_plot(Some(&name))
     }
 
     /// The time on the plot's clock: since it was shown or last cleared
@@ -581,17 +575,16 @@ impl App {
 
     /// `plot-freeze`: the chart stops moving or jumps back to now; the data is collected
     /// either way
-    pub fn toggle_plot_freeze(&mut self) {
+    pub fn toggle_plot_freeze(&mut self) -> Note {
         let at = self.plot_clock();
         let Some(plot) = &mut self.plot else {
-            self.notify_plot(ToastLevel::Warn, "No plot shown");
-            return;
+            return plot_note(ToastLevel::Warn, "No plot shown");
         };
         let frozen = !plot.is_frozen();
         plot.freeze(frozen.then_some(at));
         let name = plot.name.clone();
         let state = if frozen { "frozen" } else { "live" };
-        self.notify_plot(ToastLevel::Info, format!("Plot {name} {state}"));
+        plot_note(ToastLevel::Info, format!("Plot {name} {state}"))
     }
 
     /// RX bytes for the plot shown, at the time they came in on its clock
@@ -609,6 +602,12 @@ impl App {
             self.plot_started = Instant::now();
         }
     }
+}
+
+/// The plot's note: showing, switching, freezing and closing it follow each other in one
+/// box (MAX-234)
+pub fn plot_note(level: ToastLevel, text: impl Into<String>) -> Note {
+    Note::new(level, text).in_slot("plot")
 }
 
 #[cfg(test)]

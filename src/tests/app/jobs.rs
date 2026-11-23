@@ -10,6 +10,7 @@ use crate::{
         tests::{app, parse_fails},
     },
     inputs::{AppAction, DialogAction},
+    link::serial::LineControl,
 };
 
 /// MAX-12: the command line runs its chain one action at a time, in order, each effect
@@ -223,4 +224,41 @@ fn restore_dialog_holds_a_command_line() {
     assert!(matches!(app.dispatch(send), UpdateEffect::None));
     assert!(app.next_command_action(Instant::now()).is_none());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-165 (A1 step 2): what an action reports is shown for who started it. A chain's
+/// failure stops the rest of the chain, said with how many didn't run; the same failure from
+/// the user's own input is only said, and a chain waiting goes on.
+/// How: `dtr on` on a link with no control lines, in a chain, then as input while a chain
+/// sleeps.
+#[test]
+fn a_failure_stops_only_its_chain() {
+    let mut app = app();
+    let last_toast = |app: &App| {
+        let toasts = app.notifications.active_toasts();
+        toasts.last().unwrap().message.clone()
+    };
+    let queue = |app: &mut App, chain: &str| {
+        let chain = crate::commands::parse(chain).unwrap();
+        app.update(Action::App(AppAction::QueueCommands(chain)));
+    };
+
+    queue(&mut app, "dtr on; send x");
+    let (origin, dtr) = app.next_command_action(Instant::now()).unwrap();
+    app.dispatch_from(&origin, dtr);
+    assert_eq!(
+        last_toast(&app),
+        "DTR on: the link has no control lines (1 more not run)"
+    );
+    assert!(app.next_command_action(Instant::now()).is_none());
+
+    queue(&mut app, "sleep 1000; send y");
+    let (origin, sleep) = app.next_command_action(Instant::now()).unwrap();
+    app.dispatch_from(&origin, sleep);
+    let dtr = Action::App(AppAction::LineControl(LineControl::Dtr(true)));
+    app.dispatch_from(&Origin::Input, dtr);
+    assert_eq!(last_toast(&app), "DTR on: the link has no control lines");
+    let later = Instant::now() + Duration::from_secs(2);
+    let (_, send) = app.next_command_action(later).unwrap();
+    assert!(matches!(app.update(send), UpdateEffect::Transmit(y) if y == b"y"));
 }

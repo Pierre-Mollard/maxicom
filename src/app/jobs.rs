@@ -6,10 +6,12 @@ use std::time::Instant;
 
 use super::{App, RECANCEL_FOR, cancelled_text};
 use crate::{
-    commands::{CommandError, Invocation, Origin, Target},
+    commands::{
+        CommandError, Invocation, Origin, Target,
+        report::{Failure, Note, Report},
+    },
     configs::KeyBindingAction,
     inputs::Action,
-    notification::ToastLevel,
     overlays::Overlay,
 };
 
@@ -46,6 +48,23 @@ impl App {
             .map(|action| (origin, action))
     }
 
+    /// What an action from `origin` reported (MAX-165), shown: its notes as toasts, then its
+    /// failure. A chain's failure stops the rest of the chain, quietly when a popup shows it;
+    /// the user's own input has no chain to stop, its failure is only said
+    pub fn present(&mut self, origin: &Origin, report: Report) {
+        for note in report.notes {
+            self.show_note(note);
+        }
+        match (report.failure, origin) {
+            (None, _) | (Some(Failure::Shown(_)), Origin::Input) => {}
+            (Some(Failure::Said(message)), Origin::Input) => self.notify_error(message),
+            (Some(Failure::Said(message)), _) => self.fail_commands(message),
+            (Some(Failure::Shown(_)), _) => {
+                self.drop_pending_commands();
+            }
+        }
+    }
+
     /// A command failed with `message`, here or where the loop applied its effect: the rest of
     /// its chain is dropped, the error says how much
     pub fn fail_commands(&mut self, message: String) {
@@ -62,27 +81,32 @@ impl App {
     }
 
     /// A chain to run (MAX-12), started by `origin` (MAX-165): after the commands waiting, but
-    /// a chain starting with `cancel` stops them instead of waiting behind them
-    pub fn queue_chain(&mut self, origin: Origin, mut invocations: Vec<Invocation>) {
+    /// a chain starting with `cancel` stops them instead of waiting behind them, which it
+    /// reports
+    pub fn queue_chain(&mut self, origin: Origin, mut invocations: Vec<Invocation>) -> Report {
         let cancels = invocations.first().is_some_and(|invocation| {
             matches!(
                 invocation.spec.target,
                 Target::Action(KeyBindingAction::CancelCommands)
             )
         });
+        let mut report = Report::default();
         if cancels {
             invocations.remove(0);
-            self.cancel();
+            report = self.cancel();
         }
         let queued = invocations.into_iter().map(|i| (origin.clone(), i));
         self.pending_commands.extend(queued);
+        report
     }
 
-    /// `cancel` (MAX-12): stops the file being sent and drops the commands waiting
-    pub fn cancel(&mut self) {
+    /// `cancel` (MAX-12): stops the file being sent and drops the commands waiting, which it
+    /// reports
+    pub fn cancel(&mut self) -> Report {
         // the transfer says it in its own box, "Cancelled", where a failure says "Stopped"
         // (MAX-228)
         let transfer_cancelled = self.transfer.is_some();
+        let mut notes = Vec::new();
         if let Some(mut transfer) = self.transfer.take() {
             // a protocol's receiver is told to stop too
             let cans = transfer.cancel();
@@ -90,7 +114,7 @@ impl App {
                 self.write_link(&cans, false);
                 self.recancel_until = Some(Instant::now() + RECANCEL_FOR);
             }
-            self.notify_transfer(ToastLevel::Warn, cancelled_text(&transfer));
+            notes.push(Note::warn(cancelled_text(&transfer)).in_slot("transfer"));
         }
         let mut stopped = Vec::new();
         if self.mash.take().is_some() {
@@ -104,10 +128,11 @@ impl App {
         if !stopped.is_empty() {
             let mut message = stopped.join(", ");
             message[..1].make_ascii_uppercase();
-            self.notify_warn(message);
+            notes.push(Note::warn(message));
         } else if !transfer_cancelled {
-            self.notify_info("Nothing to cancel");
+            notes.push(Note::info("Nothing to cancel"));
         }
+        Report::from(notes)
     }
 
     /// The rest of a chain waits until `until` (a `sleep`, the end of a `break`, an `open` at

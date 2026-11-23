@@ -8,6 +8,7 @@ use std::{
 use super::*;
 use crate::{
     capture::CaptureFormat,
+    commands::report::{Note, Report},
     configs::{
         KeyBindingsConfig, KeyResolver, SettingsConfig, TextEncoding, settings::RestoreMode,
     },
@@ -574,7 +575,7 @@ fn detach_then_attach() {
 }
 
 /// MAX-168: new line settings on a detached port are kept for its next open, with a
-/// notice; on a link that isn't a port they change nothing.
+/// notice (reported, MAX-165); on a link that isn't a port they change nothing.
 /// How: a serial port that isn't there, a 9600 baud config; then a TCP link.
 #[test]
 fn reconfigure_keeps_settings_for_a_detached_port() {
@@ -583,10 +584,10 @@ fn reconfigure_keeps_settings_for_a_detached_port() {
         baud: 9600,
         ..app.link_config().line
     };
-    app.apply_link_effect(UpdateEffect::Reconfigure(line));
+    let (_, report) = app.apply_link_effect(UpdateEffect::Reconfigure(line));
     assert_eq!(app.link_config().line.baud, 9600);
-    let kept = "The port is detached: it opens with these settings";
-    assert!(toasts(&app).contains(&kept.to_string()));
+    let kept = Note::info("The port is detached: it opens with these settings");
+    assert_eq!(report, Report::from(kept));
 
     let (listener, address) = listener();
     let (mut app, _peer) = connected(&listener, &address);

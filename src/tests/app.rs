@@ -1742,12 +1742,33 @@ fn add_cr_and_add_lf_on_the_screen() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The mouse toggle flips the capture setting and says so (MAX-113).
+/// MAX-165 (A1 step 2): a screenshot that can't be written fails its command, so the rest
+/// of its chain doesn't run (it was only said before).
+/// How: a name under a file, which can't be a folder.
+#[test]
+fn a_failed_screenshot_stops_its_chain() {
+    let mut app = app();
+    let file = std::env::temp_dir().join(format!("maxicom_test_{}_shot_file", std::process::id()));
+    std::fs::write(&file, b"").unwrap();
+    let name = file.join("s").display().to_string().replace('\\', "/");
+    let chain = crate::commands::parse(&format!("screenshot {name}; send x")).unwrap();
+    app.update(Action::App(AppAction::QueueCommands(chain)));
+    let (origin, shot) = app.next_command_action(Instant::now()).unwrap();
+    app.dispatch_from(&origin, shot);
+    let toast = &app.notifications.active_toasts().last().unwrap().message;
+    assert!(toast.starts_with("Failed to save screenshot: "), "{toast}");
+    assert!(toast.ends_with(" (1 more not run)"), "{toast}");
+    assert!(app.next_command_action(Instant::now()).is_none());
+    let _ = std::fs::remove_file(&file);
+}
+
+/// The mouse toggle flips the capture setting and says so (MAX-113), as the user's action
+/// presents its note (MAX-165).
 #[test]
 fn mouse_toggle_flips_the_setting() {
     let mut app = app();
     assert!(app.settings.ui.mouse);
-    app.toggle_setting(SettingKey::Mouse);
+    app.update(Action::App(AppAction::ToggleSetting(SettingKey::Mouse)));
     assert!(!app.settings.ui.mouse);
     assert_eq!(toasts(&app), ["Mouse capture Off"]);
 }
@@ -1760,11 +1781,17 @@ fn mouse_toggle_flips_the_setting() {
 fn cycling_shows_one_box() {
     let mut app = app();
     for _ in 0..4 {
-        app.toggle_setting(SettingKey::DisplayRaw);
+        app.update(Action::App(AppAction::ToggleSetting(
+            SettingKey::DisplayRaw,
+        )));
     }
     assert_eq!(toasts(&app), ["Raw SideView is Off"]);
-    app.toggle_setting(SettingKey::DisplayRaw);
-    app.toggle_setting(SettingKey::TextEncoding);
+    app.update(Action::App(AppAction::ToggleSetting(
+        SettingKey::DisplayRaw,
+    )));
+    app.update(Action::App(AppAction::ToggleSetting(
+        SettingKey::TextEncoding,
+    )));
     assert_eq!(
         toasts(&app),
         ["Raw SideView is Hex", "Rx Text Encoding is ASCII"]

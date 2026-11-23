@@ -15,7 +15,10 @@ use ratatui::style::Color;
 use super::{App, UpdateEffect, triggers::Trigger};
 use crate::{
     capture::{CaptureDevice, RecordingMeta, Session, recording_raw},
-    commands::Origin,
+    commands::{
+        Origin,
+        report::{Failure, Note, Report},
+    },
     configs::{
         AppConfig, KeyResolver, LinksConfig, PlotsConfig,
         links::{SavedLink, default_name},
@@ -76,7 +79,9 @@ impl App {
             return;
         }
         if self.link_kind().is_tcp() {
-            self.begin_open(OpenFor::Start);
+            if let Some(note) = self.begin_open(OpenFor::Start) {
+                self.show_note(note);
+            }
         } else if matches!(self.overlay(), Some(Overlay::RestoreSession(_))) {
             self.disconnected_after_restore = true;
         } else {
@@ -221,30 +226,32 @@ impl App {
         Some(LinkConfig { address, line })
     }
 
-    /// `link` written to `links.toml`, or in place of `replaces`, and said; why not else
+    /// `link` written to `links.toml`, or in place of `replaces`, with what to say; why not
+    /// else
     pub fn store_link(
         &mut self,
         link: &SavedLink,
         replaces: Option<&SavedLink>,
-    ) -> Result<(), String> {
+    ) -> Result<Vec<Note>, String> {
         let path = AppConfig::active_links_path(self.settings());
         self.links = Ok(LinksConfig::put(&path, link.clone(), replaces)?);
-        self.notify_success(format!("Saved link '{}'", link.name));
+        let saved = format!("Saved link '{}'", link.name);
+        let mut notes = vec![Note::new(ToastLevel::Success, saved)];
         // saved all the same: the file can come after, the link's open says if it doesn't
         let missing = profiles::missing(&self.profiles_dir, &link.profiles);
         if !missing.is_empty() {
             let (names, dir) = (missing.join("', '"), self.profiles_dir.display());
-            self.notify_warn(format!("No profile '{names}' in {dir}"));
+            notes.push(Note::warn(format!("No profile '{names}' in {dir}")));
         }
-        Ok(())
+        Ok(notes)
     }
 
-    /// `link` taken out of `links.toml`, and said; why not else
-    pub fn remove_link(&mut self, link: &SavedLink) -> Result<(), String> {
+    /// `link` taken out of `links.toml`, with what to say; why not else
+    pub fn remove_link(&mut self, link: &SavedLink) -> Result<Note, String> {
         let path = AppConfig::active_links_path(self.settings());
         self.links = Ok(LinksConfig::remove(&path, link)?);
-        self.notify_success(format!("Deleted link '{}'", link.name));
-        Ok(())
+        let deleted = format!("Deleted link '{}'", link.name);
+        Ok(Note::new(ToastLevel::Success, deleted))
     }
 
     /// This machine's saved links
@@ -416,12 +423,12 @@ impl App {
     }
 
     /// The stack laid, said in its notice box (MAX-240)
-    pub fn say_profiles(&mut self) {
+    pub fn profiles_note(&self) -> Note {
         let message = match self.profiles.as_slice() {
             [] => "No profile laid".to_string(),
             profiles => format!("Profiles: {}", profiles.join(", ")),
         };
-        self.notify_keyed("profiles", ToastLevel::Info, message);
+        Note::info(message).in_slot("profiles")
     }
 
     /// `profiles` for the loop to lay, none when they're the ones laid
@@ -432,18 +439,19 @@ impl App {
     /// The stack a replay plays with (MAX-240): its session's from the meta, then `extra`
     /// (`--profile`'s at start). A profile not found is said and left out, the replay running
     /// all the same
-    fn replay_profiles(&mut self, session: Vec<String>, extra: &[String]) {
+    fn replay_profiles(&mut self, session: Vec<String>, extra: &[String]) -> Option<Note> {
         let mut stack = session;
         stack.extend(extra.iter().cloned());
         let missing: Vec<String> = (profiles::missing(&self.profiles_dir, &stack).into_iter())
             .map(str::to_string)
             .collect();
-        if !missing.is_empty() {
+        let note = (!missing.is_empty()).then(|| {
             let (names, dir) = (missing.join("', '"), self.profiles_dir.display());
-            self.notify_warn(format!("Replay without profile '{names}': not in {dir}"));
-            stack.retain(|name| !missing.contains(name));
-        }
+            Note::warn(format!("Replay without profile '{names}': not in {dir}"))
+        });
+        stack.retain(|name| !missing.contains(name));
         self.set_profiles_due(stack);
+        note
     }
 
     /// `profiles` laid over the config (MAX-240): what they change of it, the keys, the
@@ -522,9 +530,9 @@ impl App {
 
     /// `link` added to `links.toml`, or in place of `replaces`, then the directory on it; the
     /// popup stays when it isn't saved, saying why (MAX-185)
-    pub fn save_link(&mut self, link: SavedLink, replaces: Option<SavedLink>) {
+    pub fn save_link(&mut self, link: SavedLink, replaces: Option<SavedLink>) -> Report {
         match self.store_link(&link, replaces.as_ref()) {
-            Ok(()) => {
+            Ok(notes) => {
                 self.open_directory(serial::port_names());
                 if let Some(Overlay::Directory(directory)) = &mut self.overlay
                     && let Ok(links) = &directory.links
@@ -533,21 +541,24 @@ impl App {
                     directory.tab = DirectoryTab::Saved;
                     directory.link_selected = idx;
                 }
+                Report::from(notes)
             }
-            Err(err) => self.notify_warn(format!("{}: {err}", link.name)),
+            Err(err) => Report::from(Note::warn(format!("{}: {err}", link.name))),
         }
     }
 
     /// `link` taken out of `links.toml`, said, then the directory back on the saved links,
     /// the error said there when it wasn't (MAX-185)
-    pub fn delete_link(&mut self, link: &SavedLink) {
-        if let Err(err) = self.remove_link(link) {
-            self.notify_warn(format!("{}: {err}", link.name));
-        }
+    pub fn delete_link(&mut self, link: &SavedLink) -> Report {
+        let note = match self.remove_link(link) {
+            Ok(note) => note,
+            Err(err) => Note::warn(format!("{}: {err}", link.name)),
+        };
         self.open_directory(serial::port_names());
         if let Some(Overlay::Directory(directory)) = &mut self.overlay {
             directory.tab = DirectoryTab::Saved;
         }
+        Report::from(note)
     }
 
     /// The directory on `ports` and this machine's saved links, each with its line settings
@@ -623,20 +634,22 @@ impl App {
         Ok(turn)
     }
 
-    /// The action from `origin` (MAX-165), then the link effect it gives applied to the link:
-    /// what is left (quit, clipboard, reload) is the loop's
+    /// The action from `origin` (MAX-165), then the link effect it gives applied to the link,
+    /// what that reports shown: what is left (quit, clipboard, reload) is the loop's
     pub fn dispatch_from(&mut self, origin: &Origin, action: Action) -> UpdateEffect {
-        let effect = self.update_from(origin, action);
-        let effect = self.apply_link_effect(effect);
+        let (effect, mut report) = self.update_from(origin, action);
+        let (effect, link_report) = self.apply_link_effect(effect);
+        report.extend(link_report);
+        self.present(origin, report);
         self.restore_link_popup();
         effect
     }
 
-    fn apply_link_effect(&mut self, effect: UpdateEffect) -> UpdateEffect {
-        match effect {
+    fn apply_link_effect(&mut self, effect: UpdateEffect) -> (UpdateEffect, Report) {
+        let report = match effect {
             UpdateEffect::Open(address) => {
                 let line = self.link.config().line;
-                self.open_link(LinkConfig { address, line });
+                self.open_link(LinkConfig { address, line })
             }
             UpdateEffect::OpenLink(config) => self.open_link(config),
             UpdateEffect::Replay {
@@ -651,12 +664,13 @@ impl App {
                 if self.transmit(&bytes) {
                     self.link.note_activity();
                 }
+                Report::default()
             }
             UpdateEffect::Reconfigure(line) => self.reconfigure_link(line),
             UpdateEffect::LineControl(control) => self.line_control(control),
-            other => return other,
-        }
-        UpdateEffect::None
+            other => return (other, Report::default()),
+        };
+        (UpdateEffect::None, report)
     }
 
     /// Writes `bytes` to the link, counted and recorded (not in a replay). True when written;
@@ -930,19 +944,17 @@ impl App {
     }
 
     /// Starts opening the link for `why`; a TCP link says it connects, which takes a while
-    fn begin_open(&mut self, why: OpenFor) {
+    fn begin_open(&mut self, why: OpenFor) -> Option<Note> {
         self.link.begin_open(why);
-        if self.link_kind().is_tcp() {
-            let message = format!("Connecting to {}", self.link_label());
-            self.notify_link(ToastLevel::Info, message);
-        }
+        let connecting = || format!("Connecting to {}", self.link_label());
+        (self.link_kind().is_tcp()).then(|| link_note(ToastLevel::Info, connecting()))
     }
 
     /// The current link closes and the new one opens as a reconnect does, without waiting: the rest
     /// of the chain waits for its result (MAX-12). A replay that set the live link aside
     /// ends first, so the switch starts from the live link, its session backup and its encoding
     /// (MAX-171)
-    fn open_link(&mut self, config: LinkConfig) {
+    fn open_link(&mut self, config: LinkConfig) -> Report {
         if self.replaced_link().is_some() {
             self.stop_replay();
         }
@@ -959,22 +971,23 @@ impl App {
         self.link.switch_to(config);
         self.pause_commands(Instant::now() + CONNECT_TIMEOUT * 2);
         let message = format!("Opening {}", self.link_label());
-        self.notify_link(ToastLevel::Info, message);
         self.close_link_popups();
+        Report::from(link_note(ToastLevel::Info, message))
     }
 
     /// The file in place of the link, which closes: no wait, a file opens at once (MAX-166).
     /// For `replay` and `open file://` while running, and for `--replay` at start (MAX-168).
     /// `path` is a recording: its `.raw`, its `.meta` or its folder; anything else is refused
     /// (MAX-175). Without a `session`, the recording's meta file gives the device, when it has
-    /// one (MAX-163). It plays with its meta's profile stack, `extra` over it (MAX-240)
+    /// one (MAX-163). It plays with its meta's profile stack, `extra` over it (MAX-240). The
+    /// notes say what it played with, for the caller to show
     pub fn open_replay(
         &mut self,
         path: PathBuf,
         delay: Duration,
         session: Option<&CaptureDevice>,
         extra: &[String],
-    ) -> io::Result<()> {
+    ) -> io::Result<Vec<Note>> {
         let path = recording_raw(&path)?;
         let replay = Replay::open(&path, delay)?;
         self.link.set_replay(replay);
@@ -982,16 +995,22 @@ impl App {
         let session = session.or(meta.as_ref().map(|meta| &meta.device));
         self.start_replay(path.clone(), session);
         let profiles = meta.map(|meta| meta.profiles).unwrap_or_default();
-        self.replay_profiles(profiles, extra);
-        self.notify_info(format!("Replaying {}", path.display()));
+        let mut notes: Vec<Note> = self.replay_profiles(profiles, extra).into_iter().collect();
+        notes.push(Note::info(format!("Replaying {}", path.display())));
         self.close_link_popups();
-        Ok(())
+        Ok(notes)
     }
 
     /// A replay asked while running: a file that doesn't open stops the chain
-    fn replay_file(&mut self, path: PathBuf, delay: Duration, session: Option<CaptureDevice>) {
-        if let Err(e) = self.open_replay(path.clone(), delay, session.as_ref(), &[]) {
-            self.fail_commands(format!("replay: {}: {e}", path.display()));
+    fn replay_file(
+        &mut self,
+        path: PathBuf,
+        delay: Duration,
+        session: Option<CaptureDevice>,
+    ) -> Report {
+        match self.open_replay(path.clone(), delay, session.as_ref(), &[]) {
+            Ok(notes) => Report::from(notes),
+            Err(e) => Report::failed(format!("replay: {}: {e}", path.display())),
         }
     }
 
@@ -999,22 +1018,22 @@ impl App {
     /// finished, on the newest session's file, device and profiles, in terminal mode as a
     /// replay does. Line mode holds it on a history of its own, which goes with the replay.
     /// The loading popup shows while it loads, a slice a loop turn (MAX-272)
-    fn open_group_replay(&mut self, sessions: Vec<Session>) {
+    fn open_group_replay(&mut self, sessions: Vec<Session>) -> Report {
         let Some(newest) = sessions.last() else {
-            return;
+            return Report::default();
         };
         let Some(path) = newest.raw_path() else {
-            return;
+            return Report::default();
         };
         let replay = match Replay::loaded(path) {
             Ok(replay) => replay,
-            Err(e) => return self.notify_warn(format!("Group not replayed: {e}")),
+            Err(e) => return Report::from(Note::warn(format!("Group not replayed: {e}"))),
         };
         self.link.set_replay(replay);
         let device = newest.meta.as_ref().map(|meta| &meta.device);
         self.start_replay(path.to_path_buf(), device);
         let profiles = (newest.meta.as_ref()).map(|meta| meta.profiles.clone());
-        self.replay_profiles(profiles.unwrap_or_default(), &[]);
+        let note = self.replay_profiles(profiles.unwrap_or_default(), &[]);
         let count = sessions.len();
         self.close_link_popups();
         let lines = GROUP_REPLAY_LINES.max(self.settings.line_mode.history_size);
@@ -1025,89 +1044,97 @@ impl App {
             run.loading = Some(Box::new(load));
         }
         self.open_overlay(Overlay::Loading);
+        Report::from(Vec::from_iter(note))
     }
 
     /// The link the replay replaced opens again as at start, its popup if it doesn't; a replay
     /// from the command line just stops reading
-    fn stop_replay_link(&mut self) {
+    fn stop_replay_link(&mut self) -> Report {
+        let mut notes = Vec::new();
         // a group still loading stops where it is (MAX-272)
         if let Some(run) = &mut self.replay
             && run.loading.take().is_some()
         {
-            self.notify_info("Group load stopped");
+            notes.push(Note::info("Group load stopped"));
         }
         self.link.close();
         if self.stop_replay() {
-            self.begin_open(OpenFor::Start);
+            notes.extend(self.begin_open(OpenFor::Start));
         } else {
-            self.notify_info("Replay stopped");
+            notes.push(Note::info("Replay stopped"));
         }
+        Report::from(notes)
     }
 
     /// Detaches the link, with its popup, or attaches it again; a replay has nothing to
     /// attach. The attach's result comes with the reopen's, next turn for a port
-    fn toggle_attach(&mut self) {
+    fn toggle_attach(&mut self) -> Report {
         if !self.link_kind().reopens() {
-            return;
+            return Report::default();
         }
         // no device to attach yet: the directory to pick one (MAX-181)
         if self.device_unpicked {
             self.open_directory(crate::link::serial::port_names());
-            return;
+            return Report::default();
         }
         if self.link.is_open() {
             self.link.detach();
             self.show_detached();
             let message = format!("{} detached", self.link_kind().name());
-            self.notify_link(ToastLevel::Warn, message);
+            Report::from(link_note(ToastLevel::Warn, message))
         } else {
-            self.begin_open(OpenFor::Attach);
+            Report::from(Vec::from_iter(self.begin_open(OpenFor::Attach)))
         }
     }
 
     /// New line settings: a port that refuses them stops the chain, the dialog
     /// says why (MAX-12)
     /// New line settings; DTR and RTS changed on an open port wait for its next open (MAX-9)
-    fn reconfigure_link(&mut self, line: LineSettings) {
+    fn reconfigure_link(&mut self, line: LineSettings) -> Report {
         let old = self.link_config().line;
         let levels_changed = (old.dtr, old.rts) != (line.dtr, line.rts);
         match self.link.reconfigure(line) {
             Reconfigured::Applied if levels_changed => {
-                self.notify_info("DTR and RTS levels are set at the next open");
+                Report::from(Note::info("DTR and RTS levels are set at the next open"))
             }
-            Reconfigured::Applied | Reconfigured::Ignored => {}
-            Reconfigured::Kept => {
-                self.notify_info("The port is detached: it opens with these settings");
-            }
+            Reconfigured::Applied | Reconfigured::Ignored => Report::default(),
+            Reconfigured::Kept => Report::from(Note::info(
+                "The port is detached: it opens with these settings",
+            )),
             Reconfigured::Refused(e) => {
-                self.drop_pending_commands();
+                let message = format!("Failed to reconfigure serial: {e}");
                 self.open_overlay(Overlay::Error(
                     ErrorDialog::new("Serial Conf Rejected", "Failed to reconfigure serial")
                         .with_details(e),
                 ));
+                Report {
+                    notes: Vec::new(),
+                    failure: Some(Failure::Shown(message)),
+                }
             }
         }
     }
 
     /// A control line set; a break pauses the command line chain until its end, which the next
     /// turn comes to first
-    fn line_control(&mut self, control: LineControl) {
+    fn line_control(&mut self, control: LineControl) -> Report {
         let now = Instant::now();
         match self.link.control(control, now) {
-            None => self.fail_commands(format!("{control}: the port is detached")),
+            None => Report::failed(format!("{control}: the port is detached")),
             Some(Ok(())) => {
                 if let LineControl::Break(duration) = control {
                     self.pause_commands(now + duration);
                 }
+                Report::default()
             }
-            Some(Err(e)) => self.fail_commands(format!("{control}: {e}")),
+            Some(Err(e)) => Report::failed(format!("{control}: {e}")),
         }
     }
 
     /// A replay control on the replay reading, said with a notice (MAX-166)
-    pub fn control_replay(&mut self, control: ReplayControl) {
+    pub fn control_replay(&mut self, control: ReplayControl) -> Report {
         let Some(replay) = self.link.replay_mut() else {
-            return;
+            return Report::default();
         };
         let notice = match control {
             ReplayControl::Pause => {
@@ -1127,10 +1154,10 @@ impl App {
                     self.restart_replay_screen();
                     "Replay restarted".to_string()
                 }
-                Err(e) => return self.notify_error(format!("replay-restart: {e}")),
+                Err(e) => return Report::failed(format!("replay-restart: {e}")),
             },
         };
-        self.notify_info(notice);
+        Report::from(Note::info(notice))
     }
 
     fn show_disconnected(&mut self) {
@@ -1166,6 +1193,12 @@ impl App {
             self.close_overlay();
         }
     }
+}
+
+/// A note in the link's box, as `notify_link` shows it: connecting then connected, lost then
+/// reconnected, detached then attached (MAX-228)
+fn link_note(level: ToastLevel, text: impl Into<String>) -> Note {
+    Note::new(level, text).in_slot("link")
 }
 
 #[cfg(test)]

@@ -11,7 +11,7 @@ use crate::{
     app::{
         capture::GroupLoad,
         mash::{Mash, MashStep},
-        plots::Plot,
+        plots::{Plot, plot_note},
         scroller::ScrollStatus,
         search::{
             SEARCH_HISTORY_SIZE, SearchDirection, SearchHost, SearchModeKind, SearchState,
@@ -26,7 +26,10 @@ use crate::{
     capture::{
         CaptureDevice, CaptureLine, Recorder, RecordingWriter, ScreenshotFormat, Session, Stream,
     },
-    commands::{Invocation, Origin},
+    commands::{
+        Invocation, Origin,
+        report::{Note, Report},
+    },
     configs::{
         AppConfig, DualBufferMode, KeyBindingAction, KeyResolver, LinksConfig, Mode, PlotsConfig,
         QueryGroup, RawSideView, SettingsConfig, StatusBarLayout, TextEncoding, WrapMode,
@@ -747,7 +750,7 @@ impl App {
     /// Says once a link that the device looks like a shell, its history and completion in
     /// terminal mode (MAX-255), worded for what brought it. With `shell_hint`, in line mode on
     /// a written link only, never when terminal mode is turned off
-    fn hint_shell(&mut self, hint: ShellHint) {
+    fn hint_shell(&mut self, hint: ShellHint) -> Option<Note> {
         let line_mode = self.settings.mode == Mode::Line;
         if self.shell_hinted
             || !self.settings.line_mode.shell_hint
@@ -755,7 +758,7 @@ impl App {
             || !self.settings.mode_enabled(Mode::Terminal)
             || !self.link_kind().writes()
         {
-            return;
+            return None;
         }
         self.shell_hinted = true;
         let key = (self.key_resolver.action_keys(KeyBindingAction::SKInputMode))
@@ -777,7 +780,7 @@ impl App {
                 format!("Tab completion is the device shell's: {key} switches to terminal mode")
             }
         };
-        self.notify_keyed("shell", ToastLevel::Info, msg);
+        Some(Note::info(msg).in_slot("shell"))
     }
 
     /// The next frames hide the borders, the scrollbar and the status bar each while the
@@ -898,19 +901,23 @@ impl App {
         self.overlay = None;
     }
 
-    /// An action of the user's own input
+    /// An action of the user's own input, what it reports shown
     pub fn update(&mut self, action: Action) -> UpdateEffect {
-        self.update_from(&Origin::Input, action)
+        let (effect, report) = self.update_from(&Origin::Input, action);
+        self.present(&Origin::Input, report);
+        effect
     }
 
-    /// An action from `origin` (MAX-165): only the user's input acts as typing, so a trigger's
-    /// command neither ends a prefix the user pressed nor stops a mash
-    pub fn update_from(&mut self, origin: &Origin, action: Action) -> UpdateEffect {
+    /// An action from `origin` (MAX-165), with what it reports for the caller to present:
+    /// only the user's input acts as typing, so a trigger's command neither ends a prefix the
+    /// user pressed nor stops a mash
+    pub fn update_from(&mut self, origin: &Origin, action: Action) -> (UpdateEffect, Report) {
         if *origin == Origin::Input {
             self.input_takes_over(&action);
         }
-        match action {
-            Action::App(action) => self.update_action_app(action),
+        let mut report = Report::default();
+        let effect = match action {
+            Action::App(action) => self.update_action_app(action, &mut report),
             Action::TransmitRaw(bytes) => {
                 // refused while a protocol transfer owns the link: not echoed (MAX-162)
                 if self.settings.local_echo && !self.link_busy() {
@@ -934,27 +941,29 @@ impl App {
                 };
                 if sends && self.link_busy() {
                     self.say_link_busy();
-                    return UpdateEffect::None;
+                    return (UpdateEffect::None, report);
                 }
                 // a click in the input leaves the history for it (MAX-113), a right-click
                 // paste too (MAX-144)
                 if let LineInputAction::ClickAt(_) | LineInputAction::Paste(_) = action {
                     if self.is_copy_mode_active() {
-                        self.update_action_copy_mode(CopyModeAction::Exit);
+                        self.update_action_copy_mode(CopyModeAction::Exit, &mut report);
                     }
                     if self.is_search_active() {
-                        self.update_action_search_mode(SearchModeAction::Cancel);
+                        self.update_action_search_mode(SearchModeAction::Cancel, &mut report);
                     }
                 }
                 // the device's history and completion are in terminal mode: said once (MAX-255)
                 match (&action, self.terminal_mode.shell_signal()) {
                     (LineInputAction::HistoryUp | LineInputAction::HistoryDown, Some(signal)) => {
-                        self.hint_shell(ShellHint::History(signal));
+                        report
+                            .notes
+                            .extend(self.hint_shell(ShellHint::History(signal)));
                     }
                     (LineInputAction::HandleKey(key), _)
                         if key.code == KeyCode::Tab && key.modifiers.is_empty() =>
                     {
-                        self.hint_shell(ShellHint::Tab);
+                        report.notes.extend(self.hint_shell(ShellHint::Tab));
                     }
                     _ => {}
                 }
@@ -964,12 +973,12 @@ impl App {
                     .update_action_lineinput(&self.settings, action);
                 if is_interrupt && matches!(effect, UpdateEffect::Transmit(_)) && !self.link_busy()
                 {
-                    self.notify_info("^C sent");
+                    report.notes.push(Note::info("^C sent"));
                 }
                 effect
             }
             Action::Terminal(TerminalAction::Screenshot(format)) => {
-                self.take_screenshot(format);
+                report.notes.extend(self.take_screenshot(format));
                 UpdateEffect::None
             }
             Action::Terminal(action) => {
@@ -993,8 +1002,8 @@ impl App {
                 effect
             }
             Action::History(action) => self.update_action_history(action),
-            Action::CopyMode(action) => self.update_action_copy_mode(action),
-            Action::Search(action) => self.update_action_search_mode(action),
+            Action::CopyMode(action) => self.update_action_copy_mode(action, &mut report),
+            Action::Search(action) => self.update_action_search_mode(action, &mut report),
             Action::Overlay(action) => {
                 if let Some(mut overlay) = self.overlay.take() {
                     let response = overlay.handle_action(action, &self.settings);
@@ -1021,11 +1030,13 @@ impl App {
                         OverlayResponse::Reattach => UpdateEffect::ToggleAttach,
                         OverlayResponse::Run(action) => {
                             let action = action.to_action(self);
-                            self.update(action)
+                            let (effect, run) = self.update_from(origin, action);
+                            report.extend(run);
+                            effect
                         }
                         OverlayResponse::QueueCommands { line, invocations } => {
                             self.push_command_history(line);
-                            self.queue_chain(Origin::CommandLine, invocations);
+                            report.extend(self.queue_chain(Origin::CommandLine, invocations));
                             UpdateEffect::None
                         }
                         OverlayResponse::StartCapture {
@@ -1038,37 +1049,41 @@ impl App {
                         }
                         OverlayResponse::HandledNotify { message, warn } => {
                             self.overlay = Some(overlay);
-                            if warn {
-                                self.notify_warn(message);
-                            } else {
-                                self.notify_info(message);
-                            }
+                            report.notes.push(match warn {
+                                true => Note::warn(message),
+                                false => Note::info(message),
+                            });
                             UpdateEffect::None
                         }
                         OverlayResponse::JumpMark(letter) => {
-                            self.update_mark(MarkAction::Jump(letter));
+                            report
+                                .notes
+                                .extend(self.update_mark(MarkAction::Jump(letter)));
                             UpdateEffect::None
                         }
                         OverlayResponse::ClosePanel(panel) => {
-                            self.close_panel(panel);
+                            report.notes.extend(self.close_panel(panel));
                             UpdateEffect::None
                         }
                         // the menu's "Add mark": on the line clicked, else where a mark goes
                         OverlayResponse::AddMark(line) => {
-                            self.update_mark(match line {
+                            let note = self.update_mark(match line {
                                 Some(line) => MarkAction::AddAt(line),
                                 None => MarkAction::Add(None),
                             });
+                            report.notes.extend(note);
                             UpdateEffect::None
                         }
                         OverlayResponse::DeleteMark(letter) => {
                             self.overlay = Some(overlay);
-                            self.update_mark(MarkAction::Delete(letter));
+                            report
+                                .notes
+                                .extend(self.update_mark(MarkAction::Delete(letter)));
                             UpdateEffect::None
                         }
                         OverlayResponse::ToggleTrigger(name) => {
                             self.overlay = Some(overlay);
-                            self.toggle_triggers(name.as_deref());
+                            report.notes.push(self.toggle_triggers(name.as_deref()));
                             UpdateEffect::None
                         }
                         // laid at once by the loop, the popup staying on the new stack
@@ -1077,7 +1092,7 @@ impl App {
                             match self.toggled_profile(&name) {
                                 Ok(stack) => UpdateEffect::LayProfiles(stack),
                                 Err(message) => {
-                                    self.notify_warn(message);
+                                    report.notes.push(Note::warn(message));
                                     UpdateEffect::None
                                 }
                             }
@@ -1091,7 +1106,7 @@ impl App {
                                 None => UpdateEffect::None,
                                 Some(Ok(stack)) => UpdateEffect::LayProfiles(stack),
                                 Some(Err(message)) => {
-                                    self.notify_warn(message);
+                                    report.notes.push(Note::warn(message));
                                     UpdateEffect::None
                                 }
                             }
@@ -1102,7 +1117,7 @@ impl App {
                                 Ok(Some(stack)) => UpdateEffect::LayProfiles(stack),
                                 Ok(None) => UpdateEffect::None,
                                 Err(message) => {
-                                    self.notify_warn(message);
+                                    report.notes.push(Note::warn(message));
                                     UpdateEffect::None
                                 }
                             }
@@ -1117,7 +1132,7 @@ impl App {
                             let armed = (self.triggers.iter())
                                 .any(|trigger| trigger.name == name && trigger.is_armed());
                             if armed != on {
-                                self.arm_triggers(on, Some(&name));
+                                report.notes.push(self.arm_triggers(on, Some(&name)));
                             }
                             UpdateEffect::None
                         }
@@ -1147,7 +1162,9 @@ impl App {
                         }
                         OverlayResponse::NameRunningSession(name) => {
                             if let Err(err) = self.name_session(&name) {
-                                self.notify_warn(format!("Session not named: {err}"));
+                                report
+                                    .notes
+                                    .push(Note::warn(format!("Session not named: {err}")));
                             }
                             if let Overlay::Sessions(browser) = &mut overlay {
                                 browser.reload();
@@ -1162,7 +1179,7 @@ impl App {
                         }
                         OverlayResponse::SaveLink { link, replaces } => {
                             self.overlay = Some(overlay);
-                            self.save_link(link, replaces);
+                            report.extend(self.save_link(link, replaces));
                             UpdateEffect::None
                         }
                         OverlayResponse::NewLink => {
@@ -1178,7 +1195,7 @@ impl App {
                             UpdateEffect::None
                         }
                         OverlayResponse::DeleteLink(link) => {
-                            self.delete_link(&link);
+                            report.extend(self.delete_link(&link));
                             UpdateEffect::None
                         }
                         OverlayResponse::RestoreSession(yes) => {
@@ -1188,7 +1205,7 @@ impl App {
                             UpdateEffect::None
                         }
                         OverlayResponse::SaveScreenshot { path, contents } => {
-                            self.save_screenshot(&path, contents);
+                            report.extend(self.save_screenshot(&path, contents));
                             UpdateEffect::None
                         }
                     }
@@ -1197,7 +1214,8 @@ impl App {
                 }
             }
             Action::Redraw | Action::Ignore => UpdateEffect::None,
-        }
+        };
+        (effect, report)
     }
 
     /// What the user's input does before its action: it ends the prefix and stops a mash
@@ -1319,18 +1337,17 @@ impl App {
     }
 
     /// Toggles the trigger named, or all of them: armed when none is, else disarmed (MAX-6)
-    fn toggle_triggers(&mut self, name: Option<&str>) {
+    fn toggle_triggers(&mut self, name: Option<&str>) -> Note {
         let named = (self.triggers.iter()).filter(|t| name.is_none_or(|name| name == t.name));
         let on = !named.into_iter().any(Trigger::is_armed);
-        self.arm_triggers(on, name);
+        self.arm_triggers(on, name)
     }
 
     /// Arms or disarms the triggers, or the one named, with a notice of what is armed after
     /// (MAX-6)
-    fn arm_triggers(&mut self, on: bool, name: Option<&str>) {
+    fn arm_triggers(&mut self, on: bool, name: Option<&str>) -> Note {
         if self.triggers.is_empty() {
-            self.notify_warn("triggers.toml has no trigger");
-            return;
+            return Note::warn("triggers.toml has no trigger");
         }
         for trigger in &mut self.triggers {
             if name.is_none_or(|name| name == trigger.name) {
@@ -1339,22 +1356,22 @@ impl App {
         }
         let armed = self.armed_triggers().join(", ");
         if armed.is_empty() {
-            self.notify_info("Triggers disarmed");
+            Note::info("Triggers disarmed")
         } else {
-            self.notify_info(format!("Triggers armed: {armed}"));
+            Note::info(format!("Triggers armed: {armed}"))
         }
     }
 
     /// The counts of the triggers back to zero, or the one named's, with a notice (MAX-220)
-    fn reset_trigger_hits(&mut self, name: Option<&str>) {
+    fn reset_trigger_hits(&mut self, name: Option<&str>) -> Note {
         for trigger in &mut self.triggers {
             if name.is_none_or(|name| name == trigger.name) {
                 trigger.hits = 0;
             }
         }
         match name {
-            Some(name) => self.notify_info(format!("Trigger {name}: count reset")),
-            None => self.notify_info("Trigger counts reset"),
+            Some(name) => Note::info(format!("Trigger {name}: count reset")),
+            None => Note::info("Trigger counts reset"),
         }
     }
 
@@ -1421,7 +1438,9 @@ impl App {
             if !trigger.silent {
                 self.notify_info(notice);
             }
-            self.queue_chain(origin, invocations);
+            for note in self.queue_chain(origin, invocations).notes {
+                self.show_note(note);
+            }
         }
     }
 
@@ -1468,8 +1487,11 @@ impl App {
                 self.query_answers.extend(bytes);
             }
             // unanswered in line mode, the device may give up on its line editing: said now
-            if live && self.terminal_mode.shell_signal() == Some(ShellSignal::Query) {
-                self.hint_shell(ShellHint::Query);
+            if live
+                && self.terminal_mode.shell_signal() == Some(ShellSignal::Query)
+                && let Some(note) = self.hint_shell(ShellHint::Query)
+            {
+                self.show_note(note);
             }
             if !self.settings.terminal_mode.notify_unhandled.is_empty() {
                 self.notify_unhandled();
@@ -1580,18 +1602,21 @@ impl App {
     /// Takes the terminal screen now, in both formats, and opens the dialog asking where to
     /// save it and which format, `format` chosen first, so a fast screen is caught. Line mode
     /// doesn't show that screen, so it is not taken there (MAX-147)
-    fn save_screenshot(&mut self, path: &Path, contents: String) {
+    fn save_screenshot(&mut self, path: &Path, contents: String) -> Report {
         let path = expand_home(path);
         let saved = create_parent_dirs(&path).and_then(|()| std::fs::write(&path, contents));
         match saved {
-            Ok(()) => self.notify_success(format!("Screenshot saved to {}", path.display())),
-            Err(e) => self.notify_error(format!("Failed to save screenshot: {e}")),
+            Ok(()) => Report::from(Note::new(
+                ToastLevel::Success,
+                format!("Screenshot saved to {}", path.display()),
+            )),
+            Err(e) => Report::failed(format!("Failed to save screenshot: {e}")),
         }
     }
 
     /// `screenshot <name>` (MAX-12): saved at once, its format from its extension (`.ans` the
     /// colors, else text, `.txt` added to a name without one), a bare name in `screenshot.dir`
-    fn save_screenshot_as(&mut self, name: &Path) {
+    fn save_screenshot_as(&mut self, name: &Path) -> Report {
         let format = match name.extension() {
             Some(ext) if ext == "ans" => ScreenshotFormat::Ansi,
             _ => ScreenshotFormat::Text,
@@ -1601,7 +1626,7 @@ impl App {
             path.set_extension(format.extension());
         }
         let contents = self.terminal_mode.screenshot().into_contents(format);
-        self.save_screenshot(&path, contents);
+        self.save_screenshot(&path, contents)
     }
 
     /// Whether an on/off setting is on, for `set` (MAX-12); none for the ones with more values
@@ -1620,15 +1645,15 @@ impl App {
         }
     }
 
-    fn take_screenshot(&mut self, format: ScreenshotFormat) {
+    fn take_screenshot(&mut self, format: ScreenshotFormat) -> Option<Note> {
         if self.settings.mode != Mode::Terminal {
-            self.notify_info("Screenshots are in terminal mode");
-            return;
+            return Some(Note::info("Screenshots are in terminal mode"));
         }
         let shot = self.terminal_mode.screenshot();
         let stem = self.settings.screenshot.stem();
         let dialog = ScreenshotDialog::new(format, &stem.to_string_lossy(), shot);
         self.open_overlay(Overlay::Screenshot(dialog));
+        None
     }
 
     /// Returns true when something on screen changed with time alone (needs a redraw)
@@ -1857,7 +1882,9 @@ impl App {
         };
         // onto the edge row the last scroll brought in, then the next one
         if let Some(pos) = self.frame_map.copy_position(side, x, y, true) {
-            self.update_action_copy_mode(CopyModeAction::MouseDrag(pos, (x, y)));
+            let mut report = Report::default();
+            self.update_action_copy_mode(CopyModeAction::MouseDrag(pos, (x, y)), &mut report);
+            self.present(&Origin::Input, report);
         }
         // terminal mode's dump scrolls on its own (MAX-252)
         if side == CopySide::Raw && self.settings.mode == Mode::Terminal {
@@ -1877,7 +1904,8 @@ impl App {
         true
     }
 
-    fn update_action_app(&mut self, action: AppAction) -> UpdateEffect {
+    /// An app action, what it reports added to `report`
+    fn update_action_app(&mut self, action: AppAction, report: &mut Report) -> UpdateEffect {
         match action {
             AppAction::SetPrefix(state) => {
                 self.prefix_active = state;
@@ -1895,7 +1923,7 @@ impl App {
                 UpdateEffect::None
             }
             AppAction::ToggleSetting(setting) => {
-                self.toggle_setting(setting);
+                report.notes.extend(self.toggle_setting(setting));
                 UpdateEffect::None
             }
             AppAction::ToggleRecording => {
@@ -1919,11 +1947,14 @@ impl App {
                 UpdateEffect::None
             }
             AppAction::Notify(level, text) => {
-                self.notify(level, text);
+                report.notes.push(Note::new(level, text));
                 UpdateEffect::None
             }
             AppAction::StartMash(mash) => {
-                self.notify_info(format!("Mashing until '{}'", mash.until_text()));
+                let until = mash.until_text();
+                report
+                    .notes
+                    .push(Note::info(format!("Mashing until '{until}'")));
                 // the rest of the line waits for its text, its timeout at most
                 self.pause_commands(mash.deadline());
                 self.mash = Some(*mash);
@@ -1959,7 +1990,7 @@ impl App {
                 };
                 // the progress row says it already (MAX-228)
                 if !self.settings.ui.transfer_row {
-                    self.notify_transfer(ToastLevel::Info, message);
+                    report.notes.push(Note::info(message).in_slot("transfer"));
                 }
                 self.transfer = Some(*transfer);
                 self.busy_said = false;
@@ -1976,20 +2007,22 @@ impl App {
             AppAction::OpenLink(config) => UpdateEffect::OpenLink(config),
             // `link-save` and `link-delete` (MAX-185): a refusal stops the chain
             AppAction::SaveLink(link) => {
-                if let Err(err) = self.store_link(&link, None) {
-                    self.fail_commands(format!("link-save: {err}"));
+                match self.store_link(&link, None) {
+                    Ok(notes) => report.notes.extend(notes),
+                    Err(err) => report.fail(format!("link-save: {err}")),
                 }
                 UpdateEffect::None
             }
             AppAction::DeleteLink(link) => {
-                if let Err(err) = self.remove_link(&link) {
-                    self.fail_commands(format!("link-delete: {err}"));
+                match self.remove_link(&link) {
+                    Ok(note) => report.notes.push(note),
+                    Err(err) => report.fail(format!("link-delete: {err}")),
                 }
                 UpdateEffect::None
             }
             AppAction::NameSession(name) => {
                 if let Err(err) = self.name_session(&name) {
-                    self.fail_commands(format!("session-name: {err}"));
+                    report.fail(format!("session-name: {err}"));
                 }
                 UpdateEffect::None
             }
@@ -2000,57 +2033,55 @@ impl App {
             },
             AppAction::StopReplay => UpdateEffect::StopReplay,
             AppAction::ControlReplay(control) => {
-                self.control_replay(control);
+                report.extend(self.control_replay(control));
                 UpdateEffect::None
             }
             AppAction::SetEncoding(encoding) => {
                 self.settings.encoding = encoding;
                 let encoding = encoding.as_str();
-                self.notify_setting(
-                    "setting:encoding",
-                    format!("Rx Text Encoding is {encoding}"),
-                );
+                let text = format!("Rx Text Encoding is {encoding}");
+                report.notes.push(setting_note("setting:encoding", text));
                 UpdateEffect::None
             }
             AppAction::SaveScreenshot(name) => {
-                self.save_screenshot_as(&name);
+                report.extend(self.save_screenshot_as(&name));
                 UpdateEffect::None
             }
             AppAction::QueueCommands(invocations) => {
-                self.queue_chain(Origin::KeyBinding, invocations);
+                report.extend(self.queue_chain(Origin::KeyBinding, invocations));
                 UpdateEffect::None
             }
             AppAction::CancelCommands => {
-                self.cancel();
+                report.extend(self.cancel());
                 UpdateEffect::None
             }
             AppAction::ToggleTriggers => {
-                self.toggle_triggers(None);
+                report.notes.push(self.toggle_triggers(None));
                 UpdateEffect::None
             }
             AppAction::ArmTriggers { on, name } => {
-                self.arm_triggers(on, name.as_deref());
+                report.notes.push(self.arm_triggers(on, name.as_deref()));
                 UpdateEffect::None
             }
             AppAction::ResetTriggers(name) => {
-                self.reset_trigger_hits(name.as_deref());
+                report.notes.push(self.reset_trigger_hits(name.as_deref()));
                 UpdateEffect::None
             }
             AppAction::ShowPlot(name) => {
-                self.show_plot(name.as_deref());
+                report.notes.extend(self.show_plot(name.as_deref()));
                 UpdateEffect::None
             }
             AppAction::ShowProfiles => {
-                self.say_profiles();
+                report.notes.push(self.profiles_note());
                 UpdateEffect::None
             }
             AppAction::LayProfiles(profiles) => UpdateEffect::LayProfiles(profiles),
             AppAction::TogglePlotFreeze => {
-                self.toggle_plot_freeze();
+                report.notes.push(self.toggle_plot_freeze());
                 UpdateEffect::None
             }
             AppAction::StepPlot(forward) => {
-                self.step_plot(forward);
+                report.notes.extend(self.step_plot(forward));
                 UpdateEffect::None
             }
             AppAction::DismissToast(id) => {
@@ -2075,18 +2106,24 @@ impl App {
                 UpdateEffect::None
             }
             AppAction::Mark(action) => {
-                self.update_mark(action);
+                report.notes.extend(self.update_mark(action));
                 UpdateEffect::None
             }
             AppAction::PasteBuffer => {
                 let Some(text) = self.paste_buffer.clone() else {
                     return UpdateEffect::None;
                 };
-                self.notify_info(format!("Pasted {} chars", text.chars().count()));
-                match self.settings.mode {
-                    Mode::Terminal => self.update(Action::Terminal(TerminalAction::Paste(text))),
-                    Mode::Line => self.update(Action::LineInput(LineInputAction::Paste(text))),
-                }
+                let count = text.chars().count();
+                report
+                    .notes
+                    .push(Note::info(format!("Pasted {count} chars")));
+                let paste = match self.settings.mode {
+                    Mode::Terminal => Action::Terminal(TerminalAction::Paste(text)),
+                    Mode::Line => Action::LineInput(LineInputAction::Paste(text)),
+                };
+                let (effect, pasted) = self.update_from(&Origin::Input, paste);
+                report.extend(pasted);
+                effect
             }
             // the live link a replay replaced comes back with the attach key too (MAX-166)
             AppAction::ToggleAttach if self.replaced_link().is_some() => UpdateEffect::StopReplay,
@@ -2095,7 +2132,7 @@ impl App {
             AppAction::Redraw => UpdateEffect::Redraw,
             AppAction::SideView(action) => self.update_side_view(action),
             AppAction::ResizeSidePanel(by) => {
-                self.resize_side_panel(by);
+                report.notes.extend(self.resize_side_panel(by));
                 UpdateEffect::None
             }
             // the menu's selection follows the pointer, the other parts are only drawn
@@ -2127,10 +2164,9 @@ impl App {
 
     /// The side panel's share of the split, by `by` percent, kept in the config's range
     /// (MAX-189): the raw panel's or the plot's (MAX-222)
-    fn resize_side_panel(&mut self, by: i16) {
-        if self.settings.raw_side.view == RawSideView::Off && self.plot.is_none() {
-            self.notify_warn("SideView is Off");
-        }
+    fn resize_side_panel(&mut self, by: i16) -> Option<Note> {
+        let off = self.settings.raw_side.view == RawSideView::Off && self.plot.is_none();
+        let note = off.then(|| Note::warn("SideView is Off"));
         // the plot's while one is shown, the raw panel's otherwise (MAX-230)
         let panel = match self.plot {
             Some(_) => SidePanel::Plot,
@@ -2144,6 +2180,7 @@ impl App {
         };
         let to = to.unwrap_or_else(|| (split as i16 + by).max(0) as u16);
         *self.split_percent_mut(panel) = to.clamp(SPLIT_PERCENT_MIN, SPLIT_PERCENT_MAX);
+        note
     }
 
     /// Terminal mode's raw panel on the right, from `split` percent: growing (`dir` 1), the
@@ -2202,12 +2239,15 @@ impl App {
 
     /// The right-click menu's "Close": the raw view off, as `Ctrl-a B` says it, or the plot
     /// off (MAX-230)
-    fn close_panel(&mut self, panel: SidePanel) {
+    fn close_panel(&mut self, panel: SidePanel) -> Option<Note> {
         match panel {
             SidePanel::Raw => {
                 self.settings.raw_side.view = RawSideView::Off;
                 let view = self.settings.raw_side.view.as_str();
-                self.notify_setting("setting:raw", format!("Raw SideView is {view}"));
+                Some(setting_note(
+                    "setting:raw",
+                    format!("Raw SideView is {view}"),
+                ))
             }
             SidePanel::Plot => self.show_plot(None),
         }
@@ -2266,8 +2306,9 @@ impl App {
         UpdateEffect::None
     }
 
-    /// The copy action applied by the mode's copy state: the text a yank gives
-    fn copy_action(&mut self, action: CopyModeAction) -> Option<String> {
+    /// The copy action applied by the mode's copy state: the text a yank gives, what it says
+    /// added to `report`
+    fn copy_action(&mut self, action: CopyModeAction, report: &mut Report) -> Option<String> {
         match self.settings.mode {
             Mode::Terminal => {
                 let text = (self.terminal_mode).handle_copy_action(action, &self.settings);
@@ -2277,9 +2318,8 @@ impl App {
                         UntracedYank::TraceOff => "the byte trace is off",
                         UntracedYank::NotTraced => "no byte trace for this selection",
                     };
-                    self.notify_warn(format!(
-                        "Copied the screen's bytes, not the ones received: {why}"
-                    ));
+                    let text = format!("Copied the screen's bytes, not the ones received: {why}");
+                    report.notes.push(Note::warn(text));
                 }
                 text
             }
@@ -2297,7 +2337,12 @@ impl App {
         (self.focused_at.take()).is_some_and(|at| at.elapsed() < FOCUS_CLICK)
     }
 
-    fn update_action_copy_mode(&mut self, action: CopyModeAction) -> UpdateEffect {
+    /// A copy mode action, what it says added to `report`
+    fn update_action_copy_mode(
+        &mut self,
+        action: CopyModeAction,
+        report: &mut Report,
+    ) -> UpdateEffect {
         if let CopyModeAction::ScrollView(scroll) = action {
             return self.copy_scroll(scroll);
         }
@@ -2329,9 +2374,10 @@ impl App {
                 // the press waiting for a drag enters copy mode where it was
                 if let Some((pos, side)) = self.pending_press.take() {
                     if self.is_search_active() {
-                        self.close_search_for_click();
+                        self.close_search_for_click(report);
                     }
-                    self.copy_action(CopyModeAction::MousePress(pos, side, MouseUnit::Char));
+                    let press = CopyModeAction::MousePress(pos, side, MouseUnit::Char);
+                    self.copy_action(press, report);
                 }
                 self.clicks.reset();
                 self.drag_hold = Some(at);
@@ -2354,14 +2400,15 @@ impl App {
         };
         // a click in the history leaves the search for copy mode there (MAX-113)
         if matches!(action, CopyModeAction::MousePress(..)) && self.is_search_active() {
-            self.close_search_for_click();
+            self.close_search_for_click(report);
         }
-        let copied = self.copy_action(action);
+        let copied = self.copy_action(action, report);
         if let Some(link) = self.terminal_mode.take_link_asked() {
             return match link {
                 Some(uri) => self.copy_link(uri),
                 None => {
-                    self.notify_keyed("copy", ToastLevel::Warn, "No link under the cursor");
+                    let note = Note::warn("No link under the cursor").in_slot("copy");
+                    report.notes.push(note);
                     UpdateEffect::None
                 }
             };
@@ -2385,10 +2432,15 @@ impl App {
         }
     }
 
-    fn update_action_search_mode(&mut self, action: SearchModeAction) -> UpdateEffect {
+    /// A search action, what it says added to `report`
+    fn update_action_search_mode(
+        &mut self,
+        action: SearchModeAction,
+        report: &mut Report,
+    ) -> UpdateEffect {
         match action {
             SearchModeAction::Repeat(opposite) => {
-                self.repeat_search(opposite);
+                report.notes.extend(self.repeat_search(opposite));
                 return UpdateEffect::None;
             }
             SearchModeAction::History(up) => {
@@ -2396,7 +2448,7 @@ impl App {
                 return UpdateEffect::None;
             }
             SearchModeAction::Word(direction) => {
-                self.search_word(direction);
+                self.search_word(direction, report);
                 return UpdateEffect::None;
             }
             // a search always runs in copy mode (MAX-215): from out of it, copy mode starts
@@ -2405,8 +2457,8 @@ impl App {
             SearchModeAction::Start(_) | SearchModeAction::Query(_)
                 if !self.is_copy_mode_active() =>
             {
-                self.copy_action(CopyModeAction::Enter);
-                self.copy_action(CopyModeAction::EndOfLine);
+                self.copy_action(CopyModeAction::Enter, report);
+                self.copy_action(CopyModeAction::EndOfLine, report);
                 self.search_mut().exits_copy = true;
             }
             _ => {}
@@ -2438,10 +2490,11 @@ impl App {
             && self.terminal_mode.dump_search()
             && self.settings.raw_side.view == RawSideView::Off
         {
-            self.notify_warn("A raw search needs the raw panel: no bytes shown to search");
+            let text = "A raw search needs the raw panel: no bytes shown to search";
+            report.notes.push(Note::warn(text));
         }
         if leaves_copy {
-            self.copy_action(CopyModeAction::Exit);
+            self.copy_action(CopyModeAction::Exit, report);
             self.update_action_history(HistoryAction::ScrollToBottom);
         }
         if confirmed {
@@ -2450,7 +2503,7 @@ impl App {
             let search = self.search_mut();
             let forward = search.direction == SearchDirection::Forward;
             if started_at.is_some_and(|origin| search.went_around(origin)) {
-                self.notify_search_went_around(forward);
+                report.notes.push(went_around_note(forward));
             }
         }
 
@@ -2489,7 +2542,7 @@ impl App {
 
     /// `*` in copy mode (MAX-218): the word under the cursor searched as if typed, from its
     /// first char so that the next match is another one, and kept as after Enter
-    fn search_word(&mut self, direction: SearchDirection) {
+    fn search_word(&mut self, direction: SearchDirection, report: &mut Report) {
         let (cursor, text) = match self.settings.mode {
             Mode::Terminal => (
                 self.terminal_mode.copy_state().cursor,
@@ -2501,7 +2554,7 @@ impl App {
             ),
         };
         let Some((start, word)) = word_at(&text, cursor.char_idx) else {
-            self.notify_warn("No word under the cursor");
+            report.notes.push(Note::warn("No word under the cursor"));
             return;
         };
         let copy_state = match self.settings.mode {
@@ -2510,16 +2563,16 @@ impl App {
         };
         copy_state.jump_to(cursor.line_idx, start);
         self.search_mut().mode_kind = SearchModeKind::Text;
-        self.update_action_search_mode(SearchModeAction::Start(direction));
-        self.update_action_search_mode(SearchModeAction::Paste(word));
-        self.update_action_search_mode(SearchModeAction::Confirm);
+        self.update_action_search_mode(SearchModeAction::Start(direction), report);
+        self.update_action_search_mode(SearchModeAction::Paste(word), report);
+        self.update_action_search_mode(SearchModeAction::Confirm, report);
     }
 
     /// A click in the history closes the search for copy mode there: copy mode stays, also
     /// when the search started it (MAX-215)
-    fn close_search_for_click(&mut self) {
+    fn close_search_for_click(&mut self, report: &mut Report) {
         self.search_mut().exits_copy = false;
-        self.update_action_search_mode(SearchModeAction::Cancel);
+        self.update_action_search_mode(SearchModeAction::Cancel, report);
     }
 
     /// The current mode's search
@@ -2537,25 +2590,17 @@ impl App {
         }
     }
 
-    /// `n` / `N` in copy mode (MAX-215), with a toast when it goes around the history's end
-    fn repeat_search(&mut self, opposite: bool) {
+    /// `n` / `N` in copy mode (MAX-215), with a note when it goes around the history's end
+    fn repeat_search(&mut self, opposite: bool) -> Option<Note> {
         let wrapped = match self.settings.mode {
             Mode::Terminal => self.terminal_mode.repeat_search(opposite),
             Mode::Line => self.line_mode.repeat_search(opposite),
         };
         let forward = (self.search().direction == SearchDirection::Forward) != opposite;
         match wrapped {
-            None => self.notify_warn("No match to go to"),
-            Some(true) => self.notify_search_went_around(forward),
-            Some(false) => {}
-        }
-    }
-
-    fn notify_search_went_around(&mut self, forward: bool) {
-        if forward {
-            self.notify_info("Search hit the end, went on from the top");
-        } else {
-            self.notify_info("Search hit the top, went on from the end");
+            None => Some(Note::warn("No match to go to")),
+            Some(true) => Some(went_around_note(forward)),
+            Some(false) => None,
         }
     }
 
@@ -2689,14 +2734,15 @@ impl App {
         self.warn_shadowed_keys();
     }
 
-    fn toggle_setting(&mut self, key: SettingKey) {
+    fn toggle_setting(&mut self, key: SettingKey) -> Option<Note> {
+        let mut note = None;
         match key {
             SettingKey::LocalEcho => {
                 self.settings.local_echo = !self.settings.local_echo;
             }
             SettingKey::LineWrap => {
                 if self.settings().mode == Mode::Terminal {
-                    self.notify_warn("Line wrap: line mode only");
+                    note = Some(Note::warn("Line wrap: line mode only"));
                 }
                 self.settings.line_mode.wrap_mode = match self.settings.line_mode.wrap_mode {
                     WrapMode::Word => WrapMode::Char,
@@ -2708,7 +2754,9 @@ impl App {
             // no switching to the mode `disabled_mode` turns off (MAX-260)
             SettingKey::Mode if !self.settings.mode_enabled(self.settings.mode.other()) => {
                 let other = self.settings.mode.other().as_str();
-                self.notify_warn(format!("The {other} mode is disabled (disabled_mode)"));
+                note = Some(Note::warn(format!(
+                    "The {other} mode is disabled (disabled_mode)"
+                )));
             }
             SettingKey::Mode => {
                 self.settings.mode = self.settings.mode.other();
@@ -2720,10 +2768,10 @@ impl App {
             SettingKey::TextEncoding => {
                 self.settings.encoding.toggle();
                 let encoding = self.settings.encoding.as_str();
-                self.notify_setting(
+                note = Some(setting_note(
                     "setting:encoding",
                     format!("Rx Text Encoding is {encoding}"),
-                );
+                ));
             }
             SettingKey::IdentWrap => {
                 self.settings.line_mode.wrap_indent = match self.settings.line_mode.wrap_indent {
@@ -2742,18 +2790,27 @@ impl App {
             SettingKey::DisplayMode => {
                 self.settings.line_mode.display_mode.toggle();
                 let mode = self.settings.line_mode.display_mode.as_str();
-                self.notify_setting("setting:display", format!("Display Mode is {mode}"));
+                note = Some(setting_note(
+                    "setting:display",
+                    format!("Display Mode is {mode}"),
+                ));
             }
             SettingKey::Mouse => {
                 self.settings.ui.mouse = !self.settings.ui.mouse;
                 let state = on_off(self.settings.ui.mouse);
-                self.notify_setting("setting:mouse", format!("Mouse capture {state}"));
+                note = Some(setting_note(
+                    "setting:mouse",
+                    format!("Mouse capture {state}"),
+                ));
             }
             SettingKey::DimensionMode => {
                 self.settings.terminal_mode.dimension_mode.toggle();
                 self.update_viewport(self.viewport);
                 let mode = self.settings.terminal_mode.dimension_mode.as_str();
-                self.notify_setting("setting:size", format!("Terminal Size Mode is {mode}"));
+                note = Some(setting_note(
+                    "setting:size",
+                    format!("Terminal Size Mode is {mode}"),
+                ));
             }
             // off empties `answer_groups`, its list kept aside for on, all groups when none was
             SettingKey::AnswerQueries => {
@@ -2766,7 +2823,10 @@ impl App {
                     self.answer_groups_off = Some(std::mem::take(groups));
                 }
                 let state = on_off(!self.settings.terminal_mode.answer_groups.is_empty());
-                self.notify_setting("setting:answers", format!("Query answers {state}"));
+                note = Some(setting_note(
+                    "setting:answers",
+                    format!("Query answers {state}"),
+                ));
             }
             // from the bytes received now on; off gives the memory back (MAX-256)
             SettingKey::ByteTrace => {
@@ -2776,46 +2836,59 @@ impl App {
                 if !terminal.byte_trace {
                     self.terminal_mode.dump_mut().forget_trace();
                 }
-                self.notify_setting("setting:byte-trace", format!("Byte trace {state}"));
+                note = Some(setting_note(
+                    "setting:byte-trace",
+                    format!("Byte trace {state}"),
+                ));
             }
             // the bytes received from now on, what's shown stays as it came (MAX-181)
             SettingKey::AddCr => {
                 self.settings.add_cr = !self.settings.add_cr;
                 let state = on_off(self.settings.add_cr);
-                self.notify_setting("setting:add-cr", format!("Add CR {state}"));
+                note = Some(setting_note("setting:add-cr", format!("Add CR {state}")));
             }
             SettingKey::AddLf => {
                 self.settings.add_lf = !self.settings.add_lf;
                 let state = on_off(self.settings.add_lf);
-                self.notify_setting("setting:add-lf", format!("Add LF {state}"));
+                note = Some(setting_note("setting:add-lf", format!("Add LF {state}")));
             }
             // what the Backspace key sends in terminal mode (MAX-270)
             SettingKey::Backspace => {
                 self.settings.terminal_mode.backspace.toggle();
                 let byte = self.settings.terminal_mode.backspace.as_str();
-                self.notify_setting("setting:backspace", format!("Backspace sends {byte}"));
+                note = Some(setting_note(
+                    "setting:backspace",
+                    format!("Backspace sends {byte}"),
+                ));
             }
             // what Enter sends in line mode (MAX-184)
             SettingKey::TxEol => {
                 self.settings.line_mode.tx_eol.toggle();
                 let eol = self.settings.line_mode.tx_eol.as_str();
-                self.notify_setting("setting:enter", format!("Line Enter sends {eol}"));
+                note = Some(setting_note(
+                    "setting:enter",
+                    format!("Line Enter sends {eol}"),
+                ));
             }
             // the next plot of plots.toml, off after the last, as `plot` alone (MAX-222)
             // as `plot`: the next one, off after the last
             SettingKey::Plot if self.plots.plots.is_empty() => {
-                self.notify_plot(ToastLevel::Warn, "plots.toml has no plot");
+                note = Some(plot_note(ToastLevel::Warn, "plots.toml has no plot"));
             }
             SettingKey::Plot => {
                 let name = self.next_plot().map(String::from);
-                self.show_plot(name.as_deref());
+                note = self.show_plot(name.as_deref());
             }
             SettingKey::DisplayRaw => {
                 self.settings.raw_side.view.toggle();
                 let view = self.settings.raw_side.view.as_str();
-                self.notify_setting("setting:raw", format!("Raw SideView is {view}"));
+                note = Some(setting_note(
+                    "setting:raw",
+                    format!("Raw SideView is {view}"),
+                ));
             }
         }
+        note
     }
 
     #[inline]
@@ -2848,13 +2921,16 @@ impl App {
     }
 
     /// The marks of the current mode's view (MAX-164); a toast says what happened
-    fn update_mark(&mut self, action: MarkAction) {
+    fn update_mark(&mut self, action: MarkAction) -> Option<Note> {
         self.pending_mark = None;
         let mode = self.settings.mode;
         match action {
             // the status bar's badge reads MARK meanwhile
-            MarkAction::Await(pending) => self.pending_mark = Some(pending),
-            MarkAction::Cancel => {}
+            MarkAction::Await(pending) => {
+                self.pending_mark = Some(pending);
+                None
+            }
+            MarkAction::Cancel => None,
             MarkAction::Add(_) | MarkAction::AddAt(_) => {
                 let marks = self.marks();
                 let letter = match action {
@@ -2862,8 +2938,7 @@ impl App {
                     _ => None,
                 };
                 let Some(letter) = letter.or_else(|| marks.first_free()) else {
-                    self.notify_warn("all 26 marks are set: delete one first");
-                    return;
+                    return Some(Note::warn("all 26 marks are set: delete one first"));
                 };
                 let added = match (mode, action) {
                     (Mode::Line, MarkAction::AddAt(line)) => {
@@ -2875,10 +2950,10 @@ impl App {
                     (Mode::Line, _) => self.line_mode.add_mark(letter),
                     (Mode::Terminal, _) => self.terminal_mode.add_mark(letter),
                 };
-                match added {
-                    Some(_) => self.notify_info(format!("mark {letter}")),
-                    None => self.notify_warn("no line to mark yet"),
-                }
+                Some(match added {
+                    Some(_) => Note::info(format!("mark {letter}")),
+                    None => Note::warn("no line to mark yet"),
+                })
             }
             MarkAction::Jump(letter) => {
                 let jumped = match mode {
@@ -2886,8 +2961,11 @@ impl App {
                     Mode::Terminal => self.terminal_mode.jump_to_mark(letter),
                 };
                 match jumped {
-                    Some(line) => self.flash_mark(line),
-                    None => self.notify_warn(format!("mark {letter} is not set")),
+                    Some(line) => {
+                        self.flash_mark(line);
+                        None
+                    }
+                    None => Some(Note::warn(format!("mark {letter} is not set"))),
                 }
             }
             MarkAction::Delete(letter) => {
@@ -2895,10 +2973,10 @@ impl App {
                     Mode::Line => self.line_mode.remove_mark(letter),
                     Mode::Terminal => self.terminal_mode.remove_mark(letter),
                 };
-                match removed {
-                    Some(_) => self.notify_info(format!("mark {letter} deleted")),
-                    None => self.notify_warn(format!("mark {letter} is not set")),
-                }
+                Some(match removed {
+                    Some(_) => Note::info(format!("mark {letter} deleted")),
+                    None => Note::warn(format!("mark {letter} is not set")),
+                })
             }
             MarkAction::Adjacent(forward) => {
                 let jumped = match mode {
@@ -2906,12 +2984,15 @@ impl App {
                     Mode::Terminal => self.terminal_mode.jump_to_adjacent_mark(forward),
                 };
                 match jumped.and_then(|letter| self.marks().get(letter)) {
-                    Some(line) => self.flash_mark(line),
-                    None => self.notify_info(if forward {
+                    Some(line) => {
+                        self.flash_mark(line);
+                        None
+                    }
+                    None => Some(Note::info(if forward {
                         "no mark below"
                     } else {
                         "no mark above"
-                    }),
+                    })),
                 }
             }
         }
@@ -3071,6 +3152,14 @@ impl App {
         self.notify(ToastLevel::Error, msg);
     }
 
+    /// What an action reported (MAX-165), shown: in its slot's box when it has one
+    pub fn show_note(&mut self, note: Note) {
+        match note.slot {
+            Some(slot) => self.notify_keyed(slot, note.level, note.text),
+            None => self.notify(note.level, note.text),
+        }
+    }
+
     fn notify(&mut self, level: ToastLevel, msg: impl Into<String>) {
         let msg = msg.into();
         let duration = toast_duration(level, &msg);
@@ -3121,11 +3210,20 @@ impl App {
     pub fn notify_link(&mut self, level: ToastLevel, msg: impl Into<String>) {
         self.notify_keyed("link", level, msg);
     }
+}
 
-    /// A setting's toast: cycling it shows one box with its last value (MAX-234)
-    fn notify_setting(&mut self, key: &'static str, msg: impl Into<String>) {
-        self.notify_keyed(key, ToastLevel::Info, msg);
+/// A search that went around the history's end, said which way (MAX-218)
+fn went_around_note(forward: bool) -> Note {
+    if forward {
+        Note::info("Search hit the end, went on from the top")
+    } else {
+        Note::info("Search hit the top, went on from the end")
     }
+}
+
+/// A setting's note: cycling it shows one box with its last value (MAX-234)
+fn setting_note(key: &'static str, text: impl Into<String>) -> Note {
+    Note::info(text).in_slot(key)
 }
 
 /// How long a toast stays: the time to read it (MAX-228), 2 s to notice it then 50 ms a

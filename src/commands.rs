@@ -12,6 +12,7 @@ use crate::{
 };
 
 pub mod build;
+pub mod report;
 pub mod tokenizer;
 
 use tokenizer::Word;
@@ -76,10 +77,15 @@ pub enum Target {
 // (MAX-149) are clients too
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Origin {
+    /// from user's key/clicks/pastes/popups
     Input,
+    /// from command line popup
     CommandLine,
+    /// from (named) command to keys
     KeyBinding,
+    /// from a trigger
     Trigger(String),
+    /// from a profile hook
     Profile(&'static str),
 }
 
