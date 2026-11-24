@@ -459,6 +459,8 @@ pub struct MaxicomTerminal<'a> {
     cursor: MaxicomCursor<'a>,
     empty_filling_char: &'a str,
     outside_filling_style: Style,
+    /// The columns a missing cell is drawn blank in, not filled as outside the screen
+    blank_to: u16,
     focused: bool,
     zero_width: bool,
     unsure_width: bool,
@@ -477,6 +479,7 @@ impl<'a> MaxicomTerminal<'a> {
             cursor: MaxicomCursor::default(),
             empty_filling_char: " ",
             outside_filling_style: Style::default().fg(Color::DarkGray),
+            blank_to: 0,
             focused: true,
             zero_width: false,
             unsure_width: false,
@@ -527,6 +530,15 @@ impl<'a> MaxicomTerminal<'a> {
     #[inline]
     pub const fn filling_char_style(mut self, style: Style) -> Self {
         self.outside_filling_style = style;
+        self
+    }
+
+    /// A missing cell in the columns before `cols` is blank: past the grid's width, a history
+    /// row kept from a wider screen is drawn there, and the shorter rows beside it were blank
+    /// on that screen, not outside it (MAX-282)
+    #[inline]
+    pub const fn blank_to(mut self, cols: u16) -> Self {
+        self.blank_to = cols;
         self
     }
 
@@ -628,7 +640,7 @@ fn handle(term: &MaxicomTerminal, area: Rect, buf: &mut Buffer) {
                         cell.set_fg(fg);
                     }
                 }
-            } else {
+            } else if source_col >= term.blank_to {
                 // Outside the terminal canvas (viewer area padding)
                 cell.set_symbol(term.empty_filling_char);
                 cell.set_style(term.outside_filling_style);

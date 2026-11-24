@@ -131,34 +131,24 @@ impl Dump {
         cells
     }
 
-    /// What byte `offset` wrote (MAX-256): its char and the cell it went to, on a screen `cols`
-    /// wide; none for a byte that draws nothing (a control byte, a sequence) or no longer kept
-    pub fn written(&self, offset: u64, encoding: TextEncoding, cols: u16) -> Option<Write> {
+    /// What byte `offset` wrote (MAX-256): its char and the cell it went to; none for a byte
+    /// that draws nothing (a control byte, a sequence) or no longer kept
+    pub fn written(&self, offset: u64, encoding: TextEncoding) -> Option<Write> {
         let run = self.writes.at(offset)?;
-        (self.writes_of(run, encoding, cols).into_iter())
-            .find(|write| write.bytes.contains(&offset))
+        (self.writes_of(run, encoding).into_iter()).find(|write| write.bytes.contains(&offset))
     }
 
-    /// The writes to `cell` on a screen `cols` wide, newest first, `max` at most
-    pub fn writes_to(
-        &self,
-        cell: Cell,
-        encoding: TextEncoding,
-        cols: u16,
-        max: usize,
-    ) -> Vec<Write> {
-        let wide = u64::from(cols.max(1));
+    /// The writes to `cell`, newest first, `max` at most
+    pub fn writes_to(&self, cell: Cell, encoding: TextEncoding, max: usize) -> Vec<Write> {
         let mut found = Vec::new();
         for run in self.writes.newest_first() {
             if run.alternate != cell.alternate || cell.row < run.row {
                 continue;
             }
-            // a char takes a byte at least, a cell at most two: the rows it can reach
-            let reach = (u64::from(run.col) + 2 * (run.end - run.start)) / wide;
-            if cell.row > run.row + reach {
+            if cell.row > run.row + self.rows_reached(run) {
                 continue;
             }
-            let write = (self.writes_of(run, encoding, cols).into_iter()).find(|write| {
+            let write = (self.writes_of(run, encoding).into_iter()).find(|write| {
                 let width = width(write.ch).max(1);
                 write.cell.row == cell.row
                     && (u64::from(write.cell.col)..u64::from(write.cell.col) + width)
@@ -173,10 +163,10 @@ impl Dump {
     }
 
     /// The chars the bytes of `range` wrote, in byte order, a char cut by its ends included
-    pub fn written_in(&self, range: Range<u64>, encoding: TextEncoding, cols: u16) -> Vec<Write> {
+    pub fn written_in(&self, range: Range<u64>, encoding: TextEncoding) -> Vec<Write> {
         let mut found = Vec::new();
         for run in self.writes.within(range.clone()) {
-            let writes = self.writes_of(run, encoding, cols).into_iter();
+            let writes = self.writes_of(run, encoding).into_iter();
             found.extend(writes.filter(|w| w.bytes.start < range.end && w.bytes.end > range.start));
         }
         found
@@ -189,20 +179,16 @@ impl Dump {
         rows: RangeInclusive<u64>,
         alternate: bool,
         encoding: TextEncoding,
-        cols: u16,
     ) -> HashMap<(u64, u16), Write> {
-        let wide = u64::from(cols.max(1));
         let mut found = HashMap::new();
         for run in self.writes.newest_first() {
             if run.alternate != alternate || run.row > *rows.end() {
                 continue;
             }
-            // a char takes a byte at least, a cell at most two: the rows it can reach
-            let reach = (u64::from(run.col) + 2 * (run.end - run.start)) / wide;
-            if run.row + reach < *rows.start() {
+            if run.row + self.rows_reached(run) < *rows.start() {
                 continue;
             }
-            for write in self.writes_of(run, encoding, cols) {
+            for write in self.writes_of(run, encoding) {
                 if !rows.contains(&write.cell.row) {
                     continue;
                 }
@@ -220,10 +206,18 @@ impl Dump {
         self.writes.within(range).next().is_some()
     }
 
+    /// The rows after its first one a run can reach: a char takes a byte at least, a cell at
+    /// most two, on the screen as wide as it was then
+    fn rows_reached(&self, run: Run) -> u64 {
+        let wide = u64::from(self.writes.cols_at(run.start).max(1));
+        (u64::from(run.col) + 2 * (run.end - run.start)) / wide
+    }
+
     /// The chars a run wrote and their cells: from its first cell on, a char wrapping to the next
-    /// row when it doesn't fit, a combining char on the cell before it
-    fn writes_of(&self, run: Run, encoding: TextEncoding, cols: u16) -> Vec<Write> {
-        let cols = u64::from(cols.max(1));
+    /// row when it doesn't fit, as the screen was wide then (MAX-282), a combining char on the
+    /// cell before it
+    fn writes_of(&self, run: Run, encoding: TextEncoding) -> Vec<Write> {
+        let cols = u64::from(self.writes.cols_at(run.start).max(1));
         let (mut row, mut col) = (run.row, u64::from(run.col));
         let mut last = None;
         let mut out = Vec::new();

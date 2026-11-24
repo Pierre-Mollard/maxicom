@@ -1023,7 +1023,8 @@ fn prio_keyword() {
 /// MAX-139: squeezed, a variable without a format of its own takes its compact form: the
 /// port's file name, a byte count as a size, the pan without spaces and parentheses; one
 /// with a format keeps it.
-/// How: the port, RX at 1536 with and without `:6`, a 200-column terminal panned by 3.
+/// How: the port, RX at 1536 with and without `:6`, a 200-column line on a 200-column terminal
+/// panned by 3.
 #[test]
 fn compact_forms() {
     use crate::{configs::TerminalDimensionMode, inputs::HistoryAction};
@@ -1040,6 +1041,9 @@ fn compact_forms() {
 
     a.settings_mut().terminal_mode.dimension_mode = TerminalDimensionMode::Fixed;
     a.settings_mut().terminal_mode.cols = 200;
+    a.update_viewport(crate::app::types::ViewportSize::new(80, 20));
+    let line = "x".repeat(200);
+    (a.terminal_mode).process_rx(crate::configs::TextEncoding::Utf8, line.as_bytes());
     a.update_viewport(crate::app::types::ViewportSize::new(80, 20));
     a.update(Action::History(HistoryAction::PanRight(3)));
     assert_eq!(text_with("{pan_left}", &a, Fit::default()), "◀ (3)");

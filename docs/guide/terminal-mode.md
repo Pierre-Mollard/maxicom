@@ -20,27 +20,60 @@ differ from the view: it's the size a program on the device draws for.
 
 The device doesn't learn this size by itself, because a serial line has no
 resize signal (see [Serial shells](#serial-shells) for how to tell it). So
-changing it only changes what maxicom can show, and an automatic resize
-never loses data. The exception is a program that asks maxicom for
-[size reports](#size-reports-from-programs): it's told each new size.
+changing it only changes what maxicom can show. The exception is a program
+that asks maxicom for [size reports](#size-reports-from-programs): it's told
+each new size.
 
-The default, `grow_only`, suits most uses: the screen follows the window
-when it grows, and keeps its content when it shrinks.
+A line wider than the screen wraps at the screen's width. When the screen
+gets narrower, the rows on it are cut at the new width. `grow_only` and
+`auto` never let that happen to a line, on the screen or in the history.
+The other modes can cut long lines.
+
+The default, `auto`, suits most uses: the screen follows the window, never
+gets smaller than the size most devices draw for, and never cuts a line.
+Lines wrap where you see them, and the screen goes back to the window's
+size once wider content is gone.
+
+For a device whose programs draw full screens without the alternate screen
+(menus, editors, `top` on a `vt100` or `linux` terminal type), and when you
+told the device a bigger size, `grow_only` is the safer choice: the screen
+never gets smaller than what was drawn for it. It costs memory and speed
+after the window was made bigger, even for a moment, as every line keeps
+the widest size.
 
 ### Dimension mode
 
 `dimension_mode` in `[terminal_mode]` decides how the screen is sized. `S`
 in the settings popup cycles it.
 
-| Mode | Size |
-| --- | --- |
-| `grow_only` (default) | Grows with the view, never shrinks. When the window gets smaller, the view follows the cursor. |
-| `match_view` | The view's size, but never smaller than the content below the cursor or the widest row |
-| `fixed_cols` | The view's rows, but never fewer than the content below the cursor; `cols` columns |
-| `fixed` | `rows` x `cols` |
+| Mode | Size | Can cut long lines |
+| --- | --- | --- |
+| `auto` (default) | The view's size, but never smaller than `rows` x `cols`, the content below the cursor or the widest row on the screen. When history lines wider than the screen come back on it (the window got taller), the screen widens for them first. While a full-screen program uses the alternate screen, the size stays as it is. | No |
+| `grow_only` | Grows with the view, never shrinks. When the window gets smaller, the view follows the cursor. | No |
+| `match_view` | Like `auto`, but history lines wider than the screen are cut when they come back on it. | Yes, in the history |
+| `fixed_cols` | The view's rows, but never fewer than the content below the cursor; `cols` columns | Yes |
+| `fixed` | `rows` x `cols` | Yes |
+
+Picking `match_view` in the settings popup shows a warning, as it can cut
+lines in the history.
+
+History lines that are wider than the screen can still be read: the view
+pans to them, and search, copy and highlights see them whole.
 
 `rows` and `cols` in `[terminal_mode]` (default `24` x `80`) give the size
-of `fixed`, and the columns of `fixed_cols`. They are read at startup.
+of `fixed`, the columns of `fixed_cols`, and the smallest size of `auto`.
+They are read at startup.
+
+`auto` doesn't go below that size so that lines stay readable in a narrow
+window: they wrap at 80 columns and the view pans to the rest. It's also
+the size most devices draw for. The columns count the history's borders
+and scrollbar, so in a window of exactly 80 columns the screen is the
+view, and there is nothing to pan.
+
+`auto` holds its size during a full-screen program (an editor, `top`, a
+menu) that uses the alternate screen. The lines of the normal screen wait
+behind it, and they would be cut if the screen got smaller then. Once the
+program ends, the screen follows the view again.
 
 ### Setting the size by hand
 

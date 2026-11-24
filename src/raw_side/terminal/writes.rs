@@ -1,6 +1,7 @@
 //! Which bytes wrote which cells (MAX-256): each printable run received, with the cell its first
 //! char went to. A run's cells follow from its start by arithmetic, wraps included, so a run is
-//! 16 bytes whatever its length. Kept in time order, dropped with the bytes or past a limit
+//! 16 bytes whatever its length. Kept in time order, dropped with the bytes or past a limit.
+//! The screen's width at each run is kept apart, once per change (MAX-282)
 
 use std::{collections::VecDeque, ops::Range};
 
@@ -43,6 +44,9 @@ struct Tail {
 #[derive(Debug)]
 pub struct Writes {
     runs: VecDeque<Packed>,
+    /// The screen's width from each change on: the first byte of the first run written at it,
+    /// and the width. A run's cells wrap at the width it was written at, not today's
+    widths: VecDeque<(u64, u16)>,
     /// The main screen rows' base, set by the first main screen run
     row_base: Option<u64>,
     limit: usize,
@@ -54,6 +58,7 @@ impl Writes {
     pub fn new(limit: usize) -> Self {
         Self {
             runs: VecDeque::new(),
+            widths: VecDeque::new(),
             row_base: None,
             limit: limit.max(1),
             tail: None,
@@ -64,10 +69,14 @@ impl Writes {
     /// bytes and its cells follow) makes it longer, so a run cut by small reads stays one. A run
     /// longer than a packed run holds keeps its first bytes only
     pub fn push(&mut self, run: Run, cells: u32, cols: u16) {
-        let cols = u64::from(cols.max(1));
+        let width = cols.max(1);
+        let cols = u64::from(width);
         let len = run.end - run.start;
         let next = |row: u64, col: u64| row * cols + col;
+        // a run going on at another width (the screen resized between them) is a run of its own
+        let same_width = self.widths.back().is_some_and(|&(_, last)| last == width);
         if let Some(tail) = &mut self.tail
+            && same_width
             && tail.end == run.start
             && tail.alternate == run.alternate
             && next(tail.row, tail.col) == next(run.row, u64::from(run.col))
@@ -85,6 +94,9 @@ impl Writes {
             self.main_row(run.row)
         };
         let col = run.col.min(ALTERNATE - 1) | if run.alternate { ALTERNATE } else { 0 };
+        if !same_width {
+            self.widths.push_back((run.start, width));
+        }
         // grown by doubling, but never past the limit: the last step takes what's left
         if self.runs.len() == self.runs.capacity() && self.runs.len() < self.limit {
             let more = self.runs.len().max(64).min(self.limit - self.runs.len());
@@ -104,6 +116,26 @@ impl Writes {
         });
         if self.runs.len() > self.limit {
             self.runs.pop_front();
+            self.forget_widths();
+        }
+    }
+
+    /// The width the run starting at byte `start` was written at: the screen's then
+    pub fn cols_at(&self, start: u64) -> u16 {
+        let idx = self.widths.partition_point(|&(from, _)| from <= start);
+        idx.checked_sub(1)
+            .and_then(|idx| self.widths.get(idx))
+            .map_or(1, |&(_, width)| width)
+    }
+
+    /// The widths no run kept was written at go: all but the one the oldest run has
+    fn forget_widths(&mut self) {
+        let Some(first) = self.runs.front().map(|run| run.start) else {
+            self.widths.clear();
+            return;
+        };
+        while self.widths.get(1).is_some_and(|&(from, _)| from <= first) {
+            self.widths.pop_front();
         }
     }
 
@@ -135,10 +167,12 @@ impl Writes {
         {
             self.runs.pop_front();
         }
+        self.forget_widths();
     }
 
     pub fn clear(&mut self) {
         self.runs.clear();
+        self.widths.clear();
         self.row_base = None;
         self.tail = None;
     }
@@ -147,6 +181,7 @@ impl Writes {
     pub fn release(&mut self) {
         self.clear();
         self.runs = VecDeque::new();
+        self.widths = VecDeque::new();
     }
 
     #[cfg(test)]

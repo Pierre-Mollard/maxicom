@@ -302,8 +302,8 @@ See [Terminal mode](terminal-mode.md).
 
 | Setting | Default | |
 | --- | --- | --- |
-| `dimension_mode` | `"grow_only"` | `grow_only`, `match_view`, `fixed_cols`, `fixed` |
-| `rows`, `cols` | `24`, `80` | The size of `fixed` (`cols` for `fixed_cols`) |
+| `dimension_mode` | `"auto"` | `auto`, `grow_only`, `match_view`, `fixed_cols`, `fixed` |
+| `rows`, `cols` | `24`, `80` | The size of `fixed` (`cols` for `fixed_cols`), the smallest size of `auto` |
 | `history_size` | `100000` | Scrollback lines kept |
 | `empty_fill_char` | `"░"` | Fills the view outside the emulated screen |
 | `unfocused_cursor_glyph` | `"█"` | The cursor while unfocused |

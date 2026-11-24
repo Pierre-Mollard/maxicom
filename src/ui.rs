@@ -120,10 +120,16 @@ pub fn render(
             app.frame_map_mut().side_handles.push(handle);
         }
     }
-    app.update_viewport(ViewportSize::new(
-        layout.content_area.width,
-        layout.content_area.height,
-    ));
+    let borders = if app.show_borders() { 2 } else { 0 };
+    // in the right border, the scrollbar takes no column of the view
+    let in_border = |area: &Rect| borders > 0 && area.right() == layout.monitor_outer.right();
+    let scrollbar = (layout.scrollbar_area)
+        .filter(|area| !in_border(area))
+        .map_or(0, |area| area.width);
+    app.update_viewport(ViewportSize {
+        frame_cols: borders + scrollbar,
+        ..ViewportSize::new(layout.content_area.width, layout.content_area.height)
+    });
 
     if app.show_borders() {
         let border_style = border_style_for(

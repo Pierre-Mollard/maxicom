@@ -33,7 +33,8 @@ use crate::{
     },
     configs::{
         AppConfig, DualBufferMode, KeyBindingAction, KeyResolver, LinksConfig, Mode, PlotsConfig,
-        QueryGroup, RawSideView, SettingsConfig, StatusBarLayout, TextEncoding, WrapMode,
+        QueryGroup, RawSideView, SettingsConfig, StatusBarLayout, TerminalDimensionMode,
+        TextEncoding, WrapMode,
         settings::{
             PrefixPlace, PrefixWrapBehavior, RawSideOrientation, SPLIT_PERCENT_MAX,
             SPLIT_PERCENT_MIN, on_off,
@@ -998,7 +999,10 @@ impl App {
                         OverlayResponse::Close => UpdateEffect::None,
                         OverlayResponse::Quit => UpdateEffect::Quit,
                         OverlayResponse::ToggleSetting(key) => {
-                            self.toggle_setting(key);
+                            // the popup shows the new value: only a warning is said (MAX-282)
+                            let warning = (self.toggle_setting(key))
+                                .filter(|note| note.level == ToastLevel::Warn);
+                            report.notes.extend(warning);
                             self.overlay = Some(overlay);
                             UpdateEffect::None
                         }
@@ -2785,11 +2789,16 @@ impl App {
             SettingKey::DimensionMode => {
                 self.settings.terminal_mode.dimension_mode.toggle();
                 self.update_viewport(self.viewport);
-                let mode = self.settings.terminal_mode.dimension_mode.as_str();
-                note = Some(setting_note(
-                    "setting:size",
-                    format!("Terminal Size Mode is {mode}"),
-                ));
+                let dimension_mode = self.settings.terminal_mode.dimension_mode;
+                let text = format!("Terminal Size Mode is {}", dimension_mode.as_str());
+                // the one sized from the view that cuts lines, unlike `auto` (MAX-282)
+                note = Some(match dimension_mode {
+                    TerminalDimensionMode::MatchView => Note::warn(format!(
+                        "{text}: lines wider than the view can be cut, in the history too"
+                    ))
+                    .in_slot("setting:size"),
+                    _ => setting_note("setting:size", text),
+                });
             }
             // off empties `answer_groups`, its list kept aside for on, all groups when none was
             SettingKey::AnswerQueries => {

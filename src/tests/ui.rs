@@ -2356,7 +2356,7 @@ fn settings_in_two_columns() {
         "General                           Line Mode",
         "[M] Input Mode    : Line          [W] Line Wrap     : Word-Wrap",
         "[B] Byte Inspect  : Off           Terminal Mode",
-        "[V] Plot          : Off           [S] Size Mode     : Grow Only",
+        "[V] Plot          : Off           [S] Size Mode     : Auto     ",
         "                                  [R] Query Answers : On",
         "Newlines",
         "[N] Line Enter    : LF",
@@ -4008,6 +4008,8 @@ fn focus_effects_off_keeps_the_focused_look() {
 fn scrolled_terminal_keeps_a_fake_cursor() {
     let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 12, |s| {
         s.mode = Mode::Terminal;
+        // `auto` would grow it back to its 24 rows
+        s.terminal_mode.dimension_mode = crate::configs::TerminalDimensionMode::GrowOnly;
     });
     // the grid as tall as the view: scrolling up goes into the history, not a pan of it
     h.draw();
@@ -7138,22 +7140,25 @@ fn right_click_menu_hides_a_disabled_mode() {
 }
 
 /// MAX-133: the settings popup has a "Terminal Mode" section with the size mode; its key
-/// `S` and a click cycle it (grow only, match view, fixed cols, fixed) and the grid follows
-/// at once.
-/// How: terminal mode at 80x24, the grid grown on a 100-column screen first; the
-/// popup, `S` (match view: the blank grid shrinks to the view), a click (fixed cols).
+/// `S` and a click cycle it (auto, grow only, match view, fixed cols, fixed) and the grid
+/// follows at once. Match View warns it can cut lines (MAX-282). `auto`, the default, is the
+/// view's size in a window of its configured 80 columns: the scrollbar's column counted, no
+/// pan by one column (MAX-282).
+/// How: terminal mode at 80x24, the grid on a 100-column screen first; the popup, `S` (grow
+/// only), a click (match view and its warning), a click (fixed cols: 80 columns).
 #[test]
 fn settings_popup_size_mode() {
-    use crate::configs::TerminalDimensionMode::{FixedCols, MatchView};
+    use crate::configs::TerminalDimensionMode::{FixedCols, GrowOnly, MatchView};
     use crossterm::event::KeyCode::Char;
     let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 100, 24, |s| {
         s.mode = Mode::Terminal;
     });
     h.draw();
+    assert_eq!(h.app.terminal_mode.get_vt100_size().1, 99);
     h.terminal.backend_mut().resize(80, 24);
     h.draw();
     // the view is a column narrower than the screen: the scrollbar's
-    assert_eq!(h.app.terminal_mode.get_vt100_size().1, 99);
+    assert_eq!(h.app.terminal_mode.get_vt100_size().1, 79);
 
     h.app
         .update(Action::App(AppAction::OpenOverlay(Overlay::Settings(
@@ -7162,17 +7167,89 @@ fn settings_popup_size_mode() {
     let rows = h.draw();
     assert!(rows.iter().any(|row| row.contains("Terminal Mode")));
     let size_mode = cell_of(&rows, "Size Mode");
-    assert!(rows[size_mode.1 as usize].contains("Grow Only"));
+    assert!(rows[size_mode.1 as usize].contains("Auto"));
 
     key_do(&mut h, Char('s'), KeyModifiers::NONE);
     let rows = h.draw();
-    assert_eq!(h.app.settings().terminal_mode.dimension_mode, MatchView);
-    assert!(rows[size_mode.1 as usize].contains("Match View"));
+    assert_eq!(h.app.settings().terminal_mode.dimension_mode, GrowOnly);
+    assert!(rows[size_mode.1 as usize].contains("Grow Only"));
     assert_eq!(h.app.terminal_mode.get_vt100_size().1, 79);
 
     click(&mut h, size_mode);
+    let rows = h.draw();
+    assert_eq!(h.app.settings().terminal_mode.dimension_mode, MatchView);
+    assert!(rows[size_mode.1 as usize].contains("Match View"));
+    let toast = h.app.notifications.active_toasts().last().unwrap();
+    assert_eq!(toast.level, ToastLevel::Warn);
+    assert!(toast.message.contains("can be cut"), "{}", toast.message);
+
+    click(&mut h, size_mode);
+    h.draw();
     assert_eq!(h.app.settings().terminal_mode.dimension_mode, FixedCols);
+    assert_eq!(h.app.terminal_mode.get_vt100_size().1, 80);
     assert!(matches!(h.app.overlay(), Some(Overlay::Settings(_))));
+}
+
+/// MAX-282: `auto`'s smallest width is its 80 configured columns of window, the history's
+/// frame counted: 78 columns beside the two borders (the scrollbar in the right one), 79
+/// beside the scrollbar's own column without borders. In a narrower window the screen keeps
+/// that width, wider it is the view.
+/// How: a 60-column window with and without borders, then 120 columns.
+#[test]
+fn auto_smallest_width_counts_the_frame() {
+    for (borders, smallest) in [(true, 78), (false, 79)] {
+        let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 60, 24, |s| {
+            s.mode = Mode::Terminal;
+            s.ui.show_borders = borders;
+        });
+        h.draw();
+        assert_eq!(
+            h.app.terminal_mode.get_vt100_size().1,
+            smallest,
+            "{borders}"
+        );
+        h.terminal.backend_mut().resize(120, 24);
+        h.draw();
+        let view = h.app.frame_areas().content.width;
+        assert_eq!(h.app.terminal_mode.get_vt100_size().1, view, "{borders}");
+    }
+}
+
+/// MAX-282: panned past the grid's width to a history line kept from a wider screen, the
+/// shorter rows beside it are blank there, as they were on that screen; the outside of a
+/// screen smaller than the view still shows the fill char.
+/// How: a 180-char line and 30 short ones in a 200-column window, then 100 columns, the view
+/// at the top and panned to the end; then `fixed` 24x80 in the 100-column window
+#[test]
+fn panned_past_the_grid_is_blank() {
+    let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 200, 20, |s| {
+        s.mode = Mode::Terminal;
+        s.ui.show_borders = false;
+    });
+    h.draw();
+    let mut bytes = format!("W {} END\r\n", "w".repeat(174));
+    bytes.extend((0..30).map(|i| format!("short {i}\r\n")));
+    h.app.feed_rx(bytes.as_bytes());
+    h.draw();
+    h.terminal.backend_mut().resize(100, 20);
+    h.draw();
+    h.scroll(HistoryAction::ScrollToTop);
+    h.draw();
+    h.scroll(HistoryAction::PanRight(200));
+    let rows = h.draw();
+    assert!(rows[0].contains(" END"), "{rows:#?}");
+    assert!(rows.iter().all(|row| !row.contains('░')), "{rows:#?}");
+
+    h.app.settings_mut().terminal_mode.dimension_mode =
+        crate::configs::TerminalDimensionMode::Fixed;
+    h.scroll(HistoryAction::ScrollToBottom);
+    let rows = h.draw();
+    assert_eq!(h.app.terminal_mode.get_vt100_size().1, 80);
+    // past the 80 columns, before the scrollbar
+    assert!(
+        rows[0].trim_end_matches(['▲', '│']).ends_with("░░"),
+        "{rows:#?}"
+    );
 }
 
 /// MAX-163: `P` in the settings popup cycles `prefix_place` (inset, border, none) and the
@@ -7650,7 +7727,8 @@ fn status_bar_in_the_history_border() {
 /// padded so the center doesn't move while panning, each arrow in the secondary color while
 /// it can pan that way (muted else) and panning on a click; the history's border arrows are
 /// only there when the bar has no pan variable. With the `border` layout too.
-/// How: a 200-column terminal in a 120-column screen panned right by 3, `line` layout: the
+/// How: a 200-column line on a 200-column terminal in a 120-column screen panned right by 3,
+/// `line` layout: the
 /// history's bottom row and the bar; a click on `◀`; a bar without the pan; `border`; then
 /// line mode with a 200-char line.
 #[test]
@@ -7662,6 +7740,9 @@ fn the_pan_shows_once_in_the_status_bar() {
         s.ui.show_borders = true;
         s.ui.status_bar.layout = StatusBarLayout::Line;
     });
+    h.draw();
+    let line = "x".repeat(200);
+    (h.app.terminal_mode).process_rx(TextEncoding::Utf8, line.as_bytes());
     h.draw();
     h.scroll(HistoryAction::PanRight(3));
     let rows = h.draw();
@@ -8348,6 +8429,7 @@ fn hidden_status_bar_over_the_view_with_the_prefix() {
 fn terminal_view_follows_the_cursor_in_a_taller_grid() {
     let mut h = Harness::line_mode_with(LineDisplayMode::Pretty, 80, 50, |s| {
         s.mode = Mode::Terminal;
+        s.terminal_mode.dimension_mode = crate::configs::TerminalDimensionMode::GrowOnly;
     });
     h.draw();
     assert_eq!(h.app.terminal_mode.get_vt100_size().0, 49);

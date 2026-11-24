@@ -48,7 +48,7 @@ pub const CONFIG_COMMENTS: &[(&str, &str)] = &[
     ("terminal_mode", guide!("terminal-mode.html")),
     (
         "terminal_mode.dimension_mode",
-        "values: grow_only, fixed_cols, match_view, fixed",
+        "values: auto, grow_only, match_view, fixed_cols, fixed",
     ),
     (
         "terminal_mode.answer_groups",

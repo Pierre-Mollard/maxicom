@@ -9,7 +9,7 @@ use crossterm::event::KeyEvent;
 use jiff::Timestamp;
 use terminput::Encoding;
 use terminput_crossterm::to_terminput_key;
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     app::{
@@ -150,6 +150,9 @@ pub struct TerminalMode {
     /// The grid columns up to the rightmost cell with content, measured when a shrink needs it
     /// and forgotten when the grid changes (MAX-140)
     content_cols: Option<u16>,
+    /// The last `pan_reach`: its view (vt100's scrollback, `pan_offset_y`, view height, the
+    /// width it measured past) and its columns, forgotten when the grid changes (MAX-282)
+    pan_reach: Option<((usize, usize, usize, usize), usize)>,
     vi_pending_copy: Option<ViPending>,
     flash_until: Option<Instant>,
     row_timestamps: VecDeque<Option<Timestamp>>,
@@ -229,6 +232,7 @@ impl TerminalMode {
             pan_offset_y: 0,
             live_bottom: 1,
             content_cols: None,
+            pan_reach: None,
             vi_pending_copy: None,
             flash_until: None,
             row_timestamps: VecDeque::from(vec![None; rows as usize]),
@@ -620,7 +624,7 @@ impl TerminalMode {
     /// `still_shows` for chars on one world line, `(column, char)` each: the line read once
     fn shows_on_line(&mut self, line: usize, chars: &[(usize, char)]) -> Vec<bool> {
         let sb = self.max_content_scrollback;
-        with_world_row(&mut self.vt100_parser, sb, line, |screen, view_row, _| {
+        with_world_row(&mut self.vt100_parser, sb, line, |screen, view_row| {
             (chars.iter())
                 .map(|&(col, ch)| {
                     // a `�` received shows as its stand-in (MAX-249)
@@ -652,28 +656,35 @@ impl TerminalMode {
         if let Some(found) = self.mirror_bytes.as_ref().filter(|found| found.at == at) {
             return found.bytes.clone();
         }
-        let cols = self.get_vt100_size().1;
-        let last_col = usize::from(cols.max(1)) - 1;
         let (first, last) = (
             self.cell_at(start.line_idx, 0),
             self.cell_at(end.line_idx, 0),
         );
         let rows = first.row..=last.row;
-        let writes = (self.dump).newest_writes_on(rows, first.alternate, encoding, cols);
+        let writes = (self.dump).newest_writes_on(rows, first.alternate, encoding);
         let mut pieces = Vec::new();
         for line in start.line_idx..=end.line_idx {
+            let row = self.cell_at(line, 0).row;
+            // a whole line ends at its last write: a history row can be wider than the grid
+            // (MAX-282)
+            let row_end = (writes.keys())
+                .filter(|&&(at, _)| at == row)
+                .map(|&(_, col)| usize::from(col))
+                .max();
+            let Some(row_end) = row_end else {
+                continue;
+            };
             let from = if line == start.line_idx {
                 start.char_idx
             } else {
                 0
             };
             let to = if line == end.line_idx {
-                end.char_idx
+                end.char_idx.min(row_end)
             } else {
-                last_col
+                row_end
             };
-            let row = self.cell_at(line, 0).row;
-            let found: Vec<&Write> = (from..=to.min(last_col))
+            let found: Vec<&Write> = (from..=to)
                 .filter_map(|col| writes.get(&(row, col as u16)))
                 .collect();
             let chars: Vec<_> = (found.iter())
@@ -720,10 +731,9 @@ impl TerminalMode {
         if let Some(found) = self.mirror_cells.as_ref().filter(|found| found.at == at) {
             return found.cells.clone();
         }
-        let cols = self.get_vt100_size().1;
         let mut by_line: std::collections::BTreeMap<usize, Vec<(usize, char)>> =
             std::collections::BTreeMap::new();
-        for write in self.dump.written_in(selected, encoding, cols) {
+        for write in self.dump.written_in(selected, encoding) {
             if let Some((line, col)) = self.line_of(write.cell)
                 && lines.contains(&line)
             {
@@ -753,8 +763,7 @@ impl TerminalMode {
         max: usize,
     ) -> Option<Vec<Write>> {
         let cell = self.cell_at(line_idx, col);
-        let cols = self.get_vt100_size().1;
-        let writes = self.dump.writes_to(cell, encoding, cols, max);
+        let writes = self.dump.writes_to(cell, encoding, max);
         let shown = writes.first()?;
         self.still_shows(&shown.clone()).then_some(writes)
     }
@@ -856,8 +865,7 @@ impl TerminalMode {
         offset: u64,
         encoding: TextEncoding,
     ) -> Option<((usize, usize), bool)> {
-        let cols = self.get_vt100_size().1;
-        let write = self.dump.written(offset, encoding, cols)?;
+        let write = self.dump.written(offset, encoding)?;
         let at = self.line_of(write.cell)?;
         Some((at, self.still_shows(&write)))
     }
@@ -903,6 +911,7 @@ impl TerminalMode {
         self.search_text_changed(started_on_main, lines_before, evicted);
         self.update_live_bottom();
         self.content_cols = None;
+        self.pan_reach = None;
 
         // the alternate screen has no scrollback and leaves the main one as it is: its rows are
         // synced once the remote is back on the main screen
@@ -978,7 +987,9 @@ impl TerminalMode {
             match dim_mode {
                 TerminalDimensionMode::GrowOnly => {
                     let target_rows = cur_rows.max(avail_h);
-                    let target_cols = cur_cols.max(avail_w);
+                    let target_cols = cur_cols
+                        .max(avail_w)
+                        .max(self.pulled_back_cols(target_rows));
                     if (target_rows, target_cols) != (cur_rows, cur_cols) {
                         self.set_vt100_size(target_rows, target_cols);
                     }
@@ -991,6 +1002,24 @@ impl TerminalMode {
                     }
                 }
 
+                // vt100 resizes the main screen with the alternate one, and the main one can't
+                // be measured while a full-screen program has the alternate one: the size
+                // waits for the program to leave it (MAX-282)
+                TerminalDimensionMode::Auto if self.vt100_parser.screen().alternate_screen() => {}
+                // the configured size at least: lines readable in a narrow view, the size most
+                // devices draw for (MAX-282). Its columns count the history's frame: in a window
+                // of the configured width the screen is the view, no pan by a column
+                TerminalDimensionMode::Auto => {
+                    let min_cols = conf_cols.saturating_sub(viewport.frame_cols);
+                    let target_rows = self.rows_to_keep(avail_h.max(conf_rows));
+                    let target_cols = (self.cols_to_keep(avail_w.max(min_cols)))
+                        .max(self.pulled_back_cols(target_rows));
+                    if (target_rows, target_cols) != (cur_rows, cur_cols) {
+                        self.set_vt100_size(target_rows, target_cols);
+                    }
+                }
+
+                // `auto` without the rows pulled back from the scrollback: they are cut
                 TerminalDimensionMode::MatchView => {
                     let target_rows = self.rows_to_keep(avail_h);
                     let target_cols = self.cols_to_keep(avail_w);
@@ -1008,8 +1037,9 @@ impl TerminalMode {
         }
 
         self.restore_separator_on_top();
-        self.clamp_pan_x(viewport.cols);
         self.reconcile_both_vertical_scroll();
+        // from the rows shown once the vertical scroll is set
+        self.clamp_pan_x(viewport.cols);
     }
 
     /// Once the grid has the view's size after a restore: the separator back on the top row if
@@ -1122,6 +1152,7 @@ impl TerminalMode {
         self.pan_offset_y = 0;
         self.live_bottom = 1;
         self.content_cols = None;
+        self.pan_reach = None;
 
         self.scroller.scroll_to_bottom();
         self.scroller.max_scroll_y = 0;
@@ -1317,10 +1348,54 @@ impl TerminalMode {
         self.scroller.offset_y
     }
 
-    // for 2D terminal mode the metrics and clamping is handled within the emulator
+    /// The columns the pan reaches (MAX-282), at least `floor` (the view's width: only the
+    /// columns past it make a pan): the widest content of the rows shown, a scrollback row kept
+    /// from a wider grid included, and the remote's cursor when its row is shown. The grid's
+    /// blank columns past them aren't panned to. Kept until the grid or the view changes
+    fn pan_reach(&mut self, floor: usize) -> usize {
+        let screen = self.vt100_parser.screen();
+        let key = (
+            screen.scrollback(),
+            self.pan_offset_y,
+            self.scroller.view_height,
+            floor,
+        );
+        if let Some((at, reach)) = self.pan_reach
+            && at == key
+        {
+            return reach;
+        }
+        let (grid_rows, grid_cols) = vt100_size(screen);
+        let first = self.pan_offset_y.min(usize::from(grid_rows)) as u16;
+        let shown = first..grid_rows.min(first.saturating_add(self.scroller.view_height as u16));
+        let floor_col = u16::try_from(floor).unwrap_or(u16::MAX);
+        let content = shown_content_end(screen, shown.clone(), grid_cols, floor_col);
+        let (cursor_row, cursor_col) = screen.cursor_position();
+        // scrolled back, the cursor's row is that many rows lower in the view; after the last
+        // column (a wrap pending) it is past the grid
+        let cursor = u16::try_from(usize::from(cursor_row) + screen.scrollback())
+            .ok()
+            .filter(|row| !screen.hide_cursor() && shown.contains(row))
+            .map_or(0, |_| (cursor_col + 1).min(grid_cols));
+        let reach = floor.max(usize::from(content.max(cursor)));
+        self.pan_reach = Some((key, reach));
+        reach
+    }
+
+    /// The columns a row without a cell there is drawn blank in: the grid's, and past it the
+    /// content the pan reaches, a history row kept from a wider screen (MAX-282). Beyond, the
+    /// outside of the screen
+    pub fn blank_cols(&self) -> u16 {
+        let grid_cols = self.get_vt100_size().1;
+        if self.scroller.max_pan_x == 0 {
+            return grid_cols;
+        }
+        let reach = self.scroller.view_width + self.scroller.max_pan_x;
+        grid_cols.max(u16::try_from(reach).unwrap_or(u16::MAX))
+    }
+
     fn clamp_pan_x(&mut self, visible_cols: usize) {
-        let vt_cols = vt100_size(self.vt100_parser.screen()).1 as usize;
-        let max_pan = vt_cols.saturating_sub(visible_cols);
+        let max_pan = self.pan_reach(visible_cols) - visible_cols;
         self.scroller.max_pan_x = max_pan;
         self.scroller.offset_x = self.scroller.offset_x.min(max_pan);
     }
@@ -1395,6 +1470,26 @@ impl TerminalMode {
             self.vt100_parser.screen_mut().set_scrollback(scrolled);
         }
         cols.max(self.content_cols.unwrap_or(0))
+    }
+
+    /// The columns a grid of `rows` needs for the scrollback rows it pulls back on screen, up to
+    /// their last cell with text (0 when it isn't taller): vt100 pulls the last ones back when
+    /// the grid grows taller and cuts them to the grid's width (MAX-282). Only on the frames
+    /// the grid grows taller
+    fn pulled_back_cols(&mut self, rows: u16) -> u16 {
+        let (grid_rows, grid_cols) = self.get_vt100_size();
+        let screen = self.vt100_parser.screen();
+        let pulled = usize::from(rows.saturating_sub(grid_rows)).min(self.max_content_scrollback);
+        if pulled == 0 || screen.alternate_screen() {
+            return 0;
+        }
+        // scrolled back by `pulled` rows, the view's top rows are the ones pulled back
+        let scrolled = screen.scrollback();
+        self.vt100_parser.screen_mut().set_scrollback(pulled);
+        let screen = self.vt100_parser.screen();
+        let cols = shown_content_end(screen, 0..pulled as u16, grid_cols, 0);
+        self.vt100_parser.screen_mut().set_scrollback(scrolled);
+        cols
     }
 
     /// The grid rows the live view ends at: down to the cursor or the lowest row with content,
@@ -1548,6 +1643,7 @@ impl TerminalMode {
         }
         self.update_live_bottom();
         self.content_cols = None;
+        self.pan_reach = None;
         // in the alternate screen the main rows can't be measured: the next RX on the main
         // screen fixes the slot count (see `process_rx`)
         if self.vt100_parser.screen().alternate_screen() {
@@ -1600,7 +1696,7 @@ impl TerminalMode {
     /// main one's lines read blank then, so the screen's rows keep their world line (MAX-218)
     fn text_lines_from(&mut self, from: usize) -> Vec<String> {
         let max_sb = self.max_content_scrollback;
-        let (rows, cols) = self.get_vt100_size();
+        let rows = self.get_vt100_size().0;
         let current_sb = self.vt100_parser.screen().scrollback();
         let alternate = self.vt100_parser.screen().alternate_screen();
 
@@ -1612,7 +1708,7 @@ impl TerminalMode {
                 lines.push(String::new());
             } else {
                 self.vt100_parser.screen_mut().set_scrollback(sb);
-                if let Some(first_row) = self.vt100_parser.screen().rows(0, cols).next() {
+                if let Some(first_row) = self.vt100_parser.screen().rows(0, WHOLE_ROW).next() {
                     lines.push(shown_string(first_row));
                 }
             }
@@ -1621,7 +1717,12 @@ impl TerminalMode {
 
         self.vt100_parser.screen_mut().set_scrollback(0);
         let screen_from = from.saturating_sub(max_sb);
-        for row in self.vt100_parser.screen().rows(0, cols).skip(screen_from) {
+        for row in self
+            .vt100_parser
+            .screen()
+            .rows(0, WHOLE_ROW)
+            .skip(screen_from)
+        {
             lines.push(shown_string(row));
         }
 
@@ -1821,7 +1922,6 @@ impl TerminalMode {
     fn reveal_at(&mut self, cursor_row: usize, cursor_col: usize, reveal: Reveal) {
         let view_h = self.scroller.view_height;
         let view_w = self.scroller.view_width; // or passed-in visible columns width
-        let (_, grid_cols) = self.get_vt100_size();
 
         let (top_visible, bottom_visible) = self.visible_lines();
         let shown = (top_visible..=bottom_visible).contains(&cursor_row);
@@ -1834,8 +1934,12 @@ impl TerminalMode {
             Reveal::Center => self.scroll_to_target_line(cursor_row, view_h),
         }
 
-        if view_w > 0 && (grid_cols as usize) > view_w {
-            let max_pan_x = (grid_cols as usize).saturating_sub(view_w);
+        // the pan reaches the copy cursor, on a row's content or the remote's cursor
+        let reach = self.pan_reach(view_w).max(cursor_col + 1);
+        if view_w > 0 && reach > view_w {
+            let max_pan_x = reach - view_w;
+            // the next frame clamps the pan to it before it measures the rows shown
+            self.scroller.max_pan_x = max_pan_x;
 
             if cursor_col < self.scroller.offset_x {
                 self.scroller.offset_x = cursor_col;
@@ -2188,7 +2292,6 @@ impl TerminalMode {
         view_w: usize,
         view_h: usize,
     ) {
-        let (_, grid_cols) = self.get_vt100_size();
         let max_sb = self.max_content_scrollback;
         // the offsets count from the live view's last row, not the grid's
         let total_world_lines = max_sb + self.live_rows();
@@ -2204,12 +2307,71 @@ impl TerminalMode {
         self.scroller.scroll_to(target_scroll_y);
         self.reconcile_both_vertical_scroll();
 
-        if view_w > 0 && (grid_cols as usize) > view_w {
-            let max_pan_x = (grid_cols as usize).saturating_sub(view_w);
+        let reach = self.pan_reach(view_w).max(target_col + 1);
+        if view_w > 0 && reach > view_w {
+            let max_pan_x = reach - view_w;
+            self.scroller.max_pan_x = max_pan_x;
             let half_w = view_w / 2;
             self.scroller.offset_x = target_col.saturating_sub(half_w).min(max_pan_x);
         }
     }
+}
+
+/// The width that reads a row whole with `rows()` / `rows_formatted()`: a scrollback row kept
+/// from a wider grid is longer than the grid (MAX-282)
+pub const WHOLE_ROW: u16 = u16::MAX;
+
+/// The column after the last cell with text on visible rows `rows`, `floor` at least, past the
+/// grid's width for a scrollback row kept from a wider grid (MAX-282). A `cell()` costs about
+/// 10 ns, a frame 200 to 500 µs: each row's last `TAIL_CELLS` are read from its end, which
+/// settles a full row and raises the floor; the first row still open is read whole from its end
+/// (rows tend to be alike, it raises the floor for the others), then vt100's row text from that
+/// floor on (its gaps as spaces, ending at its last cell with text) only when a row may still go
+/// past it. The text costs on the cells with text past the floor only
+fn shown_content_end(
+    screen: &vt100::Screen,
+    rows: std::ops::Range<u16>,
+    grid_cols: u16,
+    floor: u16,
+) -> u16 {
+    const TAIL_CELLS: u16 = 16;
+    let last_text = |row: u16, cols: std::ops::Range<u16>| {
+        cols.rev().find_map(|col| {
+            let cell = screen.cell(row, col)?;
+            (cell.has_contents()).then(|| col + 1 + u16::from(cell.is_wide()))
+        })
+    };
+    let mut end = floor;
+    let mut first_open = None;
+    for row in rows.clone() {
+        let mut len = grid_cols;
+        while len < u16::MAX && screen.cell(row, len).is_some() {
+            len += 1;
+        }
+        if len <= end {
+            continue;
+        }
+        let tail = len.saturating_sub(TAIL_CELLS).max(end);
+        match last_text(row, tail..len) {
+            Some(found) => end = end.max(found),
+            None if tail > end => {
+                first_open.get_or_insert((row, tail));
+            }
+            None => {}
+        }
+    }
+    let Some((row, tail)) = first_open else {
+        return end;
+    };
+    if let Some(found) = last_text(row, end..tail) {
+        end = end.max(found);
+    }
+    let from = end;
+    (screen.rows(from, WHOLE_ROW))
+        .skip(usize::from(rows.start))
+        .take(rows.len())
+        .map(|text| from.saturating_add(u16::try_from(text.width()).unwrap_or(u16::MAX)))
+        .fold(end, u16::max)
 }
 
 // HACK: there is no function to fetch string content from history so sb everywhere
@@ -2220,8 +2382,8 @@ pub fn read_vt100_world_line_text(
 ) -> Option<String> {
     // vt100's own row text, like search and the selection read it: the gaps a tab or a cursor
     // move leave are spaces, so a char index is a screen column (#33); a stand-in is one `�`
-    with_world_row(parser, max_sb, world_row, |screen, view_row, cols| {
-        shown_string(screen.rows(0, cols).nth(view_row).unwrap_or_default())
+    with_world_row(parser, max_sb, world_row, |screen, view_row| {
+        shown_string(screen.rows(0, WHOLE_ROW).nth(view_row).unwrap_or_default())
     })
 }
 
@@ -2232,9 +2394,9 @@ pub fn read_vt100_world_line_formatted(
     max_sb: usize,
     world_row: usize,
 ) -> Option<String> {
-    with_world_row(parser, max_sb, world_row, |screen, view_row, cols| {
+    with_world_row(parser, max_sb, world_row, |screen, view_row| {
         screen
-            .rows_formatted(0, cols)
+            .rows_formatted(0, WHOLE_ROW)
             .nth(view_row)
             .unwrap_or_default()
     })
@@ -2262,10 +2424,10 @@ fn with_world_row<T>(
     parser: &mut TerminalParser,
     max_sb: usize,
     world_row: usize,
-    read: impl FnOnce(&vt100::Screen, usize, u16) -> T,
+    read: impl FnOnce(&vt100::Screen, usize) -> T,
 ) -> Option<T> {
     // this function is not a member to simlify ownership with TerminalModeTextSource
-    let (rows, cols) = vt100_size(parser.screen());
+    let rows = vt100_size(parser.screen()).0;
     let total_world = max_sb + rows as usize;
 
     if world_row >= total_world {
@@ -2286,7 +2448,7 @@ fn with_world_row<T>(
 
     // `rows()` / `rows_formatted()` are lazy but build every row before `view_row`: one row for
     // history (always at the top), a screen at most
-    let value = read(parser.screen(), view_row as usize, cols);
+    let value = read(parser.screen(), view_row as usize);
     if current_sb != target_sb {
         parser.screen_mut().set_scrollback(current_sb);
     }

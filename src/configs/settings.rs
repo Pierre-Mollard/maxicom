@@ -426,18 +426,28 @@ pub struct LinePrefixes<'a> {
     pub separator: &'static str,
 }
 
+/// How the terminal emulator's grid is sized from the view (MAX-140, MAX-282)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalDimensionMode {
+    /// the view's size, at least the configured one, never cutting a line, on screen or in the
+    /// scrollback; held while a full-screen program uses the alternate screen (the default)
+    Auto,
+    /// grows with the view, never shrinks
     GrowOnly,
+    /// the configured columns, the view's rows: cuts the lines wider than them
     FixedCols,
+    /// the view's size, never cutting a line on screen, but the scrollback's lines wider than
+    /// it are cut when a taller view brings them back on screen
     MatchView,
+    /// the configured size: cuts the lines wider than it
     Fixed,
 }
 
 impl TerminalDimensionMode {
     pub const fn as_str(self) -> &'static str {
         match self {
+            TerminalDimensionMode::Auto => "Auto",
             TerminalDimensionMode::GrowOnly => "Grow Only",
             TerminalDimensionMode::MatchView => "Match View",
             TerminalDimensionMode::FixedCols => "Fixed Cols",
@@ -447,10 +457,11 @@ impl TerminalDimensionMode {
 
     pub fn toggle(&mut self) {
         *self = match *self {
+            TerminalDimensionMode::Auto => TerminalDimensionMode::GrowOnly,
             TerminalDimensionMode::GrowOnly => TerminalDimensionMode::MatchView,
             TerminalDimensionMode::MatchView => TerminalDimensionMode::FixedCols,
             TerminalDimensionMode::FixedCols => TerminalDimensionMode::Fixed,
-            TerminalDimensionMode::Fixed => TerminalDimensionMode::GrowOnly,
+            TerminalDimensionMode::Fixed => TerminalDimensionMode::Auto,
         };
     }
 }
@@ -848,7 +859,7 @@ impl Default for TerminalModeConfig {
         Self {
             rows: 24,
             cols: 80,
-            dimension_mode: TerminalDimensionMode::GrowOnly,
+            dimension_mode: TerminalDimensionMode::Auto,
             history_size: 100_000,
             empty_fill_char: String::from("░"),
             unfocused_cursor_glyph: String::from("█"),

@@ -11,6 +11,7 @@ use crate::{
     app::{
         App,
         selection::CopySide,
+        terminal_mode::WHOLE_ROW,
         types::{FocusTarget, RowChars, ScrollbarMap, TextRow},
     },
     clock,
@@ -39,7 +40,7 @@ fn highlight_grid(
     if highlights.iter().all(|hl| hl.pattern.is_empty()) {
         return;
     }
-    let (grid_rows, cols) = vt100_size(screen);
+    let grid_rows = vt100_size(screen).0;
     let shown_end = grid_rows.min(pan_y.saturating_add(area.height));
     // the first line shown can start above the view
     let mut row = pan_y;
@@ -47,7 +48,7 @@ fn highlight_grid(
         row -= 1;
     }
     let mut row_texts = screen
-        .rows(0, cols)
+        .rows(0, WHOLE_ROW)
         .skip(usize::from(row))
         .map(shown_string);
     let mut joined = String::new();
@@ -63,7 +64,7 @@ fn highlight_grid(
             joined.clear();
             loop {
                 let wrapped = screen.row_wrapped(row) && row + 1 < grid_rows;
-                push_row_cells(screen, row, cols, wrapped, &mut joined, &mut cells);
+                push_row_cells(screen, row, wrapped, &mut joined, &mut cells);
                 row += 1;
                 if !wrapped {
                     break;
@@ -97,7 +98,7 @@ fn highlight_grid(
                 }
                 if cells.is_empty() {
                     joined.clear();
-                    push_row_cells(screen, first_row, cols, false, &mut joined, &mut cells);
+                    push_row_cells(screen, first_row, false, &mut joined, &mut cells);
                     debug_assert_eq!(joined, row_text);
                 }
                 let first = cells.partition_point(|cell| cell.0 < start);
@@ -113,21 +114,23 @@ fn highlight_grid(
 /// Appends grid row `row`'s text to `text` as vt100's row text has it (an empty cell before a
 /// char as a space, a wide char's second cell left out: its first cell's style covers both),
 /// and each of those cells' text start, row and column to `cells`; with `to_end`, the empty
-/// cells at the end too
+/// cells at the end too. The whole row: a scrollback row kept from a wider grid is longer than
+/// the grid (MAX-282)
 fn push_row_cells(
     screen: &vt100::Screen,
     row: u16,
-    cols: u16,
     to_end: bool,
     text: &mut String,
     cells: &mut Vec<(usize, u16, u16)>,
 ) {
     let mut blanks_from = None;
     let mut prev_was_wide = false;
-    for col in 0..cols {
+    let mut row_end = 0;
+    for col in 0..WHOLE_ROW {
         let Some(cell) = screen.cell(row, col) else {
-            continue;
+            break;
         };
+        row_end = col + 1;
         if std::mem::take(&mut prev_was_wide) {
             continue;
         }
@@ -144,7 +147,7 @@ fn push_row_cells(
         text.push_str(&shown(cell.contents()));
     }
     if to_end && let Some(from) = blanks_from {
-        for blank in from..cols {
+        for blank in from..row_end {
             cells.push((text.len(), row, blank));
             text.push(' ');
         }
@@ -217,6 +220,7 @@ pub fn render_vt100_terminal(
         .style(*theme.terminal.term_inside)
         .filling_char(&app.settings().terminal_mode.empty_fill_char)
         .filling_char_style(*theme.terminal.term_outside)
+        .blank_to(app.terminal_mode.blank_cols())
         .zero_width(app.settings().ui.draw_zero_width)
         .unsure_width(app.settings().ui.draw_unsure_width);
 
@@ -229,7 +233,7 @@ pub fn render_vt100_terminal(
     highlight_grid(frame.buffer_mut(), content_area, screen, pan, highlights);
     draw_links(app, frame.buffer_mut(), content_area, pan, theme);
 
-    let (grid_rows, cols) = app.terminal_mode.get_vt100_size();
+    let grid_rows = app.terminal_mode.get_vt100_size().0;
     let max_sb = app.terminal_mode.get_max_scrollback();
     let current_sb = app.terminal_mode.vt100_screen().scrollback();
     let pan_x = app.terminal_mode.pan_offset_x();
@@ -332,7 +336,7 @@ pub fn render_vt100_terminal(
             let visible_rows = app
                 .terminal_mode
                 .vt100_screen()
-                .rows(0, cols)
+                .rows(0, WHOLE_ROW)
                 .skip(pan_y)
                 .take(content_area.height as usize)
                 .map(shown_string);

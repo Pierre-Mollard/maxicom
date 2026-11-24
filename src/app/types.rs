@@ -166,6 +166,10 @@ impl LogEntry {
 pub struct ViewportSize {
     pub cols: usize,
     pub rows: usize,
+    /// The columns the history's own frame takes beside the view, its borders and scrollbar:
+    /// `auto`'s smallest width counts them, so an 80-column window doesn't pan one column
+    /// (MAX-282)
+    pub frame_cols: u16,
 }
 
 impl ViewportSize {
@@ -173,6 +177,7 @@ impl ViewportSize {
         Self {
             cols: cols as usize,
             rows: rows as usize,
+            frame_cols: 0,
         }
     }
 }

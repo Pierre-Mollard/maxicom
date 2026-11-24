@@ -105,3 +105,29 @@ fn rows_come_back_as_given() {
     assert_eq!(writes.at(2), Some(run(2, 3, far + 1, 0)));
     assert_eq!(writes.at(3), Some(alternate));
 }
+
+/// MAX-282: each run is laid out as wide as the screen was when it came: the width is kept
+/// once per change, a run going on at another width is a run of its own, and the widths no
+/// run kept was written at go with the runs.
+/// How: a run at 80 columns, one going on from it at 120, one more at 160 on a log of two
+/// runs; then trimmed
+#[test]
+fn widths_follow_the_runs() {
+    let mut writes = Writes::new(2);
+    writes.push(run(0, 5, 10, 0), 5, 80);
+    writes.push(run(5, 7, 10, 5), 2, 120);
+    assert_eq!(writes.len(), 2);
+    assert_eq!(writes.cols_at(0), 80);
+    assert_eq!(writes.cols_at(5), 120);
+    assert_eq!(writes.widths.len(), 2);
+
+    writes.push(run(7, 9, 11, 0), 2, 160);
+    assert_eq!(writes.len(), 2);
+    assert_eq!(writes.cols_at(5), 120);
+    assert_eq!(writes.cols_at(7), 160);
+    assert_eq!(writes.widths.len(), 2);
+
+    writes.trim(7);
+    assert_eq!(writes.widths.len(), 1);
+    assert_eq!(writes.cols_at(7), 160);
+}

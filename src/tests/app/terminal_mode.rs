@@ -441,19 +441,24 @@ fn query_cursor_keys_keep_the_current_match() {
     assert!(tm.search_state.target_jump.is_some());
 }
 
-/// A view of `cols`x`rows` in `mode`, the configured size 24x80
+/// A view of `cols`x`rows` in `mode`, the configured size 24x80; 10x40 for `auto`, whose
+/// smallest size it is (MAX-282): below the views of the tests, so they show its sizing
 fn view(tm: &mut TerminalMode, mode: TerminalDimensionMode, cols: u16, rows: u16) {
-    tm.update_viewport(ViewportSize::new(cols, rows), 0, mode, 24, 80);
+    let (conf_rows, conf_cols) = match mode {
+        TerminalDimensionMode::Auto => (10, 40),
+        _ => (24, 80),
+    };
+    tm.update_viewport(ViewportSize::new(cols, rows), 0, mode, conf_rows, conf_cols);
 }
 
-/// MAX-140: `match_view` and `fixed_cols` don't shrink the grid past the content below
-/// the cursor (vt100 would drop those rows), and finish shrinking once it is gone.
+/// MAX-140: `auto`, `match_view` and `fixed_cols` don't shrink the grid past the content
+/// below the cursor (vt100 would drop those rows), and finish shrinking once it is gone.
 /// How: a 30-row grid with "menu" on row 20 and the prompt on row 1, a 10-row view in each
 /// mode, then the screen cleared.
 #[test]
 fn shrinking_keeps_the_rows_below_the_cursor() {
-    use TerminalDimensionMode::{FixedCols, MatchView};
-    for mode in [MatchView, FixedCols] {
+    use TerminalDimensionMode::{Auto, FixedCols, MatchView};
+    for mode in [Auto, MatchView, FixedCols] {
         let mut tm = terminal(30);
         tm.process_rx(TextEncoding::Utf8, b"\x1b[20;1Hmenu\x1b[1;1H$ ");
         view(&mut tm, mode, 80, 10);
@@ -467,29 +472,32 @@ fn shrinking_keeps_the_rows_below_the_cursor() {
     }
 }
 
-/// MAX-140: `match_view` doesn't make the grid narrower than its widest row (vt100 would cut
-/// the rows), and finishes once that row is gone; with blank rows and columns only it
-/// matches the view.
-/// How: a 70-column row on an 80-column grid and a 40x10 view, then the screen cleared; a
-/// fresh grid with a prompt only.
+/// MAX-140: `auto` and `match_view` don't make the grid narrower than its widest row (vt100
+/// would cut the rows), and finish once that row is gone; with blank rows and columns only
+/// they match the view.
+/// How: in each mode, a 70-column row on an 80-column grid and a 40x10 view, then the screen
+/// cleared; a fresh grid with a prompt only.
 #[test]
 fn shrinking_keeps_the_widest_row() {
-    let mut tm = terminal(10);
-    let long = "x".repeat(70);
-    tm.process_rx(TextEncoding::Utf8, long.as_bytes());
-    view(&mut tm, TerminalDimensionMode::MatchView, 40, 10);
-    assert_eq!(tm.get_vt100_size(), (10, 70));
-    let row = tm.get_max_scrollback();
-    assert_eq!(row_text(&mut tm, row), long);
+    use TerminalDimensionMode::{Auto, MatchView};
+    for mode in [Auto, MatchView] {
+        let mut tm = terminal(10);
+        let long = "x".repeat(70);
+        tm.process_rx(TextEncoding::Utf8, long.as_bytes());
+        view(&mut tm, mode, 40, 10);
+        assert_eq!(tm.get_vt100_size(), (10, 70), "{mode:?}");
+        let row = tm.get_max_scrollback();
+        assert_eq!(row_text(&mut tm, row), long, "{mode:?}");
 
-    tm.process_rx(TextEncoding::Utf8, b"\x1b[2J");
-    view(&mut tm, TerminalDimensionMode::MatchView, 40, 10);
-    assert_eq!(tm.get_vt100_size(), (10, 40));
+        tm.process_rx(TextEncoding::Utf8, b"\x1b[2J");
+        view(&mut tm, mode, 40, 10);
+        assert_eq!(tm.get_vt100_size(), (10, 40), "{mode:?}");
 
-    let mut tm = terminal(30);
-    tm.process_rx(TextEncoding::Utf8, b"$ ");
-    view(&mut tm, TerminalDimensionMode::MatchView, 40, 10);
-    assert_eq!(tm.get_vt100_size(), (10, 40));
+        let mut tm = terminal(30);
+        tm.process_rx(TextEncoding::Utf8, b"$ ");
+        view(&mut tm, mode, 40, 10);
+        assert_eq!(tm.get_vt100_size(), (10, 40), "{mode:?}");
+    }
 }
 
 /// MAX-140: a size the user asks for (the resize popup, fit to the view) applies exactly,
@@ -505,6 +513,331 @@ fn an_explicit_size_applies_as_asked() {
     );
     tm.set_vt100_size(5, 40);
     assert_eq!(tm.get_vt100_size(), (5, 40));
+}
+
+/// A 100-column line `A0123…` and a 130-column one `Bbcd…`, received on a 120x10 grid (the
+/// second one wraps), then 20 more lines to push both into the scrollback if `scrolled`
+fn wide_lines(mode: TerminalDimensionMode, scrolled: bool) -> TerminalMode {
+    let a: String = std::iter::once('A')
+        .chain((1..100).map(|i| char::from(b'0' + i % 10)))
+        .collect();
+    let b: String = std::iter::once('B')
+        .chain((1..130).map(|i| char::from(b'a' + i % 26)))
+        .collect();
+    let mut tm = terminal(24);
+    tm.set_vt100_size(10, 120);
+    tm.process_rx(TextEncoding::Utf8, format!("{a}\r\n{b}\r\n").as_bytes());
+    if scrolled {
+        for i in 0..20 {
+            tm.process_rx(TextEncoding::Utf8, format!("line {i}\r\n").as_bytes());
+        }
+    }
+    view(&mut tm, mode, 120, 10);
+    tm
+}
+
+/// The length of the line starting with `first` as search and copy read it, and the cells
+/// vt100 still holds for it, read past the grid's width
+fn line_widths(tm: &mut TerminalMode, first: char) -> (usize, usize) {
+    let read = tm
+        .all_text_lines()
+        .iter()
+        .find(|line| line.starts_with(first))
+        .map_or(0, |line| line.trim_end().len());
+    let rows = tm.get_vt100_size().0;
+    let mut held = 0;
+    for offset in 0..=tm.get_max_scrollback() {
+        tm.vt100_parser.screen_mut().set_scrollback(offset);
+        let screen = tm.vt100_parser.screen();
+        for row in (0..rows).filter(|&row| {
+            screen
+                .cell(row, 0)
+                .is_some_and(|c| c.contents() == first.to_string())
+        }) {
+            held = (0..u16::MAX)
+                .take_while(|&col| screen.cell(row, col).is_some_and(|c| c.has_contents()))
+                .count();
+        }
+    }
+    tm.vt100_parser.screen_mut().set_scrollback(0);
+    (read, held)
+}
+
+/// MAX-282: `grow_only` never loses a line, on screen or in the scrollback; its pan reaches
+/// the content, not the grid's blank columns past it, and a wider grid clears the wrap of the
+/// rows on screen (vt100).
+/// How: the wide lines on screen, a wider then a narrower view; the same lines in the
+/// scrollback, a narrower view, a taller one (rows pulled back), a wider one.
+#[test]
+fn grow_only_keeps_wide_lines() {
+    use TerminalDimensionMode::GrowOnly;
+    let mut tm = wide_lines(GrowOnly, false);
+    let b_row = tm.get_max_scrollback() + 1;
+    assert!(tm.vt100_screen().row_wrapped(1));
+    view(&mut tm, GrowOnly, 160, 10);
+    assert!(!tm.vt100_screen().row_wrapped(1));
+    view(&mut tm, GrowOnly, 60, 10);
+    assert_eq!(tm.get_vt100_size(), (10, 160));
+    assert_eq!(line_widths(&mut tm, 'A'), (100, 100));
+    assert_eq!(row_text(&mut tm, b_row).len(), 120);
+    // 120 columns of content in a 160-column grid
+    assert_eq!(tm.scroller.max_pan_x, 60);
+
+    let mut tm = wide_lines(GrowOnly, true);
+    for (cols, rows) in [(60, 10), (60, 40), (160, 40)] {
+        view(&mut tm, GrowOnly, cols, rows);
+        assert_eq!(line_widths(&mut tm, 'A'), (100, 100), "{cols}x{rows}");
+    }
+}
+
+/// MAX-282: `auto` keeps the rows on screen whole, and shrinks past the rows in the
+/// scrollback: they are read whole and the pan reaches them while they are shown; a taller
+/// view pulling them back on screen widens the grid for them first, and it shrinks again once
+/// they are back in the scrollback.
+/// How: the wide lines on screen then in the scrollback, a narrower view, scrolled to the top
+/// and back, a taller view, a wider one, 40 more lines and a narrower view.
+#[test]
+fn auto_keeps_wide_scrollback_lines() {
+    use TerminalDimensionMode::Auto;
+    let mut tm = wide_lines(Auto, false);
+    view(&mut tm, Auto, 60, 10);
+    assert_eq!(tm.get_vt100_size(), (10, 120));
+    assert_eq!(line_widths(&mut tm, 'A'), (100, 100));
+
+    let mut tm = wide_lines(Auto, true);
+    view(&mut tm, Auto, 60, 10);
+    assert_eq!(tm.get_vt100_size(), (10, 60));
+    assert_eq!(line_widths(&mut tm, 'A'), (100, 100));
+    assert_eq!(tm.scroller.max_pan_x, 0);
+    // B's first row is 120 columns wide
+    tm.scroll_to_top();
+    view(&mut tm, Auto, 60, 10);
+    assert_eq!(tm.scroller.max_pan_x, 60);
+    tm.scroll_to_bottom();
+    view(&mut tm, Auto, 60, 10);
+    assert_eq!(tm.scroller.max_pan_x, 0);
+    view(&mut tm, Auto, 60, 40);
+    assert_eq!(tm.get_vt100_size(), (40, 120));
+    assert_eq!(line_widths(&mut tm, 'A'), (100, 100));
+    view(&mut tm, Auto, 160, 40);
+    assert_eq!(line_widths(&mut tm, 'A'), (100, 100));
+
+    for i in 0..40 {
+        tm.process_rx(TextEncoding::Utf8, format!("more {i}\r\n").as_bytes());
+    }
+    view(&mut tm, Auto, 60, 40);
+    assert_eq!(tm.get_vt100_size(), (40, 60));
+    assert_eq!(line_widths(&mut tm, 'A'), (100, 100));
+}
+
+/// MAX-282: `auto` is never smaller than the configured size, its columns counting the
+/// history's frame (a 79-column view beside a scrollbar is 80 columns of window: no pan by
+/// one), and holds its size while a full-screen program uses the alternate screen: vt100
+/// resizes the main screen along, which can't be measured then. Back on the main screen it
+/// follows the view again, nothing cut.
+/// How: a 24x80 configured size and a 60x10 view; 79 and 60 columns with a one-column frame;
+/// then the wide lines on screen, a full-screen program, a 60-column view then a taller one
+/// during it, and the program leaving.
+#[test]
+fn auto_minimum_and_alternate_screen() {
+    use TerminalDimensionMode::Auto;
+    let size = |tm: &mut TerminalMode, cols, rows| {
+        tm.update_viewport(ViewportSize::new(cols, rows), 0, Auto, 24, 80);
+    };
+    let mut tm = terminal(10);
+    size(&mut tm, 60, 10);
+    assert_eq!(tm.get_vt100_size(), (24, 80));
+    for (cols, grid_cols) in [(79, 79), (60, 79)] {
+        let viewport = ViewportSize {
+            frame_cols: 1,
+            ..ViewportSize::new(cols, 30)
+        };
+        tm.update_viewport(viewport, 0, Auto, 24, 80);
+        assert_eq!(tm.get_vt100_size(), (30, grid_cols), "{cols}");
+    }
+
+    let mut tm = wide_lines(Auto, false);
+    tm.process_rx(TextEncoding::Utf8, b"\x1b[?1049hmenu");
+    size(&mut tm, 60, 10);
+    assert_eq!(tm.get_vt100_size(), (10, 120));
+    size(&mut tm, 60, 40);
+    assert_eq!(tm.get_vt100_size(), (10, 120));
+    tm.process_rx(TextEncoding::Utf8, b"\x1b[?1049l");
+    size(&mut tm, 60, 40);
+    assert_eq!(tm.get_vt100_size(), (40, 120));
+    assert_eq!(line_widths(&mut tm, 'A'), (100, 100));
+}
+
+/// MAX-282: the byte trace lays each run out as wide as the screen was when it came, so `Y`
+/// finds the bytes of a line after the screen's width changed: the second row of a wrapped
+/// line once the screen got wider, a history line wider than the screen once it got narrower.
+/// How: a 130-char line wrapping at 100 columns, the screen 200 wide, its second row selected;
+/// a 178-char line at 220 columns, 20 lines after it, `auto` at 98 columns, the line selected
+#[test]
+fn trace_follows_the_width_runs_were_written_at() {
+    use TerminalDimensionMode::{Auto, GrowOnly};
+    let settings = crate::configs::SettingsConfig::default();
+    let traced = |tm: &mut TerminalMode, line: usize| {
+        tm.handle_copy_action(CopyModeAction::Enter, &settings);
+        tm.copy_state.enter_at(line, 0);
+        tm.handle_copy_action(CopyModeAction::SelectLine, &settings);
+        let bytes = tm.selection_bytes(TextEncoding::Utf8);
+        tm.handle_copy_action(CopyModeAction::Exit, &settings);
+        bytes
+            .iter()
+            .map(|range| range.end - range.start)
+            .sum::<u64>()
+    };
+    let device = |tm: &mut TerminalMode, text: &str| {
+        tm.process_device_rx(TextEncoding::Utf8, text.as_bytes(), false, false, true);
+    };
+
+    let mut tm = terminal(10);
+    tm.set_vt100_size(10, 100);
+    device(&mut tm, &format!("Z {}\r\n", "q".repeat(128)));
+    view(&mut tm, GrowOnly, 200, 10);
+    let second_row = tm.get_max_scrollback() + 1;
+    assert_eq!(traced(&mut tm, second_row), 30);
+
+    let mut tm = terminal(10);
+    tm.set_vt100_size(10, 220);
+    device(&mut tm, &format!("Y {} END\r\n", "w".repeat(172)));
+    for i in 0..20 {
+        device(&mut tm, &format!("after {i}\r\n"));
+    }
+    view(&mut tm, Auto, 98, 10);
+    assert_eq!(tm.get_vt100_size().1, 98);
+    let line = (tm.all_text_lines().iter())
+        .position(|line| line.starts_with("Y "))
+        .unwrap();
+    assert_eq!(traced(&mut tm, line), 178);
+}
+
+/// MAX-282: `match_view` is `auto` without the rows pulled back from the scrollback: a taller
+/// view cuts the scrollback lines wider than the grid for good (lossy, as the fixed modes).
+/// How: the wide lines in the scrollback, a narrower view, a taller one, a wider one.
+#[test]
+fn match_view_cuts_wide_scrollback_lines() {
+    use TerminalDimensionMode::MatchView;
+    let mut tm = wide_lines(MatchView, true);
+    view(&mut tm, MatchView, 60, 10);
+    assert_eq!(line_widths(&mut tm, 'A'), (100, 100));
+    view(&mut tm, MatchView, 60, 40);
+    assert_eq!(tm.get_vt100_size(), (40, 60));
+    assert_eq!(line_widths(&mut tm, 'A'), (60, 60));
+    view(&mut tm, MatchView, 160, 40);
+    assert_eq!(line_widths(&mut tm, 'A'), (60, 60));
+}
+
+/// MAX-282: `grow_only` widens for the rows a taller view pulls back too, when they were kept
+/// from a grid `auto` had wider.
+/// How: the wide lines in the scrollback, `auto` at 60 columns, then `grow_only` taller.
+#[test]
+fn grow_only_widens_for_rows_pulled_back() {
+    use TerminalDimensionMode::{Auto, GrowOnly};
+    let mut tm = wide_lines(Auto, true);
+    view(&mut tm, Auto, 60, 10);
+    assert_eq!(tm.get_vt100_size(), (10, 60));
+    view(&mut tm, GrowOnly, 60, 40);
+    assert_eq!(tm.get_vt100_size(), (40, 120));
+    assert_eq!(line_widths(&mut tm, 'A'), (100, 100));
+}
+
+/// MAX-282: `fixed_cols` and `fixed` cut the lines on screen at the configured width, and
+/// the scrollback lines they pull back on screen (simple modes, accepted); a line left in
+/// the scrollback stays whole.
+/// How: the wide lines on screen, then in the scrollback, each mode; a taller view.
+#[test]
+fn fixed_modes_cut_at_the_configured_width() {
+    use TerminalDimensionMode::{Fixed, FixedCols};
+    for mode in [FixedCols, Fixed] {
+        let mut tm = wide_lines(mode, false);
+        assert_eq!(tm.get_vt100_size().1, 80, "{mode:?}");
+        assert_eq!(line_widths(&mut tm, 'A'), (80, 80), "{mode:?}");
+    }
+
+    let mut tm = wide_lines(FixedCols, true);
+    assert_eq!(line_widths(&mut tm, 'A'), (100, 100));
+    view(&mut tm, FixedCols, 60, 40);
+    assert_eq!(line_widths(&mut tm, 'A'), (80, 80));
+
+    // `fixed` takes its 24 rows at once: the line is pulled back and cut
+    let mut tm = wide_lines(Fixed, true);
+    assert_eq!(tm.get_vt100_size(), (24, 80));
+    assert_eq!(line_widths(&mut tm, 'A'), (80, 80));
+}
+
+/// MAX-282: the pan reaches the widest content of the rows shown and the remote's cursor when
+/// its row is shown, not the grid's blank columns: none for a grid grown for a moment, none
+/// for a hidden cursor, the cursor's last column after a full row (a wrap pending).
+/// How: a 40-column line in a grid grown to 160 columns, an 80-column view; the cursor moved
+/// to column 151 on a blank row, then hidden; a full 160-column row.
+#[test]
+fn pan_reaches_the_content_and_the_cursor() {
+    use TerminalDimensionMode::GrowOnly;
+    let mut tm = terminal(10);
+    view(&mut tm, GrowOnly, 160, 10);
+    tm.process_rx(
+        TextEncoding::Utf8,
+        format!("{}\r\n", "x".repeat(40)).as_bytes(),
+    );
+    view(&mut tm, GrowOnly, 80, 10);
+    assert_eq!(tm.get_vt100_size().1, 160);
+    assert_eq!(tm.scroller.max_pan_x, 0);
+    assert_eq!(tm.can_pan_right(), None);
+
+    tm.process_rx(TextEncoding::Utf8, b"\x1b[5;151H");
+    view(&mut tm, GrowOnly, 80, 10);
+    assert_eq!(tm.scroller.max_pan_x, 71);
+    tm.process_rx(TextEncoding::Utf8, b"\x1b[?25l");
+    view(&mut tm, GrowOnly, 80, 10);
+    assert_eq!(tm.scroller.max_pan_x, 0);
+
+    tm.process_rx(
+        TextEncoding::Utf8,
+        format!("\x1b[?25h\x1b[6;1H{}", "y".repeat(160)).as_bytes(),
+    );
+    view(&mut tm, GrowOnly, 80, 10);
+    assert_eq!(tm.scroller.max_pan_x, 80);
+}
+
+/// MAX-282: the pan's reach is the end of the widest row shown whatever it holds: rows ending
+/// far from the grid's edge, a wider one after a narrower one, a wide char last, a full row.
+/// How: a 200-column grid in a 60-column view, a 100-column row then a 150-column one ending in
+/// a wide char; then a full 200-column row.
+#[test]
+fn pan_reach_finds_the_widest_row() {
+    use TerminalDimensionMode::Fixed;
+    let mut tm = TerminalMode::new(100, 10, 200);
+    let rows = format!("{}\r\n{}界\r\n", "x".repeat(100), "y".repeat(148));
+    tm.process_rx(TextEncoding::Utf8, rows.as_bytes());
+    tm.update_viewport(ViewportSize::new(60, 10), 0, Fixed, 10, 200);
+    assert_eq!(tm.scroller.max_pan_x, 90);
+
+    tm.process_rx(TextEncoding::Utf8, "z".repeat(200).as_bytes());
+    tm.update_viewport(ViewportSize::new(60, 10), 0, Fixed, 10, 200);
+    assert_eq!(tm.scroller.max_pan_x, 140);
+}
+
+/// MAX-282: a scrollback row wider than the grid reads whole, for search and copy, and a
+/// search match past the grid's width pans the view to it.
+/// How: `auto` shrunk to 60 columns with the 100-column line in the scrollback: its
+/// text, then centered on its column 95.
+#[test]
+fn wide_scrollback_rows_read_whole() {
+    use TerminalDimensionMode::Auto;
+    let mut tm = wide_lines(Auto, true);
+    view(&mut tm, Auto, 60, 10);
+    assert_eq!(tm.get_vt100_size().1, 60);
+    let line = (tm.all_text_lines().iter())
+        .position(|line| line.starts_with('A'))
+        .unwrap();
+    assert_eq!(row_text(&mut tm, line).len(), 100);
+
+    tm.center_on_target_match(line, 95, 60, 10);
+    view(&mut tm, Auto, 60, 10);
+    // 120 columns shown (B's first row): the pan stops at 60
+    assert_eq!(tm.pan_offset_x(), 60);
 }
 
 /// MAX-272: a restore skips the erases of the scrollback (`ESC[3J`, `ESC[?3J`), whole or cut
