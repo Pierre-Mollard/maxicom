@@ -8,6 +8,7 @@ use crate::{
     configs::KeyBindingAction,
     inputs::Action,
     link::{Address, Protocol},
+    overlays::SettingKey,
     paths::expand_home,
 };
 
@@ -41,6 +42,8 @@ pub enum ArgKind {
     Link,
     Plot,
     Profile,
+    /// A command's name, the registry's or one of `[commands]` (MAX-283)
+    Command,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,8 +73,18 @@ pub enum Target {
     /// The action built from its arguments, checked against its spec
     Build(fn(&App, &[ArgValue]) -> Result<Action, String>),
     /// A query (MAX-165): the state read, nothing changed, its value given back
-    Query(fn(&App, &[ArgValue]) -> Result<Value, String>),
+    Query(QueryFn),
+    /// The user's popup, the others' value (MAX-283): the action for the user, the query
+    /// for a trigger, a profile or a client
+    Popup {
+        action: KeyBindingAction,
+        query: QueryFn,
+    },
 }
+
+/// A query's function (MAX-165). It takes the app mutably to read what needs it (the
+/// emulator's scrollback, MAX-283), but leaves it as it was
+pub type QueryFn = fn(&mut App, &[ArgValue]) -> Result<Value, String>;
 
 /// Who started an action or a chain (MAX-165). Only `Input` acts as typing: it ends the
 /// prefix and stops a mash
@@ -99,6 +112,26 @@ impl Origin {
     /// that ask them)
     pub fn is_user(&self) -> bool {
         matches!(self, Self::Input | Self::CommandLine | Self::KeyBinding)
+    }
+
+    /// Its kind as `status` names it (MAX-283), the trigger's or the hook's name apart
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::CommandLine => "command-line",
+            Self::KeyBinding => "key-binding",
+            Self::Trigger(_) => "trigger",
+            Self::Profile(_) => "profile",
+        }
+    }
+
+    /// The trigger's name, the profile hook's; none for the user
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Self::Trigger(name) => Some(name),
+            Self::Profile(hook) => Some(hook),
+            Self::Input | Self::CommandLine | Self::KeyBinding => None,
+        }
     }
 }
 
@@ -168,7 +201,7 @@ impl CommandSpec {
     const fn query(
         name: &'static str,
         args: &'static [ArgSpec],
-        query: fn(&App, &[ArgValue]) -> Result<Value, String>,
+        query: QueryFn,
         help: &'static str,
     ) -> Self {
         Self {
@@ -176,6 +209,24 @@ impl CommandSpec {
             args,
             help,
             target: Target::Query(query),
+            asks: Asks::Never,
+        }
+    }
+
+    /// A popup for the user, a value for the others (MAX-283). Its arguments, all optional,
+    /// are the query's: the popup shows everything
+    const fn popup(
+        name: &'static str,
+        args: &'static [ArgSpec],
+        action: KeyBindingAction,
+        query: QueryFn,
+        help: &'static str,
+    ) -> Self {
+        Self {
+            name,
+            args,
+            help,
+            target: Target::Popup { action, query },
             asks: Asks::Never,
         }
     }
@@ -465,7 +516,13 @@ pub static COMMANDS: &[CommandSpec] = {
             A::ToggleTriggers,
             "Arm / disarm the triggers",
         ),
-        CommandSpec::action("triggers", A::Triggers, "Open the triggers").asking(Asks::Always),
+        CommandSpec::popup(
+            "triggers",
+            &[],
+            A::Triggers,
+            query::triggers,
+            "Open the triggers",
+        ),
         CommandSpec::action("profiles", A::Profiles, "Open the profiles").asking(Asks::Always),
         CommandSpec::action(
             "plot-freeze",
@@ -492,18 +549,39 @@ pub static COMMANDS: &[CommandSpec] = {
             A::DismissNotifications,
             "Close all the notifications",
         ),
-        CommandSpec::action(
+        CommandSpec::popup(
             "notifications",
+            &[
+                ArgSpec {
+                    name: "from",
+                    kind: ArgKind::Int {
+                        min: 0,
+                        max: 100_000,
+                        suggestions: &[],
+                    },
+                    optional: true,
+                },
+                ArgSpec {
+                    name: "count",
+                    kind: ArgKind::Int {
+                        min: 1,
+                        max: query::MAX_COUNT,
+                        suggestions: &[],
+                    },
+                    optional: true,
+                },
+            ],
             A::Notifications,
+            query::notifications,
             "Open the notifications said since the start, to read one again",
-        )
-        .asking(Asks::Always),
-        CommandSpec::action(
+        ),
+        CommandSpec::popup(
             "marks",
+            &[],
             A::Marks,
+            query::marks,
             "Open the marks: a letter jumps to its mark",
-        )
-        .asking(Asks::Always),
+        ),
         CommandSpec::action("prev-mark", A::PrevMark, "Go to the mark above"),
         CommandSpec::action("next-mark", A::NextMark, "Go to the mark below"),
         CommandSpec::build(
@@ -749,6 +827,79 @@ pub static COMMANDS: &[CommandSpec] = {
             query::status,
             "Show the link, its settings and what runs: the mode, the counts, the recording",
         ),
+        CommandSpec::query(
+            "get",
+            &[ArgSpec {
+                name: "setting",
+                kind: ArgKind::Enum(&SettingKey::NAMES),
+                optional: true,
+            }],
+            query::get,
+            "Show a setting's value, or every setting's",
+        ),
+        CommandSpec::query(
+            "history",
+            &[
+                ArgSpec {
+                    name: "from",
+                    kind: ArgKind::Int {
+                        min: 0,
+                        max: i64::MAX,
+                        suggestions: &[],
+                    },
+                    optional: true,
+                },
+                ArgSpec {
+                    name: "count",
+                    kind: ArgKind::Int {
+                        min: 1,
+                        max: query::MAX_COUNT,
+                        suggestions: &[],
+                    },
+                    optional: true,
+                },
+            ],
+            query::history,
+            "Show the last lines of the line mode history, skipping [from] newest",
+        ),
+        CommandSpec::query(
+            "history-size",
+            &[],
+            query::history_size,
+            "Show how many lines the line mode history holds, and how many its cap dropped",
+        ),
+        CommandSpec::query(
+            "screen",
+            &[ArgSpec {
+                name: "format",
+                kind: ArgKind::Enum(&["text", "colors"]),
+                optional: true,
+            }],
+            query::screen,
+            "Show the terminal's live screen as text, or with its colors as escapes",
+        ),
+        CommandSpec::query(
+            "cursor",
+            &[],
+            query::cursor,
+            "Show the terminal cursor's row and column, from 0, and whether it shows",
+        ),
+        CommandSpec::query(
+            "term-size",
+            &[],
+            query::term_size,
+            "Show the terminal's rows and columns",
+        ),
+        CommandSpec::query(
+            "commands",
+            &[ArgSpec {
+                name: "name",
+                kind: ArgKind::Command,
+                optional: true,
+            }],
+            query::commands,
+            "List the commands, or show one's arguments and what it needs",
+        ),
         CommandSpec::build(
             "notify",
             &[
@@ -855,9 +1006,10 @@ pub fn find_by_action(action: KeyBindingAction) -> Option<&'static CommandSpec> 
     if let KeyBindingAction::Command(spec) = action {
         return Some(spec);
     }
-    COMMANDS
-        .iter()
-        .find(|spec| matches!(spec.target, Target::Action(a) if a == action))
+    COMMANDS.iter().find(|spec| match spec.target {
+        Target::Action(a) | Target::Popup { action: a, .. } => a == action,
+        Target::Build(_) | Target::Query(_) => false,
+    })
 }
 
 /// A command line saved under a name in `[commands]` of `keymap.toml` (MAX-239), a command
@@ -966,6 +1118,15 @@ fn complete_in(commands: &'static [CommandSpec], line: &str, names: &Names) -> C
                     .map(|name| escape_word(name))
                     .filter(|name| name.starts_with(prefix))
                     .collect(),
+                ArgKind::Command => {
+                    let mut names: Vec<String> = (commands.iter().map(|spec| spec.name))
+                        .chain(named.iter().map(|command| command.name.as_str()))
+                        .filter(|name| name.starts_with(prefix))
+                        .map(String::from)
+                        .collect();
+                    names.sort_unstable();
+                    names
+                }
                 ArgKind::Plot => (plot_names.iter().map(String::as_str))
                     .chain(["off"])
                     .map(escape_word)
@@ -1249,13 +1410,35 @@ impl ArgKind {
                 .find(|value| **value == text)
                 .map(|value| ArgValue::Enum(value))
                 .ok_or_else(|| format!("'{text}' is not one of {}", values.join(", "))),
-            Self::String | Self::Trigger | Self::Link | Self::Plot | Self::Profile => {
-                Ok(ArgValue::String(text.to_string()))
-            }
+            Self::String
+            | Self::Trigger
+            | Self::Link
+            | Self::Plot
+            | Self::Profile
+            | Self::Command => Ok(ArgValue::String(text.to_string())),
             Self::Path => Ok(ArgValue::Path(PathBuf::from(text))),
             Self::Address => text.parse().map(ArgValue::Address),
             Self::Hex => parse_hex(text).map(ArgValue::Bytes),
             Self::Bytes => unreachable!("bytes aren't text"),
+        }
+    }
+
+    /// Its name in `commands`' description of an argument (MAX-283)
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Int { .. } => "int",
+            Self::Bool => "bool",
+            Self::Enum(_) => "enum",
+            Self::String => "string",
+            Self::Path => "path",
+            Self::Address => "address",
+            Self::Hex => "hex",
+            Self::Bytes => "bytes",
+            Self::Trigger => "trigger",
+            Self::Link => "link",
+            Self::Plot => "plot",
+            Self::Profile => "profile",
+            Self::Command => "command",
         }
     }
 
@@ -1275,7 +1458,8 @@ impl ArgKind {
             | Self::Trigger
             | Self::Link
             | Self::Plot
-            | Self::Profile => &[],
+            | Self::Profile
+            | Self::Command => &[],
         };
         values
             .iter()

@@ -14,6 +14,7 @@ const PAGE: usize = 10;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarkRow {
     pub letter: char,
+    pub line: usize,
     pub time: Option<Timestamp>,
     pub text: String,
 }

@@ -460,6 +460,56 @@ fn trigger_marks_its_line() {
     assert_eq!(marked(&mut app).1, ["panic terminal"]);
 }
 
+/// MAX-283 (step 5): `marks` gives each view's marks by letter: the line (history entry or
+/// world row), its time when known, its text; a view without marks gives `none`.
+/// How: a trigger marking `c` on `panic`, fed in line mode (both views fed), then terminal
+/// mode alone; times left out of the comparison.
+#[test]
+fn marks_gives_each_views_marks() {
+    use crate::configs::settings::DualBufferMode;
+    let mut app = app();
+    let shown = |app: &mut App| -> Vec<String> {
+        let lines = crate::commands::query::marks(app, &[])
+            .unwrap()
+            .lines()
+            .into_iter();
+        let lines = lines.filter(|line| !line.starts_with("    time: "));
+        lines.map(|line| line.trim_end().to_string()).collect()
+    };
+    assert_eq!(shown(&mut app), ["line: none", "terminal: none"]);
+    let config: crate::configs::TriggersConfig = toml::from_str(
+        r#"
+            [crash]
+            match = "panic"
+            run = "notify error crashed"
+            mark = "c"
+            armed = true
+            rearm = true
+            silent = true
+            "#,
+    )
+    .unwrap();
+    app.settings.mode = Mode::Line;
+    app.set_triggers(config.compile().unwrap());
+    app.feed_rx(b"boot\r\npanic here\r\n");
+    app.settings.mode = Mode::Terminal;
+    app.settings.dual_mode_buffering = DualBufferMode::ActiveOnly;
+    app.feed_rx(b"panic again\r\n");
+    assert_eq!(
+        shown(&mut app),
+        [
+            "line:",
+            "  c:",
+            "    line: 1",
+            "    text: panic here",
+            "terminal:",
+            "  c:",
+            "    line: 2",
+            "    text: panic again",
+        ]
+    );
+}
+
 /// MAX-220: each trigger counts its fires, a silent one too, not while disarmed;
 /// `trigger reset` sets one's count or all back to zero with a notice, a name that isn't
 /// one refused. A reload keeps the counts of the triggers of the same name; a switch to
@@ -487,6 +537,12 @@ fn trigger_counts() {
         let triggers = app.triggers().iter();
         triggers.map(|t| (t.name.clone(), t.hits)).collect()
     };
+    // MAX-283: when each last fired, kept and reset with its count
+    let fired = |app: &App| -> Vec<bool> {
+        (app.triggers().iter())
+            .map(|t| t.last_hit.is_some())
+            .collect()
+    };
     let counts = |login, panic, uboot| {
         vec![
             ("login".to_string(), login),
@@ -508,6 +564,7 @@ fn trigger_counts() {
         "Trigger panic: count reset"
     );
     assert_eq!(hits(&app), counts(2, 0, 1));
+    assert_eq!(fired(&app), [true, false, true]);
     assert_eq!(
         run(&mut app, "trigger reset nope"),
         "trigger: no trigger named 'nope'"
@@ -515,14 +572,17 @@ fn trigger_counts() {
 
     reload(&mut app);
     assert_eq!(hits(&app), counts(2, 0, 1), "kept across a reload");
+    assert_eq!(fired(&app), [true, false, true], "kept across a reload");
     assert_eq!(run(&mut app, "trigger reset"), "Trigger counts reset");
     assert_eq!(hits(&app), counts(0, 0, 0));
+    assert_eq!(fired(&app), [false; 3]);
 
     run(&mut app, "trigger on");
     app.feed_rx(b"login: ");
     assert_eq!(hits(&app), counts(1, 0, 0));
     app.switch_session();
     assert_eq!(hits(&app), counts(0, 0, 0), "reset by a device switch");
+    assert_eq!(fired(&app), [false; 3], "reset by a device switch");
 }
 
 /// MAX-6: the toggle arms every trigger when none is armed, else disarms them all; the
@@ -3198,6 +3258,13 @@ fn every_command_shows_what_it_did() {
         ),
         ("notify info hi", "info hi"),
         ("status", "popup Query"),
+        ("commands", "popup Query"),
+        ("get", "popup Query"),
+        ("history", "popup Query"),
+        ("history-size", "popup Query"),
+        ("screen", "popup Query"),
+        ("cursor", "popup Query"),
+        ("term-size", "popup Query"),
         ("search x", ""),
         ("mash x y", "info Mashing until 'y'"),
         ("trigger on", "error trigger: triggers.toml has no trigger"),

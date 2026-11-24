@@ -52,11 +52,30 @@ pub struct Cancelled {
 
 /// A chain running: its commands still to come, and what it waits for
 #[derive(Debug)]
-struct Job {
+pub struct Job {
     id: JobId,
     origin: Origin,
     commands: VecDeque<Invocation>,
     wait: Option<Wait>,
+}
+
+impl Job {
+    pub fn id(&self) -> JobId {
+        self.id
+    }
+
+    pub fn origin(&self) -> &Origin {
+        &self.origin
+    }
+
+    /// Its commands not run yet, the one due first
+    pub fn commands(&self) -> &VecDeque<Invocation> {
+        &self.commands
+    }
+
+    pub fn wait(&self) -> Option<Wait> {
+        self.wait
+    }
 }
 
 /// Whose a job is, for its turn and for `cancel`: one owner's chains run one after the other
@@ -142,6 +161,13 @@ impl Jobs {
             return Some((caller, invocation));
         }
         None
+    }
+
+    /// The jobs running, the oldest first (MAX-283): one with no command left and nothing to
+    /// wait for is done, out of the list even before `next` drops it, as the job of the query
+    /// reading the list is when the query is its last command
+    pub fn running(&self) -> impl Iterator<Item = &Job> {
+        (self.jobs.iter()).filter(|job| !job.commands.is_empty() || job.wait.is_some())
     }
 
     /// `job` waits for `wait` before its next command

@@ -49,12 +49,12 @@ use crate::{
     link::{
         Address, LinkConfig, LinkKind, LinkState,
         replay::Replay,
-        serial::{LineControl, LineSettings},
+        serial::{LineControl, LineLevel, LineSettings},
     },
     notification::{Notice, NotificationManager, ToastLevel},
     overlays::{
-        MarkBrowser, NoticeBrowser, Overlay, OverlayResponse, PopupTarget, ScreenshotDialog,
-        SettingKey,
+        MarkBrowser, MarkRow, NoticeBrowser, Overlay, OverlayResponse, PopupTarget,
+        ScreenshotDialog, SettingKey,
     },
     paths::{create_parent_dirs, expand_home},
     transfer::{FileTransfer, Step, modem::Protocol},
@@ -540,6 +540,20 @@ impl App {
     /// The link's address and line settings (MAX-168)
     pub fn link_config(&self) -> &LinkConfig {
         self.link.config()
+    }
+
+    /// The marks of `mode`'s view by line (MAX-164), with their line's text: the terminal's
+    /// read from the emulator's scrollback, put back after (MAX-283)
+    pub fn mark_rows(&mut self, mode: Mode) -> Vec<MarkRow> {
+        match mode {
+            Mode::Line => self.line_mode.mark_rows(),
+            Mode::Terminal => self.terminal_mode.mark_rows(),
+        }
+    }
+
+    /// DTR and RTS as maxicom last set them since the open (MAX-283)
+    pub fn line_levels(&self) -> (LineLevel, LineLevel) {
+        self.link.levels()
     }
 
     /// The link itself, for the other modules' tests to set its address (MAX-168)
@@ -1299,12 +1313,15 @@ impl App {
     }
 
     /// The rules of `triggers.toml`, at startup and on a reload (MAX-6)
-    /// The triggers of the config and its profiles, each keeping the count of the one of the
-    /// same name it replaces (MAX-220): a reload or a profile lay doesn't reset them
+    /// The triggers of the config and its profiles, each keeping the count and the last fire
+    /// of the one of the same name it replaces (MAX-220): a reload or a profile lay doesn't
+    /// reset them
     pub fn set_triggers(&mut self, mut triggers: Vec<Trigger>) {
         for trigger in &mut triggers {
-            let old = self.triggers.iter().find(|old| old.name == trigger.name);
-            trigger.hits = old.map_or(0, |old| old.hits);
+            if let Some(old) = self.triggers.iter().find(|old| old.name == trigger.name) {
+                trigger.hits = old.hits;
+                trigger.last_hit = old.last_hit;
+            }
         }
         self.triggers = triggers;
     }
@@ -1353,7 +1370,7 @@ impl App {
     fn reset_trigger_hits(&mut self, name: Option<&str>) -> Note {
         for trigger in &mut self.triggers {
             if name.is_none_or(|name| name == trigger.name) {
-                trigger.hits = 0;
+                trigger.reset_hits();
             }
         }
         match name {
@@ -2071,10 +2088,7 @@ impl App {
                 UpdateEffect::None
             }
             AppAction::OpenMarks => {
-                let rows = match self.settings.mode {
-                    Mode::Line => self.line_mode.mark_rows(),
-                    Mode::Terminal => self.terminal_mode.mark_rows(),
-                };
+                let rows = self.mark_rows(self.settings.mode);
                 self.overlay = Some(Overlay::Marks(MarkBrowser::new(rows)));
                 UpdateEffect::None
             }
@@ -3007,6 +3021,11 @@ impl App {
     /// The session backup runs, what the optional `session` status bar condition shows
     pub fn has_session(&self) -> bool {
         self.recorder.has_session()
+    }
+
+    /// The chains running as jobs (MAX-283), for `status`
+    pub fn jobs(&self) -> &Jobs {
+        &self.jobs
     }
 
     /// What the recording running saves, if one runs: what `REC` shows

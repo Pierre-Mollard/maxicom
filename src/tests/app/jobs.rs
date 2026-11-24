@@ -376,7 +376,8 @@ fn automation_cant_run_what_asks_the_user() {
 }
 
 /// MAX-165 (A1 step 5): `status` from the user opens its answer in a popup: the link, its
-/// state, the mode; from a trigger it does nothing, and the trigger's chain goes on.
+/// state, the mode, DTR (MAX-283) unset by the open; from a trigger it does nothing, and the
+/// trigger's chain goes on.
 /// How: `status` bound to a key, then a trigger's `status; send x`.
 #[test]
 fn status_answers_the_user_only() {
@@ -398,6 +399,7 @@ fn status_answers_the_user_only() {
     assert!(view.lines.iter().any(|line| line.starts_with("link: ")));
     assert!(view.lines.contains(&"state: open".to_string()), "{view:?}");
     assert!(view.lines.contains(&"rx: 0".to_string()), "{view:?}");
+    assert!(view.lines.contains(&"dtr: unset".to_string()), "{view:?}");
     app.close_overlay();
 
     let trigger = Origin::Trigger("boot".to_string());
@@ -406,4 +408,113 @@ fn status_answers_the_user_only() {
     let effects = drain(&mut app);
     assert!(app.overlay().is_none());
     assert!(matches!(&effects[..], [UpdateEffect::None, UpdateEffect::Transmit(x)] if x == b"x"));
+}
+
+/// MAX-283 (step 1): `status` shows the session backup (its stem, its folder, running or
+/// paused by a replay) and the jobs running (their number, origin, trigger name, command due,
+/// commands left, wait); the job of the `status` asked, its last command, is done and left out.
+/// How: no session and no job, then a session in a temp folder and a trigger's chain waiting
+/// on a `sleep`, `status` run as the user's chain; then a replay over the live link.
+#[test]
+fn status_shows_the_session_and_the_jobs() {
+    let mut app = app();
+    let status = |app: &mut App| {
+        let chain = crate::commands::parse("status").unwrap();
+        app.update(Action::App(AppAction::QueueCommands(chain)));
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            app.update_for(&caller, action);
+        }
+        let Some(Overlay::Query(view)) = app.overlay() else {
+            panic!("no answer popup");
+        };
+        let lines = view.lines.clone();
+        app.close_overlay();
+        lines
+    };
+    let lines = status(&mut app);
+    assert!(lines.contains(&"session: none".to_string()), "{lines:?}");
+    assert!(lines.contains(&"jobs: none".to_string()), "{lines:?}");
+
+    let dir = std::env::temp_dir().join(format!("maxicom_status_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    app.start_session(Some(dir.clone()));
+    let trigger = Origin::Trigger("boot".to_string());
+    let job = (app.jobs.push(
+        trigger,
+        crate::commands::parse("sleep 60000; send x").unwrap(),
+    ))
+    .unwrap();
+    let (caller, action) = app.next_command_action(Instant::now()).unwrap();
+    app.update_for(&caller, action);
+    let lines = status(&mut app);
+    let (raw, false) = app.session_backup().unwrap() else {
+        panic!("the session isn't running");
+    };
+    let folder = raw.parent().unwrap();
+    let stem = folder.file_name().unwrap().to_string_lossy();
+    let at = lines.iter().position(|line| line == "session:").unwrap();
+    assert_eq!(
+        lines[at + 1..at + 4],
+        [
+            format!("  stem: {stem}"),
+            format!("  folder: {}", folder.display()),
+            "  state: running".to_string(),
+        ]
+    );
+    let at = lines.iter().position(|line| line == "jobs:").unwrap();
+    assert_eq!(
+        lines[at + 1..],
+        [
+            format!("  id: {job}"),
+            "  origin: trigger".to_string(),
+            "  name: boot".to_string(),
+            "  next: send".to_string(),
+            "  left: 1".to_string(),
+            "  wait: time".to_string(),
+        ]
+    );
+
+    app.start_replay(std::path::PathBuf::from("/tmp/a.raw"), None);
+    let lines = status(&mut app);
+    assert!(lines.contains(&"  state: paused".to_string()), "{lines:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MAX-283 (steps 5-6): `marks`, `triggers` and `notifications` have two faces: the user's
+/// opens the popup, a trigger's gives its value to nobody and its chain goes on, where it was
+/// refused before.
+/// How: each from the command line, then a trigger's `<name>; send x`.
+#[test]
+fn popup_queries_open_their_popup_for_the_user_only() {
+    let mut app = app();
+    let drain = |app: &mut App| {
+        let mut effects = Vec::new();
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            effects.push(app.update_for(&caller, action));
+        }
+        effects
+    };
+    for name in ["marks", "triggers", "notifications"] {
+        let chain = crate::commands::parse(name).unwrap();
+        app.update(Action::App(AppAction::QueueCommands(chain)));
+        drain(&mut app);
+        let popup = match app.overlay() {
+            Some(Overlay::Marks(_)) => "marks",
+            Some(Overlay::Triggers(_)) => "triggers",
+            Some(Overlay::Notices(_)) => "notifications",
+            _ => "none",
+        };
+        assert_eq!(popup, name);
+        app.close_overlay();
+
+        let trigger = Origin::Trigger("boot".to_string());
+        let chain = crate::commands::parse(&format!("{name}; send x")).unwrap();
+        app.jobs.push(trigger, chain);
+        let effects = drain(&mut app);
+        assert!(app.overlay().is_none(), "{name}");
+        assert!(
+            matches!(&effects[..], [UpdateEffect::None, UpdateEffect::Transmit(x)] if x == b"x"),
+            "{name}"
+        );
+    }
 }

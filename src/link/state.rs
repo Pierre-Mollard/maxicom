@@ -10,7 +10,7 @@ use std::{
 use super::{
     Address, ByteSource, LinkConfig, LinkError, LinkKind, Opener,
     replay::Replay,
-    serial::{LineControl, LineSettings},
+    serial::{FlowControl, LineControl, LineLevel, LineSettings},
 };
 
 /// Between two tries to reopen a closed link
@@ -23,6 +23,10 @@ pub struct LinkState {
     open_for: OpenFor,
     /// When the break a `break` command started ends (MAX-12)
     break_until: Option<Instant>,
+    /// DTR and RTS as maxicom last set them since the open (MAX-283): by the open's levels or
+    /// the `dtr` / `rts` commands, `Keep` while untouched
+    dtr: LineLevel,
+    rts: LineLevel,
     last_rx_activity: Instant,
     last_reconnect_attempt: Instant,
     /// Detached by hand or when idle: not reopened until an attach, or another link
@@ -57,6 +61,8 @@ impl LinkState {
             opener: Opener::default(),
             open_for: OpenFor::Retry,
             break_until: None,
+            dtr: LineLevel::Keep,
+            rts: LineLevel::Keep,
             last_rx_activity: now,
             last_reconnect_attempt: now,
             detached: false,
@@ -80,6 +86,12 @@ impl LinkState {
         self.device.as_ref().and_then(ByteSource::shared_with)
     }
 
+    /// DTR and RTS as maxicom last set them since the open (MAX-283), `Keep` for one it
+    /// didn't touch
+    pub fn levels(&self) -> (LineLevel, LineLevel) {
+        (self.dtr, self.rts)
+    }
+
     /// Closed until an attach: by hand, idle, or a reattach that failed
     pub fn is_detached(&self) -> bool {
         self.detached
@@ -98,6 +110,9 @@ impl LinkState {
     /// The link at start, with the device opened before the UI if any; its timers from now
     pub fn start(&mut self, device: Option<ByteSource>) {
         let now = Instant::now();
+        if device.is_some() {
+            self.opened();
+        }
         self.device = device;
         self.last_reconnect_attempt = now;
         self.last_rx_activity = now;
@@ -132,8 +147,12 @@ impl LinkState {
     /// Sets a control line, none when closed; a break ends at `now` + its duration
     pub fn control(&mut self, control: LineControl, now: Instant) -> Option<Result<(), LinkError>> {
         let result = self.device.as_mut()?.control(control);
-        if let (Ok(()), LineControl::Break(duration)) = (&result, control) {
-            self.break_until = Some(now + duration);
+        let level = |on| if on { LineLevel::On } else { LineLevel::Off };
+        match (&result, control) {
+            (Ok(()), LineControl::Break(duration)) => self.break_until = Some(now + duration),
+            (Ok(()), LineControl::Dtr(on)) => self.dtr = level(on),
+            (Ok(()), LineControl::Rts(on)) => self.rts = level(on),
+            (Err(_), _) => {}
         }
         Some(result)
     }
@@ -263,6 +282,7 @@ impl LinkState {
         let why = mem::replace(&mut self.open_for, OpenFor::Retry);
         Some(match result {
             Ok(device) => {
+                self.opened();
                 self.device = Some(device);
                 self.last_rx_activity = Instant::now();
                 (why, Ok(()))
@@ -274,6 +294,17 @@ impl LinkState {
                 (why, Err(e))
             }
         })
+    }
+
+    /// A device just opened, with DTR and RTS as its line asks: under hardware flow control
+    /// the driver has RTS, untouched
+    fn opened(&mut self) {
+        let line = &self.config.line;
+        self.dtr = line.dtr;
+        self.rts = match line.flow_control {
+            FlowControl::RtsCts => LineLevel::Keep,
+            _ => line.rts,
+        };
     }
 }
 

@@ -75,3 +75,41 @@ fn failed_switch_goes_back() {
     }
     assert_eq!(*link.config(), before);
 }
+
+/// MAX-283 (step 2): DTR and RTS are the levels maxicom last set: the open's, then the
+/// `dtr` / `rts` commands'; each open starts again from its line's, RTS untouched under
+/// hardware flow control.
+/// How: an RFC 2217 link (its control lines are sent at once) opened with DTR off and RTS
+/// left as is, DTR and RTS set, then a switch to the same server with hardware flow control.
+#[test]
+fn levels_are_the_last_set() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = Address::Tcp(
+        listener.local_addr().unwrap().to_string(),
+        crate::link::Protocol::Rfc2217,
+    );
+    let mut link = link_on(address);
+    let mut config = link.config().clone();
+    config.line.dtr = LineLevel::Off;
+    link.set_config(config.clone());
+    link.begin_open(OpenFor::Start);
+    assert!(matches!(result(&mut link), (OpenFor::Start, Ok(()))));
+    assert_eq!(link.levels(), (LineLevel::Off, LineLevel::Keep));
+
+    let now = Instant::now();
+    assert!(matches!(
+        link.control(LineControl::Dtr(true), now),
+        Some(Ok(()))
+    ));
+    assert!(matches!(
+        link.control(LineControl::Rts(false), now),
+        Some(Ok(()))
+    ));
+    assert_eq!(link.levels(), (LineLevel::On, LineLevel::Off));
+
+    config.line.rts = LineLevel::On;
+    config.line.flow_control = crate::link::serial::FlowControl::RtsCts;
+    link.switch_to(config);
+    assert!(matches!(result(&mut link), (OpenFor::Open { .. }, Ok(()))));
+    assert_eq!(link.levels(), (LineLevel::Off, LineLevel::Keep));
+}

@@ -143,8 +143,9 @@ fn every_action_has_one_command() {
     let mut indexes: Vec<usize> = COMMANDS
         .iter()
         .filter_map(|spec| match spec.target {
-            Target::Action(action) => {
-                assert!(spec.args.is_empty(), "{}", spec.name);
+            Target::Action(action) | Target::Popup { action, .. } => {
+                // a popup's arguments are its query's, all optional (MAX-283)
+                assert!(spec.runs_bare(), "{}", spec.name);
                 assert_eq!(find_by_name(spec.name), Some(spec));
                 assert_eq!(find_by_action(action), Some(spec));
                 Some(action_index(action))
@@ -436,6 +437,15 @@ fn named_commands_complete_and_parse() {
     };
     assert_eq!(help("board-reset"), "Reset the board");
     assert_eq!(help("bye"), "quit");
+    // MAX-283: `commands` completes a name, the registry's or one of `[commands]`, sorted
+    let names = Names {
+        named: &named,
+        ..Names::default()
+    };
+    assert_eq!(
+        values(&complete("commands b", &names)),
+        ["baud", "board-reset", "break", "bye"]
+    );
 
     let names = |line: &str| -> Vec<&str> {
         let invocations = parse_with(line, &named).unwrap();
@@ -730,8 +740,6 @@ fn commands_that_ask_the_user() {
             "enter-search-backward",
             "help",
             "link-settings",
-            "marks",
-            "notifications",
             "profiles",
             "quit",
             "record",
@@ -741,7 +749,6 @@ fn commands_that_ask_the_user() {
             "search",
             "sessions",
             "settings",
-            "triggers",
         ]
     );
     assert_eq!(asking(Asks::Bare), ["jump-mark", "mark"]);

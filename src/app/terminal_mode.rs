@@ -1209,6 +1209,7 @@ impl TerminalMode {
                 );
                 MarkRow {
                     letter,
+                    line: row,
                     time: self.get_timeline_timestamp(row),
                     text: shown_string(text.unwrap_or_default()),
                 }
@@ -2264,6 +2265,29 @@ impl TerminalMode {
             text: shown_string(screen.contents()),
             ansi: shown_string(screen.contents_formatted()),
         }
+    }
+
+    /// The live screen as text, or with its styles as escape sequences (MAX-283): whatever the
+    /// view scrolled back to, put back after. No flash, unlike a screenshot
+    pub fn live_screen(&mut self, styled: bool) -> String {
+        let scrolled = self.vt100_parser.screen().scrollback();
+        self.vt100_parser.screen_mut().set_scrollback(0);
+        let screen = self.vt100_parser.screen();
+        let contents = if styled {
+            screen.contents_formatted()
+        } else {
+            screen.contents()
+        };
+        self.vt100_parser.screen_mut().set_scrollback(scrolled);
+        shown_string(contents)
+    }
+
+    /// The cursor on the live screen (MAX-283): its row and column from 0, and whether the
+    /// remote shows it
+    pub fn cursor(&self) -> (u16, u16, bool) {
+        let screen = self.vt100_parser.screen();
+        let (row, col) = screen.cursor_position();
+        (row, col, !screen.hide_cursor())
     }
 
     pub fn trigger_flash(&mut self) {

@@ -339,6 +339,7 @@ impl LineMode {
             let entry = self.local_history.get(line)?;
             Some(MarkRow {
                 letter,
+                line,
                 time: entry.timestamp,
                 text: entry.text.trim_end_matches(['\r', '\n']).to_string(),
             })

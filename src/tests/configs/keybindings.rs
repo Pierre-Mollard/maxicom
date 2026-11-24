@@ -314,7 +314,7 @@ fn keymap_actions_are_the_action_commands() {
     for spec in COMMANDS {
         let parsed = spec.name.parse::<KeyBindingAction>();
         match spec.target {
-            Target::Action(action) => {
+            Target::Action(action) | Target::Popup { action, .. } => {
                 assert_eq!(parsed.unwrap(), action, "{}", spec.name);
                 assert_eq!(action.to_string(), spec.name);
             }
@@ -344,6 +344,13 @@ fn keymap_actions_are_the_action_commands() {
             "replay-restart",
             "break",
             "status",
+            "get",
+            "history",
+            "history-size",
+            "screen",
+            "cursor",
+            "term-size",
+            "commands",
             "plot",
             "profile",
         ]

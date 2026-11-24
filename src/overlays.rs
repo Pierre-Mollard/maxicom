@@ -349,6 +349,71 @@ pub enum SettingKey {
     Plot,
 }
 
+impl SettingKey {
+    /// Every setting, in the settings popup's order (MAX-283)
+    pub const ALL: [Self; 18] = [
+        Self::Mode,
+        Self::LocalEcho,
+        Self::DisplayTimestamp,
+        Self::TextEncoding,
+        Self::Mouse,
+        Self::DisplayRaw,
+        Self::Plot,
+        Self::AddCr,
+        Self::AddLf,
+        Self::TxEol,
+        Self::LineWrap,
+        Self::IdentWrap,
+        Self::PrefixPlace,
+        Self::DisplayMode,
+        Self::DimensionMode,
+        Self::AnswerQueries,
+        Self::ByteTrace,
+        Self::Backspace,
+    ];
+
+    /// Their names, as `get` and `set` take them
+    pub const NAMES: [&'static str; 18] = {
+        let mut names = [""; 18];
+        let mut i = 0;
+        while i < names.len() {
+            names[i] = Self::ALL[i].name();
+            i += 1;
+        }
+        names
+    };
+
+    /// Its name for the commands (MAX-283): `set`'s, a command's (`mode`, `encoding`), else
+    /// its toggle's or its popup label's
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::LocalEcho => "local-echo",
+            Self::Mode => "mode",
+            Self::LineWrap => "line-wrap",
+            Self::IdentWrap => "indent-wrap",
+            Self::PrefixPlace => "prefix-place",
+            Self::DisplayTimestamp => "timestamps",
+            Self::TextEncoding => "encoding",
+            Self::DisplayMode => "display-mode",
+            Self::DisplayRaw => "display-raw",
+            Self::Mouse => "mouse",
+            Self::DimensionMode => "size-mode",
+            Self::AnswerQueries => "answer-queries",
+            Self::ByteTrace => "byte-trace",
+            Self::AddCr => "add-cr",
+            Self::AddLf => "add-lf",
+            Self::TxEol => "tx-eol",
+            Self::Backspace => "backspace",
+            Self::Plot => "plot",
+        }
+    }
+
+    /// The setting of that name
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|key| key.name() == name)
+    }
+}
+
 /// `d`, or a click on its hint, in the link's popups (MAX-181)
 fn opens_directory(action: &DialogAction) -> bool {
     match action {

@@ -445,16 +445,7 @@ pub fn set(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     let [ArgValue::Enum(name), ArgValue::Bool(on)] = args else {
         unreachable!("set takes a setting and on or off");
     };
-    let key = match *name {
-        "local-echo" => SettingKey::LocalEcho,
-        "timestamps" => SettingKey::DisplayTimestamp,
-        "mouse" => SettingKey::Mouse,
-        "answer-queries" => SettingKey::AnswerQueries,
-        "byte-trace" => SettingKey::ByteTrace,
-        "add-cr" => SettingKey::AddCr,
-        "add-lf" => SettingKey::AddLf,
-        _ => unreachable!("set takes one of ON_OFF_SETTINGS"),
-    };
+    let key = SettingKey::named(name).expect("set takes one of ON_OFF_SETTINGS");
     let is_on = app.setting_is_on(key).expect("an on/off setting");
     Ok(if is_on == *on {
         Action::Ignore

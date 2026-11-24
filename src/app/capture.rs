@@ -94,7 +94,7 @@ impl App {
     pub fn switch_session(&mut self) {
         // another board's crashes aren't this one's (MAX-220)
         for trigger in &mut self.triggers {
-            trigger.hits = 0;
+            trigger.reset_hits();
         }
         self.recorder.end_line(self.settings.encoding);
         self.clear_screen();
@@ -658,6 +658,16 @@ impl App {
         }
     }
 
+    /// The `.raw` of this maxicom's session backup: the live link's, or the one a replay
+    /// paused while it runs, then with `true` (MAX-283)
+    pub fn session_backup(&self) -> Option<(&Path, bool)> {
+        if let Some(raw) = self.recorder.session_raw() {
+            return Some((raw, false));
+        }
+        let paused = self.replaced_link()?.session.as_ref()?;
+        Some((paused.raw_path(), true))
+    }
+
     /// The session browser on the session folder, the session restored into the history marked
     /// (MAX-148, MAX-202)
     pub fn open_session_browser(&mut self) -> Option<Note> {
@@ -665,21 +675,19 @@ impl App {
             return Some(Note::warn("No session folder"));
         };
         let max_size = self.settings.sessions.limits().max_size;
-        // the live link's session backup, the one a replay paused while it runs
-        let replaced = self.replaced_link();
-        let paused_raw = replaced.and_then(|replaced| {
-            let session = replaced.session.as_ref()?;
-            Some(session.raw_path().to_path_buf())
-        });
-        let live_raw = self.recorder.session_raw().or(paused_raw.as_deref());
+        let backup = self.session_backup();
+        let live_raw = backup.map(|(raw, _)| raw.to_path_buf());
+        let paused_raw = backup
+            .filter(|&(_, paused)| paused)
+            .map(|(raw, _)| raw.to_path_buf());
         let mut browser = SessionBrowser::new(dir, self.restored_session.clone())
             .with_max_size(max_size)
             .with_group_by(self.settings.sessions.group_by.clone())
-            .with_focus(live_raw)
-            .with_own_session(live_raw)
+            .with_focus(live_raw.as_deref())
+            .with_own_session(live_raw.as_deref())
             .with_link_colors(self.link_colors());
-        if replaced.is_some() {
-            browser = browser.with_live(paused_raw.clone());
+        if self.replays_over_live_link() {
+            browser = browser.with_live(paused_raw);
         }
         self.open_overlay(Overlay::Sessions(Box::new(browser)));
         None

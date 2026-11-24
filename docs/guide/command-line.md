@@ -191,15 +191,70 @@ Settings with more than two values cycle with their keys. See
 
 ### Reading the state
 
+These commands read maxicom's state and change nothing. They are there for
+scripts first, and you can run them too.
+
 | Command | Does |
 | --- | --- |
-| `status` | Shows the link (its name, kind, state and line settings), the mode, the encoding, the bytes received and sent, the recording, the file being sent and the profiles laid |
+| `status` | Shows the link (its name, kind, state and line settings), DTR and RTS, the mode, the encoding, the bytes received and sent, the recording, the session backup, the file being sent, the profiles laid and the lines running |
+| `get [setting]` | Shows a setting's value, or every setting's |
+| `history [from] [count]` | Shows the last lines of line mode's history, and the line still coming in |
+| `history-size` | Shows how many lines the history holds, and how many its limit dropped |
+| `screen [text\|colors]` | Shows the terminal's screen, as text or with its colors |
+| `cursor` | Shows the terminal cursor's row and column, and whether it shows |
+| `term-size` | Shows the terminal's rows and columns |
+| `commands [name]` | Lists every command with its help, or shows one in detail |
 
-Its answer opens in a popup, one line each. Enter or `c` copies the selected
-line, `a` the whole answer. No key runs it by default: bind `status` to one
-in `keymap.toml` if you use it often, see
+The answer opens in a popup, one line each. Enter or `c` copies the selected
+line, `a` the whole answer. No key runs these by default: bind one in
+`keymap.toml` if you use it often, see
 [Actions and commands](keybindings.md#actions-and-commands). In a trigger's
-or a profile's line it does nothing.
+or a profile's line they do nothing.
+
+#### Settings by name
+
+`get` names the settings the way `set` does, and gives the others' names
+too. A setting with two values shows `true` or `false`. The others show the
+value as `settings.toml` writes it, like `word` or `grow_only`.
+
+| Name | Setting |
+| --- | --- |
+| `mode`, `encoding`, `local-echo`, `timestamps`, `mouse`, `answer-queries`, `byte-trace`, `add-cr`, `add-lf` | As `mode`, `encoding` and `set` take them |
+| `line-wrap`, `indent-wrap`, `prefix-place`, `display-mode`, `display-raw`, `tx-eol` | Line mode's wrapping, prefixes, display, raw view and line ending |
+| `size-mode`, `backspace` | Terminal mode's size mode and Backspace byte |
+| `plot` | The plot shown, `off` when none |
+
+#### Lines and how many
+
+`history` gives 50 lines by default and 500 at most. It counts from the
+newest: `history 0 10` is the last 10 lines, and `history 10 10` the 10
+before them. Each line comes with its number, its time and its text. The
+number is the one `marks` gives for a [mark](marks.md) in a trigger's line,
+below. The answer says when older lines were left out.
+
+`notifications` takes the same `[from] [count]` in a trigger's or a
+profile's line, below.
+
+#### DTR and RTS
+
+`status` gives the level maxicom last set on each line since the link
+opened: `on` or `off`, from the link's `dtr` and `rts` settings or the `dtr`
+and `rts` commands. `unset` means maxicom hasn't touched it, so it's as the
+system left it. Under hardware flow control, RTS is the driver's and stays
+`unset`.
+
+#### Popups that answer
+
+`marks`, `triggers` and `notifications` open their popup for you. In a
+trigger's or a profile's line, where no popup can open, they give their
+content instead, and the line goes on: the marks of each mode, each trigger
+with its counts and its last fire, the notifications said.
+
+#### The screen
+
+`screen` reads the live screen, even while you've scrolled back. `screen
+colors` keeps the colors as escape sequences; the popup shows them as
+`␛[1m`, and copying keeps the real escapes.
 
 ### Search and screenshots
 

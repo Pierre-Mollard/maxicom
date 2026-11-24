@@ -40,12 +40,17 @@ impl App {
         let built = match (asks.flatten(), invocation.spec.target) {
             (Some(reason), _) => Err(reason.to_string()),
             (None, Target::Action(action)) => Ok(action.to_action(self)),
+            (None, Target::Popup { action, .. }) if caller.origin.is_user() => {
+                Ok(action.to_action(self))
+            }
             (None, Target::Build(build)) => build(self, &invocation.args),
             // run at once: a query changes nothing, its answer goes to who asked
-            (None, Target::Query(query)) => query(self, &invocation.args).map(|value| {
-                let query = invocation.spec.name;
-                Action::App(AppAction::Answer(Box::new(Answer { query, value })))
-            }),
+            (None, Target::Query(query) | Target::Popup { query, .. }) => {
+                query(self, &invocation.args).map(|value| {
+                    let query = invocation.spec.name;
+                    Action::App(AppAction::Answer(Box::new(Answer { query, value })))
+                })
+            }
         };
         match built {
             Ok(action) => Some((caller, action)),

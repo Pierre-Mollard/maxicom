@@ -1,14 +1,16 @@
 //! What a query gives back (MAX-165): a small tree of values, shown as text lines in the TUI
 //! and turned into JSON by the API (MAX-284). Its kinds come with their first query: a
-//! `Bool` or a `Float` waits for one that gives it
+//! `Float` waits for one that gives it
 
 /// A query's value
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
-    /// A text, shown as it is
+    /// A text, shown as it is: one on several lines (a screen) on lines of its own
     Text(String),
     /// A whole number: a count, a rate
     Int(i64),
+    /// Yes or no, shown as `true` or `false`
+    Bool(bool),
     /// Values in order, shown on one line when they are all scalars
     List(Vec<Value>),
     /// Named values in order, one `name: value` line each
@@ -22,7 +24,9 @@ impl Value {
     }
 
     /// The lines the TUI shows: `name: value` for a map's scalars, a list of scalars on one
-    /// line (`none` when empty), what is nested below its name, indented
+    /// line (`none` when empty, a map too), what is nested below its name, indented; a text
+    /// on several lines one line each. Control characters show as their pictures (`␛`): an
+    /// escape sequence would move the popup's drawing
     pub fn lines(&self) -> Vec<String> {
         let mut lines = Vec::new();
         self.push_lines("", &mut lines);
@@ -51,16 +55,25 @@ impl Value {
                     }
                 }
             }
-            Self::Text(_) | Self::Int(_) => {}
+            Self::Text(text) => {
+                for line in text.lines() {
+                    lines.push(format!("{indent}{}", pictures(line)));
+                }
+            }
+            Self::Int(_) | Self::Bool(_) => {}
         }
     }
 
-    /// The value on one line, when it fits there: a text, a number, a list of those
+    /// The value on one line, when it fits there: a text, a number, a yes or no, a list of
+    /// those, an empty map
     fn scalar(&self) -> Option<String> {
         match self {
-            Self::Text(text) => Some(text.clone()),
+            Self::Text(text) if text.contains('\n') => None,
+            Self::Text(text) => Some(pictures(text)),
             Self::Int(n) => Some(n.to_string()),
+            Self::Bool(yes) => Some(yes.to_string()),
             Self::List(items) if items.is_empty() => Some("none".to_string()),
+            Self::Map(entries) if entries.is_empty() => Some("none".to_string()),
             Self::List(items) => {
                 let scalars: Option<Vec<String>> = items.iter().map(Self::scalar).collect();
                 scalars.map(|scalars| scalars.join(", "))
@@ -68,6 +81,17 @@ impl Value {
             Self::Map(_) => None,
         }
     }
+}
+
+/// A control character as its picture, `␛` for ESC, for the TUI's lines
+fn pictures(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '\0'..='\x1f' => char::from_u32(0x2400 + c as u32).unwrap_or(c),
+            '\x7f' => '\u{2421}',
+            c => c,
+        })
+        .collect()
 }
 
 #[cfg(test)]

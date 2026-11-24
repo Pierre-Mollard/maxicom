@@ -41,7 +41,9 @@ silent = true
 `run` can't hold a command that needs you there: one that opens a popup or a
 mode (`help`, `settings`, `record`, `search`, copy mode...), or `mark` and
 `jump-mark` without their letter, which would take your next key. It stops
-the trigger's line with an error saying so.
+the trigger's line with an error saying so. `marks`, `triggers` and
+`notifications` are fine: they open no popup there, see
+[Popups that answer](command-line.md#popups-that-answer).
 
 ### Raising a notification
 

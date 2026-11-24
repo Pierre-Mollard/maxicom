@@ -4,6 +4,7 @@
 //! redraws its countdown with `\b` and only ends the line when it runs out, a line matcher
 //! would see it too late.
 
+use jiff::Timestamp;
 use memchr::memmem::Finder;
 
 use crate::commands::Invocation;
@@ -22,6 +23,8 @@ pub struct Trigger {
     pub mark: Option<char>,
     /// How many times it fired, since it was loaded or reset (MAX-220)
     pub hits: u32,
+    /// When it last fired, since then too (MAX-283)
+    pub last_hit: Option<Timestamp>,
     armed: bool,
     matcher: StreamMatcher,
 }
@@ -45,6 +48,7 @@ impl Trigger {
             silent: false,
             mark: None,
             hits: 0,
+            last_hit: None,
             armed,
             matcher,
         }
@@ -72,6 +76,12 @@ impl Trigger {
         self.armed = on;
     }
 
+    /// Its count back to zero, and its last fire forgotten (MAX-220, MAX-283)
+    pub fn reset_hits(&mut self) {
+        self.hits = 0;
+        self.last_hit = None;
+    }
+
     /// Where in this chunk its text ends when it fires on it, past the text's last byte,
     /// counted; a disarmed one doesn't look at it
     pub fn fires(&mut self, chunk: &[u8]) -> Option<usize> {
@@ -80,6 +90,7 @@ impl Trigger {
         }
         let end = self.matcher.feed(chunk)?;
         self.hits = self.hits.saturating_add(1);
+        self.last_hit = Some(Timestamp::now());
         if !self.rearm {
             self.armed = false;
             self.matcher.reset();

@@ -8,6 +8,7 @@ fn key(code: KeyCode) -> DialogAction {
 fn row(letter: char) -> MarkRow {
     MarkRow {
         letter,
+        line: 0,
         time: None,
         text: format!("line {letter}"),
     }

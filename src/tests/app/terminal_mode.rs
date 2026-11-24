@@ -2251,3 +2251,22 @@ fn shell_signal_from_device_bytes() {
     device(&mut own, b"after the restore ");
     assert_eq!(own.shell_signal(), None);
 }
+
+/// MAX-283 (step 8): `screen` reads the live screen, plain or with its styles, whatever the
+/// view scrolled back to, which stays scrolled; `cursor` is on the live screen too.
+/// How: five lines on a three-row terminal, the view scrolled back two rows.
+#[test]
+fn live_screen_ignores_the_scroll_back() {
+    let mut tm = terminal(3);
+    tm.process_rx(
+        TextEncoding::Utf8,
+        b"one\r\ntwo\r\nthree\r\n\x1b[1mfour\x1b[0m\r\nfive",
+    );
+    tm.vt100_parser.screen_mut().set_scrollback(2);
+    assert_eq!(tm.live_screen(false), "three\nfour\nfive");
+    assert!(tm.live_screen(true).contains("\x1b[1mfour"));
+    assert_eq!(tm.vt100_parser.screen().scrollback(), 2);
+    assert_eq!(tm.cursor(), (2, 4, true));
+    tm.process_rx(TextEncoding::Utf8, b"\x1b[?25l");
+    assert_eq!(tm.cursor(), (2, 4, false));
+}
