@@ -318,7 +318,12 @@ pub fn triggers(app: &mut App, _args: &[ArgValue]) -> Result<Value, String> {
 
 /// A time as the getters give it (MAX-283): UTC, to the millisecond, `2026-11-24T21:20:52.854Z`
 fn time(at: jiff::Timestamp) -> Value {
-    Value::text(format!("{at:.3}"))
+    Value::text(utc(at))
+}
+
+/// A time as the API writes it, the getters' and the API's own (MAX-74)
+pub fn utc(at: jiff::Timestamp) -> String {
+    format!("{at:.3}")
 }
 
 /// How many lines a getter gives at most, and by default (MAX-283)

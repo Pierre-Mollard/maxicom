@@ -36,12 +36,14 @@ strip = true
 ansi-to-tui = "8.0.1"
 crossterm = "0.29.0"
 dirs = "7.0.0"
+interprocess = "2.4.9"
 jiff = "1.0.1"
 libc = "0.2.189"
 memchr = "2.8.3"
 ratatui = { version = "0.30.2", features = ["unstable-rendered-line-info", "serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_ignored = "0.1.14"
+serde_json = "1"
 serial2 = "0.2.38"
 socket2 = { version = "0.6.5", features = ["all"] }
 terminput = "0.5.15"

@@ -173,6 +173,13 @@ pub enum CommandLineLayout {
     StatusBar,
 }
 
+/// The local API socket other programs connect to (MAX-74), off unless enabled
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ApiConfig {
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CommandLineConfig {
@@ -1192,6 +1199,7 @@ pub struct SettingsConfig {
     pub raw_side: RawSideConfig,
     pub plot_side: PlotSideConfig,
     pub command_line: CommandLineConfig,
+    pub api: ApiConfig,
 
     // cache
     #[serde(skip)]
@@ -1230,6 +1238,7 @@ impl Default for SettingsConfig {
             raw_side: RawSideConfig::default(),
             plot_side: PlotSideConfig::default(),
             command_line: CommandLineConfig::default(),
+            api: ApiConfig::default(),
             timestamp_width: 0,
         };
         settings.refresh_timestamp_width();

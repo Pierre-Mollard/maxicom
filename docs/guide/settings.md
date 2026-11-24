@@ -443,3 +443,15 @@ See [Command line](command-line.md#look).
 | --- | --- | --- |
 | `layout` | `"popup"` | `popup` or `status_bar` |
 | `history_size` | `100` | Lines kept |
+
+### `[api]`
+
+A local socket that scripts and other programs use to talk to this
+maxicom. Only your user can connect to it. A reload starts or stops it.
+
+| Setting | Default | |
+| --- | --- | --- |
+| `enabled` | `false` | Listens on `maxicom-<pid>.sock` in the runtime folder (`$XDG_RUNTIME_DIR/maxicom`), else the cache folder; on Windows, the pipe `\\.\pipe\maxicom-<pid>` |
+
+While it runs it answers `hello` only: the methods to read and drive
+maxicom come next.

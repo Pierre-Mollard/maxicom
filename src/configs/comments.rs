@@ -125,6 +125,10 @@ pub const CONFIG_COMMENTS: &[(&str, &str)] = &[
     ("plot_side.split_percent", "10 to 85"),
     ("command_line", guide!("command-line.html")),
     ("command_line.layout", "values: popup, status_bar"),
+    (
+        "api",
+        "A local socket that scripts and other programs use to talk to this maxicom",
+    ),
 ];
 
 pub const THEME_COMMENTS: &[(&str, &str)] = &[(

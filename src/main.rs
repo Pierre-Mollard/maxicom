@@ -37,6 +37,7 @@ use crate::{
     ui::{PostRenderEffect, layout::LayoutWarning, render, status_bar::CompiledStatusBar},
 };
 
+mod api;
 mod app;
 mod args;
 mod capture;
@@ -392,6 +393,11 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     // set from `ui.mouse` in the loop, so its toggle and a reload apply it too (MAX-113)
     let mut mouse_captured = false;
 
+    // the local API (MAX-74), as `[api] enabled` says, checked again after each reload
+    let instance = api::Instance::now();
+    let mut api_server: Option<api::Server> = None;
+    sync_api(&mut api_server, &instance, &mut app);
+
     let mut last_layout_warnings: Vec<LayoutWarning> = Vec::default();
     let mut needs_redraw = true;
     let mut last_draw: Option<Instant> = None;
@@ -495,6 +501,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                                 let reloaded =
                                     app.apply_reload(config.settings, config.key_resolver);
                                 app.present(&caller, Report::from(reloaded));
+                                sync_api(&mut api_server, &instance, &mut app);
                                 app.warn_shadowed_keys();
                                 for text in config.warnings {
                                     app.emit(Event::ConfigWarning { text });
@@ -533,6 +540,15 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
 
         needs_redraw |= app.tick();
+
+        // the API's requests, answered with the app in hand (MAX-74)
+        if let Some(server) = &mut api_server {
+            for (conn, request) in server.requests() {
+                if let Some(reply) = api::answer(&app, &instance, &request) {
+                    server.reply(conn, reply);
+                }
+            }
+        }
 
         let since_draw = last_draw.map_or(Duration::MAX, |t| t.elapsed());
         needs_redraw |= since_draw >= MAX_FRAME_AGE;
@@ -655,5 +671,28 @@ fn execute_clipboard_copy(app: &App, text: &str, what: Option<&str>) -> Report {
             Report::from(Note::new(ToastLevel::Error, error).in_slot("copy"))
         }
         Ok(()) => Report::from(Vec::from_iter(app.copied_note(text, what))),
+    }
+}
+
+/// Starts or stops the API server as `[api] enabled` says (MAX-74): at start and after a
+/// reload, so a failure is said once, not retried on every pass
+fn sync_api(server: &mut Option<api::Server>, instance: &api::Instance, app: &mut App) {
+    match (app.settings().api.enabled, server.is_some()) {
+        (true, false) => {
+            let dir = api::socket_dir();
+            match api::Server::start(dir.as_deref(), &instance.name()) {
+                Ok(started) => {
+                    let location = started.location().to_string();
+                    *server = Some(started);
+                    app.show_note(Note::info(format!("API listening on {location}")));
+                }
+                Err(err) => app.show_note(Note::warn(format!("API not started: {err}"))),
+            }
+        }
+        (false, true) => {
+            *server = None;
+            app.show_note(Note::info("API stopped"));
+        }
+        (true, true) | (false, false) => {}
     }
 }
