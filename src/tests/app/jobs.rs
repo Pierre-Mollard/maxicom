@@ -30,8 +30,8 @@ fn command_line_runs_its_chain_in_order() {
     assert!(matches!(effect, UpdateEffect::None));
     assert!(app.overlay().is_none());
     let mut effects = Vec::new();
-    while let Some((_, action)) = app.next_command_action(Instant::now()) {
-        effects.push(app.update(action));
+    while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+        effects.push(app.update_for(&caller, action));
     }
     assert!(matches!(
         effects[..],
@@ -80,7 +80,7 @@ fn bound_line_runs_as_typed() {
 #[test]
 fn queued_commands_carry_their_origin() {
     let mut app = app();
-    let next_origin = |app: &mut App| app.next_command_action(Instant::now()).unwrap().0;
+    let next_origin = |app: &mut App| app.next_command_action(Instant::now()).unwrap().0.origin;
 
     app.update(KeyBindingAction::CommandLine.to_action(&app));
     app.update(Action::Overlay(DialogAction::Paste("send a".to_string())));
@@ -94,8 +94,8 @@ fn queued_commands_carry_their_origin() {
     app.set_triggers(crate::configs::TriggersConfig::default().compile().unwrap());
     let chain = crate::commands::parse("trigger on panic").unwrap();
     app.update(Action::App(AppAction::QueueCommands(chain)));
-    while let Some((origin, action)) = app.next_command_action(Instant::now()) {
-        let _ = app.update_from(&origin, action);
+    while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+        app.update_for(&caller, action);
     }
     app.feed_rx(b"[   12.345] Kernel panic - not syncing");
     assert_eq!(next_origin(&mut app), Origin::Trigger("panic".to_string()));
@@ -105,9 +105,8 @@ fn queued_commands_carry_their_origin() {
     assert_eq!(next_origin(&mut app), Origin::Profile("on_load"));
 }
 
-/// MAX-12: `sleep` pauses the rest of the chain, which goes on once its time is up; the
-/// pause the loop sets for a break does the same. A failure drops a paused chain, pause
-/// and all.
+/// MAX-12: `sleep` pauses the rest of the chain, which goes on once its time is up. A failure
+/// drops a waiting job, its wait and all (MAX-165).
 /// How: the actions taken one by one, at chosen times.
 #[test]
 fn command_line_sleep() {
@@ -117,28 +116,32 @@ fn command_line_sleep() {
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
     };
-    let sent = |app: &mut App, next: Option<(Origin, Action)>| match app.update(next.unwrap().1) {
-        UpdateEffect::Transmit(bytes) => bytes,
-        _ => panic!("expected a transmit"),
+    let sent = |app: &mut App, next: Option<(Caller, Action)>| {
+        let (caller, action) = next.unwrap();
+        match app.update_for(&caller, action) {
+            UpdateEffect::Transmit(bytes) => bytes,
+            _ => panic!("expected a transmit"),
+        }
     };
 
     queue_line(&mut app, "send a; sleep 100; send b");
     let now = Instant::now();
     let action = app.next_command_action(now);
     assert_eq!(sent(&mut app, action), b"a");
-    let sleep = app.next_command_action(now).unwrap().1;
-    app.update(sleep);
+    let (caller, sleep) = app.next_command_action(now).unwrap();
+    app.update_for(&caller, sleep);
     assert!(app.next_command_action(Instant::now()).is_none());
     let later = Instant::now() + Duration::from_millis(150);
     let action = app.next_command_action(later);
     assert_eq!(sent(&mut app, action), b"b");
     assert!(app.next_command_action(later).is_none());
 
-    // the loop pauses the chain for a break
-    queue_line(&mut app, "send c");
-    app.pause_commands(later + Duration::from_millis(100));
-    assert!(app.next_command_action(later).is_none());
-    app.fail_commands("break: failed".to_string());
+    // a failure while the job waits drops it
+    queue_line(&mut app, "sleep 100; send c");
+    let (caller, sleep) = app.next_command_action(later).unwrap();
+    app.update_for(&caller, sleep);
+    assert!(app.next_command_action(Instant::now()).is_none());
+    app.fail_job(caller.job.unwrap(), "break: failed".to_string());
     assert!(
         app.next_command_action(later + Duration::from_secs(1))
             .is_none()
@@ -244,8 +247,8 @@ fn a_failure_stops_only_its_chain() {
     };
 
     queue(&mut app, "dtr on; send x");
-    let (origin, dtr) = app.next_command_action(Instant::now()).unwrap();
-    app.dispatch_from(&origin, dtr);
+    let (caller, dtr) = app.next_command_action(Instant::now()).unwrap();
+    app.dispatch_from(&caller, dtr);
     assert_eq!(
         last_toast(&app),
         "DTR on: the link has no control lines (1 more not run)"
@@ -253,12 +256,78 @@ fn a_failure_stops_only_its_chain() {
     assert!(app.next_command_action(Instant::now()).is_none());
 
     queue(&mut app, "sleep 1000; send y");
-    let (origin, sleep) = app.next_command_action(Instant::now()).unwrap();
-    app.dispatch_from(&origin, sleep);
+    let (caller, sleep) = app.next_command_action(Instant::now()).unwrap();
+    app.dispatch_from(&caller, sleep);
     let dtr = Action::App(AppAction::LineControl(LineControl::Dtr(true)));
-    app.dispatch_from(&Origin::Input, dtr);
+    app.dispatch_from(&Caller::input(), dtr);
     assert_eq!(last_toast(&app), "DTR on: the link has no control lines");
     let later = Instant::now() + Duration::from_secs(2);
     let (_, send) = app.next_command_action(later).unwrap();
     assert!(matches!(app.update(send), UpdateEffect::Transmit(y) if y == b"y"));
+}
+
+/// MAX-165 (A1 step 3): a trigger's chain runs while the user's waits on a `sleep`, and its
+/// failure drops only its own rest: the user's chain goes on once its time is up.
+/// How: `sleep 1000; send u` bound to a key, then a trigger firing `send t; dtr on; send no`
+/// on a link with no control lines.
+#[test]
+fn a_trigger_runs_while_the_user_waits() {
+    let config: crate::configs::TriggersConfig = toml::from_str(
+        r#"
+            [boot]
+            match = "boot>"
+            run = "send t; dtr on; send no"
+            armed = true
+            "#,
+    )
+    .unwrap();
+    let mut app = app();
+    app.set_triggers(config.compile().unwrap());
+    let last_toast = |app: &App| {
+        let toasts = app.notifications.active_toasts();
+        toasts.last().unwrap().message.clone()
+    };
+    let chain = crate::commands::parse("sleep 1000; send u").unwrap();
+    app.update(Action::App(AppAction::QueueCommands(chain)));
+    let (caller, sleep) = app.next_command_action(Instant::now()).unwrap();
+    app.dispatch_from(&caller, sleep);
+
+    app.feed_rx(b"boot>");
+    let (caller, send) = app.next_command_action(Instant::now()).unwrap();
+    assert_eq!(caller.origin, Origin::Trigger("boot".to_string()));
+    assert!(matches!(app.update_for(&caller, send), UpdateEffect::Transmit(t) if t == b"t"));
+    let (caller, dtr) = app.next_command_action(Instant::now()).unwrap();
+    app.dispatch_from(&caller, dtr);
+    assert_eq!(
+        last_toast(&app),
+        "DTR on: the link has no control lines (1 more not run)"
+    );
+    assert!(app.next_command_action(Instant::now()).is_none());
+
+    let later = Instant::now() + Duration::from_secs(2);
+    let (caller, send) = app.next_command_action(later).unwrap();
+    assert_eq!(caller.origin, Origin::KeyBinding);
+    assert!(matches!(app.update_for(&caller, send), UpdateEffect::Transmit(u) if u == b"u"));
+    assert!(app.next_command_action(later).is_none());
+}
+
+/// MAX-165 (A1 step 3): an `open` with no answer by its time fails its chain, rather than
+/// the next command finding the link closed.
+/// How: the open's wait set as the link sets it, already past its time.
+#[test]
+fn an_unanswered_open_fails_its_chain() {
+    let mut app = app();
+    let chain = crate::commands::parse("open /dev/ttyUSB9; send x").unwrap();
+    app.update(Action::App(AppAction::QueueCommands(chain)));
+    let now = Instant::now();
+    let (caller, open) = app.next_command_action(now).unwrap();
+    app.update_for(&caller, open);
+    app.jobs
+        .wait(caller.job.unwrap(), Wait::LinkOpen { until: now });
+
+    assert!(app.next_command_action(now).is_none());
+    let toast = app.notifications.active_toasts().last().unwrap();
+    let secs = (crate::link::CONNECT_TIMEOUT * 2).as_secs();
+    let failed = format!("open: no answer after {secs}s (1 more not run)");
+    assert_eq!(toast.message, failed);
 }

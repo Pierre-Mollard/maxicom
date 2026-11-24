@@ -136,7 +136,8 @@ open file://boot.raw            # a replay
 - It completes the saved links, the schemes and the serial ports the system
   lists, then paths after `file://` or a `/`.
 - The rest of the line waits until the link is open:
-  `open COM4; send AT\r`.
+  `open COM4; send AT\r`. With no answer after a while (twice the connect
+  timeout), the rest of the line doesn't run.
 - If the port fails to open, the previous link comes back, its screen as it
   was.
 - Another device starts on a clean screen, with its last session restored
@@ -204,10 +205,21 @@ extension. See [Search](search.md) and [Screenshots](capture.md#screenshots).
 | Command | Does |
 | --- | --- |
 | `sleep <ms>` | The rest of the line waits that long, up to a minute. The screen stays live. |
-| `cancel` | Stops the file being sent and a `mash`, and drops the commands waiting |
+| `cancel` | Stops the file being sent and a `mash`, and drops the commands waiting. In a trigger's line, only that trigger's. |
 
-A line run while another is waiting runs after it. A line starting with
-`cancel` is the exception: it runs at once, so `cancel; send x` doesn't wait.
+Your lines run one after the other: a line run while another of yours is
+waiting runs after it. A line starting with `cancel` is the exception: it
+runs at once, so `cancel; send x` doesn't wait.
+
+A command that takes a while holds the rest of its line until it is done:
+`sleep`, `break`, `open` (until the link is open), `mash` (until its text
+comes in) and the file transfers, `send-file`, `upload` and `download` (until
+the file went through).
+
+A [trigger](triggers.md)'s line and a [profile](profiles.md)'s run beside
+yours, not behind them. While your line waits on one of these, theirs goes
+on, and the other way round. A command that fails stops only the rest of its
+own line.
 
 ### Waiting for a prompt: `mash`
 
@@ -314,7 +326,7 @@ ctrl-c = { run = "send-hex 03", help = "Send Ctrl-c" }
 
 The key runs its line as if you typed it:
 
-- it runs after a line still waiting, unless it starts with `cancel`;
+- it runs after a line of yours still waiting, unless it starts with `cancel`;
 - it doesn't go in the history.
 
 Which keys take a named command, and the rules a name follows, are in

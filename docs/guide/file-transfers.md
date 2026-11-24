@@ -25,9 +25,10 @@ control that handles one line at a time:
 send-file ~/scripts/setup.sh 50
 ```
 
-The link stays yours while it runs: what you type and `send` go out between
-its chunks. The rest of the command line doesn't wait for the file either:
-`send-file a; send b` sends `b` first.
+The link stays yours while it runs: what you type goes out between its
+chunks. A command line waits for the file to go through: `send-file a; send b`
+sends `b` once `a` is sent, and the lines you run meanwhile wait behind it.
+`cancel` doesn't wait: it stops the file and drops what waits for it.
 
 ## Uploading with XMODEM or YMODEM
 
@@ -220,8 +221,10 @@ otherwise. The status bar can show the transfer too, with `{send_file}`,
 
 ## Stopping a transfer
 
-`cancel`, or a click on the row's `✕`, stops it. An upload or a download also
-tells the other side to stop. A detach, a lost link or a replay stops it too.
+`cancel`, or a click on the row's `✕`, stops it, and drops the rest of the
+command line waiting for it. An upload or a download also tells the other side
+to stop. A detach, a lost link or a replay stops it too, and the command line
+waiting for it stops with it.
 
 The notification tells your stop from a failure. A cancel says `Cancelled`, as
 a warning: `Cancelled: fw.bin at 32%`, or for a download

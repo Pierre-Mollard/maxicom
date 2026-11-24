@@ -509,8 +509,8 @@ mod app {
         app.update(Action::App(AppAction::QueueCommands(
             crate::commands::parse(line).unwrap(),
         )));
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            app.update(action);
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            app.update_for(&caller, action);
         }
     }
 
@@ -698,8 +698,8 @@ mod app {
             ));
             let action = crate::inputs::handle_event(event, app);
             app.update(action);
-            while let Some((_, action)) = app.next_command_action(Instant::now()) {
-                app.update(action);
+            while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+                app.update_for(&caller, action);
             }
         };
         prefix_key(&mut app, 'G');

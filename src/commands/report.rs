@@ -1,6 +1,8 @@
-//! What an action reports back (MAX-165): the notices it gives and why it failed, instead of
-//! toasts shown from deep inside. The caller presents them: the user's toasts, a chain
-//! stopped on its failure, later a client's reply
+//! What an action reports back (MAX-165): the notices it gives, why it failed, and what its
+//! chain waits for, instead of toasts shown and chains paused from deep inside. The caller
+//! presents them: the user's toasts, a job stopped on its failure or waiting, later a
+//! client's reply
+use super::jobs::Wait;
 use crate::notification::ToastLevel;
 
 /// A notice of an action, shown as a toast: in the box of `slot` when it has one, where it
@@ -49,20 +51,38 @@ pub enum Failure {
     Shown(String),
 }
 
-/// What an action reports: its notes in the order they came, then its failure if it failed
+/// What an action reports: its notes in the order they came, then its failure if it failed,
+/// or what the rest of its chain waits for (a `sleep`, an `open`, a `mash`)
 #[derive(Debug, Default, PartialEq, Eq)]
 #[must_use = "a report is for who started the action: present it or add it to its report"]
 pub struct Report {
     pub notes: Vec<Note>,
     pub failure: Option<Failure>,
+    pub wait: Option<Wait>,
 }
 
 impl Report {
     /// A failure said as an error toast, no note before it
     pub fn failed(message: impl Into<String>) -> Self {
         Self {
-            notes: Vec::new(),
             failure: Some(Failure::Said(message.into())),
+            ..Self::default()
+        }
+    }
+
+    /// A failure its popup shows already, no note before it
+    pub fn shown(message: impl Into<String>) -> Self {
+        Self {
+            failure: Some(Failure::Shown(message.into())),
+            ..Self::default()
+        }
+    }
+
+    /// The rest of the chain waits for `wait`
+    pub fn waiting(wait: Wait) -> Self {
+        Self {
+            wait: Some(wait),
+            ..Self::default()
         }
     }
 
@@ -72,10 +92,11 @@ impl Report {
     }
 
     /// What a later part of the same action reports, after this: its notes follow, the first
-    /// failure stays
+    /// failure and the first wait stay
     pub fn extend(&mut self, other: Report) {
         self.notes.extend(other.notes);
         self.failure = self.failure.take().or(other.failure);
+        self.wait = self.wait.or(other.wait);
     }
 }
 
@@ -89,7 +110,7 @@ impl From<Vec<Note>> for Report {
     fn from(notes: Vec<Note>) -> Self {
         Self {
             notes,
-            failure: None,
+            ..Self::default()
         }
     }
 }

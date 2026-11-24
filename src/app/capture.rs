@@ -18,7 +18,7 @@ use crate::{
         find_last_session, group_separator, read_tail_bytes, read_times, restore_separator,
         session_name_notice, tail_lines_len, timed_chunks, timed_ranges,
     },
-    commands::report::{Failure, Note, Report},
+    commands::report::{Note, Report},
     configs::{Mode, settings::RestoreMode},
     event::Event,
     notification::ToastLevel,
@@ -653,10 +653,7 @@ impl App {
                     ErrorDialog::new("Capture Failed", "Could not open file for writing")
                         .with_details(e),
                 ));
-                Report {
-                    notes: Vec::new(),
-                    failure: Some(Failure::Shown(message)),
-                }
+                Report::shown(message)
             }
         }
     }

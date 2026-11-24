@@ -27,7 +27,8 @@ use crate::{
         CaptureDevice, CaptureLine, Recorder, RecordingWriter, ScreenshotFormat, Session, Stream,
     },
     commands::{
-        Invocation, Origin,
+        Origin,
+        jobs::{Caller, Jobs, Wait},
         report::{Note, Report},
     },
     configs::{
@@ -194,10 +195,9 @@ pub struct App {
     /// runs again
     click_hold: Option<(KeyBindingAction, ratatui::layout::Rect)>,
     click_repeat_at: Option<Instant>,
-    /// The commands of a chain still to run, one after the other (MAX-12), each with who
-    /// started it (MAX-165), and when they go on after a `sleep` or a `break`
-    pending_commands: VecDeque<(Origin, Invocation)>,
-    commands_resume_at: Option<Instant>,
+    /// The chains running, each a job with who started it and what it waits for (MAX-12,
+    /// MAX-165)
+    jobs: Jobs,
     /// The command lines that ran, the oldest first (MAX-12)
     command_history: VecDeque<String>,
     /// The searches Enter ran, oldest first, for Up / Down in the bar (MAX-218)
@@ -381,8 +381,7 @@ impl App {
             scrollbar_repeat_at: None,
             click_hold: None,
             click_repeat_at: None,
-            pending_commands: VecDeque::new(),
-            commands_resume_at: None,
+            jobs: Jobs::default(),
             command_history: VecDeque::new(),
             search_history: VecDeque::new(),
             line_mode: line_view,
@@ -495,6 +494,7 @@ impl App {
                     }
                 };
                 self.emit(done);
+                self.complete_waiting(|wait| *wait == Wait::Transfer, Report::default());
             }
             Some(Err(failure)) => self.stop_transfer(&failure.to_string()),
         }
@@ -505,8 +505,11 @@ impl App {
     pub fn stop_transfer(&mut self, why: &str) {
         if let Some(transfer) = self.transfer.take() {
             let stopped = stopped_text(&transfer);
+            // the job waiting for it fails quietly: the event's toast says it
+            let failed = Report::shown(format!("{stopped}: {why}"));
             let why = why.to_string();
             self.emit(Event::TransferStopped { stopped, why });
+            self.complete_waiting(|wait| *wait == Wait::Transfer, failed);
         }
     }
 
@@ -884,7 +887,7 @@ impl App {
     /// An action of the user's own input, what it reports shown
     pub fn update(&mut self, action: Action) -> UpdateEffect {
         let (effect, report) = self.update_from(&Origin::Input, action);
-        self.present(&Origin::Input, report);
+        self.present(&Caller::input(), report);
         effect
     }
 
@@ -897,7 +900,7 @@ impl App {
         }
         let mut report = Report::default();
         let effect = match action {
-            Action::App(action) => self.update_action_app(action, &mut report),
+            Action::App(action) => self.update_action_app(origin, action, &mut report),
             Action::TransmitRaw(bytes) => {
                 // refused while a protocol transfer owns the link: not echoed (MAX-162)
                 if self.settings.local_echo && !self.link_busy() {
@@ -1262,7 +1265,8 @@ impl App {
             MashStep::Send(bytes) => Some(bytes.to_vec()),
             MashStep::TimedOut => {
                 let until = self.mash.take()?.until_text().to_string();
-                self.fail_commands(format!("mash: '{until}' didn't come in"));
+                let failed = Report::failed(format!("mash: '{until}' didn't come in"));
+                self.complete_waiting(|wait| *wait == Wait::Mash, failed);
                 None
             }
         }
@@ -1271,7 +1275,8 @@ impl App {
     /// Ends the mash before its text came in (`why` shown as reason), and the rest of its line
     pub fn stop_mash(&mut self, why: &str) {
         if self.mash.take().is_some() {
-            self.fail_commands(format!("Mash stopped: {why}"));
+            let failed = Report::failed(format!("Mash stopped: {why}"));
+            self.complete_waiting(|wait| *wait == Wait::Mash, failed);
         }
     }
 
@@ -1283,11 +1288,9 @@ impl App {
             .is_some_and(|mash| mash.until_seen(chunk))
         {
             let until = self.mash.take().map(|mash| mash.until_text().to_string());
-            self.notify_success(format!(
-                "Mash done: '{}' came in",
-                until.unwrap_or_default()
-            ));
-            self.resume_commands();
+            let done = format!("Mash done: '{}' came in", until.unwrap_or_default());
+            let done = Report::from(Note::new(ToastLevel::Success, done));
+            self.complete_waiting(|wait| *wait == Wait::Mash, done);
         }
     }
 
@@ -1847,7 +1850,7 @@ impl App {
         if let Some(pos) = self.frame_map.copy_position(side, x, y, true) {
             let mut report = Report::default();
             self.update_action_copy_mode(CopyModeAction::MouseDrag(pos, (x, y)), &mut report);
-            self.present(&Origin::Input, report);
+            self.present(&Caller::input(), report);
         }
         // terminal mode's dump scrolls on its own (MAX-252)
         if side == CopySide::Raw && self.settings.mode == Mode::Terminal {
@@ -1867,8 +1870,13 @@ impl App {
         true
     }
 
-    /// An app action, what it reports added to `report`
-    fn update_action_app(&mut self, action: AppAction, report: &mut Report) -> UpdateEffect {
+    /// An app action from `origin`, what it reports added to `report`
+    fn update_action_app(
+        &mut self,
+        origin: &Origin,
+        action: AppAction,
+        report: &mut Report,
+    ) -> UpdateEffect {
         match action {
             AppAction::SetPrefix(state) => {
                 self.prefix_active = state;
@@ -1918,8 +1926,8 @@ impl App {
                 report
                     .notes
                     .push(Note::info(format!("Mashing until '{until}'")));
-                // the rest of the line waits for its text, its timeout at most
-                self.pause_commands(mash.deadline());
+                // the rest of the chain waits for its text, its own timeout at most
+                report.wait = Some(Wait::Mash);
                 self.mash = Some(*mash);
                 UpdateEffect::None
             }
@@ -1955,6 +1963,8 @@ impl App {
                 if !self.settings.ui.transfer_row {
                     report.notes.push(Note::info(message).in_slot("transfer"));
                 }
+                // the rest of the chain waits for the file's end (MAX-165)
+                report.wait = Some(Wait::Transfer);
                 self.transfer = Some(*transfer);
                 self.busy_said = false;
                 self.recancel_until = None;
@@ -1962,7 +1972,7 @@ impl App {
             }
             AppAction::Reconfigure(line) => UpdateEffect::Reconfigure(line),
             AppAction::PauseCommands(duration) => {
-                self.pause_commands(Instant::now() + duration);
+                report.wait = Some(Wait::Until(Instant::now() + duration));
                 UpdateEffect::None
             }
             AppAction::LineControl(control) => UpdateEffect::LineControl(control),
@@ -2016,7 +2026,7 @@ impl App {
                 UpdateEffect::None
             }
             AppAction::CancelCommands => {
-                report.extend(self.cancel());
+                report.extend(self.cancel(origin));
                 UpdateEffect::None
             }
             AppAction::ToggleTriggers => {
@@ -3099,11 +3109,6 @@ impl App {
             Mode::Terminal => self.terminal_mode.can_pan_right(),
             Mode::Line => self.line_mode.can_pan_right(),
         }
-    }
-
-    // TODO: (MAX-165) gone with step 3: mash's end becomes its command's result
-    fn notify_success(&mut self, msg: impl Into<String>) {
-        self.notify(ToastLevel::Success, msg);
     }
 
     /// The presenter's own error toast (`present`, `fail_commands`): a toast comes from

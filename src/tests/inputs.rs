@@ -115,8 +115,8 @@ fn bare_command_keys_run_the_command() {
         app.update(Action::App(AppAction::SetPrefix(true)));
         let action = handle_event(plain(KeyCode::Char(c)), app);
         app.update(action);
-        while let Some((_, action)) = app.next_command_action(now) {
-            app.update(action);
+        while let Some((caller, action)) = app.next_command_action(now) {
+            app.update_for(&caller, action);
         }
         let toasts = app.notifications.active_toasts();
         toasts.last().map(|toast| toast.message.clone())
@@ -667,8 +667,8 @@ fn mark_keys_wait_for_a_letter() {
         let press = |app: &mut App, event| {
             let action = handle_event(event, app);
             app.update(action);
-            while let Some((_, action)) = app.next_command_action(std::time::Instant::now()) {
-                app.update(action);
+            while let Some((caller, action)) = app.next_command_action(std::time::Instant::now()) {
+                app.update_for(&caller, action);
             }
         };
         let char_key = |c| plain(KeyCode::Char(c));

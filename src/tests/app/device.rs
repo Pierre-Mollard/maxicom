@@ -19,7 +19,15 @@ use crate::{
 impl App {
     /// `dispatch_from` for the user's own input, as most tests run their actions
     pub fn dispatch(&mut self, action: Action) -> UpdateEffect {
-        self.dispatch_from(&Origin::Input, action)
+        self.dispatch_from(&Caller::input(), action)
+    }
+
+    /// `update` for a job's command: what it reports presented for its job (its failure, its
+    /// wait), the effect left for the test as `update` leaves it
+    pub fn update_for(&mut self, caller: &Caller, action: Action) -> UpdateEffect {
+        let (effect, report) = self.update_from(&caller.origin, action);
+        self.present(caller, report);
+        effect
     }
 }
 
@@ -493,8 +501,8 @@ fn switch_commands_wait_for_the_restore_answer() {
     app.settings.sessions.restore = RestoreMode::Ask;
     app.start_session(Some(sessions.clone()));
     let run = |app: &mut App| {
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            app.dispatch(action);
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            app.dispatch_from(&caller, action);
         }
     };
     let command_line = crate::configs::KeyBindingAction::CommandLine.to_action(&app);
@@ -829,8 +837,8 @@ fn replay_controls() {
     let run = |app: &mut App, line: &str| {
         let invocations = crate::commands::parse(line).unwrap();
         app.dispatch(Action::App(AppAction::QueueCommands(invocations)));
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            app.dispatch(action);
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            app.dispatch_from(&caller, action);
         }
         toasts(app).last().cloned().unwrap_or_default()
     };
@@ -1970,8 +1978,8 @@ fn profile_load_and_unload() {
         app.dispatch(KeyBindingAction::CommandLine.to_action(app));
         app.dispatch(Action::Overlay(DialogAction::Paste(line.to_string())));
         let mut effects = vec![app.dispatch(Action::Overlay(DialogAction::Confirm))];
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            effects.push(app.dispatch(action));
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            effects.push(app.dispatch_from(&caller, action));
         }
         effects.into_iter().find_map(|effect| match effect {
             UpdateEffect::LayProfiles(stack) => Some(stack),
@@ -2173,8 +2181,8 @@ fn on_open_runs_once_after_an_open() {
     let sent = |app: &mut App| {
         app.run_profile_hooks();
         let mut sent = Vec::new();
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            if let UpdateEffect::Transmit(bytes) = app.update(action) {
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            if let UpdateEffect::Transmit(bytes) = app.update_for(&caller, action) {
                 sent.push(String::from_utf8(bytes).unwrap());
             }
         }
@@ -2293,8 +2301,8 @@ fn on_load_runs_for_the_profiles_laid() {
     let ran = |app: &mut App| {
         app.notifications.dismiss_all();
         app.run_profile_hooks();
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            app.update(action);
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            app.update_for(&caller, action);
         }
         toasts(app)
     };

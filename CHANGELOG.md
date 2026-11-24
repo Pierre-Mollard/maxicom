@@ -8,6 +8,24 @@ you says so in an "Upgrading" section.
 
 ## [Unreleased]
 
+### Changed
+
+- A trigger's or a profile's command line no longer waits behind yours.
+  While one waits on a `sleep`, an `open` or a `mash`, the others go on, and
+  a command that fails stops only the rest of its own line. `cancel` in a
+  trigger's line stops only that trigger's commands; yours still stops them
+  all.
+- An error from your own key or popup, like a refused baud rate or DTR, no
+  longer drops the command line waiting.
+- A `screenshot <name>` that can't be written, or a `replay-restart` that
+  can't read its file, stops the rest of its command line.
+- A command line waits for its file transfer: `send-file a; send b` sends `b`
+  once `a` went through, and so do `upload` and `download`. `cancel` stops
+  the file and drops what waits for it; a transfer that fails stops the rest
+  of its line.
+- An `open` with no answer after twice the connect timeout stops the rest of
+  its command line, instead of the next command finding the link closed.
+
 ## [0.1.4] - 2026-11-22
 
 ### Upgrading

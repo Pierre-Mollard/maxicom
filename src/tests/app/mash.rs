@@ -15,7 +15,6 @@ fn paced_until_the_timeout() {
     assert_eq!(mash.step(ms(170)), MashStep::Send(b" "));
     assert_eq!(mash.step(ms(199)), MashStep::Wait);
     assert_eq!(mash.step(ms(200)), MashStep::TimedOut);
-    assert_eq!(mash.deadline(), ms(200));
 }
 
 /// The text waited for is matched across chunks, and shown printable.

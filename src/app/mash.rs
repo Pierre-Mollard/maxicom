@@ -46,10 +46,6 @@ impl Mash {
         &self.until_text
     }
 
-    pub fn deadline(&self) -> Instant {
-        self.deadline
-    }
-
     pub fn step(&mut self, now: Instant) -> MashStep<'_> {
         if now >= self.deadline {
             return MashStep::TimedOut;

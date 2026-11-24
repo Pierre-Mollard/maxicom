@@ -80,8 +80,8 @@ fn command_line_runs_a_named_command() {
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
         let mut effects = Vec::new();
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            effects.push(app.update(action));
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            effects.push(app.update_for(&caller, action));
         }
         effects
     };
@@ -142,8 +142,8 @@ fn saved_links_on_the_command_line() {
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
         let mut effects = Vec::new();
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            effects.push(app.update(action));
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            effects.push(app.update_for(&caller, action));
         }
         effects
     };
@@ -164,18 +164,18 @@ fn saved_links_on_the_command_line() {
         }
         _ => panic!("esp32 not opened with its line"),
     }
-    app.drop_pending_commands();
+    app.jobs = Jobs::default();
     let tcp = "tcp://10.0.0.1:4000".parse::<Address>().unwrap();
     assert!(matches!(
         &run_line(&mut app, "open router\\ console")[..],
         [UpdateEffect::Open(address)] if *address == tcp
     ));
-    app.drop_pending_commands();
+    app.jobs = Jobs::default();
     assert!(matches!(
         &run_line(&mut app, "open COM3")[..],
         [UpdateEffect::Open(address)] if address.to_string() == "COM3"
     ));
-    app.drop_pending_commands();
+    app.jobs = Jobs::default();
 
     run_line(&mut app, "link-save board");
     assert_eq!(last_toast(&app), "Saved link 'board'");
@@ -209,8 +209,8 @@ fn name_the_running_session() {
         app.update(KeyBindingAction::CommandLine.to_action(app));
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            app.update(action);
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            app.update_for(&caller, action);
         }
     };
     let last_toast = |app: &App| {
@@ -258,8 +258,8 @@ fn command_line_send() {
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
         let mut effects = Vec::new();
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            effects.push(app.update(action));
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            effects.push(app.update_for(&caller, action));
         }
         effects
     };
@@ -321,8 +321,8 @@ fn triggers_fire_on_live_bytes() {
     app.set_triggers(config.compile().unwrap());
     let effects = |app: &mut App| {
         let mut effects = Vec::new();
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            effects.push(app.update(action));
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            effects.push(app.update_for(&caller, action));
         }
         effects
     };
@@ -379,8 +379,8 @@ fn trigger_mark_command_marks_the_last_line() {
     app.set_triggers(config.compile().unwrap());
     let fed = |app: &mut App, bytes: &[u8]| {
         app.feed_rx(bytes);
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            app.update(action);
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            app.update_for(&caller, action);
         }
     };
 
@@ -477,8 +477,8 @@ fn trigger_counts() {
     let run = |app: &mut App, line: &str| {
         let invocations = crate::commands::parse(line).unwrap();
         app.update(Action::App(AppAction::QueueCommands(invocations)));
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            app.update(action);
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            app.update_for(&caller, action);
         }
         let toasts = app.notifications.active_toasts();
         toasts.last().unwrap().message.clone()
@@ -545,8 +545,8 @@ fn arming_triggers() {
         app.update(Action::App(AppAction::QueueCommands(
             crate::commands::parse(line).unwrap(),
         )));
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            app.update(action);
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            app.update_for(&caller, action);
         }
     };
 
@@ -618,8 +618,8 @@ fn mash_until_its_text() {
     // the chain's actions built at `now`, their effects
     let run = |app: &mut App, now: Instant| {
         let mut effects = Vec::new();
-        while let Some((_, action)) = app.next_command_action(now) {
-            effects.push(app.update(action));
+        while let Some((caller, action)) = app.next_command_action(now) {
+            effects.push(app.update_for(&caller, action));
         }
         effects
     };
@@ -784,18 +784,19 @@ fn commands_on_the_wire() {
     let mut run = |app: &mut App, line: &str| {
         let invocations = crate::commands::parse(line).unwrap();
         app.update(Action::App(AppAction::QueueCommands(invocations)));
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            match app.update(action) {
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            let job = caller.job.unwrap();
+            match app.update_for(&caller, action) {
                 UpdateEffect::Transmit(bytes) => device.write(&bytes).unwrap(),
                 UpdateEffect::Reconfigure(line) => match device.reconfigure(&line) {
                     Ok(()) => set_line(app, line),
                     Err(_) => {
-                        app.drop_pending_commands();
+                        app.jobs.fail(job);
                     }
                 },
                 UpdateEffect::LineControl(control) => {
                     if let Err(e) = device.control(control) {
-                        app.fail_commands(format!("{control}: {e}"));
+                        app.fail_job(job, format!("{control}: {e}"));
                     }
                 }
                 UpdateEffect::None => {}
@@ -858,8 +859,8 @@ fn mash_on_the_wire() {
         if let Some(bytes) = app.next_mash_bytes(Instant::now()) {
             device.write(&bytes).unwrap();
         }
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            match app.update(action) {
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            match app.update_for(&caller, action) {
                 UpdateEffect::Transmit(bytes) => device.write(&bytes).unwrap(),
                 UpdateEffect::None => {}
                 _ => panic!("unexpected effect"),
@@ -923,15 +924,19 @@ fn command_line_send_file() {
     let path = std::env::temp_dir().join(format!("maxicom_test_{}_send.txt", std::process::id()));
     std::fs::write(&path, [b'x'; 300]).unwrap();
     let file = path.display().to_string().replace('\\', "/");
+    // the commands due, each effect as the loop gets it
+    let drain = |app: &mut App| {
+        let mut effects = Vec::new();
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            effects.push(app.update_for(&caller, action));
+        }
+        effects
+    };
     let run_line = |app: &mut App, line: &str| {
         app.update(KeyBindingAction::CommandLine.to_action(app));
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
-        let mut effects = Vec::new();
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            effects.push(app.update(action));
-        }
-        effects
+        drain(app)
     };
     let last_toast = |app: &App| {
         app.notifications
@@ -942,13 +947,15 @@ fn command_line_send_file() {
             .clone()
     };
 
+    // the rest of the chain waits for the file's end (MAX-165)
     let effects = run_line(&mut app, &format!("send-file {file}; send y"));
-    assert!(matches!(
-        &effects[..],
-        [UpdateEffect::None, UpdateEffect::Transmit(y)] if y == b"y"
-    ));
+    assert!(matches!(&effects[..], [UpdateEffect::None]));
     assert_eq!(app.transfer().unwrap().percent(), 0);
-    assert!(run_line(&mut app, &format!("send-file {file}")).is_empty());
+    // a user's line would wait behind it: a trigger's is refused
+    let trigger = Origin::Trigger("t".to_string());
+    let chain = crate::commands::parse(&format!("send-file {file}")).unwrap();
+    app.jobs.push(trigger, chain);
+    assert!(drain(&mut app).is_empty());
     assert_eq!(
         last_toast(&app),
         "send-file: a file is being sent already (cancel stops it)"
@@ -965,6 +972,9 @@ fn command_line_send_file() {
     }
     assert_eq!(sent, 300);
     assert!(app.transfer().is_none());
+    // the file went through: the chain goes on
+    let effects = drain(&mut app);
+    assert!(matches!(&effects[..], [UpdateEffect::Transmit(y)] if y == b"y"));
     // the transfer's toasts follow each other in one box, above the refusal (MAX-228)
     let transfer_toast = |app: &App| -> String {
         let toasts = app.notifications.active_toasts();
@@ -977,12 +987,25 @@ fn command_line_send_file() {
         transfer_toast(&app)
     );
 
-    run_line(&mut app, &format!("send-file {file}"));
+    // `cancel` doesn't wait behind the chain: it stops the file and drops the rest
+    run_line(&mut app, &format!("send-file {file}; send z"));
     app.transfer_step(&[], start + Duration::from_secs(1));
     run_line(&mut app, "cancel");
     assert!(app.transfer().is_none());
     assert!(
         transfer_toast(&app).ends_with(" at 32%"),
+        "{}",
+        transfer_toast(&app)
+    );
+    assert_eq!(last_toast(&app), "Dropped 1 waiting command");
+    assert!(drain(&mut app).is_empty());
+
+    // a stop on an error fails the chain, quietly: the transfer's toast says why
+    run_line(&mut app, &format!("send-file {file}; send w"));
+    app.stop_transfer("the link closed");
+    assert!(drain(&mut app).is_empty());
+    assert!(
+        transfer_toast(&app).ends_with(": the link closed"),
         "{}",
         transfer_toast(&app)
     );
@@ -1005,9 +1028,9 @@ fn command_line_send_file() {
     let _ = std::fs::remove_file(&path);
 }
 
-/// MAX-162: `upload <protocol> <path>` starts a protocol transfer, waiting for its receiver,
-/// and the chain goes on at once. Refused with a file being sent already, a mash running, an
-/// unknown protocol; a mash is refused while it runs.
+/// MAX-162: `upload <protocol> <path>` starts a protocol transfer, waiting for its receiver;
+/// the rest of the chain waits for its end (MAX-165). Refused with a file being sent already,
+/// a mash running, an unknown protocol; a mash is refused while it runs.
 #[test]
 fn command_line_upload() {
     use crate::{
@@ -1022,8 +1045,8 @@ fn command_line_upload() {
         app.update(KeyBindingAction::CommandLine.to_action(app));
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            app.update(action);
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            app.update_for(&caller, action);
         }
     };
     let toasts = |app: &App| -> Vec<String> {
@@ -1057,13 +1080,17 @@ fn command_line_upload() {
         run_line(&mut app, "cancel");
     }
 
+    // a typed line waits behind the upload's chain: built at once, as a trigger's could be
     run_line(&mut app, &format!("upload ymodem {file}"));
-    run_line(&mut app, &format!("upload xmodem {file}"));
-    let refused = "upload: a file is being sent already (cancel stops it)".to_string();
-    assert!(toasts(&app).contains(&refused), "{:?}", toasts(&app));
-    run_line(&mut app, "mash a b");
-    let refused = "mash: a file transfer is running (cancel stops it)".to_string();
-    assert!(toasts(&app).contains(&refused), "{:?}", toasts(&app));
+    let args = [ArgValue::Enum("xmodem"), ArgValue::Path(path.clone())];
+    let refused = build::upload(&app, &args).unwrap_err();
+    assert_eq!(refused, "a file is being sent already (cancel stops it)");
+    let args = [
+        ArgValue::Bytes(b"a".to_vec()),
+        ArgValue::Bytes(b"b".to_vec()),
+    ];
+    let refused = build::mash(&app, &args).unwrap_err();
+    assert_eq!(refused, "a file transfer is running (cancel stops it)");
     run_line(&mut app, "cancel");
 
     // a typed line waits behind a mash: built at once, as a bound key's could be
@@ -1152,8 +1179,8 @@ fn command_line_serial_lines() {
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
         let mut controls = Vec::new();
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            match app.update(action) {
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            match app.update_for(&caller, action) {
                 UpdateEffect::Reconfigure(line) => set_line(app, line),
                 UpdateEffect::LineControl(control) => controls.push(control),
                 _ => {}
@@ -1243,8 +1270,8 @@ fn only_input_acts_as_typing() {
 
     let mash = crate::commands::parse("mash ' ' '=> '").unwrap();
     app.update(Action::App(AppAction::QueueCommands(mash)));
-    let (origin, action) = app.next_command_action(Instant::now()).unwrap();
-    let _ = app.update_from(&origin, action);
+    let (caller, action) = app.next_command_action(Instant::now()).unwrap();
+    app.update_for(&caller, action);
     let key = crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('a'));
     let _ = app.update_from(&trigger, Action::LineInput(LineInputAction::HandleKey(key)));
     assert!(app.mash().is_some());
@@ -1286,16 +1313,20 @@ fn command_line_open() {
     let now = Instant::now();
 
     queue_line(&mut app, "open /dev/ttyUSB9; send x");
-    let open = app.next_command_action(now).unwrap().1;
+    let (caller, open) = app.next_command_action(now).unwrap();
     assert!(
-        matches!(app.update(open), UpdateEffect::Open(address) if address == "/dev/ttyUSB9".parse::<Address>().unwrap())
+        matches!(app.update_for(&caller, open), UpdateEffect::Open(address) if address == "/dev/ttyUSB9".parse::<Address>().unwrap())
     );
-    // the loop: the link closed, the line waiting for the open
+    // the loop: the link closed, the job waiting for the open's result (MAX-165)
     set_link_open(&mut app, false);
-    app.pause_commands(now + Duration::from_secs(6));
+    let until = now + Duration::from_secs(6);
+    app.jobs.wait(caller.job.unwrap(), Wait::LinkOpen { until });
     assert!(app.next_command_action(now).is_none());
     set_link_open(&mut app, true);
-    app.resume_commands();
+    app.complete_waiting(
+        |wait| matches!(wait, Wait::LinkOpen { .. }),
+        Report::default(),
+    );
     let send = app.next_command_action(now).unwrap().1;
     assert!(matches!(app.update(send), UpdateEffect::Transmit(x) if x == b"x"));
 
@@ -1409,8 +1440,8 @@ fn command_line_set_encoding_search_screenshot() {
         app.update(KeyBindingAction::CommandLine.to_action(app));
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            app.update(action);
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            app.update_for(&caller, action);
         }
     };
     let last_toast = |app: &App| {
@@ -1487,8 +1518,8 @@ fn command_line_history() {
         app.update(KeyBindingAction::CommandLine.to_action(&app));
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            app.update(action);
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            app.update_for(&caller, action);
         }
         app.close_overlay();
     }
@@ -1719,8 +1750,8 @@ fn add_cr_and_add_lf_on_the_screen() {
         app.update(KeyBindingAction::CommandLine.to_action(&app));
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            app.update(action);
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            app.update_for(&caller, action);
         }
         assert_eq!(app.setting_is_on(SettingKey::AddCr), Some(on), "{line}");
     }
@@ -2349,8 +2380,8 @@ fn mark_commands() {
         app.update(KeyBindingAction::CommandLine.to_action(app));
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            app.update(action);
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            app.update_for(&caller, action);
         }
         let toasts = app.notifications.active_toasts();
         toasts.last().map(|toast| toast.message.clone()).unwrap()
@@ -2608,8 +2639,8 @@ fn command_line_notify() {
         app.update(Action::Overlay(DialogAction::Paste(line.to_string())));
         app.update(Action::Overlay(DialogAction::Confirm));
         let mut effects = Vec::new();
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            effects.push(app.update(action));
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            effects.push(app.update_for(&caller, action));
         }
         effects
     };
@@ -2658,8 +2689,8 @@ fn trigger_runs_notify() {
     let fire = |app: &mut App| {
         app.feed_rx(b"[   12.345] Kernel panic - not syncing");
         let mut effects = Vec::new();
-        while let Some((_, action)) = app.next_command_action(Instant::now()) {
-            effects.push(app.update(action));
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            effects.push(app.update_for(&caller, action));
         }
         effects
     };
@@ -2676,8 +2707,8 @@ fn trigger_runs_notify() {
     app.update(Action::App(AppAction::QueueCommands(
         crate::commands::parse("trigger on panic").unwrap(),
     )));
-    while let Some((_, action)) = app.next_command_action(Instant::now()) {
-        app.update(action);
+    while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+        app.update_for(&caller, action);
     }
     app.notifications.dismiss_all();
     assert!(matches!(&fire(&mut app)[..], [UpdateEffect::None]));

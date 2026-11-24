@@ -18,7 +18,7 @@ their own.
 
 A **command** is what you type on the [command line](command-line.md). It
 can take arguments, like `send AT\r` or `baud 9600`, and it waits its turn:
-it runs after a line still running, in order, and `cancel` stops it.
+it runs after your lines still running, in order, and `cancel` stops it.
 
 The two meet in a few places:
 
@@ -181,8 +181,8 @@ bind or to type.
 | `run` | The command line: commands chained with `;`, as on the [command line](command-line.md) |
 | `help` | What the help and the completion show. Optional: without it, they show the line. |
 
-A named command runs like a line you type. It waits its turn behind a line
-still running, and it doesn't go in the command line's history.
+A named command runs like a line you type. It waits its turn behind your
+lines still running, and it doesn't go in the command line's history.
 
 The help's Commands tab lists the named commands with the line each one
 runs.

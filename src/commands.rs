@@ -12,6 +12,7 @@ use crate::{
 };
 
 pub mod build;
+pub mod jobs;
 pub mod report;
 pub mod tokenizer;
 
@@ -66,11 +67,8 @@ pub enum Target {
     Build(fn(&App, &[ArgValue]) -> Result<Action, String>),
 }
 
-/// Who started an action or a chain (MAX-165): `Input` is the user's own keys, clicks,
-/// pastes and popup answers; `CommandLine` a chain entered in the command line popup;
-/// `KeyBinding` a chain a key runs (a named command, or a command bound alone); `Trigger` a
-/// trigger's chain, by its name; `Profile` a profile hook's chain, `on_load` or `on_open`.
-/// Only `Input` acts as typing: it ends the prefix and stops a mash
+/// Who started an action or a chain (MAX-165). Only `Input` acts as typing: it ends the
+/// prefix and stops a mash
 // TODO: (MAX-284) a `Client` origin for each API connection (A2.1), the reason this enum
 // exists now: a client's chains run next to the user's and the triggers', and its results go
 // back to it, not to a toast (MAX-165 steps 2-3). The CLI (MAX-285) and the MCP server
@@ -231,6 +229,20 @@ impl std::fmt::Display for CommandError {
 
 impl std::error::Error for CommandError {}
 
+/// The registry: every command the command line, the keys, the triggers and the profiles run.
+///
+/// A command is done, and its chain goes on (MAX-165), when:
+///
+/// | Command | Done when |
+/// | --- | --- |
+/// | `open` | the link opened; its failure, or no answer after twice the connect timeout, fails the chain |
+/// | `sleep` | its time is up |
+/// | `break` | the break ended |
+/// | `mash` | its text came in; its timeout, a key typed or the link closing fails the chain |
+/// | `send-file`, `upload`, `download` | the file went through; a stop on an error fails the chain, its toast saying why |
+/// | `send`, `send-hex` | the bytes are written to the link, not when the device answers |
+/// | `toggle-attach` | asked: the reopen's result comes as the link's own |
+/// | every other | at once, its effect applied |
 pub static COMMANDS: &[CommandSpec] = {
     use KeyBindingAction as A;
     &[

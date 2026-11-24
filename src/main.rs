@@ -23,8 +23,8 @@ use crate::{
     },
     args::{ParseOutcome, parse_args, print_help, print_version},
     commands::{
-        Origin,
-        report::{Failure, Note, Report},
+        jobs::Caller,
+        report::{Note, Report},
     },
     configs::{
         AppConfig, ConfigsError, KeyResolver, KeywordHighlight, LinksConfig, PlotsConfig,
@@ -441,7 +441,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     let action = inputs::handle_event(event, &app);
                     // the mouse capture reports every move: one that does nothing draws nothing
                     needs_redraw |= !matches!(action, inputs::Action::Ignore);
-                    (Origin::Input, action)
+                    (Caller::input(), action)
                 }
                 // no event: a chain paused by a `sleep` or a `break` goes on once its time is
                 // up (MAX-12)
@@ -458,29 +458,26 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // the action, then the queued commands of a chain one at a time, each effect
             // applied before the next is built (MAX-12)
             let mut next = Some(next_action);
-            while let Some((origin, action)) = next.take() {
-                match app.dispatch_from(&origin, action) {
+            while let Some((caller, action)) = next.take() {
+                match app.dispatch_from(&caller, action) {
                     UpdateEffect::Quit => running = false,
                     // what an effect gives is reported to who started its action (MAX-165)
                     UpdateEffect::CopyToClipboard(text) => {
                         let copied = execute_clipboard_copy(&app, &text, None);
-                        app.present(&origin, copied);
+                        app.present(&caller, copied);
                     }
                     UpdateEffect::CopyToClipboardAs { text, what } => {
                         let copied = execute_clipboard_copy(&app, &text, Some(&what));
-                        app.present(&origin, copied);
+                        app.present(&caller, copied);
                     }
                     // `profile load` / `unload`, at once: the next command of the chain sees it
                     UpdateEffect::LayProfiles(profiles) => {
                         let laid = lay_profiles(&mut app, &global, &mut highlight_rules, profiles);
                         let report = match laid {
                             Ok(()) => Report::from(app.profiles_note()),
-                            Err(message) => Report {
-                                notes: Vec::new(),
-                                failure: Some(Failure::Shown(message)),
-                            },
+                            Err(message) => Report::shown(message),
                         };
-                        app.present(&origin, report);
+                        app.present(&caller, report);
                     }
                     // ratatui forgets what it drew: the next frame writes every cell (MAX-271)
                     UpdateEffect::Redraw => guard.terminal.clear()?,
@@ -497,7 +494,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                                 status_bar = config.status_bar;
                                 let reloaded =
                                     app.apply_reload(config.settings, config.key_resolver);
-                                app.present(&origin, Report::from(reloaded));
+                                app.present(&caller, Report::from(reloaded));
                                 app.warn_shadowed_keys();
                                 for text in config.warnings {
                                     app.emit(Event::ConfigWarning { text });
@@ -513,11 +510,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                                     )
                                     .with_details(err),
                                 ));
-                                let failed = Report {
-                                    notes: Vec::new(),
-                                    failure: Some(Failure::Shown(message)),
-                                };
-                                app.present(&origin, failed);
+                                let failed = Report::shown(message);
+                                app.present(&caller, failed);
                             }
                         }
                     }
@@ -559,7 +553,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
             PostRenderEffect::_CopyToClipboard(text) => {
                 let copied = execute_clipboard_copy(&app, &text, None);
-                app.present(&Origin::Input, copied);
+                app.present(&Caller::input(), copied);
             }
             PostRenderEffect::LayoutWarnings(current_warnings) => {
                 for warn in &current_warnings {

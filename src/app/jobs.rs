@@ -1,14 +1,17 @@
-//! Running chains (MAX-12): their commands queued with who started them (MAX-165), built
-//! one at a time on the state the previous ones left, paused by a `sleep`, a `break` or an
-//! `open`, failed with the rest dropped, or cancelled. `commands` parses and builds them, the
-//! loop applies their effects
+//! Running chains as jobs (MAX-12, MAX-165): their commands built one at a time on the state
+//! the previous ones left, a job waiting for what its command reported (a `sleep`, a
+//! `break`, an `open`, a `mash`), stopped on its failure, or cancelled. `commands::jobs` keeps
+//! the jobs, `commands` parses and builds their commands, the loop applies their effects
 use std::time::Instant;
 
 use super::{App, RECANCEL_FOR, cancelled_text};
+use crate::link::CONNECT_TIMEOUT;
 use crate::{
     commands::{
         CommandError, Invocation, Origin, Target,
-        report::{Failure, Note, Report},
+        jobs::{Caller, JobId, Wait},
+        report::Note,
+        report::{Failure, Report},
     },
     configs::KeyBindingAction,
     inputs::Action,
@@ -16,72 +19,90 @@ use crate::{
 };
 
 impl App {
-    /// The next action of a chain (MAX-12), with who started it (MAX-165). Each is built when
-    /// its turn comes, on the state the previous ones left, and the loop applies its effect
-    /// before the next. A command that refuses (the link can't do it) stops the chain, with
-    /// the error. None either while the chain is paused (before `now`) or the
+    /// The next action of a job (MAX-12), with who it runs for (MAX-165): the oldest job's
+    /// that doesn't wait. Each is built when its turn comes, on the state the previous ones
+    /// left, and the loop applies its effect before the next. A command that refuses (the link
+    /// can't do it) stops its job, with the error. None while every job waits, or while the
     /// restore dialog asks, as the device an `open` switched to may (MAX-187)
-    pub fn next_command_action(&mut self, now: Instant) -> Option<(Origin, Action)> {
+    pub fn next_command_action(&mut self, now: Instant) -> Option<(Caller, Action)> {
         if matches!(self.overlay, Some(Overlay::RestoreSession(_))) {
             return None;
         }
-        if let Some(resume_at) = self.commands_resume_at {
-            if now < resume_at {
-                return None;
-            }
-            self.commands_resume_at = None;
+        // an `open` with no answer by its time fails, rather than the next command finding
+        // the link closed
+        for job in self.jobs.unopened(now) {
+            let secs = (CONNECT_TIMEOUT * 2).as_secs();
+            self.fail_job(job, format!("open: no answer after {secs}s"));
         }
-        let (origin, invocation) = self.pending_commands.pop_front()?;
+        let (caller, invocation) = self.jobs.next(now)?;
         let built = match invocation.spec.target {
             Target::Action(action) => Ok(action.to_action(self)),
             Target::Build(build) => build(self, &invocation.args),
         };
-        built
-            .map_err(|reason| {
+        match built {
+            Ok(action) => Some((caller, action)),
+            Err(reason) => {
                 let error = CommandError::Failed {
                     command: invocation.spec.name,
                     reason,
                 };
-                self.fail_commands(error.to_string());
-            })
-            .ok()
-            .map(|action| (origin, action))
-    }
-
-    /// What an action from `origin` reported (MAX-165), shown: its notes as toasts, then its
-    /// failure. A chain's failure stops the rest of the chain, quietly when a popup shows it;
-    /// the user's own input has no chain to stop, its failure is only said
-    pub fn present(&mut self, origin: &Origin, report: Report) {
-        for note in report.notes {
-            self.show_note(note);
-        }
-        match (report.failure, origin) {
-            (None, _) | (Some(Failure::Shown(_)), Origin::Input) => {}
-            (Some(Failure::Said(message)), Origin::Input) => self.notify_error(message),
-            (Some(Failure::Said(message)), _) => self.fail_commands(message),
-            (Some(Failure::Shown(_)), _) => {
-                self.drop_pending_commands();
+                if let Some(job) = caller.job {
+                    self.fail_job(job, error.to_string());
+                }
+                None
             }
         }
     }
 
-    /// A command failed with `message`, here or where the loop applied its effect: the rest of
-    /// its chain is dropped, the error says how much
-    pub fn fail_commands(&mut self, message: String) {
-        match self.drop_pending_commands() {
+    /// What an action for `caller` reported (MAX-165), shown: its notes as toasts, then its
+    /// failure, or what its job waits for. A job's failure stops the rest of it, quietly when a
+    /// popup shows it; the user's own input has no job, its failure is only said
+    pub fn present(&mut self, caller: &Caller, report: Report) {
+        for note in report.notes {
+            self.show_note(note);
+        }
+        match (report.failure, caller.job) {
+            (Some(Failure::Said(message)), Some(job)) => self.fail_job(job, message),
+            (Some(Failure::Shown(_)), Some(job)) => {
+                self.jobs.fail(job);
+            }
+            (Some(Failure::Said(message)), None) => self.notify_error(message),
+            (Some(Failure::Shown(_)), None) | (None, None) => {}
+            (None, Some(job)) => {
+                if let Some(wait) = report.wait {
+                    self.jobs.wait(job, wait);
+                }
+            }
+        }
+    }
+
+    /// A command of `job` failed with `message`: the rest of it is dropped, the error says how
+    /// much
+    pub fn fail_job(&mut self, job: JobId, message: String) {
+        match self.jobs.fail(job) {
             0 => self.notify_error(message),
             n => self.notify_error(format!("{message} ({n} more not run)")),
         }
     }
 
-    /// Drops the rest of a chain, quietly: how many commands it had
-    pub fn drop_pending_commands(&mut self) -> usize {
-        self.commands_resume_at = None;
-        std::mem::take(&mut self.pending_commands).len()
+    /// A delayed result (MAX-165): what a job waited for came (the link opened, the mash's text
+    /// came in, the file went through), its `report` presented for that job, which goes on or
+    /// stops on its failure. With no job waiting, it is the user's: the directory's `open`
+    /// isn't a command
+    pub fn complete_waiting(&mut self, waits: impl Fn(&Wait) -> bool, report: Report) {
+        match self.jobs.waiting(waits) {
+            Some(caller) => {
+                if let Some(job) = caller.job {
+                    self.jobs.resume(job);
+                }
+                self.present(&caller, report);
+            }
+            None => self.present(&Caller::input(), report),
+        }
     }
 
-    /// A chain to run (MAX-12), started by `origin` (MAX-165): after the commands waiting, but
-    /// a chain starting with `cancel` stops them instead of waiting behind them, which it
+    /// A chain to run (MAX-12), started by `origin` (MAX-165), as a job after the ones running;
+    /// one starting with `cancel` cancels first instead of waiting behind them, which it
     /// reports
     pub fn queue_chain(&mut self, origin: Origin, mut invocations: Vec<Invocation>) -> Report {
         let cancels = invocations.first().is_some_and(|invocation| {
@@ -93,21 +114,26 @@ impl App {
         let mut report = Report::default();
         if cancels {
             invocations.remove(0);
-            report = self.cancel();
+            report = self.cancel(&origin);
         }
-        let queued = invocations.into_iter().map(|i| (origin.clone(), i));
-        self.pending_commands.extend(queued);
+        self.jobs.push(origin, invocations);
         report
     }
 
-    /// `cancel` (MAX-12): stops the file being sent and drops the commands waiting, which it
-    /// reports
-    pub fn cancel(&mut self) -> Report {
+    /// `cancel` from `origin` (MAX-12, MAX-165), which it reports. The user's stops the file
+    /// being sent, the mash and every job; a trigger's or a profile's only the jobs of its
+    /// owner, and the mash one of them waited for
+    pub fn cancel(&mut self, origin: &Origin) -> Report {
+        let user = matches!(
+            origin,
+            Origin::Input | Origin::CommandLine | Origin::KeyBinding
+        );
+        let mut notes = Vec::new();
         // the transfer says it in its own box, "Cancelled", where a failure says "Stopped"
         // (MAX-228)
-        let transfer_cancelled = self.transfer.is_some();
-        let mut notes = Vec::new();
-        if let Some(mut transfer) = self.transfer.take() {
+        let transfer = if user { self.transfer.take() } else { None };
+        let transfer_cancelled = transfer.is_some();
+        if let Some(mut transfer) = transfer {
             // a protocol's receiver is told to stop too
             let cans = transfer.cancel();
             if !cans.is_empty() {
@@ -116,11 +142,12 @@ impl App {
             }
             notes.push(Note::warn(cancelled_text(&transfer)).in_slot("transfer"));
         }
+        let cancelled = self.jobs.cancel(origin);
         let mut stopped = Vec::new();
-        if self.mash.take().is_some() {
+        if (user || cancelled.mash) && self.mash.take().is_some() {
             stopped.push("Stopped mashing".to_string());
         }
-        match self.drop_pending_commands() {
+        match cancelled.commands {
             0 => {}
             1 => stopped.push("dropped 1 waiting command".to_string()),
             n => stopped.push(format!("dropped {n} waiting commands")),
@@ -133,17 +160,6 @@ impl App {
             notes.push(Note::info("Nothing to cancel"));
         }
         Report::from(notes)
-    }
-
-    /// The rest of a chain waits until `until` (a `sleep`, the end of a `break`, an `open` at
-    /// the latest)
-    pub fn pause_commands(&mut self, until: Instant) {
-        self.commands_resume_at = Some(until);
-    }
-
-    /// The rest of a chain goes on now: the link `open` waited for is open
-    pub fn resume_commands(&mut self) {
-        self.commands_resume_at = None;
     }
 }
 

@@ -30,7 +30,7 @@ silent = true
 | Field | Means |
 | --- | --- |
 | `match` | The text to wait for. It takes the escapes of the command line: `'\x1b[7mBoot menu'`. |
-| `run` | The [command line](command-line.md) to run, as if typed, after any line still waiting |
+| `run` | The [command line](command-line.md) to run. It runs beside your own lines, not behind them, see [Waiting and stopping](command-line.md#waiting-and-stopping) |
 | `rearm` | `true` keeps the trigger armed after it fires |
 | `armed` | `true` arms it at startup |
 | `silent` | `true` fires it without its notice, see [Raising a notification](#raising-a-notification) |

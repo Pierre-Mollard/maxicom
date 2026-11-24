@@ -17,7 +17,8 @@ use crate::{
     capture::{CaptureDevice, RecordingMeta, Session, recording_raw},
     commands::{
         Origin,
-        report::{Failure, Note, Report},
+        jobs::{Caller, Wait},
+        report::{Note, Report},
     },
     configs::{
         AppConfig, KeyResolver, LinksConfig, PlotsConfig,
@@ -308,8 +309,8 @@ impl App {
             .find_map(|profile| profile.file.on_open)
     }
 
-    /// The profiles' hooks that are due, each a chain, before the commands waiting (the rest
-    /// of an `open` or a `profile load` chain), a hook that doesn't parse said:
+    /// The profiles' hooks that are due, each a job before the ones running (the rest of an
+    /// `open` or a `profile load` chain), a hook that doesn't parse said:
     /// - the `on_load` of the profiles just laid (MAX-247), first: settings before the board
     ///   talks;
     /// - the stack's `on_open` once a link opened (MAX-9): at start, on an attach and on an
@@ -324,20 +325,19 @@ impl App {
         {
             hooks.push(("on_open", chain));
         }
-        let mut invocations = Vec::new();
+        let mut parsed = Vec::new();
         for (hook, chain) in hooks {
             match crate::commands::parse_with(&chain, &self.key_resolver.commands) {
-                Ok(chain) => {
-                    invocations.extend(chain.into_iter().map(|i| (Origin::Profile(hook), i)))
-                }
+                Ok(chain) => parsed.push((Origin::Profile(hook), chain)),
                 Err(err) => {
                     let text = format!("{hook}: {err}");
                     self.emit(Event::ConfigWarning { text });
                 }
             }
         }
-        for queued in invocations.into_iter().rev() {
-            self.pending_commands.push_front(queued);
+        // one job a hook, `on_load` first: the profiles' jobs run one after the other
+        for (origin, chain) in parsed.into_iter().rev() {
+            self.jobs.push_front(origin, chain);
         }
     }
 
@@ -642,13 +642,13 @@ impl App {
         Ok(turn)
     }
 
-    /// The action from `origin` (MAX-165), then the link effect it gives applied to the link,
+    /// The action for `caller` (MAX-165), then the link effect it gives applied to the link,
     /// what that reports shown: what is left (quit, clipboard, reload) is the loop's
-    pub fn dispatch_from(&mut self, origin: &Origin, action: Action) -> UpdateEffect {
-        let (effect, mut report) = self.update_from(origin, action);
+    pub fn dispatch_from(&mut self, caller: &Caller, action: Action) -> UpdateEffect {
+        let (effect, mut report) = self.update_from(&caller.origin, action);
         let (effect, link_report) = self.apply_link_effect(effect);
         report.extend(link_report);
-        self.present(origin, report);
+        self.present(caller, report);
         self.restore_link_popup();
         effect
     }
@@ -909,7 +909,8 @@ impl App {
                 if switched || first_pick {
                     self.switch_session();
                 }
-                self.resume_commands();
+                let opening = |wait: &Wait| matches!(wait, Wait::LinkOpen { .. });
+                self.complete_waiting(opening, Report::default());
             }
         }
     }
@@ -952,13 +953,15 @@ impl App {
             // nothing was open before the first pick: the link waits again (MAX-181)
             OpenFor::Open { .. } if self.device_unpicked => {
                 self.link.detach();
-                self.fail_commands(format!("open: {e}"));
+                let failed = Report::failed(format!("open: {e}"));
+                self.complete_waiting(|wait| matches!(wait, Wait::LinkOpen { .. }), failed);
             }
             // the retries reopen the port that was open, which the link is back on
             OpenFor::Open { .. } => {
                 self.opening_profiles = None;
                 let back = self.link_label();
-                self.fail_commands(format!("open: {e}, back to {back}"));
+                let failed = Report::failed(format!("open: {e}, back to {back}"));
+                self.complete_waiting(|wait| matches!(wait, Wait::LinkOpen { .. }), failed);
             }
         }
     }
@@ -989,10 +992,14 @@ impl App {
         }
         self.opening_profiles = Some(profiles);
         self.link.switch_to(config);
-        self.pause_commands(Instant::now() + CONNECT_TIMEOUT * 2);
         let message = format!("Opening {}", self.link_label());
         self.close_link_popups();
-        Report::from(link_note(ToastLevel::Info, message))
+        // the rest of the chain waits for the open's result, a reconnect's time at most
+        let until = Instant::now() + CONNECT_TIMEOUT * 2;
+        Report {
+            wait: Some(Wait::LinkOpen { until }),
+            ..Report::from(link_note(ToastLevel::Info, message))
+        }
     }
 
     /// The file in place of the link, which closes: no wait, a file opens at once (MAX-166).
@@ -1127,26 +1134,21 @@ impl App {
                     ErrorDialog::new("Serial Conf Rejected", "Failed to reconfigure serial")
                         .with_details(e),
                 ));
-                Report {
-                    notes: Vec::new(),
-                    failure: Some(Failure::Shown(message)),
-                }
+                Report::shown(message)
             }
         }
     }
 
-    /// A control line set; a break pauses the command line chain until its end, which the next
-    /// turn comes to first
+    /// A control line set; the rest of the chain waits for a break's end, which the next turn
+    /// comes to first
     fn line_control(&mut self, control: LineControl) -> Report {
         let now = Instant::now();
         match self.link.control(control, now) {
             None => Report::failed(format!("{control}: the port is detached")),
-            Some(Ok(())) => {
-                if let LineControl::Break(duration) = control {
-                    self.pause_commands(now + duration);
-                }
-                Report::default()
-            }
+            Some(Ok(())) => match control {
+                LineControl::Break(duration) => Report::waiting(Wait::Until(now + duration)),
+                LineControl::Dtr(_) | LineControl::Rts(_) => Report::default(),
+            },
             Some(Err(e)) => Report::failed(format!("{control}: {e}")),
         }
     }
