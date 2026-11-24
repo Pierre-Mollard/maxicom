@@ -48,6 +48,7 @@ use crate::{
             notices::render_notices_popup,
             notifications::{render_busy, render_notifications},
             profiles::render_profiles_popup,
+            query::render_query_popup,
             reconfigure::render_reconfigure_popup,
             resize::render_resize_popup,
             sessions::render_sessions_popup,
@@ -359,6 +360,7 @@ fn render_active_overlay(
         Some(Overlay::Notices(browser)) => {
             render_notices_popup(app, browser, frame, theme, &mut targets)
         }
+        Some(Overlay::Query(view)) => render_query_popup(app, view, frame, theme, &mut targets),
         Some(Overlay::Directory(directory)) => {
             render_directory_popup(app, directory, frame, theme, &mut targets)
         }

@@ -44,6 +44,7 @@ static TEST_COMMANDS: [CommandSpec; 2] = [
         args: TEST_ARGS,
         help: "",
         target: Target::Action(KeyBindingAction::Quit),
+        asks: Asks::Never,
     },
     CommandSpec::action("quit", KeyBindingAction::Quit, "Quit"),
 ];
@@ -148,7 +149,7 @@ fn every_action_has_one_command() {
                 assert_eq!(find_by_action(action), Some(spec));
                 Some(action_index(action))
             }
-            Target::Build(_) => None,
+            Target::Build(_) | Target::Query(_) => None,
         })
         .collect();
     indexes.sort_unstable();
@@ -704,4 +705,44 @@ fn complete_profiles() {
     assert_eq!(values(&complete("profile ")), ["load", "unload"]);
     assert_eq!(values(&complete("profile load b")), ["board"]);
     assert_eq!(values(&complete("profile unload ")), ["board", "proj"]);
+}
+
+/// MAX-165 (A1 step 4): the commands that need the user there, the ones a trigger's, a
+/// profile's or a client's chain can't run: a new one that opens a popup or a mode, or waits
+/// for a key, goes in this list.
+#[test]
+fn commands_that_ask_the_user() {
+    let asking = |asks: Asks| -> Vec<&str> {
+        let mut names: Vec<&str> = (COMMANDS.iter())
+            .filter(|spec| spec.asks == asks)
+            .map(|spec| spec.name)
+            .collect();
+        names.sort_unstable();
+        names
+    };
+    assert_eq!(
+        asking(Asks::Always),
+        [
+            "command-line",
+            "directory",
+            "enter-copy-mode",
+            "enter-search",
+            "enter-search-backward",
+            "help",
+            "link-settings",
+            "marks",
+            "notifications",
+            "profiles",
+            "quit",
+            "record",
+            "resize-dialog",
+            "screenshot-bytes",
+            "screenshot-text",
+            "search",
+            "sessions",
+            "settings",
+            "triggers",
+        ]
+    );
+    assert_eq!(asking(Asks::Bare), ["jump-mark", "mark"]);
 }

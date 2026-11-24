@@ -331,3 +331,79 @@ fn an_unanswered_open_fails_its_chain() {
     let failed = format!("open: no answer after {secs}s (1 more not run)");
     assert_eq!(toast.message, failed);
 }
+
+/// MAX-165 (A1 step 4): a trigger's chain can't run a command that needs the user: one
+/// opening a popup fails its chain, no popup open; `mark` without its letter, which would
+/// take the user's next key, fails too, `mark a` runs.
+/// How: chains pushed for a trigger, drained as the loop does.
+#[test]
+fn automation_cant_run_what_asks_the_user() {
+    let mut app = app();
+    let trigger = Origin::Trigger("boot".to_string());
+    let last_toast = |app: &App| {
+        let toasts = app.notifications.active_toasts();
+        toasts.last().unwrap().message.clone()
+    };
+    let drain = |app: &mut App| {
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            app.update_for(&caller, action);
+        }
+    };
+
+    let chain = crate::commands::parse("help; send x").unwrap();
+    app.jobs.push(trigger.clone(), chain);
+    drain(&mut app);
+    assert!(app.overlay().is_none());
+    assert_eq!(
+        last_toast(&app),
+        "help: it opens what the user answers: only the user runs it (1 more not run)"
+    );
+
+    app.jobs
+        .push(trigger.clone(), crate::commands::parse("mark").unwrap());
+    drain(&mut app);
+    assert_eq!(
+        last_toast(&app),
+        "mark: it waits for a key: give its argument"
+    );
+    assert!(app.pending_mark().is_none());
+
+    app.feed_rx(b"line\r\n");
+    app.jobs
+        .push(trigger, crate::commands::parse("mark a").unwrap());
+    drain(&mut app);
+    assert_eq!(last_toast(&app), "mark a");
+}
+
+/// MAX-165 (A1 step 5): `status` from the user opens its answer in a popup: the link, its
+/// state, the mode; from a trigger it does nothing, and the trigger's chain goes on.
+/// How: `status` bound to a key, then a trigger's `status; send x`.
+#[test]
+fn status_answers_the_user_only() {
+    let mut app = app();
+    let drain = |app: &mut App| {
+        let mut effects = Vec::new();
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            effects.push(app.update_for(&caller, action));
+        }
+        effects
+    };
+    let chain = crate::commands::parse("status").unwrap();
+    app.update(Action::App(AppAction::QueueCommands(chain)));
+    drain(&mut app);
+    let Some(Overlay::Query(view)) = app.overlay() else {
+        panic!("no answer popup");
+    };
+    assert_eq!(view.query, "status");
+    assert!(view.lines.iter().any(|line| line.starts_with("link: ")));
+    assert!(view.lines.contains(&"state: open".to_string()), "{view:?}");
+    assert!(view.lines.contains(&"rx: 0".to_string()), "{view:?}");
+    app.close_overlay();
+
+    let trigger = Origin::Trigger("boot".to_string());
+    app.jobs
+        .push(trigger, crate::commands::parse("status; send x").unwrap());
+    let effects = drain(&mut app);
+    assert!(app.overlay().is_none());
+    assert!(matches!(&effects[..], [UpdateEffect::None, UpdateEffect::Transmit(x)] if x == b"x"));
+}

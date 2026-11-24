@@ -23,6 +23,7 @@ pub use menu::{ActionMenu, MenuRun};
 pub use misc::{ErrorDialog, FilePathDialog, ScreenshotDialog};
 pub use notices::NoticeBrowser;
 pub use profiles::ProfileBrowser;
+pub use query::QueryView;
 pub use reconfigure::{LineSettingField, LineSettingsDialog};
 pub use resize::{ResizeDialog, ResizeField};
 pub use sessions::SessionBrowser;
@@ -38,6 +39,7 @@ pub mod menu;
 pub mod misc;
 pub mod notices;
 pub mod profiles;
+pub mod query;
 pub mod reconfigure;
 pub mod resize;
 pub mod sessions;
@@ -65,6 +67,8 @@ pub enum Overlay {
     Profiles(ProfileBrowser),
     Marks(MarkBrowser),
     Notices(NoticeBrowser),
+    /// A query's answer (MAX-165)
+    Query(QueryView),
     Directory(Directory),
     LinkForm(Box<LinkForm>),
     DeleteLink(SavedLink),
@@ -115,6 +119,12 @@ pub enum PopupTarget {
     MarkDelete,
     NoticeRow(usize),
     NoticeCopy,
+    /// A line of a query's answer (MAX-165)
+    QueryRow(usize),
+    /// The query popup's Copy button: the selected line
+    QueryCopy,
+    /// The query popup's Copy all button: the whole answer
+    QueryCopyAll,
     ConfigPath(usize),
     DirectoryTab(DirectoryTab),
     DirectoryRow(usize),
@@ -250,6 +260,7 @@ impl Overlay {
             Overlay::Profiles(browser) => browser.handle_action(action),
             Overlay::Marks(browser) => browser.handle_action(action),
             Overlay::Notices(browser) => browser.handle_action(action),
+            Overlay::Query(view) => view.handle_action(action),
             Overlay::Directory(directory) => directory.handle_action(action),
             Overlay::LinkForm(form) => form.handle_action(action),
             Overlay::Error(_) => match action {

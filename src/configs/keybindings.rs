@@ -106,8 +106,8 @@ impl FromStr for KeyBindingAction {
         match commands::find_by_name(name) {
             Some(spec) => match spec.target {
                 Target::Action(action) => Ok(action),
-                Target::Build(_) if spec.runs_bare() => Ok(Self::Command(spec)),
-                Target::Build(_) => Err(UnknownActionError(name.to_string())),
+                Target::Build(_) | Target::Query(_) if spec.runs_bare() => Ok(Self::Command(spec)),
+                Target::Build(_) | Target::Query(_) => Err(UnknownActionError(name.to_string())),
             },
             None => Err(UnknownActionError(name.to_string())),
         }

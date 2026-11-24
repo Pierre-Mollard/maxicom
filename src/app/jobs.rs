@@ -11,11 +11,11 @@ use crate::{
         CommandError, Invocation, Origin, Target,
         jobs::{Caller, JobId, Wait},
         report::Note,
-        report::{Failure, Report},
+        report::{Answer, Failure, Report},
     },
     configs::KeyBindingAction,
-    inputs::Action,
-    overlays::Overlay,
+    inputs::{Action, AppAction},
+    overlays::{Overlay, QueryView},
 };
 
 impl App {
@@ -35,9 +35,17 @@ impl App {
             self.fail_job(job, format!("open: no answer after {secs}s"));
         }
         let (caller, invocation) = self.jobs.next(now)?;
-        let built = match invocation.spec.target {
-            Target::Action(action) => Ok(action.to_action(self)),
-            Target::Build(build) => build(self, &invocation.args),
+        // a popup or a key to wait for would take the user's keys: theirs to run (MAX-165)
+        let asks = (!caller.origin.is_user()).then(|| invocation.asks_user());
+        let built = match (asks.flatten(), invocation.spec.target) {
+            (Some(reason), _) => Err(reason.to_string()),
+            (None, Target::Action(action)) => Ok(action.to_action(self)),
+            (None, Target::Build(build)) => build(self, &invocation.args),
+            // run at once: a query changes nothing, its answer goes to who asked
+            (None, Target::Query(query)) => query(self, &invocation.args).map(|value| {
+                let query = invocation.spec.name;
+                Action::App(AppAction::Answer(Box::new(Answer { query, value })))
+            }),
         };
         match built {
             Ok(action) => Some((caller, action)),
@@ -60,6 +68,12 @@ impl App {
     pub fn present(&mut self, caller: &Caller, report: Report) {
         for note in report.notes {
             self.show_note(note);
+        }
+        // a query's answer opens its popup for the user; a trigger's or a profile's is nobody's
+        if let Some(answer) = report.answer
+            && caller.origin.is_user()
+        {
+            self.open_overlay(Overlay::Query(QueryView::new(answer)));
         }
         match (report.failure, caller.job) {
             (Some(Failure::Said(message)), Some(job)) => self.fail_job(job, message),
@@ -124,10 +138,7 @@ impl App {
     /// being sent, the mash and every job; a trigger's or a profile's only the jobs of its
     /// owner, and the mash one of them waited for
     pub fn cancel(&mut self, origin: &Origin) -> Report {
-        let user = matches!(
-            origin,
-            Origin::Input | Origin::CommandLine | Origin::KeyBinding
-        );
+        let user = origin.is_user();
         let mut notes = Vec::new();
         // the transfer says it in its own box, "Cancelled", where a failure says "Stopped"
         // (MAX-228)

@@ -318,16 +318,17 @@ fn keymap_actions_are_the_action_commands() {
                 assert_eq!(parsed.unwrap(), action, "{}", spec.name);
                 assert_eq!(action.to_string(), spec.name);
             }
-            Target::Build(_) if spec.runs_bare() => {
+            Target::Build(_) | Target::Query(_) if spec.runs_bare() => {
                 let action = parsed.unwrap();
                 assert_eq!(action, KeyBindingAction::Command(spec));
                 assert_eq!(action.to_string(), spec.name);
             }
-            Target::Build(_) => assert!(parsed.is_err(), "{}", spec.name),
+            Target::Build(_) | Target::Query(_) => assert!(parsed.is_err(), "{}", spec.name),
         }
     }
     let bare: Vec<_> = (COMMANDS.iter())
-        .filter(|spec| matches!(spec.target, Target::Build(_)) && spec.runs_bare())
+        .filter(|spec| matches!(spec.target, Target::Build(_) | Target::Query(_)))
+        .filter(|spec| spec.runs_bare())
         .map(|spec| spec.name)
         .collect();
     assert_eq!(
@@ -342,6 +343,7 @@ fn keymap_actions_are_the_action_commands() {
             "replay-resume",
             "replay-restart",
             "break",
+            "status",
             "plot",
             "profile",
         ]

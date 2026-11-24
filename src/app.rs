@@ -2074,6 +2074,10 @@ impl App {
                 self.overlay = Some(Overlay::Marks(MarkBrowser::new(rows)));
                 UpdateEffect::None
             }
+            AppAction::Answer(answer) => {
+                report.answer = Some(*answer);
+                UpdateEffect::None
+            }
             AppAction::OpenNotices => {
                 let notices = self.notifications.history().to_vec();
                 self.overlay = Some(Overlay::Notices(NoticeBrowser::new(notices)));

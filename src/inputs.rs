@@ -14,7 +14,7 @@ use crate::{
         types::SidePanel,
     },
     capture::ScreenshotFormat,
-    commands::Invocation,
+    commands::{Invocation, report::Answer},
     configs::{
         KeyBindingAction, KeyPattern, Mode, TextEncoding, keybindings::KeyBindingDialogAction,
         links::SavedLink,
@@ -106,6 +106,7 @@ pub enum AppAction {
     Mark(MarkAction),
     OpenMarks,
     OpenNotices,
+    Answer(Box<Answer>),
     CloseOverlay,
     Quit,
 }

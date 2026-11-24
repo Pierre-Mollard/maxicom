@@ -8,6 +8,13 @@ you says so in an "Upgrading" section.
 
 ## [Unreleased]
 
+### Added
+
+- `status` shows the link, its settings and what runs in a popup: its name,
+  kind, state and line settings, the mode, the encoding, the bytes received
+  and sent, the recording, the file being sent and the profiles laid. A line
+  or the whole answer copies from there.
+
 ### Changed
 
 - A trigger's or a profile's command line no longer waits behind yours.
@@ -25,6 +32,10 @@ you says so in an "Upgrading" section.
   of its line.
 - An `open` with no answer after twice the connect timeout stops the rest of
   its command line, instead of the next command finding the link closed.
+- A trigger's or a profile's command line can't run a command that needs you
+  there: one opening a popup or a mode (`help`, `settings`, `record`,
+  `search`, copy mode...), or `mark` / `jump-mark` without their letter. It
+  stops that line with an error instead of taking your keys.
 
 ## [0.1.4] - 2026-11-22
 

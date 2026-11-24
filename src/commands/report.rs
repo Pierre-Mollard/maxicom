@@ -2,7 +2,7 @@
 //! chain waits for, instead of toasts shown and chains paused from deep inside. The caller
 //! presents them: the user's toasts, a job stopped on its failure or waiting, later a
 //! client's reply
-use super::jobs::Wait;
+use super::{jobs::Wait, value::Value};
 use crate::notification::ToastLevel;
 
 /// A notice of an action, shown as a toast: in the box of `slot` when it has one, where it
@@ -51,14 +51,22 @@ pub enum Failure {
     Shown(String),
 }
 
+/// A query's answer: its name and its value (MAX-165)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Answer {
+    pub query: &'static str,
+    pub value: Value,
+}
+
 /// What an action reports: its notes in the order they came, then its failure if it failed,
-/// or what the rest of its chain waits for (a `sleep`, an `open`, a `mash`)
+/// what the rest of its chain waits for (a `sleep`, an `open`, a `mash`), or a query's answer
 #[derive(Debug, Default, PartialEq, Eq)]
 #[must_use = "a report is for who started the action: present it or add it to its report"]
 pub struct Report {
     pub notes: Vec<Note>,
     pub failure: Option<Failure>,
     pub wait: Option<Wait>,
+    pub answer: Option<Answer>,
 }
 
 impl Report {
@@ -92,11 +100,12 @@ impl Report {
     }
 
     /// What a later part of the same action reports, after this: its notes follow, the first
-    /// failure and the first wait stay
+    /// failure, wait and answer stay
     pub fn extend(&mut self, other: Report) {
         self.notes.extend(other.notes);
         self.failure = self.failure.take().or(other.failure);
         self.wait = self.wait.or(other.wait);
+        self.answer = self.answer.take().or(other.answer);
     }
 }
 

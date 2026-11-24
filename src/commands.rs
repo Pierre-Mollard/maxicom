@@ -13,10 +13,13 @@ use crate::{
 
 pub mod build;
 pub mod jobs;
+pub mod query;
 pub mod report;
 pub mod tokenizer;
+pub mod value;
 
 use tokenizer::Word;
+use value::Value;
 
 /// `Bytes` is any bytes, the word as the tokenizer made it (escapes and all), not only UTF-8.
 /// `Address` is a link's address, checked when the line is read (MAX-168)
@@ -59,12 +62,15 @@ pub struct ArgSpec {
     pub optional: bool,
 }
 
-/// What a command runs: a keymap action, or the action built from its arguments (checked
-/// against its spec), refused with the reason when the link can't do it
+/// What a command runs, refused with the reason when the link can't do it
 #[derive(Debug, Clone, Copy)]
 pub enum Target {
+    /// A keymap action
     Action(KeyBindingAction),
+    /// The action built from its arguments, checked against its spec
     Build(fn(&App, &[ArgValue]) -> Result<Action, String>),
+    /// A query (MAX-165): the state read, nothing changed, its value given back
+    Query(fn(&App, &[ArgValue]) -> Result<Value, String>),
 }
 
 /// Who started an action or a chain (MAX-165). Only `Input` acts as typing: it ends the
@@ -87,12 +93,35 @@ pub enum Origin {
     Profile(&'static str),
 }
 
+impl Origin {
+    /// The user, by their input, the command line or their key bindings: what they start
+    /// runs as theirs (their chains in order, their `cancel` stopping every job, the commands
+    /// that ask them)
+    pub fn is_user(&self) -> bool {
+        matches!(self, Self::Input | Self::CommandLine | Self::KeyBinding)
+    }
+}
+
 #[derive(Debug)]
 pub struct CommandSpec {
     pub name: &'static str,
     pub args: &'static [ArgSpec],
     pub help: &'static str,
     pub target: Target,
+    pub asks: Asks,
+}
+
+/// Whether a command needs the user there (MAX-165): what it opens or waits for takes their
+/// keys, so a trigger's, a profile's or a client's chain can't run it
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Asks {
+    /// Runs on its own
+    Never,
+    /// Opens a popup or a mode that takes the user's keys
+    Always,
+    /// Waits for the user's next key when its optional argument is missing (`mark` without
+    /// its letter)
+    Bare,
 }
 
 /// A spec is one entry of a registry: the same spec is the same entry
@@ -117,6 +146,7 @@ impl CommandSpec {
             args: &[],
             help,
             target: Target::Action(action),
+            asks: Asks::Never,
         }
     }
 
@@ -131,7 +161,28 @@ impl CommandSpec {
             args,
             help,
             target: Target::Build(build),
+            asks: Asks::Never,
         }
+    }
+
+    const fn query(
+        name: &'static str,
+        args: &'static [ArgSpec],
+        query: fn(&App, &[ArgValue]) -> Result<Value, String>,
+        help: &'static str,
+    ) -> Self {
+        Self {
+            name,
+            args,
+            help,
+            target: Target::Query(query),
+            asks: Asks::Never,
+        }
+    }
+
+    /// The same command, needing the user as `asks` says
+    const fn asking(self, asks: Asks) -> Self {
+        Self { asks, ..self }
     }
 
     /// Runs without arguments: none, or all optional. Such a command is a keymap action too
@@ -174,6 +225,19 @@ const fn arg(name: &'static str, kind: ArgKind) -> ArgSpec {
 pub struct Invocation {
     pub spec: &'static CommandSpec,
     pub args: Vec<ArgValue>,
+}
+
+impl Invocation {
+    /// Why it can't run without the user there, as its spec asks (MAX-165); none when it runs
+    /// on its own
+    pub fn asks_user(&self) -> Option<&'static str> {
+        match self.spec.asks {
+            Asks::Never => None,
+            Asks::Always => Some("it opens what the user answers: only the user runs it"),
+            Asks::Bare if self.args.is_empty() => Some("it waits for a key: give its argument"),
+            Asks::Bare => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -246,7 +310,7 @@ impl std::error::Error for CommandError {}
 pub static COMMANDS: &[CommandSpec] = {
     use KeyBindingAction as A;
     &[
-        CommandSpec::action("quit", A::Quit, "Quit maxicom"),
+        CommandSpec::action("quit", A::Quit, "Quit maxicom").asking(Asks::Always),
         CommandSpec::action(
             "toggle-input-mode",
             A::SKInputMode,
@@ -285,16 +349,20 @@ pub static COMMANDS: &[CommandSpec] = {
             "screenshot-bytes",
             A::ScreenshotBytes,
             "Screenshot the terminal with its colors",
-        ),
+        )
+        .asking(Asks::Always),
         CommandSpec::action(
             "screenshot-text",
             A::ScreenshotTxt,
             "Screenshot the terminal as plain text",
-        ),
-        CommandSpec::action("help", A::Help, "Open the help"),
-        CommandSpec::action("settings", A::Settings, "Open the settings"),
-        CommandSpec::action("record", A::Record, "Start / stop recording (text or full)"),
-        CommandSpec::action("resize-dialog", A::ResizeDialog, "Set the terminal size"),
+        )
+        .asking(Asks::Always),
+        CommandSpec::action("help", A::Help, "Open the help").asking(Asks::Always),
+        CommandSpec::action("settings", A::Settings, "Open the settings").asking(Asks::Always),
+        CommandSpec::action("record", A::Record, "Start / stop recording (text or full)")
+            .asking(Asks::Always),
+        CommandSpec::action("resize-dialog", A::ResizeDialog, "Set the terminal size")
+            .asking(Asks::Always),
         CommandSpec::action(
             "auto-resize-remote",
             A::AutoResizeRemote,
@@ -310,14 +378,18 @@ pub static COMMANDS: &[CommandSpec] = {
             A::AutoResizeEmulator,
             "Resize the emulator to the view",
         ),
-        CommandSpec::action("link-settings", A::LinkSettings, "Open the link settings"),
-        CommandSpec::action("enter-copy-mode", A::EnterCopyMode, "Enter copy mode"),
-        CommandSpec::action("enter-search", A::EnterSearch, "Search the history"),
+        CommandSpec::action("link-settings", A::LinkSettings, "Open the link settings")
+            .asking(Asks::Always),
+        CommandSpec::action("enter-copy-mode", A::EnterCopyMode, "Enter copy mode")
+            .asking(Asks::Always),
+        CommandSpec::action("enter-search", A::EnterSearch, "Search the history")
+            .asking(Asks::Always),
         CommandSpec::action(
             "enter-search-backward",
             A::EnterSearchBackward,
             "Search the history from the end",
-        ),
+        )
+        .asking(Asks::Always),
         CommandSpec::action("scroll-up", A::ScrollUp, "Scroll up one line"),
         CommandSpec::action("scroll-down", A::ScrollDown, "Scroll down one line"),
         CommandSpec::action(
@@ -364,12 +436,14 @@ pub static COMMANDS: &[CommandSpec] = {
         ),
         CommandSpec::action("clear", A::Clear, "Clear the view, the history a scroll up"),
         CommandSpec::action("clear-history", A::ClearHistory, "Clear the history"),
-        CommandSpec::action("sessions", A::Sessions, "Open the session backups"),
+        CommandSpec::action("sessions", A::Sessions, "Open the session backups")
+            .asking(Asks::Always),
         CommandSpec::action(
             "directory",
             A::Directory,
             "Open the directory: the serial ports to switch to",
-        ),
+        )
+        .asking(Asks::Always),
         CommandSpec::action("exit-prefix", A::ExitPrefix, "Leave the prefix"),
         CommandSpec::action("toggle-attach", A::ToggleAttach, "Detach / attach the link"),
         CommandSpec::action("reload-config", A::ReloadConfig, "Reload the config files"),
@@ -379,7 +453,8 @@ pub static COMMANDS: &[CommandSpec] = {
             "Draw the whole screen again, to clear leftovers",
         ),
         CommandSpec::action("toggle-mouse", A::ToggleMouse, "Toggle mouse support"),
-        CommandSpec::action("command-line", A::CommandLine, "Open the command line"),
+        CommandSpec::action("command-line", A::CommandLine, "Open the command line")
+            .asking(Asks::Always),
         CommandSpec::action(
             "cancel",
             A::CancelCommands,
@@ -390,8 +465,8 @@ pub static COMMANDS: &[CommandSpec] = {
             A::ToggleTriggers,
             "Arm / disarm the triggers",
         ),
-        CommandSpec::action("triggers", A::Triggers, "Open the triggers"),
-        CommandSpec::action("profiles", A::Profiles, "Open the profiles"),
+        CommandSpec::action("triggers", A::Triggers, "Open the triggers").asking(Asks::Always),
+        CommandSpec::action("profiles", A::Profiles, "Open the profiles").asking(Asks::Always),
         CommandSpec::action(
             "plot-freeze",
             A::PlotFreeze,
@@ -421,12 +496,14 @@ pub static COMMANDS: &[CommandSpec] = {
             "notifications",
             A::Notifications,
             "Open the notifications said since the start, to read one again",
-        ),
+        )
+        .asking(Asks::Always),
         CommandSpec::action(
             "marks",
             A::Marks,
             "Open the marks: a letter jumps to its mark",
-        ),
+        )
+        .asking(Asks::Always),
         CommandSpec::action("prev-mark", A::PrevMark, "Go to the mark above"),
         CommandSpec::action("next-mark", A::NextMark, "Go to the mark below"),
         CommandSpec::build(
@@ -434,13 +511,15 @@ pub static COMMANDS: &[CommandSpec] = {
             &[MARK_LETTER],
             build::mark,
             "Mark a line; without a letter, waits for it (Enter: the first free one)",
-        ),
+        )
+        .asking(Asks::Bare),
         CommandSpec::build(
             "jump-mark",
             &[MARK_LETTER],
             build::jump_mark,
             "Go to a mark; without a letter, waits for it",
-        ),
+        )
+        .asking(Asks::Bare),
         CommandSpec::build(
             "delete-mark",
             &[arg("letter", ArgKind::Enum(build::MARK_LETTERS))],
@@ -664,6 +743,12 @@ pub static COMMANDS: &[CommandSpec] = {
             build::encoding,
             "Read the received bytes as utf8, ascii, cp437 or latin1",
         ),
+        CommandSpec::query(
+            "status",
+            &[],
+            query::status,
+            "Show the link, its settings and what runs: the mode, the counts, the recording",
+        ),
         CommandSpec::build(
             "notify",
             &[
@@ -678,7 +763,8 @@ pub static COMMANDS: &[CommandSpec] = {
             &[arg("text", ArgKind::String)],
             build::search,
             "Search the history for the text",
-        ),
+        )
+        .asking(Asks::Always),
         CommandSpec::build(
             "screenshot",
             &[arg("name", ArgKind::Path)],

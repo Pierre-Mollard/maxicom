@@ -189,6 +189,18 @@ Settings with more than two values cycle with their keys. See
 [Setting a value directly](settings.md#setting-a-value-directly) and
 [Text encoding](encoding-and-newlines.md#text-encoding).
 
+### Reading the state
+
+| Command | Does |
+| --- | --- |
+| `status` | Shows the link (its name, kind, state and line settings), the mode, the encoding, the bytes received and sent, the recording, the file being sent and the profiles laid |
+
+Its answer opens in a popup, one line each. Enter or `c` copies the selected
+line, `a` the whole answer. No key runs it by default: bind `status` to one
+in `keymap.toml` if you use it often, see
+[Actions and commands](keybindings.md#actions-and-commands). In a trigger's
+or a profile's line it does nothing.
+
 ### Search and screenshots
 
 | Command | Does |

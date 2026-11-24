@@ -24,6 +24,7 @@ pub mod menu;
 pub mod notices;
 pub mod notifications;
 pub mod profiles;
+pub mod query;
 pub mod reconfigure;
 pub mod resize;
 pub mod sessions;

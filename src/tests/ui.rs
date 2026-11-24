@@ -12427,3 +12427,20 @@ fn line_heights_counted_over_frames() {
     assert_eq!(h.app.line_mode.scroll_status(), counted);
     assert!(estimated < counted.max_scroll, "{estimated} {counted:?}");
 }
+
+/// MAX-165 (A1 step 5): `status` draws its answer: the query's name as the title, a
+/// `name: value` row per line, the first one selected, the buttons in the border.
+/// How: `status` run on a line mode harness, then drawn.
+#[test]
+fn status_popup() {
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 100, 30);
+    let chain = crate::commands::parse("status").unwrap();
+    h.app.update(Action::App(AppAction::QueueCommands(chain)));
+    while let Some((_, action)) = h.app.next_command_action(std::time::Instant::now()) {
+        h.app.dispatch(action);
+    }
+    let rows = h.draw();
+    assert!(has(&rows, " status "), "{rows:#?}");
+    assert!(has(&rows, "mode: line"), "{rows:#?}");
+    assert!(has(&rows, "Copy all"), "{rows:#?}");
+}

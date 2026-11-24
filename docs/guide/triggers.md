@@ -38,6 +38,11 @@ silent = true
 
 `triggers_path` in `config.toml` points to another file.
 
+`run` can't hold a command that needs you there: one that opens a popup or a
+mode (`help`, `settings`, `record`, `search`, copy mode...), or `mark` and
+`jump-mark` without their letter, which would take your next key. It stops
+the trigger's line with an error saying so.
+
 ### Raising a notification
 
 `run` can also just tell you, with `notify`, without sending anything to the

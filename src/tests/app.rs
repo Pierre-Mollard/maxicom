@@ -3197,6 +3197,7 @@ fn every_command_shows_what_it_did() {
             "info [setting:encoding] Rx Text Encoding is Latin1",
         ),
         ("notify info hi", "info hi"),
+        ("status", "popup Query"),
         ("search x", ""),
         ("mash x y", "info Mashing until 'y'"),
         ("trigger on", "error trigger: triggers.toml has no trigger"),

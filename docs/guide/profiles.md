@@ -81,7 +81,9 @@ on_load = "mode line; set timestamps on"
 ```
 
 A profile doesn't hold settings itself: `on_load` sets them as if you typed
-the line, and they stay as they are when the profile is taken off. It runs
+the line, and they stay as they are when the profile is taken off. Like a
+trigger's, these lines can't open a popup or wait for a key, see
+[Triggers](triggers.md#the-file). It runs
 only for a profile new to the stack, so laying another profile on top
 doesn't undo what you changed since.
 
