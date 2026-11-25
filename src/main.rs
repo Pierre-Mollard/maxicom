@@ -541,13 +541,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
         needs_redraw |= app.tick();
 
-        // the API's requests, answered with the app in hand (MAX-74)
+        // the API's requests, answered with the app in hand (MAX-74), and its subscribers told
+        // what happened (MAX-284)
         if let Some(server) = &mut api_server {
-            for (conn, request) in server.requests() {
-                if let Some(reply) = api::answer(&mut app, &instance, &request) {
-                    server.reply(conn, reply);
-                }
-            }
+            let _ = server.serve(&mut app, &instance);
         }
 
         let since_draw = last_draw.map_or(Duration::MAX, |t| t.elapsed());

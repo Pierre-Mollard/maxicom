@@ -40,7 +40,7 @@ use crate::{
             SPLIT_PERCENT_MIN, on_off,
         },
     },
-    event::Event,
+    event::{Event, EventLog},
     inputs::{
         Action, AppAction, ClickHoldAction, CopyModeAction, HistoryAction, LineInputAction,
         MarkAction, PendingMark, ScrollbarAction, ScrollbarId, SearchModeAction, SideHandleAction,
@@ -175,6 +175,8 @@ pub struct App {
     mark_flash: Option<(Mode, usize, Instant)>,
     overlay: Option<Overlay>,
     pub notifications: NotificationManager,
+    /// Every event emitted, for the API's subscribers (MAX-284)
+    pub events: EventLog,
     pub viewport: ViewportSize,
     frame_areas: FrameAreas,
     frame_map: FrameMap,
@@ -369,6 +371,7 @@ impl App {
             link_test: None,
             overlay: None,
             notifications: NotificationManager::new(),
+            events: EventLog::default(),
             viewport: ViewportSize::default(),
             frame_areas: FrameAreas::default(),
             frame_map: FrameMap::default(),
@@ -3149,12 +3152,13 @@ impl App {
         self.notify(ToastLevel::Error, msg);
     }
 
-    /// An event published (MAX-165): its note shown, unless it is a silent one. A client's
-    /// subscription gets it here too (MAX-284)
+    /// An event published (MAX-165): its note shown, unless it is a silent one, and logged for
+    /// the API's subscribers (MAX-284)
     pub fn emit(&mut self, event: Event) {
         if let Some(note) = event.note() {
             self.show_note(note);
         }
+        self.events.push(event);
     }
 
     /// What an action reported (MAX-165), shown: in its slot's box when it has one

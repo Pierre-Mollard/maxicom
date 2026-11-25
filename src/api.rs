@@ -4,7 +4,7 @@
 //! Threads only move lines: one accepts the connections, each connection has a reader and a
 //! writer. The requests reach the loop through a channel it drains on every pass, and the loop
 //! answers them with the app in hand: no lock on the app. The methods are A2.1's (MAX-284):
-//! `hello` says who this maxicom is, `query` runs a getter
+//! `hello` says who this maxicom is, `query` runs a getter, `subscribe` sends the events
 use std::{
     collections::HashMap,
     io::{self, BufRead, BufReader, Read, Write},
@@ -28,6 +28,7 @@ use serde_json::{Value as Json, json};
 use crate::{
     app::App,
     commands::{CommandError, Target, value::Value},
+    event::{Event, KINDS, Logged},
 };
 
 pub mod rpc;
@@ -271,6 +272,73 @@ pub struct Server {
     messages: Receiver<Message>,
     /// Each connection's way back
     replies: HashMap<u64, Sender<Outgoing>>,
+    /// What each subscribed connection is told (MAX-284)
+    subscriptions: HashMap<u64, Subscription>,
+    /// The last event sent to the subscribers, and the end of the bytes received they were
+    /// told of: set on the first pass, the events before it being in the log for `since`
+    published: Option<(u64, u64)>,
+}
+
+/// What a connection subscribed to (MAX-284): event kinds, and `rx` for the bytes received
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Subscription {
+    kinds: Vec<&'static str>,
+    rx: bool,
+}
+
+impl Subscription {
+    /// From `subscribe`'s params: `events`, kinds of `event::KINDS` and `rx`, every one when
+    /// left out
+    fn from_params(params: Option<&Json>) -> Result<Self, RpcError> {
+        let object = match params {
+            None => None,
+            Some(Json::Object(object)) => Some(object),
+            Some(_) => return Err(RpcError::invalid_params("params are given by name")),
+        };
+        let Some(names) = object.and_then(|object| object.get("events")) else {
+            return Ok(Self {
+                kinds: KINDS.to_vec(),
+                rx: true,
+            });
+        };
+        let Json::Array(names) = names else {
+            return Err(RpcError::invalid_params("\"events\" is a list of names"));
+        };
+        let mut subscription = Self {
+            kinds: Vec::new(),
+            rx: false,
+        };
+        for name in names {
+            match name.as_str() {
+                Some("rx") => subscription.rx = true,
+                Some(name) => match KINDS.iter().find(|kind| **kind == name) {
+                    Some(kind) => subscription.kinds.push(kind),
+                    None => return Err(RpcError::invalid_params(format!("no event '{name}'"))),
+                },
+                None => return Err(RpcError::invalid_params("an event is named by a string")),
+            }
+        }
+        Ok(subscription)
+    }
+
+    fn wants(&self, event: &Event) -> bool {
+        self.kinds.contains(&event.kind())
+    }
+}
+
+/// A logged event as a subscriber gets it, the params of an `event` notification: its number,
+/// its time, its kind and its fields
+pub fn event_json(logged: &Logged) -> Json {
+    let mut object = serde_json::Map::new();
+    object.insert("seq".to_string(), json!(logged.seq));
+    object.insert(
+        "time".to_string(),
+        json!(crate::commands::query::utc(logged.time)),
+    );
+    if let Ok(Json::Object(fields)) = serde_json::to_value(&logged.event) {
+        object.extend(fields);
+    }
+    Json::Object(object)
 }
 
 impl Server {
@@ -310,6 +378,8 @@ impl Server {
             accept: Some(accept),
             messages,
             replies: HashMap::new(),
+            subscriptions: HashMap::new(),
+            published: None,
         })
     }
 
@@ -330,6 +400,7 @@ impl Server {
                 Message::Request(conn, request) => requests.push((conn, request)),
                 Message::Closed(conn) => {
                     self.replies.remove(&conn);
+                    self.subscriptions.remove(&conn);
                 }
             }
         }
@@ -342,6 +413,105 @@ impl Server {
             && replies.send(Outgoing::Line(line)).is_err()
         {
             self.replies.remove(&conn);
+            self.subscriptions.remove(&conn);
+        }
+    }
+
+    /// The loop's pass (MAX-284): the requests answered with the app in hand, then the
+    /// subscribers told of the events emitted and the bytes received since the last pass.
+    /// Returns how many requests came in
+    pub fn serve(&mut self, app: &mut App, instance: &Instance) -> usize {
+        let rx_end = app.terminal_mode.dump().stream().end();
+        let (published, told_rx) = *self.published.get_or_insert((app.events.last(), rx_end));
+        let requests = self.requests();
+        let count = requests.len();
+        for (conn, request) in requests {
+            let reply = match request.method.as_str() {
+                "subscribe" => self.subscribe(conn, app, published, &request),
+                "unsubscribe" => {
+                    self.subscriptions.remove(&conn);
+                    (request.id.as_ref()).map(|id| rpc::reply(id, Ok(json!({}))))
+                }
+                _ => answer(app, instance, &request),
+            };
+            if let Some(reply) = reply {
+                self.reply(conn, reply);
+            }
+        }
+        let events: Vec<&Logged> = app.events.after(published).collect();
+        for logged in &events {
+            self.tell(
+                |subscription| subscription.wants(&logged.event),
+                || rpc::notification("event", event_json(logged)),
+            );
+        }
+        if rx_end != told_rx {
+            self.tell(
+                |subscription| subscription.rx,
+                || rpc::notification("rx", json!({ "newest": rx_end })),
+            );
+        }
+        self.published = Some((app.events.last(), rx_end));
+        count
+    }
+
+    /// `subscribe {events?, since?}` (MAX-284): this connection told of `events` from now on,
+    /// in place of what it subscribed to before. The reply gives the last event's number, the
+    /// oldest kept and the end of the bytes received; with `since`, the events kept after that
+    /// number follow it, up to `published` (the next pass sends the rest)
+    fn subscribe(
+        &mut self,
+        conn: u64,
+        app: &App,
+        published: u64,
+        request: &Request,
+    ) -> Option<String> {
+        let id = request.id.as_ref()?;
+        let params = request.params.as_ref();
+        let since = match params.and_then(|params| params.get("since")) {
+            None => None,
+            Some(since) => match since.as_u64() {
+                Some(since) => Some(since),
+                None => {
+                    let error = RpcError::invalid_params("\"since\" is an event's number");
+                    return Some(rpc::reply(id, Err(error)));
+                }
+            },
+        };
+        let subscription = match Subscription::from_params(params) {
+            Ok(subscription) => subscription,
+            Err(error) => return Some(rpc::reply(id, Err(error))),
+        };
+        let result = json!({
+            "last": app.events.last(),
+            "oldest": app.events.oldest(),
+            "rx": app.terminal_mode.dump().stream().end(),
+        });
+        self.reply(conn, rpc::reply(id, Ok(result)));
+        if let Some(since) = since {
+            let missed = (app.events.after(since))
+                .take_while(|logged| logged.seq <= published)
+                .filter(|logged| subscription.wants(&logged.event));
+            for logged in missed {
+                self.reply(conn, rpc::notification("event", event_json(logged)));
+            }
+        }
+        self.subscriptions.insert(conn, subscription);
+        None
+    }
+
+    /// Sends a notification to the subscribers `wanted` picks, made once
+    fn tell(&mut self, wanted: impl Fn(&Subscription) -> bool, line: impl Fn() -> String) {
+        let conns: Vec<u64> = (self.subscriptions.iter())
+            .filter(|(_, subscription)| wanted(subscription))
+            .map(|(conn, _)| *conn)
+            .collect();
+        if conns.is_empty() {
+            return;
+        }
+        let line = line();
+        for conn in conns {
+            self.reply(conn, line.clone());
         }
     }
 }

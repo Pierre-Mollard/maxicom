@@ -263,3 +263,123 @@ fn config_and_screen_events_say_their_notes() {
         assert_eq!(event.note(), Some(note), "{event:?}");
     }
 }
+
+/// One event of each kind, for the JSON tests (MAX-284): a new kind must be added here
+fn one_of_each() -> Vec<Event> {
+    let text = || "x".to_string();
+    vec![
+        Event::LinkOpened {
+            label: text(),
+            how: Opened::Switched,
+        },
+        Event::LinkShared {
+            label: text(),
+            holder: text(),
+        },
+        Event::LinkNotOpened { error: text() },
+        Event::ReattachFailed { error: text() },
+        Event::LinkLost { link: "Serial" },
+        Event::LinkIdle { secs: 5 },
+        Event::WriteFailed {
+            link: "Serial",
+            error: text(),
+        },
+        Event::ReadFailed { link: "Serial" },
+        Event::BreakFailed { error: text() },
+        Event::LinkWarning { text: text() },
+        Event::Sent {
+            name: text(),
+            size: 1,
+            protocol: Some("xmodem"),
+        },
+        Event::FileReceived {
+            name: text(),
+            size: 1,
+        },
+        Event::NothingReceived,
+        Event::ReceivedFile {
+            name: text(),
+            size: 1,
+            folder: text(),
+        },
+        Event::ReceivedFiles {
+            count: 2,
+            size: 1,
+            folder: text(),
+        },
+        Event::TransferStopped {
+            stopped: text(),
+            why: text(),
+        },
+        Event::TriggerFired {
+            name: text(),
+            run: text(),
+            silent: false,
+        },
+        Event::Unhandled {
+            kinds: vec![(text(), 2)],
+            more: 0,
+        },
+        Event::DeviceCopied { base64_len: 8 },
+        Event::ShellSeen { key: text() },
+        Event::ReplayFinished,
+        Event::SessionsPruned { message: text() },
+        Event::BackupOff { error: text() },
+        Event::SessionRestored { span: text() },
+        Event::RestoreFailed { error: text() },
+        Event::RestoreOverflowed,
+        Event::RecordingStopped,
+        Event::GroupLoaded {
+            message: text(),
+            warn: false,
+        },
+        Event::ConfigWarning { text: text() },
+        Event::DeviceCopyFailed { error: text() },
+        Event::ScreenWarning { text: text() },
+    ]
+}
+
+/// MAX-284 (step 2b): every event's kind is named once in `KINDS`, the same as its JSON's
+/// `kind`, its fields beside it by their names; `Opened` in lowercase.
+/// How: one event of each kind, serialized.
+#[test]
+fn every_kind_named_as_in_its_json() {
+    let events = one_of_each();
+    assert_eq!(events.len(), KINDS.len());
+    let kinds: Vec<&str> = events.iter().map(Event::kind).collect();
+    assert_eq!(kinds, KINDS);
+    for event in &events {
+        let json = serde_json::to_value(event).unwrap();
+        assert_eq!(json["kind"], event.kind(), "{json}");
+    }
+    let opened = serde_json::to_value(&events[0]).unwrap();
+    assert_eq!(
+        opened,
+        serde_json::json!({"kind": "link-opened", "label": "x", "how": "switched"})
+    );
+    let unit = serde_json::to_value(Event::ReplayFinished).unwrap();
+    assert_eq!(unit, serde_json::json!({"kind": "replay-finished"}));
+}
+
+/// MAX-284 (step 2b): the log numbers its events from 1 and keeps the last 1000: `after`
+/// gives those after a number, all kept ones from before the oldest, none past the last;
+/// `oldest` is past `last` while it is empty.
+/// How: an empty log, then 1003 events.
+#[test]
+fn log_numbers_and_keeps_the_last() {
+    let mut log = EventLog::default();
+    assert_eq!((log.last(), log.oldest()), (0, 1));
+    assert_eq!(log.after(0).count(), 0);
+    for secs in 1..=1003 {
+        log.push(Event::LinkIdle { secs });
+    }
+    assert_eq!((log.last(), log.oldest()), (1003, 4));
+    let seqs = |after: u64| -> Vec<u64> { log.after(after).map(|logged| logged.seq).collect() };
+    assert_eq!(seqs(1000), [1001, 1002, 1003]);
+    assert_eq!(seqs(0).len(), 1000);
+    assert_eq!(seqs(0)[0], 4);
+    assert!(seqs(1003).is_empty());
+    assert!(seqs(5000).is_empty());
+    let last = log.after(1002).next().unwrap();
+    assert_eq!(last.event, Event::LinkIdle { secs: 1003 });
+}

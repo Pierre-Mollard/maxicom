@@ -153,6 +153,58 @@ fn values_as_json() {
     );
 }
 
+/// MAX-284 (step 2b): `subscribe`'s `events` names kinds of `KINDS` and `rx`; left out, every
+/// kind and `rx`; an unknown name, a name that isn't a string, a list that isn't one, params
+/// by position are refused.
+/// How: each form of params.
+#[test]
+fn subscription_params() {
+    let all = Subscription::from_params(None).unwrap();
+    assert_eq!((all.kinds.len(), all.rx), (KINDS.len(), true));
+    let some = Subscription::from_params(Some(&json!({"events": ["link-lost", "rx"]}))).unwrap();
+    assert_eq!(
+        some,
+        Subscription {
+            kinds: vec!["link-lost"],
+            rx: true
+        }
+    );
+    assert!(some.wants(&Event::LinkLost { link: "Serial" }));
+    assert!(!some.wants(&Event::ReplayFinished));
+    for params in [
+        json!({"events": ["nope"]}),
+        json!({"events": [1]}),
+        json!({"events": "rx"}),
+        json!(["rx"]),
+    ] {
+        let error = Subscription::from_params(Some(&params)).unwrap_err();
+        assert_eq!(error.code, rpc::INVALID_PARAMS, "{params}");
+    }
+}
+
+/// MAX-284 (step 2b): an event as a subscriber gets it: its number, its time (UTC, to the
+/// millisecond), its kind, its fields.
+/// How: a logged `link-opened`.
+#[test]
+fn event_as_json() {
+    let mut log = crate::event::EventLog::default();
+    log.push(Event::LinkOpened {
+        label: "/dev/ttyUSB0".to_string(),
+        how: crate::event::Opened::Connected,
+    });
+    let logged = log.after(0).next().unwrap();
+    assert_eq!(
+        event_json(logged),
+        json!({
+            "seq": 1,
+            "time": crate::commands::query::utc(logged.time),
+            "kind": "link-opened",
+            "label": "/dev/ttyUSB0",
+            "how": "connected",
+        })
+    );
+}
+
 mod socket {
     use std::{
         io::{BufRead, BufReader, Write},
@@ -436,5 +488,93 @@ mod socket {
         assert!(other.exists());
         drop((live, second));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Serves once, then until `count` requests came in, the app's state as the test set it
+    fn serve_requests(server: &mut Server, app: &mut App, count: usize) {
+        let instance = Instance::now();
+        let start = Instant::now();
+        let mut served = server.serve(app, &instance);
+        while served < count {
+            assert!(start.elapsed() < Duration::from_secs(5), "no request");
+            thread::sleep(Duration::from_millis(5));
+            served += server.serve(app, &instance);
+        }
+    }
+
+    /// MAX-284 (step 2b): each subscriber is told of the events it subscribed to, as `event`
+    /// notifications in their order; another kind isn't sent to it; after `unsubscribe` nothing
+    /// is. The reply gives the last event's number, the oldest kept and the bytes' end.
+    /// How: a client subscribed to everything, one to `link-lost` only; two events emitted;
+    /// then the first unsubscribes and one more is emitted.
+    #[test]
+    fn subscribers_told_of_their_events() {
+        let mut server = TestServer::start("events");
+        let mut app = crate::app::tests::app();
+        let mut all = Client::connect(&server);
+        let mut lost = Client::connect(&server);
+        all.send(r#"{"jsonrpc":"2.0","id":1,"method":"subscribe"}"#);
+        lost.send(
+            r#"{"jsonrpc":"2.0","id":2,"method":"subscribe","params":{"events":["link-lost"]}}"#,
+        );
+        serve_requests(&mut server, &mut app, 2);
+        let last = app.events.last();
+        assert_eq!(all.reply()["result"]["last"], json!(last));
+        assert_eq!(lost.reply()["result"]["oldest"], json!(app.events.oldest()));
+
+        app.emit(Event::ReplayFinished);
+        app.emit(Event::LinkLost { link: "Serial" });
+        serve_requests(&mut server, &mut app, 0);
+        let first = all.reply();
+        assert_eq!(first["method"], json!("event"));
+        assert_eq!(first["params"]["kind"], json!("replay-finished"));
+        assert_eq!(first["params"]["seq"], json!(last + 1));
+        assert_eq!(all.reply()["params"]["kind"], json!("link-lost"));
+        let only = lost.reply();
+        assert_eq!(only["params"]["kind"], json!("link-lost"));
+        assert_eq!(only["params"]["link"], json!("Serial"));
+
+        all.send(r#"{"jsonrpc":"2.0","id":3,"method":"unsubscribe"}"#);
+        serve_requests(&mut server, &mut app, 1);
+        assert_eq!(all.reply()["result"], json!({}));
+        app.emit(Event::LinkLost { link: "Serial" });
+        serve_requests(&mut server, &mut app, 0);
+        assert_eq!(lost.reply()["params"]["seq"], json!(last + 3));
+        // nothing more for the one gone: its next line is the answer to a new request
+        all.send(r#"{"jsonrpc":"2.0","id":4,"method":"hello"}"#);
+        serve_requests(&mut server, &mut app, 1);
+        assert_eq!(all.reply()["id"], json!(4));
+    }
+
+    /// MAX-284 (step 2b): with `since`, the events kept after that number follow the reply,
+    /// then the new ones, none twice; `rx` tells the end of the bytes received when more came.
+    /// How: three events emitted and served before the client comes, `subscribe` since the
+    /// first with `rx`, one more event and bytes received.
+    #[test]
+    fn since_gives_the_events_missed() {
+        let mut server = TestServer::start("since");
+        let mut app = crate::app::tests::app();
+        let base = app.events.last();
+        for secs in 1..=3 {
+            app.emit(Event::LinkIdle { secs });
+        }
+        serve_requests(&mut server, &mut app, 0);
+        let mut client = Client::connect(&server);
+        let since = base + 1;
+        client.send(&format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"subscribe","params":{{"events":["link-idle","rx"],"since":{since}}}}}"#
+        ));
+        serve_requests(&mut server, &mut app, 1);
+        assert_eq!(client.reply()["result"]["last"], json!(base + 3));
+        let secs = |reply: Json| reply["params"]["secs"].clone();
+        assert_eq!(secs(client.reply()), json!(2));
+        assert_eq!(secs(client.reply()), json!(3));
+        app.emit(Event::LinkIdle { secs: 4 });
+        app.feed_rx(b"hello");
+        serve_requests(&mut server, &mut app, 0);
+        assert_eq!(secs(client.reply()), json!(4));
+        let rx = client.reply();
+        assert_eq!(rx["method"], json!("rx"));
+        assert_eq!(rx["params"]["newest"], json!(5));
     }
 }

@@ -155,6 +155,11 @@ pub fn parse(line: &[u8]) -> Result<Request, Refusal> {
     Ok(Request { id, method, params })
 }
 
+/// A notification line, sent with no request: an event to a subscriber (MAX-284)
+pub fn notification(method: &str, params: Json) -> String {
+    json!({ "jsonrpc": "2.0", "method": method, "params": params }).to_string()
+}
+
 /// The reply line to `id`: its result, or its error
 pub fn reply(id: &Json, result: Result<Json, RpcError>) -> String {
     let mut message = Map::new();

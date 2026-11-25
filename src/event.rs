@@ -1,12 +1,19 @@
 //! Events (MAX-165): what happens in the session without anyone asking at that moment, the
 //! link lost, a transfer done, a session restored, published with `App::emit`: the user's toast
-//! and the notification history today, a client's subscription later (MAX-284). A result
-//! answers an action instead (`commands::report`). Each event says its own note, so its
-//! wording lives here and every listener reads the same
+//! and the notification history, and the API's subscribers (MAX-284), who get it as JSON
+//! from the log. A result answers an action instead (`commands::report`). Each event says its
+//! own note, so its wording lives here and every listener reads the same
+use std::collections::VecDeque;
+
+use jiff::Timestamp;
+use serde::Serialize;
+
 use crate::{commands::report::Note, notification::ToastLevel};
 
-/// Something that happened in the session on its own, with what its note says
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Something that happened in the session on its own, with what its note says. In JSON its
+/// kind's name (`link-opened`) and its fields (MAX-284)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Event {
     /// The link opened, `label` its name or address
     LinkOpened { label: String, how: Opened },
@@ -96,7 +103,8 @@ pub enum Event {
 }
 
 /// How the link came to open, as its note says it
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Opened {
     /// At start
     Connected,
@@ -106,7 +114,79 @@ pub enum Opened {
     Switched,
 }
 
+/// Every event's kind, as `kind()` names it: what a subscriber may ask for (MAX-284)
+pub const KINDS: [&str; 31] = [
+    "link-opened",
+    "link-shared",
+    "link-not-opened",
+    "reattach-failed",
+    "link-lost",
+    "link-idle",
+    "write-failed",
+    "read-failed",
+    "break-failed",
+    "link-warning",
+    "sent",
+    "file-received",
+    "nothing-received",
+    "received-file",
+    "received-files",
+    "transfer-stopped",
+    "trigger-fired",
+    "unhandled",
+    "device-copied",
+    "shell-seen",
+    "replay-finished",
+    "sessions-pruned",
+    "backup-off",
+    "session-restored",
+    "restore-failed",
+    "restore-overflowed",
+    "recording-stopped",
+    "group-loaded",
+    "config-warning",
+    "device-copy-failed",
+    "screen-warning",
+];
+
 impl Event {
+    /// Its kind's name, the same as in its JSON
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::LinkOpened { .. } => "link-opened",
+            Self::LinkShared { .. } => "link-shared",
+            Self::LinkNotOpened { .. } => "link-not-opened",
+            Self::ReattachFailed { .. } => "reattach-failed",
+            Self::LinkLost { .. } => "link-lost",
+            Self::LinkIdle { .. } => "link-idle",
+            Self::WriteFailed { .. } => "write-failed",
+            Self::ReadFailed { .. } => "read-failed",
+            Self::BreakFailed { .. } => "break-failed",
+            Self::LinkWarning { .. } => "link-warning",
+            Self::Sent { .. } => "sent",
+            Self::FileReceived { .. } => "file-received",
+            Self::NothingReceived => "nothing-received",
+            Self::ReceivedFile { .. } => "received-file",
+            Self::ReceivedFiles { .. } => "received-files",
+            Self::TransferStopped { .. } => "transfer-stopped",
+            Self::TriggerFired { .. } => "trigger-fired",
+            Self::Unhandled { .. } => "unhandled",
+            Self::DeviceCopied { .. } => "device-copied",
+            Self::ShellSeen { .. } => "shell-seen",
+            Self::ReplayFinished => "replay-finished",
+            Self::SessionsPruned { .. } => "sessions-pruned",
+            Self::BackupOff { .. } => "backup-off",
+            Self::SessionRestored { .. } => "session-restored",
+            Self::RestoreFailed { .. } => "restore-failed",
+            Self::RestoreOverflowed => "restore-overflowed",
+            Self::RecordingStopped => "recording-stopped",
+            Self::GroupLoaded { .. } => "group-loaded",
+            Self::ConfigWarning { .. } => "config-warning",
+            Self::DeviceCopyFailed { .. } => "device-copy-failed",
+            Self::ScreenWarning { .. } => "screen-warning",
+        }
+    }
+
     /// What the user is shown: the level, the box (the link's or the transfer's for what
     /// follows on from its last message, MAX-228) and the text; none for a silent one
     pub fn note(&self) -> Option<Note> {
@@ -226,6 +306,59 @@ impl Event {
             }
         };
         Some(note)
+    }
+}
+
+/// An event as the log keeps it: its number, counted from 1 since the start, and its time
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Logged {
+    pub seq: u64,
+    pub time: Timestamp,
+    pub event: Event,
+}
+
+/// The last events emitted (MAX-284), for the API's subscribers: a client that comes back asks
+/// from the last number it saw
+#[derive(Debug, Default)]
+pub struct EventLog {
+    events: VecDeque<Logged>,
+    last: u64,
+}
+
+/// The events the log keeps
+const LOG_SIZE: usize = 1000;
+
+impl EventLog {
+    pub fn push(&mut self, event: Event) {
+        self.last += 1;
+        if self.events.len() == LOG_SIZE {
+            self.events.pop_front();
+        }
+        self.events.push_back(Logged {
+            seq: self.last,
+            time: Timestamp::now(),
+            event,
+        });
+    }
+
+    /// The number of the last event, 0 before the first
+    pub fn last(&self) -> u64 {
+        self.last
+    }
+
+    /// The number of the oldest event kept: past `last` when none is
+    pub fn oldest(&self) -> u64 {
+        self.events
+            .front()
+            .map_or(self.last + 1, |logged| logged.seq)
+    }
+
+    /// The events kept after number `seq`, oldest first
+    pub fn after(&self, seq: u64) -> impl Iterator<Item = &Logged> {
+        let skip = seq.saturating_sub(self.oldest().saturating_sub(1));
+        self.events
+            .iter()
+            .skip(usize::try_from(skip).unwrap_or(usize::MAX))
     }
 }
 
