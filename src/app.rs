@@ -29,7 +29,9 @@ use crate::{
     commands::{
         Origin,
         jobs::{Caller, Jobs, Wait},
+        query,
         report::{Note, Report},
+        value::Value,
     },
     configs::{
         AppConfig, DualBufferMode, KeyBindingAction, KeyResolver, LinksConfig, Mode, PlotsConfig,
@@ -40,7 +42,7 @@ use crate::{
             SPLIT_PERCENT_MIN, on_off,
         },
     },
-    event::{Event, EventLog},
+    event::{Cause, Event, EventLog, SettingValue},
     inputs::{
         Action, AppAction, ClickHoldAction, CopyModeAction, HistoryAction, LineInputAction,
         MarkAction, PendingMark, ScrollbarAction, ScrollbarId, SearchModeAction, SideHandleAction,
@@ -1017,7 +1019,7 @@ impl App {
                         OverlayResponse::Quit => UpdateEffect::Quit,
                         OverlayResponse::ToggleSetting(key) => {
                             // the popup shows the new value: only a warning is said (MAX-282)
-                            let warning = (self.toggle_setting(key))
+                            let warning = (self.toggle_setting(origin, key))
                                 .filter(|note| note.level == ToastLevel::Warn);
                             report.notes.extend(warning);
                             self.overlay = Some(overlay);
@@ -1296,7 +1298,9 @@ impl App {
     /// Ends the mash before its text came in (`why` shown as reason), and the rest of its line
     pub fn stop_mash(&mut self, why: &str) {
         if self.mash.take().is_some() {
+            let why = why.to_string();
             let failed = Report::failed(format!("Mash stopped: {why}"));
+            self.emit(Event::MashStopped { why });
             self.complete_waiting(|wait| *wait == Wait::Mash, failed);
         }
     }
@@ -1308,8 +1312,10 @@ impl App {
             .as_mut()
             .is_some_and(|mash| mash.until_seen(chunk))
         {
-            let until = self.mash.take().map(|mash| mash.until_text().to_string());
-            let done = format!("Mash done: '{}' came in", until.unwrap_or_default());
+            let until =
+                (self.mash.take()).map_or_else(String::new, |mash| mash.until_text().to_string());
+            let done = format!("Mash done: '{until}' came in");
+            self.emit(Event::MashDone { until });
             let done = Report::from(Note::new(ToastLevel::Success, done));
             self.complete_waiting(|wait| *wait == Wait::Mash, done);
         }
@@ -1918,7 +1924,7 @@ impl App {
                 UpdateEffect::None
             }
             AppAction::ToggleSetting(setting) => {
-                report.notes.extend(self.toggle_setting(setting));
+                report.notes.extend(self.toggle_setting(origin, setting));
                 UpdateEffect::None
             }
             AppAction::ToggleRecording => {
@@ -1952,6 +1958,8 @@ impl App {
                     .push(Note::info(format!("Mashing until '{until}'")));
                 // the rest of the chain waits for its text, its own timeout at most
                 report.wait = Some(Wait::Mash);
+                let (until, cause) = (until.to_string(), Cause::from(origin));
+                self.emit(Event::MashStarted { until, cause });
                 self.mash = Some(*mash);
                 UpdateEffect::None
             }
@@ -1989,6 +1997,18 @@ impl App {
                 }
                 // the rest of the chain waits for the file's end (MAX-165)
                 report.wait = Some(Wait::Transfer);
+                let direction = if transfer.is_download() {
+                    "receive"
+                } else {
+                    "send"
+                };
+                self.emit(Event::TransferStarted {
+                    direction,
+                    name: transfer.name(),
+                    size: transfer.size(),
+                    protocol: transfer.protocol().map(Protocol::name),
+                    cause: Cause::from(origin),
+                });
                 self.transfer = Some(*transfer);
                 self.busy_said = false;
                 self.recancel_until = None;
@@ -2031,11 +2051,13 @@ impl App {
             },
             AppAction::StopReplay => UpdateEffect::StopReplay,
             AppAction::ControlReplay(control) => {
-                report.extend(self.control_replay(control));
+                report.extend(self.control_replay(origin, control));
                 UpdateEffect::None
             }
             AppAction::SetEncoding(encoding) => {
+                let before = query::setting(self, SettingKey::TextEncoding);
                 self.settings.encoding = encoding;
+                self.publish_setting(origin, SettingKey::TextEncoding, before);
                 let encoding = encoding.as_str();
                 let text = format!("Rx Text Encoding is {encoding}");
                 report.notes.push(setting_note("setting:encoding", text));
@@ -2066,7 +2088,9 @@ impl App {
                 UpdateEffect::None
             }
             AppAction::ShowPlot(name) => {
+                let before = query::setting(self, SettingKey::Plot);
                 report.notes.extend(self.show_plot(name.as_deref()));
+                self.publish_setting(origin, SettingKey::Plot, before);
                 UpdateEffect::None
             }
             AppAction::ShowProfiles => {
@@ -2079,7 +2103,9 @@ impl App {
                 UpdateEffect::None
             }
             AppAction::StepPlot(forward) => {
+                let before = query::setting(self, SettingKey::Plot);
                 report.notes.extend(self.step_plot(forward));
+                self.publish_setting(origin, SettingKey::Plot, before);
                 UpdateEffect::None
             }
             AppAction::DismissToast(id) => {
@@ -2734,7 +2760,32 @@ impl App {
         }
     }
 
-    fn toggle_setting(&mut self, key: SettingKey) -> Option<Note> {
+    /// The setting `key` cycled by `origin`, published when it changed (MAX-284): a mode
+    /// `disabled_mode` keeps from switching isn't
+    fn toggle_setting(&mut self, origin: &Origin, key: SettingKey) -> Option<Note> {
+        let before = query::setting(self, key);
+        let note = self.cycle_setting(key);
+        self.publish_setting(origin, key, before);
+        note
+    }
+
+    /// `key` published with `origin` as its cause, when `get` gives other than `before`
+    fn publish_setting(&mut self, origin: &Origin, key: SettingKey, before: Value) {
+        let value = match query::setting(self, key) {
+            value if value == before => return,
+            Value::Bool(on) => SettingValue::On(on),
+            Value::Text(word) => SettingValue::Word(word),
+            value => unreachable!("a setting is on/off or a word, not {value:?}"),
+        };
+        let (setting, cause) = (key.name(), Cause::from(origin));
+        self.emit(Event::SettingChanged {
+            setting,
+            value,
+            cause,
+        });
+    }
+
+    fn cycle_setting(&mut self, key: SettingKey) -> Option<Note> {
         let mut note = None;
         match key {
             SettingKey::LocalEcho => {

@@ -1607,14 +1607,125 @@ fn setting_toggles_keep_the_viewport() {
     app.settings.mode = Mode::Line;
     app.update_viewport(ViewportSize::new(100, 30));
 
-    app.toggle_setting(SettingKey::LineWrap);
+    app.toggle_setting(&Origin::Input, SettingKey::LineWrap);
     let scroller = app.line_mode.scroller();
     assert_eq!((scroller.view_width, scroller.view_height), (100, 30));
 
-    app.toggle_setting(SettingKey::Mode);
+    app.toggle_setting(&Origin::Input, SettingKey::Mode);
     assert_eq!(app.settings.mode, Mode::Terminal);
     let scroller = app.terminal_mode.scroller();
     assert_eq!((scroller.view_width, scroller.view_height), (100, 30));
+}
+
+/// MAX-284 (step 2c): a setting changed is published with who did it and its value as `get`
+/// gives it, from a key, the settings popup or a command alike; a toggle that doesn't change
+/// it (the other mode disabled) and an encoding set to the one in use publish nothing.
+/// How: the mode toggled by a profile hook, then refused with terminal disabled; local echo
+/// and the encoding cycled by the user's input, the encoding set by a trigger to latin1 twice.
+#[test]
+fn setting_changes_are_published() {
+    use crate::event::{Cause, SettingValue};
+    let mut app = app();
+    app.settings.mode = Mode::Terminal;
+    app.settings.local_echo = false;
+    app.settings.encoding = TextEncoding::Utf8;
+    let since = app.events.last();
+    let toggle = |key| Action::App(AppAction::ToggleSetting(key));
+    let hook = Origin::Profile("on_load");
+    let _ = app.update_from(&hook, toggle(SettingKey::Mode));
+    app.settings.disabled_mode = DisabledMode::Terminal;
+    let _ = app.update_from(&hook, toggle(SettingKey::Mode));
+    let _ = app.update_from(&Origin::Input, toggle(SettingKey::LocalEcho));
+    let _ = app.update_from(&Origin::Input, toggle(SettingKey::TextEncoding));
+    let cycled = crate::commands::query::setting(&app, SettingKey::TextEncoding);
+    let crate::commands::value::Value::Text(cycled) = cycled else {
+        panic!("the encoding is a word");
+    };
+    let trigger = Origin::Trigger("boot".to_string());
+    for _ in 0..2 {
+        let latin1 = Action::App(AppAction::SetEncoding(TextEncoding::Latin1));
+        let _ = app.update_from(&trigger, latin1);
+    }
+
+    let events: Vec<Event> = (app.events.after(since))
+        .map(|logged| logged.event.clone())
+        .collect();
+    let changed = |setting, value, origin: &Origin| Event::SettingChanged {
+        setting,
+        value,
+        cause: Cause::from(origin),
+    };
+    let word = |word: &str| SettingValue::Word(word.to_string());
+    assert_eq!(
+        events,
+        [
+            changed("mode", word("line"), &hook),
+            changed("local-echo", SettingValue::On(true), &Origin::Input),
+            changed("encoding", SettingValue::Word(cycled), &Origin::Input),
+            changed("encoding", word("latin1"), &trigger),
+        ]
+    );
+}
+
+/// MAX-284 (step 2c): a mash started is published with who did it, its end with the text
+/// that came in or why it stopped; a transfer started with its direction, file and size.
+/// How: a mash from a trigger until `ok`, `ok` received; another stopped; a raw send of 3
+/// bytes from the user.
+#[test]
+fn mash_and_transfer_are_published() {
+    use crate::{app::mash::Mash, event::Cause, transfer::FileTransfer};
+    let mut app = app();
+    let since = app.events.last();
+    let mash = || {
+        let (every, timeout) = (Duration::from_millis(50), Duration::from_secs(15));
+        Mash::new(b"\r".to_vec(), b"ok", every, timeout, Instant::now()).unwrap()
+    };
+    let trigger = Origin::Trigger("boot".to_string());
+    let start = |mash| Action::App(AppAction::StartMash(Box::new(mash)));
+    let _ = app.update_from(&trigger, start(mash()));
+    app.feed_rx(b"ok");
+    let _ = app.update_from(&trigger, start(mash()));
+    app.stop_mash("the link closed");
+    let transfer = FileTransfer::raw(
+        Box::new(std::io::Cursor::new(b"abc".to_vec())),
+        "f.bin".to_string(),
+        3,
+        11_520.0,
+        Duration::ZERO,
+        Instant::now(),
+    );
+    let _ = app.update_from(
+        &Origin::Input,
+        Action::App(AppAction::StartTransfer(Box::new(transfer))),
+    );
+
+    let events: Vec<Event> = (app.events.after(since))
+        .map(|logged| logged.event.clone())
+        .collect();
+    let started = || Event::MashStarted {
+        until: "ok".to_string(),
+        cause: Cause::from(&trigger),
+    };
+    assert_eq!(
+        events,
+        [
+            started(),
+            Event::MashDone {
+                until: "ok".to_string()
+            },
+            started(),
+            Event::MashStopped {
+                why: "the link closed".to_string()
+            },
+            Event::TransferStarted {
+                direction: "send",
+                name: "f.bin".to_string(),
+                size: Some(3),
+                protocol: None,
+                cause: Cause::from(&Origin::Input),
+            },
+        ]
+    );
 }
 
 /// MAX-260: the mode `disabled_mode` turns off can't be switched to: the toggle stays and
@@ -1685,8 +1796,8 @@ fn reload_takes_the_files_settings() {
     // only the terminal view is laid out yet: the reload into line mode lays out that one
     app.settings.mode = Mode::Terminal;
     app.update_viewport(ViewportSize::new(100, 30));
-    app.toggle_setting(SettingKey::LocalEcho);
-    app.toggle_setting(SettingKey::DisplayTimestamp);
+    app.toggle_setting(&Origin::Input, SettingKey::LocalEcho);
+    app.toggle_setting(&Origin::Input, SettingKey::DisplayTimestamp);
     app.update(Action::App(AppAction::SetPrefix(true)));
 
     let mut settings = SettingsConfig::default();
@@ -2244,11 +2355,11 @@ fn byte_trace_follows_the_setting() {
     let runs = |app: &App| app.terminal_mode.dump().writes().len();
     app.feed_rx(b"abc");
     assert_eq!(runs(&app), 1);
-    app.toggle_setting(SettingKey::ByteTrace);
+    app.toggle_setting(&Origin::Input, SettingKey::ByteTrace);
     assert_eq!(runs(&app), 0);
     app.feed_rx(b"\r\ndef");
     assert_eq!(runs(&app), 0);
-    app.toggle_setting(SettingKey::ByteTrace);
+    app.toggle_setting(&Origin::Input, SettingKey::ByteTrace);
     app.feed_rx(b"\r\nghi");
     assert_eq!(runs(&app), 1);
 }
@@ -2262,21 +2373,21 @@ fn byte_trace_follows_the_setting() {
 fn query_answers_follow_the_settings() {
     let mut app = app();
     app.settings.mode = Mode::Terminal;
-    app.toggle_setting(SettingKey::AnswerQueries);
+    app.toggle_setting(&Origin::Input, SettingKey::AnswerQueries);
     assert!(app.settings.terminal_mode.answer_groups.is_empty());
     app.feed_rx(DSR);
     assert!(app.take_query_answers().is_empty());
-    app.toggle_setting(SettingKey::AnswerQueries);
+    app.toggle_setting(&Origin::Input, SettingKey::AnswerQueries);
     app.feed_rx(DSR);
     assert_eq!(app.take_query_answers(), DSR_READY);
 
     let size = vec![QueryGroup::Size];
     app.settings.terminal_mode.answer_groups = size.clone();
-    app.toggle_setting(SettingKey::AnswerQueries);
-    app.toggle_setting(SettingKey::AnswerQueries);
+    app.toggle_setting(&Origin::Input, SettingKey::AnswerQueries);
+    app.toggle_setting(&Origin::Input, SettingKey::AnswerQueries);
     assert_eq!(app.settings.terminal_mode.answer_groups, size);
     app.settings.terminal_mode.answer_groups = Vec::new();
-    app.toggle_setting(SettingKey::AnswerQueries);
+    app.toggle_setting(&Origin::Input, SettingKey::AnswerQueries);
     assert_eq!(app.settings.terminal_mode.answer_groups, QueryGroup::ALL);
 
     app.feed_rx(b"\x05");

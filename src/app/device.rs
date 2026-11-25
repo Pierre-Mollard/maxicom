@@ -25,7 +25,7 @@ use crate::{
         links::{SavedLink, default_name},
         profiles,
     },
-    event::{Event, Opened},
+    event::{Cause, Event, Opened},
     inputs::Action,
     link::{
         Address, ByteSource, CONNECT_TIMEOUT, LinkConfig, LinkError, LinkKind, OpenFor,
@@ -646,28 +646,34 @@ impl App {
     /// what that reports shown: what is left (quit, clipboard, reload) is the loop's
     pub fn dispatch_from(&mut self, caller: &Caller, action: Action) -> UpdateEffect {
         let (effect, mut report) = self.update_from(&caller.origin, action);
-        let (effect, link_report) = self.apply_link_effect(effect);
+        let (effect, link_report) = self.apply_link_effect(&caller.origin, effect);
         report.extend(link_report);
         self.present(caller, report);
         self.restore_link_popup();
         effect
     }
 
-    fn apply_link_effect(&mut self, effect: UpdateEffect) -> (UpdateEffect, Report) {
+    /// The link effect applied, what reaches the device or the link published with `origin`
+    /// as its cause (MAX-284)
+    fn apply_link_effect(
+        &mut self,
+        origin: &Origin,
+        effect: UpdateEffect,
+    ) -> (UpdateEffect, Report) {
         let report = match effect {
             UpdateEffect::Open(address) => {
                 let line = self.link.config().line;
-                self.open_link(LinkConfig { address, line })
+                self.open_link(origin, LinkConfig { address, line })
             }
-            UpdateEffect::OpenLink(config) => self.open_link(config),
+            UpdateEffect::OpenLink(config) => self.open_link(origin, config),
             UpdateEffect::Replay {
                 path,
                 delay,
                 session,
-            } => self.replay_file(path, delay, session),
-            UpdateEffect::ReplayGroup(sessions) => self.open_group_replay(sessions),
-            UpdateEffect::StopReplay => self.stop_replay_link(),
-            UpdateEffect::ToggleAttach => self.toggle_attach(),
+            } => self.replay_file(origin, path, delay, session),
+            UpdateEffect::ReplayGroup(sessions) => self.open_group_replay(origin, sessions),
+            UpdateEffect::StopReplay => self.stop_replay_link(origin),
+            UpdateEffect::ToggleAttach => self.toggle_attach(origin),
             UpdateEffect::Transmit(bytes) => match self.transmit(&bytes) {
                 Ok(()) => {
                     self.link.note_activity();
@@ -675,8 +681,8 @@ impl App {
                 }
                 Err(note) => Report::from(Vec::from_iter(note)),
             },
-            UpdateEffect::Reconfigure(line) => self.reconfigure_link(line),
-            UpdateEffect::LineControl(control) => self.line_control(control),
+            UpdateEffect::Reconfigure(line) => self.reconfigure_link(origin, line),
+            UpdateEffect::LineControl(control) => self.line_control(origin, control),
             other => return (other, Report::default()),
         };
         (UpdateEffect::None, report)
@@ -888,6 +894,16 @@ impl App {
             OpenFor::Open { .. } => Opened::Switched,
         };
         self.emit(Event::LinkOpened { label, how });
+        // the levels its line asks, set by the open itself (MAX-9)
+        if self.link_kind().has_line_settings() {
+            let (dtr, rts) = self.link.levels();
+            for (line, level) in [("dtr", dtr), ("rts", rts)] {
+                if let Some(on) = level.level() {
+                    let cause = Cause::link();
+                    self.emit(Event::LineLevel { line, on, cause });
+                }
+            }
+        }
         match why {
             OpenFor::Start => {}
             OpenFor::Attach => self.close_overlay(),
@@ -952,6 +968,8 @@ impl App {
             OpenFor::Retry => {}
             // nothing was open before the first pick: the link waits again (MAX-181)
             OpenFor::Open { .. } if self.device_unpicked => {
+                let error = e.to_string();
+                self.emit(Event::OpenFailed { error, back: None });
                 self.link.detach();
                 let failed = Report::failed(format!("open: {e}"));
                 self.complete_waiting(|wait| matches!(wait, Wait::LinkOpen { .. }), failed);
@@ -960,6 +978,11 @@ impl App {
             OpenFor::Open { .. } => {
                 self.opening_profiles = None;
                 let back = self.link_label();
+                let (error, label) = (e.to_string(), back.clone());
+                self.emit(Event::OpenFailed {
+                    error,
+                    back: Some(label),
+                });
                 let failed = Report::failed(format!("open: {e}, back to {back}"));
                 self.complete_waiting(|wait| matches!(wait, Wait::LinkOpen { .. }), failed);
             }
@@ -977,7 +1000,7 @@ impl App {
     /// of the chain waits for its result (MAX-12). A replay that set the live link aside
     /// ends first, so the switch starts from the live link, its session backup and its encoding
     /// (MAX-171)
-    fn open_link(&mut self, config: LinkConfig) -> Report {
+    fn open_link(&mut self, origin: &Origin, config: LinkConfig) -> Report {
         if self.replaced_link().is_some() {
             self.stop_replay();
         }
@@ -992,6 +1015,9 @@ impl App {
         }
         self.opening_profiles = Some(profiles);
         self.link.switch_to(config);
+        let label = self.link_label();
+        let cause = Cause::from(origin);
+        self.emit(Event::LinkOpening { label, cause });
         let message = format!("Opening {}", self.link_label());
         self.close_link_popups();
         // the rest of the chain waits for the open's result, a reconnect's time at most
@@ -1031,12 +1057,20 @@ impl App {
     /// A replay asked while running: a file that doesn't open stops the chain
     fn replay_file(
         &mut self,
+        origin: &Origin,
         path: PathBuf,
         delay: Duration,
         session: Option<CaptureDevice>,
     ) -> Report {
         match self.open_replay(path.clone(), delay, session.as_ref(), &[]) {
-            Ok(notes) => Report::from(notes),
+            Ok(notes) => {
+                self.emit(Event::ReplayStarted {
+                    path: path.display().to_string(),
+                    sessions: 1,
+                    cause: Cause::from(origin),
+                });
+                Report::from(notes)
+            }
             Err(e) => Report::failed(format!("replay: {}: {e}", path.display())),
         }
     }
@@ -1045,7 +1079,7 @@ impl App {
     /// finished, on the newest session's file, device and profiles, in terminal mode as a
     /// replay does. Line mode holds it on a history of its own, which goes with the replay.
     /// The loading popup shows while it loads, a slice a loop turn (MAX-272)
-    fn open_group_replay(&mut self, sessions: Vec<Session>) -> Report {
+    fn open_group_replay(&mut self, origin: &Origin, sessions: Vec<Session>) -> Report {
         let Some(newest) = sessions.last() else {
             return Report::default();
         };
@@ -1057,6 +1091,11 @@ impl App {
             Err(e) => return Report::from(Note::warn(format!("Group not replayed: {e}"))),
         };
         self.link.set_replay(replay);
+        self.emit(Event::ReplayStarted {
+            path: path.display().to_string(),
+            sessions: sessions.len(),
+            cause: Cause::from(origin),
+        });
         let device = newest.meta.as_ref().map(|meta| &meta.device);
         self.start_replay(path.to_path_buf(), device);
         let profiles = (newest.meta.as_ref()).map(|meta| meta.profiles.clone());
@@ -1076,7 +1115,7 @@ impl App {
 
     /// The link the replay replaced opens again as at start, its popup if it doesn't; a replay
     /// from the command line just stops reading
-    fn stop_replay_link(&mut self) -> Report {
+    fn stop_replay_link(&mut self, origin: &Origin) -> Report {
         let mut notes = Vec::new();
         // a group still loading stops where it is (MAX-272)
         if let Some(run) = &mut self.replay
@@ -1085,8 +1124,13 @@ impl App {
             notes.push(Note::info("Group load stopped"));
         }
         self.link.close();
+        self.emit(Event::ReplayStopped {
+            cause: Cause::from(origin),
+        });
         if self.stop_replay() {
             notes.extend(self.begin_open(OpenFor::Start));
+            let (label, cause) = (self.link_label(), Cause::from(origin));
+            self.emit(Event::LinkOpening { label, cause });
         } else {
             notes.push(Note::info("Replay stopped"));
         }
@@ -1095,7 +1139,7 @@ impl App {
 
     /// Detaches the link, with its popup, or attaches it again; a replay has nothing to
     /// attach. The attach's result comes with the reopen's, next turn for a port
-    fn toggle_attach(&mut self) -> Report {
+    fn toggle_attach(&mut self, origin: &Origin) -> Report {
         if !self.link_kind().reopens() {
             return Report::default();
         }
@@ -1107,20 +1151,35 @@ impl App {
         if self.link.is_open() {
             self.link.detach();
             self.show_detached();
+            let cause = Cause::from(origin);
+            self.emit(Event::LinkDetached { cause });
             let message = format!("{} detached", self.link_kind().name());
             Report::from(link_note(ToastLevel::Warn, message))
         } else {
-            Report::from(Vec::from_iter(self.begin_open(OpenFor::Attach)))
+            let opening = self.begin_open(OpenFor::Attach);
+            let (label, cause) = (self.link_label(), Cause::from(origin));
+            self.emit(Event::LinkOpening { label, cause });
+            Report::from(Vec::from_iter(opening))
         }
     }
 
     /// New line settings: a port that refuses them stops the chain, the dialog
     /// says why (MAX-12)
     /// New line settings; DTR and RTS changed on an open port wait for its next open (MAX-9)
-    fn reconfigure_link(&mut self, line: LineSettings) -> Report {
+    /// Set or kept for the next open, the settings are published (MAX-284)
+    fn reconfigure_link(&mut self, origin: &Origin, line: LineSettings) -> Report {
         let old = self.link_config().line;
         let levels_changed = (old.dtr, old.rts) != (line.dtr, line.rts);
-        match self.link.reconfigure(line) {
+        let reconfigured = self.link.reconfigure(line);
+        if let Reconfigured::Applied | Reconfigured::Kept = reconfigured {
+            self.emit(Event::LineSettings {
+                baud: line.baud,
+                framing: line.framing.to_string(),
+                flow: line.flow_control,
+                cause: Cause::from(origin),
+            });
+        }
+        match reconfigured {
             Reconfigured::Applied if levels_changed => {
                 Report::from(Note::info("DTR and RTS levels are set at the next open"))
             }
@@ -1141,20 +1200,41 @@ impl App {
 
     /// A control line set; the rest of the chain waits for a break's end, which the next turn
     /// comes to first
-    fn line_control(&mut self, control: LineControl) -> Report {
+    fn line_control(&mut self, origin: &Origin, control: LineControl) -> Report {
         let now = Instant::now();
         match self.link.control(control, now) {
-            None => Report::failed(format!("{control}: the port is detached")),
-            Some(Ok(())) => match control {
-                LineControl::Break(duration) => Report::waiting(Wait::Until(now + duration)),
-                LineControl::Dtr(_) | LineControl::Rts(_) => Report::default(),
-            },
-            Some(Err(e)) => Report::failed(format!("{control}: {e}")),
+            None => return Report::failed(format!("{control}: the port is detached")),
+            Some(Err(e)) => return Report::failed(format!("{control}: {e}")),
+            Some(Ok(())) => {}
+        }
+        let cause = Cause::from(origin);
+        match control {
+            LineControl::Dtr(on) => {
+                self.emit(Event::LineLevel {
+                    line: "dtr",
+                    on,
+                    cause,
+                });
+                Report::default()
+            }
+            LineControl::Rts(on) => {
+                self.emit(Event::LineLevel {
+                    line: "rts",
+                    on,
+                    cause,
+                });
+                Report::default()
+            }
+            LineControl::Break(duration) => {
+                let ms = duration.as_millis() as u64;
+                self.emit(Event::BreakSent { ms, cause });
+                Report::waiting(Wait::Until(now + duration))
+            }
         }
     }
 
     /// A replay control on the replay reading, said with a notice (MAX-166)
-    pub fn control_replay(&mut self, control: ReplayControl) -> Report {
+    pub fn control_replay(&mut self, origin: &Origin, control: ReplayControl) -> Report {
         let Some(replay) = self.link.replay_mut() else {
             return Report::default();
         };
@@ -1179,6 +1259,18 @@ impl App {
                 Err(e) => return Report::failed(format!("replay-restart: {e}")),
             },
         };
+        let (control, delay_ms) = match control {
+            ReplayControl::Pause => ("pause", None),
+            ReplayControl::Resume => ("resume", None),
+            ReplayControl::Delay(delay) => ("delay", Some(delay.as_millis() as u64)),
+            ReplayControl::Restart => ("restart", None),
+        };
+        let cause = Cause::from(origin);
+        self.emit(Event::ReplayControl {
+            control,
+            delay_ms,
+            cause,
+        });
         Report::from(Note::info(notice))
     }
 

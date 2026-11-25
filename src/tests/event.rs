@@ -336,7 +336,134 @@ fn one_of_each() -> Vec<Event> {
         Event::ConfigWarning { text: text() },
         Event::DeviceCopyFailed { error: text() },
         Event::ScreenWarning { text: text() },
+        Event::LineSettings {
+            baud: 9600,
+            framing: "8N1".to_string(),
+            flow: FlowControl::RtsCts,
+            cause: Cause::from(&Origin::Input),
+        },
+        Event::LineLevel {
+            line: "dtr",
+            on: false,
+            cause: Cause::from(&Origin::Input),
+        },
+        Event::BreakSent {
+            ms: 250,
+            cause: Cause::from(&Origin::Input),
+        },
+        Event::LinkDetached {
+            cause: Cause::from(&Origin::Input),
+        },
+        Event::LinkOpening {
+            label: text(),
+            cause: Cause::from(&Origin::Input),
+        },
+        Event::SettingChanged {
+            setting: "local-echo",
+            value: SettingValue::On(true),
+            cause: Cause::from(&Origin::Input),
+        },
+        Event::OpenFailed {
+            error: text(),
+            back: Some(text()),
+        },
+        Event::ReplayStarted {
+            path: text(),
+            sessions: 1,
+            cause: Cause::from(&Origin::Input),
+        },
+        Event::ReplayStopped {
+            cause: Cause::from(&Origin::Input),
+        },
+        Event::ReplayControl {
+            control: "delay",
+            delay_ms: Some(20),
+            cause: Cause::from(&Origin::Input),
+        },
+        Event::TransferStarted {
+            direction: "send",
+            name: text(),
+            size: Some(3),
+            protocol: Some("ymodem"),
+            cause: Cause::from(&Origin::Input),
+        },
+        Event::MashStarted {
+            until: text(),
+            cause: Cause::from(&Origin::Input),
+        },
+        Event::MashDone { until: text() },
+        Event::MashStopped { why: text() },
     ]
+}
+
+/// MAX-284 (step 2c): what reaches the device or the link is silent, whoever did it: its
+/// result told them. In JSON an action's cause is the origin's kind as `status` says it, with
+/// the trigger's or the hook's name, or `link` for what an open sets itself; the line
+/// settings' framing as written (`8N1`), the flow as a config word; a setting's value as
+/// `get` gives it, on/off or a word; a replay's delay only for `delay`.
+/// How: each such kind from `one_of_each`, then a few with a cause or a value of each sort.
+#[test]
+fn device_actions_are_silent_with_their_cause() {
+    let events = one_of_each();
+    let actions = &events[KINDS
+        .iter()
+        .position(|kind| *kind == "line-settings")
+        .unwrap()..];
+    assert_eq!(actions.len(), 14);
+    for event in actions {
+        assert_eq!(event.note(), None, "{event:?}");
+    }
+    let json = |event: &Event| serde_json::to_value(event).unwrap();
+    assert_eq!(
+        json(&actions[0]),
+        serde_json::json!({
+            "kind": "line-settings", "baud": 9600, "framing": "8N1", "flow": "rtscts",
+            "cause": {"kind": "input"}
+        })
+    );
+    let level = Event::LineLevel {
+        line: "rts",
+        on: true,
+        cause: Cause::link(),
+    };
+    assert_eq!(json(&level)["cause"], serde_json::json!({"kind": "link"}));
+    let mode = Event::SettingChanged {
+        setting: "mode",
+        value: SettingValue::Word("terminal".to_string()),
+        cause: Cause::from(&Origin::Trigger("boot".to_string())),
+    };
+    assert_eq!(
+        json(&mode),
+        serde_json::json!({
+            "kind": "setting-changed", "setting": "mode", "value": "terminal",
+            "cause": {"kind": "trigger", "name": "boot"}
+        })
+    );
+    let echo = json(&actions[5]);
+    assert_eq!(
+        (&echo["value"], &echo["cause"]["kind"]),
+        (&serde_json::json!(true), &serde_json::json!("input"))
+    );
+    let hook = Event::ReplayControl {
+        control: "pause",
+        delay_ms: None,
+        cause: Cause::from(&Origin::Profile("on_load")),
+    };
+    assert_eq!(
+        json(&hook),
+        serde_json::json!({
+            "kind": "replay-control", "control": "pause",
+            "cause": {"kind": "profile", "name": "on_load"}
+        })
+    );
+    let failed = Event::OpenFailed {
+        error: "no such port".to_string(),
+        back: None,
+    };
+    assert_eq!(
+        json(&failed),
+        serde_json::json!({"kind": "open-failed", "error": "no such port", "back": null})
+    );
 }
 
 /// MAX-284 (step 2b): every event's kind is named once in `KINDS`, the same as its JSON's

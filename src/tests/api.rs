@@ -160,13 +160,14 @@ fn values_as_json() {
 #[test]
 fn subscription_params() {
     let all = Subscription::from_params(None).unwrap();
-    assert_eq!((all.kinds.len(), all.rx), (KINDS.len(), true));
+    assert_eq!((all.kinds.len(), all.rx, all.tx), (KINDS.len(), true, true));
     let some = Subscription::from_params(Some(&json!({"events": ["link-lost", "rx"]}))).unwrap();
     assert_eq!(
         some,
         Subscription {
             kinds: vec!["link-lost"],
-            rx: true
+            rx: true,
+            tx: false,
         }
     );
     assert!(some.wants(&Event::LinkLost { link: "Serial" }));
@@ -180,6 +181,28 @@ fn subscription_params() {
         let error = Subscription::from_params(Some(&params)).unwrap_err();
         assert_eq!(error.code, rpc::INVALID_PARAMS, "{params}");
     }
+}
+
+/// MAX-284 (step 2b, review change): a subscription grows by the names added, kinds kept in
+/// the order of `KINDS`, none twice; it loses only the names taken off; its names are the
+/// kinds then `rx`.
+/// How: `link-lost` + `rx`, then `link-idle` and `link-lost` again added, then `link-lost`
+/// and `rx` taken off.
+#[test]
+fn subscription_add_and_remove() {
+    let named =
+        |events: Json| Subscription::from_params(Some(&json!({ "events": events }))).unwrap();
+    let mut subscription = named(json!(["link-lost", "rx"]));
+    subscription.add(&named(json!(["link-lost", "link-idle"])));
+    let mut kinds = vec!["link-lost", "link-idle"];
+    kinds.sort_by_key(|kind| KINDS.iter().position(|known| known == kind));
+    assert_eq!(subscription.kinds, kinds);
+    assert_eq!(subscription.names(), [kinds.as_slice(), &["rx"]].concat());
+    subscription.remove(&named(json!(["link-lost", "rx"])));
+    assert_eq!(subscription.names(), ["link-idle"]);
+    assert!(!subscription.is_empty());
+    subscription.remove(&Subscription::from_params(None).unwrap());
+    assert!(subscription.is_empty());
 }
 
 /// MAX-284 (step 2b): an event as a subscriber gets it: its number, its time (UTC, to the
@@ -536,7 +559,7 @@ mod socket {
 
         all.send(r#"{"jsonrpc":"2.0","id":3,"method":"unsubscribe"}"#);
         serve_requests(&mut server, &mut app, 1);
-        assert_eq!(all.reply()["result"], json!({}));
+        assert_eq!(all.reply()["result"], json!({ "events": [] }));
         app.emit(Event::LinkLost { link: "Serial" });
         serve_requests(&mut server, &mut app, 0);
         assert_eq!(lost.reply()["params"]["seq"], json!(last + 3));
@@ -546,10 +569,75 @@ mod socket {
         assert_eq!(all.reply()["id"], json!(4));
     }
 
+    /// MAX-284 (step 2b, review change): `subscribe {events}` adds to what the connection
+    /// has and `unsubscribe {events}` takes only those off, each reply giving the names held
+    /// after; with `since`, only the kinds just added are sent again; a bare `unsubscribe`
+    /// drops the rest; a name unknown to `unsubscribe` is refused, the subscription kept.
+    /// How: `link-lost`, then `link-idle` + `rx` added since an event of each kind, then
+    /// `link-lost` taken off, events of both kinds emitted, then a bad name, an empty `events`
+    /// (adds nothing) and a bare `unsubscribe`.
+    #[test]
+    fn subscriptions_change_by_kind() {
+        let mut server = TestServer::start("kinds");
+        let mut app = crate::app::tests::app();
+        let mut client = Client::connect(&server);
+        let request = |id: u32, method: &str, params: Json| {
+            json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}).to_string()
+        };
+        client.send(&request(1, "subscribe", json!({"events": ["link-lost"]})));
+        serve_requests(&mut server, &mut app, 1);
+        assert_eq!(client.reply()["result"]["events"], json!(["link-lost"]));
+        let since = app.events.last();
+        app.emit(Event::LinkLost { link: "Serial" });
+        app.emit(Event::LinkIdle { secs: 1 });
+        serve_requests(&mut server, &mut app, 0);
+        assert_eq!(client.reply()["params"]["kind"], json!("link-lost"));
+
+        let added = json!({"events": ["link-idle", "rx"], "since": since});
+        client.send(&request(2, "subscribe", added));
+        serve_requests(&mut server, &mut app, 1);
+        let names = client.reply()["result"]["events"].clone();
+        let mut both = vec!["link-lost", "link-idle"];
+        both.sort_by_key(|kind| KINDS.iter().position(|known| known == kind));
+        assert_eq!(names, json!([both.as_slice(), &["rx"]].concat()));
+        // the missed one of the kind added; not the link-lost sent already
+        assert_eq!(client.reply()["params"]["kind"], json!("link-idle"));
+
+        client.send(&request(3, "unsubscribe", json!({"events": ["link-lost"]})));
+        serve_requests(&mut server, &mut app, 1);
+        assert_eq!(
+            client.reply()["result"]["events"],
+            json!(["link-idle", "rx"])
+        );
+        app.emit(Event::LinkLost { link: "Serial" });
+        app.emit(Event::LinkIdle { secs: 2 });
+        serve_requests(&mut server, &mut app, 0);
+        assert_eq!(client.reply()["params"]["secs"], json!(2));
+
+        client.send(&request(4, "unsubscribe", json!({"events": ["nope"]})));
+        serve_requests(&mut server, &mut app, 1);
+        assert_eq!(client.reply()["error"]["code"], json!(rpc::INVALID_PARAMS));
+        client.send(&request(5, "subscribe", json!({"events": []})));
+        serve_requests(&mut server, &mut app, 1);
+        assert_eq!(
+            client.reply()["result"]["events"],
+            json!(["link-idle", "rx"])
+        );
+        client.send(r#"{"jsonrpc":"2.0","id":6,"method":"unsubscribe"}"#);
+        serve_requests(&mut server, &mut app, 1);
+        assert_eq!(client.reply()["result"]["events"], json!([]));
+        app.emit(Event::LinkIdle { secs: 3 });
+        serve_requests(&mut server, &mut app, 0);
+        client.send(&request(7, "hello", json!({})));
+        serve_requests(&mut server, &mut app, 1);
+        assert_eq!(client.reply()["id"], json!(7));
+    }
+
     /// MAX-284 (step 2b): with `since`, the events kept after that number follow the reply,
-    /// then the new ones, none twice; `rx` tells the end of the bytes received when more came.
+    /// then the new ones, none twice; `rx` tells the end of the bytes received when more came,
+    /// `tx` (step 2c) the count of bytes sent.
     /// How: three events emitted and served before the client comes, `subscribe` since the
-    /// first with `rx`, one more event and bytes received.
+    /// first with `rx` and `tx`, one more event, bytes received and sent.
     #[test]
     fn since_gives_the_events_missed() {
         let mut server = TestServer::start("since");
@@ -562,19 +650,27 @@ mod socket {
         let mut client = Client::connect(&server);
         let since = base + 1;
         client.send(&format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"subscribe","params":{{"events":["link-idle","rx"],"since":{since}}}}}"#
+            r#"{{"jsonrpc":"2.0","id":1,"method":"subscribe","params":{{"events":["link-idle","rx","tx"],"since":{since}}}}}"#
         ));
         serve_requests(&mut server, &mut app, 1);
-        assert_eq!(client.reply()["result"]["last"], json!(base + 3));
+        let result = client.reply()["result"].clone();
+        assert_eq!(
+            (&result["last"], &result["tx"]),
+            (&json!(base + 3), &json!(0))
+        );
         let secs = |reply: Json| reply["params"]["secs"].clone();
         assert_eq!(secs(client.reply()), json!(2));
         assert_eq!(secs(client.reply()), json!(3));
         app.emit(Event::LinkIdle { secs: 4 });
         app.feed_rx(b"hello");
+        app.stats.update_tx(3);
         serve_requests(&mut server, &mut app, 0);
         assert_eq!(secs(client.reply()), json!(4));
         let rx = client.reply();
         assert_eq!(rx["method"], json!("rx"));
         assert_eq!(rx["params"]["newest"], json!(5));
+        let tx = client.reply();
+        assert_eq!(tx["method"], json!("tx"));
+        assert_eq!(tx["params"]["sent"], json!(3));
     }
 }

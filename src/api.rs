@@ -274,21 +274,32 @@ pub struct Server {
     replies: HashMap<u64, Sender<Outgoing>>,
     /// What each subscribed connection is told (MAX-284)
     subscriptions: HashMap<u64, Subscription>,
-    /// The last event sent to the subscribers, and the end of the bytes received they were
-    /// told of: set on the first pass, the events before it being in the log for `since`
-    published: Option<(u64, u64)>,
+    /// What the subscribers were told of: set on the first pass, the events before it being
+    /// in the log for `since`
+    published: Option<Published>,
 }
 
-/// What a connection subscribed to (MAX-284): event kinds, and `rx` for the bytes received
+/// What the subscribers were last told of (MAX-284): the last event's number, the end of the
+/// bytes received, the count of bytes sent
+#[derive(Debug, Clone, Copy)]
+struct Published {
+    event: u64,
+    rx: u64,
+    tx: usize,
+}
+
+/// What a connection subscribed to (MAX-284): event kinds, `rx` for the bytes received, `tx`
+/// for the bytes sent
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Subscription {
     kinds: Vec<&'static str>,
     rx: bool,
+    tx: bool,
 }
 
 impl Subscription {
-    /// From `subscribe`'s params: `events`, kinds of `event::KINDS` and `rx`, every one when
-    /// left out
+    /// From `subscribe`'s params: `events`, kinds of `event::KINDS`, `rx` and `tx`, every one
+    /// when left out
     fn from_params(params: Option<&Json>) -> Result<Self, RpcError> {
         let object = match params {
             None => None,
@@ -299,18 +310,17 @@ impl Subscription {
             return Ok(Self {
                 kinds: KINDS.to_vec(),
                 rx: true,
+                tx: true,
             });
         };
         let Json::Array(names) = names else {
             return Err(RpcError::invalid_params("\"events\" is a list of names"));
         };
-        let mut subscription = Self {
-            kinds: Vec::new(),
-            rx: false,
-        };
+        let mut subscription = Self::none();
         for name in names {
             match name.as_str() {
                 Some("rx") => subscription.rx = true,
+                Some("tx") => subscription.tx = true,
                 Some(name) => match KINDS.iter().find(|kind| **kind == name) {
                     Some(kind) => subscription.kinds.push(kind),
                     None => return Err(RpcError::invalid_params(format!("no event '{name}'"))),
@@ -321,8 +331,43 @@ impl Subscription {
         Ok(subscription)
     }
 
+    fn none() -> Self {
+        Self {
+            kinds: Vec::new(),
+            rx: false,
+            tx: false,
+        }
+    }
+
     fn wants(&self, event: &Event) -> bool {
         self.kinds.contains(&event.kind())
+    }
+
+    /// What `other` names added: the kinds kept in the order of `KINDS`
+    fn add(&mut self, other: &Self) {
+        self.kinds = (KINDS.iter().copied())
+            .filter(|kind| self.kinds.contains(kind) || other.kinds.contains(kind))
+            .collect();
+        self.rx |= other.rx;
+        self.tx |= other.tx;
+    }
+
+    /// What `other` names taken off
+    fn remove(&mut self, other: &Self) {
+        self.kinds.retain(|kind| !other.kinds.contains(kind));
+        self.rx &= !other.rx;
+        self.tx &= !other.tx;
+    }
+
+    fn is_empty(&self) -> bool {
+        self.kinds.is_empty() && !self.rx && !self.tx
+    }
+
+    /// The names it holds, as `events` takes them: the kinds, then `rx` and `tx`
+    fn names(&self) -> Vec<&'static str> {
+        let rx = self.rx.then_some("rx");
+        let tx = self.tx.then_some("tx");
+        self.kinds.iter().copied().chain(rx).chain(tx).collect()
     }
 }
 
@@ -421,17 +466,19 @@ impl Server {
     /// subscribers told of the events emitted and the bytes received since the last pass.
     /// Returns how many requests came in
     pub fn serve(&mut self, app: &mut App, instance: &Instance) -> usize {
-        let rx_end = app.terminal_mode.dump().stream().end();
-        let (published, told_rx) = *self.published.get_or_insert((app.events.last(), rx_end));
+        let now = Published {
+            event: app.events.last(),
+            rx: app.terminal_mode.dump().stream().end(),
+            tx: app.stats.tx(),
+        };
+        let told = *self.published.get_or_insert(now);
+        let published = told.event;
         let requests = self.requests();
         let count = requests.len();
         for (conn, request) in requests {
             let reply = match request.method.as_str() {
                 "subscribe" => self.subscribe(conn, app, published, &request),
-                "unsubscribe" => {
-                    self.subscriptions.remove(&conn);
-                    (request.id.as_ref()).map(|id| rpc::reply(id, Ok(json!({}))))
-                }
+                "unsubscribe" => self.unsubscribe(conn, &request),
                 _ => answer(app, instance, &request),
             };
             if let Some(reply) = reply {
@@ -445,20 +492,30 @@ impl Server {
                 || rpc::notification("event", event_json(logged)),
             );
         }
-        if rx_end != told_rx {
+        if now.rx != told.rx {
             self.tell(
                 |subscription| subscription.rx,
-                || rpc::notification("rx", json!({ "newest": rx_end })),
+                || rpc::notification("rx", json!({ "newest": now.rx })),
             );
         }
-        self.published = Some((app.events.last(), rx_end));
+        if now.tx != told.tx {
+            self.tell(
+                |subscription| subscription.tx,
+                || rpc::notification("tx", json!({ "sent": now.tx })),
+            );
+        }
+        self.published = Some(Published {
+            event: app.events.last(),
+            ..now
+        });
         count
     }
 
     /// `subscribe {events?, since?}` (MAX-284): this connection told of `events` from now on,
-    /// in place of what it subscribed to before. The reply gives the last event's number, the
-    /// oldest kept and the end of the bytes received; with `since`, the events kept after that
-    /// number follow it, up to `published` (the next pass sends the rest)
+    /// added to what it subscribed to before. The reply gives the last event's number, the
+    /// oldest kept, the end of the bytes received and every name subscribed to now; with
+    /// `since`, the events kept after that number of the kinds just added follow it, up to
+    /// `published` (the next pass sends the rest): the kinds it had were sent already
     fn subscribe(
         &mut self,
         conn: u64,
@@ -478,26 +535,49 @@ impl Server {
                 }
             },
         };
-        let subscription = match Subscription::from_params(params) {
-            Ok(subscription) => subscription,
+        let asked = match Subscription::from_params(params) {
+            Ok(asked) => asked,
             Err(error) => return Some(rpc::reply(id, Err(error))),
         };
+        let had = self.subscriptions.get(&conn).cloned();
+        let mut subscription = had.clone().unwrap_or_else(Subscription::none);
+        subscription.add(&asked);
         let result = json!({
             "last": app.events.last(),
             "oldest": app.events.oldest(),
             "rx": app.terminal_mode.dump().stream().end(),
+            "tx": app.stats.tx(),
+            "events": subscription.names(),
         });
         self.reply(conn, rpc::reply(id, Ok(result)));
         if let Some(since) = since {
             let missed = (app.events.after(since))
                 .take_while(|logged| logged.seq <= published)
-                .filter(|logged| subscription.wants(&logged.event));
+                .filter(|logged| asked.wants(&logged.event))
+                .filter(|logged| !had.as_ref().is_some_and(|had| had.wants(&logged.event)));
             for logged in missed {
                 self.reply(conn, rpc::notification("event", event_json(logged)));
             }
         }
         self.subscriptions.insert(conn, subscription);
         None
+    }
+
+    /// `unsubscribe {events?}` (MAX-284): `events` taken off what this connection subscribed
+    /// to, the others kept; left out, every one. The reply gives the names still subscribed to
+    fn unsubscribe(&mut self, conn: u64, request: &Request) -> Option<String> {
+        let result = Subscription::from_params(request.params.as_ref()).map(|asked| {
+            let Some(subscription) = self.subscriptions.get_mut(&conn) else {
+                return json!({ "events": [] });
+            };
+            subscription.remove(&asked);
+            let left = subscription.names();
+            if subscription.is_empty() {
+                self.subscriptions.remove(&conn);
+            }
+            json!({ "events": left })
+        });
+        (request.id.as_ref()).map(|id| rpc::reply(id, result))
     }
 
     /// Sends a notification to the subscribers `wanted` picks, made once

@@ -235,7 +235,8 @@ pub fn get(app: &mut App, args: &[ArgValue]) -> Result<Value, String> {
     }
 }
 
-fn setting(app: &App, key: SettingKey) -> Value {
+/// A setting's value as `get` gives it: on/off, or its word (MAX-284: `setting-changed` too)
+pub fn setting(app: &App, key: SettingKey) -> Value {
     if let Some(on) = app.setting_is_on(key) {
         return Value::Bool(on);
     }

@@ -592,7 +592,7 @@ fn reconfigure_keeps_settings_for_a_detached_port() {
         baud: 9600,
         ..app.link_config().line
     };
-    let (_, report) = app.apply_link_effect(UpdateEffect::Reconfigure(line));
+    let (_, report) = app.apply_link_effect(&Origin::Input, UpdateEffect::Reconfigure(line));
     assert_eq!(app.link_config().line.baud, 9600);
     let kept = Note::info("The port is detached: it opens with these settings");
     assert_eq!(report, Report::from(kept));
@@ -603,8 +603,213 @@ fn reconfigure_keeps_settings_for_a_detached_port() {
         baud: 9600,
         ..app.link_config().line
     };
-    let _ = app.apply_link_effect(UpdateEffect::Reconfigure(line));
+    let _ = app.apply_link_effect(&Origin::Input, UpdateEffect::Reconfigure(line));
     assert_eq!(app.link_config().line.baud, 115_200);
+}
+
+/// MAX-284 (step 2c): what reaches the device or the link is published once done, with who
+/// did it: line settings, DTR, RTS, a break, a detach, an attach and an open (`link-opening`,
+/// their result its own event); line settings on a detached port too (kept for its next
+/// open). A control line refused (the port detached) publishes nothing.
+/// How: an RFC 2217 link to a local listener; each action from the user, DTR off from a
+/// trigger; detached, DTR refused, 57600 baud, attached; then `open` of a second listener.
+#[test]
+fn device_actions_are_published() {
+    use crate::{commands::jobs::Caller, event::Cause, link::serial::FlowControl};
+    let (first, address) = listener();
+    let address = address.replace("tcp://", "rfc2217://");
+    let mut app = app_on(&address);
+    app.start_link(None);
+    let _peer = first.accept().unwrap();
+    poll_until(&mut app, "connected", |app| app.link.is_open());
+    let since = app.events.last();
+    let user = || Cause::from(&Origin::Input);
+    let control = |control| Action::App(AppAction::LineControl(control));
+    let line = |baud| LineSettings {
+        baud,
+        ..LineSettings::default()
+    };
+
+    app.dispatch(Action::App(AppAction::Reconfigure(line(9600))));
+    let trigger = Caller {
+        origin: Origin::Trigger("boot".to_string()),
+        job: None,
+    };
+    app.dispatch_from(&trigger, control(LineControl::Dtr(false)));
+    app.dispatch(control(LineControl::Rts(true)));
+    app.dispatch(control(LineControl::Break(Duration::from_millis(100))));
+    app.dispatch(Action::App(AppAction::ToggleAttach));
+    app.dispatch(control(LineControl::Dtr(true)));
+    app.dispatch(Action::App(AppAction::Reconfigure(line(57600))));
+    app.dispatch(Action::App(AppAction::ToggleAttach));
+    let (second, other) = listener();
+    let other: Address = other.parse().unwrap();
+    app.dispatch(Action::App(AppAction::Open(other.clone())));
+
+    let events: Vec<Event> = (app.events.after(since))
+        .map(|logged| logged.event.clone())
+        .collect();
+    let settings = |baud| Event::LineSettings {
+        baud,
+        framing: "8N1".to_string(),
+        flow: FlowControl::None,
+        cause: user(),
+    };
+    assert_eq!(
+        events,
+        [
+            settings(9600),
+            Event::LineLevel {
+                line: "dtr",
+                on: false,
+                cause: Cause::from(&trigger.origin),
+            },
+            Event::LineLevel {
+                line: "rts",
+                on: true,
+                cause: user(),
+            },
+            Event::BreakSent {
+                ms: 100,
+                cause: user()
+            },
+            Event::LinkDetached { cause: user() },
+            settings(57600),
+            Event::LinkOpening {
+                label: address.clone(),
+                cause: user(),
+            },
+            Event::LinkOpening {
+                label: other.to_string(),
+                cause: user(),
+            },
+        ]
+    );
+    drop(second);
+}
+
+/// The events of `kinds` emitted after `since`
+fn events_of(app: &App, since: u64, kinds: &[&str]) -> Vec<Event> {
+    (app.events.after(since))
+        .filter(|logged| kinds.contains(&logged.event.kind()))
+        .map(|logged| logged.event.clone())
+        .collect()
+}
+
+/// MAX-284 (step 2c): the DTR and RTS levels a line asks are set by the open itself and
+/// published with the link as their cause, after `link-opened`; a line that keeps them
+/// publishes none. An `open` that fails publishes `open-failed`, its error naming what it
+/// tried, `back` the link it went back to.
+/// How: an RFC 2217 link with `dtr = on`, `rts = off`, opened; then `open` of a listener
+/// gone.
+#[test]
+fn open_sets_levels_and_failed_open_is_published() {
+    use crate::{event::Cause, link::serial::LineLevel};
+    let (first, address) = listener();
+    let address = address.replace("tcp://", "rfc2217://");
+    let mut app = App::new(
+        SettingsConfig::default(),
+        KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap(),
+        LinkConfig {
+            address: address.parse::<Address>().unwrap(),
+            line: LineSettings {
+                dtr: LineLevel::On,
+                rts: LineLevel::Off,
+                ..LineSettings::default()
+            },
+        },
+    );
+    let since = app.events.last();
+    app.start_link(None);
+    let _peer = first.accept().unwrap();
+    poll_until(&mut app, "connected", |app| app.link.is_open());
+    let kinds = ["link-opened", "line-level", "open-failed"];
+    let level = |line, on| Event::LineLevel {
+        line,
+        on,
+        cause: Cause::link(),
+    };
+    let opened = Event::LinkOpened {
+        label: address.clone(),
+        how: Opened::Connected,
+    };
+    assert_eq!(
+        events_of(&app, since, &kinds),
+        [opened, level("dtr", true), level("rts", false)]
+    );
+
+    let (gone, other) = listener();
+    drop(gone);
+    let since = app.events.last();
+    app.dispatch(Action::App(AppAction::Open(other.parse().unwrap())));
+    poll_until(&mut app, "open failed", |app| {
+        !events_of(app, since, &["open-failed"]).is_empty()
+    });
+    let [Event::OpenFailed { error, back }] = &events_of(&app, since, &["open-failed"])[..] else {
+        panic!("one open-failed");
+    };
+    assert!(
+        error.contains(other.trim_start_matches("tcp://")),
+        "{error}"
+    );
+    assert_eq!(back.as_deref(), Some(address.as_str()));
+}
+
+/// MAX-284 (step 2c): a replay started, controlled and stopped is published with who did
+/// it; the live link it set aside opening again is `link-opening`.
+/// How: a TCP link, a replay of a small file, a pause, a delay, then the stop.
+#[test]
+fn replay_actions_are_published() {
+    use crate::{event::Cause, link::replay::ReplayControl};
+    let (listener, address) = listener();
+    let (mut app, _peer) = connected(&listener, &address);
+    let path = std::env::temp_dir().join(format!(
+        "maxicom_test_{}_replay_events.raw",
+        std::process::id()
+    ));
+    std::fs::write(&path, b"replayed\r\n").unwrap();
+    let since = app.events.last();
+    app.dispatch(Action::App(AppAction::Replay {
+        path: path.clone(),
+        delay: Duration::ZERO,
+    }));
+    let control = |control| Action::App(AppAction::ControlReplay(control));
+    app.dispatch(control(ReplayControl::Pause));
+    app.dispatch(control(ReplayControl::Delay(Duration::from_millis(20))));
+    app.dispatch(Action::App(AppAction::StopReplay));
+    let user = || Cause::from(&Origin::Input);
+    let kinds = [
+        "replay-started",
+        "replay-control",
+        "replay-stopped",
+        "link-opening",
+    ];
+    assert_eq!(
+        events_of(&app, since, &kinds),
+        [
+            Event::ReplayStarted {
+                path: path.display().to_string(),
+                sessions: 1,
+                cause: user(),
+            },
+            Event::ReplayControl {
+                control: "pause",
+                delay_ms: None,
+                cause: user(),
+            },
+            Event::ReplayControl {
+                control: "delay",
+                delay_ms: Some(20),
+                cause: user(),
+            },
+            Event::ReplayStopped { cause: user() },
+            Event::LinkOpening {
+                label: address,
+                cause: user(),
+            },
+        ]
+    );
+    let _ = std::fs::remove_file(&path);
 }
 
 /// MAX-168: a link quiet for `inactivity_detach_timeout` is detached, with its popup.
@@ -1583,7 +1788,7 @@ fn group_replay_loads_at_once_and_gives_the_link_back() {
     app.settings.mode = crate::configs::Mode::Line;
     app.feed_rx(b"live line\r\n");
 
-    let _ = app.apply_link_effect(UpdateEffect::ReplayGroup(sessions.clone()));
+    let _ = app.apply_link_effect(&Origin::Input, UpdateEffect::ReplayGroup(sessions.clone()));
     assert_eq!(app.link_kind(), LinkKind::Replay);
     assert_eq!(app.settings.mode, crate::configs::Mode::Terminal);
     assert!(app.is_replay_ended());
@@ -1746,7 +1951,7 @@ fn group_replay_has_no_controls() {
     use crate::commands::build::{replay_pause, replay_restart, replay_resume};
     let (dir, sessions) = group_of_three("group_replay_controls");
     let mut app = crate::app::tests::app();
-    let _ = app.apply_link_effect(UpdateEffect::ReplayGroup(sessions));
+    let _ = app.apply_link_effect(&Origin::Input, UpdateEffect::ReplayGroup(sessions));
     for command in [replay_pause, replay_resume, replay_restart] {
         let refused = command(&app, &[]).err();
         assert_eq!(
@@ -2447,7 +2652,7 @@ fn group_load_stops_on_close() {
     app.settings.mode = crate::configs::Mode::Line;
     app.feed_rx(b"live line\r\n");
 
-    let _ = app.apply_link_effect(UpdateEffect::ReplayGroup(sessions));
+    let _ = app.apply_link_effect(&Origin::Input, UpdateEffect::ReplayGroup(sessions));
     assert!(matches!(app.overlay(), Some(Overlay::Loading)));
     app.dispatch(Action::Overlay(crate::inputs::DialogAction::Close));
     assert!(app.overlay().is_none());

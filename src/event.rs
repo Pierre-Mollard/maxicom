@@ -8,7 +8,11 @@ use std::collections::VecDeque;
 use jiff::Timestamp;
 use serde::Serialize;
 
-use crate::{commands::report::Note, notification::ToastLevel};
+use crate::{
+    commands::{Origin, report::Note},
+    link::serial::FlowControl,
+    notification::ToastLevel,
+};
 
 /// Something that happened in the session on its own, with what its note says. In JSON its
 /// kind's name (`link-opened`) and its fields (MAX-284)
@@ -100,6 +104,109 @@ pub enum Event {
     DeviceCopyFailed { error: String },
     /// The screen is too small for a part of the layout: `text` says which
     ScreenWarning { text: String },
+    // what reaches the device or the link (MAX-284), silent: the one who did it was told by
+    // its result. An action names its `cause`; what comes of it later (`open-failed`,
+    // `mash-done`) doesn't, as `link-opened`
+    /// Line settings set: the baud rate, the framing (`8N1`) and the flow control
+    LineSettings {
+        baud: u32,
+        framing: String,
+        flow: FlowControl,
+        cause: Cause,
+    },
+    /// A control line set, `line` DTR or RTS
+    LineLevel {
+        line: &'static str,
+        on: bool,
+        cause: Cause,
+    },
+    /// A break started, held `ms` long
+    BreakSent { ms: u64, cause: Cause },
+    /// The link detached by hand
+    LinkDetached { cause: Cause },
+    /// The link opening, `label` the one opened (`open`, the directory, an attach): what it
+    /// gives comes as its own event
+    LinkOpening { label: String, cause: Cause },
+    /// A setting changed, `setting` its name as `get` and `set` know it, `value` what `get`
+    /// gives now
+    SettingChanged {
+        setting: &'static str,
+        value: SettingValue,
+        cause: Cause,
+    },
+    /// An `open` (or a pick in the directory) failed: `error` says why, naming what it tried;
+    /// `back` the link it went back to, none before the first pick
+    OpenFailed { error: String, back: Option<String> },
+    /// A replay in place of the link: a file, or a group of `sessions` loaded at once, `path`
+    /// the newest's
+    ReplayStarted {
+        path: String,
+        sessions: usize,
+        cause: Cause,
+    },
+    /// The replay stopped: the live link it set aside opens again, said by `link-opening`
+    ReplayStopped { cause: Cause },
+    /// The replay paused, resumed, restarted or its delay set (`delay_ms`)
+    ReplayControl {
+        control: &'static str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        delay_ms: Option<u64>,
+        cause: Cause,
+    },
+    /// A file transfer started, `direction` send or receive: a protocol's waits for the other
+    /// side, its end comes as its own event
+    TransferStarted {
+        direction: &'static str,
+        name: String,
+        size: Option<u64>,
+        protocol: Option<&'static str>,
+        cause: Cause,
+    },
+    /// A mash started: its text sent again and again until `until` comes in
+    MashStarted { until: String, cause: Cause },
+    /// The mash's text came in: it ended
+    MashDone { until: String },
+    /// The mash ended before its text came in, `why`
+    MashStopped { why: String },
+}
+
+/// A setting's value in an event (MAX-284): on or off, or its word
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum SettingValue {
+    /// an on/off setting
+    On(bool),
+    /// the others: a config word, a plot's name
+    Word(String),
+}
+
+/// Who did what an event says (MAX-284): its origin's kind as `status` names it, with the
+/// trigger's or the profile hook's name
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Cause {
+    kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+}
+
+impl Cause {
+    /// The link itself, not an origin: what an open sets on its own (the DTR and RTS levels
+    /// of its line)
+    pub fn link() -> Self {
+        Self {
+            kind: "link",
+            name: None,
+        }
+    }
+}
+
+impl From<&Origin> for Cause {
+    fn from(origin: &Origin) -> Self {
+        Self {
+            kind: origin.kind(),
+            name: origin.name().map(str::to_string),
+        }
+    }
 }
 
 /// How the link came to open, as its note says it
@@ -115,7 +222,7 @@ pub enum Opened {
 }
 
 /// Every event's kind, as `kind()` names it: what a subscriber may ask for (MAX-284)
-pub const KINDS: [&str; 31] = [
+pub const KINDS: [&str; 45] = [
     "link-opened",
     "link-shared",
     "link-not-opened",
@@ -147,6 +254,20 @@ pub const KINDS: [&str; 31] = [
     "config-warning",
     "device-copy-failed",
     "screen-warning",
+    "line-settings",
+    "line-level",
+    "break-sent",
+    "link-detached",
+    "link-opening",
+    "setting-changed",
+    "open-failed",
+    "replay-started",
+    "replay-stopped",
+    "replay-control",
+    "transfer-started",
+    "mash-started",
+    "mash-done",
+    "mash-stopped",
 ];
 
 impl Event {
@@ -184,6 +305,20 @@ impl Event {
             Self::ConfigWarning { .. } => "config-warning",
             Self::DeviceCopyFailed { .. } => "device-copy-failed",
             Self::ScreenWarning { .. } => "screen-warning",
+            Self::LineSettings { .. } => "line-settings",
+            Self::LineLevel { .. } => "line-level",
+            Self::BreakSent { .. } => "break-sent",
+            Self::LinkDetached { .. } => "link-detached",
+            Self::LinkOpening { .. } => "link-opening",
+            Self::SettingChanged { .. } => "setting-changed",
+            Self::OpenFailed { .. } => "open-failed",
+            Self::ReplayStarted { .. } => "replay-started",
+            Self::ReplayStopped { .. } => "replay-stopped",
+            Self::ReplayControl { .. } => "replay-control",
+            Self::TransferStarted { .. } => "transfer-started",
+            Self::MashStarted { .. } => "mash-started",
+            Self::MashDone { .. } => "mash-done",
+            Self::MashStopped { .. } => "mash-stopped",
         }
     }
 
@@ -304,6 +439,20 @@ impl Event {
             Self::DeviceCopyFailed { error } => {
                 Note::new(ToastLevel::Error, format!("Clipboard error: {error}")).in_slot("copy")
             }
+            Self::LineSettings { .. }
+            | Self::LineLevel { .. }
+            | Self::BreakSent { .. }
+            | Self::LinkDetached { .. }
+            | Self::LinkOpening { .. }
+            | Self::SettingChanged { .. }
+            | Self::OpenFailed { .. }
+            | Self::ReplayStarted { .. }
+            | Self::ReplayStopped { .. }
+            | Self::ReplayControl { .. }
+            | Self::TransferStarted { .. }
+            | Self::MashStarted { .. }
+            | Self::MashDone { .. }
+            | Self::MashStopped { .. } => return None,
         };
         Some(note)
     }
