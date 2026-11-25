@@ -48,3 +48,24 @@ fn value_lines() {
     assert_eq!(screen.lines(), ["screen:", "  a␛[1mb", "  c"]);
     assert_eq!(Value::text("x\ty").lines(), ["x␉y"]);
 }
+
+/// MAX-284 (step 2a): bytes show 16 a line, their hex padded to a full line's, then their
+/// text escaped as `send` reads it (printable ASCII as is, `\\`, `\r` `\n` `\t`, `\xHH`);
+/// none when empty.
+/// How: 18 bytes below a name, an empty one.
+#[test]
+fn bytes_lines() {
+    let bytes = Value::Map(vec![(
+        "bytes".to_string(),
+        Value::Bytes(b"ab\\\r\n\t\x1b\xff 0123456789".to_vec()),
+    )]);
+    assert_eq!(
+        bytes.lines(),
+        [
+            "bytes:",
+            r"  61 62 5c 0d 0a 09 1b ff 20 30 31 32 33 34 35 36  ab\\\r\n\t\x1b\xff 0123456",
+            r"  37 38 39                                         789",
+        ]
+    );
+    assert_eq!(Value::Bytes(Vec::new()).lines(), ["none"]);
+}

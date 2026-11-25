@@ -7,14 +7,14 @@ use super::*;
 /// How: the test app, a request of each kind.
 #[test]
 fn hello_says_who_answers() {
-    let app = crate::app::tests::app();
+    let mut app = crate::app::tests::app();
     let instance = Instance::now();
     let request = |id: Option<Json>, method: &str| Request {
         id,
         method: method.to_string(),
         params: None,
     };
-    let hello = answer(&app, &instance, &request(Some(json!(1)), "hello")).unwrap();
+    let hello = answer(&mut app, &instance, &request(Some(json!(1)), "hello")).unwrap();
     let hello: Json = serde_json::from_str(&hello).unwrap();
     let result = &hello["result"];
     assert_eq!(result["api"], json!(API_VERSION));
@@ -24,9 +24,133 @@ fn hello_says_who_answers() {
         result["since"],
         json!(crate::commands::query::utc(instance.since))
     );
-    let unknown = answer(&app, &instance, &request(Some(json!(2)), "nope")).unwrap();
-    assert!(unknown.contains("-32601"), "{unknown}");
-    assert_eq!(answer(&app, &instance, &request(None, "hello")), None);
+    let unknown = answer(&mut app, &instance, &request(Some(json!(2)), "nope")).unwrap();
+    assert!(
+        unknown.contains(&rpc::METHOD_NOT_FOUND.to_string()),
+        "{unknown}"
+    );
+    assert_eq!(answer(&mut app, &instance, &request(None, "hello")), None);
+}
+
+/// The reply to `method` with `params`, as JSON
+fn ask(app: &mut App, method: &str, params: Json) -> Json {
+    let request = Request {
+        id: Some(json!(1)),
+        method: method.to_string(),
+        params: Some(params),
+    };
+    let reply = answer(app, &Instance::now(), &request).unwrap();
+    serde_json::from_str(&reply).unwrap()
+}
+
+/// MAX-284 (step 1): `hello` takes the client's name, a string; params given by position or
+/// a name that isn't a string are refused as invalid params.
+/// How: `hello` with a name, a number for it, an array of params.
+#[test]
+fn hello_takes_a_client_name() {
+    let mut app = crate::app::tests::app();
+    let named = ask(&mut app, "hello", json!({"client": "script"}));
+    assert_eq!(named["result"]["api"], json!(API_VERSION));
+    let number = ask(&mut app, "hello", json!({"client": 1}));
+    assert_eq!(
+        number["error"]["code"],
+        json!(rpc::INVALID_PARAMS),
+        "{number}"
+    );
+    let array = ask(&mut app, "hello", json!(["script"]));
+    assert_eq!(
+        array["error"]["code"],
+        json!(rpc::INVALID_PARAMS),
+        "{array}"
+    );
+}
+
+/// MAX-284 (step 1): `query` runs a getter's command and gives its value as JSON, the same as
+/// the TUI's: `status` an object in its order, a popup command (`marks`) its value; a named
+/// command of one query runs too.
+/// How: the test app; `status` against the query function itself, `marks`, `commands
+/// status`, a `[commands]` entry naming `status`.
+#[test]
+fn query_gives_the_value_as_json() {
+    let mut app = crate::app::tests::app();
+    let status = ask(&mut app, "query", json!({"command": "status"}));
+    let expected = crate::commands::query::status(&mut app, &[]).unwrap();
+    assert_eq!(status["result"], json(&expected), "{status}");
+    let names: Vec<&String> = status["result"].as_object().unwrap().keys().collect();
+    let Value::Map(entries) = &expected else {
+        panic!("status is a map")
+    };
+    assert_eq!(
+        names,
+        entries.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+    let marks = ask(&mut app, "query", json!({"command": "marks"}));
+    assert!(
+        marks["result"].is_object() || marks["result"].is_array(),
+        "{marks}"
+    );
+    let commands = ask(&mut app, "query", json!({"command": "commands status"}));
+    assert_eq!(commands["result"]["type"], json!("query"), "{commands}");
+    app.key_resolver.commands = vec![crate::commands::NamedCommand {
+        name: "state".to_string(),
+        run: "status".to_string(),
+        help: String::new(),
+        invocations: crate::commands::parse("status").unwrap(),
+    }];
+    let named = ask(&mut app, "query", json!({"command": "state"}));
+    assert_eq!(named["result"], status["result"]);
+}
+
+/// MAX-284 (step 1): `query` refuses what isn't one query, each with its code: a command that
+/// doesn't parse (unknown command, missing argument), an action or two queries (not a
+/// query), a getter that fails, no `command` (invalid params).
+/// How: one request of each.
+#[test]
+fn query_refusals() {
+    let mut app = crate::app::tests::app();
+    let code = |app: &mut App, params: Json| ask(app, "query", params)["error"]["code"].clone();
+    assert_eq!(
+        code(&mut app, json!({"command": "nope"})),
+        json!(rpc::UNKNOWN_COMMAND)
+    );
+    assert_eq!(
+        code(&mut app, json!({"command": "send"})),
+        json!(rpc::MISSING_ARGUMENT)
+    );
+    assert_eq!(
+        code(&mut app, json!({"command": "quit"})),
+        json!(rpc::NOT_A_QUERY)
+    );
+    assert_eq!(
+        code(&mut app, json!({"command": "status; status"})),
+        json!(rpc::NOT_A_QUERY)
+    );
+    assert_eq!(
+        code(&mut app, json!({"command": "commands nope"})),
+        json!(rpc::COMMAND_FAILED)
+    );
+    assert_eq!(code(&mut app, json!({})), json!(rpc::INVALID_PARAMS));
+}
+
+/// MAX-284 (step 1): every kind of value turns into its JSON: texts, numbers, yes or no,
+/// lists, maps in their order (not sorted), nested; bytes in base64 (step 2a).
+/// How: a value of every kind.
+#[test]
+fn values_as_json() {
+    let value = Value::Map(vec![
+        ("z".to_string(), Value::text("a\nb")),
+        ("a".to_string(), Value::Int(-3)),
+        ("m".to_string(), Value::Bool(true)),
+        (
+            "list".to_string(),
+            Value::List(vec![Value::Int(1), Value::Map(vec![])]),
+        ),
+        ("bytes".to_string(), Value::Bytes(b"\x1b[1m\xff".to_vec())),
+    ]);
+    assert_eq!(
+        serde_json::to_string(&json(&value)).unwrap(),
+        r#"{"z":"a\nb","a":-3,"m":true,"list":[1,{}],"bytes":"G1sxbf8="}"#
+    );
 }
 
 mod socket {
@@ -133,14 +257,14 @@ mod socket {
 
     /// Runs the loop's part until `count` requests were answered
     fn answer_requests(server: &mut Server, count: usize) {
-        let app = crate::app::tests::app();
+        let mut app = crate::app::tests::app();
         let instance = Instance::now();
         let start = Instant::now();
         let mut answered = 0;
         while answered < count {
             assert!(start.elapsed() < Duration::from_secs(5), "no request");
             for (conn, request) in server.requests() {
-                if let Some(reply) = answer(&app, &instance, &request) {
+                if let Some(reply) = answer(&mut app, &instance, &request) {
                     server.reply(conn, reply);
                 }
                 answered += 1;
@@ -222,23 +346,23 @@ mod socket {
 
         let mut client = Client::connect(&server);
         client.send("not json");
-        assert_eq!(client.reply()["error"]["code"], json!(-32700));
+        assert_eq!(client.reply()["error"]["code"], json!(rpc::PARSE_ERROR));
         assert!(client.closed());
 
         let mut client = Client::connect(&server);
         client.send_bytes(&vec![b'x'; rpc::MAX_LINE + 10]);
-        assert_eq!(client.reply()["error"]["code"], json!(-32700));
+        assert_eq!(client.reply()["error"]["code"], json!(rpc::PARSE_ERROR));
         assert!(client.closed());
 
         let mut client = Client::connect(&server);
         client.send(r#"{"jsonrpc":"2.0","id":1}"#);
-        assert_eq!(client.reply()["error"]["code"], json!(-32600));
+        assert_eq!(client.reply()["error"]["code"], json!(rpc::INVALID_REQUEST));
         client.send(r#"{"jsonrpc":"2.0","id":2,"method":"nope"}"#);
         answer_requests(&mut server, 1);
         let unknown = client.reply();
         assert_eq!(
             (&unknown["id"], &unknown["error"]["code"]),
-            (&json!(2), &json!(-32601))
+            (&json!(2), &json!(rpc::METHOD_NOT_FOUND))
         );
     }
 

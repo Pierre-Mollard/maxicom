@@ -3265,6 +3265,8 @@ fn every_command_shows_what_it_did() {
         ("screen", "popup Query"),
         ("cursor", "popup Query"),
         ("term-size", "popup Query"),
+        ("raw", "popup Query"),
+        ("raw-since 0", "popup Query"),
         ("search x", ""),
         ("mash x y", "info Mashing until 'y'"),
         ("trigger on", "error trigger: triggers.toml has no trigger"),

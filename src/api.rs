@@ -3,8 +3,8 @@
 //!
 //! Threads only move lines: one accepts the connections, each connection has a reader and a
 //! writer. The requests reach the loop through a channel it drains on every pass, and the loop
-//! answers them with the app in hand: no lock on the app. The methods are A2.1's (MAX-284);
-//! `hello` says who this maxicom is
+//! answers them with the app in hand: no lock on the app. The methods are A2.1's (MAX-284):
+//! `hello` says who this maxicom is, `query` runs a getter
 use std::{
     collections::HashMap,
     io::{self, BufRead, BufReader, Read, Write},
@@ -18,13 +18,17 @@ use std::{
     time::Duration,
 };
 
+use base64::prelude::*;
 use interprocess::local_socket::{
     ListenerNonblockingMode, ListenerOptions, Name, Stream, prelude::*,
 };
 use jiff::Timestamp;
 use serde_json::{Value as Json, json};
 
-use crate::app::App;
+use crate::{
+    app::App,
+    commands::{CommandError, Target, value::Value},
+};
 
 pub mod rpc;
 #[cfg(windows)]
@@ -152,19 +156,91 @@ fn is_alive(path: &Path) -> bool {
         .is_ok()
 }
 
-/// The answer to a request, for the loop: none for a notification
-pub fn answer(app: &App, instance: &Instance, request: &Request) -> Option<String> {
+/// The answer to a request, for the loop: none for a notification, which isn't run either
+/// (the methods so far only read)
+pub fn answer(app: &mut App, instance: &Instance, request: &Request) -> Option<String> {
+    let id = request.id.as_ref()?;
     let result = match request.method.as_str() {
-        "hello" => Ok(json!({
-            "api": API_VERSION,
-            "version": env!("CARGO_PKG_VERSION"),
-            "pid": instance.pid,
-            "link": app.link_label(),
-            "since": crate::commands::query::utc(instance.since),
-        })),
+        "hello" => hello(app, instance, request.params.as_ref()),
+        "query" => query(app, request.params.as_ref()),
         method => Err(RpcError::method_not_found(method)),
     };
-    (request.id.as_ref()).map(|id| rpc::reply(id, result))
+    Some(rpc::reply(id, result))
+}
+
+/// `hello {client?}`: who this maxicom is. `client` is the name the client gives itself
+// TODO: (MAX-286) the client's name kept with its connection, for the TUI to show (A3)
+fn hello(app: &App, instance: &Instance, params: Option<&Json>) -> Result<Json, RpcError> {
+    let _client = text_param(params, "client", false)?;
+    Ok(json!({
+        "api": API_VERSION,
+        "version": env!("CARGO_PKG_VERSION"),
+        "pid": instance.pid,
+        "link": app.link_label(),
+        "since": crate::commands::query::utc(instance.since),
+    }))
+}
+
+/// `query {command}`: `command` is a command as typed in the command-line popup, parsed
+/// against the registry and the user's `[commands]` (MAX-239); it must come out as one
+/// command whose target is a query (MAX-283's getters) or a popup, whose value it gives. Run
+/// at once, not as a job: a query never waits and changes nothing. Its value as JSON
+fn query(app: &mut App, params: Option<&Json>) -> Result<Json, RpcError> {
+    let command = text_param(params, "command", true)?.unwrap_or_default();
+    let invocations = crate::commands::parse_with(command, &app.key_resolver.commands)
+        .map_err(|error| RpcError::command(&error))?;
+    let [invocation] = invocations.as_slice() else {
+        return Err(RpcError::not_a_query(format!(
+            "one query, not {}",
+            invocations.len()
+        )));
+    };
+    let name = invocation.spec.name;
+    let (Target::Query(run) | Target::Popup { query: run, .. }) = invocation.spec.target else {
+        return Err(RpcError::not_a_query(format!("{name} isn't a query")));
+    };
+    let value = run(app, &invocation.args).map_err(|reason| {
+        RpcError::command(&CommandError::Failed {
+            command: name,
+            reason,
+        })
+    })?;
+    Ok(json(&value))
+}
+
+/// A text param by its name, from params given by name: an error when it isn't a text, or
+/// when it is `required` and missing
+fn text_param<'a>(
+    params: Option<&'a Json>,
+    name: &str,
+    required: bool,
+) -> Result<Option<&'a str>, RpcError> {
+    let object = match params {
+        None => None,
+        Some(Json::Object(object)) => Some(object),
+        Some(_) => return Err(RpcError::invalid_params("params are given by name")),
+    };
+    match object.and_then(|object| object.get(name)) {
+        Some(Json::String(text)) => Ok(Some(text)),
+        Some(_) => Err(RpcError::invalid_params(format!("\"{name}\" is a string"))),
+        None if required => Err(RpcError::invalid_params(format!("\"{name}\" is missing"))),
+        None => Ok(None),
+    }
+}
+
+/// A query's value as JSON: a map an object, its names in order; bytes in base64
+pub fn json(value: &Value) -> Json {
+    match value {
+        Value::Text(text) => json!(text),
+        Value::Int(n) => json!(n),
+        Value::Bool(yes) => json!(yes),
+        Value::List(items) => items.iter().map(json).collect(),
+        Value::Bytes(bytes) => json!(BASE64_STANDARD.encode(bytes)),
+        Value::Map(entries) => (entries.iter())
+            .map(|(name, value)| (name.clone(), json(value)))
+            .collect::<serde_json::Map<_, _>>()
+            .into(),
+    }
 }
 
 /// What a connection tells the loop, by its number

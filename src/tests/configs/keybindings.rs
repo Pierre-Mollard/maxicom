@@ -349,6 +349,7 @@ fn keymap_actions_are_the_action_commands() {
             "history-size",
             "screen",
             "cursor",
+            "raw",
             "term-size",
             "commands",
             "plot",

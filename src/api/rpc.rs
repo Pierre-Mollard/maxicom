@@ -2,9 +2,28 @@
 //! and writing replies; no socket here, so it is tested alone
 use serde_json::{Map, Value as Json, json};
 
+use crate::commands::CommandError;
+
 /// The longest line read, its newline included: past it the connection closes, so a client
 /// that never sends a newline can't grow the buffer forever
 pub const MAX_LINE: usize = 1024 * 1024;
+
+/// The error codes: JSON-RPC's own for the protocol, maxicom's from 100 for the commands
+/// (MAX-284), one per kind of `CommandError`
+pub const PARSE_ERROR: i64 = -32700;
+pub const INVALID_REQUEST: i64 = -32600;
+pub const METHOD_NOT_FOUND: i64 = -32601;
+pub const INVALID_PARAMS: i64 = -32602;
+pub const UNCLOSED_QUOTE: i64 = 101;
+pub const BAD_ESCAPE: i64 = 102;
+pub const UNKNOWN_COMMAND: i64 = 103;
+pub const MISSING_ARGUMENT: i64 = 104;
+pub const TOO_MANY_ARGUMENTS: i64 = 105;
+pub const BAD_ARGUMENT: i64 = 106;
+pub const COMMAND_FAILED: i64 = 107;
+pub const NAMED_WITH_ARGUMENTS: i64 = 108;
+/// `query`'s line isn't one query
+pub const NOT_A_QUERY: i64 = 110;
 
 /// A request read from a line: a notification (no `id`) gets no reply
 #[derive(Debug, Clone, PartialEq)]
@@ -25,7 +44,7 @@ impl RpcError {
     /// Not JSON, or not UTF-8
     pub fn parse(message: impl Into<String>) -> Self {
         Self {
-            code: -32700,
+            code: PARSE_ERROR,
             message: message.into(),
         }
     }
@@ -33,15 +52,49 @@ impl RpcError {
     /// JSON, but not a request
     pub fn invalid_request(message: impl Into<String>) -> Self {
         Self {
-            code: -32600,
+            code: INVALID_REQUEST,
             message: message.into(),
         }
     }
 
     pub fn method_not_found(method: &str) -> Self {
         Self {
-            code: -32601,
+            code: METHOD_NOT_FOUND,
             message: format!("no method '{method}'"),
+        }
+    }
+
+    /// The method's params aren't what it takes
+    pub fn invalid_params(message: impl Into<String>) -> Self {
+        Self {
+            code: INVALID_PARAMS,
+            message: message.into(),
+        }
+    }
+
+    /// A command line refused (MAX-284): one code per kind of error, the message the TUI's
+    pub fn command(error: &CommandError) -> Self {
+        let code = match error {
+            CommandError::UnclosedQuote => UNCLOSED_QUOTE,
+            CommandError::BadEscape(_) => BAD_ESCAPE,
+            CommandError::UnknownCommand(_) => UNKNOWN_COMMAND,
+            CommandError::MissingArgument { .. } => MISSING_ARGUMENT,
+            CommandError::TooManyArguments { .. } => TOO_MANY_ARGUMENTS,
+            CommandError::BadArgument { .. } => BAD_ARGUMENT,
+            CommandError::Failed { .. } => COMMAND_FAILED,
+            CommandError::NamedWithArguments(_) => NAMED_WITH_ARGUMENTS,
+        };
+        Self {
+            code,
+            message: error.to_string(),
+        }
+    }
+
+    /// `query`'s line isn't one query (MAX-284): an action, or several commands
+    pub fn not_a_query(message: impl Into<String>) -> Self {
+        Self {
+            code: NOT_A_QUERY,
+            message: message.into(),
         }
     }
 }

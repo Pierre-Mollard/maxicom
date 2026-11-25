@@ -1,5 +1,6 @@
 //! The queries' values for a known state (MAX-283)
 use super::*;
+use crate::commands::QueryFn;
 use crate::{
     app::tests::app,
     inputs::{Action, AppAction},
@@ -350,4 +351,152 @@ fn screen_cursor_and_size() {
         term_size(&mut app, &[]).unwrap().lines(),
         [format!("rows: {rows}"), format!("cols: {cols}")]
     );
+}
+
+/// An app built with `settings` changed
+fn app_with(change: impl FnOnce(&mut crate::configs::SettingsConfig)) -> App {
+    use crate::{
+        configs::{KeyBindingsConfig, KeyResolver, SettingsConfig},
+        link::LinkConfig,
+    };
+    let mut settings = SettingsConfig::default();
+    change(&mut settings);
+    App::new(
+        settings,
+        KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap(),
+        LinkConfig::default(),
+    )
+}
+
+/// The bytes, offsets and lines of a `raw` value
+fn raw_parts(value: &Value) -> (Vec<u8>, [i64; 4]) {
+    let Value::Map(entries) = value else {
+        panic!("not a map: {value:?}")
+    };
+    let int = |name: &str| match entries.iter().find(|(key, _)| key == name) {
+        Some((_, Value::Int(n))) => *n,
+        other => panic!("{name}: {other:?}"),
+    };
+    let Some((_, Value::Bytes(bytes))) = entries.iter().find(|(key, _)| key == "bytes") else {
+        panic!("no bytes")
+    };
+    (
+        bytes.clone(),
+        [int("start"), int("end"), int("oldest"), int("newest")],
+    )
+}
+
+/// MAX-284 (step 2a): `raw [from] [count]` gives the last bytes received, skipping `from`
+/// newest, with their offsets and the stream's oldest and newest; `raw-since` gives them from
+/// an offset on, `count` at most, none past the end. The TUI shows them as hex and escaped
+/// text.
+/// How: two reads in terminal mode, then each form.
+#[test]
+fn raw_gives_the_bytes_received() {
+    let mut app = app();
+    app.feed_rx(b"boot\r\n");
+    app.feed_rx(b"\x1b[1mok\\");
+    let all = raw(&mut app, &[]).unwrap();
+    assert_eq!(
+        raw_parts(&all),
+        (b"boot\r\n\x1b[1mok\\".to_vec(), [0, 13, 0, 13])
+    );
+    assert_eq!(
+        all.lines(),
+        [
+            "start: 0",
+            "end: 13",
+            "oldest: 0",
+            "newest: 13",
+            "bytes:",
+            "  62 6f 6f 74 0d 0a 1b 5b 31 6d 6f 6b 5c           boot\\r\\n\\x1b[1mok\\\\",
+        ]
+    );
+    let middle = raw(&mut app, &[ArgValue::Int(3), ArgValue::Int(4)]).unwrap();
+    assert_eq!(raw_parts(&middle), (b"\x1b[1m".to_vec(), [6, 10, 0, 13]));
+    let since = raw_since(&mut app, &[ArgValue::Int(6), ArgValue::Int(2)]).unwrap();
+    assert_eq!(raw_parts(&since), (b"\x1b[".to_vec(), [6, 8, 0, 13]));
+    let rest = raw_since(&mut app, &[ArgValue::Int(8)]).unwrap();
+    assert_eq!(raw_parts(&rest), (b"1mok\\".to_vec(), [8, 13, 0, 13]));
+    let past = raw_since(&mut app, &[ArgValue::Int(99)]).unwrap();
+    assert_eq!(raw_parts(&past), (Vec::new(), [13, 13, 0, 13]));
+    assert!(past.lines().contains(&"bytes: none".to_string()));
+}
+
+/// MAX-284 (step 2a): bytes older than the stream keeps are gone: `raw-since` from before
+/// them starts at the oldest kept, which a client compares with where it asked from; after a
+/// clear-history none are kept, the offsets counting on.
+/// How: more than the stream's 64 KiB floor fed, then `raw-since 0`; a clear-history.
+#[test]
+fn raw_since_older_than_kept() {
+    // a history of a few rows: the stream keeps its 64 KiB floor
+    let mut app = app_with(|settings| settings.terminal_mode.history_size = 10);
+    app.feed_rx(&vec![b'a'; 70 * 1024]);
+    app.feed_rx(b"end");
+    let value = raw_since(&mut app, &[ArgValue::Int(0), ArgValue::Int(10)]).unwrap();
+    let (bytes, [start, end, oldest, newest]) = raw_parts(&value);
+    assert!(oldest > 0, "{oldest}");
+    assert_eq!((start, end, newest), (oldest, oldest + 10, 70 * 1024 + 3));
+    assert_eq!(bytes, vec![b'a'; 10]);
+    let last = raw(&mut app, &[ArgValue::Int(0), ArgValue::Int(3)]).unwrap();
+    assert_eq!(raw_parts(&last).0, b"end");
+    app.terminal_mode.clear_history();
+    let cleared = raw_since(&mut app, &[ArgValue::Int(0)]).unwrap();
+    assert_eq!(
+        raw_parts(&cleared),
+        (Vec::new(), [newest, newest, newest, newest])
+    );
+}
+
+/// MAX-284 (step 2a): a mode's getters are refused when the bytes received don't go to that
+/// mode, saying why: `raw`, `raw-since`, `screen`, `cursor` with terminal mode disabled or
+/// hidden under `active_only`; `history`, `history-size` the same for line mode. Fed by
+/// `always_both`, the hidden mode's getters answer.
+/// How: an app for each setting, each getter.
+#[test]
+fn getters_of_a_mode_not_fed_refused() {
+    use crate::configs::{DualBufferMode, settings::DisabledMode};
+    let since = [ArgValue::Int(0)];
+    let terminal: [(QueryFn, &[ArgValue]); 4] = [
+        (raw, &[]),
+        (raw_since, &since),
+        (screen, &[]),
+        (cursor, &[]),
+    ];
+    let line: [(QueryFn, &[ArgValue]); 2] = [(history, &[]), (history_size, &[])];
+    let refusal = |app: &mut App, (query, args): (QueryFn, &[ArgValue])| query(app, args).err();
+
+    let mut no_terminal = app_with(|settings| {
+        settings.mode = Mode::Line;
+        settings.disabled_mode = DisabledMode::Terminal;
+    });
+    for query in terminal {
+        let error = refusal(&mut no_terminal, query);
+        assert_eq!(
+            error.as_deref(),
+            Some("terminal mode is disabled (disabled_mode)")
+        );
+    }
+    let hidden = "terminal mode isn't fed while it's hidden (dual_mode_buffering = active_only)";
+    let mut line_only = app_with(|settings| {
+        settings.mode = Mode::Line;
+        settings.dual_mode_buffering = DualBufferMode::ActiveOnly;
+    });
+    for query in terminal {
+        assert_eq!(refusal(&mut line_only, query).as_deref(), Some(hidden));
+    }
+    for query in line {
+        assert_eq!(refusal(&mut line_only, query), None);
+    }
+    let mut terminal_only = app_with(|settings| {
+        settings.dual_mode_buffering = DualBufferMode::ActiveOnly;
+    });
+    let hidden = "line mode isn't fed while it's hidden (dual_mode_buffering = active_only)";
+    for query in line {
+        assert_eq!(refusal(&mut terminal_only, query).as_deref(), Some(hidden));
+    }
+    let mut both = app_with(|settings| settings.mode = Mode::Line);
+    for query in terminal.into_iter().chain(line) {
+        assert_eq!(refusal(&mut both, query), None);
+    }
 }

@@ -372,6 +372,7 @@ pub fn notifications(app: &mut App, args: &[ArgValue]) -> Result<Value, String> 
 /// ones were left out, and the line still coming in (`partial`, empty when none): a prompt
 /// without its end of line is there
 pub fn history(app: &mut App, args: &[ArgValue]) -> Result<Value, String> {
+    fed(app, Mode::Line)?;
     let line_mode = &app.line_mode;
     let history = line_mode.history();
     let (range, cut) = page(history.len(), args);
@@ -397,6 +398,7 @@ pub fn history(app: &mut App, args: &[ArgValue]) -> Result<Value, String> {
 /// `history-size` (MAX-283): the lines line mode's history holds, and the ones its cap
 /// dropped since the start, a `clear-history` not counted
 pub fn history_size(app: &mut App, _args: &[ArgValue]) -> Result<Value, String> {
+    fed(app, Mode::Line)?;
     let line_mode = &app.line_mode;
     Ok(Value::Map(vec![
         (
@@ -413,6 +415,7 @@ pub fn history_size(app: &mut App, _args: &[ArgValue]) -> Result<Value, String> 
 /// `screen [text|colors]` (MAX-283): the terminal's live screen, its rows on lines, plain or
 /// with its colors and styles as escape sequences; the view scrolled back doesn't change it
 pub fn screen(app: &mut App, args: &[ArgValue]) -> Result<Value, String> {
+    fed(app, Mode::Terminal)?;
     let styled = match args {
         [] | [ArgValue::Enum("text")] => false,
         [ArgValue::Enum("colors")] => true,
@@ -424,12 +427,88 @@ pub fn screen(app: &mut App, args: &[ArgValue]) -> Result<Value, String> {
 /// `cursor` (MAX-283): the terminal cursor's row and column on the live screen, from 0, and
 /// whether the remote shows it
 pub fn cursor(app: &mut App, _args: &[ArgValue]) -> Result<Value, String> {
+    fed(app, Mode::Terminal)?;
     let (row, col, visible) = app.terminal_mode.cursor();
     Ok(Value::Map(vec![
         ("row".to_string(), Value::Int(i64::from(row))),
         ("col".to_string(), Value::Int(i64::from(col))),
         ("visible".to_string(), Value::Bool(visible)),
     ]))
+}
+
+/// The bytes `raw` gives by default, and at most (MAX-284)
+pub const RAW_COUNT: usize = 4096;
+pub const MAX_RAW: i64 = 64 * 1024;
+
+/// `raw [from] [count]` (MAX-284): the last bytes received, as the terminal raw panel keeps
+/// them, `count` (4096 by default, 64 KiB at most) after skipping `from` newest
+pub fn raw(app: &mut App, args: &[ArgValue]) -> Result<Value, String> {
+    fed(app, Mode::Terminal)?;
+    let (from, count) = match args {
+        [] => (0, RAW_COUNT),
+        [ArgValue::Int(from)] => (offset(*from), RAW_COUNT),
+        [ArgValue::Int(from), ArgValue::Int(count)] => (offset(*from), offset(*count) as usize),
+        _ => unreachable!("[from] [count] are numbers"),
+    };
+    let stream = app.terminal_mode.dump().stream();
+    let end = stream.end().saturating_sub(from).max(stream.start());
+    let start = end.saturating_sub(count as u64).max(stream.start());
+    Ok(raw_value(app, start..end))
+}
+
+/// `raw-since <offset> [count]` (MAX-284): the bytes received from `offset` on, a client's
+/// poll: from the oldest kept when `offset` is older, none when it is past the end
+pub fn raw_since(app: &mut App, args: &[ArgValue]) -> Result<Value, String> {
+    fed(app, Mode::Terminal)?;
+    let (since, count) = match args {
+        [ArgValue::Int(since)] => (offset(*since), RAW_COUNT),
+        [ArgValue::Int(since), ArgValue::Int(count)] => (offset(*since), offset(*count) as usize),
+        _ => unreachable!("<offset> [count] are numbers"),
+    };
+    let stream = app.terminal_mode.dump().stream();
+    let start = since.clamp(stream.start(), stream.end());
+    let end = start.saturating_add(count as u64).min(stream.end());
+    Ok(raw_value(app, start..end))
+}
+
+/// An argument checked as positive by its spec, as an offset or a count
+fn offset(n: i64) -> u64 {
+    u64::try_from(n).unwrap_or(0)
+}
+
+/// The bytes of `range`, with where they are in the stream: their `start` and `end` offsets,
+/// and the `oldest` and `newest` the stream keeps, so a client sees what it missed
+/// (`oldest` past where it asked from) and what is left (`end` short of `newest`)
+fn raw_value(app: &App, range: std::ops::Range<u64>) -> Value {
+    let stream = app.terminal_mode.dump().stream();
+    let (front, back) = stream.slices(range.clone());
+    let int = |offset: u64| Value::Int(i64::try_from(offset).unwrap_or(i64::MAX));
+    Value::Map(vec![
+        ("start".to_string(), int(range.start)),
+        ("end".to_string(), int(range.end)),
+        ("oldest".to_string(), int(stream.start())),
+        ("newest".to_string(), int(stream.end())),
+        ("bytes".to_string(), Value::Bytes([front, back].concat())),
+    ])
+}
+
+/// A getter of a mode's state needs that mode fed (MAX-284): a mode the received bytes don't
+/// go to holds what it had when they stopped, so it is refused, saying why
+fn fed(app: &App, mode: Mode) -> Result<(), String> {
+    let (line, terminal) = app.fed_modes();
+    let (fed, name) = match mode {
+        Mode::Line => (line, "line mode"),
+        Mode::Terminal => (terminal, "terminal mode"),
+    };
+    if fed {
+        Ok(())
+    } else if !app.settings().mode_enabled(mode) {
+        Err(format!("{name} is disabled (disabled_mode)"))
+    } else {
+        Err(format!(
+            "{name} isn't fed while it's hidden (dual_mode_buffering = active_only)"
+        ))
+    }
 }
 
 /// `term-size` (MAX-283): the terminal emulator's rows and columns, the size the remote is

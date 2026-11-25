@@ -31,10 +31,10 @@ fn requests_read() {
 #[test]
 fn bad_lines_refused() {
     let not_json = refusal("hello");
-    assert_eq!((not_json.error.code, not_json.close), (-32700, true));
+    assert_eq!((not_json.error.code, not_json.close), (PARSE_ERROR, true));
     assert_eq!(not_json.id, Json::Null);
     let not_utf8 = parse(b"\xff\xfe").unwrap_err();
-    assert_eq!((not_utf8.error.code, not_utf8.close), (-32700, true));
+    assert_eq!((not_utf8.error.code, not_utf8.close), (PARSE_ERROR, true));
 
     for (line, id) in [
         (r#"[{"jsonrpc":"2.0","id":1,"method":"hello"}]"#, Json::Null),
@@ -49,7 +49,7 @@ fn bad_lines_refused() {
         (r#"{"jsonrpc":"2.0","id":{},"method":"m"}"#, Json::Null),
     ] {
         let refused = refusal(line);
-        assert_eq!(refused.error.code, -32600, "{line}");
+        assert_eq!(refused.error.code, INVALID_REQUEST, "{line}");
         assert!(!refused.close, "{line}");
         assert_eq!(refused.id, id, "{line}");
     }
@@ -65,6 +65,6 @@ fn replies_written() {
     let error: Json = serde_json::from_str(&error).unwrap();
     assert_eq!(
         error,
-        json!({"jsonrpc": "2.0", "id": "q", "error": {"code": -32601, "message": "no method 'nope'"}})
+        json!({"jsonrpc": "2.0", "id": "q", "error": {"code": METHOD_NOT_FOUND, "message": "no method 'nope'"}})
     );
 }

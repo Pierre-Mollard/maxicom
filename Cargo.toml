@@ -34,6 +34,7 @@ strip = true
 
 [dependencies]
 ansi-to-tui = "8.0.1"
+base64 = "0.22.1"
 crossterm = "0.29.0"
 dirs = "7.0.0"
 interprocess = "2.4.9"
@@ -43,7 +44,7 @@ memchr = "2.8.3"
 ratatui = { version = "0.30.2", features = ["unstable-rendered-line-info", "serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_ignored = "0.1.14"
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 serial2 = "0.2.38"
 socket2 = { version = "0.6.5", features = ["all"] }
 terminput = "0.5.15"

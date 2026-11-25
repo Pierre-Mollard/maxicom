@@ -885,6 +885,56 @@ pub static COMMANDS: &[CommandSpec] = {
             "Show the terminal cursor's row and column, from 0, and whether it shows",
         ),
         CommandSpec::query(
+            "raw",
+            &[
+                ArgSpec {
+                    name: "from",
+                    kind: ArgKind::Int {
+                        min: 0,
+                        max: i64::MAX,
+                        suggestions: &[],
+                    },
+                    optional: true,
+                },
+                ArgSpec {
+                    name: "count",
+                    kind: ArgKind::Int {
+                        min: 1,
+                        max: query::MAX_RAW,
+                        suggestions: &[],
+                    },
+                    optional: true,
+                },
+            ],
+            query::raw,
+            "Show the last bytes received, skipping [from] newest",
+        ),
+        CommandSpec::query(
+            "raw-since",
+            &[
+                ArgSpec {
+                    name: "offset",
+                    kind: ArgKind::Int {
+                        min: 0,
+                        max: i64::MAX,
+                        suggestions: &[],
+                    },
+                    optional: false,
+                },
+                ArgSpec {
+                    name: "count",
+                    kind: ArgKind::Int {
+                        min: 1,
+                        max: query::MAX_RAW,
+                        suggestions: &[],
+                    },
+                    optional: true,
+                },
+            ],
+            query::raw_since,
+            "Show the bytes received from <offset> on",
+        ),
+        CommandSpec::query(
             "term-size",
             &[],
             query::term_size,

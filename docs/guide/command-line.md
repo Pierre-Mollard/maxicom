@@ -203,6 +203,8 @@ scripts first, and you can run them too.
 | `screen [text\|colors]` | Shows the terminal's screen, as text or with its colors |
 | `cursor` | Shows the terminal cursor's row and column, and whether it shows |
 | `term-size` | Shows the terminal's rows and columns |
+| `raw [from] [count]` | Shows the last bytes received as hex and text, 4096 by default, skipping `from` newest |
+| `raw-since <offset> [count]` | Shows the bytes received from an offset on, the way a script polls them |
 | `commands [name]` | Lists every command with its help, or shows one in detail |
 
 The answer opens in a popup, one line each. Enter or `c` copies the selected
@@ -210,6 +212,18 @@ line, `a` the whole answer. No key runs these by default: bind one in
 `keymap.toml` if you use it often, see
 [Actions and commands](keybindings.md#actions-and-commands). In a trigger's
 or a profile's line they do nothing.
+
+`raw` shows the bytes the terminal raw panel keeps, with their offsets:
+`start` and `end` for the bytes shown, `oldest` and `newest` for the ones kept.
+An offset counts every byte received since maxicom started, so it doesn't
+change when older bytes are dropped. Text escapes are written the way `send`
+reads them (`\r`, `\x1b`).
+
+The history and size getters belong to one mode: `history` and
+`history-size` to line mode, `screen`, `cursor`, `raw` and `raw-since` to
+terminal mode. When that mode doesn't receive the bytes (turned off by
+`disabled_mode`, or hidden with `dual_mode_buffering = "active_only"`), they
+fail and say why, rather than show what it held before.
 
 #### Settings by name
 

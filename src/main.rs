@@ -544,7 +544,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         // the API's requests, answered with the app in hand (MAX-74)
         if let Some(server) = &mut api_server {
             for (conn, request) in server.requests() {
-                if let Some(reply) = api::answer(&app, &instance, &request) {
+                if let Some(reply) = api::answer(&mut app, &instance, &request) {
                     server.reply(conn, reply);
                 }
             }

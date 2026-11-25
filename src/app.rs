@@ -1451,7 +1451,7 @@ impl App {
 
     /// Which modes the received bytes go to: the one shown, both with `always_both`, never
     /// a disabled one
-    fn fed_modes(&self) -> (bool, bool) {
+    pub fn fed_modes(&self) -> (bool, bool) {
         let both = self.settings.dual_mode_buffering == DualBufferMode::AlwaysBoth;
         let fed = |mode| self.settings.mode_enabled(mode) && (both || self.settings.mode == mode);
         (fed(Mode::Line), fed(Mode::Terminal))
