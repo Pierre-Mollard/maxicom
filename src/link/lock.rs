@@ -140,6 +140,30 @@ pub fn lock_state_in(dir: &Path, address: &Address) -> LockState {
     }
 }
 
+/// The links held in `dir` by a running maxicom, each by its `.info` (MAX-74: which instance
+/// holds which link). A lock nobody holds is a crash's leftover, and skipped
+pub fn held_locks(dir: &Path) -> Vec<LockInfo> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut held = Vec::new();
+    for entry in entries.flatten() {
+        let lock_path = entry.path();
+        if lock_path.extension().is_none_or(|ext| ext != "lock") {
+            continue;
+        }
+        let Ok(file) = open_lock(&lock_path, false) else {
+            continue;
+        };
+        if let Err(TryLockError::WouldBlock) = file.try_lock_shared()
+            && let Some(info) = read_info(&lock_path.with_extension("info"))
+        {
+            held.push(info);
+        }
+    }
+    held
+}
+
 /// The folder every user's maxicom shares for its locks: `/run/lock/maxicom` where the system
 /// lets users make it (Debian, Ubuntu), else `/tmp/maxicom-locks`, made writable by all with the
 /// sticky bit as `/tmp` is; `%ProgramData%\maxicom\locks` on Windows. None when none can be used

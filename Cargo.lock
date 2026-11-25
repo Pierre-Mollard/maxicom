@@ -803,6 +803,8 @@ dependencies = [
  "tui-input",
  "unicode-width",
  "vt100",
+ "widestring",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

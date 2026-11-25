@@ -1,5 +1,5 @@
-//! The API socket itself (MAX-74): a server in a temporary folder, clients on Unix sockets.
-//! Windows' named pipes come with step 2
+//! The API socket itself (MAX-74): a server in a temporary folder on Unix, a pipe of its own
+//! name on Windows; the clients are `interprocess` streams, as another program's would be
 use super::*;
 
 /// `hello`'s answer, with no socket: the API's version, this maxicom's pid, its link, its start
@@ -29,30 +29,99 @@ fn hello_says_who_answers() {
     assert_eq!(answer(&app, &instance, &request(None, "hello")), None);
 }
 
-#[cfg(unix)]
 mod socket {
     use std::{
         io::{BufRead, BufReader, Write},
-        os::unix::net::{UnixListener, UnixStream},
         time::Instant,
     };
 
     use super::*;
 
-    /// A folder of its own for each test's sockets
-    fn temp_dir(test: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("maxicom_api_{}_{test}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        dir
+    /// A test's server: its own folder on Unix (removed after), its own pipe name on Windows
+    struct TestServer {
+        server: Server,
+        dir: Option<PathBuf>,
     }
 
-    fn client(server: &Server) -> (UnixStream, BufReader<UnixStream>) {
-        let stream = UnixStream::connect(server.location()).unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
-        let reader = BufReader::new(stream.try_clone().unwrap());
-        (stream, reader)
+    impl TestServer {
+        fn start(test: &str) -> Self {
+            let name = format!("maxicom-test-{}-{test}", std::process::id());
+            let dir = cfg!(unix).then(|| {
+                let dir = std::env::temp_dir().join(&name);
+                let _ = std::fs::remove_dir_all(&dir);
+                dir
+            });
+            let server = Server::start(dir.as_deref(), &name).unwrap();
+            Self { server, dir }
+        }
+    }
+
+    impl Drop for TestServer {
+        fn drop(&mut self) {
+            if let Some(dir) = &self.dir {
+                let _ = std::fs::remove_dir_all(dir);
+            }
+        }
+    }
+
+    impl std::ops::Deref for TestServer {
+        type Target = Server;
+        fn deref(&self) -> &Server {
+            &self.server
+        }
+    }
+
+    impl std::ops::DerefMut for TestServer {
+        fn deref_mut(&mut self) -> &mut Server {
+            &mut self.server
+        }
+    }
+
+    /// A client, as another program's: an `interprocess` stream. Reads time out where the
+    /// system allows it (not on Windows pipes: a test hanging there fails on CI's timeout)
+    struct Client {
+        reader: BufReader<Stream>,
+    }
+
+    impl Client {
+        fn connect(server: &Server) -> Self {
+            use interprocess::local_socket::GenericFilePath;
+            let name = server.location().to_fs_name::<GenericFilePath>().unwrap();
+            let stream = Stream::connect(name).unwrap();
+            let _ = stream.set_recv_timeout(Some(Duration::from_secs(5)));
+            Self {
+                reader: BufReader::new(stream),
+            }
+        }
+
+        /// Sends bytes as they are: a write error is the server having closed, which the
+        /// reads that follow show
+        fn send_bytes(&self, bytes: &[u8]) {
+            let _ = self.reader.get_ref().write_all(bytes);
+        }
+
+        fn send(&self, line: &str) {
+            self.send_bytes(format!("{line}\n").as_bytes());
+        }
+
+        fn reply(&mut self) -> Json {
+            let mut line = String::new();
+            self.reader.read_line(&mut line).unwrap();
+            serde_json::from_str(&line).unwrap()
+        }
+
+        /// The server closed: the end, or a reset (Unix) or a broken pipe (Windows) when it
+        /// closed with bytes left unread (the line too long)
+        fn closed(&mut self) -> bool {
+            let mut rest = String::new();
+            match self.reader.read_line(&mut rest) {
+                Ok(n) => n == 0,
+                Err(err) => matches!(
+                    err.kind(),
+                    std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::BrokenPipe
+                ),
+            }
+        }
     }
 
     /// Runs the loop's part until `count` requests were answered
@@ -73,35 +142,52 @@ mod socket {
         }
     }
 
-    fn read_reply(reader: &mut BufReader<UnixStream>) -> Json {
-        let mut line = String::new();
-        reader.read_line(&mut line).unwrap();
-        serde_json::from_str(&line).unwrap()
-    }
-
-    /// MAX-74 (step 1): two clients connect at once, each gets its `hello` answered on its own
-    /// connection; the socket file is the owner's only and goes when the server stops.
-    /// How: a server in a temporary folder, two Unix socket clients.
+    /// MAX-74 (steps 1-2): two clients connect at once, each gets its `hello` answered on its
+    /// own connection, while its reader waits for its next line.
+    /// How: a test server, two clients.
     #[test]
     fn two_clients_say_hello() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = temp_dir("hello");
-        let mut server = Server::start(Some(&dir), "maxicom-test").unwrap();
-        let path = PathBuf::from(server.location());
-        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600);
-        let (mut one, mut one_reader) = client(&server);
-        let (mut two, mut two_reader) = client(&server);
-        writeln!(one, r#"{{"jsonrpc":"2.0","id":1,"method":"hello"}}"#).unwrap();
-        writeln!(two, r#"{{"jsonrpc":"2.0","id":"b","method":"hello"}}"#).unwrap();
+        let mut server = TestServer::start("hello");
+        let mut one = Client::connect(&server);
+        let mut two = Client::connect(&server);
+        one.send(r#"{"jsonrpc":"2.0","id":1,"method":"hello"}"#);
+        two.send(r#"{"jsonrpc":"2.0","id":"b","method":"hello"}"#);
         answer_requests(&mut server, 2);
-        let first = read_reply(&mut one_reader);
-        let second = read_reply(&mut two_reader);
+        let (first, second) = (one.reply(), two.reply());
         assert_eq!((&first["id"], &second["id"]), (&json!(1), &json!("b")));
         assert_eq!(first["result"]["api"], json!(API_VERSION));
+    }
+
+    /// MAX-74 (step 1): the socket's folder is the owner's only, and the socket file too where
+    /// its mode can be set (not macOS); the file goes when the server stops.
+    /// How: a test server's folder and file modes, then the file after the server is dropped.
+    #[cfg(unix)]
+    #[test]
+    fn socket_file_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let mut server = TestServer::start("file");
+        let path = PathBuf::from(server.location());
+        assert_eq!(mode(path.parent().unwrap()), 0o700);
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        assert_eq!(mode(&path), 0o600);
+        let dir = server.dir.take();
         drop(server);
         assert!(!path.exists(), "the socket file stays");
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = dir.map(std::fs::remove_dir_all);
+    }
+
+    /// MAX-74 (step 2): the pipe goes when the server stops: a client can't connect any more.
+    /// How: a test server's pipe name, connected to after the server is dropped.
+    #[cfg(windows)]
+    #[test]
+    fn pipe_gone_after_stop() {
+        use interprocess::local_socket::GenericFilePath;
+        let server = TestServer::start("gone-pipe");
+        let location = server.location().to_string();
+        drop(server);
+        let name = location.to_fs_name::<GenericFilePath>().unwrap();
+        assert!(Stream::connect(name).is_err(), "the pipe stays");
     }
 
     /// MAX-74 (step 1): a client that leaves before its reply changes nothing for the
@@ -109,72 +195,106 @@ mod socket {
     /// How: a `hello` sent then the client dropped, answered; then another client's `hello`.
     #[test]
     fn client_gone_before_its_reply() {
-        let dir = temp_dir("gone");
-        let mut server = Server::start(Some(&dir), "maxicom-test").unwrap();
-        let (mut gone, _) = client(&server);
-        writeln!(gone, r#"{{"jsonrpc":"2.0","id":1,"method":"hello"}}"#).unwrap();
+        let mut server = TestServer::start("gone");
+        let gone = Client::connect(&server);
+        gone.send(r#"{"jsonrpc":"2.0","id":1,"method":"hello"}"#);
         drop(gone);
         answer_requests(&mut server, 1);
-        let (mut next, mut reader) = client(&server);
-        writeln!(next, r#"{{"jsonrpc":"2.0","id":2,"method":"hello"}}"#).unwrap();
+        let mut next = Client::connect(&server);
+        next.send(r#"{"jsonrpc":"2.0","id":2,"method":"hello"}"#);
         answer_requests(&mut server, 1);
-        assert_eq!(read_reply(&mut reader)["id"], json!(2));
-        drop(server);
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(next.reply()["id"], json!(2));
     }
 
     /// MAX-74 (step 1): a line that isn't JSON gets a parse error and the connection closes; a
     /// line too long too; an invalid request and an unknown method keep it open.
-    /// How: one client per case; an empty read (or a reset) is the closed connection.
+    /// How: one client per case.
     #[test]
     fn bad_lines() {
-        let dir = temp_dir("bad");
-        let mut server = Server::start(Some(&dir), "maxicom-test").unwrap();
-        // closed: the end, or a reset when the server closed with bytes left unread (the
-        // line too long)
-        let closed = |reader: &mut BufReader<UnixStream>| {
-            let mut rest = String::new();
-            match reader.read_line(&mut rest) {
-                Ok(n) => n == 0,
-                Err(err) => err.kind() == std::io::ErrorKind::ConnectionReset,
-            }
-        };
+        let mut server = TestServer::start("bad");
 
-        let (mut stream, mut reader) = client(&server);
-        writeln!(stream, "not json").unwrap();
-        assert_eq!(read_reply(&mut reader)["error"]["code"], json!(-32700));
-        assert!(closed(&mut reader));
+        let mut client = Client::connect(&server);
+        client.send("not json");
+        assert_eq!(client.reply()["error"]["code"], json!(-32700));
+        assert!(client.closed());
 
-        let (mut stream, mut reader) = client(&server);
-        let long = vec![b'x'; rpc::MAX_LINE + 10];
-        let _ = stream.write_all(&long);
-        assert_eq!(read_reply(&mut reader)["error"]["code"], json!(-32700));
-        assert!(closed(&mut reader));
+        let mut client = Client::connect(&server);
+        client.send_bytes(&vec![b'x'; rpc::MAX_LINE + 10]);
+        assert_eq!(client.reply()["error"]["code"], json!(-32700));
+        assert!(client.closed());
 
-        let (mut stream, mut reader) = client(&server);
-        writeln!(stream, r#"{{"jsonrpc":"2.0","id":1}}"#).unwrap();
-        assert_eq!(read_reply(&mut reader)["error"]["code"], json!(-32600));
-        writeln!(stream, r#"{{"jsonrpc":"2.0","id":2,"method":"nope"}}"#).unwrap();
+        let mut client = Client::connect(&server);
+        client.send(r#"{"jsonrpc":"2.0","id":1}"#);
+        assert_eq!(client.reply()["error"]["code"], json!(-32600));
+        client.send(r#"{"jsonrpc":"2.0","id":2,"method":"nope"}"#);
         answer_requests(&mut server, 1);
-        let unknown = read_reply(&mut reader);
+        let unknown = client.reply();
         assert_eq!(
             (&unknown["id"], &unknown["error"]["code"]),
             (&json!(2), &json!(-32601))
         );
+    }
+
+    /// MAX-74 (step 3): the running maxicoms are found by their sockets, each with its pid
+    /// and the link it holds by the lock files; a dead one's socket file, another socket name
+    /// and a lock left by a crash aren't.
+    /// How: a server named as this process' instance holding a TCP link's lock in a temporary
+    /// lock folder, a lock file with an `.info` nobody holds; on Unix a stale socket file and
+    /// a live test server of another name in the same folder.
+    #[test]
+    fn running_found_with_their_link() {
+        use crate::link::lock::LinkLock;
+        let me = Instance::now();
+        let server = TestServer::start("running");
+        let live = Server::start(server.dir.as_deref(), &me.name()).unwrap();
+        let locks = server.dir.clone().unwrap_or_else(|| {
+            let dir = std::env::temp_dir().join(format!("maxicom-test-{}-locks", me.pid));
+            let _ = std::fs::remove_dir_all(&dir);
+            dir
+        });
+        let locks = locks.join("locks");
+        std::fs::create_dir_all(&locks).unwrap();
+        let address = "tcp://10.0.0.3:4000".parse().unwrap();
+        let _lock = LinkLock::take_in(&locks, &address).ok().unwrap();
+        std::fs::write(locks.join("gone.lock"), "").unwrap();
+        std::fs::write(locks.join("gone.info"), "pid=1\naddress=tcp://gone:1\n").unwrap();
+        #[cfg(unix)]
+        {
+            let dir = server.dir.as_deref().unwrap();
+            drop(std::os::unix::net::UnixListener::bind(dir.join("maxicom-1.sock")).unwrap());
+        }
+
+        let found = running(server.dir.as_deref(), Some(&locks));
+        let mine: Vec<_> = found.iter().filter(|found| found.pid == me.pid).collect();
+        assert_eq!(mine.len(), 1, "{found:?}");
+        assert_eq!(mine[0].location, live.location());
+        assert_eq!(mine[0].link.as_deref(), Some("tcp://10.0.0.3:4000"));
+        assert!(found.iter().all(|found| found.pid != 1), "{found:?}");
+        #[cfg(unix)]
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(crate::link::lock::held_locks(&locks).len(), 1);
+        drop(live);
+        assert!(
+            running(server.dir.as_deref(), Some(&locks))
+                .iter()
+                .all(|found| found.pid != me.pid)
+        );
         drop(server);
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(locks);
     }
 
     /// MAX-74 (step 1): at start, the socket files no maxicom listens on are removed, the
     /// live ones and the other files kept.
     /// How: a socket file left by a listener dropped (std leaves its file), a live server's
     /// file, an unrelated file; then a second server starting in the same folder.
+    #[cfg(unix)]
     #[test]
     fn stale_sockets_removed() {
-        let dir = temp_dir("stale");
+        let dir = std::env::temp_dir().join(format!("maxicom-test-{}-stale", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let stale = dir.join("maxicom-1.sock");
-        drop(UnixListener::bind(&stale).unwrap());
+        drop(std::os::unix::net::UnixListener::bind(&stale).unwrap());
         assert!(stale.exists());
         let other = dir.join("notes.txt");
         std::fs::write(&other, "x").unwrap();

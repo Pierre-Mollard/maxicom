@@ -27,6 +27,8 @@ use serde_json::{Value as Json, json};
 use crate::app::App;
 
 pub mod rpc;
+#[cfg(windows)]
+pub mod windows;
 
 use rpc::{Request, RpcError};
 
@@ -67,6 +69,87 @@ impl Instance {
 /// has no runtime folder). Unused on Windows, whose pipes have no file
 pub fn socket_dir() -> Option<PathBuf> {
     (dirs::runtime_dir().or_else(dirs::cache_dir)).map(|dir| dir.join("maxicom"))
+}
+
+/// A maxicom found running by its socket (MAX-74), for `maxicom list` (A2.2)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Running {
+    pub pid: u32,
+    /// Its socket file, or its pipe
+    pub location: String,
+    /// The link it holds, by the lock files: none when it holds no lock (a replay, the
+    /// directory) or the lock folder can't be read
+    pub link: Option<String>,
+}
+
+/// The maxicoms running, by pid: their sockets in `dir`, this user's folder, a socket file
+/// being alive when it can be connected to (Unix); every pipe named so (Windows: other users'
+/// too, which refuse the connect). Each one's link from the locks held in `lock_dir`. `dir`
+/// and `lock_dir` are `socket_dir()` and `lock_dir()` but in tests
+// TODO: (MAX-285) used by `maxicom list`; the attribute goes with its first caller
+#[cfg_attr(not(test), expect(dead_code, reason = "A2.2's maxicom list (MAX-285)"))]
+pub fn running(dir: Option<&Path>, lock_dir: Option<&Path>) -> Vec<Running> {
+    let locks = lock_dir
+        .map(crate::link::lock::held_locks)
+        .unwrap_or_default();
+    let mut running: Vec<Running> = (listening(dir).into_iter())
+        .filter_map(|(name, location)| {
+            let pid = name.strip_prefix(PREFIX)?.parse().ok()?;
+            let link = (locks.iter())
+                .find(|lock| lock.pid == pid)
+                .map(|lock| lock.address.clone());
+            Some(Running {
+                pid,
+                location,
+                link,
+            })
+        })
+        .collect();
+    running.sort_by_key(|found| found.pid);
+    running
+}
+
+/// The names and locations of the maxicom sockets listened on: the files of `dir` a connect
+/// gets through to (Unix)
+#[cfg(unix)]
+fn listening(dir: Option<&Path>) -> Vec<(String, String)> {
+    let Some(entries) = dir.and_then(|dir| std::fs::read_dir(dir).ok()) else {
+        return Vec::new();
+    };
+    (entries.flatten())
+        .filter_map(|entry| {
+            let file_name = entry.file_name().into_string().ok()?;
+            let name = file_name.strip_suffix(SUFFIX)?;
+            let path = entry.path();
+            (name.starts_with(PREFIX) && is_alive(&path))
+                .then(|| (name.to_string(), path.display().to_string()))
+        })
+        .collect()
+}
+
+/// The names and locations of the maxicom pipes: the pipe folder lists only the pipes that
+/// exist, so no connect, which would take an instance of the pipe (Windows)
+#[cfg(windows)]
+fn listening(_dir: Option<&Path>) -> Vec<(String, String)> {
+    let Ok(entries) = std::fs::read_dir(r"\\.\pipe\") else {
+        return Vec::new();
+    };
+    (entries.flatten())
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            name.starts_with(PREFIX)
+                .then(|| (name.clone(), format!(r"\\.\pipe\{name}")))
+        })
+        .collect()
+}
+
+/// Whether a maxicom listens on a socket file: a dead one's file refuses the connect
+#[cfg(unix)]
+fn is_alive(path: &Path) -> bool {
+    use interprocess::local_socket::GenericFilePath;
+    (path.to_path_buf().to_fs_name::<GenericFilePath>())
+        .and_then(Stream::connect)
+        .is_ok()
 }
 
 /// The answer to a request, for the loop: none for a notification
@@ -122,11 +205,18 @@ impl Server {
         let options = ListenerOptions::new()
             .name(listener_name)
             .nonblocking(ListenerNonblockingMode::Accept);
-        // the owner only: another user can't connect
-        #[cfg(unix)]
+        // the owner only: another user can't connect. On Unix the socket folder is the owner's
+        // only already (`socket_name`); the file's mode too where `interprocess` can set it
+        // (not macOS)
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         let options = {
             use interprocess::os::unix::local_socket::ListenerOptionsExt;
             options.mode(0o600)
+        };
+        #[cfg(windows)]
+        let options = {
+            use interprocess::os::windows::local_socket::ListenerOptionsExt;
+            options.security_descriptor(windows::owner_only()?)
         };
         let listener = options.create_sync()?;
         let stop = Arc::new(AtomicBool::new(false));
@@ -205,8 +295,12 @@ fn socket_name(
     #[cfg(unix)]
     {
         use interprocess::local_socket::GenericFilePath;
+        use std::os::unix::fs::PermissionsExt;
         let dir = dir.ok_or_else(|| io::Error::other("no folder for the socket"))?;
         std::fs::create_dir_all(dir)?;
+        // the owner's only: another user can't reach the socket in it, on every Unix (some
+        // ignore a socket file's own mode on connect)
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
         remove_stale_sockets(dir);
         let path = dir.join(format!("{name}{SUFFIX}"));
         let listener_name = path.clone().to_fs_name::<GenericFilePath>()?;
@@ -226,7 +320,6 @@ fn socket_name(
 /// and a connect to it is refused
 #[cfg(unix)]
 fn remove_stale_sockets(dir: &Path) {
-    use interprocess::local_socket::GenericFilePath;
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -234,13 +327,7 @@ fn remove_stale_sockets(dir: &Path) {
         let path = entry.path();
         let file_name = entry.file_name();
         let file_name = file_name.to_string_lossy();
-        if !(file_name.starts_with(PREFIX) && file_name.ends_with(SUFFIX)) {
-            continue;
-        }
-        let alive = (path.clone().to_fs_name::<GenericFilePath>())
-            .and_then(Stream::connect)
-            .is_ok();
-        if !alive {
+        if file_name.starts_with(PREFIX) && file_name.ends_with(SUFFIX) && !is_alive(&path) {
             let _ = std::fs::remove_file(&path);
         }
     }
