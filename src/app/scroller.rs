@@ -29,6 +29,9 @@ impl ScrollStatus {
         ((pos_from_top as f32 / self.max_scroll as f32) * 100.0).round() as u8
     }
 
+    /// `All`, `Bot`, `Top`, or the percent between them: always 3 columns, so the status bar
+    /// doesn't move. 1..99 there (not at the bottom isn't 100%, not at the top isn't 0%), padded
+    /// with a space: ` 5%`
     pub fn position_display(&self) -> String {
         if self.max_scroll == 0 {
             "All".to_string()
@@ -37,7 +40,7 @@ impl ScrollStatus {
         } else if self.is_top() {
             "Top".to_string()
         } else {
-            format!("{}%", self.percent())
+            format!("{:>2}%", self.percent().clamp(1, 99))
         }
     }
 }
@@ -147,3 +150,7 @@ impl ViewportScroller {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/app/scroller.rs"]
+mod tests;

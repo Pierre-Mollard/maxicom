@@ -44,13 +44,20 @@ mod socket {
     }
 
     impl TestServer {
+        /// Unix: a short socket name in a folder of the test's own, the path kept under
+        /// macOS' 104 bytes (its temporary folder is long). Windows: a pipe name of its own
         fn start(test: &str) -> Self {
-            let name = format!("maxicom-test-{}-{test}", std::process::id());
+            let unique = format!("{}-{test}", std::process::id());
             let dir = cfg!(unix).then(|| {
-                let dir = std::env::temp_dir().join(&name);
+                let dir = std::env::temp_dir().join(format!("mx-{unique}"));
                 let _ = std::fs::remove_dir_all(&dir);
                 dir
             });
+            let name = if cfg!(unix) {
+                "maxicom-t".to_string()
+            } else {
+                format!("maxicom-test-{unique}")
+            };
             let server = Server::start(dir.as_deref(), &name).unwrap();
             Self { server, dir }
         }
@@ -290,7 +297,7 @@ mod socket {
     #[cfg(unix)]
     #[test]
     fn stale_sockets_removed() {
-        let dir = std::env::temp_dir().join(format!("maxicom-test-{}-stale", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mx-{}-stale", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let stale = dir.join("maxicom-1.sock");

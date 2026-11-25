@@ -342,6 +342,9 @@ fn accept_loop(
     let next = AtomicU64::new(1);
     while !stop.load(Ordering::Relaxed) {
         match listener.accept() {
+            // blocking reads: macOS (BSD) gives an accepted stream the listener's non-blocking
+            // mode, and a read would end the connection at once
+            Ok(stream) if stream.set_nonblocking(false).is_err() => drop(stream),
             Ok(stream) => {
                 let conn = next.fetch_add(1, Ordering::Relaxed);
                 let to_loop = to_loop.clone();

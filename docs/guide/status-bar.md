@@ -129,7 +129,7 @@ and the pan.
 | `{pan_left}` / `{pan_right}` | Left / right pan amount | `◀ (3)`, `!(2) ▶` |
 | `{pan_offset}` | Columns panned from the left edge | `3` |
 | `{pan_max}` | Columns the view can pan in all | `117` |
-| `{scroll_pos}` / `{scroll_pos_up}` | Position: `All`, `Bot`, `Top`, `42%` / uppercase | `BOT` |
+| `{scroll_pos}` / `{scroll_pos_up}` | Position: `All`, `Bot`, `Top`, `42%` / uppercase, always 3 columns (` 5%`, 1 to 99 between the ends) | `BOT` |
 | `{scroll_percent}` | Numeric percent: 0..100 | `42` |
 | `{scroll_offset}` | Lines scrolled away from tail | `15` |
 | `{scroll_max}` | Total scrollback depth | `500` |
