@@ -1,13 +1,16 @@
 # The user guide as a website (docs/book.toml): built on each pull request that
 # changes docs/ or CHANGELOG.md (the book includes it), so a broken book fails
 # it; built and published to GitHub Pages on main. The site is built on the
-# runner and handed to Pages as an artifact: nothing is committed.
+# runner and handed to Pages as an artifact: nothing is committed. On main it
+# also carries badges/tests.json, the test count the README's badge reads
+# (shields.io endpoint), so a push to main that changes the code publishes too.
 name: Docs
 
 on:
   push:
     branches: [main]
-    paths: ["docs/**", "CHANGELOG.md", ".github/workflows/docs.yml"]
+    paths:
+      ["docs/**", "CHANGELOG.md", ".github/workflows/docs.yml", "src/**", "Cargo.toml", "Cargo.lock"]
   pull_request:
     paths: ["docs/**", "CHANGELOG.md", ".github/workflows/docs.yml"]
   workflow_dispatch:
@@ -37,6 +40,33 @@ jobs:
           curl -sSfL "$url" | tar -xz -C "$HOME/.local/bin"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: mdbook build docs
+      # the test count for the README's badge: a failing test turns it red, it
+      # doesn't stop the guide from publishing (CI is where tests gate)
+      - if: github.ref == 'refs/heads/main'
+        uses: dtolnay/rust-toolchain@stable
+      - if: github.ref == 'refs/heads/main'
+        uses: Swatinem/rust-cache@v2
+      - name: Test count badge
+        if: github.ref == 'refs/heads/main'
+        timeout-minutes: 15
+        run: |
+          set -o pipefail
+          status=0
+          cargo test --no-fail-fast 2>&1 | tee test.log || status=$?
+          count() { grep '^test result:' test.log | grep -o "[0-9]* $1" | awk '{n += $1} END {print n + 0}'; }
+          passed=$(count passed)
+          failed=$(count failed)
+          if [ "$status" -eq 0 ] && [ "$failed" -eq 0 ]; then
+            message="$passed passed"; color="brightgreen"
+          elif [ "$failed" -gt 0 ]; then
+            message="$failed failed, $passed passed"; color="red"
+          else
+            message="not run"; color="lightgrey"
+          fi
+          mkdir -p docs/book/badges
+          printf '{"schemaVersion":1,"label":"tests","message":"%s","color":"%s"}\n' \
+            "$message" "$color" > docs/book/badges/tests.json
+          cat docs/book/badges/tests.json
       - if: github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v5
         with:

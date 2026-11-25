@@ -3,5 +3,6 @@
 *.raw
 tools/screenshots/__pycache__/
 tools/perf/__pycache__/
+tools/api/__pycache__/
 /docs/book
 tools/widths/target

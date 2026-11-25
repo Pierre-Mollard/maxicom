@@ -19,69 +19,13 @@ Linux, macOS and Windows (the pipe \\\\.\\pipe\\maxicom-<pid>).
 
 import argparse
 import json
-import os
 import socket
 import sys
 from pathlib import Path
 
-PREFIX = "maxicom-"
-SUFFIX = ".sock"
-PIPES = "\\\\.\\pipe\\"
-
-
-def socket_dir():
-    """maxicom's socket folder: the runtime folder, else the cache folder (src/api.rs)"""
-    runtime = os.environ.get("XDG_RUNTIME_DIR")
-    if runtime and sys.platform.startswith("linux"):
-        return Path(runtime) / "maxicom"
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Caches" / "maxicom"
-    cache = os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache"
-    return Path(cache) / "maxicom"
-
-
-def alive(path):
-    """A socket file a maxicom listens on: a dead one's refuses the connect"""
-    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        probe.connect(str(path))
-        return True
-    except OSError:
-        return False
-    finally:
-        probe.close()
-
-
-def running():
-    """(pid, location) of each maxicom found, by pid"""
-    found = []
-    if os.name == "nt":
-        names = [name for name in os.listdir(PIPES) if name.startswith(PREFIX)]
-        found = [(name[len(PREFIX):], PIPES + name) for name in names]
-    else:
-        folder = socket_dir()
-        if folder.is_dir():
-            for path in folder.iterdir():
-                name = path.name
-                if name.startswith(PREFIX) and name.endswith(SUFFIX) and alive(path):
-                    found.append((name[len(PREFIX):-len(SUFFIX)], str(path)))
-    return sorted((int(pid), location) for pid, location in found if pid.isdigit())
-
-
-def pick(pid):
-    """The maxicom to talk to: `pid`, else the only one running"""
-    found = running()
-    if pid is not None:
-        for each in found:
-            if each[0] == pid:
-                return each[1]
-        sys.exit(f"no maxicom with pid {pid} has its API on: {[p for p, _ in found]}")
-    if len(found) == 1:
-        return found[0][1]
-    if not found:
-        sys.exit("no maxicom with its API on ([api] enabled = true in config.toml)")
-    listed = "\n".join(f"  {p}  {location}" for p, location in found)
-    sys.exit(f"several maxicoms run, pick one with --pid:\n{listed}")
+# the discovery and the connection are the API client's (tools/api)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools" / "api"))
+from maxicom_client import Connection, NotFound, pick, running  # noqa: E402
 
 
 def line_of(arg, number):
@@ -98,29 +42,6 @@ def expects_reply(line):
     except ValueError:
         return True
     return not (isinstance(message, dict) and "id" not in message)
-
-
-class Connection:
-    """A Unix socket, or a Windows pipe opened as a file"""
-
-    def __init__(self, location, timeout):
-        if os.name == "nt":
-            self.file = open(location, "r+b", buffering=0)
-            self.reader = open(self.file.fileno(), "rb", closefd=False)
-        else:
-            self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            self.sock.settimeout(timeout)
-            self.sock.connect(location)
-            self.file = self.sock.makefile("wb", buffering=0)
-            self.reader = self.sock.makefile("rb")
-
-    def send(self, line):
-        self.file.write(line.encode() + b"\n")
-
-    def receive(self):
-        """A reply line, or None when maxicom closed the connection"""
-        line = self.reader.readline()
-        return line.decode(errors="replace").rstrip("\n") if line else None
 
 
 def main():
@@ -148,7 +69,11 @@ def main():
         else:
             lines.append(line_of(arg, len(lines) + 1))
 
-    connection = Connection(pick(args.pid), args.timeout)
+    try:
+        location = pick(args.pid)
+    except NotFound as e:
+        sys.exit(str(e))
+    connection = Connection(location, args.timeout)
     for line in lines:
         print(f"> {line}", file=sys.stderr)
         connection.send(line)
