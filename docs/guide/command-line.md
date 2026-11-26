@@ -67,6 +67,7 @@ only.
 | --- | --- |
 | `send <text>` | Sends the text as is, its escapes as bytes: `send AT\r`, `send "hello world\r\n"` |
 | `send-hex <bytes>` | Sends bytes written in hex, without spaces: `send-hex 0d0a` |
+| `send-line <text>` | Sends the text and the line ending Enter sends in line mode (`tx_eol`), in either mode: `send-line "ls -l"`. `send-line ""` sends the line ending alone. |
 | `send-file <path> [line-delay-ms]` | Sends a file as it is, see below |
 | `upload <xmodem\|xmodem-1k\|ymodem> <path>` | Sends a file to a receiver like U-Boot's `loady`, see below |
 | `download <xmodem\|ymodem> [path]` | Receives files the device sends (`sb`, `sx`), see below |
@@ -144,7 +145,11 @@ open file://boot.raw            # a replay
   and its own backup (see [Restore](capture.md#restore)). With
   `restore = "ask"`, the rest of the line waits for your answer.
 
-`toggle-attach` detaches and attaches the link, like `Ctrl-a D`.
+`toggle-attach` detaches and attaches the link, like `Ctrl-a D`. In a line,
+`attach` and `detach` are safer: they do nothing when the link is already
+attached or detached, so they never do the opposite of what you meant.
+`attach` (and `toggle-attach` when it attaches) waits for the link to open,
+like `open`; when it can't, the rest of the line doesn't run.
 
 ### Replay
 
@@ -176,6 +181,17 @@ the line. See [Saved links](saved-links.md).
 | `session-name [text]` | [Names](capture.md#naming-a-session) the running session, in quotes when it has spaces; without text, takes its name away |
 
 Without a running session it refuses, and stops the rest of the line.
+
+### Recording
+
+| Command | Does |
+| --- | --- |
+| `record-start full\|text [path]` | Starts a recording without the dialog: `full` to the folder `path`, `text` to `path.log`. Without a path, the dialog's name in `capture.dir`. |
+| `record-stop` | Stops the recording. Does nothing when none runs. |
+
+Only one recording runs at a time: `record-start` refuses while one runs,
+and stops the rest of the line. `record` opens the dialog, like `Ctrl-a l`.
+See [Recordings](capture.md#recordings).
 
 ### Settings
 

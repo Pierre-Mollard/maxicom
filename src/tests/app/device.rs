@@ -582,6 +582,72 @@ fn detach_then_attach() {
     assert!(app.overlay().is_none());
 }
 
+/// MAX-219: `attach` and `detach` set the link so, nothing when it is so already (no event);
+/// `attach` holds the rest of its chain until the link opened, as `toggle-attach`'s attach
+/// does, and stops it when the open fails: the reattach toast and the detached popup say
+/// why, no error toast of its own. A replay has no link to set: both refuse.
+/// How: a TCP link and the user's chains run as the loop does: `attach`, then
+/// `detach; detach; attach; send x` and `toggle-attach; toggle-attach; send z` answered by
+/// the listener; then the listener gone and `detach; attach; send y`; then a replay.
+#[test]
+fn attach_and_detach_set_the_link() {
+    let (listener, address) = listener();
+    let (mut app, _peer) = connected(&listener, &address);
+    let run = |app: &mut App, line: &str| {
+        app.jobs
+            .push(Origin::Input, crate::commands::parse(line).unwrap());
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            app.dispatch_from(&caller, action);
+        }
+    };
+    let waits = |app: &App| app.jobs.running().filter_map(|job| job.wait()).count();
+    let kinds = ["link-detached", "link-opening"];
+
+    let since = app.events.last();
+    run(&mut app, "attach");
+    assert!(app.link.is_open());
+    assert!(events_of(&app, since, &kinds).is_empty());
+
+    run(&mut app, "detach; detach; attach; send x");
+    assert!(!app.link.is_open());
+    assert_eq!(waits(&app), 1, "send x waits for the open");
+    let events = events_of(&app, since, &kinds);
+    assert_eq!(
+        events.iter().map(Event::kind).collect::<Vec<_>>(),
+        kinds,
+        "one detach, one attach"
+    );
+    let (mut peer, _) = listener.accept().unwrap();
+    poll_until(&mut app, "attached", |app| app.link.is_open());
+    assert_eq!(waits(&app), 0);
+    assert!(app.overlay().is_none());
+    run(&mut app, "");
+    let mut buffer = [0; 1];
+    peer.read_exact(&mut buffer).unwrap();
+    assert_eq!(&buffer, b"x");
+    // the toggle's attach holds its chain too
+    run(&mut app, "toggle-attach; toggle-attach; send z");
+    assert_eq!(waits(&app), 1, "send z waits for the open");
+    let (mut peer, _) = listener.accept().unwrap();
+    poll_until(&mut app, "toggled", |app| app.link.is_open());
+    run(&mut app, "");
+    peer.read_exact(&mut buffer).unwrap();
+    assert_eq!(&buffer, b"z");
+
+    drop(listener);
+    run(&mut app, "detach; attach; send y");
+    poll_until(&mut app, "attach failed", |app| waits(app) == 0);
+    assert_eq!(app.jobs.running().count(), 0, "send y dropped");
+    assert!(matches!(app.overlay(), Some(Overlay::DeviceDetached)));
+    let shown = toasts(&app);
+    assert!(shown.iter().any(|t| t.starts_with("Failed to reattach")));
+    assert!(!shown.iter().any(|t| t.starts_with("attach:")), "{shown:?}");
+
+    let mut app = app_on("file:///tmp/maxicom_test_attach.raw");
+    run(&mut app, "detach");
+    assert!(toasts(&app).contains(&"detach: a replay has no link".to_string()));
+}
+
 /// MAX-168: new line settings on a detached port are kept for its next open, with a
 /// notice (reported, MAX-165); on a link that isn't a port they change nothing.
 /// How: a serial port that isn't there, a 9600 baud config; then a TCP link.

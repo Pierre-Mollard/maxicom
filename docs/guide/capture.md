@@ -67,6 +67,9 @@ or a click on `● REC`, stops it.
 Only one recording runs at a time. A full recording includes the text, so
 you don't need both.
 
+From the command line or a script, `record-start` and `record-stop` do the
+same without the dialog. See [Recording](command-line.md#recording).
+
 ### Text recordings
 
 A text recording writes the received lines, decoded, one per line. With

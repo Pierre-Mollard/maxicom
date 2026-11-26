@@ -11,6 +11,7 @@ use jiff::Timestamp;
 
 use crate::{
     app::{App, mash::Mash, wait_for::TextWatch},
+    capture::Stream,
     clock,
     commands::{ArgKind, ArgValue, query, value::Value},
     configs::{Mode, TextEncoding, links::SavedLink},
@@ -42,6 +43,52 @@ pub fn send(app: &App, args: &[ArgValue]) -> Result<Action, String> {
         return Err(TRANSFER_RUNNING.to_string());
     }
     Ok(Action::TransmitRaw(bytes.clone()))
+}
+
+/// `send-line <text>` (MAX-219): the text with line mode's line ending (`tx-eol`), as Enter
+/// sends it, in any mode; an empty text sends the line ending alone
+pub fn send_line(app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let [ArgValue::Bytes(text)] = args else {
+        unreachable!("send-line takes its text");
+    };
+    let mut bytes = text.clone();
+    bytes.extend_from_slice(app.settings().line_mode.tx_eol.as_bytes());
+    send(app, &[ArgValue::Bytes(bytes)])
+}
+
+/// What `record-start` records (MAX-219), as the recording dialog names them
+pub const RECORD_STREAMS: &[&str] = &["full", "text"];
+
+/// `record-start <full|text> [path]` (MAX-219): the recording dialog's start, without it:
+/// `path` taken as the dialog takes it (`.log` added for text), the dialog's name when left
+/// out. Refused while one runs, one recording at a time
+pub fn record_start(app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let (stream, path) = match args {
+        [ArgValue::Enum(stream)] => (*stream, None),
+        [ArgValue::Enum(stream), ArgValue::Path(path)] => (*stream, Some(path.clone())),
+        _ => unreachable!("record-start takes a stream and a path"),
+    };
+    if let Some(running) = app.recording() {
+        let running = running.as_str();
+        return Err(format!(
+            "recording {running} already (record-stop stops it)"
+        ));
+    }
+    let stream = match stream {
+        "text" => Stream::Text,
+        _ => Stream::Full,
+    };
+    let capture = &app.settings().capture;
+    let path = path.unwrap_or_else(|| capture.path_for(&capture.name));
+    Ok(Action::App(AppAction::StartRecording { path, stream }))
+}
+
+/// `record-stop` (MAX-219): stops the recording, nothing when none runs
+pub fn record_stop(app: &App, _: &[ArgValue]) -> Result<Action, String> {
+    Ok(match app.recording() {
+        Some(_) => Action::App(AppAction::ToggleRecording),
+        None => Action::Ignore,
+    })
 }
 
 /// `send-file <path> [line-delay-ms]`: starts sending the file, paced; the chain goes on at

@@ -65,6 +65,8 @@ pub enum KeyBindingAction {
     ClearHistory,
     Sessions,
     ToggleAttach,
+    Attach,
+    Detach,
     ExitPrefix,
     ReloadConfig,
     ToggleMouse,

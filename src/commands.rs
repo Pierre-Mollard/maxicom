@@ -498,6 +498,20 @@ pub static COMMANDS: &[CommandSpec] = {
         CommandSpec::action("settings", A::Settings, "Open the settings").asking(Asks::Always),
         CommandSpec::action("record", A::Record, "Start / stop recording (text or full)")
             .asking(Asks::Always),
+        CommandSpec::build(
+            "record-start",
+            &[
+                arg("stream", ArgKind::Enum(build::RECORD_STREAMS)),
+                ArgSpec {
+                    name: "path",
+                    kind: ArgKind::Path,
+                    optional: true,
+                },
+            ],
+            build::record_start,
+            "Start recording, full (a folder) or text (path.log), without the dialog",
+        ),
+        CommandSpec::build("record-stop", &[], build::record_stop, "Stop recording"),
         CommandSpec::action("resize-dialog", A::ResizeDialog, "Set the terminal size")
             .asking(Asks::Always),
         CommandSpec::action(
@@ -586,6 +600,13 @@ pub static COMMANDS: &[CommandSpec] = {
         CommandSpec::action("exit-prefix", A::ExitPrefix, "Leave the prefix"),
         CommandSpec::action("toggle-attach", A::ToggleAttach, "Detach / attach the link")
             .reaching_device(),
+        CommandSpec::action(
+            "attach",
+            A::Attach,
+            "Attach the link, the chain waiting for it to open",
+        )
+        .reaching_device(),
+        CommandSpec::action("detach", A::Detach, "Detach the link").reaching_device(),
         CommandSpec::action("reload-config", A::ReloadConfig, "Reload the config files"),
         CommandSpec::action(
             "redraw",
@@ -704,6 +725,13 @@ pub static COMMANDS: &[CommandSpec] = {
             &[arg("text", ArgKind::Bytes)],
             build::send,
             "Send text, with escapes: \\r \\n \\t \\xNN",
+        )
+        .reaching_device(),
+        CommandSpec::build(
+            "send-line",
+            &[arg("text", ArgKind::Bytes)],
+            build::send_line,
+            "Send text and the line ending (tx-eol), as Enter does in line mode",
         )
         .reaching_device(),
         CommandSpec::build(

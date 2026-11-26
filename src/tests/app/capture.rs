@@ -104,6 +104,56 @@ fn one_recording_at_a_time() {
     let _ = std::fs::remove_dir_all(temp("act"));
 }
 
+/// MAX-219: `record-start` starts a recording without the dialog: text to `<path>.log`, full
+/// to the folder `<path>`, the dialog's name in `[capture]`'s folder without a path. It
+/// refuses while one runs, stopping its chain; `record-stop` stops it, and does nothing when
+/// none runs.
+/// How: a text recording to a temp path, a second start refused, the stop twice; then a full
+/// one by its default name in a temp folder.
+#[test]
+fn record_start_and_stop() {
+    let mut app = app();
+    let dir = std::env::temp_dir().join(format!("maxicom_test_{}_rec", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |app: &mut App, line: &str| {
+        app.jobs.push(
+            crate::commands::Origin::Input,
+            crate::commands::parse(line).unwrap(),
+        );
+        while let Some((caller, action)) = app.next_command_action(std::time::Instant::now()) {
+            app.dispatch_from(&caller, action);
+        }
+    };
+    let last = |app: &App| toasts(app).last().cloned().unwrap_or_default();
+    // forward slashes: a backslash escapes on the command line (Windows paths)
+    let base = dir.join("act").display().to_string().replace('\\', "/");
+
+    run(&mut app, &format!("record-start text {base}"));
+    assert_eq!(app.recording(), Some(Stream::Text));
+    assert!(dir.join("act.log").is_file());
+    run(&mut app, "record-start full; send x");
+    assert_eq!(app.recording(), Some(Stream::Text));
+    assert_eq!(
+        last(&app),
+        "record-start: recording text already (record-stop stops it) (1 more not run)"
+    );
+    run(&mut app, "record-stop");
+    assert_eq!(app.recording(), None);
+    assert_eq!(last(&app), "Stopped recording text");
+    run(&mut app, "record-stop");
+    assert_eq!(last(&app), "Stopped recording text", "nothing more");
+
+    app.settings.capture.dir = dir.clone();
+    app.settings.capture.name = "default".to_string();
+    run(&mut app, "record-start full");
+    assert_eq!(app.recording(), Some(Stream::Full));
+    assert!(dir.join("default").is_dir());
+    assert!(app.overlay().is_none());
+    run(&mut app, "record-stop");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// MAX-148: a restore puts the session's last lines in line mode, then the separator; the
 /// terminal gets the raw bytes, back on the main screen. Nothing goes to the new session or
 /// the stats. MAX-175: line mode is cut from the raw bytes, so a sent line isn't restored,

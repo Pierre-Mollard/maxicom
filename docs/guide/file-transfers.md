@@ -109,7 +109,7 @@ stray byte would break a packet, and some bytes even abort the receiver.
 - What you type isn't sent. A notification says so once: `A file transfer is
   running: cancel stops it`. A line typed in line mode stays in its input, so
   you can send it afterwards.
-- `send`, `send-hex` and `mash` are refused.
+- `send`, `send-hex`, `send-line` and `mash` are refused.
 - The receiver's answers aren't shown, and maxicom doesn't answer the device's
   terminal queries.
 - Everything else works: scrolling, copy mode, search, popups.

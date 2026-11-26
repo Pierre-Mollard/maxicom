@@ -298,6 +298,39 @@ fn command_line_send() {
     );
 }
 
+/// MAX-219: `send-line` sends its text with line mode's line ending (`tx-eol`), as Enter
+/// does, in either mode; an empty text sends the line ending alone. It refuses where `send`
+/// does.
+/// How: chains on a live port with each `tx-eol`, the second in terminal mode, then a replay.
+#[test]
+fn command_line_send_line() {
+    let mut app = app();
+    let run_line = |app: &mut App, line: &str| {
+        app.jobs
+            .push(Origin::Input, crate::commands::parse(line).unwrap());
+        let mut sent = Vec::new();
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            if let UpdateEffect::Transmit(bytes) = app.update_for(&caller, action) {
+                sent.push(bytes);
+            }
+        }
+        sent
+    };
+    let lf = run_line(&mut app, "send-line 'ls -l'; send-line ''");
+    assert_eq!(lf, [b"ls -l\n".to_vec(), b"\n".to_vec()]);
+    let crlf = run_line(&mut app, "set tx-eol crlf; mode terminal; send-line AT");
+    assert_eq!(crlf, [b"AT\r\n".to_vec()]);
+
+    app.link
+        .set_address("file:///tmp/capture.raw".parse::<Address>().unwrap());
+    assert!(run_line(&mut app, "send-line x").is_empty());
+    let toasts = app.notifications.active_toasts();
+    assert_eq!(
+        toasts.last().unwrap().message,
+        "send-line: a replay has no link to send to"
+    );
+}
+
 /// MAX-6: an armed trigger whose text comes in runs its command line as a typed one, with
 /// a notice, once (one shot); a disarmed one doesn't. A replay's bytes and what the restore
 /// question held back never fire one.
@@ -3403,6 +3436,7 @@ fn every_command_shows_what_it_did() {
         ("help", "popup Help"),
         ("settings", "popup Settings"),
         ("record", "popup FilePath"),
+        ("record-stop", ""),
         ("resize-dialog", "popup TerminalSize"),
         ("auto-resize-remote", ""),
         ("auto-resize-remote-line", ""),
@@ -3440,6 +3474,11 @@ fn every_command_shows_what_it_did() {
             "toggle-attach",
             "popup DeviceDetached | warn [link] Serial port detached",
         ),
+        ("attach", ""),
+        (
+            "detach",
+            "popup DeviceDetached | warn [link] Serial port detached",
+        ),
         ("reload-config", "effect Reload"),
         ("redraw", "effect Redraw"),
         ("disconnect-clients", "effect DisconnectClients"),
@@ -3464,6 +3503,7 @@ fn every_command_shows_what_it_did() {
         ("delete-mark a", "warn mark a is not set"),
         ("send x", ""),
         ("send-hex 41", ""),
+        ("send-line x", ""),
         ("download xmodem", ""),
         ("open /dev/ttyUSB9", "info [link] Opening /dev/ttyUSB9"),
         ("link-save", "success Saved link 'ttyUSB0'"),
@@ -3529,6 +3569,10 @@ fn every_command_shows_what_it_did() {
         (
             format!("screenshot {shot}"),
             format!("success Screenshot saved to {shot}.txt"),
+        ),
+        (
+            format!("record-start text {shot}"),
+            "success Started recording text".to_string(),
         ),
     ]);
 

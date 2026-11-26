@@ -14,7 +14,7 @@ use crate::{
         types::SidePanel,
         wait_for::TextWatch,
     },
-    capture::ScreenshotFormat,
+    capture::{ScreenshotFormat, Stream},
     commands::{Invocation, report::Answer},
     configs::{
         KeyBindingAction, KeyPattern, Mode, TextEncoding, keybindings::KeyBindingDialogAction,
@@ -65,7 +65,9 @@ pub enum AppAction {
     ToggleSetting(SettingKey),
     SetSetting(SettingKey, &'static str),
     ToggleRecording,
+    StartRecording { path: PathBuf, stream: Stream },
     ToggleAttach,
+    SetAttached(bool),
     ReloadConfig,
     Redraw,
     DisconnectClients,

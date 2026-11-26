@@ -437,6 +437,8 @@ command: see [Actions and commands](#actions-and-commands).
 | `directory` | Open the directory: the serial ports to switch to | `Ctrl-a d` |
 | `exit-prefix` | Leave the prefix | — |
 | `toggle-attach` | Detach / attach the link | `Ctrl-a D` |
+| `attach` | Attach the link, the chain waiting for it to open | — |
+| `detach` | Detach the link | — |
 | `reload-config` | Reload the config files | `Ctrl-a r` |
 | `redraw` | Draw the whole screen again, to clear leftovers | `Ctrl-a R`, `Ctrl-a Ctrl-l` |
 | `toggle-mouse` | Toggle mouse support | `Ctrl-a M` |

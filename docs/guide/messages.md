@@ -83,7 +83,7 @@ See [Command line](command-line.md).
 | `hardware flow control drives RTS (flow none first)` | `rts` with `flow rtscts` |
 | `a file is being sent already (cancel stops it)` | A second `send-file`, `upload` or `download` |
 | `<path> isn't a folder: YMODEM files come with their names` | `download ymodem` with a file path. See [Where the files go](file-transfers.md#where-the-files-go). |
-| `a file transfer is running (cancel stops it)` | `send`, `send-hex` or `mash` during an `upload` or a `download`. See [While it runs](file-transfers.md#while-it-runs). |
+| `a file transfer is running (cancel stops it)` | `send`, `send-hex`, `send-line` or `mash` during an `upload` or a `download`. See [While it runs](file-transfers.md#while-it-runs). |
 | `a mash runs (cancel stops it)` | `upload` or `download` while a `mash` runs |
 | `Stopped receiving <file>, kept as <part>: <why>` | A download stopped in a file, its partial file kept. See [When a download fails](file-transfers.md#when-a-download-fails). |
 | `a mash runs already (cancel stops it)` | A second `mash` |
@@ -99,6 +99,8 @@ See [Command line](command-line.md).
 | `screenshots are in terminal mode` | `screenshot` in line mode |
 | `no replay runs`, `the replay isn't paused`, `the replay is finished …` | A replay command with nothing to act on |
 | `a replay can't open a link (replay-stop ends it)` | `open` during a replay |
+| `attach: a replay has no link`, `detach: a replay has no link` | `attach` or `detach` during a replay |
+| `attach: no device picked yet`, `detach: no device picked yet` | `attach` or `detach` before a port is picked in the directory |
 
 ## Config files
 
@@ -118,6 +120,7 @@ See [Command line](command-line.md).
 | Message | Means | To do |
 | --- | --- | --- |
 | Popup "Capture Failed" | The recording's file or folder can't be created | Check the path and its rights |
+| `recording <stream> already (record-stop stops it)` | `record-start` while a recording runs | `record-stop` first |
 | `Full recording stopped: the device changed` | Another port, line settings, encoding, or a replay | Start a new recording. See [Full recordings](capture.md#full-recordings). |
 | `Session backup off: <reason>` | This session isn't backed up, usually because the cache folder can't be written | Check the folder: `maxicom --cache-dir` |
 | `Session not restored: too much data came in while asking` | More than 4 MiB arrived while the restore question was up | See [The question](capture.md#the-question) |

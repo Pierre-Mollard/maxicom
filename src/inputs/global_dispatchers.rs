@@ -124,6 +124,8 @@ impl KeyBindingAction {
             KeyBindingAction::ClearHistory => Action::History(HistoryAction::Clear),
             KeyBindingAction::ExitPrefix => Action::App(AppAction::SetPrefix(false)),
             KeyBindingAction::ToggleAttach => Action::App(AppAction::ToggleAttach),
+            KeyBindingAction::Attach => Action::App(AppAction::SetAttached(true)),
+            KeyBindingAction::Detach => Action::App(AppAction::SetAttached(false)),
             KeyBindingAction::ReloadConfig => Action::App(AppAction::ReloadConfig),
             KeyBindingAction::Redraw => Action::App(AppAction::Redraw),
             KeyBindingAction::Sessions => Action::App(AppAction::OpenSessions),

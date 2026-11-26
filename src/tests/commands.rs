@@ -136,6 +136,8 @@ fn action_index(action: KeyBindingAction) -> usize {
         A::Redraw => 65,
         A::Notifications => 66,
         A::DisconnectClients => 67,
+        A::Attach => 68,
+        A::Detach => 69,
         A::Command(spec) => unreachable!("{} is a built command", spec.name),
     }
 }
@@ -157,7 +159,7 @@ fn every_action_has_one_command() {
         })
         .collect();
     indexes.sort_unstable();
-    assert_eq!(indexes, (0..68).collect::<Vec<_>>());
+    assert_eq!(indexes, (0..70).collect::<Vec<_>>());
 }
 
 /// The help writes a required argument in angle brackets, an optional one in square ones
@@ -821,10 +823,12 @@ fn commands_that_reach_the_device() {
     assert_eq!(
         reaching(Access::Device),
         [
+            "attach",
             "auto-resize-remote",
             "auto-resize-remote-line",
             "baud",
             "break",
+            "detach",
             "download",
             "dtr",
             "flow",
@@ -838,6 +842,7 @@ fn commands_that_reach_the_device() {
             "send",
             "send-file",
             "send-hex",
+            "send-line",
             "toggle-attach",
             "toggle-triggers",
             "trigger",

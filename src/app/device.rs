@@ -674,6 +674,7 @@ impl App {
             UpdateEffect::ReplayGroup(sessions) => self.open_group_replay(origin, sessions),
             UpdateEffect::StopReplay => self.stop_replay_link(origin),
             UpdateEffect::ToggleAttach => self.toggle_attach(origin),
+            UpdateEffect::SetAttached(attach) => self.set_attached(origin, attach),
             UpdateEffect::Transmit(bytes) => match self.transmit(&bytes) {
                 Ok(()) => {
                     self.link.note_activity();
@@ -909,7 +910,11 @@ impl App {
         }
         match why {
             OpenFor::Start => {}
-            OpenFor::Attach => self.close_overlay(),
+            OpenFor::Attach => {
+                self.close_overlay();
+                let opening = |wait: &Wait| matches!(wait, Wait::LinkOpen { .. });
+                self.complete_waiting(opening, Report::default());
+            }
             OpenFor::Retry => {
                 if let Some(Overlay::DeviceDisconnected) = self.overlay() {
                     self.close_overlay();
@@ -967,6 +972,9 @@ impl App {
                 if self.overlay.is_none() {
                     self.show_detached();
                 }
+                // its toast said it, and the detached popup is back: `attach`'s job only stops
+                let failed = Report::shown(format!("attach: {e}"));
+                self.complete_waiting(|wait| matches!(wait, Wait::LinkOpen { .. }), failed);
             }
             OpenFor::Retry => {}
             // nothing was open before the first pick: the link waits again (MAX-181)
@@ -1141,7 +1149,8 @@ impl App {
     }
 
     /// Detaches the link, with its popup, or attaches it again; a replay has nothing to
-    /// attach. The attach's result comes with the reopen's, next turn for a port
+    /// attach. The attach's result comes with the reopen's, next turn for a port: the rest of
+    /// the chain waits for it (MAX-219)
     fn toggle_attach(&mut self, origin: &Origin) -> Report {
         if !self.link_kind().reopens() {
             return Report::default();
@@ -1152,18 +1161,50 @@ impl App {
             return Report::default();
         }
         if self.link.is_open() {
-            self.link.detach();
-            self.show_detached();
-            let cause = Cause::from(origin);
-            self.emit(Event::LinkDetached { cause });
-            let message = format!("{} detached", self.link_kind().name());
-            Report::from(link_note(ToastLevel::Warn, message))
+            self.detach_link(origin)
         } else {
-            let opening = self.begin_open(OpenFor::Attach);
-            let (label, cause) = (self.link_label(), Cause::from(origin));
-            self.emit(Event::LinkOpening { label, cause });
-            Report::from(Vec::from_iter(opening))
+            self.attach_link(origin)
         }
+    }
+
+    /// `attach` / `detach` (MAX-219): nothing when the link is so already. A replay has no
+    /// link to set, nor has the start's directory before a pick
+    fn set_attached(&mut self, origin: &Origin, attach: bool) -> Report {
+        let verb = if attach { "attach" } else { "detach" };
+        if !self.link_kind().reopens() {
+            return Report::failed(format!("{verb}: a replay has no link"));
+        }
+        if self.device_unpicked {
+            return Report::failed(format!("{verb}: no device picked yet"));
+        }
+        match attach {
+            true if self.link.is_open() => Report::default(),
+            false if self.link.is_detached() => Report::default(),
+            true => self.attach_link(origin),
+            false => self.detach_link(origin),
+        }
+    }
+
+    /// The link opens again, the rest of the chain waiting for its result as `open`'s does
+    fn attach_link(&mut self, origin: &Origin) -> Report {
+        let opening = self.begin_open(OpenFor::Attach);
+        let (label, cause) = (self.link_label(), Cause::from(origin));
+        self.emit(Event::LinkOpening { label, cause });
+        let until = Instant::now() + CONNECT_TIMEOUT * 2;
+        Report {
+            wait: Some(Wait::LinkOpen { until }),
+            ..Report::from(Vec::from_iter(opening))
+        }
+    }
+
+    /// The link closes until an attach, with its popup: a reconnect running stops too
+    fn detach_link(&mut self, origin: &Origin) -> Report {
+        self.link.detach();
+        self.show_detached();
+        let cause = Cause::from(origin);
+        self.emit(Event::LinkDetached { cause });
+        let message = format!("{} detached", self.link_kind().name());
+        Report::from(link_note(ToastLevel::Warn, message))
     }
 
     /// New line settings: a port that refuses them stops the chain, the dialog

@@ -354,6 +354,8 @@ pub enum UpdateEffect {
         what: String,
     },
     ToggleAttach,
+    /// The link attached or detached, `attach` / `detach`'s (MAX-219)
+    SetAttached(bool),
     ReloadConfig,
     /// The host terminal cleared and every cell written again: what it shows drifted from
     /// what maxicom drew (MAX-271)
@@ -1983,6 +1985,10 @@ impl App {
                 report.notes.extend(self.toggle_recording());
                 UpdateEffect::None
             }
+            AppAction::StartRecording { path, stream } => {
+                report.extend(self.start_capture(&path, stream, false));
+                UpdateEffect::None
+            }
             AppAction::OpenOverlay(overlay) => {
                 self.overlay = Some(overlay);
                 UpdateEffect::None
@@ -2219,6 +2225,10 @@ impl App {
             // the live link a replay replaced comes back with the attach key too (MAX-166)
             AppAction::ToggleAttach if self.replaced_link().is_some() => UpdateEffect::StopReplay,
             AppAction::ToggleAttach => UpdateEffect::ToggleAttach,
+            AppAction::SetAttached(true) if self.replaced_link().is_some() => {
+                UpdateEffect::StopReplay
+            }
+            AppAction::SetAttached(attach) => UpdateEffect::SetAttached(attach),
             AppAction::ReloadConfig => UpdateEffect::ReloadConfig,
             AppAction::Redraw => UpdateEffect::Redraw,
             AppAction::DisconnectClients => {

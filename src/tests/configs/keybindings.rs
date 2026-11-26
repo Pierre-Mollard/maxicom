@@ -167,7 +167,7 @@ fn mouse_toggle_default_key() {
 /// between words: the old `_` names are refused
 #[test]
 fn action_names() {
-    const NAMES: [(&str, KeyBindingAction); 58] = [
+    const NAMES: [(&str, KeyBindingAction); 60] = [
         ("quit", KeyBindingAction::Quit),
         ("toggle-input-mode", KeyBindingAction::SKInputMode),
         ("toggle-local-echo", KeyBindingAction::SKLocalEcho),
@@ -219,6 +219,8 @@ fn action_names() {
         ("sessions", KeyBindingAction::Sessions),
         ("exit-prefix", KeyBindingAction::ExitPrefix),
         ("toggle-attach", KeyBindingAction::ToggleAttach),
+        ("attach", KeyBindingAction::Attach),
+        ("detach", KeyBindingAction::Detach),
         ("reload-config", KeyBindingAction::ReloadConfig),
         ("toggle-mouse", KeyBindingAction::ToggleMouse),
         ("command-line", KeyBindingAction::CommandLine),
@@ -334,6 +336,7 @@ fn keymap_actions_are_the_action_commands() {
     assert_eq!(
         bare,
         [
+            "record-stop",
             "mark",
             "jump-mark",
             "link-save",
