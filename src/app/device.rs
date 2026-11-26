@@ -872,6 +872,9 @@ impl App {
                 turn.redraw = true;
             }
         }
+        if !self.link.is_open() {
+            self.fail_text_watches("the link closed");
+        }
     }
 
     fn opened(&mut self, why: OpenFor) {

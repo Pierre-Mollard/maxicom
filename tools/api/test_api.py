@@ -7,6 +7,7 @@ a client on its socket. Linux and macOS; run by hand, from the repository:
 """
 
 import base64
+import threading
 import unittest
 
 from harness import Device, Maxicom, build, until
@@ -74,6 +75,32 @@ class ApiTest(unittest.TestCase):
         until(self.device.connected, "maxicom connected to the device")
         self.client.send(b"\x00\xff\r\n")
         until(lambda: self.device.received() == b"\x00\xff\r\n", "the bytes sent")
+
+    def test_wait_for_gives_the_text_that_came(self):
+        """`wait-for` holds its job until one of its texts comes from the device, even split
+        over two writes; the run's reply gives the text that came. Its time up fails the run
+        (107)"""
+        reply = {}
+
+        def run():
+            reply.update(self.client.run("wait-for-ms 5000 OK ERROR", timeout=10))
+
+        thread = threading.Thread(target=run)
+        thread.start()
+
+        def waiting():
+            jobs = self.client.query("status")["jobs"]
+            return any(job["wait"] == "text" for job in jobs)
+
+        until(waiting, "the job waiting for its texts")
+        self.device.send(b"flash ER")
+        self.device.send(b"ROR\r\n")
+        thread.join(10)
+        self.assertEqual(reply["values"], [{"query": "wait-for", "value": "ERROR"}])
+        with self.assertRaises(RpcError) as late:
+            self.client.run("wait-for-ms 100 never")
+        self.assertEqual(late.exception.code, 107)
+        self.assertIn("'never' didn't come in", str(late.exception))
 
     def test_bytes_received_come_by_rx_and_raw_since(self):
         """Bytes from the device: an `rx` notification with the stream's end, then

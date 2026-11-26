@@ -22,6 +22,7 @@ use crate::{
         terminal_mode::ShellSignal,
         triggers::Trigger,
         types::{FocusTarget, FrameAreas, FrameMap, ScrollbarMap, SidePanel, ViewportSize},
+        wait_for::TextWatch,
     },
     capture::{
         CaptureDevice, CaptureLine, Recorder, RecordingWriter, ScreenshotFormat, Session, Stream,
@@ -91,6 +92,7 @@ pub mod term_answers;
 pub mod terminal_mode;
 pub mod triggers;
 pub mod types;
+pub mod wait_for;
 
 pub use line_mode::LineMode;
 pub use terminal_mode::{TerminalMode, UntracedYank};
@@ -262,6 +264,9 @@ pub struct App {
     profiles_dir: PathBuf,
     /// The text `mash` sends until another comes in (MAX-6)
     mash: Option<Mash>,
+    /// The texts the jobs' `wait-for`s wait for (MAX-219), and the next watch's number
+    text_watches: Vec<TextWatch>,
+    next_watch: u64,
     /// The plots of `plots.toml`, the one shown and when its clock started (MAX-222)
     plots: PlotsConfig,
     plot: Option<Plot>,
@@ -437,6 +442,8 @@ impl App {
             on_load_due: Vec::new(),
             profiles_dir: AppConfig::profiles_dir(),
             mash: None,
+            text_watches: Vec::new(),
+            next_watch: 0,
             plots: PlotsConfig::default(),
             plot: None,
             plot_started: Instant::now(),
@@ -655,6 +662,7 @@ impl App {
         self.recorder.end_line(self.settings.encoding);
         self.stop_transfer("a replay took the link's place");
         self.stop_mash("a replay took the link's place");
+        self.fail_text_watches("a replay took the link's place");
         let (rx_bytes, line_mode, terminal_mode, stats) = self.clear_screen();
         // a replay replacing a replay keeps the live link the first one set aside
         let replaced = match self.replay.take().and_then(|run| run.replaced) {
@@ -1307,6 +1315,7 @@ impl App {
         self.feed_marking(chunk, &fired);
         self.run_fired(&fired);
         self.watch_mash(chunk);
+        self.watch_texts(chunk);
     }
 
     pub fn mash(&self) -> Option<&Mash> {
@@ -2000,6 +2009,20 @@ impl App {
                 let (until, cause) = (until.to_string(), Cause::from(origin));
                 self.emit(Event::MashStarted { until, cause });
                 self.mash = Some(*mash);
+                UpdateEffect::None
+            }
+            AppAction::WaitFor(mut watch) => {
+                // the chain waits for one of its texts, failed at its time
+                watch.id = self.next_watch;
+                self.next_watch += 1;
+                report
+                    .notes
+                    .push(Note::info(format!("Waiting for {}", watch.texts_shown())));
+                report.wait = Some(Wait::Text {
+                    watch: watch.id,
+                    until: watch.until,
+                });
+                self.text_watches.push(*watch);
                 UpdateEffect::None
             }
             AppAction::StartTransfer(transfer) => {

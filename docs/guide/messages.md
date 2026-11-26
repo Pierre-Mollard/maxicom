@@ -89,6 +89,8 @@ See [Command line](command-line.md).
 | `a mash runs already (cancel stops it)` | A second `mash` |
 | `mash: '<text>' didn't come in` | The mash timed out |
 | `Mash stopped: <why>` | A key was typed, the link closed, or a replay started |
+| `wait-for: '<text>' didn't come in` | None of the texts of `wait-for` came in time |
+| `wait-for: <why> before '<text>' came in` | The link closed, or a replay started, while `wait-for` waited |
 | `Stopped sending <file> at <n>%: <why>` | The write failed, the link closed, a replay started, or an upload failed. See [When an upload fails](file-transfers.md#when-an-upload-fails). |
 | `Cancelled: <file> at <n>%`, `Cancelled: <file>, kept as <part>` | Your `cancel` stopped a transfer; a download keeps its partial file. See [Stopping a transfer](file-transfers.md#stopping-a-transfer). |
 | `no trigger named '<name>'`, `triggers.toml has no trigger` | `trigger` names no trigger. See [Triggers](triggers.md). |

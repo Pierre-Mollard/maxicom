@@ -46,6 +46,7 @@ static TEST_COMMANDS: [CommandSpec; 2] = [
         target: Target::Action(KeyBindingAction::Quit),
         asks: Asks::Never,
         access: Access::Control,
+        repeats: false,
     },
     CommandSpec::action("quit", KeyBindingAction::Quit, "Quit"),
 ];
@@ -166,6 +167,37 @@ fn usage() {
     assert_eq!(usage("quit"), "quit");
     assert_eq!(usage("dtr"), "dtr <state>");
     assert_eq!(usage("send-file"), "send-file <path> [line-delay-ms]");
+    assert_eq!(usage("wait-for-ms"), "wait-for-ms <ms> <text>...");
+}
+
+/// MAX-219: a repeating last argument takes every word left, each read as its kind, at least
+/// one; the arguments before it are read as usual.
+/// How: `wait-for` and `wait-for-ms` with one, then three texts, then none.
+#[test]
+fn repeating_argument() {
+    let args = |line: &str| parse(line).unwrap().remove(0).args;
+    let bytes = |text: &[u8]| ArgValue::Bytes(text.to_vec());
+    assert_eq!(args("wait-for OK"), [bytes(b"OK")]);
+    assert_eq!(
+        args("wait-for OK 'login: ' \\r\\n"),
+        [bytes(b"OK"), bytes(b"login: "), bytes(b"\r\n")]
+    );
+    assert_eq!(
+        args("wait-for-ms 500 OK ERROR"),
+        [ArgValue::Int(500), bytes(b"OK"), bytes(b"ERROR")]
+    );
+    assert_eq!(
+        parse("wait-for").unwrap_err().to_string(),
+        "wait-for: missing argument <text>"
+    );
+    assert_eq!(
+        parse("wait-for-ms 500").unwrap_err().to_string(),
+        "wait-for-ms: missing argument <text>"
+    );
+    assert_eq!(
+        parse("wait-for-ms OK ERROR").unwrap_err().to_string(),
+        "wait-for-ms: bad argument 1: 'OK' is not a number"
+    );
 }
 
 /// `send` takes any bytes, escapes and all, `send-hex` hex digits; both are bytes

@@ -90,6 +90,7 @@ impl App {
             self.fail_job(job, format!("open: no answer after {secs}s"));
         }
         self.sync_asks(now);
+        self.sync_text_watches(now);
         self.settle_runs();
         let (caller, invocation) = self.jobs.next(now)?;
         // a popup or a key to wait for would take the user's keys: theirs to run (MAX-165);

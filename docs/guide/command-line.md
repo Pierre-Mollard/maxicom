@@ -349,9 +349,9 @@ waiting runs after it. A line starting with `cancel` is the exception: it
 runs at once, so `cancel; send x` doesn't wait.
 
 A command that takes a while holds the rest of its line until it is done:
-`sleep`, `break`, `open` (until the link is open), `mash` (until its text
-comes in) and the file transfers, `send-file`, `upload` and `download` (until
-the file went through).
+`sleep`, `break`, `open` (until the link is open), `mash` and `wait-for`
+(until their text comes in) and the file transfers, `send-file`, `upload`
+and `download` (until the file went through).
 
 A [trigger](triggers.md)'s line and a [profile](profiles.md)'s run beside
 yours, not behind them. While your line waits on one of these, theirs goes
@@ -384,6 +384,26 @@ With a reset first, on one key:
 ```text
 dtr off; rts on; rts off; mash ' ' '=> '
 ```
+
+### Waiting for the device: `wait-for`
+
+```text
+wait-for <text>...
+wait-for-ms <ms> <text>...
+```
+
+`wait-for` holds the rest of the line until one of the texts comes in, for
+at most 10 seconds; `wait-for-ms` sets how long, up to 10 minutes. Only what
+comes in after it starts counts, and a text cut between two reads is still
+found. The texts take the same escapes as `send`.
+
+```text
+send 'flash\r'; wait-for OK ERROR; send 'reset\r'
+```
+
+A toast says which text came in. The timeout, `cancel`, a lost link or a
+replay starting drop the rest of the line. Unlike `mash`, it sends nothing:
+it only waits.
 
 ### Triggers
 

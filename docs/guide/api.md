@@ -140,7 +140,8 @@ line the command line takes, several commands with `;` included:
 ```
 
 The reply comes when the job ends, not when it starts. A `sleep`, an
-`open`, a `mash` or a file transfer in the line make it wait. Several `run`
+`open`, a `mash`, a `wait-for` or a file transfer in the line make it wait.
+A `wait-for` gives the text that came in as its value. Several `run`
 can be in flight at once, each with its own `id`. A program's jobs run one
 after the other, the oldest first, next to yours and to the triggers'.
 

@@ -111,6 +111,7 @@ fn job(job: &Job) -> Value {
         Some(Wait::Until(_)) => "time",
         Some(Wait::LinkOpen { .. }) => "link-open",
         Some(Wait::Mash) => "mash",
+        Some(Wait::Text { .. }) => "text",
         Some(Wait::Transfer) => "transfer",
         Some(Wait::Asked { .. }) => "user",
     };

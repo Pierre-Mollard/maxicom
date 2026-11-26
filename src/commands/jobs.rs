@@ -37,6 +37,9 @@ pub enum Wait {
     LinkOpen { until: Instant },
     /// A `mash`'s text coming in; the mash ends on its own timeout
     Mash,
+    /// One of a `wait-for`'s texts coming in (MAX-219), the app's watch `watch`; failed at
+    /// `until`
+    Text { watch: u64, until: Instant },
     /// A file going through (`send-file`, `upload`, `download`) to its end; a stop on an
     /// error fails the job, its own toast saying why
     Transfer,

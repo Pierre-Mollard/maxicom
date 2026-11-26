@@ -10,7 +10,7 @@ use std::{
 use jiff::Timestamp;
 
 use crate::{
-    app::{App, mash::Mash},
+    app::{App, mash::Mash, wait_for::TextWatch},
     clock,
     commands::ArgValue,
     configs::{Mode, TextEncoding, links::SavedLink},
@@ -541,6 +541,35 @@ pub fn mash(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     let mash = Mash::new(text.clone(), until, every, timeout, Instant::now())
         .ok_or_else(|| "nothing to wait for".to_string())?;
     Ok(Action::App(AppAction::StartMash(Box::new(mash))))
+}
+
+/// How long `wait-for` waits at most (MAX-219)
+pub const WAIT_FOR_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// `wait-for <text>...` (MAX-219): the rest of the chain waits for one of the texts to come
+/// in, `WAIT_FOR_TIMEOUT` at most
+pub fn wait_for(app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    watch_texts(app, args, WAIT_FOR_TIMEOUT)
+}
+
+/// `wait-for-ms <ms> <text>...` (MAX-219): `wait-for`, waiting `ms` at most
+pub fn wait_for_ms(app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let [ArgValue::Int(ms), texts @ ..] = args else {
+        unreachable!("wait-for-ms takes a time, then texts");
+    };
+    watch_texts(app, texts, Duration::from_millis(*ms as u64))
+}
+
+/// The texts waited for from now on, on an open link: what came in before doesn't count
+fn watch_texts(app: &App, args: &[ArgValue], timeout: Duration) -> Result<Action, String> {
+    let texts = args.iter().map(|arg| match arg {
+        ArgValue::Bytes(text) => text.clone(),
+        _ => unreachable!("wait-for takes texts"),
+    });
+    link_open(app)?;
+    let watch = TextWatch::new(texts.collect(), Instant::now() + timeout)
+        .ok_or_else(|| "an empty text would match anything".to_string())?;
+    Ok(Action::App(AppAction::WaitFor(Box::new(watch))))
 }
 
 /// `trigger on|off|toggle|reset [name]` (MAX-6): all the triggers, or the one named. Toggled,

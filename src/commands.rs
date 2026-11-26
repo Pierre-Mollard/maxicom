@@ -145,6 +145,8 @@ pub struct CommandSpec {
     pub target: Target,
     pub asks: Asks,
     pub access: Access,
+    /// Its last argument takes every word left, one or more (`wait-for <text>...`)
+    pub repeats: bool,
 }
 
 /// Whether a command needs the user there (MAX-165): what it opens or waits for takes their
@@ -197,6 +199,7 @@ impl CommandSpec {
             target: Target::Action(action),
             asks: Asks::Never,
             access: Access::Control,
+            repeats: false,
         }
     }
 
@@ -213,6 +216,7 @@ impl CommandSpec {
             target: Target::Build(build),
             asks: Asks::Never,
             access: Access::Control,
+            repeats: false,
         }
     }
 
@@ -229,6 +233,7 @@ impl CommandSpec {
             target: Target::Query(query),
             asks: Asks::Never,
             access: Access::Read,
+            repeats: false,
         }
     }
 
@@ -248,6 +253,7 @@ impl CommandSpec {
             target: Target::Popup { action, query },
             asks: Asks::Never,
             access: Access::Read,
+            repeats: false,
         }
     }
 
@@ -261,6 +267,24 @@ impl CommandSpec {
         Self {
             access: Access::Device,
             ..self
+        }
+    }
+
+    /// The same command, its last argument taking every word left
+    const fn repeating(self) -> Self {
+        Self {
+            repeats: true,
+            ..self
+        }
+    }
+
+    /// The argument the word at `index` is (from 0, after the name): the last one again past
+    /// the end when it repeats
+    pub fn arg_at(&self, index: usize) -> Option<&ArgSpec> {
+        match self.args.get(index) {
+            Some(arg) => Some(arg),
+            None if self.repeats => self.args.last(),
+            None => None,
         }
     }
 
@@ -279,6 +303,9 @@ impl CommandSpec {
             } else {
                 usage.push_str(&format!(" <{}>", arg.name));
             }
+        }
+        if self.repeats {
+            usage.push_str("...");
         }
         usage
     }
@@ -410,6 +437,7 @@ impl std::error::Error for CommandError {}
 /// | `sleep` | its time is up |
 /// | `break` | the break ended |
 /// | `mash` | its text came in; its timeout, a key typed or the link closing fails the chain |
+/// | `wait-for`, `wait-for-ms` | one of its texts came in; its timeout, the link closing or a replay taking its place fails the chain |
 /// | `send-file`, `upload`, `download` | the file went through; a stop on an error fails the chain, its toast saying why |
 /// | `send`, `send-hex` | the bytes are written to the link, not when the device answers |
 /// | `toggle-attach` | asked: the reopen's result comes as the link's own |
@@ -1170,6 +1198,30 @@ pub static COMMANDS: &[CommandSpec] = {
         )
         .reaching_device(),
         CommandSpec::build(
+            "wait-for",
+            &[arg("text", ArgKind::Bytes)],
+            build::wait_for,
+            "Wait for one of the texts to come in, 10 s at most: wait-for OK ERROR",
+        )
+        .repeating(),
+        CommandSpec::build(
+            "wait-for-ms",
+            &[
+                arg(
+                    "ms",
+                    ArgKind::Int {
+                        min: 1,
+                        max: 600_000,
+                        suggestions: &[],
+                    },
+                ),
+                arg("text", ArgKind::Bytes),
+            ],
+            build::wait_for_ms,
+            "Wait for one of the texts to come in, that long at most",
+        )
+        .repeating(),
+        CommandSpec::build(
             "trigger",
             &[
                 arg("state", ArgKind::Enum(&["on", "off", "toggle", "reset"])),
@@ -1325,7 +1377,7 @@ fn complete_in(commands: &'static [CommandSpec], line: &str, names: &Names) -> C
         Some(name) => commands
             .iter()
             .find(|spec| spec.name == name)
-            .and_then(|spec| spec.args.get(word.index - 1))
+            .and_then(|spec| spec.arg_at(word.index - 1))
             .map(|arg| match arg.kind {
                 ArgKind::Path => path_candidates(prefix),
                 ArgKind::Address => address_candidates(prefix, link_names, ports),
@@ -1556,7 +1608,7 @@ fn is_path_word(words: &[Word]) -> bool {
     std::str::from_utf8(name)
         .ok()
         .and_then(find_by_name)
-        .and_then(|spec| spec.args.get(args.len()))
+        .and_then(|spec| spec.arg_at(args.len()))
         .is_some_and(|arg| matches!(arg.kind, ArgKind::Path | ArgKind::Address))
 }
 
@@ -1575,14 +1627,17 @@ fn invocation(words: &[Word]) -> Result<Invocation, CommandError> {
 }
 
 fn parse_args(spec: &'static CommandSpec, words: &[Word]) -> Result<Vec<ArgValue>, CommandError> {
-    if words.len() > spec.args.len() {
+    if words.len() > spec.args.len() && !spec.repeats {
         return Err(CommandError::TooManyArguments {
             command: spec.name,
             max: spec.args.len(),
         });
     }
     let mut args = Vec::with_capacity(words.len());
-    for (index, arg) in spec.args.iter().enumerate() {
+    for index in 0..words.len().max(spec.args.len()) {
+        let Some(arg) = spec.arg_at(index) else {
+            break;
+        };
         match words.get(index) {
             Some(word) => {
                 let value = arg

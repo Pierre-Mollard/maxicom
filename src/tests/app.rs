@@ -3458,6 +3458,8 @@ fn every_command_shows_what_it_did() {
         ("raw-since 0", "popup Query"),
         ("search x", ""),
         ("mash x y", "info Mashing until 'y'"),
+        ("wait-for OK ERROR", "info Waiting for 'OK' or 'ERROR'"),
+        ("wait-for-ms 100 OK", "info Waiting for 'OK'"),
         ("trigger on", "error trigger: triggers.toml has no trigger"),
         ("plot", "info [plot] Plot key-value"),
         ("profile", "info [profiles] No profile laid"),
