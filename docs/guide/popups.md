@@ -45,6 +45,13 @@ Enter. Fields drawn with arrows change their value when you click an arrow.
 When maxicom asks a yes / no question (quit, delete, restore a session),
 Enter or `y` answers yes, Esc or `n` answers no.
 
+When a program connected to the API runs a command its access level sets to
+`ask`, the API popup shows the program's name and the command. Enter or `y`
+runs it, `a` runs it and lets that program's next commands of the same kind
+run without asking until it disconnects, Esc or `n` refuses it. The popup
+waits for any popup you are in to close first, and refuses on its own once
+`ask_timeout` has passed. A click outside doesn't close it.
+
 ## Error popups
 
 An error you need to read, like a config file that doesn't load, opens in a
@@ -71,3 +78,4 @@ popup with the details. Esc or Enter closes it.
 | Loading | `p` on a group in the session browser | [Capture](capture.md#while-it-loads) |
 | Right-click menu | A right click | [Copy mode and mouse](copy-mode-and-mouse.md#right-click-menu) |
 | Detached, Connection Lost, No device | Shown by the link | [Links](links.md#the-links-popups) |
+| API | A program's command set to `ask` | [Questions](#questions), [Settings](settings.md#api) |

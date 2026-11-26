@@ -1,7 +1,7 @@
 //! Jobs (MAX-165): the chains running, each with who started it, one command at a time.
 //! Jobs don't wait for each other: one that waits (a `sleep`, an `open`, a `mash`) lets the
 //! others go on, and one that fails drops only its own commands. The chains of one owner
-//! (the user's, a trigger's, the profiles') still run one after the other, the oldest
+//! (the user's, a trigger's, the profiles', a client's) still run one after the other, the oldest
 //! first. Pure: `App` builds the commands and applies their effects (`app::jobs`)
 use std::{collections::VecDeque, time::Instant};
 
@@ -40,6 +40,9 @@ pub enum Wait {
     /// A file going through (`send-file`, `upload`, `download`) to its end; a stop on an
     /// error fails the job, its own toast saying why
     Transfer,
+    /// The user's answer to a client's command the `[api]` levels ask about (MAX-287); refused
+    /// at `until`
+    Asked { until: Instant },
 }
 
 /// What `cancel` took away: how many commands were waiting, and whether a job waited for the
@@ -87,6 +90,9 @@ enum Owner<'a> {
     Trigger(&'a str),
     /// The profiles' hooks
     Profile,
+    /// An API connection, by its number (MAX-287): each client's chains in order, beside
+    /// the others'
+    Client(u64),
 }
 
 fn owner(origin: &Origin) -> Owner<'_> {
@@ -94,6 +100,7 @@ fn owner(origin: &Origin) -> Owner<'_> {
         Origin::Input | Origin::CommandLine | Origin::KeyBinding => Owner::User,
         Origin::Trigger(name) => Owner::Trigger(name),
         Origin::Profile(_) => Owner::Profile,
+        Origin::Client { conn, .. } => Owner::Client(*conn),
     }
 }
 
@@ -187,6 +194,26 @@ impl Jobs {
         })
     }
 
+    /// `invocation` back at the front of `job`, due again: a command held for the user's
+    /// answer (MAX-287)
+    pub fn put_back(&mut self, job: JobId, invocation: Invocation) {
+        if let Some(job) = self.jobs.iter_mut().find(|j| j.id == job) {
+            job.commands.push_front(invocation);
+        }
+    }
+
+    /// `job`'s next command dropped, not run
+    pub fn skip(&mut self, job: JobId) {
+        if let Some(job) = self.jobs.iter_mut().find(|j| j.id == job) {
+            job.commands.pop_front();
+        }
+    }
+
+    /// Whether `job` still runs: not done, failed or cancelled
+    pub fn has(&self, job: JobId) -> bool {
+        self.running().any(|running| running.id == job)
+    }
+
     /// `job` waits no more: its next command is due
     pub fn resume(&mut self, job: JobId) {
         if let Some(job) = self.jobs.iter_mut().find(|j| j.id == job) {
@@ -208,8 +235,14 @@ impl Jobs {
         }
     }
 
-    /// `cancel` from `origin`: the user's stops every job, a trigger's or a profile's only
-    /// the ones of its owner
+    /// Every client's jobs ended (MAX-287), the others kept
+    pub fn cancel_clients(&mut self) {
+        self.jobs
+            .retain(|job| !matches!(owner(&job.origin), Owner::Client(_)));
+    }
+
+    /// `cancel` from `origin`: the user's stops every job, a trigger's, a profile's or a
+    /// client's only the ones of its owner
     pub fn cancel(&mut self, origin: &Origin) -> Cancelled {
         let by = owner(origin);
         let mut cancelled = Cancelled::default();

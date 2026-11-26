@@ -128,8 +128,16 @@ pub const CONFIG_COMMENTS: &[(&str, &str)] = &[
     ("command_line.layout", "values: popup, status_bar"),
     (
         "api",
-        "A local socket that scripts and other programs use to talk to this maxicom",
+        concat!(
+            "A local socket that scripts and other programs use to talk to this maxicom",
+            "\nWhat its clients may do: read = queries and events; control = changes to",
+            "\nmaxicom itself (view, marks, settings); device = what reaches the device",
+            "\n(sends, line levels and settings, open). off refuses, ask asks you, on allows",
+        ),
     ),
+    ("api.read", "values: off, on"),
+    ("api.control", "values: off, ask, on"),
+    ("api.device", "values: off, ask, on"),
 ];
 
 pub const THEME_COMMENTS: &[(&str, &str)] = &[(

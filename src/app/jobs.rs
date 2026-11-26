@@ -7,16 +7,40 @@ use std::time::Instant;
 use super::{App, RECANCEL_FOR, cancelled_text};
 use crate::link::CONNECT_TIMEOUT;
 use crate::{
+    api::READING_OFF,
     commands::{
-        CommandError, Invocation, Origin, Target,
+        Access, CommandError, Invocation, Origin, Target,
         jobs::{Caller, JobId, Wait},
         report::Note,
         report::{Answer, Failure, Report},
     },
-    configs::KeyBindingAction,
+    configs::{KeyBindingAction, Level, ReadLevel},
     inputs::{Action, AppAction},
-    overlays::{Overlay, QueryView},
+    overlays::{AskAnswer, Overlay, QueryView},
 };
+
+/// A client's command held for the user's answer (MAX-287)
+#[derive(Debug, Clone)]
+pub struct Ask {
+    pub job: JobId,
+    /// The client asking: its name for the popup, its connection for an always
+    pub client: Origin,
+    /// The command as typed
+    pub command: String,
+    pub access: Access,
+    /// Refused when no answer came by then
+    pub until: Instant,
+}
+
+/// What the `[api]` levels say of a client's command (MAX-287)
+enum Gate {
+    /// It runs
+    Run,
+    /// It is refused, saying why
+    Refuse(String),
+    /// The user is asked, for this access
+    Ask(Access),
+}
 
 impl App {
     /// The next action of a job (MAX-12), with who it runs for (MAX-165): the oldest job's
@@ -34,11 +58,25 @@ impl App {
             let secs = (CONNECT_TIMEOUT * 2).as_secs();
             self.fail_job(job, format!("open: no answer after {secs}s"));
         }
+        self.sync_asks(now);
         let (caller, invocation) = self.jobs.next(now)?;
-        // a popup or a key to wait for would take the user's keys: theirs to run (MAX-165)
+        // a popup or a key to wait for would take the user's keys: theirs to run (MAX-165);
+        // a client runs what the user's `[api]` levels let it (MAX-287)
         let asks = (!caller.origin.is_user()).then(|| invocation.asks_user());
-        let built = match (asks.flatten(), invocation.spec.target) {
-            (Some(reason), _) => Err(reason.to_string()),
+        let refused = match asks.flatten() {
+            Some(reason) => Some(reason.to_string()),
+            None => match self.client_gate(&caller, &invocation) {
+                Gate::Run => None,
+                Gate::Refuse(reason) => Some(reason),
+                // held, its job waiting: the other jobs go on
+                Gate::Ask(access) => {
+                    self.hold_for_user(&caller, invocation, access, now);
+                    return self.next_command_action(now);
+                }
+            },
+        };
+        let built = match (refused, invocation.spec.target) {
+            (Some(reason), _) => Err(reason),
             (None, Target::Action(action)) => Ok(action.to_action(self)),
             (None, Target::Popup { action, .. }) if caller.origin.is_user() => {
                 Ok(action.to_action(self))
@@ -65,6 +103,135 @@ impl App {
                 None
             }
         }
+    }
+
+    /// What the user's `[api]` levels say of a client's command (MAX-287), as its access
+    /// says: run, refused, or asked; any other origin runs. An `ask` the user answered for this
+    /// job, or for this client always, runs
+    fn client_gate(&mut self, caller: &Caller, invocation: &Invocation) -> Gate {
+        let Origin::Client { conn, .. } = caller.origin else {
+            return Gate::Run;
+        };
+        let api = self.settings.api;
+        let access = invocation.access();
+        let (level, what) = match access {
+            Access::Read if api.read == ReadLevel::Off => {
+                return Gate::Refuse(READING_OFF.to_string());
+            }
+            Access::Read => return Gate::Run,
+            Access::Control => (api.control, "control"),
+            Access::Device => (api.device, "device"),
+        };
+        match level {
+            Level::On => Gate::Run,
+            Level::Off => Gate::Refuse(format!("{what} access is off in [api]")),
+            Level::Ask if self.allowed_always.contains(&(conn, access)) => Gate::Run,
+            Level::Ask => {
+                let once = (self.allowed_once.iter()).position(|job| Some(*job) == caller.job);
+                match once {
+                    Some(at) => {
+                        self.allowed_once.remove(at);
+                        Gate::Run
+                    }
+                    None => Gate::Ask(access),
+                }
+            }
+        }
+    }
+
+    /// A client's command held for the user's answer (MAX-287): back at the front of its job,
+    /// which waits for the answer, refused after `[api] ask_timeout`
+    fn hold_for_user(
+        &mut self,
+        caller: &Caller,
+        invocation: Invocation,
+        access: Access,
+        now: Instant,
+    ) {
+        let Some(job) = caller.job else {
+            return;
+        };
+        let until = now + self.settings.api.ask_timeout;
+        let command = invocation.text();
+        self.jobs.put_back(job, invocation);
+        self.jobs.wait(job, Wait::Asked { until });
+        self.asks.push_back(Ask {
+            job,
+            client: caller.origin.clone(),
+            command,
+            access,
+            until,
+        });
+        self.sync_asks(now);
+    }
+
+    /// An ask refused, by the user or for want of an answer: its held command dropped, then
+    /// its job failed with `why`
+    fn refuse_ask(&mut self, ask: Ask, why: &str) {
+        self.jobs.skip(ask.job);
+        self.fail_job(ask.job, format!("{}: {why}", ask.command));
+    }
+
+    /// The asks kept in step with their jobs (MAX-287): one with no answer by its time is
+    /// refused, one whose job is gone (cancelled, failed) dropped; the first one shown when no
+    /// other popup is open, so it never takes the keys of one the user is in
+    fn sync_asks(&mut self, now: Instant) {
+        while let Some(at) = self.asks.iter().position(|ask| now >= ask.until) {
+            if let Some(ask) = self.asks.remove(at) {
+                self.refuse_ask(ask, "no answer from the user");
+            }
+        }
+        let jobs = &self.jobs;
+        self.asks.retain(|ask| jobs.has(ask.job));
+        let first = self.asks.front().map(|ask| ask.job);
+        if let Some(Overlay::ClientAsk(shown)) = self.overlay
+            && Some(shown) != first
+        {
+            self.overlay = None;
+        }
+        if self.overlay.is_none()
+            && let Some(job) = first
+        {
+            self.open_overlay(Overlay::ClientAsk(job));
+        }
+    }
+
+    /// Every client's jobs cancelled and what the user let them do forgotten, their
+    /// connections closing (MAX-287): their asks go with their jobs
+    pub fn drop_clients(&mut self) {
+        self.jobs.cancel_clients();
+        self.allowed_once.clear();
+        self.allowed_always.clear();
+        self.sync_asks(Instant::now());
+    }
+
+    /// The client's command asked first, the one its popup shows (MAX-287)
+    pub fn asked(&self) -> Option<&Ask> {
+        self.asks.front()
+    }
+
+    /// The user's answer to the command asked (MAX-287): sent runs it, always runs it and the
+    /// next ones of its access from that client without asking, refused stops its job
+    pub fn answer_ask(&mut self, answer: AskAnswer) {
+        if matches!(self.overlay, Some(Overlay::ClientAsk(_))) {
+            self.overlay = None;
+        }
+        let Some(ask) = self.asks.pop_front() else {
+            return;
+        };
+        match answer {
+            AskAnswer::Send => self.allowed_once.push(ask.job),
+            AskAnswer::Always => {
+                if let Origin::Client { conn, .. } = ask.client {
+                    self.allowed_always.push((conn, ask.access));
+                }
+            }
+            AskAnswer::Refuse => {
+                self.refuse_ask(ask, "refused by the user");
+                return;
+            }
+        }
+        self.jobs.resume(ask.job);
     }
 
     /// What an action for `caller` reported (MAX-165), shown: its notes as toasts, then its

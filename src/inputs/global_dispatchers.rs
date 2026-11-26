@@ -131,6 +131,7 @@ impl KeyBindingAction {
                 Action::App(AppAction::ToggleSetting(SettingKey::Mouse))
             }
             KeyBindingAction::CancelCommands => Action::App(AppAction::CancelCommands),
+            KeyBindingAction::DisconnectClients => Action::App(AppAction::DisconnectClients),
             KeyBindingAction::ToggleTriggers => Action::App(AppAction::ToggleTriggers),
             KeyBindingAction::PlotFreeze => Action::App(AppAction::TogglePlotFreeze),
             KeyBindingAction::PlotNext => Action::App(AppAction::StepPlot(true)),

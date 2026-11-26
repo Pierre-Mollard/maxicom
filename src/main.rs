@@ -488,6 +488,15 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     }
                     // ratatui forgets what it drew: the next frame writes every cell (MAX-271)
                     UpdateEffect::Redraw => guard.terminal.clear()?,
+                    // the clients dropped, the server still listening (MAX-287)
+                    UpdateEffect::DisconnectClients => {
+                        let count = api_server.as_mut().map_or(0, api::Server::disconnect_all);
+                        let note = match count {
+                            1 => "Disconnected 1 API client".to_string(),
+                            n => format!("Disconnected {n} API clients"),
+                        };
+                        app.present(&caller, Report::from(vec![Note::info(note)]));
+                    }
                     UpdateEffect::ReloadConfig => {
                         match load_runtime_config(&config_path, app.profiles()) {
                             Ok((files, config)) => {

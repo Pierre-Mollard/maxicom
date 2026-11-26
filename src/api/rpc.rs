@@ -24,6 +24,8 @@ pub const COMMAND_FAILED: i64 = 107;
 pub const NAMED_WITH_ARGUMENTS: i64 = 108;
 /// `query`'s line isn't one query
 pub const NOT_A_QUERY: i64 = 110;
+/// Refused by the access levels the user set in `[api]` (MAX-287)
+pub const REFUSED: i64 = 111;
 
 /// A request read from a line: a notification (no `id`) gets no reply
 #[derive(Debug, Clone, PartialEq)]
@@ -87,6 +89,14 @@ impl RpcError {
         Self {
             code,
             message: error.to_string(),
+        }
+    }
+
+    /// Refused by the user's `[api]` levels (MAX-287)
+    pub fn refused(message: impl Into<String>) -> Self {
+        Self {
+            code: REFUSED,
+            message: message.into(),
         }
     }
 

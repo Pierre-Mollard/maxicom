@@ -10,8 +10,9 @@ use ratatui::{
 };
 
 use crate::{
-    app::capture::GroupLoad,
+    app::{capture::GroupLoad, jobs::Ask},
     capture::Session,
+    commands::{Access, Origin, value::pictures},
     configs::{
         KeyPattern, KeyResolver, Mode, ThemeConfig, keybindings::KeyBindingDialogAction,
         links::SavedLink,
@@ -390,6 +391,74 @@ pub fn render_delete_link_popup(
     );
     let tone = theme.palette.text_warn;
     render_alert("Delete link", tone, text, hints, frame, theme, targets)
+}
+
+/// A client's command the `[api]` levels ask about (MAX-287): who asks, the command as typed
+/// (control characters as their pictures), what it reaches and the seconds left to answer;
+/// send, always for this client, refuse
+pub fn render_ask_popup(
+    ask: &Ask,
+    resolver: &KeyResolver,
+    frame: &mut Frame,
+    theme: &ThemeConfig,
+    targets: &mut Vec<(Rect, PopupTarget)>,
+) -> Rect {
+    let client = match &ask.client {
+        Origin::Client {
+            name: Some(name), ..
+        } => format!("'{name}'"),
+        Origin::Client { conn, .. } => format!("client {conn}"),
+        origin => origin.kind().to_string(),
+    };
+    let (reaches, tone) = match ask.access {
+        Access::Device => ("It reaches the device", theme.palette.text_warn),
+        Access::Control | Access::Read => ("It changes maxicom", theme.palette.main),
+    };
+    let left = ask
+        .until
+        .saturating_duration_since(Instant::now())
+        .as_secs();
+    let text = vec![
+        Line::from(Span::styled(
+            format!("The API client {client} wants to run"),
+            Style::default()
+                .fg(theme.palette.text)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            pictures(&ask.command),
+            Style::default().fg(theme.palette.secondary),
+        )),
+        Line::from(Span::styled(
+            format!("{reaches}: refused in {left} s"),
+            Style::default().fg(theme.palette.text_muted),
+        )),
+        Line::from(""),
+    ];
+    let dialog_key = |action| resolver.dialog_keys(action).into_iter().next();
+    let always = KeyPattern {
+        code: KeyCode::Char('a'),
+        modifiers: KeyModifiers::NONE,
+    };
+    let buttons = [
+        (
+            dialog_key(KeyBindingDialogAction::Confirm),
+            PopupTarget::Hint(KeyBindingDialogAction::Confirm),
+            "Send",
+        ),
+        (Some(always), PopupTarget::AskAlways, "Always"),
+        (
+            dialog_key(KeyBindingDialogAction::Close),
+            PopupTarget::Hint(KeyBindingDialogAction::Close),
+            "Refuse",
+        ),
+    ];
+    let buttons = buttons
+        .into_iter()
+        .map(|(key, target, label)| (key.map(|key| (key, target)).into_iter().collect(), label));
+    let (line, spots) = hint_spans(buttons, theme);
+    let hints = Hints { line, spots };
+    render_alert("API", tone, text, hints, frame, theme, targets)
 }
 
 /// The startup question when a past session on this device can be restored (MAX-148)

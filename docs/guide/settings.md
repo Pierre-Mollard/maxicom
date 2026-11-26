@@ -449,11 +449,19 @@ See [Command line](command-line.md#look).
 ### `[api]`
 
 A local socket that scripts and other programs use to talk to this
-maxicom. Only your user can connect to it. A reload starts or stops it.
+maxicom. Only your user can connect to it. A reload starts or stops it,
+and applies the levels below to the programs already connected.
 
 | Setting | Default | |
 | --- | --- | --- |
-| `enabled` | `false` | Listens on `maxicom-<pid>.sock` in the runtime folder (`$XDG_RUNTIME_DIR/maxicom`), else the cache folder; on Windows, the pipe `\\.\pipe\maxicom-<pid>` |
+| `enabled` | `false` | Listens on `maxicom-<pid>.sock` in the runtime folder (`$XDG_RUNTIME_DIR/maxicom`), else in `maxicom-<uid>` in the temporary folder (`/tmp`, `$TMPDIR` on macOS); on Windows, the pipe `\\.\pipe\maxicom-<pid>` |
+| `read` | `"on"` | Reading the state: queries, events. `off` or `on` |
+| `control` | `"on"` | Changing maxicom itself: the view, marks, settings. `off`, `ask` or `on` |
+| `device` | `"off"` | Reaching the device: sending, DTR and RTS, line settings, opening a link, triggers and profiles. `off`, `ask` or `on` |
+| `ask_timeout` | `"30s"` | How long an `ask` waits for your answer before refusing |
 
-While it runs it answers `hello` only: the methods to read and drive
-maxicom come next.
+`off` refuses, `on` allows, and `ask` shows you what the program wants
+to run, for you to allow or refuse ([Popups](popups.md#questions)). A program can't change these levels:
+only you do, in this file. The `commands` query shows the level each
+command needs, and `disconnect-clients` drops every program connected
+([Command line](command-line.md#waiting-and-stopping)).

@@ -27,17 +27,14 @@ PIPES = "\\\\.\\pipe\\"
 
 
 def socket_dir(env=None):
-    """maxicom's socket folder: the runtime folder, else the cache folder (src/api.rs), for a
-    maxicom started with `env` (this process's environment by default)"""
+    """maxicom's socket folder (src/api.rs): `maxicom` in the runtime folder, else
+    `maxicom-<uid>` in the temporary folder, for a maxicom started with `env` (this process's
+    environment by default)"""
     env = os.environ if env is None else env
-    home = Path(env.get("HOME") or Path.home())
     runtime = env.get("XDG_RUNTIME_DIR")
     if runtime and sys.platform.startswith("linux"):
         return Path(runtime) / "maxicom"
-    if sys.platform == "darwin":
-        return home / "Library" / "Caches" / "maxicom"
-    cache = env.get("XDG_CACHE_HOME") or home / ".cache"
-    return Path(cache) / "maxicom"
+    return Path(env.get("TMPDIR") or "/tmp") / f"maxicom-{os.geteuid()}"
 
 
 def location_of(pid, env=None):

@@ -2,7 +2,8 @@
 //! their `Value` shown in a popup for the user and later given to a client (MAX-284). A
 //! trigger's or a profile's query does nothing: nobody waits for its answer
 use super::{
-    ArgKind, ArgSpec, ArgValue, Asks, COMMANDS, CommandSpec, NamedCommand, Target,
+    Access, ArgKind, ArgSpec, ArgValue, Asks, COMMANDS, CommandSpec, Invocation, NamedCommand,
+    Target,
     jobs::{Job, Wait},
     value::Value,
 };
@@ -111,6 +112,7 @@ fn job(job: &Job) -> Value {
         Some(Wait::LinkOpen { .. }) => "link-open",
         Some(Wait::Mash) => "mash",
         Some(Wait::Transfer) => "transfer",
+        Some(Wait::Asked { .. }) => "user",
     };
     entries.extend([
         ("next".to_string(), Value::text(next)),
@@ -123,7 +125,8 @@ fn job(job: &Job) -> Value {
 /// `commands [name]` (MAX-283), the API's description of itself: bare, every command's name
 /// and help, the registry's and `[commands]`', sorted; with a name, that command in detail:
 /// its type (action, query, or named for one of `[commands]`), usage, help, whether it needs
-/// the user (`asks`), and its arguments (kind, optional, bounds, values)
+/// the user (`asks`), what it reaches (`access`, the API level a client needs, MAX-287), and
+/// its arguments (kind, optional, bounds, values)
 pub fn commands(app: &mut App, args: &[ArgValue]) -> Result<Value, String> {
     let named = &app.key_resolver.commands;
     let name = match args {
@@ -160,6 +163,7 @@ fn builtin(spec: &CommandSpec) -> Value {
         Asks::Always => "always",
         Asks::Bare => "bare",
     };
+    let access = access_word(spec.access);
     let args = spec
         .args
         .iter()
@@ -170,6 +174,7 @@ fn builtin(spec: &CommandSpec) -> Value {
         ("usage".to_string(), Value::text(spec.usage())),
         ("help".to_string(), Value::text(spec.help)),
         ("asks".to_string(), Value::text(asks)),
+        ("access".to_string(), Value::text(access)),
         ("args".to_string(), Value::Map(args.collect())),
     ])
 }
@@ -200,10 +205,23 @@ fn argument(arg: &ArgSpec) -> Value {
     Value::Map(entries)
 }
 
-/// A command of `[commands]`: its chain, no arguments, and `asks` always when one of its
-/// commands needs the user
+/// An access as the API's levels name it
+fn access_word(access: Access) -> &'static str {
+    match access {
+        Access::Read => "read",
+        Access::Control => "control",
+        Access::Device => "device",
+    }
+}
+
+/// A command of `[commands]`: its chain, no arguments, `asks` always when one of its
+/// commands needs the user, and the widest access of its commands
 fn named_command(command: &NamedCommand) -> Value {
     let asks = (command.invocations.iter()).any(|invocation| invocation.asks_user().is_some());
+    let access = (command.invocations.iter())
+        .map(Invocation::access)
+        .max()
+        .unwrap_or(Access::Read);
     Value::Map(vec![
         ("name".to_string(), Value::text(&command.name)),
         ("type".to_string(), Value::text("named")),
@@ -214,6 +232,7 @@ fn named_command(command: &NamedCommand) -> Value {
             "asks".to_string(),
             Value::text(if asks { "always" } else { "never" }),
         ),
+        ("access".to_string(), Value::text(access_word(access))),
         ("args".to_string(), Value::Map(Vec::new())),
     ])
 }

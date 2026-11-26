@@ -4694,6 +4694,38 @@ fn delete_link_popup() {
     }
 }
 
+/// MAX-287 (step 5): the API popup names the client and shows its command as typed, what it
+/// reaches and the time left, with its keys; it opens by itself for a client's command
+/// under `ask`.
+/// How: a client's `send` with an escape byte under `device = "ask"`.
+#[test]
+fn client_ask_popup() {
+    use crate::commands::Origin;
+    let mut h = Harness::line_mode(LineDisplayMode::Pretty, 80, 24);
+    h.app.settings_mut().api.device = crate::configs::Level::Ask;
+    let client = Origin::Client {
+        conn: 3,
+        name: Some("script".to_string()),
+    };
+    let chain = crate::commands::parse("send \"reboot\\r\"").unwrap();
+    let _ = h.app.queue_chain(client, chain);
+    assert!(
+        h.app
+            .next_command_action(std::time::Instant::now())
+            .is_none()
+    );
+    let rows = h.draw();
+    for row in [
+        " API ",
+        "The API client 'script' wants to run",
+        "send \"reboot\\r\"",
+        "It reaches the device: refused in",
+        "Enter Send · a Always · Esc Refuse",
+    ] {
+        assert!(has(&rows, row), "{row}: {rows:#?}");
+    }
+}
+
 /// MAX-181: the directory warns what its test does, and shows each tested port's result
 /// after its name; more ports than rows, a scrollbar in its right padding.
 /// How: six ports with a test result each but the device in use; then 40 ports.

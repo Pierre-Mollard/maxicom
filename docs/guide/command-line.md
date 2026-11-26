@@ -342,6 +342,7 @@ extension. See [Search](search.md) and [Screenshots](capture.md#screenshots).
 | --- | --- |
 | `sleep <ms>` | The rest of the line waits that long, up to a minute. The screen stays live. |
 | `cancel` | Stops the file being sent and a `mash`, and drops the commands waiting. In a trigger's line, only that trigger's. |
+| `disconnect-clients` | Drops every program connected to the [API](settings.md#api): their commands are stopped and their connections closed. The API keeps listening, so a program can connect again. No key by default. |
 
 Your lines run one after the other: a line run while another of yours is
 waiting runs after it. A line starting with `cancel` is the exception: it

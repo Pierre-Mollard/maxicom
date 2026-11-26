@@ -27,8 +27,8 @@ use crate::{
         CaptureDevice, CaptureLine, Recorder, RecordingWriter, ScreenshotFormat, Session, Stream,
     },
     commands::{
-        Origin,
-        jobs::{Caller, Jobs, Wait},
+        Access, Origin,
+        jobs::{Caller, JobId, Jobs, Wait},
         query,
         report::{Note, Report},
         value::Value,
@@ -204,6 +204,13 @@ pub struct App {
     /// The chains running, each a job with who started it and what it waits for (MAX-12,
     /// MAX-165)
     jobs: Jobs,
+    /// The clients' commands held for the user's answer, the first one asked (MAX-287)
+    asks: VecDeque<jobs::Ask>,
+    /// The jobs whose held command the user let run, once (MAX-287)
+    allowed_once: Vec<JobId>,
+    /// What the user let a client do without asking again, by its connection (MAX-287)
+    // TODO: (MAX-284) forgotten when the connection closes, with its jobs cancelled
+    allowed_always: Vec<(u64, Access)>,
     /// The command lines that ran, the oldest first (MAX-12)
     command_history: VecDeque<String>,
     /// The searches Enter ran, oldest first, for Up / Down in the bar (MAX-218)
@@ -342,6 +349,9 @@ pub enum UpdateEffect {
     /// The host terminal cleared and every cell written again: what it shows drifted from
     /// what maxicom drew (MAX-271)
     Redraw,
+    /// Every API client dropped, their jobs cancelled already (MAX-287): the loop holds the
+    /// server
+    DisconnectClients,
     /// The profile stack for the loop to lay at once, `profile load` / `unload`'s (MAX-240)
     LayProfiles(Vec<String>),
     Quit,
@@ -394,6 +404,9 @@ impl App {
             click_hold: None,
             click_repeat_at: None,
             jobs: Jobs::default(),
+            asks: VecDeque::new(),
+            allowed_once: Vec::new(),
+            allowed_always: Vec::new(),
             command_history: VecDeque::new(),
             search_history: VecDeque::new(),
             rx_bytes,
@@ -1203,6 +1216,10 @@ impl App {
                         }
                         OverlayResponse::EditLink(link) => {
                             self.open_link_form(Some(link));
+                            UpdateEffect::None
+                        }
+                        OverlayResponse::AnswerAsk(answer) => {
+                            self.answer_ask(answer);
                             UpdateEffect::None
                         }
                         OverlayResponse::AskDeleteLink(link) => {
@@ -2171,6 +2188,10 @@ impl App {
             AppAction::ToggleAttach => UpdateEffect::ToggleAttach,
             AppAction::ReloadConfig => UpdateEffect::ReloadConfig,
             AppAction::Redraw => UpdateEffect::Redraw,
+            AppAction::DisconnectClients => {
+                self.drop_clients();
+                UpdateEffect::DisconnectClients
+            }
             AppAction::SideView(action) => self.update_side_view(action),
             AppAction::ResizeSidePanel(by) => {
                 report.notes.extend(self.resize_side_panel(by));

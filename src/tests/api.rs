@@ -30,6 +30,11 @@ fn hello_says_who_answers() {
         "{unknown}"
     );
     assert_eq!(answer(&mut app, &instance, &request(None, "hello")), None);
+    // what clients may do, as `[api]` sets it (MAX-287): the defaults
+    assert_eq!(
+        result["access"],
+        json!({ "read": "on", "control": "on", "device": "off" })
+    );
 }
 
 /// The reply to `method` with `params`, as JSON
@@ -350,6 +355,31 @@ mod socket {
         }
     }
 
+    /// MAX-287 (step 6): `disconnect_all` closes every client's connection while its reader
+    /// waits for a line: each client sees it closed at once, without sending; the server goes
+    /// on listening, a new client answered.
+    /// How: two clients answered once, dropped, then a third one's `hello`.
+    #[test]
+    fn disconnect_all_closes_the_clients() {
+        let mut server = TestServer::start("drop");
+        let mut one = Client::connect(&server);
+        let mut two = Client::connect(&server);
+        one.send(r#"{"jsonrpc":"2.0","id":1,"method":"hello"}"#);
+        two.send(r#"{"jsonrpc":"2.0","id":2,"method":"hello"}"#);
+        answer_requests(&mut server, 2);
+        one.reply();
+        two.reply();
+        assert_eq!(server.disconnect_all(), 2);
+        assert!(one.closed(), "the first client still connected");
+        assert!(two.closed(), "the second client still connected");
+        assert_eq!(server.disconnect_all(), 0);
+
+        let mut three = Client::connect(&server);
+        three.send(r#"{"jsonrpc":"2.0","id":3,"method":"hello"}"#);
+        answer_requests(&mut server, 1);
+        assert_eq!(three.reply()["id"], json!(3));
+    }
+
     /// MAX-74 (steps 1-2): two clients connect at once, each gets its `hello` answered on its
     /// own connection, while its reader waits for its next line.
     /// How: a test server, two clients.
@@ -383,6 +413,69 @@ mod socket {
         drop(server);
         assert!(!path.exists(), "the socket file stays");
         let _ = dir.map(std::fs::remove_dir_all);
+    }
+
+    /// MAX-287 (step 1): the socket folder is the runtime folder's `maxicom`, else
+    /// `maxicom-<uid>` in the temporary folder, both local to this computer; never the cache
+    /// folder, which a home on NFS shares with other computers.
+    /// How: the folder with and without a runtime folder.
+    #[cfg(unix)]
+    #[test]
+    fn socket_folder_is_this_computers() {
+        let temp = Path::new("/tmp");
+        let runtime = Some(PathBuf::from("/run/user/1000"));
+        assert_eq!(
+            socket_dir_in(runtime, temp, 1000),
+            Path::new("/run/user/1000/maxicom")
+        );
+        assert_eq!(
+            socket_dir_in(None, temp, 1000),
+            Path::new("/tmp/maxicom-1000")
+        );
+    }
+
+    /// MAX-287 (step 1): a socket folder already there is used only when it is a folder of
+    /// this user's that other users can't write to (the temporary folder is everyone's), then
+    /// made the owner's only; a link or a folder others can write to is refused, with no
+    /// socket made. Another user's folder is refused too (not tested: it needs a second user).
+    /// How: a server started in a link to a folder, in a folder open to all, in a 0755 folder.
+    #[cfg(unix)]
+    #[test]
+    fn socket_folder_checked() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!("mx-{}-own", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let set_mode = |path: &Path, mode| {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap()
+        };
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+
+        let target = base.join("target");
+        std::fs::create_dir(&target).unwrap();
+        set_mode(&target, 0o700);
+        let link = base.join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let refused = Server::start(Some(&link), "maxicom-t").err().unwrap();
+        assert!(refused.to_string().ends_with("isn't a folder"), "{refused}");
+
+        let open = base.join("open");
+        std::fs::create_dir(&open).unwrap();
+        set_mode(&open, 0o777);
+        let refused = Server::start(Some(&open), "maxicom-t").err().unwrap();
+        assert!(
+            refused.to_string().starts_with("other users can write"),
+            "{refused}"
+        );
+        assert!(!open.join("maxicom-t.sock").exists());
+
+        let readable = base.join("readable");
+        std::fs::create_dir(&readable).unwrap();
+        set_mode(&readable, 0o755);
+        let server = Server::start(Some(&readable), "maxicom-t").unwrap();
+        assert_eq!(mode(&readable), 0o700);
+        drop(server);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// MAX-74 (step 2): the pipe goes when the server stops: a client can't connect any more.
@@ -569,6 +662,44 @@ mod socket {
         all.send(r#"{"jsonrpc":"2.0","id":4,"method":"hello"}"#);
         serve_requests(&mut server, &mut app, 1);
         assert_eq!(all.reply()["id"], json!(4));
+    }
+
+    /// MAX-287 (step 3): with `read = "off"`, `query`, `subscribe` and `unsubscribe` are
+    /// refused (`REFUSED`) and `hello` still answers, giving the levels; turned off by a
+    /// reload, a subscriber is told nothing more, and on again it subscribes again.
+    /// How: a subscriber, `read` turned off, an event emitted, the three methods and `hello`;
+    /// then `read` on again and a query.
+    #[test]
+    fn reading_off_refuses_reads() {
+        use crate::configs::ReadLevel;
+        let mut server = TestServer::start("read");
+        let mut app = crate::app::tests::app();
+        let mut client = Client::connect(&server);
+        client.send(r#"{"jsonrpc":"2.0","id":1,"method":"subscribe"}"#);
+        serve_requests(&mut server, &mut app, 1);
+        assert!(client.reply()["result"].is_object());
+
+        app.settings_mut().api.read = ReadLevel::Off;
+        app.emit(Event::LinkLost { link: "Serial" });
+        client.send(r#"{"jsonrpc":"2.0","id":2,"method":"query","params":{"command":"status"}}"#);
+        client.send(r#"{"jsonrpc":"2.0","id":3,"method":"subscribe"}"#);
+        client.send(r#"{"jsonrpc":"2.0","id":4,"method":"unsubscribe"}"#);
+        client.send(r#"{"jsonrpc":"2.0","id":5,"method":"hello"}"#);
+        serve_requests(&mut server, &mut app, 4);
+        // no `event` before the refusals: the subscription went with the reload
+        for id in 2..=4 {
+            let reply = client.reply();
+            assert_eq!(reply["id"], json!(id));
+            assert_eq!(reply["error"]["code"], json!(rpc::REFUSED), "{reply}");
+        }
+        let hello = client.reply();
+        assert_eq!(hello["id"], json!(5));
+        assert_eq!(hello["result"]["access"]["read"], json!("off"));
+
+        app.settings_mut().api.read = ReadLevel::On;
+        client.send(r#"{"jsonrpc":"2.0","id":6,"method":"query","params":{"command":"status"}}"#);
+        serve_requests(&mut server, &mut app, 1);
+        assert!(client.reply()["result"].is_object());
     }
 
     /// MAX-284 (step 2b, review change): `subscribe {events}` adds to what the connection

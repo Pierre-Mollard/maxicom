@@ -88,10 +88,6 @@ pub type QueryFn = fn(&mut App, &[ArgValue]) -> Result<Value, String>;
 
 /// Who started an action or a chain (MAX-165). Only `Input` acts as typing: it ends the
 /// prefix and stops a mash
-// TODO: (MAX-284) a `Client` origin for each API connection (A2.1), the reason this enum
-// exists now: a client's chains run next to the user's and the triggers', and its results go
-// back to it, not to a toast (MAX-165 steps 2-3). The CLI (MAX-285) and the MCP server
-// (MAX-149) are clients too
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Origin {
     /// from user's key/clicks/pastes/popups
@@ -104,6 +100,13 @@ pub enum Origin {
     Trigger(String),
     /// from a profile hook
     Profile(&'static str),
+    /// from an API connection (MAX-287), by its number, with the name its `hello` gave. Its
+    /// chains run next to the user's and the triggers', within the `[api]` levels; the CLI
+    /// (MAX-285) and the MCP server (MAX-149) are clients too
+    // TODO: (MAX-284) made by `run` (step 3), its results going back to the client, not to a
+    // toast; the attribute goes with it
+    #[cfg_attr(not(test), expect(dead_code, reason = "MAX-284's run"))]
+    Client { conn: u64, name: Option<String> },
 }
 
 impl Origin {
@@ -122,14 +125,16 @@ impl Origin {
             Self::KeyBinding => "key-binding",
             Self::Trigger(_) => "trigger",
             Self::Profile(_) => "profile",
+            Self::Client { .. } => "client",
         }
     }
 
-    /// The trigger's name, the profile hook's; none for the user
+    /// The trigger's name, the profile hook's, the client's; none for the user
     pub fn name(&self) -> Option<&str> {
         match self {
             Self::Trigger(name) => Some(name),
             Self::Profile(hook) => Some(hook),
+            Self::Client { name, .. } => name.as_deref(),
             Self::Input | Self::CommandLine | Self::KeyBinding => None,
         }
     }
@@ -142,6 +147,7 @@ pub struct CommandSpec {
     pub help: &'static str,
     pub target: Target,
     pub asks: Asks,
+    pub access: Access,
 }
 
 /// Whether a command needs the user there (MAX-165): what it opens or waits for takes their
@@ -155,6 +161,19 @@ pub enum Asks {
     /// Waits for the user's next key when its optional argument is missing (`mark` without
     /// its letter)
     Bare,
+}
+
+/// What a command reaches (MAX-287), for the API's access levels: a client's command runs
+/// as the level of its kind lets it
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Access {
+    /// Reads the state, changes nothing: the queries
+    Read,
+    /// Changes maxicom's own state, not the device's: the view, the marks, the settings
+    Control,
+    /// Reaches the device or the link: what is sent, the line's levels and settings, the
+    /// link opened or replaced, what sends on its own (triggers, profile hooks)
+    Device,
 }
 
 /// A spec is one entry of a registry: the same spec is the same entry
@@ -180,6 +199,7 @@ impl CommandSpec {
             help,
             target: Target::Action(action),
             asks: Asks::Never,
+            access: Access::Control,
         }
     }
 
@@ -195,6 +215,7 @@ impl CommandSpec {
             help,
             target: Target::Build(build),
             asks: Asks::Never,
+            access: Access::Control,
         }
     }
 
@@ -210,6 +231,7 @@ impl CommandSpec {
             help,
             target: Target::Query(query),
             asks: Asks::Never,
+            access: Access::Read,
         }
     }
 
@@ -228,12 +250,21 @@ impl CommandSpec {
             help,
             target: Target::Popup { action, query },
             asks: Asks::Never,
+            access: Access::Read,
         }
     }
 
     /// The same command, needing the user as `asks` says
     const fn asking(self, asks: Asks) -> Self {
         Self { asks, ..self }
+    }
+
+    /// The same command, reaching the device (`Access::Device`)
+    const fn reaching_device(self) -> Self {
+        Self {
+            access: Access::Device,
+            ..self
+        }
     }
 
     /// Runs without arguments: none, or all optional. Such a command is a keymap action too
@@ -279,6 +310,34 @@ pub struct Invocation {
 }
 
 impl Invocation {
+    /// The command as the user would type it (MAX-287), for the API's ask popup: its name and
+    /// arguments, bytes with `send`'s escapes in quotes
+    pub fn text(&self) -> String {
+        let mut line = self.spec.name.to_string();
+        for arg in &self.args {
+            line.push(' ');
+            match arg {
+                ArgValue::Int(n) => line.push_str(&n.to_string()),
+                ArgValue::Bool(on) => line.push_str(if *on { "on" } else { "off" }),
+                ArgValue::Enum(word) => line.push_str(word),
+                ArgValue::String(text) => line.push_str(&escape_word(text)),
+                ArgValue::Path(path) => line.push_str(&escape_word(&path.to_string_lossy())),
+                ArgValue::Address(address) => line.push_str(&escape_word(&address.to_string())),
+                ArgValue::Bytes(bytes) => line.push_str(&format!("\"{}\"", value::escaped(bytes))),
+            }
+        }
+        line
+    }
+
+    /// What it reaches (MAX-287): its spec's access, but `set answer-queries` reaches the
+    /// device, maxicom then writing its answers to the device's queries on its own
+    pub fn access(&self) -> Access {
+        match (self.spec.name, self.args.as_slice()) {
+            ("set", [ArgValue::Enum("answer-queries"), ..]) => Access::Device,
+            _ => self.spec.access,
+        }
+    }
+
     /// Why it can't run without the user there, as its spec asks (MAX-165); none when it runs
     /// on its own
     pub fn asks_user(&self) -> Option<&'static str> {
@@ -418,12 +477,14 @@ pub static COMMANDS: &[CommandSpec] = {
             "auto-resize-remote",
             A::AutoResizeRemote,
             "Resize the remote to the emulator",
-        ),
+        )
+        .reaching_device(),
         CommandSpec::action(
             "auto-resize-remote-line",
             A::AutoResizeRemoteLine,
             "Resize the remote to the line view width",
-        ),
+        )
+        .reaching_device(),
         CommandSpec::action(
             "auto-resize-emulator",
             A::AutoResizeEmulator,
@@ -496,7 +557,8 @@ pub static COMMANDS: &[CommandSpec] = {
         )
         .asking(Asks::Always),
         CommandSpec::action("exit-prefix", A::ExitPrefix, "Leave the prefix"),
-        CommandSpec::action("toggle-attach", A::ToggleAttach, "Detach / attach the link"),
+        CommandSpec::action("toggle-attach", A::ToggleAttach, "Detach / attach the link")
+            .reaching_device(),
         CommandSpec::action("reload-config", A::ReloadConfig, "Reload the config files"),
         CommandSpec::action(
             "redraw",
@@ -512,10 +574,16 @@ pub static COMMANDS: &[CommandSpec] = {
             "Stop the file transfer and queued commands",
         ),
         CommandSpec::action(
+            "disconnect-clients",
+            A::DisconnectClients,
+            "Drop every API client: their commands stopped, their connections closed",
+        ),
+        CommandSpec::action(
             "toggle-triggers",
             A::ToggleTriggers,
             "Arm / disarm the triggers",
-        ),
+        )
+        .reaching_device(),
         CommandSpec::popup(
             "triggers",
             &[],
@@ -609,13 +677,15 @@ pub static COMMANDS: &[CommandSpec] = {
             &[arg("text", ArgKind::Bytes)],
             build::send,
             "Send text, with escapes: \\r \\n \\t \\xNN",
-        ),
+        )
+        .reaching_device(),
         CommandSpec::build(
             "send-hex",
             &[arg("bytes", ArgKind::Hex)],
             build::send,
             "Send bytes written in hex: 0d0a",
-        ),
+        )
+        .reaching_device(),
         CommandSpec::build(
             "send-file",
             &[
@@ -632,7 +702,8 @@ pub static COMMANDS: &[CommandSpec] = {
             ],
             build::send_file,
             "Send a file at the baud rate, waiting after each line",
-        ),
+        )
+        .reaching_device(),
         CommandSpec::build(
             "upload",
             &[
@@ -641,7 +712,8 @@ pub static COMMANDS: &[CommandSpec] = {
             ],
             build::upload,
             "Send a file with XMODEM or YMODEM to a receiver (loady, loadx, rx, rb)",
-        ),
+        )
+        .reaching_device(),
         CommandSpec::build(
             "download",
             &[
@@ -654,13 +726,15 @@ pub static COMMANDS: &[CommandSpec] = {
             ],
             build::download,
             "Receive files sent with XMODEM or YMODEM (sb, sx), into [transfers] dir or a path",
-        ),
+        )
+        .reaching_device(),
         CommandSpec::build(
             "open",
             &[arg("address", ArgKind::Address)],
             build::open,
             "Switch to a saved link, a port (its settings kept), tcp:// or telnet://host:port or file://path",
-        ),
+        )
+        .reaching_device(),
         CommandSpec::build(
             "link-save",
             &[ArgSpec {
@@ -703,13 +777,15 @@ pub static COMMANDS: &[CommandSpec] = {
             ],
             build::replay,
             "Replay a raw capture in place of the link, a buffer every delay",
-        ),
+        )
+        .reaching_device(),
         CommandSpec::build(
             "replay-stop",
             &[],
             build::replay_stop,
             "Stop the replay, back to the link it replaced",
-        ),
+        )
+        .reaching_device(),
         CommandSpec::build("replay-pause", &[], build::replay_pause, "Pause the replay"),
         CommandSpec::build(
             "replay-resume",
@@ -755,13 +831,15 @@ pub static COMMANDS: &[CommandSpec] = {
             &[arg("state", ArgKind::Bool)],
             build::dtr,
             "Set the DTR line: on or off",
-        ),
+        )
+        .reaching_device(),
         CommandSpec::build(
             "rts",
             &[arg("state", ArgKind::Bool)],
             build::rts,
             "Set the RTS line: on or off",
-        ),
+        )
+        .reaching_device(),
         CommandSpec::build(
             "break",
             &[ArgSpec {
@@ -775,7 +853,8 @@ pub static COMMANDS: &[CommandSpec] = {
             }],
             build::line_break,
             "Hold the line in break, 250 ms by default",
-        ),
+        )
+        .reaching_device(),
         CommandSpec::build(
             "baud",
             &[arg(
@@ -790,13 +869,15 @@ pub static COMMANDS: &[CommandSpec] = {
             )],
             build::baud,
             "Set the baud rate",
-        ),
+        )
+        .reaching_device(),
         CommandSpec::build(
             "framing",
             &[arg("framing", ArgKind::String)],
             build::framing,
             "Set data bits, parity and stop bits: 8N1",
-        ),
+        )
+        .reaching_device(),
         CommandSpec::build(
             "set",
             &[
@@ -1089,7 +1170,8 @@ pub static COMMANDS: &[CommandSpec] = {
             ],
             build::mash,
             "Send text every 50 ms until a text comes in, 15 s at most",
-        ),
+        )
+        .reaching_device(),
         CommandSpec::build(
             "trigger",
             &[
@@ -1102,7 +1184,8 @@ pub static COMMANDS: &[CommandSpec] = {
             ],
             build::trigger,
             "Arm, disarm or toggle the triggers, or reset their counts; or the one named's",
-        ),
+        )
+        .reaching_device(),
         CommandSpec::build(
             "plot",
             &[ArgSpec {
@@ -1129,13 +1212,15 @@ pub static COMMANDS: &[CommandSpec] = {
             ],
             build::profile,
             "Lay a profile over the config, take one off, or alone show them",
-        ),
+        )
+        .reaching_device(),
         CommandSpec::build(
             "flow",
             &[arg("flow", ArgKind::Enum(&["none", "hw", "sw"]))],
             build::flow,
             "Set flow control: none, hw (RTS/CTS), sw (XON/XOFF)",
-        ),
+        )
+        .reaching_device(),
     ]
 };
 

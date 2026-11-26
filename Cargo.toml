@@ -57,4 +57,4 @@ vt100 = "0.18.1"
 # the API pipe's permissions (src/api/windows.rs): the versions interprocess already uses
 [target.'cfg(windows)'.dependencies]
 widestring = "1.2.1"
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Pipes", "Win32_System_Threading"] }

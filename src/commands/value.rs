@@ -103,7 +103,7 @@ fn bytes_line(row: &[u8]) -> String {
 
 /// Bytes as text the way `send` reads its escapes: printable ASCII as it is, `\\` for a
 /// backslash, `\r` `\n` `\t`, `\xHH` for any other byte
-fn escaped(bytes: &[u8]) -> String {
+pub fn escaped(bytes: &[u8]) -> String {
     let mut text = String::with_capacity(bytes.len());
     for &byte in bytes {
         match byte {
@@ -119,7 +119,7 @@ fn escaped(bytes: &[u8]) -> String {
 }
 
 /// A control character as its picture, `␛` for ESC, for the TUI's lines
-fn pictures(text: &str) -> String {
+pub fn pictures(text: &str) -> String {
     text.chars()
         .map(|c| match c {
             '\0'..='\x1f' => char::from_u32(0x2400 + c as u32).unwrap_or(c),

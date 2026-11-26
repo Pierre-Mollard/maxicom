@@ -45,6 +45,7 @@ static TEST_COMMANDS: [CommandSpec; 2] = [
         help: "",
         target: Target::Action(KeyBindingAction::Quit),
         asks: Asks::Never,
+        access: Access::Control,
     },
     CommandSpec::action("quit", KeyBindingAction::Quit, "Quit"),
 ];
@@ -133,6 +134,7 @@ fn action_index(action: KeyBindingAction) -> usize {
         A::PageSideDown => 64,
         A::Redraw => 65,
         A::Notifications => 66,
+        A::DisconnectClients => 67,
         A::Command(spec) => unreachable!("{} is a built command", spec.name),
     }
 }
@@ -154,7 +156,7 @@ fn every_action_has_one_command() {
         })
         .collect();
     indexes.sort_unstable();
-    assert_eq!(indexes, (0..67).collect::<Vec<_>>());
+    assert_eq!(indexes, (0..68).collect::<Vec<_>>());
 }
 
 /// The help writes a required argument in angle brackets, an optional one in square ones
@@ -752,4 +754,56 @@ fn commands_that_ask_the_user() {
         ]
     );
     assert_eq!(asking(Asks::Bare), ["jump-mark", "mark"]);
+}
+
+/// MAX-287 (step 2): what each command reaches, for the API's levels. The queries and popups
+/// only read; every other command changes maxicom's state (`control`) unless it is in this
+/// list: what it does reaches the device or the link, or sends on its own later (triggers
+/// armed, a profile's hooks). A new command is `control` until it goes in this list: one that
+/// writes to the link, sets a line, opens or replaces the link goes here. `set answer-queries`
+/// reaches the device too (maxicom writes its answers), the other settings of `set` don't.
+#[test]
+fn commands_that_reach_the_device() {
+    let reaching = |access: Access| -> Vec<&str> {
+        let mut names: Vec<&str> = (COMMANDS.iter())
+            .filter(|spec| spec.access == access)
+            .map(|spec| spec.name)
+            .collect();
+        names.sort_unstable();
+        names
+    };
+    assert_eq!(
+        reaching(Access::Device),
+        [
+            "auto-resize-remote",
+            "auto-resize-remote-line",
+            "baud",
+            "break",
+            "download",
+            "dtr",
+            "flow",
+            "framing",
+            "mash",
+            "open",
+            "profile",
+            "replay",
+            "replay-stop",
+            "rts",
+            "send",
+            "send-file",
+            "send-hex",
+            "toggle-attach",
+            "toggle-triggers",
+            "trigger",
+            "upload",
+        ]
+    );
+    for spec in COMMANDS {
+        let reads = matches!(spec.target, Target::Query(_) | Target::Popup { .. });
+        assert_eq!(spec.access == Access::Read, reads, "{}", spec.name);
+    }
+    let access = |line: &str| parse(line).unwrap()[0].access();
+    assert_eq!(access("set answer-queries on"), Access::Device);
+    assert_eq!(access("set local-echo on"), Access::Control);
+    assert_eq!(access("send hi"), Access::Device);
 }

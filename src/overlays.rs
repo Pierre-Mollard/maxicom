@@ -6,7 +6,7 @@ use crossterm::event::KeyCode;
 use crate::{
     app::types::SidePanel,
     capture::{CaptureDevice, Session, Stream},
-    commands::Invocation,
+    commands::{Invocation, jobs::JobId},
     configs::links::SavedLink,
     configs::{AppConfig, KeyBindingAction, SettingsConfig, keybindings::KeyBindingDialogAction},
     inputs::DialogAction,
@@ -74,6 +74,21 @@ pub enum Overlay {
     DeleteLink(SavedLink),
     /// A group replay loading (MAX-272): its state is the replay's. Close stops it
     Loading,
+    /// A client's command the `[api]` levels ask the user about (MAX-287), by its job: the
+    /// app's first ask
+    ClientAsk(JobId),
+}
+
+/// The user's answer to a client's command asked about (MAX-287)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AskAnswer {
+    /// Runs it, this once
+    Send,
+    /// Runs it, and the client's next commands of the same access without asking, until it
+    /// disconnects
+    Always,
+    /// Refuses it: its chain stops
+    Refuse,
 }
 
 /// A part of a popup the mouse picks (MAX-113)
@@ -125,6 +140,8 @@ pub enum PopupTarget {
     QueryCopy,
     /// The query popup's Copy all button: the whole answer
     QueryCopyAll,
+    /// The ask popup's always button (MAX-287)
+    AskAlways,
     ConfigPath(usize),
     DirectoryTab(DirectoryTab),
     DirectoryRow(usize),
@@ -198,6 +215,7 @@ pub enum OverlayResponse {
     EditLink(SavedLink),
     AskDeleteLink(SavedLink),
     DeleteLink(SavedLink),
+    AnswerAsk(AskAnswer),
     SaveLink {
         link: SavedLink,
         replaces: Option<SavedLink>,
@@ -239,6 +257,7 @@ impl Overlay {
                 | Overlay::NoDevice
                 | Overlay::RestoreSession(_)
                 | Overlay::Loading
+                | Overlay::ClientAsk(_)
         )
     }
 
@@ -284,6 +303,22 @@ impl Overlay {
                 DialogAction::HandleKey(key) => match key.code {
                     KeyCode::Char('y' | 'Y') => OverlayResponse::DeleteLink(link.clone()),
                     KeyCode::Char('n' | 'N') => OverlayResponse::Run(KeyBindingAction::Directory),
+                    _ => OverlayResponse::Handled,
+                },
+                _ => OverlayResponse::Handled,
+            },
+            // a client's command: y runs it, a always for that client, n or close refuses
+            // (MAX-287)
+            Overlay::ClientAsk(_) => match action {
+                DialogAction::Confirm => OverlayResponse::AnswerAsk(AskAnswer::Send),
+                DialogAction::Close => OverlayResponse::AnswerAsk(AskAnswer::Refuse),
+                DialogAction::Pick(PopupTarget::AskAlways) => {
+                    OverlayResponse::AnswerAsk(AskAnswer::Always)
+                }
+                DialogAction::HandleKey(key) => match key.code {
+                    KeyCode::Char('y' | 'Y') => OverlayResponse::AnswerAsk(AskAnswer::Send),
+                    KeyCode::Char('a' | 'A') => OverlayResponse::AnswerAsk(AskAnswer::Always),
+                    KeyCode::Char('n' | 'N') => OverlayResponse::AnswerAsk(AskAnswer::Refuse),
                     _ => OverlayResponse::Handled,
                 },
                 _ => OverlayResponse::Handled,

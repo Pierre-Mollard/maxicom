@@ -35,9 +35,9 @@ use crate::{
         plot::render_plot_panel,
         popups::{
             alert::{
-                render_confirm_quit_popup, render_delete_link_popup, render_detached_popup,
-                render_disconnected_popup, render_error_popup, render_loading_popup,
-                render_no_device_popup, render_restore_popup,
+                render_ask_popup, render_confirm_quit_popup, render_delete_link_popup,
+                render_detached_popup, render_disconnected_popup, render_error_popup,
+                render_loading_popup, render_no_device_popup, render_restore_popup,
             },
             command_line::render_command_line,
             directory::{render_directory_popup, render_link_form_popup},
@@ -376,6 +376,10 @@ fn render_active_overlay(
         Some(Overlay::DeleteLink(link)) => {
             render_delete_link_popup(link, resolver, frame, theme, &mut targets)
         }
+        Some(Overlay::ClientAsk(_)) => match app.asked() {
+            Some(ask) => render_ask_popup(ask, resolver, frame, theme, &mut targets),
+            None => return,
+        },
         Some(Overlay::Loading) => match app.group_load() {
             Some(load) => render_loading_popup(load, resolver, frame, theme, &mut targets),
             None => return,

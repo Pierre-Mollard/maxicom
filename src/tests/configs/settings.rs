@@ -210,3 +210,25 @@ fn disabled_mode_is_not_the_start_mode() {
         "mode is \"line\", the mode disabled_mode turns off"
     );
 }
+
+/// MAX-287 (step 3): `[api]` levels: reading and changing maxicom allowed, reaching the device
+/// off, by default; each level read from its word; `read` takes no `ask` (clients poll: a
+/// popup per query would be useless).
+/// How: an empty `[api]`, one with every level set, `read = "ask"`.
+#[test]
+fn api_levels_parse() {
+    use crate::configs::settings::{ApiConfig, Level, ReadLevel};
+    let parse = |toml: &str| toml::from_str::<ApiConfig>(toml);
+    let api = parse("").unwrap();
+    assert!(!api.enabled);
+    assert_eq!(
+        (api.read, api.control, api.device),
+        (ReadLevel::On, Level::On, Level::Off)
+    );
+    let api = parse("read = \"off\"\ncontrol = \"ask\"\ndevice = \"on\"").unwrap();
+    assert_eq!(
+        (api.read, api.control, api.device),
+        (ReadLevel::Off, Level::Ask, Level::On)
+    );
+    assert!(parse("read = \"ask\"").is_err());
+}

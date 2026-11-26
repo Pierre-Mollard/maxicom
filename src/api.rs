@@ -28,6 +28,7 @@ use serde_json::{Value as Json, json};
 use crate::{
     app::App,
     commands::{CommandError, Target, value::Value},
+    configs::ReadLevel,
     event::{Event, KINDS, Logged},
 };
 
@@ -70,10 +71,32 @@ impl Instance {
     }
 }
 
-/// The folder of the socket files on Unix: the runtime folder, else the cache folder (macOS
-/// has no runtime folder). Unused on Windows, whose pipes have no file
+/// The folder of the socket files on Unix (`socket_dir_in`). None on Windows, whose pipes
+/// have no file
 pub fn socket_dir() -> Option<PathBuf> {
-    (dirs::runtime_dir().or_else(dirs::cache_dir)).map(|dir| dir.join("maxicom"))
+    #[cfg(unix)]
+    {
+        let uid = unsafe { libc::geteuid() };
+        Some(socket_dir_in(
+            dirs::runtime_dir(),
+            &std::env::temp_dir(),
+            uid,
+        ))
+    }
+    #[cfg(not(unix))]
+    None
+}
+
+/// The socket folder of user `uid`: `maxicom` in the runtime folder, else `maxicom-<uid>` in
+/// the temporary folder (`/tmp`, macOS' `$TMPDIR`), as tmux does: both are this computer's.
+/// Not the cache folder: on a home shared over NFS, one computer would find the other's
+/// sockets, which refuse its connect, and remove them as stale (MAX-287)
+#[cfg(unix)]
+pub fn socket_dir_in(runtime: Option<PathBuf>, temp: &Path, uid: u32) -> PathBuf {
+    match runtime {
+        Some(runtime) => runtime.join("maxicom"),
+        None => temp.join(format!("maxicom-{uid}")),
+    }
 }
 
 /// A maxicom found running by its socket (MAX-74), for `maxicom list` (A2.2)
@@ -179,7 +202,26 @@ fn hello(app: &App, instance: &Instance, params: Option<&Json>) -> Result<Json, 
         "pid": instance.pid,
         "link": app.link_label(),
         "since": crate::commands::query::utc(instance.since),
+        "access": access(app),
     }))
+}
+
+/// Why a client's read is refused, `read` being off (MAX-287)
+pub const READING_OFF: &str = "reading is off in [api]";
+
+/// What clients may do, as the user set it in `[api]` (MAX-287): `read`, `control` and
+/// `device`, each `off`, `ask` or `on` (`read` has no `ask`)
+fn access(app: &App) -> Json {
+    let api = app.settings().api;
+    json!({ "read": api.read, "control": api.control, "device": api.device })
+}
+
+/// Why the user's `[api]` levels refuse `method` (MAX-287), none when they let it run:
+/// `query`, `subscribe` and `unsubscribe` read, refused when `read` is off; `hello` always
+/// answers, so a client learns its access
+fn refusal(app: &App, method: &str) -> Option<RpcError> {
+    let reads = matches!(method, "query" | "subscribe" | "unsubscribe");
+    (reads && app.settings().api.read == ReadLevel::Off).then(|| RpcError::refused(READING_OFF))
 }
 
 /// `query {command}`: `command` is a command as typed in the command-line popup, parsed
@@ -259,6 +301,9 @@ enum Outgoing {
     /// Stops, the lines before written: the connection closes when its reader is done too.
     /// Dropping a stream doesn't shut it down while another thread holds it
     Close,
+    /// Stops and shuts the connection down, the lines before written: the client sees it
+    /// closed, the reader's read ends (MAX-287)
+    Disconnect,
 }
 
 /// The server while it runs: dropping it stops it and removes its socket file. Connections
@@ -470,6 +515,18 @@ impl Server {
         }
     }
 
+    /// Every client dropped (MAX-287): each connection shut down, its subscriptions gone; the
+    /// server goes on listening. How many there were
+    pub fn disconnect_all(&mut self) -> usize {
+        for replies in self.replies.values() {
+            let _ = replies.send(Outgoing::Disconnect);
+        }
+        self.subscriptions.clear();
+        let count = self.replies.len();
+        self.replies.clear();
+        count
+    }
+
     /// The loop's pass (MAX-284): the requests answered with the app in hand, then the
     /// subscribers told of the events emitted and the bytes received since the last pass.
     /// Returns how many requests came in
@@ -484,12 +541,18 @@ impl Server {
         let told = *self.published.get_or_insert(now);
         let published = told.event;
         let requests = self.requests();
+        // reading turned off (a reload): no one is told anything more
+        if app.settings().api.read == ReadLevel::Off {
+            self.subscriptions.clear();
+        }
         let count = requests.len();
         for (conn, request) in requests {
-            let reply = match request.method.as_str() {
-                "subscribe" => self.subscribe(conn, app, published, &request),
-                "unsubscribe" => self.unsubscribe(conn, &request),
-                _ => answer(app, instance, &request),
+            let refused = refusal(app, &request.method);
+            let reply = match (refused, request.method.as_str()) {
+                (Some(error), _) => (request.id.as_ref()).map(|id| rpc::reply(id, Err(error))),
+                (None, "subscribe") => self.subscribe(conn, app, published, &request),
+                (None, "unsubscribe") => self.unsubscribe(conn, &request),
+                (None, _) => answer(app, instance, &request),
             };
             if let Some(reply) = reply {
                 self.reply(conn, reply);
@@ -645,12 +708,8 @@ fn socket_name(
     #[cfg(unix)]
     {
         use interprocess::local_socket::GenericFilePath;
-        use std::os::unix::fs::PermissionsExt;
         let dir = dir.ok_or_else(|| io::Error::other("no folder for the socket"))?;
-        std::fs::create_dir_all(dir)?;
-        // the owner's only: another user can't reach the socket in it, on every Unix (some
-        // ignore a socket file's own mode on connect)
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+        own_folder(dir)?;
         remove_stale_sockets(dir);
         let path = dir.join(format!("{name}{SUFFIX}"));
         let listener_name = path.clone().to_fs_name::<GenericFilePath>()?;
@@ -664,6 +723,34 @@ fn socket_name(
         let listener_name = name.to_string().to_ns_name::<GenericNamespaced>()?;
         Ok((listener_name, None, format!(r"\\.\pipe\{name}")))
     }
+}
+
+/// Makes the socket folder, or checks the one there: a folder (not a link) of this user's
+/// that no other user can write to, then made the owner's only, so another user can't reach
+/// the socket in it, on every Unix (some ignore a socket file's own mode on connect). The
+/// temporary folder is everyone's: another user could make ours first, or put a socket of
+/// theirs in it (MAX-287)
+#[cfg(unix)]
+fn own_folder(dir: &Path) -> io::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)?;
+    let meta = std::fs::symlink_metadata(dir)?;
+    let shown = dir.display();
+    if !meta.is_dir() {
+        return Err(io::Error::other(format!("{shown} isn't a folder")));
+    }
+    if meta.uid() != unsafe { libc::geteuid() } {
+        return Err(io::Error::other(format!("{shown} is another user's")));
+    }
+    if meta.mode() & 0o022 != 0 {
+        return Err(io::Error::other(format!(
+            "other users can write to {shown}"
+        )));
+    }
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
 }
 
 /// Removes the socket files no maxicom listens on any more: a maxicom killed leaves its file,
@@ -680,6 +767,25 @@ fn remove_stale_sockets(dir: &Path) {
         if file_name.starts_with(PREFIX) && file_name.ends_with(SUFFIX) && !is_alive(&path) {
             let _ = std::fs::remove_file(&path);
         }
+    }
+}
+
+/// Shuts a connection down from this side, both ways, while its reader may be blocked in a
+/// read, which then ends: a socket's `shutdown` (Unix), the pipe disconnected (Windows)
+fn shut_down(stream: &Stream) {
+    #[cfg(unix)]
+    {
+        use std::os::fd::{AsFd, AsRawFd};
+        let Stream::UdSocket(socket) = stream;
+        unsafe { libc::shutdown(socket.as_fd().as_raw_fd(), libc::SHUT_RDWR) };
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::{AsHandle, AsRawHandle};
+        let Stream::NamedPipe(pipe) = stream;
+        unsafe {
+            windows_sys::Win32::System::Pipes::DisconnectNamedPipe(pipe.as_handle().as_raw_handle())
+        };
     }
 }
 
@@ -722,8 +828,13 @@ fn serve(conn: u64, stream: Stream, to_loop: &Sender<Message>) {
         .spawn(move || {
             let mut send = &*sending;
             for outgoing in to_write {
-                let Outgoing::Line(line) = outgoing else {
-                    break;
+                let line = match outgoing {
+                    Outgoing::Line(line) => line,
+                    Outgoing::Close => break,
+                    Outgoing::Disconnect => {
+                        shut_down(&sending);
+                        break;
+                    }
                 };
                 let written = (send.write_all(line.as_bytes()))
                     .and_then(|()| send.write_all(b"\n"))

@@ -70,6 +70,7 @@ pub enum KeyBindingAction {
     ToggleMouse,
     CommandLine,
     CancelCommands,
+    DisconnectClients,
     ToggleTriggers,
     Triggers,
     Profiles,

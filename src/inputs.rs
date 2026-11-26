@@ -66,6 +66,7 @@ pub enum AppAction {
     ToggleAttach,
     ReloadConfig,
     Redraw,
+    DisconnectClients,
     OpenOverlay(Overlay),
     SideView(SideViewAction),
     ResizeSidePanel(i16),

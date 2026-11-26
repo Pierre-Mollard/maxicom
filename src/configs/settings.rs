@@ -173,11 +173,53 @@ pub enum CommandLineLayout {
     StatusBar,
 }
 
-/// The local API socket other programs connect to (MAX-74), off unless enabled
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+/// The local API socket other programs connect to (MAX-74), off unless enabled, and what its
+/// clients may do (MAX-287): read the state, change maxicom's, reach the device. Only the
+/// user sets them, in this file: a client can't change its own access
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ApiConfig {
     pub enabled: bool,
+    pub read: ReadLevel,
+    pub control: Level,
+    pub device: Level,
+    /// How long an `ask` waits for the user's answer, refused after
+    #[serde(with = "super::duration")]
+    pub ask_timeout: Duration,
+}
+
+impl Default for ApiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            read: ReadLevel::On,
+            control: Level::On,
+            device: Level::Off,
+            ask_timeout: Duration::from_secs(30),
+        }
+    }
+}
+
+/// What the API's clients may do of one kind (MAX-287)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Level {
+    /// Refused
+    Off,
+    /// Asked to the user, each time
+    Ask,
+    /// Allowed
+    On,
+}
+
+/// Whether the API's clients may read the state (MAX-287): no asking, as clients poll
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadLevel {
+    /// Refused
+    Off,
+    /// Allowed
+    On,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -29,9 +29,10 @@ pub use keybindings::{
 pub use links::LinksConfig;
 pub use plots::{PlotsConfig, PlotsFileError};
 pub use settings::{
-    CommandLineLayout, DualBufferMode, LineDisplayMode, LinkDefaults, Mode, PrefixWrapBehavior,
-    QueryGroup, RawSideView, SettingsConfig, SettingsError, StatusBarConfig, StatusBarLayout,
-    TerminalDimensionMode, TerminalModeConfig, TextEncoding, WrapMode,
+    CommandLineLayout, DualBufferMode, Level, LineDisplayMode, LinkDefaults, Mode,
+    PrefixWrapBehavior, QueryGroup, RawSideView, ReadLevel, SettingsConfig, SettingsError,
+    StatusBarConfig, StatusBarLayout, TerminalDimensionMode, TerminalModeConfig, TextEncoding,
+    WrapMode,
 };
 pub use theme::{ThemeConfig, ThemeError};
 pub use triggers::{TriggersConfig, TriggersFileError};

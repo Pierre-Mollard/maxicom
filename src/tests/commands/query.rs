@@ -39,9 +39,9 @@ fn commands_lists_every_command() {
 }
 
 /// MAX-283 (step 3): with a name, `commands` gives that command in detail: type, usage,
-/// help, `asks`, and each argument's kind, whether it's optional, a number's bounds and
+/// help, `asks`, `access` (MAX-287), and each argument's kind, whether it's optional, a number's bounds and
 /// suggestions, an enum's values; a command of `[commands]` its chain, asking always when one
-/// of its commands does; an unknown name fails.
+/// of its commands does, its access the widest of its commands'; an unknown name fails.
 /// How: `baud`, `mark` (bare: waits for its letter), `trigger`, `status`, `board-reset`, a
 /// named `keys` running `help`, `zz`.
 #[test]
@@ -55,6 +55,7 @@ fn commands_shows_one_command() {
             "usage: baud <rate>",
             "help: Set the baud rate",
             "asks: never",
+            "access: device",
             "args:",
             "  rate:",
             "    kind: int",
@@ -79,10 +80,12 @@ fn commands_shows_one_command() {
     let status = lines(&mut app, &named("status"));
     assert!(status.contains(&"type: query".to_string()), "{status:?}");
     assert!(status.contains(&"args: none".to_string()), "{status:?}");
+    assert!(status.contains(&"access: read".to_string()), "{status:?}");
     // a popup for the user, a value for the others (step 5): a query that never asks
     let marks = lines(&mut app, &named("marks"));
     assert!(marks.contains(&"type: query".to_string()), "{marks:?}");
     assert!(marks.contains(&"asks: never".to_string()), "{marks:?}");
+    assert!(marks.contains(&"access: read".to_string()), "{marks:?}");
     assert_eq!(
         lines(&mut app, &named("board-reset")),
         [
@@ -92,6 +95,7 @@ fn commands_shows_one_command() {
             "help: Pulse DTR, which resets most boards",
             "run: dtr off; sleep 100; dtr on",
             "asks: never",
+            "access: device",
             "args: none",
         ]
     );
@@ -104,6 +108,7 @@ fn commands_shows_one_command() {
     let keys = lines(&mut app, &named("keys"));
     assert!(keys.contains(&"help: help".to_string()), "{keys:?}");
     assert!(keys.contains(&"asks: always".to_string()), "{keys:?}");
+    assert!(keys.contains(&"access: control".to_string()), "{keys:?}");
     assert_eq!(
         commands(&mut app, &named("zz")),
         Err("unknown command 'zz'".to_string())

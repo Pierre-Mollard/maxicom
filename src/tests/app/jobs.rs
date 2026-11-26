@@ -375,6 +375,252 @@ fn automation_cant_run_what_asks_the_user() {
     assert_eq!(last_toast(&app), "mark a");
 }
 
+/// MAX-287 (step 4): a client's command runs as the user's `[api]` level for its access
+/// says: allowed when `on`, refused when `off` (its chain stopped, the toast saying which
+/// level), asked when `ask` (step 5); `set answer-queries` needs
+/// `device`, the other settings `control`; a trigger's command isn't held by the levels.
+/// How: chains pushed for a client under the default levels (read, control on, device off),
+/// then each level changed; then the same `send` from a trigger.
+#[test]
+fn clients_run_within_their_levels() {
+    use crate::configs::{Level, ReadLevel};
+    let mut app = app();
+    let client = Origin::Client {
+        conn: 1,
+        name: Some("script".to_string()),
+    };
+    let last_toast = |app: &App| {
+        let toasts = app.notifications.active_toasts();
+        toasts.last().unwrap().message.clone()
+    };
+    let run = |app: &mut App, origin: &Origin, line: &str| {
+        app.jobs
+            .push(origin.clone(), crate::commands::parse(line).unwrap());
+        let mut sent = Vec::new();
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            if let UpdateEffect::Transmit(bytes) = app.update_for(&caller, action) {
+                sent.extend(bytes);
+            }
+        }
+        sent
+    };
+
+    let echo = app.settings.local_echo;
+    assert!(run(&mut app, &client, "toggle-local-echo; send x; send y").is_empty());
+    assert_ne!(app.settings.local_echo, echo, "control is on");
+    assert_eq!(
+        last_toast(&app),
+        "send: device access is off in [api] (1 more not run)"
+    );
+    run(&mut app, &client, "set answer-queries on");
+    assert_eq!(last_toast(&app), "set: device access is off in [api]");
+
+    app.settings.api.device = Level::On;
+    assert_eq!(run(&mut app, &client, "send x"), b"x");
+    app.settings.api.device = Level::Ask;
+    assert!(run(&mut app, &client, "send x").is_empty());
+    assert_eq!(app.asked().unwrap().command, "send \"x\"");
+    app.update(Action::Overlay(DialogAction::Close));
+
+    app.settings.api.control = Level::Off;
+    run(&mut app, &client, "toggle-local-echo");
+    assert_ne!(app.settings.local_echo, echo, "toggled again");
+    assert_eq!(
+        last_toast(&app),
+        "toggle-local-echo: control access is off in [api]"
+    );
+    app.settings.api.read = ReadLevel::Off;
+    run(&mut app, &client, "status");
+    assert_eq!(last_toast(&app), "status: reading is off in [api]");
+
+    app.settings.api.device = Level::Off;
+    let trigger = Origin::Trigger("boot".to_string());
+    assert_eq!(run(&mut app, &trigger, "send x"), b"x");
+}
+
+/// MAX-287 (step 4): each API connection owns its jobs: its chains run in order, beside the
+/// other clients', and its `cancel` stops only its own, as a trigger's does.
+/// How: two clients each waiting in a `sleep`, the first one's `cancel`, then the second's
+/// chain going on.
+#[test]
+fn a_clients_cancel_stops_only_its_jobs() {
+    let mut app = app();
+    app.settings.api.device = crate::configs::Level::On;
+    let client = |conn| Origin::Client { conn, name: None };
+    let line = |text: &str| crate::commands::parse(text).unwrap();
+    app.jobs.push(client(1), line("sleep 50; send a"));
+    app.jobs.push(client(2), line("sleep 50; send b"));
+    let now = Instant::now();
+    while let Some((caller, action)) = app.next_command_action(now) {
+        app.update_for(&caller, action);
+    }
+    assert_eq!(app.jobs.running().count(), 2, "both wait");
+    let report = app.cancel(&client(1));
+    assert_eq!(report.notes[0].text, "Dropped 1 waiting command");
+    let later = Instant::now() + Duration::from_millis(100);
+    let (caller, action) = app.next_command_action(later).unwrap();
+    assert_eq!(caller.origin, client(2));
+    assert!(matches!(app.update_for(&caller, action), UpdateEffect::Transmit(b) if b == b"b"));
+    assert!(app.next_command_action(later).is_none());
+}
+
+/// A client's chain, the effects of its commands run until every job waits, at `now`
+fn run_client(app: &mut App, conn: u64, line: &str, now: Instant) -> Vec<u8> {
+    let client = Origin::Client {
+        conn,
+        name: Some("script".to_string()),
+    };
+    app.jobs.push(client, crate::commands::parse(line).unwrap());
+    drain_at(app, now)
+}
+
+/// The jobs' commands run until every job waits, at `now`: the bytes they sent
+fn drain_at(app: &mut App, now: Instant) -> Vec<u8> {
+    let mut sent = Vec::new();
+    while let Some((caller, action)) = app.next_command_action(now) {
+        if let UpdateEffect::Transmit(bytes) = app.update_for(&caller, action) {
+            sent.extend(bytes);
+        }
+    }
+    sent
+}
+
+fn key(c: char) -> Action {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    Action::Overlay(DialogAction::HandleKey(KeyEvent::new(
+        KeyCode::Char(c),
+        KeyModifiers::NONE,
+    )))
+}
+
+/// MAX-287 (step 5): with `ask`, a client's command waits for the user: its job waits
+/// (`status` says `user`), a popup shows the command as typed; confirm runs it, once: the next
+/// one asks again; `n` refuses it and stops its chain, the toast saying so.
+/// How: a client's `send a; send b; send c` under `device = "ask"`, confirmed, then refused.
+#[test]
+fn asked_commands_wait_for_the_user() {
+    let mut app = app();
+    app.settings.api.device = crate::configs::Level::Ask;
+    let now = Instant::now();
+    assert!(run_client(&mut app, 1, "send a; send b; send c", now).is_empty());
+    assert!(matches!(app.overlay(), Some(Overlay::ClientAsk(_))));
+    assert_eq!(app.asked().unwrap().command, "send \"a\"");
+    let job = app.jobs.running().next().unwrap();
+    assert!(matches!(job.wait(), Some(Wait::Asked { .. })));
+
+    app.update(Action::Overlay(DialogAction::Confirm));
+    assert!(app.overlay().is_none());
+    assert_eq!(drain_at(&mut app, now), b"a");
+    assert_eq!(app.asked().unwrap().command, "send \"b\"");
+    assert!(matches!(app.overlay(), Some(Overlay::ClientAsk(_))));
+
+    app.update(key('n'));
+    assert!(drain_at(&mut app, now).is_empty());
+    assert!(app.overlay().is_none());
+    assert!(app.asked().is_none());
+    assert_eq!(app.jobs.running().count(), 0);
+    let toasts = app.notifications.active_toasts();
+    assert_eq!(
+        toasts.last().unwrap().message,
+        "send \"b\": refused by the user (1 more not run)"
+    );
+}
+
+/// MAX-287 (step 5): `a` (always) runs the command and the client's next ones of the same
+/// access without asking; another client is still asked, and so is a `control` command of
+/// the first one.
+/// How: client 1's `send a; send b` answered always, then client 2's `send c`, then client 1's
+/// `toggle-local-echo` under `control = "ask"`.
+#[test]
+fn always_lets_the_client_go_on() {
+    use crate::configs::Level;
+    let mut app = app();
+    app.settings.api.device = Level::Ask;
+    app.settings.api.control = Level::Ask;
+    let now = Instant::now();
+    run_client(&mut app, 1, "send a; send b", now);
+    app.update(key('a'));
+    assert_eq!(drain_at(&mut app, now), b"ab");
+    assert!(app.asked().is_none());
+
+    assert!(run_client(&mut app, 2, "send c", now).is_empty());
+    assert_eq!(app.asked().unwrap().command, "send \"c\"");
+    app.update(key('n'));
+    drain_at(&mut app, now);
+    run_client(&mut app, 1, "toggle-local-echo", now);
+    assert_eq!(app.asked().unwrap().command, "toggle-local-echo");
+}
+
+/// MAX-287 (step 5): an ask with no answer by `ask_timeout` is refused, its popup closed and
+/// the next one shown; asks queue, one popup at a time; a popup the user is in isn't taken
+/// over: the ask shows once it closes; the user's `cancel` drops the asks with their jobs.
+/// How: two clients asked while the quit question is open, it closed; the first one left
+/// past its time; the second one's job cancelled by the user.
+#[test]
+fn asks_queue_time_out_and_go_with_their_jobs() {
+    let mut app = app();
+    app.settings.api.device = crate::configs::Level::Ask;
+    app.settings.api.ask_timeout = Duration::from_secs(30);
+    app.overlay = Some(Overlay::ConfirmQuit);
+    let now = Instant::now();
+    run_client(&mut app, 1, "send a", now);
+    run_client(&mut app, 2, "send b", now + Duration::from_secs(10));
+    assert!(matches!(app.overlay(), Some(Overlay::ConfirmQuit)));
+    app.overlay = None;
+    drain_at(&mut app, now + Duration::from_secs(10));
+    assert_eq!(app.asked().unwrap().command, "send \"a\"");
+
+    drain_at(&mut app, now + Duration::from_secs(30));
+    let toasts = app.notifications.active_toasts();
+    assert_eq!(
+        toasts.last().unwrap().message,
+        "send \"a\": no answer from the user"
+    );
+    assert_eq!(app.asked().unwrap().command, "send \"b\"");
+    assert!(matches!(app.overlay(), Some(Overlay::ClientAsk(_))));
+
+    let _ = app.cancel(&Origin::Input);
+    drain_at(&mut app, now + Duration::from_secs(31));
+    assert!(app.asked().is_none());
+    assert!(app.overlay().is_none());
+}
+
+/// MAX-287 (step 6): `disconnect-clients` cancels every client's jobs, its ask and popup
+/// with them, and forgets what the user let the clients do; the user's and the triggers'
+/// jobs go on; the loop gets the effect that closes the connections.
+/// How: client 1 asked (`device = "ask"`), client 2 in a `sleep`, a trigger and the user in a
+/// `sleep`, an always granted; then `disconnect-clients` from the command line.
+#[test]
+fn disconnect_clients_drops_only_the_clients() {
+    let mut app = app();
+    app.settings.api.device = crate::configs::Level::Ask;
+    let now = Instant::now();
+    run_client(&mut app, 1, "send a", now);
+    run_client(&mut app, 2, "sleep 1000; toggle-local-echo", now);
+    let line = |text: &str| crate::commands::parse(text).unwrap();
+    app.jobs.push(
+        Origin::Trigger("boot".to_string()),
+        line("sleep 1000; send t"),
+    );
+    app.jobs
+        .push(Origin::CommandLine, line("sleep 1000; send u"));
+    drain_at(&mut app, now);
+    app.allowed_always.push((2, Access::Control));
+    assert_eq!(app.jobs.running().count(), 4);
+    assert!(matches!(app.overlay(), Some(Overlay::ClientAsk(_))));
+
+    let effect = app.update(Action::App(AppAction::DisconnectClients));
+    assert!(matches!(effect, UpdateEffect::DisconnectClients));
+    let origins: Vec<&Origin> = app.jobs.running().map(|job| job.origin()).collect();
+    assert_eq!(
+        origins,
+        [&Origin::Trigger("boot".to_string()), &Origin::CommandLine]
+    );
+    assert!(app.asked().is_none());
+    assert!(app.overlay().is_none());
+    assert!(app.allowed_always.is_empty());
+}
+
 /// MAX-165 (A1 step 5): `status` from the user opens its answer in a popup: the link, its
 /// state, the mode, DTR (MAX-283) unset by the open; from a trigger it does nothing, and the
 /// trigger's chain goes on.

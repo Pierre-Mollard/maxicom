@@ -3284,6 +3284,7 @@ fn shown_after(app: &mut App, line: &str) -> String {
             UpdateEffect::CopyToClipboardAs { .. } => "CopyAs",
             UpdateEffect::ReloadConfig => "Reload",
             UpdateEffect::Redraw => "Redraw",
+            UpdateEffect::DisconnectClients => "DisconnectClients",
             UpdateEffect::LayProfiles(_) => "LayProfiles",
             _ => "link (not applied by dispatch)",
         };
@@ -3387,6 +3388,7 @@ fn every_command_shows_what_it_did() {
         ),
         ("reload-config", "effect Reload"),
         ("redraw", "effect Redraw"),
+        ("disconnect-clients", "effect DisconnectClients"),
         ("toggle-mouse", "info [setting:mouse] Mouse capture Off"),
         ("command-line", "popup CommandLine"),
         ("cancel", "info Nothing to cancel"),
