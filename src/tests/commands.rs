@@ -523,6 +523,20 @@ fn complete_command_names() {
     );
 }
 
+/// MAX-219: `set`'s value completes from the values of the setting named before it, `on`
+/// and `off` for a switch; none after a name `set` doesn't take.
+/// How: a setting of words, a switch, then an unknown name, in a chain.
+#[test]
+fn set_values_complete_by_setting() {
+    let complete = |line| complete(line, &Names::default());
+    assert_eq!(
+        values(&complete("set size-mode f")),
+        ["fixed_cols", "fixed"]
+    );
+    assert_eq!(values(&complete("send x; set  mouse ")), ["on", "off"]);
+    assert_eq!(complete("set wide ").candidates, []);
+}
+
 #[test]
 fn complete_argument_values() {
     let complete = |line| complete_in(&TEST_COMMANDS, line, &Names::default());

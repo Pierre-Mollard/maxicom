@@ -44,6 +44,8 @@ pub enum ArgKind {
     Profile,
     /// A command's name, the registry's or one of `[commands]` (MAX-283)
     Command,
+    /// A value of the setting named before it (MAX-219), checked when it runs
+    SettingValue,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -906,11 +908,11 @@ pub static COMMANDS: &[CommandSpec] = {
         CommandSpec::build(
             "set",
             &[
-                arg("setting", ArgKind::Enum(build::ON_OFF_SETTINGS)),
-                arg("state", ArgKind::Bool),
+                arg("setting", ArgKind::Enum(build::SET_SETTINGS)),
+                arg("value", ArgKind::SettingValue),
             ],
             build::set,
-            "Set local-echo, timestamps, mouse, answer-queries, add-cr or add-lf on or off",
+            "Set a setting to a value, as get names them: set line-wrap char, set mouse off",
         ),
         CommandSpec::build(
             "mode",
@@ -1402,6 +1404,13 @@ fn complete_in(commands: &'static [CommandSpec], line: &str, names: &Names) -> C
                     names.sort_unstable();
                     names
                 }
+                // the values of the setting named before it (MAX-219)
+                ArgKind::SettingValue => (word.previous.and_then(SettingKey::named))
+                    .map_or(&[][..], SettingKey::values)
+                    .iter()
+                    .filter(|value| value.starts_with(prefix))
+                    .map(|value| value.to_string())
+                    .collect(),
                 ArgKind::Plot => (plot_names.iter().map(String::as_str))
                     .chain(["off"])
                     .map(escape_word)
@@ -1512,6 +1521,8 @@ struct LastWord<'a> {
     index: usize,
     /// Its command's name, when it isn't the name
     command: Option<&'a str>,
+    /// The word before it in its command, when it isn't the name
+    previous: Option<&'a str>,
 }
 
 /// None when the word has a quote or an escape: it isn't text a candidate starts like
@@ -1520,6 +1531,7 @@ fn last_word(line: &str) -> Option<LastWord<'_>> {
     let mut index = 0;
     let mut in_word = false;
     let mut command = None;
+    let mut previous = None;
     let mut quote = None;
     let mut escaped = false;
     for (i, c) in line.char_indices() {
@@ -1540,12 +1552,15 @@ fn last_word(line: &str) -> Option<LastWord<'_>> {
                 index = 0;
                 in_word = false;
                 command = None;
+                previous = None;
                 start = i + 1;
             }
             c if c.is_whitespace() => {
                 if in_word {
                     if index == 0 {
                         command = Some(&line[start..i]);
+                    } else {
+                        previous = Some(&line[start..i]);
                     }
                     index += 1;
                     in_word = false;
@@ -1573,6 +1588,7 @@ fn last_word(line: &str) -> Option<LastWord<'_>> {
         start,
         index,
         command,
+        previous,
     })
 }
 
@@ -1693,7 +1709,8 @@ impl ArgKind {
             | Self::Link
             | Self::Plot
             | Self::Profile
-            | Self::Command => Ok(ArgValue::String(text.to_string())),
+            | Self::Command
+            | Self::SettingValue => Ok(ArgValue::String(text.to_string())),
             Self::Path => Ok(ArgValue::Path(PathBuf::from(text))),
             Self::Address => text.parse().map(ArgValue::Address),
             Self::Hex => parse_hex(text).map(ArgValue::Bytes),
@@ -1717,6 +1734,7 @@ impl ArgKind {
             Self::Plot => "plot",
             Self::Profile => "profile",
             Self::Command => "command",
+            Self::SettingValue => "setting-value",
         }
     }
 
@@ -1737,7 +1755,8 @@ impl ArgKind {
             | Self::Link
             | Self::Plot
             | Self::Profile
-            | Self::Command => &[],
+            | Self::Command
+            | Self::SettingValue => &[],
         };
         values
             .iter()

@@ -170,11 +170,24 @@ is already so. That suits a [named command](keybindings.md#named-commands) on a 
 ```text
 set local-echo on
 set timestamps off
+set size-mode fixed
 ```
 
-`set` takes `local-echo`, `timestamps`, `mouse`, `answer-queries`,
-`byte-trace`, `add-cr` and `add-lf`. For the encoding, use `encoding utf8|ascii|cp437|latin1`. The
-other settings, with more than two values, cycle with their keys.
+| Setting | Values |
+| --- | --- |
+| `local-echo`, `timestamps`, `mouse`, `answer-queries`, `byte-trace`, `add-cr`, `add-lf` | `on`, `off` |
+| `line-wrap` | `word`, `char`, `truncate` |
+| `indent-wrap` | `none`, `prefix`, `timestamp` |
+| `prefix-place` | `inset`, `border`, `none` |
+| `display-mode` | `pretty`, `clean`, `raw`, `hex`, `octal`, `binary` |
+| `display-raw` | `off`, `hex`, `octal`, `binary` |
+| `size-mode` | `auto`, `grow_only`, `fixed_cols`, `match_view`, `fixed` |
+| `tx-eol` | `crlf`, `cr`, `lf` |
+| `backspace` | `del`, `bs` |
+
+The values are the ones `get` gives, and complete on the command line. The
+mode, the encoding and the plot have their own commands: `mode line|terminal`,
+`encoding utf8|ascii|cp437|latin1` and `plot <name>|off`.
 
 ### Config paths
 

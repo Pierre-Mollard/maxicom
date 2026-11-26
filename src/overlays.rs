@@ -443,6 +443,29 @@ impl SettingKey {
         }
     }
 
+    /// The values `set` takes for it (MAX-219), as `get` gives them: `on`/`off` for a switch;
+    /// none for the ones of their own command (`mode`, `encoding`, `plot`)
+    pub const fn values(self) -> &'static [&'static str] {
+        match self {
+            Self::LocalEcho
+            | Self::DisplayTimestamp
+            | Self::Mouse
+            | Self::AnswerQueries
+            | Self::ByteTrace
+            | Self::AddCr
+            | Self::AddLf => &["on", "off"],
+            Self::LineWrap => &["word", "char", "truncate"],
+            Self::IdentWrap => &["none", "prefix", "timestamp"],
+            Self::PrefixPlace => &["inset", "border", "none"],
+            Self::DisplayMode => &["pretty", "clean", "raw", "hex", "octal", "binary"],
+            Self::DisplayRaw => &["off", "hex", "octal", "binary"],
+            Self::DimensionMode => &["auto", "grow_only", "fixed_cols", "match_view", "fixed"],
+            Self::TxEol => &["crlf", "cr", "lf"],
+            Self::Backspace => &["del", "bs"],
+            Self::Mode | Self::TextEncoding | Self::Plot => &[],
+        }
+    }
+
     /// The setting of that name
     pub fn named(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|key| key.name() == name)

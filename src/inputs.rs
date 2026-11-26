@@ -63,6 +63,7 @@ pub enum AppAction {
     SetPrefix(bool),
     FocusGained(bool),
     ToggleSetting(SettingKey),
+    SetSetting(SettingKey, &'static str),
     ToggleRecording,
     ToggleAttach,
     ReloadConfig,

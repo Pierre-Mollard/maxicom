@@ -181,12 +181,11 @@ Without a running session it refuses, and stops the rest of the line.
 
 | Command | Does |
 | --- | --- |
-| `set <setting> on\|off` | Sets `local-echo`, `timestamps`, `mouse`, `answer-queries`, `byte-trace`, `add-cr` or `add-lf`. Does nothing when it's already so. |
+| `set <setting> <value>` | Sets a setting to a value, named as `get` names them: `on\|off` for a switch, `set line-wrap char`. Does nothing when it's already so. The values complete. |
 | `mode line\|terminal` | Switches to line or terminal mode. Does nothing when it's already so. |
 | `encoding utf8\|ascii\|cp437\|latin1` | Sets how the received bytes are read |
 
-Settings with more than two values cycle with their keys. See
-[Setting a value directly](settings.md#setting-a-value-directly) and
+See [Setting a value directly](settings.md#setting-a-value-directly) and
 [Text encoding](encoding-and-newlines.md#text-encoding).
 
 ### Reading the state

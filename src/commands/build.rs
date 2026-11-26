@@ -12,7 +12,7 @@ use jiff::Timestamp;
 use crate::{
     app::{App, mash::Mash, wait_for::TextWatch},
     clock,
-    commands::ArgValue,
+    commands::{ArgKind, ArgValue, query, value::Value},
     configs::{Mode, TextEncoding, links::SavedLink},
     inputs::{Action, AppAction, MarkAction, PendingMark, SearchModeAction},
     link::{
@@ -430,7 +430,7 @@ pub fn replay_speed(app: &App, args: &[ArgValue]) -> Result<Action, String> {
 }
 
 /// The settings `set` turns on or off, by name
-pub const ON_OFF_SETTINGS: &[&str] = &[
+pub const SET_SETTINGS: &[&str] = &[
     "local-echo",
     "timestamps",
     "mouse",
@@ -438,19 +438,41 @@ pub const ON_OFF_SETTINGS: &[&str] = &[
     "byte-trace",
     "add-cr",
     "add-lf",
+    "line-wrap",
+    "indent-wrap",
+    "prefix-place",
+    "display-mode",
+    "display-raw",
+    "size-mode",
+    "tx-eol",
+    "backspace",
 ];
 
 /// `set <setting> on|off`: nothing when it is so already
 pub fn set(app: &App, args: &[ArgValue]) -> Result<Action, String> {
-    let [ArgValue::Enum(name), ArgValue::Bool(on)] = args else {
-        unreachable!("set takes a setting and on or off");
+    let [ArgValue::Enum(name), ArgValue::String(value)] = args else {
+        unreachable!("set takes a setting and its value");
     };
-    let key = SettingKey::named(name).expect("set takes one of ON_OFF_SETTINGS");
-    let is_on = app.setting_is_on(key).expect("an on/off setting");
-    Ok(if is_on == *on {
+    let key = SettingKey::named(name).expect("set takes one of SET_SETTINGS");
+    if let Some(is_on) = app.setting_is_on(key) {
+        let Ok(ArgValue::Bool(on)) = ArgKind::Bool.parse(value.as_bytes()) else {
+            return Err(format!("'{value}' is not on/true/1 or off/false/0"));
+        };
+        return Ok(if is_on == on {
+            Action::Ignore
+        } else {
+            Action::App(AppAction::ToggleSetting(key))
+        });
+    }
+    // a setting of more than two values (MAX-219)
+    let values = key.values();
+    let Some(&word) = values.iter().find(|word| **word == value) else {
+        return Err(format!("'{value}' is not one of {}", values.join(", ")));
+    };
+    Ok(if query::setting(app, key) == Value::text(word) {
         Action::Ignore
     } else {
-        Action::App(AppAction::ToggleSetting(key))
+        Action::App(AppAction::SetSetting(key, word))
     })
 }
 

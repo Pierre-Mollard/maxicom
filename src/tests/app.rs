@@ -1525,7 +1525,12 @@ fn command_line_set_encoding_search_screenshot() {
     );
     assert!(!app.settings.ui.mouse && app.settings.show_timestamps);
     assert!(app.settings.terminal_mode.answer_groups.is_empty());
-    assert!(parse_fails(&mut app, "set line-wrap on"));
+    run_line(&mut app, "set line-wrap on");
+    let toast = app.notifications.active_toasts().last().unwrap();
+    assert_eq!(
+        toast.message,
+        "set: 'on' is not one of word, char, truncate"
+    );
 
     // MAX-247: `mode` sets the mode, nothing when it is so already
     run_line(&mut app, "mode line");
@@ -1664,6 +1669,55 @@ fn setting_changes_are_published() {
             changed("encoding", SettingValue::Word(cycled), &Origin::Input),
             changed("encoding", word("latin1"), &trigger),
         ]
+    );
+}
+
+/// MAX-219: `set` puts a setting of more than two values to the value named, from any value it
+/// has: `get` then gives it, one `setting-changed` says so; set to the value it has, nothing
+/// changes and nothing is published. A value it doesn't take is refused with its values.
+/// How: every setting of words, from each of its values to each, through the command's
+/// chain; then a wrong value.
+#[test]
+fn set_reaches_every_value() {
+    use crate::commands::{query, value::Value};
+    let mut app = app();
+    let run = |app: &mut App, line: &str| {
+        app.update(Action::App(AppAction::QueueCommands(
+            crate::commands::parse(line).unwrap(),
+        )));
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            app.update_for(&caller, action);
+        }
+    };
+    let words = SettingKey::ALL.into_iter().filter(|key| {
+        let values = key.values();
+        !values.is_empty() && values != ["on", "off"]
+    });
+    for key in words {
+        let name = key.name();
+        for from in key.values() {
+            for to in key.values() {
+                run(&mut app, &format!("set {name} {from}"));
+                let since = app.events.last();
+                run(&mut app, &format!("set {name} {from}"));
+                let events: Vec<_> = app.events.after(since).map(|e| e.event.clone()).collect();
+                assert!(events.is_empty(), "{name} {from} {events:?}");
+                run(&mut app, &format!("set {name} {to}"));
+                assert_eq!(
+                    query::setting(&app, key),
+                    Value::text(*to),
+                    "{name} {from} {to}"
+                );
+                let changes = app.events.after(since).count();
+                assert_eq!(changes, usize::from(from != to), "{name} {from} {to}");
+            }
+        }
+    }
+    run(&mut app, "set line-wrap wide");
+    let toasts = app.notifications.active_toasts();
+    assert_eq!(
+        toasts.last().unwrap().message,
+        "set: 'wide' is not one of word, char, truncate"
     );
 }
 

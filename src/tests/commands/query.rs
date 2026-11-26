@@ -153,10 +153,11 @@ fn get_gives_the_settings() {
     assert_eq!(one(&mut app, "local-echo"), Value::Bool(true));
 }
 
-/// MAX-283 (step 4): every setting has its own name, which `get` parses and finds back; the
-/// names `set` takes are switches' names.
-/// How: each `SettingKey` (the match fails to build when one is added and not listed), and
-/// each of `set`'s names.
+/// MAX-283 (step 4): every setting has its own name, which `get` parses and finds back.
+/// MAX-219: every setting is set by `set`, `mode`, `encoding` or `plot`, `set`'s with the
+/// values it lists, a switch's `on` and `off`.
+/// How: each `SettingKey` (the match fails to build when one is added and not listed), the
+/// line setting it to each of its values parsed.
 #[test]
 fn every_setting_is_reachable() {
     for key in SettingKey::ALL {
@@ -189,9 +190,25 @@ fn every_setting_is_reachable() {
     names.dedup();
     assert_eq!(names.len(), SettingKey::ALL.len(), "a name twice");
     let app = app();
-    for name in crate::commands::build::ON_OFF_SETTINGS {
-        let key = SettingKey::named(name).unwrap();
-        assert!(app.setting_is_on(key).is_some(), "{name}");
+    for key in SettingKey::ALL {
+        let name = key.name();
+        let lines = match key {
+            SettingKey::Mode => vec!["mode terminal".to_string()],
+            SettingKey::TextEncoding => vec!["encoding latin1".to_string()],
+            SettingKey::Plot => vec!["plot off".to_string()],
+            _ => {
+                assert!(crate::commands::build::SET_SETTINGS.contains(&name));
+                let switch = app.setting_is_on(key).is_some();
+                assert_eq!(switch, key.values() == ["on", "off"], "{name}");
+                (key.values().iter())
+                    .map(|value| format!("set {name} {value}"))
+                    .collect()
+            }
+        };
+        assert!(!lines.is_empty(), "{name}");
+        for line in lines {
+            assert!(crate::commands::parse(&line).is_ok(), "{line}");
+        }
     }
 }
 

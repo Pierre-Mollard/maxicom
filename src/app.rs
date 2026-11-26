@@ -1975,6 +1975,10 @@ impl App {
                 report.notes.extend(self.toggle_setting(origin, setting));
                 UpdateEffect::None
             }
+            AppAction::SetSetting(setting, word) => {
+                (report.notes).extend(self.set_word_setting(origin, setting, word));
+                UpdateEffect::None
+            }
             AppAction::ToggleRecording => {
                 report.notes.extend(self.toggle_recording());
                 UpdateEffect::None
@@ -2872,16 +2876,16 @@ impl App {
             SettingKey::LocalEcho => {
                 self.settings.local_echo = !self.settings.local_echo;
             }
-            SettingKey::LineWrap => {
-                if self.settings().mode == Mode::Terminal {
-                    note = Some(Note::warn("Line wrap: line mode only"));
-                }
-                self.settings.line_mode.wrap_mode = match self.settings.line_mode.wrap_mode {
-                    WrapMode::Word => WrapMode::Char,
-                    WrapMode::Char => WrapMode::Truncate,
-                    WrapMode::Truncate => WrapMode::Word,
-                };
-                self.update_viewport(self.viewport);
+            SettingKey::LineWrap
+            | SettingKey::IdentWrap
+            | SettingKey::PrefixPlace
+            | SettingKey::DisplayMode
+            | SettingKey::DimensionMode
+            | SettingKey::Backspace
+            | SettingKey::TxEol
+            | SettingKey::DisplayRaw => {
+                self.step_word_setting(key);
+                note = self.word_setting_applied(key);
             }
             // no switching to the mode `disabled_mode` turns off (MAX-260)
             SettingKey::Mode if !self.settings.mode_enabled(self.settings.mode.other()) => {
@@ -2905,28 +2909,6 @@ impl App {
                     format!("Rx Text Encoding is {encoding}"),
                 ));
             }
-            SettingKey::IdentWrap => {
-                self.settings.line_mode.wrap_indent = match self.settings.line_mode.wrap_indent {
-                    PrefixWrapBehavior::None => PrefixWrapBehavior::Prefix,
-                    PrefixWrapBehavior::Prefix => PrefixWrapBehavior::Timestamp,
-                    PrefixWrapBehavior::Timestamp => PrefixWrapBehavior::None,
-                }
-            }
-            SettingKey::PrefixPlace => {
-                self.settings.line_mode.prefix_place = match self.settings.line_mode.prefix_place {
-                    PrefixPlace::Inset => PrefixPlace::Border,
-                    PrefixPlace::Border => PrefixPlace::None,
-                    PrefixPlace::None => PrefixPlace::Inset,
-                }
-            }
-            SettingKey::DisplayMode => {
-                self.settings.line_mode.display_mode.toggle();
-                let mode = self.settings.line_mode.display_mode.as_str();
-                note = Some(setting_note(
-                    "setting:display",
-                    format!("Display Mode is {mode}"),
-                ));
-            }
             SettingKey::Mouse => {
                 self.settings.ui.mouse = !self.settings.ui.mouse;
                 let state = on_off(self.settings.ui.mouse);
@@ -2934,20 +2916,6 @@ impl App {
                     "setting:mouse",
                     format!("Mouse capture {state}"),
                 ));
-            }
-            SettingKey::DimensionMode => {
-                self.settings.terminal_mode.dimension_mode.toggle();
-                self.update_viewport(self.viewport);
-                let dimension_mode = self.settings.terminal_mode.dimension_mode;
-                let text = format!("Terminal Size Mode is {}", dimension_mode.as_str());
-                // the one sized from the view that cuts lines, unlike `auto` (MAX-282)
-                note = Some(match dimension_mode {
-                    TerminalDimensionMode::MatchView => Note::warn(format!(
-                        "{text}: lines wider than the view can be cut, in the history too"
-                    ))
-                    .in_slot("setting:size"),
-                    _ => setting_note("setting:size", text),
-                });
             }
             // off empties `answer_groups`, its list kept aside for on, all groups when none was
             SettingKey::AnswerQueries => {
@@ -2989,24 +2957,6 @@ impl App {
                 let state = on_off(self.settings.add_lf);
                 note = Some(setting_note("setting:add-lf", format!("Add LF {state}")));
             }
-            // what the Backspace key sends in terminal mode (MAX-270)
-            SettingKey::Backspace => {
-                self.settings.terminal_mode.backspace.toggle();
-                let byte = self.settings.terminal_mode.backspace.as_str();
-                note = Some(setting_note(
-                    "setting:backspace",
-                    format!("Backspace sends {byte}"),
-                ));
-            }
-            // what Enter sends in line mode (MAX-184)
-            SettingKey::TxEol => {
-                self.settings.line_mode.tx_eol.toggle();
-                let eol = self.settings.line_mode.tx_eol.as_str();
-                note = Some(setting_note(
-                    "setting:enter",
-                    format!("Line Enter sends {eol}"),
-                ));
-            }
             // the next plot of plots.toml, off after the last, as `plot` alone (MAX-222)
             // as `plot`: the next one, off after the last
             SettingKey::Plot if self.plots.plots.is_empty() => {
@@ -3016,16 +2966,133 @@ impl App {
                 let name = self.next_plot().map(String::from);
                 note = self.show_plot(name.as_deref());
             }
-            SettingKey::DisplayRaw => {
-                self.settings.raw_side.view.toggle();
-                let view = self.settings.raw_side.view.as_str();
-                note = Some(setting_note(
-                    "setting:raw",
-                    format!("Raw SideView is {view}"),
-                ));
-            }
         }
         note
+    }
+
+    /// `set <setting> <word>` (MAX-219): a setting of more than two values set to the one
+    /// `get` names, with what follows as the settings popup's cycle; its event when it changed
+    fn set_word_setting(&mut self, origin: &Origin, key: SettingKey, word: &str) -> Option<Note> {
+        let before = query::setting(self, key);
+        if before == Value::text(word) {
+            return None;
+        }
+        let value = toml::Value::String(word.to_string());
+        let settings = &mut self.settings;
+        let set = match key {
+            SettingKey::LineWrap => value.try_into().map(|v| settings.line_mode.wrap_mode = v),
+            SettingKey::IdentWrap => value.try_into().map(|v| settings.line_mode.wrap_indent = v),
+            SettingKey::PrefixPlace => {
+                (value.try_into()).map(|v| settings.line_mode.prefix_place = v)
+            }
+            SettingKey::DisplayMode => {
+                (value.try_into()).map(|v| settings.line_mode.display_mode = v)
+            }
+            SettingKey::DisplayRaw => value.try_into().map(|v| settings.raw_side.view = v),
+            SettingKey::DimensionMode => {
+                (value.try_into()).map(|v| settings.terminal_mode.dimension_mode = v)
+            }
+            SettingKey::TxEol => value.try_into().map(|v| settings.line_mode.tx_eol = v),
+            SettingKey::Backspace => value
+                .try_into()
+                .map(|v| settings.terminal_mode.backspace = v),
+            _ => unreachable!("{} isn't a setting of words", key.name()),
+        };
+        set.expect("`set` checks the word against the setting's values");
+        let note = self.word_setting_applied(key);
+        self.publish_setting(origin, key, before);
+        note
+    }
+
+    /// A setting of more than two values to its next one, as the settings popup cycles them
+    fn step_word_setting(&mut self, key: SettingKey) {
+        let line_mode = &mut self.settings.line_mode;
+        match key {
+            SettingKey::LineWrap => {
+                line_mode.wrap_mode = match line_mode.wrap_mode {
+                    WrapMode::Word => WrapMode::Char,
+                    WrapMode::Char => WrapMode::Truncate,
+                    WrapMode::Truncate => WrapMode::Word,
+                };
+            }
+            SettingKey::IdentWrap => {
+                line_mode.wrap_indent = match line_mode.wrap_indent {
+                    PrefixWrapBehavior::None => PrefixWrapBehavior::Prefix,
+                    PrefixWrapBehavior::Prefix => PrefixWrapBehavior::Timestamp,
+                    PrefixWrapBehavior::Timestamp => PrefixWrapBehavior::None,
+                }
+            }
+            SettingKey::PrefixPlace => {
+                line_mode.prefix_place = match line_mode.prefix_place {
+                    PrefixPlace::Inset => PrefixPlace::Border,
+                    PrefixPlace::Border => PrefixPlace::None,
+                    PrefixPlace::None => PrefixPlace::Inset,
+                }
+            }
+            SettingKey::DisplayMode => line_mode.display_mode.toggle(),
+            SettingKey::TxEol => line_mode.tx_eol.toggle(),
+            SettingKey::DimensionMode => self.settings.terminal_mode.dimension_mode.toggle(),
+            SettingKey::Backspace => self.settings.terminal_mode.backspace.toggle(),
+            SettingKey::DisplayRaw => self.settings.raw_side.view.toggle(),
+            _ => unreachable!("{} isn't a setting of words", key.name()),
+        }
+    }
+
+    /// What follows a setting of more than two values changed, cycled or set: the view laid
+    /// out again for the ones that size it, and the note saying the new value
+    fn word_setting_applied(&mut self, key: SettingKey) -> Option<Note> {
+        match key {
+            SettingKey::LineWrap => {
+                self.update_viewport(self.viewport);
+                (self.settings.mode == Mode::Terminal)
+                    .then(|| Note::warn("Line wrap: line mode only"))
+            }
+            SettingKey::IdentWrap | SettingKey::PrefixPlace => None,
+            SettingKey::DisplayMode => {
+                let mode = self.settings.line_mode.display_mode.as_str();
+                Some(setting_note(
+                    "setting:display",
+                    format!("Display Mode is {mode}"),
+                ))
+            }
+            SettingKey::DimensionMode => {
+                self.update_viewport(self.viewport);
+                let dimension_mode = self.settings.terminal_mode.dimension_mode;
+                let text = format!("Terminal Size Mode is {}", dimension_mode.as_str());
+                // the one sized from the view that cuts lines, unlike `auto` (MAX-282)
+                Some(match dimension_mode {
+                    TerminalDimensionMode::MatchView => Note::warn(format!(
+                        "{text}: lines wider than the view can be cut, in the history too"
+                    ))
+                    .in_slot("setting:size"),
+                    _ => setting_note("setting:size", text),
+                })
+            }
+            // what the Backspace key sends in terminal mode (MAX-270)
+            SettingKey::Backspace => {
+                let byte = self.settings.terminal_mode.backspace.as_str();
+                Some(setting_note(
+                    "setting:backspace",
+                    format!("Backspace sends {byte}"),
+                ))
+            }
+            // what Enter sends in line mode (MAX-184)
+            SettingKey::TxEol => {
+                let eol = self.settings.line_mode.tx_eol.as_str();
+                Some(setting_note(
+                    "setting:enter",
+                    format!("Line Enter sends {eol}"),
+                ))
+            }
+            SettingKey::DisplayRaw => {
+                let view = self.settings.raw_side.view.as_str();
+                Some(setting_note(
+                    "setting:raw",
+                    format!("Raw SideView is {view}"),
+                ))
+            }
+            _ => unreachable!("{} isn't a setting of words", key.name()),
+        }
     }
 
     #[inline]
