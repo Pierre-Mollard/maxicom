@@ -33,6 +33,7 @@
 - [File transfers](file-transfers.md)
 - [Notifications](notifications.md)
 - [Command line](command-line.md)
+- [API](api.md)
 
 # Configuration
 

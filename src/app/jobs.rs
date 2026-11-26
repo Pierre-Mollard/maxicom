@@ -10,7 +10,7 @@ use crate::{
     api::READING_OFF,
     commands::{
         Access, CommandError, Invocation, Origin, Target,
-        jobs::{Caller, JobId, Wait},
+        jobs::{Caller, Ended, JobId, Wait},
         report::Note,
         report::{Answer, Failure, Report},
     },
@@ -30,6 +30,37 @@ pub struct Ask {
     pub access: Access,
     /// Refused when no answer came by then
     pub until: Instant,
+}
+
+/// What a client's job did (MAX-284), its `run`'s reply: the notes its commands gave, the
+/// answers of its queries, and why it stopped if it didn't end
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Outcome {
+    pub notes: Vec<String>,
+    pub answers: Vec<Answer>,
+    pub failure: Option<JobFailure>,
+}
+
+/// Why a client's job stopped (MAX-284)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobFailure {
+    pub kind: FailureKind,
+    pub message: String,
+    /// Its commands that didn't run
+    pub not_run: usize,
+}
+
+/// What stopped a job (MAX-284), each kind its own error code for a client
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureKind {
+    /// A command failed: the link couldn't, an argument was wrong
+    Command,
+    /// The `[api]` levels refused a command, or it needs the user there
+    Refused,
+    /// The user refused a command asked about, or didn't answer
+    ByUser,
+    /// A `cancel` took the job away
+    Cancelled,
 }
 
 /// What the `[api]` levels say of a client's command (MAX-287)
@@ -59,6 +90,7 @@ impl App {
             self.fail_job(job, format!("open: no answer after {secs}s"));
         }
         self.sync_asks(now);
+        self.settle_runs();
         let (caller, invocation) = self.jobs.next(now)?;
         // a popup or a key to wait for would take the user's keys: theirs to run (MAX-165);
         // a client runs what the user's `[api]` levels let it (MAX-287)
@@ -74,6 +106,10 @@ impl App {
                     return self.next_command_action(now);
                 }
             },
+        };
+        let kind = match refused {
+            Some(_) => FailureKind::Refused,
+            None => FailureKind::Command,
         };
         let built = match (refused, invocation.spec.target) {
             (Some(reason), _) => Err(reason),
@@ -98,7 +134,7 @@ impl App {
                     reason,
                 };
                 if let Some(job) = caller.job {
-                    self.fail_job(job, error.to_string());
+                    self.fail_job_as(job, error.to_string(), kind);
                 }
                 None
             }
@@ -169,7 +205,8 @@ impl App {
     /// its job failed with `why`
     fn refuse_ask(&mut self, ask: Ask, why: &str) {
         self.jobs.skip(ask.job);
-        self.fail_job(ask.job, format!("{}: {why}", ask.command));
+        let message = format!("{}: {why}", ask.command);
+        self.fail_job_as(ask.job, message, FailureKind::ByUser);
     }
 
     /// The asks kept in step with their jobs (MAX-287): one with no answer by its time is
@@ -238,6 +275,26 @@ impl App {
     /// failure, or what its job waits for. A job's failure stops the rest of it, quietly when a
     /// popup shows it; the user's own input has no job, its failure is only said
     pub fn present(&mut self, caller: &Caller, report: Report) {
+        // a client's job: what it reports goes back to the client, not to a toast (MAX-284)
+        if let Some(job) = caller.job
+            && let Some(outcome) = self.runs.get_mut(&job)
+        {
+            outcome
+                .notes
+                .extend(report.notes.into_iter().map(|note| note.text));
+            outcome.answers.extend(report.answer);
+            match report.failure {
+                Some(Failure::Said(message) | Failure::Shown(message)) => {
+                    self.fail_job(job, message);
+                }
+                None => {
+                    if let Some(wait) = report.wait {
+                        self.jobs.wait(job, wait);
+                    }
+                }
+            }
+            return;
+        }
         for note in report.notes {
             self.show_note(note);
         }
@@ -265,9 +322,113 @@ impl App {
     /// A command of `job` failed with `message`: the rest of it is dropped, the error says how
     /// much
     pub fn fail_job(&mut self, job: JobId, message: String) {
-        match self.jobs.fail(job) {
+        self.fail_job_as(job, message, FailureKind::Command);
+    }
+
+    /// `fail_job`, saying what stopped it: a client's job keeps it for its reply (MAX-284),
+    /// any other's is a toast
+    fn fail_job_as(&mut self, job: JobId, message: String, kind: FailureKind) {
+        let not_run = self.jobs.fail(job);
+        if let Some(outcome) = self.runs.get_mut(&job) {
+            outcome.failure = Some(JobFailure {
+                kind,
+                message,
+                not_run,
+            });
+            return;
+        }
+        match not_run {
             0 => self.notify_error(message),
             n => self.notify_error(format!("{message} ({n} more not run)")),
+        }
+    }
+
+    /// A client's chain (MAX-284), run as a job of its own: its number, for the reply when it
+    /// ends. One starting with `cancel` cancels the client's jobs first, as the user's does,
+    /// its notes the job's; with nothing left to run, no job, and those notes
+    pub fn run_for_client(
+        &mut self,
+        origin: Origin,
+        mut invocations: Vec<Invocation>,
+    ) -> (Option<JobId>, Vec<String>) {
+        let mut notes = Vec::new();
+        if starts_with_cancel(&invocations) {
+            invocations.remove(0);
+            let report = self.cancel(&origin);
+            notes = report.notes.into_iter().map(|note| note.text).collect();
+        }
+        let Some(job) = self.jobs.push(origin, invocations) else {
+            return (None, notes);
+        };
+        let outcome = Outcome {
+            notes,
+            ..Outcome::default()
+        };
+        self.runs.insert(job, outcome);
+        (Some(job), Vec::new())
+    }
+
+    /// `cancel` from a client (MAX-284): its job `job`, or every one of its jobs, the mash one
+    /// of them waited for stopping too; what it did, as `cancel` says it. A job that isn't one
+    /// of the client's running is refused
+    pub fn cancel_for_client(
+        &mut self,
+        origin: &Origin,
+        job: Option<JobId>,
+    ) -> Result<Report, String> {
+        let Some(job) = job else {
+            return Ok(self.cancel(origin));
+        };
+        let Origin::Client { conn, .. } = origin else {
+            return Ok(self.cancel(origin));
+        };
+        let own = (self.jobs.running()).any(|running| {
+            running.id() == job
+                && matches!(running.origin(), Origin::Client { conn: of, .. } if of == conn)
+        });
+        if !own {
+            return Err(format!("no job {job} of this client runs"));
+        }
+        if self
+            .jobs
+            .cancel_job(job)
+            .is_some_and(|cancelled| cancelled.mash)
+        {
+            self.mash = None;
+        }
+        self.sync_asks(Instant::now());
+        Ok(Report::from(Note::warn(format!("Cancelled job {job}"))))
+    }
+
+    /// A client's connection closed (MAX-284): its jobs cancelled, the mash one of them waited
+    /// for stopped, its asks gone with them, and what the user let it do always forgotten
+    pub fn client_gone(&mut self, conn: u64) {
+        let _ = self.cancel(&Origin::Client { conn, name: None });
+        self.allowed_always.retain(|(of, _)| *of != conn);
+        self.sync_asks(Instant::now());
+    }
+
+    /// The clients' jobs that ended since the last call, each with what it did (MAX-284)
+    pub fn finished_runs(&mut self) -> Vec<(JobId, Outcome)> {
+        self.settle_runs();
+        std::mem::take(&mut self.finished)
+    }
+
+    /// The jobs that ended, the clients' moved to `finished` with how they ended: a
+    /// cancelled one says so, a failed one says why (`fail_job_as`)
+    fn settle_runs(&mut self) {
+        for (job, ended) in self.jobs.take_ended() {
+            let Some(mut outcome) = self.runs.remove(&job) else {
+                continue;
+            };
+            if ended == Ended::Cancelled {
+                outcome.failure = Some(JobFailure {
+                    kind: FailureKind::Cancelled,
+                    message: "cancelled".to_string(),
+                    not_run: 0,
+                });
+            }
+            self.finished.push((job, outcome));
         }
     }
 
@@ -291,14 +452,8 @@ impl App {
     /// one starting with `cancel` cancels first instead of waiting behind them, which it
     /// reports
     pub fn queue_chain(&mut self, origin: Origin, mut invocations: Vec<Invocation>) -> Report {
-        let cancels = invocations.first().is_some_and(|invocation| {
-            matches!(
-                invocation.spec.target,
-                Target::Action(KeyBindingAction::CancelCommands)
-            )
-        });
         let mut report = Report::default();
-        if cancels {
+        if starts_with_cancel(&invocations) {
             invocations.remove(0);
             report = self.cancel(&origin);
         }
@@ -344,6 +499,16 @@ impl App {
         }
         Report::from(notes)
     }
+}
+
+/// A chain whose first command is `cancel`: it cancels first, not waiting behind the jobs
+fn starts_with_cancel(invocations: &[Invocation]) -> bool {
+    invocations.first().is_some_and(|invocation| {
+        matches!(
+            invocation.spec.target,
+            Target::Action(KeyBindingAction::CancelCommands)
+        )
+    })
 }
 
 #[cfg(test)]

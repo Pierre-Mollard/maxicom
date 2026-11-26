@@ -2,7 +2,10 @@
 //! and writing replies; no socket here, so it is tested alone
 use serde_json::{Map, Value as Json, json};
 
-use crate::commands::CommandError;
+use crate::{
+    app::jobs::{FailureKind, JobFailure},
+    commands::CommandError,
+};
 
 /// The longest line read, its newline included: past it the connection closes, so a client
 /// that never sends a newline can't grow the buffer forever
@@ -24,8 +27,13 @@ pub const COMMAND_FAILED: i64 = 107;
 pub const NAMED_WITH_ARGUMENTS: i64 = 108;
 /// `query`'s line isn't one query
 pub const NOT_A_QUERY: i64 = 110;
-/// Refused by the access levels the user set in `[api]` (MAX-287)
+/// Refused by the access levels the user set in `[api]`, or a command that needs the user
+/// there (MAX-287)
 pub const REFUSED: i64 = 111;
+/// A command the user was asked about, refused or not answered (MAX-287)
+pub const REFUSED_BY_USER: i64 = 112;
+/// A `run`'s job cancelled before its end (MAX-284)
+pub const CANCELLED: i64 = 113;
 
 /// A request read from a line: a notification (no `id`) gets no reply
 #[derive(Debug, Clone, PartialEq)]
@@ -98,6 +106,22 @@ impl RpcError {
             code: REFUSED,
             message: message.into(),
         }
+    }
+
+    /// A `run`'s job stopped (MAX-284): one code per kind of stop, the message saying which
+    /// command and why, and how many commands didn't run
+    pub fn job(failure: &JobFailure) -> Self {
+        let code = match failure.kind {
+            FailureKind::Command => COMMAND_FAILED,
+            FailureKind::Refused => REFUSED,
+            FailureKind::ByUser => REFUSED_BY_USER,
+            FailureKind::Cancelled => CANCELLED,
+        };
+        let message = match failure.not_run {
+            0 => failure.message.clone(),
+            n => format!("{} ({n} more not run)", failure.message),
+        };
+        Self { code, message }
     }
 
     /// `query`'s line isn't one query (MAX-284): an action, or several commands

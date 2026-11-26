@@ -52,6 +52,29 @@ class ApiTest(unittest.TestCase):
             self.client.query("toggle-local-echo")
         self.assertEqual(refused.exception.code, 110)
 
+    def test_run_within_the_levels(self):
+        """`run` replies when its job ends: a setting toggled (control on) and a query's value;
+        a send refused, device access being off by default (111)"""
+        done = self.client.run("toggle-local-echo; status")
+        self.assertEqual(done["values"][0]["query"], "status")
+        with self.assertRaises(RpcError) as refused:
+            self.client.run("send hi")
+        self.assertEqual(refused.exception.code, 111)
+        self.assertEqual(self.device.received(), b"")
+
+    def test_send_raw_bytes(self):
+        """`send` writes raw bytes, any byte, once `device` is on; refused while it is off"""
+        with self.assertRaises(RpcError) as refused:
+            self.client.send(b"no")
+        self.assertEqual(refused.exception.code, 111)
+        self.tearDown()
+        self.device = Device()
+        self.maxicom = Maxicom(self.device.address, api='device = "on"\n')
+        self.client = self.maxicom.client()
+        until(self.device.connected, "maxicom connected to the device")
+        self.client.send(b"\x00\xff\r\n")
+        until(lambda: self.device.received() == b"\x00\xff\r\n", "the bytes sent")
+
     def test_bytes_received_come_by_rx_and_raw_since(self):
         """Bytes from the device: an `rx` notification with the stream's end, then
         `raw-since` gives them, base64 in JSON"""

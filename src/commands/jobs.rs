@@ -45,6 +45,17 @@ pub enum Wait {
     Asked { until: Instant },
 }
 
+/// How a job ended (MAX-284), for a client waiting for its `run`'s reply
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ended {
+    /// Every command ran
+    Done,
+    /// A command failed: the rest didn't run
+    Failed,
+    /// A `cancel` took it away
+    Cancelled,
+}
+
 /// What `cancel` took away: how many commands were waiting, and whether a job waited for the
 /// mash, which stops then
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -109,6 +120,8 @@ fn owner(origin: &Origin) -> Owner<'_> {
 pub struct Jobs {
     jobs: VecDeque<Job>,
     next_id: JobId,
+    /// The jobs that ended since `take_ended`, and how (MAX-284)
+    ended: Vec<(JobId, Ended)>,
 }
 
 impl Jobs {
@@ -144,8 +157,14 @@ impl Jobs {
     /// The next command due at `now`: the oldest job's that doesn't wait, and that no older
     /// job of its owner holds back. A time waited for is over at `now`; a job done is gone
     pub fn next(&mut self, now: Instant) -> Option<(Caller, Invocation)> {
-        self.jobs
-            .retain(|job| !job.commands.is_empty() || job.wait.is_some());
+        let ended = &mut self.ended;
+        self.jobs.retain(|job| {
+            let runs = !job.commands.is_empty() || job.wait.is_some();
+            if !runs {
+                ended.push((job.id, Ended::Done));
+            }
+            runs
+        });
         let mut owners = Vec::new();
         for job in &mut self.jobs {
             let job_owner = owner(&job.origin);
@@ -230,15 +249,40 @@ impl Jobs {
     /// `job` ends: how many of its commands didn't run
     pub fn fail(&mut self, job: JobId) -> usize {
         match self.jobs.iter().position(|j| j.id == job) {
-            Some(at) => self.jobs.remove(at).map_or(0, |job| job.commands.len()),
+            Some(at) => {
+                self.ended.push((job, Ended::Failed));
+                self.jobs.remove(at).map_or(0, |job| job.commands.len())
+            }
             None => 0,
         }
     }
 
+    /// The jobs that ended since the last call, and how (MAX-284)
+    pub fn take_ended(&mut self) -> Vec<(JobId, Ended)> {
+        std::mem::take(&mut self.ended)
+    }
+
+    /// `job` taken away by a `cancel` (MAX-284): what it held, none when it doesn't run
+    pub fn cancel_job(&mut self, job: JobId) -> Option<Cancelled> {
+        let at = self.jobs.iter().position(|j| j.id == job)?;
+        let cancelled = self.jobs.remove(at).map(|job| Cancelled {
+            commands: job.commands.len(),
+            mash: job.wait == Some(Wait::Mash),
+        });
+        self.ended.push((job, Ended::Cancelled));
+        cancelled
+    }
+
     /// Every client's jobs ended (MAX-287), the others kept
     pub fn cancel_clients(&mut self) {
-        self.jobs
-            .retain(|job| !matches!(owner(&job.origin), Owner::Client(_)));
+        let ended = &mut self.ended;
+        self.jobs.retain(|job| {
+            let kept = !matches!(owner(&job.origin), Owner::Client(_));
+            if !kept {
+                ended.push((job.id, Ended::Cancelled));
+            }
+            kept
+        });
     }
 
     /// `cancel` from `origin`: the user's stops every job, a trigger's, a profile's or a
@@ -246,11 +290,13 @@ impl Jobs {
     pub fn cancel(&mut self, origin: &Origin) -> Cancelled {
         let by = owner(origin);
         let mut cancelled = Cancelled::default();
+        let ended = &mut self.ended;
         self.jobs.retain(|job| {
             let kept = by != Owner::User && owner(&job.origin) != by;
             if !kept {
                 cancelled.commands += job.commands.len();
                 cancelled.mash |= job.wait == Some(Wait::Mash);
+                ended.push((job.id, Ended::Cancelled));
             }
             kept
         });

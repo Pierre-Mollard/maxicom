@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -208,8 +208,12 @@ pub struct App {
     asks: VecDeque<jobs::Ask>,
     /// The jobs whose held command the user let run, once (MAX-287)
     allowed_once: Vec<JobId>,
-    /// What the user let a client do without asking again, by its connection (MAX-287)
-    // TODO: (MAX-284) forgotten when the connection closes, with its jobs cancelled
+    /// The clients' jobs running, each with what it did so far (MAX-284)
+    runs: HashMap<JobId, jobs::Outcome>,
+    /// The clients' jobs ended, for the API to reply (MAX-284)
+    finished: Vec<(JobId, jobs::Outcome)>,
+    /// What the user let a client do without asking again, by its connection, until it
+    /// closes (MAX-287)
     allowed_always: Vec<(u64, Access)>,
     /// The command lines that ran, the oldest first (MAX-12)
     command_history: VecDeque<String>,
@@ -406,6 +410,8 @@ impl App {
             jobs: Jobs::default(),
             asks: VecDeque::new(),
             allowed_once: Vec::new(),
+            runs: HashMap::new(),
+            finished: Vec::new(),
             allowed_always: Vec::new(),
             command_history: VecDeque::new(),
             search_history: VecDeque::new(),

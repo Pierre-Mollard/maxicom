@@ -12,6 +12,7 @@ Windows (the pipe \\\\.\\pipe\\maxicom-<pid>). Used by `scripts/api_request.py` 
 integration tests next to it (`test_api.py`).
 """
 
+import base64
 import itertools
 import json
 import os
@@ -219,6 +220,16 @@ class Client:
     def query(self, command, timeout=5.0):
         """A getter's value: `query {command}`"""
         return self.call("query", {"command": command}, timeout)
+
+    def run(self, command, timeout=5.0):
+        """A command line run as a job of this connection: `run {command}`, its reply when
+        the job ends (its notes and its queries' values)"""
+        return self.call("run", {"command": command}, timeout)
+
+    def send(self, data, timeout=5.0):
+        """Raw bytes sent as this connection's `send`: `send {bytes}`, base64"""
+        encoded = base64.b64encode(data).decode("ascii")
+        return self.call("send", {"bytes": encoded}, timeout)
 
     def wait_for(self, method, match=lambda params: True, timeout=5.0):
         """The params of the first notification `method` that `match` takes, taken off the

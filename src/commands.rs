@@ -103,9 +103,6 @@ pub enum Origin {
     /// from an API connection (MAX-287), by its number, with the name its `hello` gave. Its
     /// chains run next to the user's and the triggers', within the `[api]` levels; the CLI
     /// (MAX-285) and the MCP server (MAX-149) are clients too
-    // TODO: (MAX-284) made by `run` (step 3), its results going back to the client, not to a
-    // toast; the attribute goes with it
-    #[cfg_attr(not(test), expect(dead_code, reason = "MAX-284's run"))]
     Client { conn: u64, name: Option<String> },
 }
 

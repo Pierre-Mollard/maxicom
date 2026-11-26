@@ -449,8 +449,9 @@ See [Command line](command-line.md#look).
 ### `[api]`
 
 A local socket that scripts and other programs use to talk to this
-maxicom. Only your user can connect to it. A reload starts or stops it,
-and applies the levels below to the programs already connected.
+maxicom, described in [API](api.md). Only your user can connect to it. A
+reload starts or stops it, and applies the levels below to the programs
+already connected.
 
 | Setting | Default | |
 | --- | --- | --- |

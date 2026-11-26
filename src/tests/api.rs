@@ -702,6 +702,140 @@ mod socket {
         assert!(client.reply()["result"].is_object());
     }
 
+    /// Serves until one request came in and no `run` waits for its job, running the jobs as
+    /// the loop does; then `client`'s next line
+    fn serve_until_reply(server: &mut Server, app: &mut App, client: &mut Client) -> Json {
+        let instance = Instance::now();
+        let start = Instant::now();
+        let mut served = 0;
+        while served == 0 || !server.runs.is_empty() {
+            assert!(start.elapsed() < Duration::from_secs(5), "no reply");
+            served += server.serve(app, &instance);
+            while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+                app.dispatch_from(&caller, action);
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        server.serve(app, &instance);
+        client.reply()
+    }
+
+    /// MAX-284 (step 3a): `run {command}` runs a command line as a job of the connection,
+    /// under the name its `hello` gave: the reply comes when the job ends, with its notes and
+    /// its queries' values; a stopped job is an error of its kind (`REFUSED` for the levels,
+    /// the message saying how many didn't run); a line that doesn't parse is refused at once.
+    /// How: `hello` named, `run` of `status; sleep 1` (its job, still running, listed with the
+    /// name), `send x; send y` with device off,
+    /// `nope`, a missing `command`.
+    #[test]
+    fn run_replies_when_its_job_ends() {
+        let mut server = TestServer::start("run");
+        let mut app = crate::app::tests::app();
+        let mut client = Client::connect(&server);
+        client.send(r#"{"jsonrpc":"2.0","id":1,"method":"hello","params":{"client":"py"}}"#);
+        serve_requests(&mut server, &mut app, 1);
+        client.reply();
+
+        client.send(
+            r#"{"jsonrpc":"2.0","id":2,"method":"run","params":{"command":"status; sleep 1"}}"#,
+        );
+        let done = serve_until_reply(&mut server, &mut app, &mut client);
+        assert_eq!(done["id"], json!(2));
+        let values = &done["result"]["values"];
+        assert_eq!(values[0]["query"], json!("status"));
+        let jobs = &values[0]["value"]["jobs"];
+        assert_eq!(jobs[0]["origin"], json!("client"), "{jobs}");
+        assert_eq!(jobs[0]["name"], json!("py"), "{jobs}");
+
+        client.send(
+            r#"{"jsonrpc":"2.0","id":3,"method":"run","params":{"command":"send x; send y"}}"#,
+        );
+        let refused = serve_until_reply(&mut server, &mut app, &mut client);
+        assert_eq!(refused["error"]["code"], json!(rpc::REFUSED), "{refused}");
+        assert_eq!(
+            refused["error"]["message"],
+            json!("send: device access is off in [api] (1 more not run)")
+        );
+
+        client.send(r#"{"jsonrpc":"2.0","id":4,"method":"run","params":{"command":"nope"}}"#);
+        let unknown = serve_until_reply(&mut server, &mut app, &mut client);
+        assert_eq!(unknown["error"]["code"], json!(rpc::UNKNOWN_COMMAND));
+        client.send(r#"{"jsonrpc":"2.0","id":5,"method":"run"}"#);
+        let missing = serve_until_reply(&mut server, &mut app, &mut client);
+        assert_eq!(missing["error"]["code"], json!(rpc::INVALID_PARAMS));
+    }
+
+    /// MAX-284 (step 3b): `send {bytes}` runs base64 bytes as a `send` of the connection,
+    /// held by the `device` level like any: refused with it off; bytes that aren't base64, or
+    /// none given, are refused at once as invalid params.
+    /// How: `send` of "aGk=" (device off by default), of "%%", without params.
+    #[test]
+    fn send_is_a_send_of_the_client() {
+        let mut server = TestServer::start("send");
+        let mut app = crate::app::tests::app();
+        let mut client = Client::connect(&server);
+        client.send(r#"{"jsonrpc":"2.0","id":1,"method":"send","params":{"bytes":"aGk="}}"#);
+        let refused = serve_until_reply(&mut server, &mut app, &mut client);
+        assert_eq!(refused["error"]["code"], json!(rpc::REFUSED), "{refused}");
+        assert_eq!(
+            refused["error"]["message"],
+            json!("send: device access is off in [api]")
+        );
+        client.send(r#"{"jsonrpc":"2.0","id":2,"method":"send","params":{"bytes":"%%"}}"#);
+        let bad = serve_until_reply(&mut server, &mut app, &mut client);
+        assert_eq!(bad["error"]["code"], json!(rpc::INVALID_PARAMS), "{bad}");
+        client.send(r#"{"jsonrpc":"2.0","id":3,"method":"send"}"#);
+        let missing = serve_until_reply(&mut server, &mut app, &mut client);
+        assert_eq!(missing["error"]["code"], json!(rpc::INVALID_PARAMS));
+    }
+
+    /// MAX-284 (step 3c): `cancel` stops the connection's jobs: the cancel is answered with
+    /// what it did, the waiting `run` with `CANCELLED`; a job number not its own is refused; a
+    /// connection that closes takes its jobs with it.
+    /// How: a `run` in a long `sleep`, `cancel {job: 999}`, then `cancel`; another client's
+    /// `run` in a `sleep`, then that client gone.
+    #[test]
+    fn cancel_and_disconnect_end_the_jobs() {
+        let mut server = TestServer::start("cancel");
+        let mut app = crate::app::tests::app();
+        let instance = Instance::now();
+        let mut client = Client::connect(&server);
+        client.send(
+            r#"{"jsonrpc":"2.0","id":1,"method":"run","params":{"command":"sleep 60000; status"}}"#,
+        );
+        client.send(r#"{"jsonrpc":"2.0","id":2,"method":"cancel","params":{"job":999}}"#);
+        serve_requests(&mut server, &mut app, 2);
+        let refused = client.reply();
+        assert_eq!(refused["id"], json!(2));
+        assert_eq!(refused["error"]["code"], json!(rpc::INVALID_PARAMS));
+        assert_eq!(app.jobs().running().count(), 1);
+
+        client.send(r#"{"jsonrpc":"2.0","id":3,"method":"cancel"}"#);
+        serve_requests(&mut server, &mut app, 1);
+        let cancel = client.reply();
+        assert_eq!(cancel["id"], json!(3));
+        assert_eq!(
+            cancel["result"]["notes"],
+            json!(["Dropped 2 waiting commands"])
+        );
+        server.serve(&mut app, &instance);
+        let run = client.reply();
+        assert_eq!(run["id"], json!(1));
+        assert_eq!(run["error"]["code"], json!(rpc::CANCELLED), "{run}");
+
+        let other = Client::connect(&server);
+        other.send(r#"{"jsonrpc":"2.0","id":4,"method":"run","params":{"command":"sleep 60000"}}"#);
+        serve_requests(&mut server, &mut app, 1);
+        assert_eq!(app.jobs().running().count(), 1);
+        drop(other);
+        let start = Instant::now();
+        while app.jobs().running().count() > 0 {
+            assert!(start.elapsed() < Duration::from_secs(5), "the job stays");
+            server.serve(&mut app, &instance);
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     /// MAX-284 (step 2b, review change): `subscribe {events}` adds to what the connection
     /// has and `unsubscribe {events}` takes only those off, each reply giving the names held
     /// after; with `since`, only the kinds just added are sent again; a bare `unsubscribe`

@@ -109,7 +109,7 @@ class Maxicom:
     """maxicom on a pty of `cols` × `rows`, on `address`, in a folder of its own: its HOME,
     config, cache and runtime folders. What it draws is read and dropped"""
 
-    def __init__(self, address, cols=100, rows=30):
+    def __init__(self, address, cols=100, rows=30, api=""):
         self.dir = Path(tempfile.mkdtemp(prefix="mx-", dir="/tmp"))
         self.env = dict(os.environ)
         for name, sub in [
@@ -126,7 +126,7 @@ class Maxicom:
         self.env["TERM"] = "xterm-256color"
         config = self.dir / "config" / "maxicom"
         config.mkdir()
-        (config / "config.toml").write_text(CONFIG)
+        (config / "config.toml").write_text(CONFIG + api)
 
         self.master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))

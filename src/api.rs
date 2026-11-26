@@ -26,8 +26,8 @@ use jiff::Timestamp;
 use serde_json::{Value as Json, json};
 
 use crate::{
-    app::App,
-    commands::{CommandError, Target, value::Value},
+    app::{App, jobs::Outcome},
+    commands::{ArgValue, CommandError, Invocation, Origin, Target, jobs::JobId, value::Value},
     configs::ReadLevel,
     event::{Event, KINDS, Logged},
 };
@@ -192,8 +192,9 @@ pub fn answer(app: &mut App, instance: &Instance, request: &Request) -> Option<S
     Some(rpc::reply(id, result))
 }
 
-/// `hello {client?}`: who this maxicom is. `client` is the name the client gives itself
-// TODO: (MAX-286) the client's name kept with its connection, for the TUI to show (A3)
+/// `hello {client?}`: who this maxicom is. `client` is the name the client gives itself, kept
+/// with its connection by `Server::serve` for its jobs
+// TODO: (MAX-286) the clients and their names shown in the TUI (A3)
 fn hello(app: &App, instance: &Instance, params: Option<&Json>) -> Result<Json, RpcError> {
     let _client = text_param(params, "client", false)?;
     Ok(json!({
@@ -322,6 +323,14 @@ pub struct Server {
     /// What the subscribers were told of: set on the first pass, the events before it being
     /// in the log for `since`
     published: Option<Published>,
+    /// The name each connection's `hello` gave (MAX-284)
+    names: HashMap<u64, String>,
+    /// The `run`s waiting for their job to end: the connection and the request's id
+    /// (MAX-284)
+    runs: HashMap<JobId, (u64, Json)>,
+    /// The connections closed since the loop's last pass, for their jobs to be cancelled
+    /// (MAX-284)
+    closed: Vec<u64>,
 }
 
 /// What the subscribers were last told of (MAX-284): the last event's number, the end of the
@@ -424,6 +433,18 @@ impl Subscription {
     }
 }
 
+/// A `run`'s reply once its job ended (MAX-284): its number, the notes its commands gave and
+/// its queries' values, each with its query's name; or why it stopped
+fn run_result(job: JobId, outcome: &Outcome) -> Result<Json, RpcError> {
+    if let Some(failure) = &outcome.failure {
+        return Err(RpcError::job(failure));
+    }
+    let values: Vec<Json> = (outcome.answers.iter())
+        .map(|answer| json!({ "query": answer.query, "value": json(&answer.value) }))
+        .collect();
+    Ok(json!({ "job": job, "notes": outcome.notes, "values": values }))
+}
+
 /// A logged event as a subscriber gets it, the params of an `event` notification: its number,
 /// its time, its kind and its fields
 pub fn event_json(logged: &Logged) -> Json {
@@ -478,6 +499,9 @@ impl Server {
             replies: HashMap::new(),
             subscriptions: HashMap::new(),
             published: None,
+            names: HashMap::new(),
+            runs: HashMap::new(),
+            closed: Vec::new(),
         })
     }
 
@@ -499,6 +523,9 @@ impl Server {
                 Message::Closed(conn) => {
                     self.replies.remove(&conn);
                     self.subscriptions.remove(&conn);
+                    self.names.remove(&conn);
+                    self.runs.retain(|_, (of, _)| *of != conn);
+                    self.closed.push(conn);
                 }
             }
         }
@@ -522,6 +549,8 @@ impl Server {
             let _ = replies.send(Outgoing::Disconnect);
         }
         self.subscriptions.clear();
+        self.names.clear();
+        self.runs.clear();
         let count = self.replies.len();
         self.replies.clear();
         count
@@ -541,6 +570,10 @@ impl Server {
         let told = *self.published.get_or_insert(now);
         let published = told.event;
         let requests = self.requests();
+        // a client gone: its jobs with it (MAX-284)
+        for conn in std::mem::take(&mut self.closed) {
+            app.client_gone(conn);
+        }
         // reading turned off (a reload): no one is told anything more
         if app.settings().api.read == ReadLevel::Off {
             self.subscriptions.clear();
@@ -552,10 +585,26 @@ impl Server {
                 (Some(error), _) => (request.id.as_ref()).map(|id| rpc::reply(id, Err(error))),
                 (None, "subscribe") => self.subscribe(conn, app, published, &request),
                 (None, "unsubscribe") => self.unsubscribe(conn, &request),
-                (None, _) => answer(app, instance, &request),
+                (None, "run") => self.run(conn, app, &request),
+                (None, "send") => self.send(conn, app, &request),
+                (None, "cancel") => self.cancel(conn, app, &request),
+                (None, method) => {
+                    let reply = answer(app, instance, &request);
+                    if method == "hello"
+                        && let Ok(Some(name)) = text_param(request.params.as_ref(), "client", false)
+                    {
+                        self.names.insert(conn, name.to_string());
+                    }
+                    reply
+                }
             };
             if let Some(reply) = reply {
                 self.reply(conn, reply);
+            }
+        }
+        for (job, outcome) in app.finished_runs() {
+            if let Some((conn, id)) = self.runs.remove(&job) {
+                self.reply(conn, rpc::reply(&id, run_result(job, &outcome)));
             }
         }
         let events: Vec<&Logged> = app.events.after(published).collect();
@@ -594,6 +643,99 @@ impl Server {
             ..now
         });
         count
+    }
+
+    /// `run {command}` (MAX-284): a command line as typed, run as a job of this connection
+    /// (`Origin::Client`, with its `hello` name), each command held by the user's `[api]`
+    /// levels (MAX-287). The reply comes when the job ends, on a later pass; at once for a
+    /// line that doesn't parse or holds no command. A notification runs it, unanswered
+    fn run(&mut self, conn: u64, app: &mut App, request: &Request) -> Option<String> {
+        let reply = |result| (request.id.as_ref()).map(|id| rpc::reply(id, result));
+        let command = match text_param(request.params.as_ref(), "command", true) {
+            Ok(command) => command.unwrap_or_default(),
+            Err(error) => return reply(Err(error)),
+        };
+        let invocations = match crate::commands::parse_with(command, &app.key_resolver.commands) {
+            Ok(invocations) => invocations,
+            Err(error) => return reply(Err(RpcError::command(&error))),
+        };
+        self.start_run(conn, app, request, invocations)
+    }
+
+    /// `send {bytes}` (MAX-284): raw bytes, base64, sent as a `send` of this connection's: for
+    /// binary a command line would only escape. The same job as `run`'s, held by the `device`
+    /// level, its reply once the bytes are written
+    fn send(&mut self, conn: u64, app: &mut App, request: &Request) -> Option<String> {
+        let reply = |result| (request.id.as_ref()).map(|id| rpc::reply(id, result));
+        let encoded = match text_param(request.params.as_ref(), "bytes", true) {
+            Ok(encoded) => encoded.unwrap_or_default(),
+            Err(error) => return reply(Err(error)),
+        };
+        let Ok(bytes) = BASE64_STANDARD.decode(encoded) else {
+            return reply(Err(RpcError::invalid_params("\"bytes\" is base64")));
+        };
+        let spec = crate::commands::find_by_name("send").expect("send is a command");
+        let invocation = Invocation {
+            spec,
+            args: vec![ArgValue::Bytes(bytes)],
+        };
+        self.start_run(conn, app, request, vec![invocation])
+    }
+
+    /// A client's chain started as a job of `conn` (MAX-284), its reply kept for when the job
+    /// ends; an empty one answered at once
+    fn start_run(
+        &mut self,
+        conn: u64,
+        app: &mut App,
+        request: &Request,
+        invocations: Vec<Invocation>,
+    ) -> Option<String> {
+        let origin = Origin::Client {
+            conn,
+            name: self.names.get(&conn).cloned(),
+        };
+        match app.run_for_client(origin, invocations) {
+            (Some(job), _) => {
+                if let Some(id) = &request.id {
+                    self.runs.insert(job, (conn, id.clone()));
+                }
+                None
+            }
+            (None, notes) => {
+                let empty = json!({ "job": null, "notes": notes, "values": [] });
+                (request.id.as_ref()).map(|id| rpc::reply(id, Ok(empty)))
+            }
+        }
+    }
+
+    /// `cancel {job?}` (MAX-284): this connection's job `job`, or all its jobs, stopped, their
+    /// `run`s answered `CANCELLED`; the reply gives what it did, as `cancel` says it. A job
+    /// that isn't one of this connection's running is refused (invalid params)
+    fn cancel(&mut self, conn: u64, app: &mut App, request: &Request) -> Option<String> {
+        let id = request.id.as_ref();
+        let job = match request.params.as_ref().and_then(|params| params.get("job")) {
+            None => None,
+            Some(job) => match job.as_u64() {
+                Some(job) => Some(job),
+                None => {
+                    let error = RpcError::invalid_params("\"job\" is a job's number");
+                    return id.map(|id| rpc::reply(id, Err(error)));
+                }
+            },
+        };
+        let origin = Origin::Client {
+            conn,
+            name: self.names.get(&conn).cloned(),
+        };
+        let result = match app.cancel_for_client(&origin, job) {
+            Ok(report) => {
+                let notes: Vec<String> = report.notes.into_iter().map(|note| note.text).collect();
+                Ok(json!({ "notes": notes }))
+            }
+            Err(message) => Err(RpcError::invalid_params(message)),
+        };
+        id.map(|id| rpc::reply(id, result))
     }
 
     /// `subscribe {events?, since?}` (MAX-284): this connection told of `events` from now on,

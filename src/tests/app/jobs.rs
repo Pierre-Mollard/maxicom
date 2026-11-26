@@ -621,6 +621,136 @@ fn disconnect_clients_drops_only_the_clients() {
     assert!(app.allowed_always.is_empty());
 }
 
+/// MAX-284 (step 3a): a client's chain run with `run_for_client` reports back, not to toasts:
+/// when it ends, its notes and its queries' answers; when it stops, why, as a kind (a command
+/// failed, refused by the levels, by the user, cancelled) and how many commands didn't run.
+/// How: `toggle-local-echo; status`; `send x; send y` (device off); `notify info ''` (nothing to say);
+/// `send a` asked and refused; `sleep 1000; send b` cancelled by the user; no toast meanwhile.
+#[test]
+fn client_runs_report_back() {
+    use crate::app::jobs::FailureKind;
+    let mut app = app();
+    let client = Origin::Client {
+        conn: 1,
+        name: None,
+    };
+    let toasts = |app: &App| app.notifications.active_toasts().len();
+    let before = toasts(&app);
+    let run = |app: &mut App, line: &str| {
+        let chain = crate::commands::parse(line).unwrap();
+        let job = app.run_for_client(client.clone(), chain).0.unwrap();
+        drain_at(app, Instant::now());
+        job
+    };
+    let finished = |app: &mut App, job| {
+        let runs = app.finished_runs();
+        assert_eq!(runs.len(), 1, "{runs:?}");
+        assert_eq!(runs[0].0, job);
+        runs[0].1.clone()
+    };
+
+    let job = run(&mut app, "toggle-local-echo; status");
+    let done = finished(&mut app, job);
+    assert!(done.failure.is_none(), "{done:?}");
+    assert_eq!(done.answers.len(), 1);
+    assert_eq!(done.answers[0].query, "status");
+    assert!(app.overlay().is_none(), "a client gets no popup");
+
+    let job = run(&mut app, "send x; send y");
+    let failure = finished(&mut app, job).failure.unwrap();
+    assert_eq!(failure.kind, FailureKind::Refused);
+    assert_eq!(failure.message, "send: device access is off in [api]");
+    assert_eq!(failure.not_run, 1);
+
+    let job = run(&mut app, "notify info ''");
+    let failure = finished(&mut app, job).failure.unwrap();
+    assert_eq!(failure.kind, FailureKind::Command);
+    assert_eq!(failure.message, "notify: nothing to say");
+
+    app.settings.api.device = crate::configs::Level::Ask;
+    let job = run(&mut app, "send a");
+    app.update(key('n'));
+    drain_at(&mut app, Instant::now());
+    let failure = finished(&mut app, job).failure.unwrap();
+    assert_eq!(failure.kind, FailureKind::ByUser);
+    assert_eq!(failure.message, "send \"a\": refused by the user");
+
+    app.settings.api.device = crate::configs::Level::On;
+    let job = run(&mut app, "sleep 1000; send b");
+    assert!(app.finished_runs().is_empty(), "it waits");
+    let _ = app.cancel(&Origin::Input);
+    let failure = finished(&mut app, job).failure.unwrap();
+    assert_eq!(failure.kind, FailureKind::Cancelled);
+    assert_eq!(toasts(&app), before, "a client's job makes no toast");
+}
+
+/// MAX-284 (step 3c): a client's `cancel` stops one of its jobs by number, or all of them, and
+/// never another client's; the jobs cancelled end `Cancelled`; a line starting with `cancel`
+/// cancels the client's jobs first, its notes the new job's; a closed connection's jobs are
+/// cancelled, its asks with them, and its always forgotten, another client's kept.
+/// How: client 1's two sleeping runs and client 2's one; a cancel by number (its own, then the
+/// other's), then of all; `cancel; status`; client 1 asked with always granted to both, gone.
+#[test]
+fn clients_cancel_their_own_jobs() {
+    use crate::app::jobs::FailureKind;
+    let mut app = app();
+    let client = |conn| Origin::Client { conn, name: None };
+    let line = |text: &str| crate::commands::parse(text).unwrap();
+    let run = |app: &mut App, conn, text: &str| app.run_for_client(client(conn), line(text)).0;
+    let one = run(&mut app, 1, "sleep 1000; toggle-local-echo").unwrap();
+    let two = run(&mut app, 1, "sleep 1000; toggle-local-echo").unwrap();
+    let other = run(&mut app, 2, "sleep 1000; toggle-local-echo").unwrap();
+    drain_at(&mut app, Instant::now());
+
+    assert!(app.cancel_for_client(&client(1), Some(other)).is_err());
+    let cancelled = app.cancel_for_client(&client(1), Some(one)).unwrap();
+    assert_eq!(cancelled.notes[0].text, format!("Cancelled job {one}"));
+    let ended = app.finished_runs();
+    assert_eq!(ended.len(), 1);
+    assert_eq!(ended[0].0, one);
+    let kind = ended[0].1.failure.as_ref().unwrap().kind;
+    assert_eq!(kind, FailureKind::Cancelled);
+    let _ = app.cancel_for_client(&client(1), None).unwrap();
+    let ended: Vec<JobId> = app
+        .finished_runs()
+        .into_iter()
+        .map(|(job, _)| job)
+        .collect();
+    assert_eq!(ended, [two]);
+    assert_eq!(app.jobs.running().count(), 1, "client 2's job runs");
+
+    let first = run(&mut app, 2, "sleep 1000; toggle-local-echo").unwrap();
+    let next = run(&mut app, 2, "cancel; status").unwrap();
+    drain_at(&mut app, Instant::now());
+    let runs = app.finished_runs();
+    let done = |job| {
+        runs.iter()
+            .find(|(of, _)| *of == job)
+            .map(|(_, outcome)| outcome)
+    };
+    assert!(done(first).is_some_and(|outcome| outcome.failure.is_some()));
+    assert!(
+        done(other).is_some(),
+        "the cancel took client 2's older job too"
+    );
+    let next = done(next).unwrap();
+    // `first` not started yet: both its commands, and the one `other` has left
+    assert_eq!(next.notes, ["Dropped 3 waiting commands"]);
+    assert_eq!(next.answers[0].query, "status");
+
+    app.settings.api.device = crate::configs::Level::Ask;
+    app.allowed_always.push((2, Access::Device));
+    app.allowed_always.push((1, Access::Control));
+    run(&mut app, 1, "send a");
+    drain_at(&mut app, Instant::now());
+    assert!(matches!(app.overlay(), Some(Overlay::ClientAsk(_))));
+    app.client_gone(1);
+    assert!(app.asked().is_none());
+    assert!(app.overlay().is_none());
+    assert_eq!(app.allowed_always, [(2, Access::Device)]);
+    assert_eq!(app.jobs.running().count(), 0);
+}
+
 /// MAX-165 (A1 step 5): `status` from the user opens its answer in a popup: the link, its
 /// state, the mode, DTR (MAX-283) unset by the open; from a trigger it does nothing, and the
 /// trigger's chain goes on.
