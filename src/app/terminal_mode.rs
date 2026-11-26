@@ -39,6 +39,7 @@ use crate::{
         tokens::{Effect, Kind, Token, Tokenizer},
         writes::Run,
     },
+    rx_stream::RxStream,
     terminal::{DropKind, Dropped, Hyperlink, TerminalParser, new_parser, vt100_dim, vt100_size},
 };
 
@@ -121,17 +122,27 @@ pub enum UntracedYank {
     NotTraced,
 }
 
-/// How bytes reach the emulator (MAX-256): the device's, at `offset` in the dump's stream (none
-/// when the byte trace is off: their runs aren't recorded) with add CR / add LF; or maxicom's own
-/// (a restore's reset, the separator, `clear`), which aren't in the stream
+/// How bytes reach the emulator (MAX-256): the device's, with the bytes received and their
+/// offset there to trace (none when the byte trace is off: their runs aren't recorded) and add
+/// CR / add LF; or maxicom's own (a restore's reset, the separator, `clear`), which aren't
+/// received bytes
 #[derive(Debug, Clone, Copy)]
-enum Feed {
+enum Feed<'a> {
     Device {
-        offset: Option<u64>,
+        trace: Option<(&'a RxStream, u64)>,
         add_cr: bool,
         add_lf: bool,
     },
     Own,
+}
+
+/// A row that scrolled into the scrollback (MAX-290): its absolute number, its text, and
+/// whether the terminal wrapped it into the next row (a long line cut at the screen's width)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScrolledRow {
+    pub number: u64,
+    pub text: String,
+    pub wrapped: bool,
 }
 
 /// A link's cells on the screen, as (screen row, columns) (MAX-277)
@@ -265,19 +276,22 @@ impl TerminalMode {
         }
     }
 
-    /// The device's bytes, with minicom's add CR / add LF when on (MAX-181); the stream keeps
-    /// them as received (MAX-252), and with `trace` which cells they drew (MAX-256)
+    /// The device's bytes, with minicom's add CR / add LF when on (MAX-181): `raw_bytes`, the
+    /// read just pushed to `rx` as received (MAX-252, MAX-290), and with `trace` which cells
+    /// they drew (MAX-256)
     pub fn process_device_rx(
         &mut self,
+        rx: &RxStream,
         encoding: TextEncoding,
         raw_bytes: &[u8],
         add_cr: bool,
         add_lf: bool,
         trace: bool,
     ) {
-        let offset = self.dump.push(raw_bytes);
+        let offset = rx.end() - raw_bytes.len() as u64;
+        self.dump.trim(rx.start());
         let feed = Feed::Device {
-            offset: trace.then_some(offset),
+            trace: trace.then_some((rx, offset)),
             add_cr,
             add_lf,
         };
@@ -490,11 +504,12 @@ impl TerminalMode {
         (end, !markers.is_empty())
     }
 
-    /// `feed` for the stream's bytes from `offset`, cut where a printable run starts: the cursor
-    /// there is the cell its first char goes to, recorded with the run (MAX-256). After a run
-    /// and only styles (colors), the next run starts where it ended: no cut needed
+    /// `feed` for the bytes received from `offset` in `rx`, cut where a printable run starts:
+    /// the cursor there is the cell its first char goes to, recorded with the run (MAX-256).
+    /// After a run and only styles (colors), the next run starts where it ended: no cut needed
     fn feed_runs(
         &mut self,
+        rx: &RxStream,
         encoding: TextEncoding,
         raw_bytes: &[u8],
         offset: u64,
@@ -553,7 +568,7 @@ impl TerminalMode {
                 col: col as u16,
                 alternate,
             };
-            let cells = self.dump.record(run, encoding, cols);
+            let cells = self.dump.record(rx, run, encoding, cols);
             // past the row's end the next char wraps, as vt100 places it; the cursor waits past
             // the last cell when a row is just full
             let (mut row, mut col) = (row, col + u64::from(cells));
@@ -579,6 +594,53 @@ impl TerminalMode {
                 (u64::from(row), u64::from(col), true)
             }
         }
+    }
+
+    /// The absolute number of world line 0, the oldest row kept on the main screen (MAX-290):
+    /// every row before it, evicted from the scrollback or cleared. A row's number is this plus
+    /// its world line: scrolling doesn't change it, and it is never given twice
+    pub fn first_row(&self) -> u64 {
+        self.vt100_parser.callbacks().rows_gone
+    }
+
+    /// The numbers of the rows kept that scrolled into the scrollback (MAX-290): final, unlike
+    /// the screen's below them, which the device can still rewrite (`live_screen`). On the
+    /// alternate screen, the main scrollback as last counted
+    pub fn rows_kept(&self) -> Range<u64> {
+        let first = self.first_row();
+        first..first + self.max_content_scrollback as u64
+    }
+
+    /// The rows of `numbers` that scrolled into the scrollback and are kept (MAX-290): each with
+    /// its text (its colors as escapes when `styled`) and whether it wraps into the next. None
+    /// on the alternate screen: vt100 doesn't read the main scrollback under it
+    pub fn scrolled_rows(&mut self, numbers: Range<u64>, styled: bool) -> Vec<ScrolledRow> {
+        if self.vt100_screen().alternate_screen() {
+            return Vec::new();
+        }
+        let kept = self.rows_kept();
+        let first = kept.start;
+        let numbers = numbers.start.max(kept.start)..numbers.end.min(kept.end);
+        let sb = self.max_content_scrollback;
+        let read = |screen: &vt100::Screen, view_row: usize| {
+            let text = if styled {
+                screen.rows_formatted(0, WHOLE_ROW).nth(view_row)
+            } else {
+                (screen.rows(0, WHOLE_ROW).nth(view_row)).map(|text| text.trim_end().to_string())
+            };
+            let wrapped = screen.row_wrapped(view_row as u16);
+            (shown_string(text.unwrap_or_default()), wrapped)
+        };
+        (numbers.filter_map(|number| {
+            let world_row = usize::try_from(number - first).ok()?;
+            let (text, wrapped) = with_world_row(&mut self.vt100_parser, sb, world_row, read)?;
+            Some(ScrolledRow {
+                number,
+                text,
+                wrapped,
+            })
+        }))
+        .collect()
     }
 
     /// The cell a world position is, as the writes count rows (MAX-256): on the alternate
@@ -640,7 +702,7 @@ impl TerminalMode {
     /// cell, the bytes of the char it shows now (none for a cell showing no traced char), joined
     /// across the gaps that draw nothing (escape sequences, colors, line ends) but not across
     /// bytes that drew other text. Empty off copy mode, in the dump, without a selection
-    pub fn selection_bytes(&mut self, encoding: TextEncoding) -> Vec<Range<u64>> {
+    pub fn selection_bytes(&mut self, rx: &RxStream, encoding: TextEncoding) -> Vec<Range<u64>> {
         let state = &self.copy_state;
         if !state.active || state.side != CopySide::Text {
             return Vec::new();
@@ -651,7 +713,7 @@ impl TerminalMode {
         let at = (
             (start.line_idx, start.char_idx),
             (end.line_idx, end.char_idx),
-            self.dump.stream().end(),
+            rx.end(),
         );
         if let Some(found) = self.mirror_bytes.as_ref().filter(|found| found.at == at) {
             return found.bytes.clone();
@@ -661,7 +723,7 @@ impl TerminalMode {
             self.cell_at(end.line_idx, 0),
         );
         let rows = first.row..=last.row;
-        let writes = (self.dump).newest_writes_on(rows, first.alternate, encoding);
+        let writes = (self.dump).newest_writes_on(rx, rows, first.alternate, encoding);
         let mut pieces = Vec::new();
         for line in start.line_idx..=end.line_idx {
             let row = self.cell_at(line, 0).row;
@@ -718,22 +780,23 @@ impl TerminalMode {
     /// off copy mode, on the screen, without a selection
     pub fn selection_cells(
         &mut self,
+        rx: &RxStream,
         encoding: TextEncoding,
         lines: Range<usize>,
     ) -> Vec<((usize, usize), bool)> {
         let Some(copy) = self.dump_copy() else {
             return Vec::new();
         };
-        let Some(selected) = copy.selection(&self.dump.bounds()) else {
+        let Some(selected) = copy.selection(&self.dump.bounds(rx)) else {
             return Vec::new();
         };
-        let at = (selected.clone(), self.dump.stream().end(), lines.clone());
+        let at = (selected.clone(), rx.end(), lines.clone());
         if let Some(found) = self.mirror_cells.as_ref().filter(|found| found.at == at) {
             return found.cells.clone();
         }
         let mut by_line: std::collections::BTreeMap<usize, Vec<(usize, char)>> =
             std::collections::BTreeMap::new();
-        for write in self.dump.written_in(selected, encoding) {
+        for write in self.dump.written_in(rx, selected, encoding) {
             if let Some((line, col)) = self.line_of(write.cell)
                 && lines.contains(&line)
             {
@@ -757,13 +820,14 @@ impl TerminalMode {
     /// what it shows (moved by a scroll region, erased): no bytes rather than wrong ones
     pub fn writes_at(
         &mut self,
+        rx: &RxStream,
         line_idx: usize,
         col: usize,
         encoding: TextEncoding,
         max: usize,
     ) -> Option<Vec<Write>> {
         let cell = self.cell_at(line_idx, col);
-        let writes = self.dump.writes_to(cell, encoding, max);
+        let writes = self.dump.writes_to(rx, cell, encoding, max);
         let shown = writes.first()?;
         self.still_shows(&shown.clone()).then_some(writes)
     }
@@ -773,17 +837,21 @@ impl TerminalMode {
     /// dump, or when the cell shows no write traced. And whether the cursor moved since the
     /// last call: the dump follows it then, to the bytes it shows (copy mode only, new bytes
     /// don't move it)
-    pub fn trace_ghosts(&mut self, encoding: TextEncoding) -> (Vec<Range<u64>>, bool) {
+    pub fn trace_ghosts(
+        &mut self,
+        rx: &RxStream,
+        encoding: TextEncoding,
+    ) -> (Vec<Range<u64>>, bool) {
         let state = &self.copy_state;
         if !state.active || state.side != CopySide::Text {
             return (Vec::new(), false);
         }
         let (line, col) = (state.cursor.line_idx, state.cursor.char_idx);
-        let key = (line, col, self.dump.stream().end());
+        let key = (line, col, rx.end());
         let ghosts = match &self.trace_ghosts {
             Some(found) if found.at == key => found.bytes.clone(),
             _ => {
-                let writes = self.writes_at(line, col, encoding, 1 + OLD_GHOSTS);
+                let writes = self.writes_at(rx, line, col, encoding, 1 + OLD_GHOSTS);
                 let bytes: Vec<_> = writes.into_iter().flatten().map(|w| w.bytes).collect();
                 self.trace_ghosts = Some(Ghosts {
                     at: key,
@@ -795,7 +863,7 @@ impl TerminalMode {
         let moved = self.trace_followed != Some((line, col));
         self.trace_followed = Some((line, col));
         if moved && let Some(shown) = ghosts.first() {
-            self.dump.keep_in_middle(shown.start);
+            self.dump.keep_in_middle(rx, shown.start);
         }
         (ghosts, moved)
     }
@@ -804,13 +872,17 @@ impl TerminalMode {
     /// still shows that byte's char (else written over); none off copy mode, on the screen's
     /// side, for a byte that draws nothing or a cell no longer kept. When the dump cursor moved
     /// since the last call, the screen follows it to that cell (copy mode only)
-    pub fn trace_cell(&mut self, encoding: TextEncoding) -> Option<((usize, usize), bool)> {
+    pub fn trace_cell(
+        &mut self,
+        rx: &RxStream,
+        encoding: TextEncoding,
+    ) -> Option<((usize, usize), bool)> {
         let offset = self.dump_copy()?.cursor;
-        let key = (offset, self.dump.stream().end());
+        let key = (offset, rx.end());
         let cell = match &self.trace_cell {
             Some(found) if found.at == key => found.cell,
             _ => {
-                let cell = self.written_at(offset, encoding);
+                let cell = self.written_at(rx, offset, encoding);
                 self.trace_cell = Some(TraceCell { at: key, cell });
                 cell
             }
@@ -862,10 +934,11 @@ impl TerminalMode {
     /// None for a byte that draws nothing, or a cell no longer kept or on the screen not shown
     pub fn written_at(
         &mut self,
+        rx: &RxStream,
         offset: u64,
         encoding: TextEncoding,
     ) -> Option<((usize, usize), bool)> {
-        let write = self.dump.written(offset, encoding)?;
+        let write = self.dump.written(rx, offset, encoding)?;
         let at = self.line_of(write.cell)?;
         Some((at, self.still_shows(&write)))
     }
@@ -888,12 +961,12 @@ impl TerminalMode {
 
         match feed {
             Feed::Device {
-                offset: Some(offset),
+                trace: Some((rx, offset)),
                 add_cr,
                 add_lf,
-            } => self.feed_runs(encoding, raw_bytes, offset, (add_cr, add_lf)),
+            } => self.feed_runs(rx, encoding, raw_bytes, offset, (add_cr, add_lf)),
             Feed::Device {
-                offset: None,
+                trace: None,
                 add_cr,
                 add_lf,
             } => self.feed_noting_drops(encoding, raw_bytes, (add_cr, add_lf)),
@@ -1131,19 +1204,21 @@ impl TerminalMode {
         let (rows, cols) = self.get_vt100_size();
 
         // what the device set stays: the collecting, its titles; the rows gone keep counting,
-        // the dump's absolute rows go on from them
+        // the cleared ones with them (the scrollback's and the screen's), so the absolute rows
+        // go on past every row they gave before (MAX-290)
         let old = std::mem::replace(
             &mut self.vt100_parser,
             new_parser(rows, cols, self.max_history_lines),
         );
+        // the main screen's scrollback as last counted: the alternate screen has none of its own
+        let cleared = self.max_content_scrollback + usize::from(rows);
         let old = old.callbacks();
         let events = self.vt100_parser.callbacks_mut();
         events.collect = old.collect;
-        events.rows_gone = old.rows_gone + old.evicted as u64;
+        events.rows_gone = old.rows_gone + (old.evicted + cleared) as u64;
         events.title = old.title.clone();
         events.icon_name = old.icon_name.clone();
         self.row_timestamps = VecDeque::from(vec![None; rows as usize]);
-        self.dump.clear();
         self.forget_search_text();
         self.restored_separator = None;
         self.marks.clear();
@@ -1672,6 +1747,12 @@ impl TerminalMode {
             for _ in 0..blank {
                 self.row_timestamps.insert(at, None);
             }
+            // they stand where the last rows evicted were, above every row kept: they take
+            // those rows' numbers, so the rows kept keep theirs (MAX-290). On the alternate
+            // screen they can't be counted (see above): a grow past the scrollback left then
+            // moves the main screen's numbers (a history smaller than the grow only)
+            let events = self.vt100_parser.callbacks_mut();
+            events.rows_gone = events.rows_gone.saturating_sub(blank as u64);
         }
         self.row_timestamps.resize(scrollback + rows as usize, None);
     }
@@ -1779,6 +1860,7 @@ impl TerminalMode {
 
     pub fn handle_copy_action(
         &mut self,
+        rx: &RxStream,
         action: CopyModeAction,
         settings: &SettingsConfig,
     ) -> Option<String> {
@@ -1800,13 +1882,13 @@ impl TerminalMode {
                 self.copy_state.cursor.char_idx,
                 key,
             ) {
-                return self.handle_copy_action(sub_action, settings);
+                return self.handle_copy_action(rx, sub_action, settings);
             }
             return None;
         }
         let raw_view = settings.raw_side.view;
         if action == CopyModeAction::ToggleSide {
-            self.toggle_dump_side(raw_view, settings.encoding);
+            self.toggle_dump_side(rx, raw_view, settings.encoding);
             return None;
         }
         // copy mode starting (a key or a mouse press): its pan comes back when it ends
@@ -1819,7 +1901,7 @@ impl TerminalMode {
             _ => self.dump_copy().is_some(),
         };
         if on_dump {
-            return self.dump_copy_action(action, raw_view);
+            return self.dump_copy_action(rx, action, raw_view);
         }
 
         if action == CopyModeAction::Enter {
@@ -1850,12 +1932,12 @@ impl TerminalMode {
         };
         if action == CopyModeAction::YankRaw && self.copy_state.selection_anchor.is_some() {
             let traced = match settings.terminal_mode.byte_trace {
-                true => self.selection_bytes(settings.encoding),
+                true => self.selection_bytes(rx, settings.encoding),
                 false => Vec::new(),
             };
             if !traced.is_empty() {
                 let text = (traced.into_iter())
-                    .map(|bytes| self.dump.yank_text(bytes, false, raw_view))
+                    .map(|bytes| Dump::yank_text(rx, bytes, false, raw_view))
                     .collect::<Vec<_>>()
                     .join("\n");
                 self.copy_state.exit();
@@ -1984,12 +2066,12 @@ impl TerminalMode {
 
     /// Once a frame: the matches shown found again when data came (MAX-218). The current one
     /// stays the copy cursor's, unless the bar is open: then it follows the query as typed
-    pub fn refresh_stale_matches(&mut self, raw_view: RawSideView) {
+    pub fn refresh_stale_matches(&mut self, rx: &RxStream, raw_view: RawSideView) {
         if !self.search_stale {
             return;
         }
         let typing = self.search_state.active;
-        self.update_search_matches(raw_view);
+        self.searching(rx).update_search_matches(raw_view);
         if !typing {
             let cursor = self.match_cursor();
             self.search_state.select_at(cursor);
@@ -1998,15 +2080,26 @@ impl TerminalMode {
         }
     }
 
-    pub fn handle_side_view_action(&mut self, action: SideViewAction, raw_view: RawSideView) {
+    pub fn handle_side_view_action(
+        &mut self,
+        rx: &RxStream,
+        action: SideViewAction,
+        raw_view: RawSideView,
+    ) {
+        let page = self.dump.page();
         match action {
             SideViewAction::PanLeft(bytes) => self.dump.pan_left(bytes, raw_view),
             SideViewAction::PanRight(bytes) => self.dump.pan_right(bytes, raw_view),
-            SideViewAction::ScrollUp(lines) => self.dump.scroll_up(lines),
-            SideViewAction::ScrollDown(lines) => self.dump.scroll_down(lines),
-            SideViewAction::PageUp => self.dump.scroll_up(self.dump.page()),
-            SideViewAction::PageDown => self.dump.scroll_down(self.dump.page()),
+            SideViewAction::ScrollUp(lines) => self.dump.scroll_up(rx, lines),
+            SideViewAction::ScrollDown(lines) => self.dump.scroll_down(rx, lines),
+            SideViewAction::PageUp => self.dump.scroll_up(rx, page),
+            SideViewAction::PageDown => self.dump.scroll_down(rx, page),
         }
+    }
+
+    /// The search over the screen and the scrollback, or over `rx` for a raw search
+    pub fn searching<'a>(&'a mut self, rx: &'a RxStream) -> TerminalSearch<'a> {
+        TerminalSearch { mode: self, rx }
     }
 
     #[inline]
@@ -2056,6 +2149,7 @@ impl TerminalMode {
     }
 
     #[inline]
+    #[cfg(test)]
     pub fn dump(&self) -> &Dump {
         &self.dump
     }
@@ -2088,7 +2182,7 @@ impl TerminalMode {
     /// (MAX-256), else on the last byte of the bottom line shown (no bytes: it stays on the
     /// screen); back to the screen, on the dump cursor's cell when it still shows its byte, else
     /// where the screen cursor was. Neither side keeps the other's selection, neither view jumps
-    fn toggle_dump_side(&mut self, raw_view: RawSideView, encoding: TextEncoding) {
+    fn toggle_dump_side(&mut self, rx: &RxStream, raw_view: RawSideView, encoding: TextEncoding) {
         let state = &mut self.copy_state;
         if !state.active || raw_view == RawSideView::Off {
             return;
@@ -2097,7 +2191,7 @@ impl TerminalMode {
         state.line_select = false;
         if state.side == CopySide::Raw {
             let cursor = self.dump.copy().cursor;
-            if let Some(((line, col), true)) = self.written_at(cursor, encoding) {
+            if let Some(((line, col), true)) = self.written_at(rx, cursor, encoding) {
                 self.copy_state.jump_to(line, col);
                 self.trace_followed = Some((line, col));
             }
@@ -2105,13 +2199,13 @@ impl TerminalMode {
             return;
         }
         let cursor = state.cursor;
-        let traced = self.writes_at(cursor.line_idx, cursor.char_idx, encoding, 1);
+        let traced = self.writes_at(rx, cursor.line_idx, cursor.char_idx, encoding, 1);
         if let Some(shown) = traced.and_then(|writes| writes.into_iter().next()) {
             self.dump.set_copy(DumpCopy::at(shown.bytes.start));
-            self.dump.reveal(shown.bytes.start);
+            self.dump.reveal(rx, shown.bytes.start);
             self.trace_followed_byte = Some(shown.bytes.start);
             self.copy_state.side = CopySide::Raw;
-        } else if self.dump.start_copy() {
+        } else if self.dump.start_copy(rx) {
             self.copy_state.side = CopySide::Raw;
         }
     }
@@ -2120,6 +2214,7 @@ impl TerminalMode {
     /// screen leaves it for the screen's copy mode
     fn dump_copy_action(
         &mut self,
+        rx: &RxStream,
         action: CopyModeAction,
         raw_view: RawSideView,
     ) -> Option<String> {
@@ -2128,9 +2223,9 @@ impl TerminalMode {
             self.copy_state.side = CopySide::Raw;
             self.copy_state.selection_anchor = None;
         }
-        let text = match self.dump.copy_action(action) {
+        let text = match self.dump.copy_action(rx, action) {
             DumpResult::Yank { bytes, as_received } => {
-                Some(self.dump.yank_text(bytes, as_received, raw_view))
+                Some(Dump::yank_text(rx, bytes, as_received, raw_view))
             }
             DumpResult::Exited => None,
             DumpResult::Moved | DumpResult::None => return None,
@@ -2166,24 +2261,34 @@ impl TerminalMode {
     /// under it (MAX-176). With `trace`, which cells the chunks drew is recorded (MAX-256)
     pub fn restore(
         &mut self,
+        rx: &mut RxStream,
         encoding: TextEncoding,
         chunks: &[TimedChunk],
         separator: &str,
         trace: bool,
     ) {
         for chunk in chunks {
-            self.feed_restored(encoding, chunk, trace);
+            self.feed_restored(rx, encoding, chunk, trace);
         }
         self.end_restore(separator);
     }
 
-    /// A piece of `restore`, for a session fed across loop turns (MAX-272)
+    /// A piece of `restore`, for a session fed across loop turns (MAX-272), its chunk kept with
+    /// the bytes received in `rx` (MAX-290)
     /// An erase of the scrollback (`ESC[3J`, the end of a shell's `clear`) is skipped: one
     /// session's clear doesn't wipe the sessions before it, the screen's erase stays (MAX-272)
-    pub fn feed_restored(&mut self, encoding: TextEncoding, chunk: &TimedChunk, trace: bool) {
-        let offset = self.dump.push(chunk.bytes);
+    pub fn feed_restored(
+        &mut self,
+        rx: &mut RxStream,
+        encoding: TextEncoding,
+        chunk: &TimedChunk,
+        trace: bool,
+    ) {
+        let offset = rx.push(chunk.bytes);
+        self.dump.trim(rx.start());
+        let rx = &*rx;
         let feed = Feed::Device {
-            offset: trace.then_some(offset),
+            trace: trace.then_some((rx, offset)),
             add_cr: false,
             add_lf: false,
         };
@@ -2646,23 +2751,23 @@ impl<'a> TextSource for TerminalModeTextSource<'a> {
     }
 }
 
-impl SearchHost for TerminalMode {
+/// The search host's work, given the bytes received a raw search goes over (MAX-252, MAX-290)
+impl TerminalMode {
     fn search_and_copy(&mut self) -> (&mut SearchState, &mut CopyModeState) {
         (&mut self.search_state, &mut self.copy_state)
     }
 
     /// From the screen and the scrollback's text, only the lines data may have changed read
     /// again (MAX-218)
-    fn find_matches(&mut self, view: SearchView) {
+    fn find_matches(&mut self, rx: &RxStream, view: SearchView) {
         self.search_stale = false;
         if self.dump_search() {
             // no dump to show them in: no match, the app warns (MAX-252)
-            let stream = self.dump.stream();
             let bytes = match view.raw_view {
                 RawSideView::Off => (&[][..], &[][..]),
-                _ => stream.slices(stream.start()..stream.end()),
+                _ => rx.slices(rx.start()..rx.end()),
             };
-            (self.search_state).update_matches_from_bytes(bytes, stream.start(), view.raw_view);
+            (self.search_state).update_matches_from_bytes(bytes, rx.start(), view.raw_view);
             return;
         }
         match (self.search_text.is_some(), self.search_text_from.take()) {
@@ -2681,10 +2786,10 @@ impl SearchHost for TerminalMode {
             .update_matches_from_strings(text, view.raw_view);
     }
 
-    fn center_copy_cursor(&mut self) {
+    fn center_copy_cursor(&mut self, rx: &RxStream) {
         if self.copy_state.side == CopySide::Raw {
             let cursor = self.dump.copy().cursor;
-            self.dump.cursor_to(cursor);
+            self.dump.cursor_to(rx, cursor);
         } else {
             self.reveal_copy_cursor(Reveal::Center);
         }
@@ -2721,7 +2826,7 @@ impl SearchHost for TerminalMode {
 
     /// A raw match moves the dump cursor, a text match the screen's: copy mode switches to
     /// the match's side, neither side keeping the other's selection (MAX-252)
-    fn cursor_to_match(&mut self, row: usize, col: usize) {
+    fn cursor_to_match(&mut self, rx: &RxStream, row: usize, col: usize) {
         let to_dump = self.dump_search();
         let state = &mut self.copy_state;
         if (state.side == CopySide::Raw) != to_dump {
@@ -2735,7 +2840,7 @@ impl SearchHost for TerminalMode {
             self.dump.set_copy(DumpCopy::default());
         }
         if to_dump {
-            self.dump.cursor_to(row as u64);
+            self.dump.cursor_to(rx, row as u64);
         } else {
             self.copy_state.jump_to(row, col);
         }
@@ -2748,6 +2853,43 @@ impl SearchHost for TerminalMode {
         self.copy_state = copy;
         self.dump.set_copy(dump);
         true
+    }
+}
+
+/// Terminal mode's search (MAX-218), with the bytes received a raw search goes over (MAX-252,
+/// MAX-290)
+pub struct TerminalSearch<'a> {
+    mode: &'a mut TerminalMode,
+    rx: &'a RxStream,
+}
+
+impl SearchHost for TerminalSearch<'_> {
+    fn search_and_copy(&mut self) -> (&mut SearchState, &mut CopyModeState) {
+        self.mode.search_and_copy()
+    }
+
+    fn find_matches(&mut self, view: SearchView) {
+        self.mode.find_matches(self.rx, view);
+    }
+
+    fn center_copy_cursor(&mut self) {
+        self.mode.center_copy_cursor(self.rx);
+    }
+
+    fn search_origin(&mut self, opening: bool) -> Option<LogicalPosition> {
+        self.mode.search_origin(opening)
+    }
+
+    fn match_cursor(&mut self) -> (usize, usize) {
+        self.mode.match_cursor()
+    }
+
+    fn cursor_to_match(&mut self, row: usize, col: usize) {
+        self.mode.cursor_to_match(self.rx, row, col);
+    }
+
+    fn back_to_origin(&mut self) -> bool {
+        self.mode.back_to_origin()
     }
 }
 

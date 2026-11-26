@@ -60,8 +60,103 @@ fn keys_in_application_cursor_mode() {
     assert_eq!(sent(KeyCode::PageUp, none, true), b"\x1b[5~");
 }
 
-fn terminal(rows: u16) -> TerminalMode {
-    TerminalMode::new(100, rows, 80)
+/// Terminal mode with the bytes received, as the app holds them (MAX-290): the calls that read
+/// the bytes are given them here, the others go to the mode itself
+struct Term {
+    mode: TerminalMode,
+    rx: RxStream,
+}
+
+impl std::ops::Deref for Term {
+    type Target = TerminalMode;
+
+    fn deref(&self) -> &TerminalMode {
+        &self.mode
+    }
+}
+
+impl std::ops::DerefMut for Term {
+    fn deref_mut(&mut self) -> &mut TerminalMode {
+        &mut self.mode
+    }
+}
+
+impl Term {
+    fn new(history: usize, rows: u16, cols: u16) -> Self {
+        Self {
+            mode: TerminalMode::new(history, rows, cols),
+            rx: RxStream::new(0),
+        }
+    }
+
+    /// A device read, kept with the bytes received first, as `App::feed` does
+    fn process_device_rx(
+        &mut self,
+        encoding: TextEncoding,
+        bytes: &[u8],
+        add_cr: bool,
+        add_lf: bool,
+        trace: bool,
+    ) {
+        self.rx.push(bytes);
+        let rx = &self.rx;
+        (self.mode).process_device_rx(rx, encoding, bytes, add_cr, add_lf, trace);
+    }
+
+    fn restore(
+        &mut self,
+        encoding: TextEncoding,
+        chunks: &[TimedChunk],
+        separator: &str,
+        trace: bool,
+    ) {
+        (self.mode).restore(&mut self.rx, encoding, chunks, separator, trace);
+    }
+
+    /// The history cleared with the bytes received, as `clear-history` does
+    fn clear_history(&mut self) {
+        self.mode.clear_history();
+        self.rx.clear();
+        self.mode.dump.clear();
+    }
+
+    fn searching(&mut self) -> TerminalSearch<'_> {
+        self.mode.searching(&self.rx)
+    }
+
+    fn handle_copy_action(
+        &mut self,
+        action: CopyModeAction,
+        settings: &SettingsConfig,
+    ) -> Option<String> {
+        self.mode.handle_copy_action(&self.rx, action, settings)
+    }
+
+    fn selection_bytes(&mut self, encoding: TextEncoding) -> Vec<Range<u64>> {
+        self.mode.selection_bytes(&self.rx, encoding)
+    }
+
+    fn writes_at(
+        &mut self,
+        line: usize,
+        col: usize,
+        encoding: TextEncoding,
+        max: usize,
+    ) -> Option<Vec<Write>> {
+        self.mode.writes_at(&self.rx, line, col, encoding, max)
+    }
+
+    fn written_at(
+        &mut self,
+        offset: u64,
+        encoding: TextEncoding,
+    ) -> Option<((usize, usize), bool)> {
+        self.mode.written_at(&self.rx, offset, encoding)
+    }
+}
+
+fn terminal(rows: u16) -> Term {
+    Term::new(100, rows, 80)
 }
 
 /// Feeds one line per chunk, 1 ms apart so every row gets a distinct timestamp.
@@ -80,8 +175,8 @@ fn timeline(tm: &TerminalMode) -> Vec<Option<Timestamp>> {
         .collect()
 }
 
-fn terminal_with(history: usize, rows: u16) -> TerminalMode {
-    TerminalMode::new(history, rows, 80)
+fn terminal_with(history: usize, rows: u16) -> Term {
+    Term::new(history, rows, 80)
 }
 
 /// Feeds each line as its own chunk, 1 ms apart, and returns each line's text with the
@@ -124,6 +219,94 @@ fn row_text(tm: &mut TerminalMode, row: usize) -> String {
         .to_string()
 }
 
+/// The absolute number of the main screen row showing `text` (MAX-290), none when no row kept
+/// shows it
+fn row_number(tm: &mut TerminalMode, text: &str) -> Option<u64> {
+    let world = tm.max_content_scrollback + usize::from(tm.get_vt100_size().0);
+    let row = (0..world).find(|&row| row_text(tm, row) == text)?;
+    Some(tm.first_row() + row as u64)
+}
+
+/// The absolute numbers of the rows showing `l<from>` to `l<to>`
+fn row_numbers(tm: &mut TerminalMode, lines: std::ops::RangeInclusive<u64>) -> Vec<Option<u64>> {
+    lines.map(|n| row_number(tm, &format!("l{n}"))).collect()
+}
+
+/// MAX-290: a row's absolute number (the rows before it, evicted or cleared, plus its world
+/// line) stays with the row as it scrolls into the scrollback and as the scrollback evicts;
+/// after a clear the numbers go on past every row cleared.
+/// How: a 3-row history under a 2-row grid fed l0..l6 (2 rows evicted), cleared, then l7.
+#[test]
+fn rows_keep_their_absolute_number() {
+    let mut tm = terminal_with(3, 2);
+    tm.process_rx(TextEncoding::Utf8, b"l0\r\nl1\r\nl2");
+    assert_eq!(row_numbers(&mut tm, 0..=2), [Some(0), Some(1), Some(2)]);
+    tm.process_rx(TextEncoding::Utf8, b"\r\nl3\r\nl4\r\nl5\r\nl6");
+    assert_eq!(tm.first_row(), 2);
+    let kept = row_numbers(&mut tm, 2..=6);
+    assert_eq!(kept, [2, 3, 4, 5, 6].map(Some));
+
+    tm.clear_history();
+    tm.process_rx(TextEncoding::Utf8, b"l7");
+    assert_eq!(row_number(&mut tm, "l7"), Some(7));
+}
+
+/// MAX-290: a resize moves rows between the screen and the scrollback, never their numbers,
+/// with or without rows evicted before it: a row kept has its number, a row the full
+/// scrollback evicted is gone, the blank rows vt100 puts back in their place on a grow don't
+/// push the rows kept down.
+/// How: l0..l9 on a 4-row grid with a 100-row history then a 3-row one (3 rows evicted),
+/// shrunk to 2 rows (2 more evicted from the 3-row one), grown to 6.
+#[test]
+fn resize_keeps_the_row_numbers() {
+    for history in [100, 3] {
+        let mut tm = terminal_with(history, 4);
+        let lines: Vec<String> = (0..10).map(|n| format!("l{n}")).collect();
+        tm.process_rx(TextEncoding::Utf8, lines.join("\r\n").as_bytes());
+        let first = 10 - (history.min(6) as u64 + 4);
+        let before = row_numbers(&mut tm, first..=9);
+        assert_eq!(
+            before,
+            (first..=9).map(Some).collect::<Vec<_>>(),
+            "{history}"
+        );
+        for rows in [2, 6] {
+            tm.set_vt100_size(rows, 80);
+            let after = row_numbers(&mut tm, first..=9);
+            let kept = after
+                .iter()
+                .zip(&before)
+                .filter(|(after, _)| after.is_some());
+            assert!(
+                kept.clone().all(|(after, before)| after == before),
+                "{after:?}"
+            );
+            assert!(
+                kept.count() >= usize::from(rows.min(4)),
+                "{history}, {rows}: {after:?}"
+            );
+        }
+    }
+}
+
+/// MAX-290: the alternate screen scrolls its own grid: the main screen's rows keep their
+/// numbers, none counted gone.
+/// How: l0..l4 on a 2-row grid, 20 lines on the alternate screen, back to the main one.
+#[test]
+fn alternate_screen_keeps_the_row_numbers() {
+    let mut tm = terminal_with(100, 2);
+    tm.process_rx(TextEncoding::Utf8, b"l0\r\nl1\r\nl2\r\nl3\r\nl4");
+    let before = row_numbers(&mut tm, 0..=4);
+    let full_screen: String = (0..20).map(|n| format!("menu {n}\r\n")).collect();
+    tm.process_rx(
+        TextEncoding::Utf8,
+        format!("\x1b[?1049h{full_screen}").as_bytes(),
+    );
+    tm.process_rx(TextEncoding::Utf8, b"\x1b[?1049l");
+    assert_eq!(tm.first_row(), 0);
+    assert_eq!(row_numbers(&mut tm, 0..=4), before);
+}
+
 /// Search text is built once and reused while typing, and rebuilt after anything that
 /// changes the terminal's text: RX, resize, clear (#12).
 /// How: count the matches of "hit" before and after each of those.
@@ -132,8 +315,8 @@ fn search_text_follows_terminal_changes() {
     let mut tm = terminal(3);
     feed_lines(&mut tm, &["hit", "miss"]);
     tm.search_state.query = tui_input::Input::new("hit".to_string());
-    let matches = |tm: &mut TerminalMode| {
-        tm.update_search_matches(RawSideView::default());
+    let matches = |tm: &mut Term| {
+        tm.searching().update_search_matches(RawSideView::default());
         tm.search_state.matches.len()
     };
     assert_eq!(matches(&mut tm), 1);
@@ -162,7 +345,7 @@ fn line_refs_follow_rows_when_scrollback_is_full() {
     tm.copy_state.enter_at(l4, 1);
     tm.copy_state.selection_anchor = Some(tm.copy_state.cursor);
     tm.search_state.query = tui_input::Input::new("l5".to_string());
-    tm.update_search_matches(RawSideView::default());
+    tm.searching().update_search_matches(RawSideView::default());
     assert_eq!(tm.search_state.matches.len(), 1);
 
     tm.process_rx(TextEncoding::Utf8, b"\r\nl7\r\nl8");
@@ -383,7 +566,7 @@ fn copy_mode_row_text_keeps_gaps() {
 /// How: an Up key through `update_action_terminal` before, during and after the mode.
 #[test]
 fn cursor_mode_follows_remote() {
-    let mut tm = TerminalMode::new(100, 24, 80);
+    let mut tm = Term::new(100, 24, 80);
     let up = |tm: &mut TerminalMode| match tm
         .update_action_terminal(TerminalAction::Key(key(KeyCode::Up)), BackspaceByte::Del)
     {
@@ -427,16 +610,19 @@ fn query_cursor_keys_keep_the_current_match() {
     feed_lines(&mut tm, &["hit a", "hit b"]);
     tm.search_state.active = true;
     tm.search_state.query = tui_input::Input::new("hit".to_string());
-    tm.update_search_matches(RawSideView::default());
+    tm.searching().update_search_matches(RawSideView::default());
     tm.search_state.next_match();
     tm.search_state.target_jump = None;
 
-    tm.handle_input_search(key(KeyCode::Left), RawSideView::default());
+    tm.searching()
+        .handle_input_search(key(KeyCode::Left), RawSideView::default());
     assert_eq!(tm.search_state.current_match, 1);
     assert_eq!(tm.search_state.target_jump, None);
 
-    tm.handle_input_search(key(KeyCode::Right), RawSideView::default());
-    tm.handle_input_search(key(KeyCode::Char(' ')), RawSideView::default());
+    tm.searching()
+        .handle_input_search(key(KeyCode::Right), RawSideView::default());
+    tm.searching()
+        .handle_input_search(key(KeyCode::Char(' ')), RawSideView::default());
     assert_eq!(tm.search_state.current_match, 0);
     assert!(tm.search_state.target_jump.is_some());
 }
@@ -517,7 +703,7 @@ fn an_explicit_size_applies_as_asked() {
 
 /// A 100-column line `A0123…` and a 130-column one `Bbcd…`, received on a 120x10 grid (the
 /// second one wraps), then 20 more lines to push both into the scrollback if `scrolled`
-fn wide_lines(mode: TerminalDimensionMode, scrolled: bool) -> TerminalMode {
+fn wide_lines(mode: TerminalDimensionMode, scrolled: bool) -> Term {
     let a: String = std::iter::once('A')
         .chain((1..100).map(|i| char::from(b'0' + i % 10)))
         .collect();
@@ -677,7 +863,7 @@ fn auto_minimum_and_alternate_screen() {
 fn trace_follows_the_width_runs_were_written_at() {
     use TerminalDimensionMode::{Auto, GrowOnly};
     let settings = crate::configs::SettingsConfig::default();
-    let traced = |tm: &mut TerminalMode, line: usize| {
+    let traced = |tm: &mut Term, line: usize| {
         tm.handle_copy_action(CopyModeAction::Enter, &settings);
         tm.copy_state.enter_at(line, 0);
         tm.handle_copy_action(CopyModeAction::SelectLine, &settings);
@@ -688,7 +874,7 @@ fn trace_follows_the_width_runs_were_written_at() {
             .map(|range| range.end - range.start)
             .sum::<u64>()
     };
-    let device = |tm: &mut TerminalMode, text: &str| {
+    let device = |tm: &mut Term, text: &str| {
         tm.process_device_rx(TextEncoding::Utf8, text.as_bytes(), false, false, true);
     };
 
@@ -808,7 +994,7 @@ fn pan_reaches_the_content_and_the_cursor() {
 #[test]
 fn pan_reach_finds_the_widest_row() {
     use TerminalDimensionMode::Fixed;
-    let mut tm = TerminalMode::new(100, 10, 200);
+    let mut tm = Term::new(100, 10, 200);
     let rows = format!("{}\r\n{}界\r\n", "x".repeat(100), "y".repeat(148));
     tm.process_rx(TextEncoding::Utf8, rows.as_bytes());
     tm.update_viewport(ViewportSize::new(60, 10), 0, Fixed, 10, 200);
@@ -869,13 +1055,13 @@ fn restore_keeps_the_scrollback() {
             time: None,
         },
     ];
-    let mut tm = TerminalMode::new(100, 10, 80);
+    let mut tm = Term::new(100, 10, 80);
     tm.restore(TextEncoding::Utf8, &chunks, "-- restored --", false);
     let lines = tm.all_text_lines();
     assert!(lines.iter().any(|l| l == "old 0"), "{lines:?}");
     assert!(lines.iter().any(|l| l == "new"), "{lines:?}");
 
-    let mut tm = TerminalMode::new(100, 10, 80);
+    let mut tm = Term::new(100, 10, 80);
     tm.process_rx(
         TextEncoding::Utf8,
         format!("{old}\x1b[H\x1b[2J\x1b[3Jnew\r\n").as_bytes(),
@@ -890,7 +1076,7 @@ fn restore_keeps_the_scrollback() {
 /// have no time, and a live line after them gets one.
 #[test]
 fn restore_resets_the_modes_left_set() {
-    let mut tm = TerminalMode::new(100, 24, 80);
+    let mut tm = Term::new(100, 24, 80);
     let raw = b"before\r\nkept\r\n\x1b[?1049h\x1b[?1h\x1b[?1000h\x1b[?2004h\x1b[?25l\x1b[5;10rvim";
     tm.restore(TextEncoding::Utf8, &untimed(raw), "-- restored --", true);
     let screen = tm.vt100_screen();
@@ -922,7 +1108,7 @@ fn restore_resets_the_modes_left_set() {
     assert_eq!(stamped, 2);
 
     // a session that ended mid-line: the separator goes on the next one
-    let mut tm = TerminalMode::new(100, 24, 80);
+    let mut tm = Term::new(100, 24, 80);
     tm.restore(TextEncoding::Utf8, &untimed(b"abc"), "-- restored --", true);
     let lines = tm.all_text_lines();
     let separator = lines.iter().position(|l| l == "-- restored --").unwrap();
@@ -930,7 +1116,7 @@ fn restore_resets_the_modes_left_set() {
 
     // text left under the cursor (a full-screen program's) goes up too: none stays under
     // the separator
-    let mut tm = TerminalMode::new(100, 24, 80);
+    let mut tm = Term::new(100, 24, 80);
     tm.restore(
         TextEncoding::Utf8,
         &untimed(b"top\x1b[10;1Hstatus\x1b[2;1H"),
@@ -949,7 +1135,7 @@ fn restore_resets_the_modes_left_set() {
 /// How: 3 lines and a `$ ` prompt in a 24-row grid, cleared; then a full-screen program's.
 #[test]
 fn clear_puts_the_cursor_row_on_top() {
-    let mut tm = TerminalMode::new(100, 24, 80);
+    let mut tm = Term::new(100, 24, 80);
     tm.process_rx(TextEncoding::Utf8, b"one\r\ntwo\r\nthree\r\n$ ");
     tm.clear_view();
     let screen = tm.vt100_screen();
@@ -959,7 +1145,7 @@ fn clear_puts_the_cursor_row_on_top() {
     let prompt = lines.iter().position(|l| l.trim_end() == "$").unwrap();
     assert_eq!(lines[..prompt], ["one", "two", "three"], "{lines:?}");
 
-    let mut tm = TerminalMode::new(100, 24, 80);
+    let mut tm = Term::new(100, 24, 80);
     tm.process_rx(TextEncoding::Utf8, b"\x1b[?1049h\x1b[5;1Hmenu");
     tm.clear_view();
     let screen = tm.vt100_screen();
@@ -976,7 +1162,7 @@ fn clear_puts_the_cursor_row_on_top() {
 fn restore_separator_stays_on_top_when_the_grid_grows() {
     let raw: String = (0..30).map(|i| format!("line {i:02}\r\n")).collect();
     for live in [None, Some("live")] {
-        let mut tm = TerminalMode::new(100, 24, 80);
+        let mut tm = Term::new(100, 24, 80);
         tm.restore(
             TextEncoding::Utf8,
             &untimed(raw.as_bytes()),
@@ -1068,7 +1254,8 @@ fn search_confirm_enters_copy_mode_on_the_match() {
     let raw_view = RawSideView::default();
     let mut tm = terminal(3);
     feed_lines(&mut tm, &["hit one", "b", "c", "d", "the hit"]);
-    tm.handle_search_action(SearchModeAction::Query("hit".to_string()), raw_view);
+    tm.searching()
+        .handle_search_action(SearchModeAction::Query("hit".to_string()), raw_view);
     let first = tm.search_state.matches[0];
     let last = tm.search_state.matches[1];
     assert!(first.line_idx < last.line_idx);
@@ -1077,8 +1264,10 @@ fn search_confirm_enters_copy_mode_on_the_match() {
         Some((first.line_idx, 0))
     );
 
-    tm.handle_search_action(SearchModeAction::Next, raw_view);
-    tm.handle_search_action(SearchModeAction::Confirm, raw_view);
+    tm.searching()
+        .handle_search_action(SearchModeAction::Next, raw_view);
+    tm.searching()
+        .handle_search_action(SearchModeAction::Confirm, raw_view);
     assert!(!tm.search_state.active);
     assert_eq!(tm.search_state.matches.len(), 2);
     assert!(tm.copy_state.active);
@@ -1086,8 +1275,10 @@ fn search_confirm_enters_copy_mode_on_the_match() {
     let cursor = &tm.copy_state.cursor;
     assert_eq!((cursor.line_idx, cursor.char_idx), (last.line_idx, 4));
 
-    tm.handle_search_action(SearchModeAction::Next, raw_view);
-    tm.handle_search_action(SearchModeAction::Previous, raw_view);
+    tm.searching()
+        .handle_search_action(SearchModeAction::Next, raw_view);
+    tm.searching()
+        .handle_search_action(SearchModeAction::Previous, raw_view);
     assert_eq!(tm.search_state.current_match, 1);
     let cursor = &tm.copy_state.cursor;
     assert_eq!((cursor.line_idx, cursor.char_idx), (last.line_idx, 4));
@@ -1176,7 +1367,8 @@ fn invalid_utf8_shows_like_line_mode() {
     assert_eq!(row_text(&mut tm, 0), String::from_utf8_lossy(input));
     assert_eq!(row_text(&mut tm, 0), "a\u{FFFD}b\u{FFFD}\u{FFFD}c");
 
-    tm.handle_search_action(SearchModeAction::Query("c".to_string()), raw_view);
+    tm.searching()
+        .handle_search_action(SearchModeAction::Query("c".to_string()), raw_view);
     assert_eq!(tm.search_state.matches[0].col_idx, 5);
     assert!(
         tm.screenshot()
@@ -1216,11 +1408,9 @@ fn marks_popup_shows_invalid_bytes() {
     assert_eq!(tm.mark_rows()[0].text.trim_end(), "a\u{FFFD}b");
 }
 
-/// Every byte the stream holds, both slices joined (MAX-252)
-fn stream_bytes(tm: &TerminalMode) -> Vec<u8> {
-    let stream = tm.dump.stream();
-    let (front, back) = stream.slices(stream.start()..stream.end());
-    [front, back].concat()
+/// Every byte received still kept (MAX-252)
+fn stream_bytes(tm: &Term) -> Vec<u8> {
+    tm.rx.bytes(tm.rx.start()..tm.rx.end())
 }
 
 /// MAX-252 step 1: the stream keeps the device's bytes as received, before add CR, the
@@ -1260,7 +1450,7 @@ fn stream_holds_restored_bytes_not_the_reset() {
 // ---- MAX-256: which bytes wrote which cells ----
 
 /// The device's bytes, read as they come in `reads`
-fn device(tm: &mut TerminalMode, reads: &[&[u8]]) {
+fn device(tm: &mut Term, reads: &[&[u8]]) {
     for read in reads {
         tm.process_device_rx(TextEncoding::Utf8, read, false, false, true);
     }
@@ -1272,7 +1462,7 @@ fn span(start: u64, end: u64) -> std::ops::Range<u64> {
 }
 
 /// The bytes of the writes at a world position, newest first
-fn bytes_at(tm: &mut TerminalMode, line: usize, col: usize) -> Option<Vec<std::ops::Range<u64>>> {
+fn bytes_at(tm: &mut Term, line: usize, col: usize) -> Option<Vec<std::ops::Range<u64>>> {
     let writes = tm.writes_at(line, col, TextEncoding::Utf8, 32)?;
     Some(writes.into_iter().map(|write| write.bytes).collect())
 }
@@ -1285,7 +1475,7 @@ fn bytes_at(tm: &mut TerminalMode, line: usize, col: usize) -> Option<Vec<std::o
 fn a_byte_leads_to_its_cell() {
     let mut tm = terminal(24);
     device(&mut tm, &[b"ab\r\n\x1b[31mred\x1b[0m x"]);
-    let at = |tm: &mut TerminalMode, offset| tm.written_at(offset, TextEncoding::Utf8);
+    let at = |tm: &mut Term, offset| tm.written_at(offset, TextEncoding::Utf8);
     assert_eq!(at(&mut tm, 1), Some(((0, 1), true)));
     assert_eq!(at(&mut tm, 9), Some(((1, 0), true)));
     assert_eq!(at(&mut tm, 17), Some(((1, 4), true)));
@@ -1576,7 +1766,7 @@ fn autowrap_on_by_default() {
 
 /// Non-blank cells on the live screen: (with a current link, without), through the lookup the
 /// UI uses
-fn bench_coverage(tm: &mut TerminalMode) -> (usize, usize) {
+fn bench_coverage(tm: &mut Term) -> (usize, usize) {
     let (rows, cols) = tm.get_vt100_size();
     tm.refresh_max_scrollback();
     let sb = tm.max_content_scrollback;
@@ -1608,7 +1798,7 @@ fn bench_coverage(tm: &mut TerminalMode) -> (usize, usize) {
 }
 
 /// Feeds `bytes` in reads of `read` bytes, as a serial port gives them
-fn bench_feed(tm: &mut TerminalMode, bytes: &[u8], read: usize) {
+fn bench_feed(tm: &mut Term, bytes: &[u8], read: usize) {
     for chunk in bytes.chunks(read) {
         tm.process_device_rx(TextEncoding::Utf8, chunk, false, false, true);
     }
@@ -1673,7 +1863,7 @@ fn trace_coverage_bench() {
         ("vi (alternate, scroll region, IL, DCH)", vi.as_bytes()),
         ("shell line editing", shell.as_bytes()),
     ] {
-        let mut tm = TerminalMode::new(1000, 24, 80);
+        let mut tm = Term::new(1000, 24, 80);
         bench_feed(&mut tm, bytes, 64);
         let (current, none) = bench_coverage(&mut tm);
         let all = (current + none).max(1) as f64;
@@ -1762,8 +1952,8 @@ fn bench_streams(amount: usize, cols: usize) -> Vec<(&'static str, Vec<u8>)> {
 }
 
 /// The bytes received in reads of `read` bytes, the trace off or on: seconds taken
-fn bench_time(bytes: &[u8], rows: u16, cols: u16, read: usize, trace: bool) -> (f64, TerminalMode) {
-    let mut tm = TerminalMode::new(10_000, rows, cols);
+fn bench_time(bytes: &[u8], rows: u16, cols: u16, read: usize, trace: bool) -> (f64, Term) {
+    let mut tm = Term::new(10_000, rows, cols);
     let start = std::time::Instant::now();
     for chunk in bytes.chunks(read) {
         tm.process_device_rx(TextEncoding::Utf8, chunk, false, false, trace);
@@ -1823,7 +2013,7 @@ fn trace_cost_bench() {
 
 /// What vt100 dropped from `reads`, fed as the device's, collecting, the byte trace on or off
 fn dropped(reads: &[&[u8]], trace: bool) -> Vec<(DropKind, Vec<u8>)> {
-    let mut tm = TerminalMode::new(100, 5, 40);
+    let mut tm = Term::new(100, 5, 40);
     tm.collect_dropped(true, true);
     for read in reads {
         tm.process_device_rx(TextEncoding::Utf8, read, false, false, trace);
@@ -1906,7 +2096,7 @@ fn dropped_in_stream_order() {
             ],
             "{trace}"
         );
-        let mut tm = TerminalMode::new(100, 5, 40);
+        let mut tm = Term::new(100, 5, 40);
         tm.collect_dropped(true, true);
         tm.process_device_rx(TextEncoding::Utf8, read, false, false, trace);
         assert_eq!(tm.vt100_screen().contents(), "abcd");
@@ -1923,11 +2113,11 @@ fn dropped_string_across_reads_and_not_collecting() {
         assert_eq!(dropped.len(), 1, "{dropped:?}");
         assert_eq!(dropped[0].0, DropKind::String);
     }
-    let mut tm = TerminalMode::new(100, 5, 40);
+    let mut tm = Term::new(100, 5, 40);
     tm.process_device_rx(TextEncoding::Utf8, b"\x00\x7f", false, false, true);
     assert!(tm.take_dropped().is_empty());
     // without `tokens`, only the callbacks' items: no DEL, no string, no tokenizer of its own
-    let mut tm = TerminalMode::new(100, 5, 40);
+    let mut tm = Term::new(100, 5, 40);
     tm.collect_dropped(true, false);
     tm.process_device_rx(
         TextEncoding::Utf8,
@@ -1947,7 +2137,7 @@ fn dropped_string_across_reads_and_not_collecting() {
 
 /// The device's title and icon name after `reads`, fed as the device's
 fn titles(reads: &[&[u8]]) -> (Option<String>, Option<String>) {
-    let mut tm = TerminalMode::new(100, 5, 40);
+    let mut tm = Term::new(100, 5, 40);
     for read in reads {
         tm.process_device_rx(TextEncoding::Utf8, read, false, false, false);
     }
@@ -1991,7 +2181,7 @@ fn device_titles_cleaned() {
 /// How: a title set, the history cleared, then a fresh `TerminalMode`
 #[test]
 fn device_titles_kept_on_clear_history() {
-    let mut tm = TerminalMode::new(100, 5, 40);
+    let mut tm = Term::new(100, 5, 40);
     tm.process_device_rx(TextEncoding::Utf8, b"\x1b]0;board\x07", false, false, false);
     tm.clear_history();
     assert_eq!(tm.device_title(), Some("board"));
@@ -2004,7 +2194,7 @@ fn device_titles_kept_on_clear_history() {
 /// How: a copy, the query while collecting, a 2 MB copy, then a restore holding a copy
 #[test]
 fn device_copies_kept_until_taken() {
-    let mut tm = TerminalMode::new(100, 5, 40);
+    let mut tm = Term::new(100, 5, 40);
     tm.process_device_rx(
         TextEncoding::Utf8,
         b"\x1b]52;c;aGk=\x07",
@@ -2025,7 +2215,7 @@ fn device_copies_kept_until_taken() {
         [(DropKind::Osc, b"\x1b]52;c;...\x07".to_vec())]
     );
 
-    let mut tm = TerminalMode::new(100, 5, 40);
+    let mut tm = Term::new(100, 5, 40);
     tm.collect_dropped(true, true);
     tm.restore(
         TextEncoding::Utf8,
@@ -2057,7 +2247,7 @@ fn every_c1_is_listed() {
 
 /// The screen's first row after `read`, fed as the device's, the groups marked
 fn marked(read: &[u8], groups: &[UnhandledGroup], trace: bool) -> String {
-    let mut tm = TerminalMode::new(100, 3, 40);
+    let mut tm = Term::new(100, 3, 40);
     tm.collect_dropped(true, true);
     tm.mark_dropped(groups);
     tm.process_device_rx(TextEncoding::Utf8, read, false, false, trace);
@@ -2140,7 +2330,7 @@ fn unhandled_marker_moves_the_text() {
 /// How: a restore holding NUL, every group marked
 #[test]
 fn unhandled_markers_restored() {
-    let mut tm = TerminalMode::new(100, 3, 40);
+    let mut tm = Term::new(100, 3, 40);
     tm.collect_dropped(true, true);
     tm.mark_dropped(&ALL_GROUPS);
     tm.restore(TextEncoding::Utf8, &untimed(b"a\x00b\r\n"), "", false);
@@ -2180,7 +2370,7 @@ fn links_shown_while_their_text_is_there() {
     tm.process_rx(TextEncoding::Utf8, b"\rabLINK");
     assert_eq!(shown_links(&tm), []);
 
-    let mut tm = TerminalMode::new(100, 4, 10);
+    let mut tm = Term::new(100, 4, 10);
     let mut bytes = b"12345678".to_vec();
     bytes.extend(osc8("http://b", "abcdef"));
     tm.process_rx(TextEncoding::Utf8, &bytes);
@@ -2201,7 +2391,7 @@ fn links_shown_while_their_text_is_there() {
 /// top row. Two more lines: none on the screen; vt100's view 3 rows up: both rows
 #[test]
 fn links_follow_their_rows() {
-    let mut tm = TerminalMode::new(100, 2, 4);
+    let mut tm = Term::new(100, 2, 4);
     tm.process_rx(TextEncoding::Utf8, &osc8("http://a", "abcdef"));
     tm.process_rx(TextEncoding::Utf8, b"\r\nx");
     assert_eq!(
@@ -2222,7 +2412,7 @@ fn links_follow_their_rows() {
 /// How: each sign on a fresh terminal, in order, then the ones that must not count
 #[test]
 fn shell_signal_from_device_bytes() {
-    let device = |tm: &mut TerminalMode, bytes: &[u8]| {
+    let device = |tm: &mut Term, bytes: &[u8]| {
         tm.process_device_rx(TextEncoding::Utf8, bytes, false, false, false);
     };
     let mut tm = terminal(5);

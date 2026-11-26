@@ -863,10 +863,41 @@ pub static COMMANDS: &[CommandSpec] = {
             "Show the last lines of the line mode history, skipping [from] newest",
         ),
         CommandSpec::query(
+            "history-since",
+            &[
+                ArgSpec {
+                    name: "line",
+                    kind: ArgKind::Int {
+                        min: 0,
+                        max: i64::MAX,
+                        suggestions: &[],
+                    },
+                    optional: false,
+                },
+                ArgSpec {
+                    name: "count",
+                    kind: ArgKind::Int {
+                        min: 1,
+                        max: query::MAX_COUNT,
+                        suggestions: &[],
+                    },
+                    optional: true,
+                },
+            ],
+            query::history_since,
+            "Show the line mode history from line number <line> on",
+        ),
+        CommandSpec::query(
+            "partial-line",
+            &[],
+            query::partial_line,
+            "Show the line mode line still coming in",
+        ),
+        CommandSpec::query(
             "history-size",
             &[],
             query::history_size,
-            "Show how many lines the line mode history holds, and how many its cap dropped",
+            "Show how many lines the line mode history holds, and how many its cap and clears dropped",
         ),
         CommandSpec::query(
             "screen",
@@ -877,6 +908,66 @@ pub static COMMANDS: &[CommandSpec] = {
             }],
             query::screen,
             "Show the terminal's live screen as text, or with its colors as escapes",
+        ),
+        CommandSpec::query(
+            "rows",
+            &[
+                ArgSpec {
+                    name: "format",
+                    kind: ArgKind::Enum(&["text", "colors"]),
+                    optional: true,
+                },
+                ArgSpec {
+                    name: "from",
+                    kind: ArgKind::Int {
+                        min: 0,
+                        max: i64::MAX,
+                        suggestions: &[],
+                    },
+                    optional: true,
+                },
+                ArgSpec {
+                    name: "count",
+                    kind: ArgKind::Int {
+                        min: 1,
+                        max: query::MAX_COUNT,
+                        suggestions: &[],
+                    },
+                    optional: true,
+                },
+            ],
+            query::rows,
+            "Show the last terminal rows that scrolled up, skipping [from] newest",
+        ),
+        CommandSpec::query(
+            "rows-since",
+            &[
+                ArgSpec {
+                    name: "row",
+                    kind: ArgKind::Int {
+                        min: 0,
+                        max: i64::MAX,
+                        suggestions: &[],
+                    },
+                    optional: false,
+                },
+                ArgSpec {
+                    name: "count",
+                    kind: ArgKind::Int {
+                        min: 1,
+                        max: query::MAX_COUNT,
+                        suggestions: &[],
+                    },
+                    optional: true,
+                },
+                ArgSpec {
+                    name: "format",
+                    kind: ArgKind::Enum(&["text", "colors"]),
+                    optional: true,
+                },
+            ],
+            query::rows_since,
+            "Show the terminal rows that scrolled up from row number <row> on",
         ),
         CommandSpec::query(
             "cursor",

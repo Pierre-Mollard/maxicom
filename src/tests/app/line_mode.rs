@@ -126,6 +126,24 @@ fn marks_follow_their_lines_and_go_with_them() {
     assert!(lm.marks().sorted().is_empty());
 }
 
+/// MAX-290: a line's absolute number is the lines before it, dropped by the cap or cleared,
+/// plus its index: it stays with the line, and is never given twice. `dropped_lines` keeps
+/// counting the cap's drops only (`history-size`'s `dropped`).
+/// How: a 3-line history fed 5 lines, cleared, then 2 more.
+#[test]
+fn lines_keep_their_absolute_number() {
+    let mut lm = line_mode(3);
+    lm.feed_rx(false, TextEncoding::Utf8, b"l0\nl1\nl2\nl3\nl4\n");
+    assert_eq!(texts(&lm), ["l2\n", "l3\n", "l4\n"]);
+    assert_eq!(lm.first_line(), 2);
+
+    lm.clear_history();
+    lm.feed_rx(false, TextEncoding::Utf8, b"l5\nl6\n");
+    assert_eq!(texts(&lm), ["l5\n", "l6\n"]);
+    assert_eq!(lm.first_line(), 5);
+    assert_eq!(lm.dropped_lines(), 2);
+}
+
 /// A large configured history doesn't reserve memory up front (#21).
 /// How: capacity of a fresh 100k-line LineMode.
 #[test]

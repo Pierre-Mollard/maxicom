@@ -153,21 +153,23 @@ fn values_as_json() {
     );
 }
 
-/// MAX-284 (step 2b): `subscribe`'s `events` names kinds of `KINDS` and `rx`; left out, every
-/// kind and `rx`; an unknown name, a name that isn't a string, a list that isn't one, params
-/// by position are refused.
+/// MAX-284 (step 2b): `subscribe`'s `events` names kinds of `KINDS` and streams of `STREAMS`
+/// (MAX-290); left out, every one; an unknown name, a name that isn't a string, a list that
+/// isn't one, params by position are refused.
 /// How: each form of params.
 #[test]
 fn subscription_params() {
     let all = Subscription::from_params(None).unwrap();
-    assert_eq!((all.kinds.len(), all.rx, all.tx), (KINDS.len(), true, true));
+    assert_eq!(
+        (all.kinds.len(), all.streams),
+        (KINDS.len(), STREAMS.to_vec())
+    );
     let some = Subscription::from_params(Some(&json!({"events": ["link-lost", "rx"]}))).unwrap();
     assert_eq!(
         some,
         Subscription {
             kinds: vec!["link-lost"],
-            rx: true,
-            tx: false,
+            streams: vec!["rx"],
         }
     );
     assert!(some.wants(&Event::LinkLost { link: "Serial" }));
@@ -672,5 +674,36 @@ mod socket {
         let tx = client.reply();
         assert_eq!(tx["method"], json!("tx"));
         assert_eq!(tx["params"]["sent"], json!(3));
+    }
+
+    /// MAX-290: `history` and `rows` are streams to follow: the reply gives their newest
+    /// numbers, and lines received then rows scrolled up are told with the new ones.
+    /// How: `subscribe` to both, then 30 lines received (both modes fed by `always_both`).
+    #[test]
+    fn lines_and_rows_are_notified() {
+        let mut server = TestServer::start("streams");
+        let mut app = crate::app::tests::app();
+        serve_requests(&mut server, &mut app, 0);
+        let mut client = Client::connect(&server);
+        client.send(
+            r#"{"jsonrpc":"2.0","id":1,"method":"subscribe","params":{"events":["history","rows"]}}"#,
+        );
+        serve_requests(&mut server, &mut app, 1);
+        let result = client.reply()["result"].clone();
+        assert_eq!(
+            (&result["history"], &result["rows"], &result["events"]),
+            (&json!(0), &json!(0), &json!(["history", "rows"]))
+        );
+        let lines: String = (0..30).map(|n| format!("l{n}\r\n")).collect();
+        app.feed_rx(lines.as_bytes());
+        serve_requests(&mut server, &mut app, 0);
+        let history = client.reply();
+        assert_eq!(history["method"], json!("history"));
+        assert_eq!(history["params"]["newest"], json!(30));
+        let rows = client.reply();
+        assert_eq!(rows["method"], json!("rows"));
+        let scrolled = app.terminal_mode.rows_kept().end;
+        assert!(scrolled > 0);
+        assert_eq!(rows["params"]["newest"], json!(scrolled));
     }
 }

@@ -237,6 +237,7 @@ win.
 A few settings are read at startup only. A reload tells you which of them
 changed:
 
+- `rx_bytes`;
 - `line_mode.history_size`, `line_mode.send_history_size`;
 - `terminal_mode.history_size`, `terminal_mode.rows`, `terminal_mode.cols`;
 - `sessions.enabled`, `sessions.keep`, `sessions.max_size`.
@@ -269,6 +270,7 @@ Times and file names use strftime formats: `%Y-%m-%d` for the date,
 | `disabled_mode` | `"none"` | `none`, `line` or `terminal`: the mode you can't switch to, [Introduction](introduction.md#two-modes) |
 | `dual_mode_buffering` | `"always_both"` | `always_both` or `active_only`: [Introduction](introduction.md#two-modes) |
 | `rx_buffer_size` | `4096` | Bytes read from the link at once, 512 to 65536 |
+| `rx_bytes` | `"48M"` | The bytes received kept, in any mode, for the raw side panel and `raw`: `K`, `M`, `G` or `T`, 64K at least. [Raw side panel](raw-side-panel.md#in-terminal-mode) |
 | `show_timestamps` | `false` | Times before the lines / rows: [Line mode](line-mode.md#timestamps) |
 | `timestamp_format` | `"[%H:%M:%S%.3f]"` | strftime format of those times |
 | `inactivity_detach_timeout` | `"4h"` | Detach a link idle that long, `"0s"` never: [Links](links.md#idle-links) |

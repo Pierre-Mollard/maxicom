@@ -60,7 +60,18 @@ class ApiTest(unittest.TestCase):
         newest = self.client.wait_for("rx", lambda params: params["newest"] >= start + 7)
         raw = self.client.query(f"raw-since {start}")
         self.assertEqual(base64.b64decode(raw["bytes"]), b"hello\r\n")
-        self.assertEqual(raw["end"], newest["newest"])
+        self.assertEqual((raw["start"], raw["newest"]), (start, newest["newest"]))
+
+    def test_lines_come_by_history_and_history_since(self):
+        """Lines from the device: a `history` notification with the next line number, then
+        `history-since` gives them, each with its number"""
+        start = self.subscribe("history")["history"]
+        self.device.send(b"first\r\nsecond\r\n")
+        self.client.wait_for("history", lambda params: params["newest"] >= start + 2)
+        lines = self.client.query(f"history-since {start}")
+        texts = [(entry["line"], entry["text"]) for entry in lines["entries"]]
+        self.assertEqual(texts, [(start, "first"), (start + 1, "second")])
+        self.assertFalse(lines["cut"])
 
     def test_backlog_since_the_start(self):
         """`subscribe` since 0 gives the events kept from the start: the link's open first"""

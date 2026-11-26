@@ -78,6 +78,8 @@ pub struct LineMode {
     evicted_lines: usize,
     /// All the lines dropped from the top of the history so far (MAX-202)
     dropped_lines: usize,
+    /// All the lines `clear-history` took away so far (MAX-290)
+    cleared_lines: usize,
     /// How the next frame brings the view to the copy cursor, which only the render can place
     /// in rows (MAX-143)
     copy_reveal: Option<Reveal>,
@@ -139,6 +141,7 @@ impl LineMode {
             vi_state_copymode: None,
             evicted_lines: 0,
             dropped_lines: 0,
+            cleared_lines: 0,
             copy_reveal: None,
             copy_cursor_shown: false,
             bottom_row_start: None,
@@ -272,6 +275,7 @@ impl LineMode {
     }
 
     pub fn clear_history(&mut self) {
+        self.cleared_lines += self.local_history.len();
         self.local_history.clear();
         self.row_heights.clear();
         self.view_floor = None;
@@ -421,6 +425,24 @@ impl LineMode {
         self.dropped_lines
     }
 
+    /// The absolute number of the oldest line kept (MAX-290): every line before it, dropped by
+    /// the cap or cleared. A line's number is this plus its index: it never changes, and is
+    /// never given twice
+    pub fn first_line(&self) -> u64 {
+        (self.dropped_lines + self.cleared_lines) as u64
+    }
+
+    /// The numbers of the lines kept (MAX-290)
+    pub fn lines_kept(&self) -> std::ops::Range<u64> {
+        let first = self.first_line();
+        first..first + self.local_history.len() as u64
+    }
+
+    #[inline]
+    pub fn cleared_lines(&self) -> usize {
+        self.cleared_lines
+    }
+
     /// Read-only slice/iterator of completed lines
     #[inline]
     pub fn history(&self) -> &VecDeque<LogEntry> {
@@ -431,6 +453,13 @@ impl LineMode {
     #[inline]
     pub fn partial_rx(&self) -> &[u8] {
         self.partial_line.line()
+    }
+
+    /// When the line being received started, when known; none before its first byte (the
+    /// splitter keeps the ended line's time until then) (MAX-290)
+    pub fn partial_time(&self) -> Option<Timestamp> {
+        let started = !self.partial_line.line().is_empty();
+        self.partial_line.timestamp().filter(|_| started)
     }
 
     pub fn history_up(&mut self) {

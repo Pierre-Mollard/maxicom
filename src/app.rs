@@ -59,6 +59,7 @@ use crate::{
         ScreenshotDialog, SettingKey,
     },
     paths::{create_parent_dirs, expand_home},
+    rx_stream::RxStream,
     transfer::{FileTransfer, Step, modem::Protocol},
     ui::{layout::side_chunks, raw_side::terminal::DumpLayout},
 };
@@ -207,6 +208,9 @@ pub struct App {
     command_history: VecDeque<String>,
     /// The searches Enter ran, oldest first, for Up / Down in the bar (MAX-218)
     search_history: VecDeque<String>,
+    /// The bytes received, whatever the modes fed: the terminal raw panel's and the API's
+    /// (MAX-290)
+    pub rx_bytes: RxStream,
     pub line_mode: LineMode,
     pub terminal_mode: TerminalMode,
     recorder: Recorder,
@@ -281,7 +285,7 @@ pub struct App {
 }
 
 /// The live link a replay replaced (MAX-166): its settings, its profile stack (MAX-240), the
-/// mode, the encoding, the
+/// mode, the encoding, the bytes received, the
 /// histories of both modes, the counts and its session backup, put back as they were when the
 /// replay stops (MAX-171: the backup kept here only, so it can't stay behind)
 struct ReplacedLink {
@@ -289,6 +293,7 @@ struct ReplacedLink {
     profiles: Vec<String>,
     mode: Mode,
     encoding: TextEncoding,
+    rx_bytes: RxStream,
     line_mode: LineMode,
     terminal_mode: TerminalMode,
     stats: Stats,
@@ -348,6 +353,7 @@ impl App {
         key_resolver: KeyResolver,
         link_config: LinkConfig,
     ) -> Self {
+        let rx_bytes = rx_store(&settings);
         let line_view = LineMode::new(
             settings.line_mode.history_size,
             settings.line_mode.send_history_size,
@@ -390,6 +396,7 @@ impl App {
             jobs: Jobs::default(),
             command_history: VecDeque::new(),
             search_history: VecDeque::new(),
+            rx_bytes,
             line_mode: line_view,
             terminal_mode: terminal_view,
             recorder: Recorder::default(),
@@ -629,7 +636,7 @@ impl App {
         self.recorder.end_line(self.settings.encoding);
         self.stop_transfer("a replay took the link's place");
         self.stop_mash("a replay took the link's place");
-        let (line_mode, terminal_mode, stats) = self.clear_screen();
+        let (rx_bytes, line_mode, terminal_mode, stats) = self.clear_screen();
         // a replay replacing a replay keeps the live link the first one set aside
         let replaced = match self.replay.take().and_then(|run| run.replaced) {
             Some(replaced) => Some(replaced),
@@ -638,6 +645,7 @@ impl App {
                 profiles: self.profiles.clone(),
                 mode: self.settings.mode,
                 encoding: self.settings.encoding,
+                rx_bytes,
                 line_mode,
                 terminal_mode,
                 stats,
@@ -668,9 +676,9 @@ impl App {
         }
     }
 
-    /// Fresh histories of both modes and fresh counts, the ones they replace given back: for a
-    /// replay to play on (MAX-166) and for a device switched to (MAX-187)
-    fn clear_screen(&mut self) -> (LineMode, TerminalMode, Stats) {
+    /// Fresh bytes received, histories of both modes and counts, the ones they replace given
+    /// back: for a replay to play on (MAX-166) and for a device switched to (MAX-187)
+    fn clear_screen(&mut self) -> (RxStream, LineMode, TerminalMode, Stats) {
         self.clear_plot();
         self.shell_hinted = false;
         let line_mode = LineMode::new(
@@ -683,6 +691,7 @@ impl App {
             self.settings.terminal_mode.cols,
         );
         (
+            std::mem::replace(&mut self.rx_bytes, rx_store(&self.settings)),
             std::mem::replace(&mut self.line_mode, line_mode),
             std::mem::replace(&mut self.terminal_mode, terminal_mode),
             std::mem::take(&mut self.stats),
@@ -734,6 +743,7 @@ impl App {
             self.settings.mode = replaced.mode;
         }
         self.settings.encoding = replaced.encoding;
+        self.rx_bytes = replaced.rx_bytes;
         self.line_mode = replaced.line_mode;
         self.terminal_mode = replaced.terminal_mode;
         self.stats = replaced.stats;
@@ -1478,6 +1488,8 @@ impl App {
         self.recorder
             .record_rx(settings.add_lf, settings.encoding, timestamp_format, chunk);
 
+        // kept whatever the modes fed (MAX-290)
+        self.rx_bytes.push(chunk);
         let (feed_line, feed_terminal) = self.fed_modes();
         if feed_terminal {
             self.sync_unhandled();
@@ -1489,6 +1501,7 @@ impl App {
         }
         if feed_terminal {
             (self.terminal_mode).process_device_rx(
+                &self.rx_bytes,
                 settings.encoding,
                 chunk,
                 settings.add_cr,
@@ -1746,10 +1759,13 @@ impl App {
             (ScrollbarId::History, BarScroll::To(position)) => {
                 self.update_action_history(HistoryAction::ScrollTo(bar.max - position));
             }
-            (ScrollbarId::Dump, BarScroll::Up) => self.terminal_mode.dump_mut().scroll_up(1),
-            (ScrollbarId::Dump, BarScroll::Down) => self.terminal_mode.dump_mut().scroll_down(1),
-            (ScrollbarId::Dump, BarScroll::To(position)) => {
-                self.terminal_mode.dump_mut().scroll_to(position);
+            (ScrollbarId::Dump, scroll) => {
+                let (dump, rx) = (self.terminal_mode.dump_mut(), &self.rx_bytes);
+                match scroll {
+                    BarScroll::Up => dump.scroll_up(rx, 1),
+                    BarScroll::Down => dump.scroll_down(rx, 1),
+                    BarScroll::To(position) => dump.scroll_to(rx, position),
+                }
             }
         }
     }
@@ -2240,7 +2256,7 @@ impl App {
         // the left border, the scrollbar's column
         let chrome = 1 + u16::from(self.show_scrollbar());
         let width = panel.width.saturating_sub(chrome).into();
-        let end = self.terminal_mode.dump().stream().end();
+        let end = self.rx_bytes.end();
         DumpLayout::groups(width, self.settings.raw_side.view, end)
     }
 
@@ -2290,7 +2306,7 @@ impl App {
         let raw_view = self.settings.raw_side.view;
         match (self.settings.mode, action) {
             (Mode::Terminal, action) => {
-                self.terminal_mode.handle_side_view_action(action, raw_view);
+                (self.terminal_mode).handle_side_view_action(&self.rx_bytes, action, raw_view);
             }
             // line mode's raw panel scrolls with the history
             (Mode::Line, SideViewAction::ScrollUp(lines)) => {
@@ -2319,13 +2335,13 @@ impl App {
         if self.settings.mode == Mode::Line || self.terminal_mode.dump_copy().is_none() {
             return self.update_action_history(scroll);
         }
-        let dump = self.terminal_mode.dump_mut();
+        let (dump, rx) = (self.terminal_mode.dump_mut(), &self.rx_bytes);
         let page = dump.page();
         match scroll {
-            HistoryAction::ScrollUp(lines) => dump.scroll_up(lines),
-            HistoryAction::ScrollDown(lines) => dump.scroll_down(lines),
-            HistoryAction::ScrollUpPage => dump.scroll_up(page),
-            HistoryAction::ScrollDownPage => dump.scroll_down(page),
+            HistoryAction::ScrollUp(lines) => dump.scroll_up(rx, lines),
+            HistoryAction::ScrollDown(lines) => dump.scroll_down(rx, lines),
+            HistoryAction::ScrollUpPage => dump.scroll_up(rx, page),
+            HistoryAction::ScrollDownPage => dump.scroll_down(rx, page),
             _ => {}
         }
         UpdateEffect::None
@@ -2336,7 +2352,8 @@ impl App {
     fn copy_action(&mut self, action: CopyModeAction, report: &mut Report) -> Option<String> {
         match self.settings.mode {
             Mode::Terminal => {
-                let text = (self.terminal_mode).handle_copy_action(action, &self.settings);
+                let text =
+                    (self.terminal_mode).handle_copy_action(&self.rx_bytes, action, &self.settings);
                 // `Y` couldn't give the bytes received (MAX-256)
                 if let Some(why) = self.terminal_mode.take_untraced_yank() {
                     let why = match why {
@@ -2507,7 +2524,9 @@ impl App {
         };
         let view = SearchView::from(&self.settings);
         match self.settings.mode {
-            Mode::Terminal => self.terminal_mode.handle_search_action(action, view),
+            Mode::Terminal => {
+                (self.terminal_mode.searching(&self.rx_bytes)).handle_search_action(action, view)
+            }
             Mode::Line => self.line_mode.handle_search_action(action, view),
         }
         if opens
@@ -2554,7 +2573,7 @@ impl App {
         match self.settings.mode {
             Mode::Terminal => {
                 if self.terminal_mode.search_mut().walk_history(history, up) {
-                    self.terminal_mode.update_search_matches(view);
+                    (self.terminal_mode.searching(&self.rx_bytes)).update_search_matches(view);
                 }
             }
             Mode::Line => {
@@ -2618,7 +2637,9 @@ impl App {
     /// `n` / `N` in copy mode (MAX-215), with a note when it goes around the history's end
     fn repeat_search(&mut self, opposite: bool) -> Option<Note> {
         let wrapped = match self.settings.mode {
-            Mode::Terminal => self.terminal_mode.repeat_search(opposite),
+            Mode::Terminal => {
+                (self.terminal_mode.searching(&self.rx_bytes)).repeat_search(opposite)
+            }
             Mode::Line => self.line_mode.repeat_search(opposite),
         };
         let forward = (self.search().direction == SearchDirection::Forward) != opposite;
@@ -2627,6 +2648,17 @@ impl App {
             Some(true) => Some(went_around_note(forward)),
             Some(false) => None,
         }
+    }
+
+    /// `clear-history`: the history of the mode shown, and in both modes the bytes received
+    /// with their trace (MAX-290), the offsets counting on
+    fn clear_history(&mut self) {
+        match self.settings.mode {
+            Mode::Line => self.line_mode.clear_history(),
+            Mode::Terminal => self.terminal_mode.clear_history(),
+        }
+        self.rx_bytes.clear();
+        self.terminal_mode.dump_mut().clear();
     }
 
     fn update_action_history(&mut self, action: HistoryAction) -> UpdateEffect {
@@ -2649,9 +2681,7 @@ impl App {
             (Mode::Line, HistoryAction::ScrollToTop) => {
                 self.line_mode.scroll_to_top();
             }
-            (Mode::Line, HistoryAction::Clear) => {
-                self.line_mode.clear_history();
-            }
+            (_, HistoryAction::Clear) => self.clear_history(),
             (Mode::Line, HistoryAction::ClearView) => self.line_mode.clear_view(),
             (Mode::Line, HistoryAction::PanLeft(cols)) => {
                 self.line_mode.pan_to_left(cols);
@@ -2683,7 +2713,6 @@ impl App {
             (Mode::Terminal, HistoryAction::PanLeft(cols)) => {
                 self.terminal_mode.pan_to_left(cols, self.viewport.cols);
             }
-            (Mode::Terminal, HistoryAction::Clear) => self.terminal_mode.clear_history(),
             (Mode::Terminal, HistoryAction::ClearView) => self.terminal_mode.clear_view(),
             (Mode::Line, HistoryAction::ScrollTo(rows)) => self.line_mode.scroll_to_row(rows),
             (Mode::Terminal, HistoryAction::ScrollTo(rows)) => {
@@ -2709,6 +2738,8 @@ impl App {
                 restart_needed.push(name);
             }
         };
+        keep("rx_bytes", old.rx_bytes != settings.rx_bytes);
+        settings.rx_bytes = old.rx_bytes;
         let (line, new_line) = (&old.line_mode, &mut settings.line_mode);
         keep(
             "line_mode.history_size",
@@ -3262,6 +3293,11 @@ impl App {
 }
 
 /// A search that went around the history's end, said which way (MAX-218)
+/// An empty store of the bytes received, `rx_bytes` long (MAX-290)
+fn rx_store(settings: &SettingsConfig) -> RxStream {
+    RxStream::new(usize::try_from(settings.rx_bytes.0).unwrap_or(usize::MAX))
+}
+
 fn went_around_note(forward: bool) -> Note {
     if forward {
         Note::info("Search hit the end, went on from the top")

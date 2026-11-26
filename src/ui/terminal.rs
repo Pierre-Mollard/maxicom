@@ -191,7 +191,8 @@ pub fn render_vt100_terminal(
     let is_terminal_focused = focus == FocusTarget::Terminal;
     let raw_view = app.settings().raw_side.view;
     // matches shown while data came, found again once a frame (MAX-218)
-    app.terminal_mode.refresh_stale_matches(raw_view);
+    app.terminal_mode
+        .refresh_stale_matches(&app.rx_bytes, raw_view);
 
     // a raw search's matches are in the dump, its cursor brought it there (MAX-252)
     let dump_search = app.terminal_mode.dump_search();
@@ -206,7 +207,8 @@ pub fn render_vt100_terminal(
     }
 
     // the dump copy cursor's cell (MAX-256), before the view: the screen may follow it
-    let traced = app.terminal_mode.trace_cell(app.settings().encoding);
+    let encoding = app.settings().encoding;
+    let traced = app.terminal_mode.trace_cell(&app.rx_bytes, encoding);
 
     let cursor = MaxicomCursor::from_config(
         *theme.ui.cursor_unfocused,
@@ -246,7 +248,7 @@ pub fn render_vt100_terminal(
     // the dump copy selection's cells on the rows shown, in its look (MAX-256)
     let first_shown = top_visible_world_line + pan_y;
     let shown_lines = first_shown..first_shown + content_area.height as usize;
-    let mirror = (app.terminal_mode).selection_cells(app.settings().encoding, shown_lines);
+    let mirror = (app.terminal_mode).selection_cells(&app.rx_bytes, encoding, shown_lines);
 
     // the grid rows shown, for mouse clicks (MAX-113): one char per column
     if app.settings().ui.mouse {

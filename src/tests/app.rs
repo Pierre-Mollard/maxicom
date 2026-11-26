@@ -1729,8 +1729,8 @@ fn mash_and_transfer_are_published() {
 }
 
 /// MAX-260: the mode `disabled_mode` turns off can't be switched to: the toggle stays and
-/// warns, a replay doesn't go to it, and it receives nothing even with `always_both`.
-/// With none disabled the toggle switches.
+/// warns, a replay doesn't go to it, and it receives nothing even with `always_both` (the
+/// bytes received are kept still, MAX-290). With none disabled the toggle switches.
 /// How: line mode with terminal disabled: the toggle, bytes received, a replay link; then
 /// `disabled_mode = none` and the toggle
 #[test]
@@ -1746,7 +1746,8 @@ fn disabled_mode_cant_be_switched_to() {
     );
 
     app.feed_rx(b"hello\r\n");
-    assert_eq!(app.terminal_mode.dump().stream().end(), 0);
+    assert_eq!(app.terminal_mode.vt100_screen().contents(), "");
+    assert_eq!(app.rx_bytes.end(), 7);
     assert!(!app.line_mode.history().is_empty());
 
     app.link
@@ -1757,6 +1758,77 @@ fn disabled_mode_cant_be_switched_to() {
     app.settings.disabled_mode = DisabledMode::None;
     app.update(Action::App(AppAction::ToggleSetting(SettingKey::Mode)));
     assert_eq!(app.settings.mode, Mode::Terminal);
+}
+
+/// MAX-290: the bytes received are kept whatever the modes fed, their offsets counting every
+/// byte; a byte terminal mode wasn't fed has no trace, the next one it gets has.
+/// How: line mode under `active_only` gets "ab", terminal mode under `active_only` then gets
+/// "cd", then terminal mode disabled (line mode shown) gets "ef".
+#[test]
+fn bytes_kept_whatever_the_modes_fed() {
+    let mut app = app();
+    app.settings.dual_mode_buffering = DualBufferMode::ActiveOnly;
+    app.settings.terminal_mode.byte_trace = true;
+    app.settings.mode = Mode::Line;
+    app.feed_rx(b"ab");
+    assert_eq!(app.terminal_mode.vt100_screen().contents(), "");
+
+    app.settings.mode = Mode::Terminal;
+    app.feed_rx(b"cd");
+    assert_eq!(app.terminal_mode.vt100_screen().contents(), "cd");
+    let rx = &app.rx_bytes;
+    assert_eq!(rx.bytes(rx.start()..rx.end()), b"abcd");
+    let encoding = TextEncoding::Utf8;
+    assert_eq!(app.terminal_mode.written_at(rx, 0, encoding), None);
+    assert_eq!(
+        app.terminal_mode.written_at(rx, 2, encoding),
+        Some(((0, 0), true))
+    );
+
+    app.settings.mode = Mode::Line;
+    app.settings.disabled_mode = DisabledMode::Terminal;
+    app.feed_rx(b"ef");
+    assert_eq!(app.terminal_mode.vt100_screen().contents(), "cd");
+    assert_eq!((app.rx_bytes.start(), app.rx_bytes.end()), (0, 6));
+}
+
+/// MAX-290: `rx_bytes` caps the bytes kept, the oldest dropped past it.
+/// How: `rx_bytes = "100K"`, 150 KiB received.
+#[test]
+fn rx_bytes_caps_the_bytes_kept() {
+    let mut settings = SettingsConfig::default();
+    settings.rx_bytes = "100K".parse().unwrap();
+    let resolver = KeyResolver::try_new(&KeyBindingsConfig::default()).unwrap();
+    let mut app = App::new(settings, resolver, LinkConfig::default());
+    app.feed_rx(&vec![b'a'; 150 << 10]);
+    assert_eq!(
+        (app.rx_bytes.start(), app.rx_bytes.end()),
+        (50 << 10, 150 << 10)
+    );
+}
+
+/// MAX-290: `clear-history` empties the bytes received in either mode, with their trace; the
+/// offsets go on.
+/// How: "abc" received, cleared in line mode, "d" received, cleared in terminal mode.
+#[test]
+fn clear_history_empties_the_bytes_in_both_modes() {
+    let mut app = app();
+    app.settings.terminal_mode.byte_trace = true;
+    app.settings.mode = Mode::Line;
+    app.feed_rx(b"abc");
+    app.update(Action::History(HistoryAction::Clear));
+    assert_eq!((app.rx_bytes.start(), app.rx_bytes.end()), (3, 3));
+    let rx = &app.rx_bytes;
+    assert_eq!(
+        app.terminal_mode.written_at(rx, 0, TextEncoding::Utf8),
+        None
+    );
+
+    app.feed_rx(b"d");
+    assert_eq!((app.rx_bytes.start(), app.rx_bytes.end()), (3, 4));
+    app.settings.mode = Mode::Terminal;
+    app.update(Action::History(HistoryAction::Clear));
+    assert_eq!((app.rx_bytes.start(), app.rx_bytes.end()), (4, 4));
 }
 
 pub fn toasts(app: &App) -> Vec<String> {
@@ -3142,7 +3214,7 @@ fn terminal_mode_local_echo() {
     let screen = app.terminal_mode.vt100_screen();
     assert_eq!(screen.contents(), "hi\nZa\nbAT");
     assert_eq!(screen.cursor_position(), (3, 0));
-    assert_eq!(app.terminal_mode.dump().stream().end(), 0);
+    assert_eq!(app.rx_bytes.end(), 0);
 
     key(&mut quiet, KeyCode::Char('h'));
     quiet.update(Action::TransmitRaw(b"AT\r".to_vec()));
@@ -3372,7 +3444,11 @@ fn every_command_shows_what_it_did() {
         ("commands", "popup Query"),
         ("get", "popup Query"),
         ("history", "popup Query"),
+        ("history-since 0", "popup Query"),
+        ("partial-line", "popup Query"),
         ("history-size", "popup Query"),
+        ("rows", "popup Query"),
+        ("rows-since 0", "popup Query"),
         ("screen", "popup Query"),
         ("cursor", "popup Query"),
         ("term-size", "popup Query"),

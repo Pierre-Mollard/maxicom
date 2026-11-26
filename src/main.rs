@@ -52,6 +52,7 @@ mod notification;
 mod overlays;
 mod paths;
 mod raw_side;
+mod rx_stream;
 mod terminal;
 mod transfer;
 mod ui;

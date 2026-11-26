@@ -348,7 +348,8 @@ impl App {
         let trace = self.settings.terminal_mode.byte_trace;
         // its markers come back with its bytes (MAX-253)
         self.sync_unhandled();
-        (self.terminal_mode).restore(encoding, &shown_chunks, separator, trace);
+        let rx = &mut self.rx_bytes;
+        (self.terminal_mode).restore(rx, encoding, &shown_chunks, separator, trace);
     }
 
     /// Loads a group of sessions, oldest first, for a replay (MAX-202): the end of the group that
@@ -496,7 +497,7 @@ impl App {
                     ..chunk
                 };
                 let trace = settings.terminal_mode.byte_trace;
-                self.terminal_mode.feed_restored(encoding, &chunk, trace);
+                (self.terminal_mode).feed_restored(&mut self.rx_bytes, encoding, &chunk, trace);
             } else {
                 self.line_mode.feed_restored_rx(add_lf, encoding, &chunk);
             }

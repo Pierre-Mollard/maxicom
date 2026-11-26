@@ -1178,6 +1178,8 @@ pub struct SettingsConfig {
     /// The plot of `plots.toml` shown at start, read at start only (MAX-222)
     pub plot: Option<String>,
     pub rx_buffer_size: usize,
+    /// The received bytes kept, in any mode: the raw side panel's and the API's (MAX-290)
+    pub rx_bytes: ByteSize,
     pub show_timestamps: bool,
     pub timestamp_format: String,
     #[serde(with = "super::duration")]
@@ -1214,6 +1216,7 @@ impl Default for SettingsConfig {
             add_lf: false,
             encoding: TextEncoding::default(),
             rx_buffer_size: 4096,
+            rx_bytes: ByteSize(48 << 20),
             mode: Mode::default(),
             disabled_mode: DisabledMode::default(),
             dual_mode_buffering: DualBufferMode::default(),

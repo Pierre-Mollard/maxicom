@@ -3,7 +3,8 @@ use super::*;
 use crate::commands::QueryFn;
 use crate::{
     app::tests::app,
-    inputs::{Action, AppAction},
+    configs::settings::ByteSize,
+    inputs::{Action, AppAction, HistoryAction},
     notification::ToastLevel,
     overlays::SettingKey,
 };
@@ -279,11 +280,13 @@ fn triggers_gives_each_trigger() {
     assert!(login[7].starts_with("  last: "), "{login:?}");
 }
 
-/// MAX-283 (step 7): `history` gives line mode's last lines, oldest first, each with its line
-/// (a mark's) and its text, how many there are, `cut` when older ones are left out, and the
-/// line still coming in; `history-size` the lines held and the ones the cap dropped.
+/// MAX-283 (step 7): `history` gives line mode's last lines, oldest first, each with its
+/// number and its text, in the shape of every stream (MAX-290: the oldest and newest numbers
+/// kept, `cut` when older ones are left out); `partial-line` the line still coming in, with the
+/// number it gets once ended (MAX-290); `history-size` the lines held and the ones the cap and
+/// the clears dropped.
 /// How: line mode, three lines and a prompt without its end fed; the last two asked, then
-/// all; times left out of the comparison.
+/// all; times left out of the comparison; the prompt, then ended.
 #[test]
 fn history_gives_the_last_lines() {
     let mut app = app();
@@ -300,20 +303,32 @@ fn history_gives_the_last_lines() {
     assert_eq!(
         shown(&mut app, &[ArgValue::Int(0), ArgValue::Int(2)]),
         [
-            "total: 3",
+            "oldest: 0",
+            "newest: 3",
             "cut: true",
             "entries:",
             "  line: 1",
             "  text: ok",
             "  line: 2",
             "  text: ready",
-            "partial: login: ",
         ]
     );
+    let partial = partial_line(&mut app, &[]).unwrap().lines();
+    assert_eq!(
+        (&partial[0], &partial[2]),
+        (&"line: 3".to_string(), &"text: login: ".to_string())
+    );
+    assert!(partial[1].starts_with("time: "), "{partial:?}");
     let all = shown(&mut app, &[]);
     assert_eq!(
-        all[..4],
-        ["total: 3", "cut: false", "entries:", "  line: 0"]
+        all[..5],
+        [
+            "oldest: 0",
+            "newest: 3",
+            "cut: false",
+            "entries:",
+            "  line: 0"
+        ]
     );
     let times = history(&mut app, &[]).unwrap().lines();
     assert_eq!(
@@ -322,7 +337,55 @@ fn history_gives_the_last_lines() {
     );
     assert_eq!(
         history_size(&mut app, &[]).unwrap().lines(),
-        ["lines: 3", "dropped: 0"]
+        ["lines: 3", "dropped: 0", "cleared: 0"]
+    );
+    app.feed_rx(b"\r\n");
+    assert_eq!(
+        partial_line(&mut app, &[]).unwrap().lines(),
+        ["line: 4", "text: "]
+    );
+}
+
+/// The numbers of the lines a `history` value gives
+fn line_numbers(value: &Value) -> Vec<String> {
+    let lines = value.lines().into_iter();
+    lines
+        .filter_map(|line| Some(line.strip_prefix("  line: ")?.to_string()))
+        .collect()
+}
+
+/// MAX-290: a line keeps its number across the cap's drops and a clear; `history-since` polls
+/// from a number: from the oldest kept and `cut` when it is older, none from the newest on.
+/// How: a 3-line history in line mode fed 5 lines, polled from 0, 4, 5 and 99; cleared, a line
+/// more, polled from 5; `history-size` then.
+#[test]
+fn history_since_polls_by_line_number() {
+    let mut app = app_with(|settings| {
+        settings.mode = Mode::Line;
+        settings.line_mode.history_size = 3;
+    });
+    app.feed_rx(b"l0\nl1\nl2\nl3\nl4\n");
+    let since = |app: &mut App, line: i64| history_since(app, &[ArgValue::Int(line)]).unwrap();
+    let from_start = since(&mut app, 0);
+    assert_eq!(line_numbers(&from_start), ["2", "3", "4"]);
+    assert_eq!(
+        from_start.lines()[..3],
+        ["oldest: 2", "newest: 5", "cut: true"]
+    );
+    let last = since(&mut app, 4);
+    assert_eq!(line_numbers(&last), ["4"]);
+    assert!(last.lines().contains(&"cut: false".to_string()));
+    assert!(line_numbers(&since(&mut app, 5)).is_empty());
+    assert!(line_numbers(&since(&mut app, 99)).is_empty());
+
+    app.update(Action::History(HistoryAction::Clear));
+    app.feed_rx(b"l5\n");
+    let after = since(&mut app, 5);
+    assert_eq!(line_numbers(&after), ["5"]);
+    assert!(after.lines().iter().any(|line| line == "  text: l5"));
+    assert_eq!(
+        history_size(&mut app, &[]).unwrap().lines(),
+        ["lines: 1", "dropped: 2", "cleared: 3"]
     );
 }
 
@@ -353,6 +416,120 @@ fn screen_cursor_and_size() {
     );
 }
 
+/// A field of a map value
+fn field<'a>(value: &'a Value, name: &str) -> &'a Value {
+    let Value::Map(entries) = value else {
+        panic!("not a map: {value:?}")
+    };
+    match entries.iter().find(|(key, _)| key == name) {
+        Some((_, value)) => value,
+        None => panic!("no {name} in {value:?}"),
+    }
+}
+
+/// A `rows` value's `[oldest, newest]`, `cut` and its rows: number, text, wrapped
+fn rows_parts(value: &Value) -> ([i64; 2], bool, Vec<(i64, String, bool)>) {
+    let int = |value: &Value, name| match field(value, name) {
+        Value::Int(n) => *n,
+        other => panic!("{name}: {other:?}"),
+    };
+    let flag = |value: &Value, name| match field(value, name) {
+        Value::Bool(flag) => *flag,
+        other => panic!("{name}: {other:?}"),
+    };
+    let Value::List(entries) = field(value, "entries") else {
+        panic!("no entries: {value:?}")
+    };
+    let rows = entries.iter().map(|row| {
+        let Value::Text(text) = field(row, "text") else {
+            panic!("text: {row:?}")
+        };
+        (int(row, "row"), text.clone(), flag(row, "wrapped"))
+    });
+    (
+        [int(value, "oldest"), int(value, "newest")],
+        flag(value, "cut"),
+        rows.collect(),
+    )
+}
+
+/// MAX-290: `rows` gives the terminal rows that scrolled up, each with its number, its text
+/// (with its colors as escapes for `colors`) and whether the terminal wrapped it, in the shape
+/// of every stream; the screen's rows aren't there. `rows-since` polls from a number: none
+/// from the newest on.
+/// How: a line 2 columns wider than the screen, a bold line, then enough lines to scroll them
+/// up; `rows`, `rows colors 0 2`, `rows-since` from the second row and from the newest.
+#[test]
+fn rows_give_the_scrolled_rows() {
+    let mut app = app();
+    let (height, cols) = app.terminal_mode.get_vt100_size();
+    let long = "x".repeat(usize::from(cols) + 2);
+    let lines: String = (0..=height).map(|n| format!("\r\nl{n}")).collect();
+    app.feed_rx(format!("{long}\r\n\x1b[1mbold\x1b[0m{lines}").as_bytes());
+
+    let ([oldest, newest], cut, scrolled) = rows_parts(&rows(&mut app, &[]).unwrap());
+    assert_eq!((oldest, cut), (0, false));
+    assert_eq!(newest, scrolled.len() as i64);
+    assert_eq!(
+        scrolled[..4],
+        [
+            (0, "x".repeat(usize::from(cols)), true),
+            (1, "xx".to_string(), false),
+            (2, "bold".to_string(), false),
+            (3, "l0".to_string(), false),
+        ]
+    );
+    let last_on_screen = format!("l{height}");
+    assert!(scrolled.iter().all(|(_, text, _)| *text != last_on_screen));
+
+    let colors = [ArgValue::Enum("colors"), ArgValue::Int(0), ArgValue::Int(2)];
+    let (_, cut, from_two) = rows_parts(&rows_since(&mut app, &[ArgValue::Int(2)]).unwrap());
+    assert!(!cut);
+    assert_eq!(from_two[0].0, 2);
+    let (_, _, last_two) = rows_parts(&rows(&mut app, &colors).unwrap());
+    assert_eq!(last_two.len(), 2);
+    let bold = rows_since(
+        &mut app,
+        &[ArgValue::Int(2), ArgValue::Int(1), ArgValue::Enum("colors")],
+    );
+    let (_, _, bold) = rows_parts(&bold.unwrap());
+    assert!(bold[0].1.contains("\x1b[1mbold"), "{bold:?}");
+    let past = rows_since(&mut app, &[ArgValue::Int(newest)]).unwrap();
+    assert!(rows_parts(&past).2.is_empty());
+}
+
+/// MAX-290: a row keeps its number as the scrollback evicts and across a clear; `rows-since`
+/// from older than kept starts at the oldest and says `cut`. On the alternate screen nothing
+/// scrolls: no rows, the numbers kept.
+/// How: a 5-row terminal history fed 40 lines; a clear and a line more; a full-screen program
+/// writing 40 lines.
+#[test]
+fn rows_keep_their_numbers() {
+    let mut app = app_with(|settings| settings.terminal_mode.history_size = 5);
+    let lines: Vec<String> = (0..40).map(|n| format!("l{n}")).collect();
+    app.feed_rx(lines.join("\r\n").as_bytes());
+    let ([oldest, newest], cut, kept) =
+        rows_parts(&rows_since(&mut app, &[ArgValue::Int(0)]).unwrap());
+    assert!(cut);
+    assert_eq!(newest - oldest, 5);
+    let numbered = (kept.iter()).all(|(row, text, _)| *text == format!("l{row}"));
+    assert!(numbered, "{kept:?}");
+
+    app.update(Action::History(HistoryAction::Clear));
+    let ([cleared, _], _, none) =
+        rows_parts(&rows_since(&mut app, &[ArgValue::Int(newest)]).unwrap());
+    assert!(none.is_empty());
+    assert!(cleared >= 40, "{cleared}");
+
+    let full_screen: String = (0..40).map(|n| format!("menu {n}\r\n")).collect();
+    app.feed_rx(format!("\x1b[?1049h{full_screen}").as_bytes());
+    let ([_, during], _, none) = rows_parts(&rows(&mut app, &[]).unwrap());
+    assert!(none.is_empty());
+    app.feed_rx(b"\x1b[?1049l");
+    let ([_, after], _, _) = rows_parts(&rows(&mut app, &[]).unwrap());
+    assert_eq!((during, after), (cleared, cleared));
+}
+
 /// An app built with `settings` changed
 fn app_with(change: impl FnOnce(&mut crate::configs::SettingsConfig)) -> App {
     use crate::{
@@ -368,28 +545,34 @@ fn app_with(change: impl FnOnce(&mut crate::configs::SettingsConfig)) -> App {
     )
 }
 
-/// The bytes, offsets and lines of a `raw` value
-fn raw_parts(value: &Value) -> (Vec<u8>, [i64; 4]) {
+/// The parts of a `raw` value: its bytes, `[start, oldest, newest]` and `cut`
+fn raw_parts(value: &Value) -> (Vec<u8>, [i64; 3], bool) {
     let Value::Map(entries) = value else {
         panic!("not a map: {value:?}")
     };
-    let int = |name: &str| match entries.iter().find(|(key, _)| key == name) {
-        Some((_, Value::Int(n))) => *n,
+    let field = |name: &str| match entries.iter().find(|(key, _)| key == name) {
+        Some((_, value)) => value,
+        None => panic!("no {name}"),
+    };
+    let int = |name: &str| match field(name) {
+        Value::Int(n) => *n,
         other => panic!("{name}: {other:?}"),
     };
-    let Some((_, Value::Bytes(bytes))) = entries.iter().find(|(key, _)| key == "bytes") else {
-        panic!("no bytes")
+    let (Value::Bytes(bytes), Value::Bool(cut)) = (field("bytes"), field("cut")) else {
+        panic!("bytes and cut: {value:?}")
     };
     (
         bytes.clone(),
-        [int("start"), int("end"), int("oldest"), int("newest")],
+        [int("start"), int("oldest"), int("newest")],
+        *cut,
     )
 }
 
 /// MAX-284 (step 2a): `raw [from] [count]` gives the last bytes received, skipping `from`
-/// newest, with their offsets and the stream's oldest and newest; `raw-since` gives them from
-/// an offset on, `count` at most, none past the end. The TUI shows them as hex and escaped
-/// text.
+/// newest, in the shape of every stream (MAX-290): the oldest and newest offsets kept, `cut`
+/// when older bytes kept are left out, the first byte's offset and the bytes; `raw-since`
+/// gives them from an offset on, `count` at most, none past the end. The TUI shows them as hex
+/// and escaped text.
 /// How: two reads in terminal mode, then each form.
 #[test]
 fn raw_gives_the_bytes_received() {
@@ -399,71 +582,78 @@ fn raw_gives_the_bytes_received() {
     let all = raw(&mut app, &[]).unwrap();
     assert_eq!(
         raw_parts(&all),
-        (b"boot\r\n\x1b[1mok\\".to_vec(), [0, 13, 0, 13])
+        (b"boot\r\n\x1b[1mok\\".to_vec(), [0, 0, 13], false)
     );
     assert_eq!(
         all.lines(),
         [
-            "start: 0",
-            "end: 13",
             "oldest: 0",
             "newest: 13",
+            "cut: false",
+            "start: 0",
             "bytes:",
             "  62 6f 6f 74 0d 0a 1b 5b 31 6d 6f 6b 5c           boot\\r\\n\\x1b[1mok\\\\",
         ]
     );
     let middle = raw(&mut app, &[ArgValue::Int(3), ArgValue::Int(4)]).unwrap();
-    assert_eq!(raw_parts(&middle), (b"\x1b[1m".to_vec(), [6, 10, 0, 13]));
+    assert_eq!(raw_parts(&middle), (b"\x1b[1m".to_vec(), [6, 0, 13], true));
     let since = raw_since(&mut app, &[ArgValue::Int(6), ArgValue::Int(2)]).unwrap();
-    assert_eq!(raw_parts(&since), (b"\x1b[".to_vec(), [6, 8, 0, 13]));
+    assert_eq!(raw_parts(&since), (b"\x1b[".to_vec(), [6, 0, 13], false));
     let rest = raw_since(&mut app, &[ArgValue::Int(8)]).unwrap();
-    assert_eq!(raw_parts(&rest), (b"1mok\\".to_vec(), [8, 13, 0, 13]));
+    assert_eq!(raw_parts(&rest), (b"1mok\\".to_vec(), [8, 0, 13], false));
     let past = raw_since(&mut app, &[ArgValue::Int(99)]).unwrap();
-    assert_eq!(raw_parts(&past), (Vec::new(), [13, 13, 0, 13]));
+    assert_eq!(raw_parts(&past), (Vec::new(), [13, 0, 13], false));
     assert!(past.lines().contains(&"bytes: none".to_string()));
 }
 
 /// MAX-284 (step 2a): bytes older than the stream keeps are gone: `raw-since` from before
-/// them starts at the oldest kept, which a client compares with where it asked from; after a
-/// clear-history none are kept, the offsets counting on.
+/// them starts at the oldest kept and says `cut` (MAX-290); after a clear-history none are
+/// kept, the offsets counting on.
 /// How: more than the stream's 64 KiB floor fed, then `raw-since 0`; a clear-history.
 #[test]
 fn raw_since_older_than_kept() {
-    // a history of a few rows: the stream keeps its 64 KiB floor
-    let mut app = app_with(|settings| settings.terminal_mode.history_size = 10);
+    // `rx_bytes` at 0: the stream keeps its 64 KiB floor
+    let mut app = app_with(|settings| settings.rx_bytes = ByteSize(0));
     app.feed_rx(&vec![b'a'; 70 * 1024]);
     app.feed_rx(b"end");
     let value = raw_since(&mut app, &[ArgValue::Int(0), ArgValue::Int(10)]).unwrap();
-    let (bytes, [start, end, oldest, newest]) = raw_parts(&value);
-    assert!(oldest > 0, "{oldest}");
-    assert_eq!((start, end, newest), (oldest, oldest + 10, 70 * 1024 + 3));
+    let (bytes, [start, oldest, newest], cut) = raw_parts(&value);
+    assert!(oldest > 0 && cut, "{oldest}");
+    assert_eq!((start, newest), (oldest, 70 * 1024 + 3));
     assert_eq!(bytes, vec![b'a'; 10]);
     let last = raw(&mut app, &[ArgValue::Int(0), ArgValue::Int(3)]).unwrap();
     assert_eq!(raw_parts(&last).0, b"end");
-    app.terminal_mode.clear_history();
+    app.update(Action::History(HistoryAction::Clear));
     let cleared = raw_since(&mut app, &[ArgValue::Int(0)]).unwrap();
     assert_eq!(
         raw_parts(&cleared),
-        (Vec::new(), [newest, newest, newest, newest])
+        (Vec::new(), [newest, newest, newest], true)
     );
 }
 
 /// MAX-284 (step 2a): a mode's getters are refused when the bytes received don't go to that
-/// mode, saying why: `raw`, `raw-since`, `screen`, `cursor` with terminal mode disabled or
-/// hidden under `active_only`; `history`, `history-size` the same for line mode. Fed by
-/// `always_both`, the hidden mode's getters answer.
+/// mode, saying why: `rows`, `rows-since`, `screen`, `cursor` with terminal mode disabled or hidden under
+/// `active_only`; `history`, `history-since`, `partial-line`, `history-size` the same for line mode. Fed by
+/// `always_both`, the hidden mode's getters answer. `raw` and `raw-since` answer in any mode
+/// (MAX-290).
 /// How: an app for each setting, each getter.
 #[test]
 fn getters_of_a_mode_not_fed_refused() {
     use crate::configs::{DualBufferMode, settings::DisabledMode};
     let since = [ArgValue::Int(0)];
     let terminal: [(QueryFn, &[ArgValue]); 4] = [
-        (raw, &[]),
-        (raw_since, &since),
+        (rows, &[]),
+        (rows_since, &since),
         (screen, &[]),
         (cursor, &[]),
     ];
-    let line: [(QueryFn, &[ArgValue]); 2] = [(history, &[]), (history_size, &[])];
+    let line: [(QueryFn, &[ArgValue]); 4] = [
+        (history, &[]),
+        (history_since, &since),
+        (partial_line, &[]),
+        (history_size, &[]),
+    ];
+    let any: [(QueryFn, &[ArgValue]); 2] = [(raw, &[]), (raw_since, &since)];
     let refusal = |app: &mut App, (query, args): (QueryFn, &[ArgValue])| query(app, args).err();
 
     let mut no_terminal = app_with(|settings| {
@@ -476,6 +666,9 @@ fn getters_of_a_mode_not_fed_refused() {
             error.as_deref(),
             Some("terminal mode is disabled (disabled_mode)")
         );
+    }
+    for query in any {
+        assert_eq!(refusal(&mut no_terminal, query), None);
     }
     let hidden = "terminal mode isn't fed while it's hidden (dual_mode_buffering = active_only)";
     let mut line_only = app_with(|settings| {
@@ -494,6 +687,10 @@ fn getters_of_a_mode_not_fed_refused() {
     let hidden = "line mode isn't fed while it's hidden (dual_mode_buffering = active_only)";
     for query in line {
         assert_eq!(refusal(&mut terminal_only, query).as_deref(), Some(hidden));
+    }
+    for query in any {
+        assert_eq!(refusal(&mut line_only, query), None);
+        assert_eq!(refusal(&mut terminal_only, query), None);
     }
     let mut both = app_with(|settings| settings.mode = Mode::Line);
     for query in terminal.into_iter().chain(line) {

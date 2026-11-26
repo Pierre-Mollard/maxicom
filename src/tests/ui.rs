@@ -88,6 +88,14 @@ impl Harness {
         self.app.line_mode.feed_rx(false, encoding, bytes);
     }
 
+    /// A device read straight to terminal mode, kept with the bytes received first as
+    /// `App::feed` does (MAX-290)
+    fn device_rx(&mut self, bytes: &[u8], add_cr: bool, add_lf: bool, trace: bool) {
+        self.app.rx_bytes.push(bytes);
+        let (mode, rx) = (&mut self.app.terminal_mode, &self.app.rx_bytes);
+        mode.process_device_rx(rx, TextEncoding::Utf8, bytes, add_cr, add_lf, trace);
+    }
+
     fn scroll(&mut self, action: HistoryAction) {
         let effect = self.app.update(Action::History(action));
         assert!(matches!(effect, UpdateEffect::None));
@@ -11118,9 +11126,7 @@ fn terminal_raw_on(w: u16, bytes: &[u8]) -> Harness {
     h.app.settings_mut().raw_side.view = RawSideView::Hex;
     let mut all = b"\r\n".repeat(24);
     all.extend_from_slice(bytes);
-    h.app
-        .terminal_mode
-        .process_device_rx(TextEncoding::Utf8, &all, false, false, true);
+    h.device_rx(&all, false, false, true);
     h
 }
 
@@ -11244,13 +11250,7 @@ fn terminal_dump_scrolls_on_its_own() {
     let feed = |h: &mut Harness, range: std::ops::Range<usize>| {
         for i in range {
             let line = format!("line {i:02}\n");
-            h.app.terminal_mode.process_device_rx(
-                TextEncoding::Utf8,
-                line.as_bytes(),
-                false,
-                false,
-                true,
-            );
+            h.device_rx(line.as_bytes(), false, false, true);
         }
     };
     feed(&mut h, 0..20);
@@ -11301,13 +11301,7 @@ fn terminal_dump_scrolls_with_keys() {
     let mut h = terminal_raw_on(160, b"");
     for i in 0..20 {
         let line = format!("line {i:02}\n");
-        (h.app.terminal_mode).process_device_rx(
-            TextEncoding::Utf8,
-            line.as_bytes(),
-            false,
-            false,
-            true,
-        );
+        h.device_rx(line.as_bytes(), false, false, true);
     }
     assert!(shows(&h.draw(), "line 19."));
     let screen_offset = h.app.terminal_mode.scroller().offset_y;
@@ -11352,13 +11346,7 @@ fn copy_mode_scrolls_the_view_of_its_cursor() {
     let mut h = terminal_raw_on(160, b"");
     for i in 0..20 {
         let line = format!("line {i:02}\n");
-        (h.app.terminal_mode).process_device_rx(
-            TextEncoding::Utf8,
-            line.as_bytes(),
-            false,
-            false,
-            true,
-        );
+        h.device_rx(line.as_bytes(), false, false, true);
     }
     h.draw();
     let screen_offset = h.app.terminal_mode.scroller().offset_y;
@@ -11463,9 +11451,7 @@ fn terminal_links_underlined() {
     }
     assert!(!underlined(&h, x + 5), "b");
 
-    h.app
-        .terminal_mode
-        .process_device_rx(TextEncoding::Utf8, b"\raLINK", false, false, true);
+    h.device_rx(b"\raLINK", false, false, true);
     h.draw();
     assert!(!underlined(&h, x + 1), "written over");
 }
@@ -11585,13 +11571,7 @@ fn the_dump_follows_the_screen_cursor() {
     assert_eq!(bg_at(&h, cell), shown);
 
     let more: String = (60..70).map(|i| format!("line {i:02}\r\n")).collect();
-    (h.app.terminal_mode).process_device_rx(
-        TextEncoding::Utf8,
-        more.as_bytes(),
-        false,
-        false,
-        true,
-    );
+    h.device_rx(more.as_bytes(), false, false, true);
     h.draw();
     assert_eq!(dump_cell(&h, 93), Some(cell), "new bytes don't move it");
 
@@ -11706,7 +11686,10 @@ fn the_screen_follows_the_dump_cursor() {
     );
     copy(&mut h, CopyModeAction::Enter);
     copy(&mut h, CopyModeAction::ToggleSide);
-    h.app.terminal_mode.dump_mut().cursor_to(93);
+    h.app
+        .terminal_mode
+        .dump_mut()
+        .cursor_to(&h.app.rx_bytes, 93);
     h.draw();
     let cell = screen_cell(&h, 29, 0).expect("the screen went to 'line 05'");
     assert_eq!(bg_at(&h, cell), h_theme().ui.cursor_ghost.bg);
@@ -11855,7 +11838,7 @@ fn screen_yank_raw_without_the_raw_panel() {
         .update(Action::App(crate::inputs::AppAction::ToggleSetting(
             crate::overlays::SettingKey::ByteTrace,
         )));
-    (h.app.terminal_mode).process_device_rx(TextEncoding::Utf8, b"xyz", false, false, false);
+    h.device_rx(b"xyz", false, false, false);
     h.draw();
     copy(&mut h, CopyModeAction::Enter);
     copy(&mut h, CopyModeAction::StartOfLine);
@@ -11896,7 +11879,7 @@ fn screen_yank_raw_warns_without_the_trace() {
         .update(Action::App(crate::inputs::AppAction::ToggleSetting(
             crate::overlays::SettingKey::ByteTrace,
         )));
-    (h.app.terminal_mode).process_device_rx(TextEncoding::Utf8, b"abc", false, false, false);
+    h.device_rx(b"abc", false, false, false);
     h.draw();
     assert_eq!(yank_row(&mut h), "61 62 63");
     let warned = crate::app::tests::toasts(&h.app);
@@ -11931,12 +11914,15 @@ fn the_dump_goes_live_with_the_screen() {
     let mut h = terminal_raw_on(160, lines.as_bytes());
     h.draw();
     let live = |h: &Harness| {
-        let (max, position) = h.app.terminal_mode.dump().scroll_position();
+        let (max, position) = h.app.terminal_mode.dump().scroll_position(&h.app.rx_bytes);
         position == max
     };
     assert!(live(&h));
 
-    h.app.terminal_mode.dump_mut().scroll_up(10);
+    h.app
+        .terminal_mode
+        .dump_mut()
+        .scroll_up(&h.app.rx_bytes, 10);
     assert!(!live(&h));
     let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
     h.app
@@ -11944,17 +11930,26 @@ fn the_dump_goes_live_with_the_screen() {
     assert!(live(&h), "a key typed");
 
     h.scroll(HistoryAction::ScrollUp(5));
-    h.app.terminal_mode.dump_mut().scroll_up(10);
+    h.app
+        .terminal_mode
+        .dump_mut()
+        .scroll_up(&h.app.rx_bytes, 10);
     h.scroll(HistoryAction::ScrollDown(5));
     assert!(live(&h), "the screen scrolled back down to live");
 
-    h.app.terminal_mode.dump_mut().scroll_up(10);
+    h.app
+        .terminal_mode
+        .dump_mut()
+        .scroll_up(&h.app.rx_bytes, 10);
     h.scroll(HistoryAction::ScrollDown(3));
     assert!(!live(&h), "the screen was live already");
 
     h.app.update(Action::CopyMode(CopyModeAction::Enter));
     h.app.update(Action::CopyMode(CopyModeAction::ToggleSide));
-    h.app.terminal_mode.dump_mut().cursor_to(93);
+    h.app
+        .terminal_mode
+        .dump_mut()
+        .cursor_to(&h.app.rx_bytes, 93);
     h.draw();
     h.app.terminal_mode.scroll_to_bottom();
     h.draw();
@@ -11993,7 +11988,13 @@ fn followed_ghosts_stay_in_the_middle() {
             "step {step}: row {}",
             y - area.y
         );
-        tops.insert(h.app.terminal_mode.dump().scroll_position().1);
+        tops.insert(
+            h.app
+                .terminal_mode
+                .dump()
+                .scroll_position(&h.app.rx_bytes)
+                .1,
+        );
     }
     assert!(
         tops.len() < 6,
@@ -12004,7 +12005,10 @@ fn followed_ghosts_stay_in_the_middle() {
     copy(&mut h, CopyModeAction::Exit);
     copy(&mut h, CopyModeAction::Enter);
     copy(&mut h, CopyModeAction::ToggleSide);
-    h.app.terminal_mode.dump_mut().cursor_to(48 + 9 * 10);
+    h.app
+        .terminal_mode
+        .dump_mut()
+        .cursor_to(&h.app.rx_bytes, 48 + 9 * 10);
     h.draw();
     let mut offsets = std::collections::HashSet::new();
     for step in 0..12 {
@@ -12012,7 +12016,10 @@ fn followed_ghosts_stay_in_the_middle() {
         h.draw();
         let cursor = h.app.terminal_mode.dump_copy().unwrap().cursor;
         // a CR or LF draws no cell: no ghost to follow
-        let Some(((line, col), _)) = h.app.terminal_mode.written_at(cursor, TextEncoding::Utf8)
+        let Some(((line, col), _)) =
+            h.app
+                .terminal_mode
+                .written_at(&h.app.rx_bytes, cursor, TextEncoding::Utf8)
         else {
             continue;
         };
@@ -12186,7 +12193,7 @@ fn terminal_dump_scrollbar_mouse() {
     let (x, top, bottom) = (bar.area.x, bar.area.y, bar.area.bottom() - 1);
     let position = |h: &mut Harness| {
         h.draw();
-        h.app.terminal_mode.dump().scroll_position()
+        h.app.terminal_mode.dump().scroll_position(&h.app.rx_bytes)
     };
     let (max, live) = position(&mut h);
     assert_eq!(live, max, "following the live end");
@@ -12270,11 +12277,9 @@ fn terminal_dump_at_the_bottom() {
         crate::configs::settings::RawSideOrientation::Bottom;
     let mut all = b"line 00\n".repeat(40);
     all.extend_from_slice(b"a\xF1\x80b");
-    h.app
-        .terminal_mode
-        .process_device_rx(TextEncoding::Utf8, &all, false, false, true);
+    h.device_rx(&all, false, false, true);
     let rows = h.draw();
-    let bounds = h.app.terminal_mode.dump().bounds();
+    let bounds = h.app.terminal_mode.dump().bounds(&h.app.rx_bytes);
     assert!(
         bounds.width >= 32 && bounds.width.is_multiple_of(8),
         "{bounds:?}"
@@ -12293,14 +12298,14 @@ fn terminal_dump_at_the_bottom() {
         _ => panic!("expected a yank"),
     }
 
-    let (_, live) = h.app.terminal_mode.dump().scroll_position();
+    let (_, live) = h.app.terminal_mode.dump().scroll_position(&h.app.rx_bytes);
     mouse_do(&mut h, MouseEventKind::Down(MouseButton::Left), digits);
     let above = (digits.0, raw.y - 2);
     mouse_do(&mut h, MouseEventKind::Drag(MouseButton::Left), above);
     assert_eq!(h.app.copy_side(), Some(CopySide::Raw));
     h.app
         .drag_scroll(Instant::now() + Duration::from_millis(100));
-    let (_, scrolled) = h.app.terminal_mode.dump().scroll_position();
+    let (_, scrolled) = h.app.terminal_mode.dump().scroll_position(&h.app.rx_bytes);
     assert!(scrolled < live, "{scrolled} < {live}");
 }
 
@@ -12323,7 +12328,7 @@ fn terminal_dump_scrollbar_beside_a_plot() {
             split_percent: 30,
         };
         let all = b"line 00\n".repeat(40);
-        (h.app.terminal_mode).process_device_rx(TextEncoding::Utf8, &all, false, false, true);
+        h.device_rx(&all, false, false, true);
         let rows = h.draw();
         let bar = h.app.frame_map().dump_scrollbar.expect("a dump scrollbar");
         let raw = h.app.frame_map().raw_area;

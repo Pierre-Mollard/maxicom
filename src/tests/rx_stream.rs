@@ -1,4 +1,4 @@
-//! The received bytes kept for the terminal raw panel (MAX-252).
+//! The received bytes kept (MAX-252, MAX-290).
 
 use super::*;
 
@@ -12,7 +12,7 @@ fn bytes_of(stream: &RxStream, range: Range<u64>) -> Vec<u8> {
 /// How: "abc", "", "de".
 #[test]
 fn reads_get_their_offsets() {
-    let mut stream = RxStream::new(100);
+    let mut stream = RxStream::new(1024);
     assert_eq!(stream.push(b"abc"), 0);
     assert_eq!(stream.push(b""), 3);
     assert_eq!(stream.push(b"de"), 3);
@@ -24,7 +24,7 @@ fn reads_get_their_offsets() {
 /// How: a 64 KiB stream (the least), 40 KiB of "a" then 40 KiB of "b".
 #[test]
 fn ceiling_drops_the_oldest_bytes() {
-    let mut stream = RxStream::new(1);
+    let mut stream = RxStream::new(0);
     stream.push(&[b'a'; 40 * 1024]);
     let second = stream.push(&[b'b'; 40 * 1024]);
     assert_eq!(second, 40 * 1024);
@@ -39,7 +39,7 @@ fn ceiling_drops_the_oldest_bytes() {
 /// every range of 3 bytes kept.
 #[test]
 fn slices_across_the_wrap() {
-    let mut stream = RxStream::new(1);
+    let mut stream = RxStream::new(0);
     let mut all = Vec::new();
     let mut wrapped = false;
     for round in 0..40_000u32 {
@@ -60,7 +60,7 @@ fn slices_across_the_wrap() {
 /// How: "abc", clear, "d" is at 3.
 #[test]
 fn clear_keeps_the_offsets() {
-    let mut stream = RxStream::new(100);
+    let mut stream = RxStream::new(1024);
     stream.push(b"abc");
     stream.clear();
     assert_eq!((stream.start(), stream.end()), (3, 3));

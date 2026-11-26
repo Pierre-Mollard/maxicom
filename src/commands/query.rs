@@ -368,36 +368,63 @@ pub fn notifications(app: &mut App, args: &[ArgValue]) -> Result<Value, String> 
 }
 
 /// `history [from] [count]` (MAX-283): line mode's history, the last `count` lines (50 by
-/// default, 500 at most) after skipping `from` newest, oldest first, each with its line (a
-/// mark's `line`), its time when known and its text; how many there are, `cut` when older
-/// ones were left out, and the line still coming in (`partial`, empty when none): a prompt
-/// without its end of line is there
+/// default, 500 at most) after skipping `from` newest, oldest first, in the shape of every
+/// stream (`stream_value`, MAX-290): each line with its number (`line`), its time when known
+/// and its text. The line still coming in is `partial-line`'s
 pub fn history(app: &mut App, args: &[ArgValue]) -> Result<Value, String> {
     fed(app, Mode::Line)?;
-    let line_mode = &app.line_mode;
-    let history = line_mode.history();
-    let (range, cut) = page(history.len(), args);
-    let entries = range.map(|line| {
-        let entry = &history[line];
-        let mut entries = vec![("line".to_string(), Value::Int(line as i64))];
-        if let Some(at) = entry.timestamp {
-            entries.push(("time".to_string(), time(at)));
-        }
-        let text = entry.text.trim_end_matches(['\r', '\n']);
-        entries.push(("text".to_string(), Value::text(text)));
-        Value::Map(entries)
-    });
-    let partial = app.settings().encoding.decode(line_mode.partial_rx());
-    Ok(Value::Map(vec![
-        ("total".to_string(), Value::Int(history.len() as i64)),
-        ("cut".to_string(), Value::Bool(cut)),
-        ("entries".to_string(), Value::List(entries.collect())),
-        ("partial".to_string(), Value::Text(partial)),
-    ]))
+    let (from, count) = back_args(args, DEFAULT_COUNT);
+    let window = Window::back(app.line_mode.lines_kept(), from, count);
+    Ok(history_value(app, window))
 }
 
-/// `history-size` (MAX-283): the lines line mode's history holds, and the ones its cap
-/// dropped since the start, a `clear-history` not counted
+/// `history-since <line> [count]` (MAX-290): the lines from number `line` on, `count` at most
+/// (50 by default, 500 at most), a client's poll: from the oldest kept when `line` is older
+/// (`cut`), none when it is past the newest
+pub fn history_since(app: &mut App, args: &[ArgValue]) -> Result<Value, String> {
+    fed(app, Mode::Line)?;
+    let (since, count) = since_args(args, DEFAULT_COUNT);
+    let window = Window::since(app.line_mode.lines_kept(), since, count);
+    Ok(history_value(app, window))
+}
+
+/// The lines of `window`
+fn history_value(app: &App, window: Window) -> Value {
+    let line_mode = &app.line_mode;
+    let first = line_mode.first_line();
+    let entries = window.numbers().map(|line| {
+        let entry = &line_mode.history()[(line - first) as usize];
+        line_value(line, entry.timestamp, &entry.text)
+    });
+    let entries = ("entries".to_string(), Value::List(entries.collect()));
+    stream_value(line_mode.lines_kept(), window.cut, [entries])
+}
+
+/// A line as the line mode getters give it: its number, its time when known, its text without
+/// its end of line
+fn line_value(line: u64, at: Option<jiff::Timestamp>, text: &str) -> Value {
+    let mut entries = vec![("line".to_string(), int(line))];
+    if let Some(at) = at {
+        entries.push(("time".to_string(), time(at)));
+    }
+    let text = text.trim_end_matches(['\r', '\n']);
+    entries.push(("text".to_string(), Value::text(text)));
+    Value::Map(entries)
+}
+
+/// `partial-line` (MAX-290): the line still coming in, line mode's live part as `screen` is
+/// terminal mode's: the number it gets once ended (`newest`), the time it started when known,
+/// its text so far (empty when none): a prompt without its end of line is there
+pub fn partial_line(app: &mut App, _args: &[ArgValue]) -> Result<Value, String> {
+    fed(app, Mode::Line)?;
+    let line_mode = &app.line_mode;
+    let text = app.settings().encoding.decode(line_mode.partial_rx());
+    let line = line_mode.lines_kept().end;
+    Ok(line_value(line, line_mode.partial_time(), &text))
+}
+
+/// `history-size` (MAX-283): the lines line mode's history holds, the ones its cap dropped
+/// since the start, and the ones `clear-history` took away (MAX-290)
 pub fn history_size(app: &mut App, _args: &[ArgValue]) -> Result<Value, String> {
     fed(app, Mode::Line)?;
     let line_mode = &app.line_mode;
@@ -410,7 +437,55 @@ pub fn history_size(app: &mut App, _args: &[ArgValue]) -> Result<Value, String> 
             "dropped".to_string(),
             Value::Int(line_mode.dropped_lines() as i64),
         ),
+        (
+            "cleared".to_string(),
+            Value::Int(line_mode.cleared_lines() as i64),
+        ),
     ]))
+}
+
+/// `rows [text|colors] [from] [count]` (MAX-290): the terminal's rows that scrolled into the
+/// scrollback, the last `count` (50 by default, 500 at most) after skipping `from` newest, in
+/// the shape of every stream (`stream_value`): each with its number (`row`), its text (its
+/// colors as escapes with `colors`) and whether the terminal wrapped it into the next row. The
+/// screen's rows can still change: `screen` gives them
+pub fn rows(app: &mut App, args: &[ArgValue]) -> Result<Value, String> {
+    fed(app, Mode::Terminal)?;
+    let (styled, args) = match args {
+        [ArgValue::Enum(format), rest @ ..] => (*format == "colors", rest),
+        _ => (false, args),
+    };
+    let (from, count) = back_args(args, DEFAULT_COUNT);
+    let window = Window::back(app.terminal_mode.rows_kept(), from, count);
+    Ok(rows_value(app, window, styled))
+}
+
+/// `rows-since <row> [count] [text|colors]` (MAX-290): the scrolled rows from number `row` on,
+/// `count` at most (50 by default, 500 at most), a client's poll: from the oldest kept when
+/// `row` is older (`cut`), none when it is past the newest. Nothing scrolls while a full-screen
+/// program runs on the alternate screen
+pub fn rows_since(app: &mut App, args: &[ArgValue]) -> Result<Value, String> {
+    fed(app, Mode::Terminal)?;
+    let (styled, args) = match args {
+        [rest @ .., ArgValue::Enum(format)] => (*format == "colors", rest),
+        _ => (false, args),
+    };
+    let (since, count) = since_args(args, DEFAULT_COUNT);
+    let window = Window::since(app.terminal_mode.rows_kept(), since, count);
+    Ok(rows_value(app, window, styled))
+}
+
+fn rows_value(app: &mut App, window: Window, styled: bool) -> Value {
+    let rows = app.terminal_mode.scrolled_rows(window.numbers(), styled);
+    let entries = rows.into_iter().map(|row| {
+        Value::Map(vec![
+            ("row".to_string(), int(row.number)),
+            ("text".to_string(), Value::Text(row.text)),
+            ("wrapped".to_string(), Value::Bool(row.wrapped)),
+        ])
+    });
+    let entries = ("entries".to_string(), Value::List(entries.collect()));
+    stream_value(app.terminal_mode.rows_kept(), window.cut, [entries])
 }
 
 /// `screen [text|colors]` (MAX-283): the terminal's live screen, its rows on lines, plain or
@@ -441,56 +516,118 @@ pub fn cursor(app: &mut App, _args: &[ArgValue]) -> Result<Value, String> {
 pub const RAW_COUNT: usize = 4096;
 pub const MAX_RAW: i64 = 64 * 1024;
 
-/// `raw [from] [count]` (MAX-284): the last bytes received, as the terminal raw panel keeps
-/// them, `count` (4096 by default, 64 KiB at most) after skipping `from` newest
+/// `raw [from] [count]` (MAX-284): the last bytes received in any mode (MAX-290), `count`
+/// (4096 by default, 64 KiB at most) after skipping `from` newest, in the shape of every
+/// stream (`stream_value`): their first byte's offset (`start`) and the bytes
 pub fn raw(app: &mut App, args: &[ArgValue]) -> Result<Value, String> {
-    fed(app, Mode::Terminal)?;
-    let (from, count) = match args {
-        [] => (0, RAW_COUNT),
-        [ArgValue::Int(from)] => (offset(*from), RAW_COUNT),
-        [ArgValue::Int(from), ArgValue::Int(count)] => (offset(*from), offset(*count) as usize),
-        _ => unreachable!("[from] [count] are numbers"),
-    };
-    let stream = app.terminal_mode.dump().stream();
-    let end = stream.end().saturating_sub(from).max(stream.start());
-    let start = end.saturating_sub(count as u64).max(stream.start());
-    Ok(raw_value(app, start..end))
+    let (from, count) = back_args(args, RAW_COUNT);
+    let window = Window::back(bytes_kept(app), from, count);
+    Ok(raw_value(app, window))
 }
 
 /// `raw-since <offset> [count]` (MAX-284): the bytes received from `offset` on, a client's
-/// poll: from the oldest kept when `offset` is older, none when it is past the end
+/// poll: from the oldest kept when `offset` is older (`cut`), none when it is past the end
 pub fn raw_since(app: &mut App, args: &[ArgValue]) -> Result<Value, String> {
-    fed(app, Mode::Terminal)?;
-    let (since, count) = match args {
-        [ArgValue::Int(since)] => (offset(*since), RAW_COUNT),
-        [ArgValue::Int(since), ArgValue::Int(count)] => (offset(*since), offset(*count) as usize),
-        _ => unreachable!("<offset> [count] are numbers"),
-    };
-    let stream = app.terminal_mode.dump().stream();
-    let start = since.clamp(stream.start(), stream.end());
-    let end = start.saturating_add(count as u64).min(stream.end());
-    Ok(raw_value(app, start..end))
+    let (since, count) = since_args(args, RAW_COUNT);
+    let window = Window::since(bytes_kept(app), since, count);
+    Ok(raw_value(app, window))
 }
 
-/// An argument checked as positive by its spec, as an offset or a count
-fn offset(n: i64) -> u64 {
+/// The offsets of the bytes received still kept
+fn bytes_kept(app: &App) -> std::ops::Range<u64> {
+    app.rx_bytes.start()..app.rx_bytes.end()
+}
+
+fn raw_value(app: &App, window: Window) -> Value {
+    let bytes = app.rx_bytes.bytes(window.numbers());
+    let items = [
+        ("start".to_string(), int(window.start)),
+        ("bytes".to_string(), Value::Bytes(bytes)),
+    ];
+    stream_value(bytes_kept(app), window.cut, items)
+}
+
+/// What a stream getter gives (MAX-290): the numbers `start..end` (lines, rows or byte offsets)
+/// out of the ones kept, and whether some before `start` are left out (`cut`)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Window {
+    start: u64,
+    end: u64,
+    cut: bool,
+}
+
+impl Window {
+    /// `count` at most after skipping `from` newest of `kept`: `cut` when older ones are kept
+    fn back(kept: std::ops::Range<u64>, from: u64, count: u64) -> Self {
+        let end = kept.end.saturating_sub(from).max(kept.start);
+        let start = end.saturating_sub(count).max(kept.start);
+        Self {
+            start,
+            end,
+            cut: start > kept.start,
+        }
+    }
+
+    /// `count` at most from `since` on: from the oldest of `kept` when `since` is older, `cut`
+    /// then (they're gone), none when it is past the newest
+    fn since(kept: std::ops::Range<u64>, since: u64, count: u64) -> Self {
+        let start = since.clamp(kept.start, kept.end);
+        Self {
+            start,
+            end: start.saturating_add(count).min(kept.end),
+            cut: since < kept.start,
+        }
+    }
+
+    fn numbers(self) -> std::ops::Range<u64> {
+        self.start..self.end
+    }
+}
+
+/// The shape every stream getter answers with, `raw`, `history` and `rows` alike (MAX-290):
+/// the `oldest` number kept and the `newest`, the one the next will get (a poll goes on from
+/// it), `cut` (see `Window`), then `items`, what was asked for
+fn stream_value(
+    kept: std::ops::Range<u64>,
+    cut: bool,
+    items: impl IntoIterator<Item = (String, Value)>,
+) -> Value {
+    let mut entries = vec![
+        ("oldest".to_string(), int(kept.start)),
+        ("newest".to_string(), int(kept.end)),
+        ("cut".to_string(), Value::Bool(cut)),
+    ];
+    entries.extend(items);
+    Value::Map(entries)
+}
+
+/// `[from] [count]`, `count` by default
+fn back_args(args: &[ArgValue], count: usize) -> (u64, u64) {
+    match args {
+        [] => (0, count as u64),
+        [ArgValue::Int(from)] => (number(*from), count as u64),
+        [ArgValue::Int(from), ArgValue::Int(count)] => (number(*from), number(*count)),
+        _ => unreachable!("[from] [count] are numbers"),
+    }
+}
+
+/// `<since> [count]`, `count` by default
+fn since_args(args: &[ArgValue], count: usize) -> (u64, u64) {
+    match args {
+        [ArgValue::Int(since)] => (number(*since), count as u64),
+        [ArgValue::Int(since), ArgValue::Int(count)] => (number(*since), number(*count)),
+        _ => unreachable!("<since> [count] are numbers"),
+    }
+}
+
+/// An argument checked as positive by its spec, as a number or a count
+fn number(n: i64) -> u64 {
     u64::try_from(n).unwrap_or(0)
 }
 
-/// The bytes of `range`, with where they are in the stream: their `start` and `end` offsets,
-/// and the `oldest` and `newest` the stream keeps, so a client sees what it missed
-/// (`oldest` past where it asked from) and what is left (`end` short of `newest`)
-fn raw_value(app: &App, range: std::ops::Range<u64>) -> Value {
-    let stream = app.terminal_mode.dump().stream();
-    let (front, back) = stream.slices(range.clone());
-    let int = |offset: u64| Value::Int(i64::try_from(offset).unwrap_or(i64::MAX));
-    Value::Map(vec![
-        ("start".to_string(), int(range.start)),
-        ("end".to_string(), int(range.end)),
-        ("oldest".to_string(), int(stream.start())),
-        ("newest".to_string(), int(stream.end())),
-        ("bytes".to_string(), Value::Bytes([front, back].concat())),
-    ])
+/// A number as a value
+fn int(n: u64) -> Value {
+    Value::Int(i64::try_from(n).unwrap_or(i64::MAX))
 }
 
 /// A getter of a mode's state needs that mode fed (MAX-284): a mode the received bytes don't

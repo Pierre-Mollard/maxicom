@@ -92,8 +92,10 @@ redraw a row far up, and a progress bar writes the same row again and again.
 In copy mode, [the byte trace](#the-byte-trace) shows which bytes drew which
 cell.
 
-maxicom keeps the bytes of the last `terminal_mode.history_size` × 512
-bytes (51 MB with the default), the oldest dropped first.
+maxicom keeps the last `rx_bytes` bytes received (48 MB by default), the
+oldest dropped first. It keeps them whichever mode is shown: back in
+terminal mode, the dump shows what came in line mode too. Clear history
+(`Ctrl-a C`) empties it in either mode.
 
 When its rows are wider than the panel, `Ctrl-a Shift-Left` /
 `Ctrl-a Shift-Right` pan it.
@@ -172,7 +174,9 @@ With the cursor in the dump, the screen shows the cell its byte drew:
 | `cursor_ghost_old`, dimmer | Something was written over it since |
 
 A byte that draws nothing, a control byte or part of an escape sequence, has
-no cell.
+no cell. Neither has a byte received while terminal mode didn't get the bytes
+(turned off by `disabled_mode`, or hidden with
+`dual_mode_buffering = "active_only"`).
 
 When the cursor moves, the other panel keeps its ghost in the middle half of
 what it shows: it stays still while the ghost is there, and centers it when

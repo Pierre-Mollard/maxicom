@@ -198,13 +198,17 @@ scripts first, and you can run them too.
 | --- | --- |
 | `status` | Shows the link (its name, kind, state and line settings), DTR and RTS, the mode, the encoding, the bytes received and sent, the recording, the session backup, the file being sent, the profiles laid and the lines running |
 | `get [setting]` | Shows a setting's value, or every setting's |
-| `history [from] [count]` | Shows the last lines of line mode's history, and the line still coming in |
-| `history-size` | Shows how many lines the history holds, and how many its limit dropped |
-| `screen [text\|colors]` | Shows the terminal's screen, as text or with its colors |
-| `cursor` | Shows the terminal cursor's row and column, and whether it shows |
-| `term-size` | Shows the terminal's rows and columns |
 | `raw [from] [count]` | Shows the last bytes received as hex and text, 4096 by default, skipping `from` newest |
-| `raw-since <offset> [count]` | Shows the bytes received from an offset on, the way a script polls them |
+| `raw-since <offset> [count]` | Shows the bytes received from an offset on |
+| `history [from] [count]` | Shows the last lines of line mode's history |
+| `history-since <line> [count]` | Shows line mode's lines from a line number on, the way a script polls them |
+| `partial-line` | Shows the line mode line still coming in |
+| `history-size` | Shows how many lines the history holds, and how many its limit and Clear history dropped |
+| `rows [text\|colors] [from] [count]` | Shows the last terminal rows that scrolled up into the scrollback |
+| `rows-since <row> [count] [text\|colors]` | Shows the terminal rows that scrolled up from a row number on |
+| `screen [text\|colors]` | Shows the terminal's screen, as text or with its colors |
+| `term-size` | Shows the terminal's rows and columns |
+| `cursor` | Shows the terminal cursor's row and column, and whether it shows |
 | `commands [name]` | Lists every command with its help, or shows one in detail |
 
 The answer opens in a popup, one line each. Enter or `c` copies the selected
@@ -213,17 +217,65 @@ line, `a` the whole answer. No key runs these by default: bind one in
 [Actions and commands](keybindings.md#actions-and-commands). In a trigger's
 or a profile's line they do nothing.
 
-`raw` shows the bytes the terminal raw panel keeps, with their offsets:
-`start` and `end` for the bytes shown, `oldest` and `newest` for the ones kept.
-An offset counts every byte received since maxicom started, so it doesn't
-change when older bytes are dropped. Text escapes are written the way `send`
-reads them (`\r`, `\x1b`).
+#### Bytes, lines and rows
 
-The history and size getters belong to one mode: `history` and
-`history-size` to line mode, `screen`, `cursor`, `raw` and `raw-since` to
-terminal mode. When that mode doesn't receive the bytes (turned off by
-`disabled_mode`, or hidden with `dual_mode_buffering = "active_only"`), they
-fail and say why, rather than show what it held before.
+What the device sent can be read three ways. Each is numbered, so a script
+can follow it from where it stopped:
+
+| What | Numbered by | The last ones | From a number on | Still changing |
+| --- | --- | --- | --- | --- |
+| The bytes received | Offset | `raw` | `raw-since` | Nothing: a byte is final |
+| Line mode's lines | Line number | `history` | `history-since` | `partial-line` |
+| The terminal rows that scrolled up | Row number | `rows` | `rows-since` | `screen` |
+
+A number never changes and is never given twice. An offset counts every
+byte received, a line number every line, a row number every row that
+scrolled up, the dropped ones included: when the oldest go, past the limit or
+with Clear history, the others keep their numbers. The count starts with the
+device's screen: switching to another device or starting a replay counts
+from 0 again.
+
+Every answer starts the same way:
+
+| Field | Is |
+| --- | --- |
+| `oldest` | The first number still kept |
+| `newest` | The number the next one will get: `raw-since`, `history-since` or `rows-since` from it gives what comes next |
+| `cut` | `true` when something before the first one given is left out: older ones kept but past `count`, or, from a number on, ones dropped before you asked |
+
+Then `raw` gives `start`, the offset of its first byte, and the bytes, their
+text escapes written the way `send` reads them (`\r`, `\x1b`). `history`
+gives its lines, each with its number, its time when known and its text.
+`rows` gives its rows, each with its number, its text, and `wrapped` when
+the terminal cut a long line there and went on in the next row.
+
+#### Rows that scrolled up
+
+`rows` and `rows-since` give only the rows that went up into the scrollback.
+The rows still on the screen can be written again: `screen` reads them.
+While a full-screen program uses the alternate screen, nothing scrolls up and
+the scrollback can't be read under it: `rows` and `rows-since` give no rows
+until it ends.
+
+`colors` keeps the colors as escape sequences, as `screen colors` does. In
+`rows-since`, it comes after the count: `rows-since 120 50 colors`.
+
+#### The line still coming in
+
+`partial-line` gives the line line mode hasn't seen the end of yet: the
+number it gets once it ends, the time it started and its text so far. A
+prompt waiting for your input is there, as its line ending never came. With
+nothing coming in, its text is empty.
+
+#### Which mode answers
+
+The bytes are kept whatever the mode, so `raw` and `raw-since` always
+answer. The other getters belong to one mode: `history`, `history-since`,
+`partial-line` and `history-size` to line mode, `rows`, `rows-since`,
+`screen` and `cursor` to terminal mode. When that mode doesn't receive the
+bytes (turned off by `disabled_mode`, or hidden with
+`dual_mode_buffering = "active_only"`), they fail and say why, rather than
+show what it held before.
 
 #### Settings by name
 
@@ -242,9 +294,12 @@ value as `settings.toml` writes it, like `word` or `grow_only`.
 
 `history` gives 50 lines by default and 500 at most. It counts from the
 newest: `history 0 10` is the last 10 lines, and `history 10 10` the 10
-before them. Each line comes with its number, its time and its text. The
-number is the one `marks` gives for a [mark](marks.md) in a trigger's line,
-below. The answer says when older lines were left out.
+before them. `history-since 120` gives the lines from number 120 on, 50 by
+default too. `rows` and `rows-since` count the same way, with the format
+first in `rows`: `rows text 0 10` is the last 10 rows.
+
+`history-size` gives the lines the history holds, the ones its limit
+dropped (`dropped`) and the ones Clear history took away (`cleared`).
 
 `notifications` takes the same `[from] [count]` in a trigger's or a
 profile's line, below.

@@ -280,26 +280,31 @@ pub struct Server {
 }
 
 /// What the subscribers were last told of (MAX-284): the last event's number, the end of the
-/// bytes received, the count of bytes sent
+/// bytes received, the count of bytes sent, the newest line and row numbers (MAX-290)
 #[derive(Debug, Clone, Copy)]
 struct Published {
     event: u64,
     rx: u64,
     tx: usize,
+    history: u64,
+    rows: u64,
 }
 
-/// What a connection subscribed to (MAX-284): event kinds, `rx` for the bytes received, `tx`
-/// for the bytes sent
+/// The streams a connection can follow besides the events, each told by a notification of its
+/// name: the bytes received, the bytes sent, line mode's lines and the terminal's scrolled rows
+/// (MAX-290)
+const STREAMS: [&str; 4] = ["rx", "tx", "history", "rows"];
+
+/// What a connection subscribed to (MAX-284): event kinds, and streams of `STREAMS`
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Subscription {
     kinds: Vec<&'static str>,
-    rx: bool,
-    tx: bool,
+    streams: Vec<&'static str>,
 }
 
 impl Subscription {
-    /// From `subscribe`'s params: `events`, kinds of `event::KINDS`, `rx` and `tx`, every one
-    /// when left out
+    /// From `subscribe`'s params: `events`, kinds of `event::KINDS` and streams of `STREAMS`,
+    /// every one when left out
     fn from_params(params: Option<&Json>) -> Result<Self, RpcError> {
         let object = match params {
             None => None,
@@ -309,8 +314,7 @@ impl Subscription {
         let Some(names) = object.and_then(|object| object.get("events")) else {
             return Ok(Self {
                 kinds: KINDS.to_vec(),
-                rx: true,
-                tx: true,
+                streams: STREAMS.to_vec(),
             });
         };
         let Json::Array(names) = names else {
@@ -319,11 +323,12 @@ impl Subscription {
         let mut subscription = Self::none();
         for name in names {
             match name.as_str() {
-                Some("rx") => subscription.rx = true,
-                Some("tx") => subscription.tx = true,
                 Some(name) => match KINDS.iter().find(|kind| **kind == name) {
                     Some(kind) => subscription.kinds.push(kind),
-                    None => return Err(RpcError::invalid_params(format!("no event '{name}'"))),
+                    None => match STREAMS.iter().find(|stream| **stream == name) {
+                        Some(stream) => subscription.streams.push(stream),
+                        None => return Err(RpcError::invalid_params(format!("no event '{name}'"))),
+                    },
                 },
                 None => return Err(RpcError::invalid_params("an event is named by a string")),
             }
@@ -334,8 +339,7 @@ impl Subscription {
     fn none() -> Self {
         Self {
             kinds: Vec::new(),
-            rx: false,
-            tx: false,
+            streams: Vec::new(),
         }
     }
 
@@ -343,31 +347,35 @@ impl Subscription {
         self.kinds.contains(&event.kind())
     }
 
-    /// What `other` names added: the kinds kept in the order of `KINDS`
+    /// Whether it follows `stream`, one of `STREAMS`
+    fn follows(&self, stream: &str) -> bool {
+        self.streams.contains(&stream)
+    }
+
+    /// What `other` names added: the kinds kept in the order of `KINDS`, the streams in the
+    /// order of `STREAMS`
     fn add(&mut self, other: &Self) {
         self.kinds = (KINDS.iter().copied())
             .filter(|kind| self.kinds.contains(kind) || other.kinds.contains(kind))
             .collect();
-        self.rx |= other.rx;
-        self.tx |= other.tx;
+        self.streams = (STREAMS.iter().copied())
+            .filter(|stream| self.follows(stream) || other.follows(stream))
+            .collect();
     }
 
     /// What `other` names taken off
     fn remove(&mut self, other: &Self) {
         self.kinds.retain(|kind| !other.kinds.contains(kind));
-        self.rx &= !other.rx;
-        self.tx &= !other.tx;
+        self.streams.retain(|stream| !other.follows(stream));
     }
 
     fn is_empty(&self) -> bool {
-        self.kinds.is_empty() && !self.rx && !self.tx
+        self.kinds.is_empty() && self.streams.is_empty()
     }
 
-    /// The names it holds, as `events` takes them: the kinds, then `rx` and `tx`
+    /// The names it holds, as `events` takes them: the kinds, then the streams
     fn names(&self) -> Vec<&'static str> {
-        let rx = self.rx.then_some("rx");
-        let tx = self.tx.then_some("tx");
-        self.kinds.iter().copied().chain(rx).chain(tx).collect()
+        self.kinds.iter().chain(&self.streams).copied().collect()
     }
 }
 
@@ -468,8 +476,10 @@ impl Server {
     pub fn serve(&mut self, app: &mut App, instance: &Instance) -> usize {
         let now = Published {
             event: app.events.last(),
-            rx: app.terminal_mode.dump().stream().end(),
+            rx: app.rx_bytes.end(),
             tx: app.stats.tx(),
+            history: app.line_mode.lines_kept().end,
+            rows: app.terminal_mode.rows_kept().end,
         };
         let told = *self.published.get_or_insert(now);
         let published = told.event;
@@ -494,14 +504,26 @@ impl Server {
         }
         if now.rx != told.rx {
             self.tell(
-                |subscription| subscription.rx,
+                |subscription| subscription.follows("rx"),
                 || rpc::notification("rx", json!({ "newest": now.rx })),
             );
         }
         if now.tx != told.tx {
             self.tell(
-                |subscription| subscription.tx,
+                |subscription| subscription.follows("tx"),
                 || rpc::notification("tx", json!({ "sent": now.tx })),
+            );
+        }
+        if now.history != told.history {
+            self.tell(
+                |subscription| subscription.follows("history"),
+                || rpc::notification("history", json!({ "newest": now.history })),
+            );
+        }
+        if now.rows != told.rows {
+            self.tell(
+                |subscription| subscription.follows("rows"),
+                || rpc::notification("rows", json!({ "newest": now.rows })),
             );
         }
         self.published = Some(Published {
@@ -545,8 +567,10 @@ impl Server {
         let result = json!({
             "last": app.events.last(),
             "oldest": app.events.oldest(),
-            "rx": app.terminal_mode.dump().stream().end(),
+            "rx": app.rx_bytes.end(),
             "tx": app.stats.tx(),
+            "history": app.line_mode.lines_kept().end,
+            "rows": app.terminal_mode.rows_kept().end,
             "events": subscription.names(),
         });
         self.reply(conn, rpc::reply(id, Ok(result)));

@@ -59,15 +59,15 @@ pub fn render(app: &mut App, frame: &mut Frame, raw_area: Rect, theme: &ThemeCon
 
     // the screen copy cursor's bytes (MAX-256), before the top line: the dump may follow them
     let encoding = app.settings().encoding;
-    let (ghosts, follow) = app.terminal_mode.trace_ghosts(encoding);
+    let (ghosts, follow) = app.terminal_mode.trace_ghosts(&app.rx_bytes, encoding);
     // the screen copy selection's bytes, as its ghost (MAX-256, MAX-262)
-    let mirror = app.terminal_mode.selection_bytes(encoding);
+    let mirror = app.terminal_mode.selection_bytes(&app.rx_bytes, encoding);
     let mirror_style = theme.ui.selection_ghost_style(false);
-    let dump = app.terminal_mode.dump_mut();
-    let layout = DumpLayout::fit(inner_area.width as usize, raw_view, dump.stream().end());
+    let (dump, rx) = (app.terminal_mode.dump_mut(), &app.rx_bytes);
+    let layout = DumpLayout::fit(inner_area.width as usize, raw_view, rx.end());
     let rows = inner_area.height as usize;
-    let top = dump.top_line(layout.bytes_per_line, rows);
-    let (max, position) = dump.scroll_position();
+    let top = dump.top_line(rx, layout.bytes_per_line, rows);
+    let (max, position) = dump.scroll_position(rx);
     if let Some(bar) = bar_area
         && max > 0
     {
@@ -97,7 +97,7 @@ pub fn render(app: &mut App, frame: &mut Frame, raw_area: Rect, theme: &ThemeCon
     let dump = app.terminal_mode.dump_mut();
     dump.set_pan_limit(overflow, raw_view);
     let pan_x = dump.pan_x();
-    let bounds = dump.bounds();
+    let bounds = dump.bounds(&app.rx_bytes);
     let copy = app.terminal_mode.dump_copy().copied();
     let selection = copy.and_then(|copy| copy.selection(&bounds));
     let selection_style = theme.ui.selection_style(true);
@@ -122,7 +122,7 @@ pub fn render(app: &mut App, frame: &mut Frame, raw_area: Rect, theme: &ThemeCon
         let from = line * width;
         // the line with up to 3 bytes kept around it: a char cut by its edges is seen whole
         let around = from.saturating_sub(3).max(bounds.start)..(from + width + 3).min(bounds.end);
-        let (front, back) = app.terminal_mode.dump().stream().slices(around.clone());
+        let (front, back) = app.rx_bytes.slices(around.clone());
         bytes.clear();
         bytes.extend_from_slice(front);
         bytes.extend_from_slice(back);

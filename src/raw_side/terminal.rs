@@ -1,10 +1,10 @@
 //! Terminal mode's raw panel (MAX-252): every byte received, shown as a dump like `xxd`'s.
 //! Line `n` holds the bytes `n * width..(n + 1) * width` by their absolute offset, so the lines
-//! are only arithmetic and stay put when the oldest bytes are dropped
+//! are only arithmetic and stay put when the oldest bytes are dropped. The bytes are the app's
+//! (`RxStream`, MAX-290), given to each call that reads them
 
 mod copy;
 mod scroll;
-mod stream;
 pub mod tokens;
 pub mod writes;
 
@@ -15,7 +15,6 @@ use std::{
 
 pub use copy::{DumpCopy, DumpResult};
 use scroll::DumpScroller;
-pub use stream::RxStream;
 use tokens::{Token, Tokenizer};
 use writes::{Run, Writes};
 
@@ -23,6 +22,7 @@ use crate::{
     configs::{RawSideView, TextEncoding, settings::raw_view_to_display_mode},
     inputs::CopyModeAction,
     raw_side::RawSideScroller,
+    rx_stream::RxStream,
     ui::raw_side::format_raw_bytes_to_plain_string,
 };
 
@@ -52,10 +52,10 @@ fn width(ch: char) -> u64 {
     ch.width().unwrap_or(1).min(2) as u64
 }
 
-/// The dump: the bytes kept, its own scroll and pan, and copy mode's cursor in it
+/// The dump: its own scroll and pan over the bytes received, copy mode's cursor in it, and
+/// the byte trace (which cells the bytes drew)
 #[derive(Debug)]
 pub struct Dump {
-    stream: RxStream,
     scroller: DumpScroller,
     pan: RawSideScroller,
     copy: DumpCopy,
@@ -67,7 +67,6 @@ impl Dump {
     /// The dump of a terminal history of `history_rows` rows
     pub fn new(history_rows: usize) -> Self {
         Self {
-            stream: RxStream::new(history_rows),
             scroller: DumpScroller::default(),
             pan: RawSideScroller::default(),
             copy: DumpCopy::default(),
@@ -76,16 +75,14 @@ impl Dump {
         }
     }
 
-    /// Adds a read; returns its first byte's offset
-    pub fn push(&mut self, bytes: &[u8]) -> u64 {
-        let offset = self.stream.push(bytes);
-        self.writes.trim(self.stream.start());
-        offset
+    /// The trace of the bytes before `start` dropped: they are no longer kept
+    pub fn trim(&mut self, start: u64) {
+        self.writes.trim(start);
     }
 
-    /// Every byte dropped, the offsets still counting on; the dump follows the live end
+    /// The trace dropped with the bytes received (a `clear-history`); the dump follows the live
+    /// end
     pub fn clear(&mut self) {
-        self.stream.clear();
         self.writes.clear();
         self.scroller.follow();
     }
@@ -118,12 +115,12 @@ impl Dump {
 
     /// Records a printable run on a screen `cols` wide, its cells counted from its bytes kept (a
     /// char cut between two reads included); returns them
-    pub fn record(&mut self, run: Run, encoding: TextEncoding, cols: u16) -> u32 {
-        let (front, back) = self.stream.slices(run.start..run.end);
+    pub fn record(&mut self, rx: &RxStream, run: Run, encoding: TextEncoding, cols: u16) -> u32 {
+        let (front, back) = rx.slices(run.start..run.end);
         let cells = if front.is_ascii() && back.is_ascii() {
             (front.len() + back.len()) as u32
         } else {
-            (self.chars(run.start..run.end, encoding).iter())
+            (chars(rx, run.start..run.end, encoding).iter())
                 .map(|&(_, ch)| width(ch))
                 .sum::<u64>() as u32
         };
@@ -133,13 +130,19 @@ impl Dump {
 
     /// What byte `offset` wrote (MAX-256): its char and the cell it went to; none for a byte
     /// that draws nothing (a control byte, a sequence) or no longer kept
-    pub fn written(&self, offset: u64, encoding: TextEncoding) -> Option<Write> {
+    pub fn written(&self, rx: &RxStream, offset: u64, encoding: TextEncoding) -> Option<Write> {
         let run = self.writes.at(offset)?;
-        (self.writes_of(run, encoding).into_iter()).find(|write| write.bytes.contains(&offset))
+        (self.writes_of(rx, run, encoding).into_iter()).find(|write| write.bytes.contains(&offset))
     }
 
     /// The writes to `cell`, newest first, `max` at most
-    pub fn writes_to(&self, cell: Cell, encoding: TextEncoding, max: usize) -> Vec<Write> {
+    pub fn writes_to(
+        &self,
+        rx: &RxStream,
+        cell: Cell,
+        encoding: TextEncoding,
+        max: usize,
+    ) -> Vec<Write> {
         let mut found = Vec::new();
         for run in self.writes.newest_first() {
             if run.alternate != cell.alternate || cell.row < run.row {
@@ -148,7 +151,7 @@ impl Dump {
             if cell.row > run.row + self.rows_reached(run) {
                 continue;
             }
-            let write = (self.writes_of(run, encoding).into_iter()).find(|write| {
+            let write = (self.writes_of(rx, run, encoding).into_iter()).find(|write| {
                 let width = width(write.ch).max(1);
                 write.cell.row == cell.row
                     && (u64::from(write.cell.col)..u64::from(write.cell.col) + width)
@@ -163,10 +166,15 @@ impl Dump {
     }
 
     /// The chars the bytes of `range` wrote, in byte order, a char cut by its ends included
-    pub fn written_in(&self, range: Range<u64>, encoding: TextEncoding) -> Vec<Write> {
+    pub fn written_in(
+        &self,
+        rx: &RxStream,
+        range: Range<u64>,
+        encoding: TextEncoding,
+    ) -> Vec<Write> {
         let mut found = Vec::new();
         for run in self.writes.within(range.clone()) {
-            let writes = self.writes_of(run, encoding).into_iter();
+            let writes = self.writes_of(rx, run, encoding).into_iter();
             found.extend(writes.filter(|w| w.bytes.start < range.end && w.bytes.end > range.start));
         }
         found
@@ -176,6 +184,7 @@ impl Dump {
     /// char on both its cells), as `writes_to` finds each, in one pass over the runs
     pub fn newest_writes_on(
         &self,
+        rx: &RxStream,
         rows: RangeInclusive<u64>,
         alternate: bool,
         encoding: TextEncoding,
@@ -188,7 +197,7 @@ impl Dump {
             if run.row + self.rows_reached(run) < *rows.start() {
                 continue;
             }
-            for write in self.writes_of(run, encoding) {
+            for write in self.writes_of(rx, run, encoding) {
                 if !rows.contains(&write.cell.row) {
                     continue;
                 }
@@ -216,12 +225,12 @@ impl Dump {
     /// The chars a run wrote and their cells: from its first cell on, a char wrapping to the next
     /// row when it doesn't fit, as the screen was wide then (MAX-282), a combining char on the
     /// cell before it
-    fn writes_of(&self, run: Run, encoding: TextEncoding) -> Vec<Write> {
+    fn writes_of(&self, rx: &RxStream, run: Run, encoding: TextEncoding) -> Vec<Write> {
         let cols = u64::from(self.writes.cols_at(run.start).max(1));
         let (mut row, mut col) = (run.row, u64::from(run.col));
         let mut last = None;
         let mut out = Vec::new();
-        for (bytes, ch) in self.chars(run.start..run.end, encoding) {
+        for (bytes, ch) in chars(rx, run.start..run.end, encoding) {
             let width = width(ch);
             let cell = if width == 0 {
                 match last {
@@ -247,58 +256,25 @@ impl Dump {
         out
     }
 
-    /// The chars of the bytes `range` kept, read in `encoding`, each with its bytes
-    fn chars(
-        &self,
-        range: std::ops::Range<u64>,
-        encoding: TextEncoding,
-    ) -> Vec<(Range<u64>, char)> {
-        let bytes = self.bytes(range.clone());
-        let at = |i: usize| range.start + i as u64;
-        match encoding {
-            TextEncoding::Utf8 => String::from_utf8_lossy(&bytes)
-                .char_indices()
-                .map(|(i, ch)| (at(i)..at(i + ch.len_utf8()), ch))
-                .collect(),
-            _ => (bytes.iter().enumerate())
-                .filter_map(|(i, &byte)| {
-                    let ch = encoding.decode(&[byte]).chars().next()?;
-                    Some((at(i)..at(i + 1), ch))
-                })
-                .collect(),
-        }
-    }
-
-    #[inline]
-    pub fn stream(&self) -> &RxStream {
-        &self.stream
-    }
-
-    /// The bytes of `range` still kept
-    pub fn bytes(&self, range: Range<u64>) -> Vec<u8> {
-        let (front, back) = self.stream.slices(range);
-        [front, back].concat()
-    }
-
-    pub fn bounds(&self) -> DumpBounds {
+    pub fn bounds(&self, rx: &RxStream) -> DumpBounds {
         DumpBounds {
-            start: self.stream.start(),
-            end: self.stream.end(),
+            start: rx.start(),
+            end: rx.end(),
             width: self.scroller.width,
             rows: self.scroller.rows,
         }
     }
 
     /// The top line once drawn `width` bytes a line on `rows` rows
-    pub fn top_line(&mut self, width: usize, rows: usize) -> u64 {
+    pub fn top_line(&mut self, rx: &RxStream, width: usize, rows: usize) -> u64 {
         self.scroller.width = width;
         self.scroller.rows = rows;
-        let (start, end) = self.span();
+        let (start, end) = span(rx);
         self.scroller.top_line(start, end)
     }
 
-    pub fn scroll_up(&mut self, lines: usize) {
-        let (start, end) = self.span();
+    pub fn scroll_up(&mut self, rx: &RxStream, lines: usize) {
+        let (start, end) = span(rx);
         self.scroller.scroll_up(lines, start, end);
     }
 
@@ -307,22 +283,22 @@ impl Dump {
         self.scroller.rows.saturating_sub(1).max(1)
     }
 
-    pub fn scroll_down(&mut self, lines: usize) {
-        let (start, end) = self.span();
+    pub fn scroll_down(&mut self, rx: &RxStream, lines: usize) {
+        let (start, end) = span(rx);
         self.scroller.scroll_down(lines, start, end);
     }
 
     /// The top line at `position` of the scrollbar, 0 the first line kept
-    pub fn scroll_to(&mut self, position: usize) {
-        let (start, end) = self.span();
+    pub fn scroll_to(&mut self, rx: &RxStream, position: usize) {
+        let (start, end) = span(rx);
         let (first, _) = self.scroller.bounds(start, end);
         self.scroller.scroll_to(first + position as u64, start, end);
     }
 
     /// The scrollbar once drawn: its positions past the first (the live view's) and the one
     /// shown, both from the first line kept
-    pub fn scroll_position(&self) -> (usize, usize) {
-        let (start, end) = self.span();
+    pub fn scroll_position(&self, rx: &RxStream) -> (usize, usize) {
+        let (start, end) = span(rx);
         let (first, live) = self.scroller.bounds(start, end);
         let top = self.scroller.top_line(start, end);
         ((live - first) as usize, (top - first) as usize)
@@ -370,8 +346,8 @@ impl Dump {
 
     /// Copy mode coming in: its cursor on the last byte of the bottom line shown; false
     /// without bytes
-    pub fn start_copy(&mut self) -> bool {
-        let bounds = self.bounds();
+    pub fn start_copy(&mut self, rx: &RxStream) -> bool {
+        let bounds = self.bounds(rx);
         if bounds.end == bounds.start {
             return false;
         }
@@ -382,14 +358,14 @@ impl Dump {
     }
 
     /// The cursor on `offset` (a search's match), the selection kept, the dump scrolled to it
-    pub fn cursor_to(&mut self, offset: u64) {
+    pub fn cursor_to(&mut self, rx: &RxStream, offset: u64) {
         self.copy.cursor = offset;
-        self.reveal_cursor();
+        self.reveal(rx, offset);
     }
 
     /// A copy mode action, the mouse's included; a move scrolls the dump to the cursor
-    pub fn copy_action(&mut self, action: CopyModeAction) -> DumpResult {
-        let bounds = self.bounds();
+    pub fn copy_action(&mut self, rx: &RxStream, action: CopyModeAction) -> DumpResult {
+        let bounds = self.bounds(rx);
         let result = match action {
             CopyModeAction::MousePress(pos, _, _) => {
                 self.copy.press(pos.byte_idx as u64, &bounds);
@@ -403,15 +379,20 @@ impl Dump {
             action => self.copy.apply(action, &bounds),
         };
         if result == DumpResult::Moved {
-            self.reveal_cursor();
+            self.reveal(rx, self.copy.cursor);
         }
         result
     }
 
     /// The text a yank of `bytes` copies: the bytes `as_received` (read as UTF-8), else as the
     /// panel shows them in `view`
-    pub fn yank_text(&self, bytes: Range<u64>, as_received: bool, view: RawSideView) -> String {
-        let bytes = self.bytes(bytes);
+    pub fn yank_text(
+        rx: &RxStream,
+        bytes: Range<u64>,
+        as_received: bool,
+        view: RawSideView,
+    ) -> String {
+        let bytes = rx.bytes(bytes);
         if as_received {
             String::from_utf8_lossy(&bytes).into_owned()
         } else {
@@ -419,16 +400,11 @@ impl Dump {
         }
     }
 
-    /// Scrolls the fewest lines that show the cursor
-    fn reveal_cursor(&mut self) {
-        self.reveal(self.copy.cursor);
-    }
-
     /// Keeps byte `offset` in the middle half of the lines shown: nothing moves while it's there,
     /// else the dump centers it (MAX-256: following the other panel's cursor, calmer than the
     /// fewest lines, which leave it on an edge)
-    pub fn keep_in_middle(&mut self, offset: u64) {
-        let (start, end) = self.span();
+    pub fn keep_in_middle(&mut self, rx: &RxStream, offset: u64) {
+        let (start, end) = span(rx);
         let line = offset / self.scroller.width.max(1) as u64;
         let rows = self.scroller.rows.max(1) as u64;
         let top = self.scroller.top_line(start, end);
@@ -439,14 +415,33 @@ impl Dump {
     }
 
     /// Scrolls the fewest lines that show byte `offset`
-    pub fn reveal(&mut self, offset: u64) {
-        let (start, end) = self.span();
+    pub fn reveal(&mut self, rx: &RxStream, offset: u64) {
+        let (start, end) = span(rx);
         let line = offset / self.scroller.width.max(1) as u64;
         self.scroller.reveal(line, start, end);
     }
+}
 
-    fn span(&self) -> (u64, u64) {
-        (self.stream.start(), self.stream.end())
+/// The offsets of the bytes kept, `start..end` as a pair
+fn span(rx: &RxStream) -> (u64, u64) {
+    (rx.start(), rx.end())
+}
+
+/// The chars of the bytes `range` kept, read in `encoding`, each with its bytes
+fn chars(rx: &RxStream, range: Range<u64>, encoding: TextEncoding) -> Vec<(Range<u64>, char)> {
+    let bytes = rx.bytes(range.clone());
+    let at = |i: usize| range.start + i as u64;
+    match encoding {
+        TextEncoding::Utf8 => String::from_utf8_lossy(&bytes)
+            .char_indices()
+            .map(|(i, ch)| (at(i)..at(i + ch.len_utf8()), ch))
+            .collect(),
+        _ => (bytes.iter().enumerate())
+            .filter_map(|(i, &byte)| {
+                let ch = encoding.decode(&[byte]).chars().next()?;
+                Some((at(i)..at(i + 1), ch))
+            })
+            .collect(),
     }
 }
 

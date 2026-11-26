@@ -31,6 +31,7 @@ pub const CONFIG_COMMENTS: &[(&str, &str)] = &[
     ("disabled_mode", "values: none, line, terminal"),
     ("dual_mode_buffering", "values: always_both, active_only"),
     ("rx_buffer_size", "512 to 65536"),
+    ("rx_bytes", "K, M, G or T, 64K at least"),
     ("inactivity_detach_timeout", "\"0s\": never"),
     ("line_mode", guide!("line-mode.html")),
     ("line_mode.tx_eol", "values: crlf, cr, lf"),
