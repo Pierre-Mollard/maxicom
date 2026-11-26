@@ -4,7 +4,7 @@
 # GitHub release of that tag. The release is created with the tag's CHANGELOG
 # section as notes; if it already exists, only the files are replaced.
 # Linux builds are static (musl): they need no glibc, so they run on old
-# distros (RHEL 8) as well as new ones.
+# distros (RHEL 8) as well as new ones. Then the Homebrew tap is bumped to it.
 name: Release
 
 on:
@@ -164,3 +164,67 @@ jobs:
             gh release create "$TAG" dist/* --verify-tag \
               --title "maxicom $TAG" --notes-file notes.md
           fi
+
+  # Bump the formula in the Homebrew tap (<owner>/homebrew-tap, Formula/maxicom.rb)
+  # to this release: the version, then each sha256 from SHA256SUMS, matched to
+  # the archive named in the url line above it. Skipped without the
+  # HOMEBREW_TAP_TOKEN secret (a fine-grained token with Contents write on the
+  # tap only), for a pre-release tag (v1.2.3-rc1), and for a tag older than the
+  # formula's version (a rerun by hand of an old tag must not downgrade it).
+  homebrew:
+    needs: release
+    runs-on: ubuntu-latest
+    env:
+      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - if: env.TAP_TOKEN == ''
+        run: echo "::notice::no HOMEBREW_TAP_TOKEN secret, the tap is not bumped"
+      - if: env.TAP_TOKEN != ''
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository_owner }}/homebrew-tap
+          token: ${{ env.TAP_TOKEN }}
+          path: tap
+      - if: env.TAP_TOKEN != ''
+        name: Checksums of the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release download "$TAG" -p SHA256SUMS
+      - if: env.TAP_TOKEN != ''
+        name: Bump the formula
+        working-directory: tap
+        run: |
+          version="${TAG#v}"
+          formula=Formula/maxicom.rb
+          case "$version" in *-*)
+            echo "::notice::pre-release $TAG, the tap is not bumped"; exit 0;;
+          esac
+          current=$(sed -n 's/^  version "\(.*\)"$/\1/p' "$formula")
+          newest=$(printf '%s\n' "$current" "$version" | sort -V | tail -1)
+          if [ "$newest" != "$version" ]; then
+            echo "::notice::the tap has $current, newer than $TAG: not bumped"; exit 0
+          fi
+          sed -i "s/^  version \".*\"$/  version \"$version\"/" "$formula"
+          awk '
+            NR == FNR { sum[$2] = $1; next }
+            /^ *url "/ {
+              match($0, /maxicom-[^"\/]*\.(tar\.gz|zip)/)
+              file = substr($0, RSTART, RLENGTH); urls++
+            }
+            /^ *sha256 "/ && file != "" {
+              if (!(file in sum)) { print "no checksum for " file > "/dev/stderr"; bad = 1 }
+              sub(/"[0-9a-f]+"/, "\"" sum[file] "\""); sums++; file = ""
+            }
+            { print }
+            END { if (bad || urls == 0 || urls != sums) exit 1 }
+          ' ../SHA256SUMS "$formula" > maxicom.rb.new
+          mv maxicom.rb.new "$formula"
+          git diff
+          if git diff --quiet; then
+            echo "::notice::the formula already has $TAG"; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "feat: maxicom $version"
+          git push

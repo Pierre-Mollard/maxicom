@@ -21,6 +21,18 @@ include = [
     "LICENSE-MIT",
 ]
 
+# `cargo binstall maxicom` takes the release's archive (release.yml) instead of
+# building: maxicom-<target>.tar.gz (.zip on Windows) under the v<version> tag,
+# the binary in a folder of the same name. A glibc Linux host falls back to the
+# static musl build
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }{ archive-suffix }"
+bin-dir = "{ name }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+
 [profile.profiling]
 inherits = "release"
 debug = true
