@@ -158,7 +158,9 @@ stopped it, see [Errors](#errors). A line that doesn't parse is refused at
 once, before anything runs.
 
 A program's job never shows a toast or opens a popup: what it reports goes
-back to the program. Commands that need you at the keyboard, like `help` or
+back to the program. The exception is `notify`, which is there to tell you
+something: its notification shows in maxicom as yours would.
+Commands that need you at the keyboard, like `help` or
 `mark` without its letter, are refused, as they are in a trigger's line.
 
 A line starting with `cancel` cancels this connection's jobs first, then

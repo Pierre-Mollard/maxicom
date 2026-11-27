@@ -109,7 +109,9 @@ class Maxicom:
     """maxicom on a pty of `cols` × `rows`, on `address`, in a folder of its own: its HOME,
     config, cache and runtime folders. What it draws is read and dropped"""
 
-    def __init__(self, address, cols=100, rows=30, api=""):
+    def __init__(self, address, cols=100, rows=30, api="", beside=None):
+        """`beside`: another Maxicom whose runtime folder this one shares, so a client finds
+        both"""
         self.dir = Path(tempfile.mkdtemp(prefix="mx-", dir="/tmp"))
         self.env = dict(os.environ)
         for name, sub in [
@@ -123,6 +125,8 @@ class Maxicom:
             folder = self.dir / sub
             folder.mkdir(mode=0o700)
             self.env[name] = str(folder)
+        if beside is not None:
+            self.env["XDG_RUNTIME_DIR"] = beside.env["XDG_RUNTIME_DIR"]
         self.env["TERM"] = "xterm-256color"
         config = self.dir / "config" / "maxicom"
         config.mkdir()

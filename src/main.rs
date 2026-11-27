@@ -41,6 +41,7 @@ mod api;
 mod app;
 mod args;
 mod capture;
+mod cli;
 mod clock;
 mod commands;
 mod configs;
@@ -184,6 +185,11 @@ fn reset_config(config_path: &std::path::Path) -> ExitCode {
 }
 
 fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
+    // the client of a running maxicom, which needs no settings (MAX-285)
+    if let Some(args) = args::cli() {
+        return Ok(cli::main(args));
+    }
+
     // `--config` first: the other options need the settings it gives (MAX-206)
     if let Some(path) = args::config_file() {
         AppConfig::use_config_file(path);

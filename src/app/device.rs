@@ -498,6 +498,11 @@ impl App {
         self.saved_name(&self.link.config().address)
     }
 
+    /// The address of the link in use, as it's written (MAX-285)
+    pub fn link_address(&self) -> String {
+        self.link.config().address.to_string()
+    }
+
     /// The link in use as the notices and the link's popups name it: a saved one by its name,
     /// its address after it so the device stays findable (`board (/dev/ttyUSB0)`)
     pub fn link_label(&self) -> String {

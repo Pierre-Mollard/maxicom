@@ -39,10 +39,12 @@ class ApiTest(unittest.TestCase):
         return self.client.call("subscribe", params)
 
     def test_hello_says_who_answers(self):
-        """`hello` gives the API version, the pid and the link"""
+        """`hello` gives the API version, the pid and the link: its label, saved name (none
+        here) and address"""
         hello = self.client.call("hello", {"client": "tests"})
         self.assertEqual(hello["pid"], self.maxicom.process.pid)
         self.assertEqual(hello["link"], self.device.address)
+        self.assertEqual((hello["name"], hello["address"]), (None, self.device.address))
         self.assertEqual(hello["api"], 1)
 
     def test_query_and_its_refusals(self):

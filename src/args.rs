@@ -69,6 +69,25 @@ pub fn parse_args(
     parse_args_from(env::args().skip(1), defaults, links) // skip program name
 }
 
+/// The first words kept for maxicom's own tools (MAX-285): `cli`, the client of a running
+/// maxicom, then `api` (MAX-292) and `mcp` (MAX-149). Never a saved link's name: a device file
+/// of that name opens as `./cli`
+pub const RESERVED: &[&str] = &["cli", "api", "mcp"];
+
+/// The words after `cli` when it is the first argument (MAX-285): read before the settings
+/// load, as the client needs none of them
+pub fn cli() -> Option<Vec<String>> {
+    cli_from(env::args().skip(1))
+}
+
+fn cli_from(args: impl IntoIterator<Item = String>) -> Option<Vec<String>> {
+    let mut args = args.into_iter();
+    if args.next()? != "cli" {
+        return None;
+    }
+    Some(args.collect())
+}
+
 /// The `--config` file, read before the settings load since the other options need them
 /// (MAX-206)
 pub fn config_file() -> Option<PathBuf> {
@@ -294,6 +313,13 @@ fn parse_args_from(
             "--write-config" => return Ok(ParseOutcome::WriteConfig),
             // already handled by `reset_config`, before the settings loaded (MAX-231)
             "--reset-config" => {}
+            // not a link anywhere else on the line (MAX-285)
+            word if RESERVED.contains(&word) => {
+                return Err(ParseError::BadFormat(format!(
+                    "'{word}' is reserved for maxicom's own commands: a device of that name \
+                     opens as ./{word}"
+                )));
+            }
             // a saved link's name, or the device without `--device`: `maxicom board`,
             // `maxicom /dev/ttyUSB0`, `maxicom tcp://host:port`
             word if !word.starts_with('-') => given = Some(Given::Word(word.to_string())),

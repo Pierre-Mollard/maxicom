@@ -67,6 +67,25 @@ fn reset_config_flag() {
     assert!(parse(&["-D", "x", "--reset-config"]).is_ok());
 }
 
+/// MAX-285: `cli` as the first argument gives the words after it to the client; anywhere
+/// else, it and the other reserved words are no link, and `./cli` still opens a device.
+#[test]
+fn cli_and_reserved_words() {
+    let args = |list: &[&str]| list.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        cli_from(args(&["cli", "--json", "status"])),
+        Some(args(&["--json", "status"]))
+    );
+    assert_eq!(cli_from(args(&["cli"])), Some(Vec::new()));
+    assert_eq!(cli_from(args(&["-b", "9600", "cli"])), None);
+    assert_eq!(cli_from(args(&[])), None);
+    for word in RESERVED {
+        let err = address_of(&["-b", "9600", word]).unwrap_err();
+        assert!(err.contains("is reserved"), "{err}");
+    }
+    assert_eq!(address_of(&["./cli"]).unwrap(), "./cli");
+}
+
 fn address_of(args: &[&str]) -> Result<String, String> {
     match parse(args) {
         Ok(ParseOutcome::Run { address, .. }) => Ok(address.expect("a device").to_string()),

@@ -2027,8 +2027,9 @@ impl App {
                 report.notes.extend(self.open_session_browser());
                 UpdateEffect::None
             }
+            // for the user whoever asks: a client's isn't sent back to it as a note (MAX-285)
             AppAction::Notify(level, text) => {
-                report.notes.push(Note::new(level, text));
+                self.show_note(Note::new(level, text));
                 UpdateEffect::None
             }
             AppAction::StartMash(mash) => {

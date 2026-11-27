@@ -133,11 +133,14 @@ impl SavedLink {
             || self.rts.is_some()
     }
 
-    /// A name, hosts that aren't empty, an address that parses, line fields in range and none
-    /// on a TCP link
+    /// A name, not a reserved one (MAX-285), hosts that aren't empty, an address that parses,
+    /// line fields in range and none on a TCP link
     fn check(&self) -> Result<(), String> {
         if self.name.trim().is_empty() {
             return Err("the name is empty".to_string());
+        }
+        if crate::args::RESERVED.contains(&self.name.trim()) {
+            return Err("the name is reserved for maxicom's own commands".to_string());
         }
         if self.hosts.iter().any(|host| host.trim().is_empty()) {
             return Err("a host is empty".to_string());

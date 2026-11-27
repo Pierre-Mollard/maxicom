@@ -99,13 +99,18 @@ fn line_fields_over_the_defaults() {
 /// MAX-185: the check refuses an empty name or host, an address that doesn't parse, line
 /// settings on a TCP link, line fields out of range, a misspelt field, and a name twice
 /// on one machine (the same hosts, a shared one, or no `hosts` on either); the same name
-/// on two machines passes. Each error says which link, by number and name.
+/// on two machines passes. Each error says which link, by number and name. MAX-285: a
+/// reserved name (`cli`) is refused too.
 #[test]
 fn bad_links() {
     let one = |fields: &str| check(&format!("[[link]]\n{fields}\n")).unwrap_err();
     assert_eq!(
         one("name = ' '\naddress = 'COM3'"),
         "link #1 ' ': the name is empty"
+    );
+    assert_eq!(
+        one("name = 'cli'\naddress = 'COM3'"),
+        "link #1 'cli': the name is reserved for maxicom's own commands"
     );
     assert_eq!(
         one("name = 'a'\nhosts = ['']\naddress = 'COM3'"),

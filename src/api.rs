@@ -99,7 +99,7 @@ pub fn socket_dir_in(runtime: Option<PathBuf>, temp: &Path, uid: u32) -> PathBuf
     }
 }
 
-/// A maxicom found running by its socket (MAX-74), for `maxicom list` (A2.2)
+/// A maxicom found running by its socket (MAX-74), for `maxicom cli` (MAX-285)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Running {
     pub pid: u32,
@@ -114,8 +114,6 @@ pub struct Running {
 /// being alive when it can be connected to (Unix); every pipe named so (Windows: other users'
 /// too, which refuse the connect). Each one's link from the locks held in `lock_dir`. `dir`
 /// and `lock_dir` are `socket_dir()` and `lock_dir()` but in tests
-// TODO: (MAX-285) used by `maxicom list`; the attribute goes with its first caller
-#[cfg_attr(not(test), expect(dead_code, reason = "A2.2's maxicom list (MAX-285)"))]
 pub fn running(dir: Option<&Path>, lock_dir: Option<&Path>) -> Vec<Running> {
     let locks = lock_dir
         .map(crate::link::lock::held_locks)
@@ -174,10 +172,23 @@ fn listening(_dir: Option<&Path>) -> Vec<(String, String)> {
 /// Whether a maxicom listens on a socket file: a dead one's file refuses the connect
 #[cfg(unix)]
 fn is_alive(path: &Path) -> bool {
-    use interprocess::local_socket::GenericFilePath;
-    (path.to_path_buf().to_fs_name::<GenericFilePath>())
-        .and_then(Stream::connect)
-        .is_ok()
+    connect(&path.display().to_string()).is_ok()
+}
+
+/// A connection to the maxicom at `location`, as `running` gives it: a socket file (Unix), a
+/// pipe `\\.\pipe\<name>` (Windows)
+pub fn connect(location: &str) -> io::Result<Stream> {
+    #[cfg(unix)]
+    {
+        use interprocess::local_socket::GenericFilePath;
+        Stream::connect(location.to_fs_name::<GenericFilePath>()?)
+    }
+    #[cfg(not(unix))]
+    {
+        use interprocess::local_socket::GenericNamespaced;
+        let name = location.strip_prefix(r"\\.\pipe\").unwrap_or(location);
+        Stream::connect(name.to_ns_name::<GenericNamespaced>()?)
+    }
 }
 
 /// The answer to a request, for the loop: none for a notification, which isn't run either
@@ -192,7 +203,8 @@ pub fn answer(app: &mut App, instance: &Instance, request: &Request) -> Option<S
     Some(rpc::reply(id, result))
 }
 
-/// `hello {client?}`: who this maxicom is. `client` is the name the client gives itself, kept
+/// `hello {client?}`: who this maxicom is, its link by its label, its saved name (null when
+/// it isn't saved) and its address (MAX-285). `client` is the name the client gives itself, kept
 /// with its connection by `Server::serve` for its jobs
 // TODO: (MAX-286) the clients and their names shown in the TUI (A3)
 fn hello(app: &App, instance: &Instance, params: Option<&Json>) -> Result<Json, RpcError> {
@@ -202,6 +214,8 @@ fn hello(app: &App, instance: &Instance, params: Option<&Json>) -> Result<Json, 
         "version": env!("CARGO_PKG_VERSION"),
         "pid": instance.pid,
         "link": app.link_label(),
+        "name": app.link_name(),
+        "address": app.link_address(),
         "since": crate::commands::query::utc(instance.since),
         "access": access(app),
     }))

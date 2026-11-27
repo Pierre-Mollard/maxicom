@@ -626,6 +626,7 @@ fn disconnect_clients_drops_only_the_clients() {
 /// failed, refused by the levels, by the user, cancelled) and how many commands didn't run.
 /// How: `toggle-local-echo; status`; `send x; send y` (device off); `notify info ''` (nothing to say);
 /// `send a` asked and refused; `sleep 1000; send b` cancelled by the user; no toast meanwhile.
+/// MAX-285: then a `notify`, whose toast shows.
 #[test]
 fn client_runs_report_back() {
     use crate::app::jobs::FailureKind;
@@ -682,6 +683,16 @@ fn client_runs_report_back() {
     let failure = finished(&mut app, job).failure.unwrap();
     assert_eq!(failure.kind, FailureKind::Cancelled);
     assert_eq!(toasts(&app), before, "a client's job makes no toast");
+
+    // MAX-285: but `notify` is for the user, whoever asks: its toast shows, the client gets
+    // no note back
+    let job = run(&mut app, "notify info 'flash done'");
+    let done = finished(&mut app, job);
+    assert!(done.failure.is_none() && done.notes.is_empty(), "{done:?}");
+    let shown: Vec<&str> = (app.notifications.active_toasts().iter())
+        .map(|toast| toast.message.as_str())
+        .collect();
+    assert_eq!(shown.last(), Some(&"flash done"));
 }
 
 /// MAX-284 (step 3c): a client's `cancel` stops one of its jobs by number, or all of them, and
