@@ -454,7 +454,10 @@ fn run_result(job: JobId, outcome: &Outcome) -> Result<Json, RpcError> {
         return Err(RpcError::job(failure));
     }
     let values: Vec<Json> = (outcome.answers.iter())
-        .map(|answer| json!({ "query": answer.query, "value": json(&answer.value) }))
+        .map(|answer| {
+            let value = json(&answer.value);
+            json!({ "query": answer.query, "command": answer.command, "value": value })
+        })
         .collect();
     Ok(json!({ "job": job, "notes": outcome.notes, "values": values }))
 }

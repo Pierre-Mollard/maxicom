@@ -3,8 +3,9 @@
 //! the reply: a `run`'s comes when its job ends. Ctrl-C closes the connection, which cancels
 //! the job
 use std::{
-    io::{self, BufRead, BufReader, Write},
+    io::{self, BufRead, BufReader, Read, Write},
     process::ExitCode,
+    sync::Arc,
     time::Duration,
 };
 
@@ -24,6 +25,9 @@ use crate::{
 
 /// The name the client gives itself in `hello`
 const CLIENT: &str = "maxicom-cli";
+
+/// The variable naming the socket to reach, as `--socket` does (MAX-292)
+const SOCKET_VAR: &str = "MAXICOM_SOCKET";
 
 /// How long a maxicom has to answer `hello`: one that doesn't is left out
 const HELLO_WAIT: Duration = Duration::from_secs(1);
@@ -54,11 +58,12 @@ impl From<Exit> for ExitCode {
 }
 
 /// What `maxicom cli` is asked: the instance to reach (`--instance`: a pid, a saved link's
-/// name or an address; else the only one running), the reply as the wire gives it (`--json`),
-/// and what to do
+/// name or an address; else the only one running), the socket to reach it at in place of the
+/// ones found (`--socket`, MAX-292), the reply as the wire gives it (`--json`), and what to do
 #[derive(Debug, PartialEq, Eq)]
 pub struct CliArgs {
     pub instance: Option<String>,
+    pub socket: Option<String>,
     pub json: bool,
     pub action: CliAction,
 }
@@ -93,13 +98,26 @@ pub fn main(args: Vec<String>) -> ExitCode {
             return Exit::Usage.into();
         }
     };
+    // a socket given, else in the environment: a forwarded one (MAX-292)
+    let socket = (args.socket.clone()).or_else(|| {
+        std::env::var(SOCKET_VAR)
+            .ok()
+            .filter(|path| !path.is_empty())
+    });
+    let found = || found(socket.as_deref());
     let exit = match args.action {
         CliAction::Help => {
-            print_help();
+            print_api_help();
             Exit::Done
         }
-        CliAction::List => list(args.instance.as_deref(), args.json),
-        action => match pick(args.instance.as_deref(), found().0) {
+        CliAction::List => match found() {
+            Ok(found) => list(found, args.instance.as_deref(), args.json),
+            Err(message) => {
+                eprintln!("maxicom cli: {message}");
+                Exit::NoInstance
+            }
+        },
+        action => match found().and_then(|found| pick(args.instance.as_deref(), found.0)) {
             Ok(mut maxicom) => {
                 let connection = &mut maxicom.connection;
                 match action {
@@ -181,10 +199,11 @@ impl Connection {
     }
 }
 
-/// A maxicom that answered `hello`: its pid, its `hello`, and what reaches it
+/// A maxicom that answered `hello`: its pid, its `hello`, its socket and what reaches it
 struct Found<C> {
     pid: u32,
     hello: Json,
+    location: String,
     connection: C,
 }
 
@@ -205,12 +224,21 @@ impl<C> Found<C> {
 
 /// The maxicoms running, by pid: those that answer `hello`, each with its connection, and
 /// those that take the connection but don't answer in `HELLO_WAIT` (busy, or stuck). One that
-/// refuses the connect is left out: gone, or another user's pipe (Windows)
-fn found() -> (Vec<Found<Connection>>, Vec<Running>) {
-    let running = api::running(
-        api::socket_dir().as_deref(),
-        crate::link::lock::lock_dir().as_deref(),
-    );
+/// refuses the connect is left out: gone, or another user's pipe (Windows). With `socket`,
+/// the one at that path only, its pid from its `hello` (MAX-292): an error when nothing is
+/// there
+fn found(socket: Option<&str>) -> Result<(Vec<Found<Connection>>, Vec<Running>), String> {
+    let running = match socket {
+        Some(path) => vec![Running {
+            pid: 0,
+            location: path.to_string(),
+            link: None,
+        }],
+        None => api::running(
+            api::socket_dir().as_deref(),
+            crate::link::lock::lock_dir().as_deref(),
+        ),
+    };
     let (mut answering, mut silent) = (Vec::new(), Vec::new());
     for running in running {
         let Ok(mut connection) = Connection::open(&running.location) else {
@@ -221,14 +249,20 @@ fn found() -> (Vec<Found<Connection>>, Vec<Running>) {
         connection.wait_at_most(None);
         match hello {
             Ok(Ok(hello)) => answering.push(Found {
-                pid: running.pid,
+                pid: (hello["pid"].as_u64()).map_or(running.pid, |pid| pid as u32),
                 hello,
+                location: running.location,
                 connection,
             }),
             _ => silent.push(running),
         }
     }
-    (answering, silent)
+    match socket {
+        Some(path) if answering.is_empty() && silent.is_empty() => {
+            Err(format!("no maxicom answers at {path}"))
+        }
+        _ => Ok((answering, silent)),
+    }
 }
 
 /// The maxicom `id` names (`Found::is`), else the only one running; why there's none to pick
@@ -259,11 +293,12 @@ fn pick<C>(id: Option<&str>, found: Vec<Found<C>>) -> Result<Found<C>, String> {
     }
 }
 
-/// `list`: the maxicoms running, those `id` names when given, as a table of their pid, link
-/// and start, or as JSON: a list of their `hello`s, `{pid, link, answering: false}` for one
-/// that doesn't answer. None running is no error: the table is empty
-fn list(id: Option<&str>, json: bool) -> Exit {
-    let (answering, silent) = found();
+/// `list`: the maxicoms `found`, those `id` names when given, as a table of their pid, link
+/// and start, or as JSON: a list of their `hello`s with their socket's `location` (MAX-292),
+/// `{pid, link, location, answering: false}` for one that doesn't answer. None running is no
+/// error: the table is empty
+fn list(found: (Vec<Found<Connection>>, Vec<Running>), id: Option<&str>, json: bool) -> Exit {
+    let (answering, silent) = found;
     let answering: Vec<_> = (answering.into_iter())
         .filter(|found| id.is_none_or(|id| found.is(id)))
         .collect();
@@ -271,9 +306,19 @@ fn list(id: Option<&str>, json: bool) -> Exit {
         .filter(|running| id.is_none_or(|id| running.pid.to_string() == id))
         .collect();
     if json {
-        let silent = (silent.iter())
-            .map(|running| json!({ "pid": running.pid, "link": running.link, "answering": false }));
-        let hellos = answering.into_iter().map(|found| found.hello);
+        let silent = (silent.iter()).map(|running| {
+            let Running {
+                pid,
+                location,
+                link,
+            } = running;
+            json!({ "pid": pid, "link": link, "location": location, "answering": false })
+        });
+        let hellos = (answering.into_iter()).map(|found| {
+            let mut hello = found.hello;
+            hello["location"] = json!(found.location);
+            hello
+        });
         print_lines([Json::Array(hellos.chain(silent).collect()).to_string()]);
         return Exit::Done;
     }
@@ -494,14 +539,17 @@ fn exit_of(error: &RpcError) -> Exit {
 }
 
 /// A `run`'s result as text: its notes, then its values as the TUI shows them, each under its
-/// query when there are several
+/// command as it ran when there are several (`get local-echo`)
 fn result_lines(result: &Json) -> Vec<String> {
     let notes = (result["notes"].as_array().into_iter().flatten()).filter_map(Json::as_str);
     let mut lines: Vec<String> = notes.map(str::to_string).collect();
     let values: Vec<(String, Value)> = (result["values"].as_array().into_iter().flatten())
         .map(|answer| {
-            let query = answer["query"].as_str().unwrap_or_default().to_string();
-            (query, value_of(&answer["value"]))
+            let command = answer["command"].as_str().or(answer["query"].as_str());
+            (
+                command.unwrap_or_default().to_string(),
+                value_of(&answer["value"]),
+            )
         })
         .collect();
     match <[_; 1]>::try_from(values) {
@@ -546,16 +594,19 @@ fn print_lines(lines: impl IntoIterator<Item = String>) {
 fn parse(args: impl IntoIterator<Item = String>) -> Result<CliArgs, ParseError> {
     let mut args = args.into_iter().peekable();
     let mut instance = None;
+    let mut socket = None;
     let mut json = false;
     while let Some(arg) = args.next_if(|arg| arg.starts_with('-')) {
         let (name, glued) = split_glued(&arg);
         match name {
             "--instance" => instance = Some(value("--instance", glued, &mut args)?),
+            "--socket" => socket = Some(value("--socket", glued, &mut args)?),
             "--json" if glued.is_none() => json = true,
             "--help" | "-h" if glued.is_none() => {
                 let action = CliAction::Help;
                 return Ok(CliArgs {
                     instance,
+                    socket,
                     json,
                     action,
                 });
@@ -583,6 +634,7 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<CliArgs, ParseError> 
     };
     Ok(CliArgs {
         instance,
+        socket,
         json,
         action,
     })
@@ -647,7 +699,131 @@ fn line(words: &[String]) -> String {
     words.iter().map(quoted).collect::<Vec<_>>().join(" ")
 }
 
-fn print_help() {
+/// What `maxicom api` is asked (MAX-292): the instance to reach and the socket to reach it at,
+/// as `maxicom cli` takes them, or its help page
+#[derive(Debug, PartialEq, Eq)]
+pub struct BridgeArgs {
+    pub instance: Option<String>,
+    pub socket: Option<String>,
+    pub help: bool,
+}
+
+/// `maxicom api`'s options: `--instance`, `--socket`, `--help`, nothing else
+fn parse_bridge(args: impl IntoIterator<Item = String>) -> Result<BridgeArgs, ParseError> {
+    let mut args = args.into_iter();
+    let mut parsed = BridgeArgs {
+        instance: None,
+        socket: None,
+        help: false,
+    };
+    while let Some(arg) = args.next() {
+        let (name, glued) = split_glued(&arg);
+        match name {
+            "--instance" => parsed.instance = Some(value("--instance", glued, &mut args)?),
+            "--socket" => parsed.socket = Some(value("--socket", glued, &mut args)?),
+            "--help" | "-h" if glued.is_none() => parsed.help = true,
+            _ => return Err(ParseError::UnknownArgument(arg)),
+        }
+    }
+    Ok(parsed)
+}
+
+/// `maxicom api` (MAX-292): a session with a running maxicom over stdio, for a program that
+/// reaches it through `ssh bench maxicom api`. The bytes are copied both ways as they are,
+/// JSON-RPC lines unread: stdin to the socket, the socket to stdout. stdin closing ends the
+/// session, the connection with it, so its jobs are cancelled as for a program on the socket;
+/// maxicom quitting ends it too
+pub fn bridge(args: Vec<String>) -> ExitCode {
+    let args = match parse_bridge(args) {
+        Ok(args) => args,
+        Err(err) => {
+            eprintln!("maxicom api: {err}");
+            eprintln!("See maxicom api --help.");
+            return Exit::Usage.into();
+        }
+    };
+    if args.help {
+        print_bridge_help();
+        return Exit::Done.into();
+    }
+    let socket = (args.socket.clone()).or_else(|| {
+        std::env::var(SOCKET_VAR)
+            .ok()
+            .filter(|path| !path.is_empty())
+    });
+    let found = found(socket.as_deref());
+    let maxicom = match found.and_then(|found| pick(args.instance.as_deref(), found.0)) {
+        Ok(maxicom) => maxicom,
+        Err(message) => {
+            eprintln!("maxicom api: {message}");
+            return Exit::NoInstance.into();
+        }
+    };
+    // the bytes read past `hello`'s reply are the program's: written first
+    let reader = maxicom.connection.reader;
+    let early = reader.buffer().to_vec();
+    let stream = Arc::new(reader.into_inner());
+    let sending = Arc::clone(&stream);
+    // stdin's end is the session's: the process ends there, the connection with it
+    let spawned = std::thread::Builder::new()
+        .name("api-stdin".to_string())
+        .spawn(move || {
+            let _ = io::copy(&mut io::stdin().lock(), &mut &*sending);
+            std::process::exit(Exit::Done as i32);
+        });
+    if spawned.is_err() {
+        eprintln!("maxicom api: no thread for stdin");
+        return Exit::Failed.into();
+    }
+    let mut stdout = io::stdout().lock();
+    // false once the program reading is gone
+    let mut write = |bytes: &[u8]| {
+        stdout
+            .write_all(bytes)
+            .and_then(|()| stdout.flush())
+            .is_ok()
+    };
+    if !write(&early) {
+        return Exit::Done.into();
+    }
+    let mut buffer = vec![0; 64 * 1024];
+    loop {
+        match (&*stream).read(&mut buffer) {
+            Ok(0) | Err(_) => {
+                eprintln!("maxicom api: maxicom quit");
+                return Exit::Gone.into();
+            }
+            Ok(read) if !write(&buffer[..read]) => return Exit::Done.into(),
+            Ok(_) => {}
+        }
+    }
+}
+
+fn print_bridge_help() {
+    println!(
+        "\
+maxicom api — a session with a running maxicom over stdio, for SSH
+
+Usage:
+  maxicom api [OPTIONS]
+
+  Copies the API's JSON-RPC lines both ways: stdin to the maxicom, its replies
+  and notifications to stdout. A program on another computer reaches it with
+  ssh bench maxicom api. Closing stdin ends the session, and maxicom cancels its
+  jobs; for one action at a time, use maxicom cli.
+
+Options:
+      --instance <ID>      The maxicom to reach: its pid, its saved link's name or
+                           its address [default: the only one running]
+      --socket <PATH>      The socket to reach it at, in place of the ones running
+                           here [default: $MAXICOM_SOCKET when set, else the
+                           maxicoms running on this computer]
+  -h, --help               Print help
+"
+    );
+}
+
+fn print_api_help() {
     println!(
         "\
 maxicom cli — the client of a running maxicom, one action per call
@@ -674,6 +850,9 @@ Usage:
 Options, before the action:
       --instance <ID>      The maxicom to reach: its pid, its saved link's name or
                            its address [default: the only one running]
+      --socket <PATH>      The socket to reach it at, a forwarded one, in place of
+                           the ones running here [default: $MAXICOM_SOCKET when
+                           set, else the maxicoms running on this computer]
       --json               The reply as JSON, as the API gives it
   -h, --help               Print help
 "

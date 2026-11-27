@@ -18,7 +18,7 @@ fn line_of(args: &[&str]) -> String {
 }
 
 /// MAX-285: the options come before the action, `--instance` takes its value glued or next,
-/// and `--help` stops there.
+/// and `--help` stops there. MAX-292: `--socket` too.
 #[test]
 fn options_before_the_action() {
     let args = parsed(&["--instance", "board", "--json", "status"]).unwrap();
@@ -28,6 +28,18 @@ fn options_before_the_action() {
     let args = parsed(&["--instance=1234", "status"]).unwrap();
     assert_eq!(args.instance.as_deref(), Some("1234"));
     assert!(!args.json);
+    // MAX-292: a socket path, a forwarded one
+    let args = parsed(&["--socket", "/tmp/bench.sock", "list"]).unwrap();
+    assert_eq!(args.socket.as_deref(), Some("/tmp/bench.sock"));
+    assert_eq!(args.action, CliAction::List);
+    assert_eq!(
+        parsed(&["--socket=/tmp/b.sock", "list"])
+            .unwrap()
+            .socket
+            .as_deref(),
+        Some("/tmp/b.sock")
+    );
+    assert_eq!(parsed(&["status"]).unwrap().socket, None);
     assert_eq!(action(&["--help", "whatever"]), CliAction::Help);
     assert_eq!(action(&["-h"]), CliAction::Help);
 }
@@ -136,6 +148,7 @@ fn found(pid: u32, name: Option<&str>, address: &str) -> Found<()> {
     Found {
         pid,
         hello,
+        location: format!("/run/maxicom/maxicom-{pid}.sock"),
         connection: (),
     }
 }
@@ -195,27 +208,30 @@ fn instance_picked() {
 }
 
 /// MAX-285: a `run`'s result as text: its notes, then one value bare or several under their
-/// queries, as the TUI shows them; nothing for a run with neither.
+/// commands as they ran (two `get` told apart), as the TUI shows them; nothing for a run with
+/// neither.
 #[test]
 fn result_as_text() {
     let result = json!({
         "job": 3,
         "notes": ["Local echo on"],
-        "values": [{ "query": "get baud", "value": 115200 }],
+        "values": [{ "query": "get", "command": "get baud", "value": 115200 }],
     });
     assert_eq!(result_lines(&result), ["Local echo on", "115200"]);
     let result = json!({
         "job": 4,
         "notes": [],
         "values": [
-            { "query": "get baud", "value": 115200 },
-            { "query": "status", "value": { "state": "open", "jobs": [], "speed": 1.5 } },
+            { "query": "get", "command": "get baud", "value": 115200 },
+            { "query": "get", "command": "get mode", "value": "terminal" },
+            { "query": "status", "command": "status", "value": { "state": "open", "jobs": [], "speed": 1.5 } },
         ],
     });
     assert_eq!(
         result_lines(&result),
         [
             "get baud: 115200",
+            "get mode: terminal",
             "status:",
             "  state: open",
             "  jobs: none",
@@ -275,4 +291,32 @@ fn hex_dump() {
         ]
     );
     assert!(hex_lines(0, b"").is_empty());
+}
+
+/// MAX-292: `maxicom api` takes `--instance` and `--socket` as `maxicom cli` does, `--help`,
+/// and nothing else: the session's requests come on stdin, not as arguments.
+#[test]
+fn bridge_options() {
+    let parsed = |args: &[&str]| {
+        parse_bridge(args.iter().map(|arg| arg.to_string())).map_err(|err| err.to_string())
+    };
+    let args = parsed(&["--instance", "board", "--socket=/tmp/b.sock"]).unwrap();
+    assert_eq!(
+        args,
+        BridgeArgs {
+            instance: Some("board".to_string()),
+            socket: Some("/tmp/b.sock".to_string()),
+            help: false,
+        }
+    );
+    assert!(parsed(&["-h"]).unwrap().help);
+    assert_eq!(parsed(&[]).unwrap().instance, None);
+    assert_eq!(
+        parsed(&["status"]).unwrap_err(),
+        "Unknown argument 'status'."
+    );
+    assert_eq!(
+        parsed(&["--json"]).unwrap_err(),
+        "Unknown argument '--json'."
+    );
 }

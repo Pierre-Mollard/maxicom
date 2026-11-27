@@ -185,9 +185,13 @@ fn reset_config(config_path: &std::path::Path) -> ExitCode {
 }
 
 fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
-    // the client of a running maxicom, which needs no settings (MAX-285)
-    if let Some(args) = args::cli() {
+    // the clients of a running maxicom, which need no settings: one action (MAX-285), or a
+    // session over stdio (MAX-292)
+    if let Some(args) = args::after("cli") {
         return Ok(cli::main(args));
+    }
+    if let Some(args) = args::after("api") {
+        return Ok(cli::bridge(args));
     }
 
     // `--config` first: the other options need the settings it gives (MAX-206)

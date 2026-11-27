@@ -122,8 +122,12 @@ impl App {
             // run at once: a query changes nothing, its answer goes to who asked
             (None, Target::Query(query) | Target::Popup { query, .. }) => {
                 query(self, &invocation.args).map(|value| {
-                    let query = invocation.spec.name;
-                    Action::App(AppAction::Answer(Box::new(Answer { query, value })))
+                    let answer = Answer {
+                        query: invocation.spec.name,
+                        command: invocation.text(),
+                        value,
+                    };
+                    Action::App(AppAction::Answer(Box::new(answer)))
                 })
             }
         };

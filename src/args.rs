@@ -74,15 +74,15 @@ pub fn parse_args(
 /// of that name opens as `./cli`
 pub const RESERVED: &[&str] = &["cli", "api", "mcp"];
 
-/// The words after `cli` when it is the first argument (MAX-285): read before the settings
-/// load, as the client needs none of them
-pub fn cli() -> Option<Vec<String>> {
-    cli_from(env::args().skip(1))
+/// The words after `word` when it is the first argument: `cli` (MAX-285), `api` (MAX-292).
+/// Read before the settings load, as these clients need none of them
+pub fn after(word: &str) -> Option<Vec<String>> {
+    after_from(word, env::args().skip(1))
 }
 
-fn cli_from(args: impl IntoIterator<Item = String>) -> Option<Vec<String>> {
+fn after_from(word: &str, args: impl IntoIterator<Item = String>) -> Option<Vec<String>> {
     let mut args = args.into_iter();
-    if args.next()? != "cli" {
+    if args.next()? != word {
         return None;
     }
     Some(args.collect())
@@ -397,6 +397,8 @@ Usage:
   maxicom [OPTIONS] [LINK | DEVICE]
   maxicom cli ...          Drive a running maxicom from the shell: see
                            maxicom cli --help
+  maxicom api ...          A session with a running maxicom over stdio, for
+                           programs through ssh: see maxicom api --help
 
   LINK                     A saved link's name (links.toml), opened with its line
                            settings, the options over them

@@ -656,6 +656,13 @@ fn client_runs_report_back() {
     assert_eq!(done.answers.len(), 1);
     assert_eq!(done.answers[0].query, "status");
     assert!(app.overlay().is_none(), "a client gets no popup");
+    // MAX-285: the answer names the command as it ran, its arguments too
+    let job = run(&mut app, "get local-echo");
+    let done = finished(&mut app, job);
+    assert_eq!(
+        (done.answers[0].query, done.answers[0].command.as_str()),
+        ("get", "get local-echo")
+    );
 
     let job = run(&mut app, "send x; send y");
     let failure = finished(&mut app, job).failure.unwrap();

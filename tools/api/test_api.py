@@ -98,7 +98,10 @@ class ApiTest(unittest.TestCase):
         self.device.send(b"flash ER")
         self.device.send(b"ROR\r\n")
         thread.join(10)
-        self.assertEqual(reply["values"], [{"query": "wait-for", "value": "ERROR"}])
+        command = 'wait-for-ms 5000 "OK" "ERROR"'
+        self.assertEqual(
+            reply["values"], [{"query": "wait-for", "command": command, "value": "ERROR"}]
+        )
         with self.assertRaises(RpcError) as late:
             self.client.run("wait-for-ms 100 never")
         self.assertEqual(late.exception.code, 107)

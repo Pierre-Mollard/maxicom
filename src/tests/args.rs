@@ -69,16 +69,19 @@ fn reset_config_flag() {
 
 /// MAX-285: `cli` as the first argument gives the words after it to the client; anywhere
 /// else, it and the other reserved words are no link, and `./cli` still opens a device.
+/// MAX-292: `api` the same way, for the bridge.
 #[test]
 fn cli_and_reserved_words() {
     let args = |list: &[&str]| list.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
     assert_eq!(
-        cli_from(args(&["cli", "--json", "status"])),
+        after_from("cli", args(&["cli", "--json", "status"])),
         Some(args(&["--json", "status"]))
     );
-    assert_eq!(cli_from(args(&["cli"])), Some(Vec::new()));
-    assert_eq!(cli_from(args(&["-b", "9600", "cli"])), None);
-    assert_eq!(cli_from(args(&[])), None);
+    assert_eq!(after_from("cli", args(&["cli"])), Some(Vec::new()));
+    assert_eq!(after_from("cli", args(&["-b", "9600", "cli"])), None);
+    assert_eq!(after_from("cli", args(&[])), None);
+    assert_eq!(after_from("api", args(&["api"])), Some(Vec::new()));
+    assert_eq!(after_from("api", args(&["cli", "api"])), None);
     for word in RESERVED {
         let err = address_of(&["-b", "9600", word]).unwrap_err();
         assert!(err.contains("is reserved"), "{err}");

@@ -10,23 +10,26 @@ use crate::commands::{
     value::{Value, escaped},
 };
 
-/// The texts one `wait-for` waits for, until when, each found across reads
+/// The texts one `wait-for` waits for, until when, each found across reads; its `command` as
+/// it ran, for its answer (MAX-285)
 #[derive(Debug, Clone)]
 pub struct TextWatch {
     /// Its number, given when it starts
     pub id: u64,
     pub until: Instant,
+    command: String,
     texts: Vec<Vec<u8>>,
     matchers: Vec<StreamMatcher>,
 }
 
 impl TextWatch {
     /// `None` when a text is empty, which would match anything
-    pub fn new(texts: Vec<Vec<u8>>, until: Instant) -> Option<Self> {
+    pub fn new(command: String, texts: Vec<Vec<u8>>, until: Instant) -> Option<Self> {
         let matchers = texts.iter().map(|text| StreamMatcher::new(text));
         Some(Self {
             id: 0,
             until,
+            command,
             matchers: matchers.collect::<Option<_>>()?,
             texts,
         })
@@ -57,16 +60,17 @@ impl App {
         let mut came = Vec::new();
         self.text_watches.retain_mut(|watch| {
             let id = watch.id;
-            match watch.feed(chunk) {
+            match watch.feed(chunk).map(<[u8]>::to_vec) {
+                // the watch goes: its command with the text
                 Some(text) => {
-                    came.push((id, text.to_vec()));
+                    came.push((id, std::mem::take(&mut watch.command), text));
                     false
                 }
                 None => true,
             }
         });
-        for (id, text) in came {
-            self.end_text_watch(id, Ok(text));
+        for (id, command, text) in came {
+            self.end_text_watch(id, Ok((command, text)));
         }
     }
 
@@ -96,12 +100,12 @@ impl App {
 
     /// The job waiting for watch `id` goes on with the text that came, or fails; none waiting
     /// (the user's own input has no job), nothing
-    fn end_text_watch(&mut self, id: u64, text: Result<Vec<u8>, String>) {
+    fn end_text_watch(&mut self, id: u64, text: Result<(String, Vec<u8>), String>) {
         let Some(caller) = self.jobs.waiting(|wait| waits_for(wait, id)) else {
             return;
         };
         let report = match text {
-            Ok(text) => {
+            Ok((command, text)) => {
                 let came = format!("wait-for: '{}' came in", escaped(&text));
                 let mut report = Report::from(Note::info(came));
                 // the user has it in the note: an answer would open a popup
@@ -109,6 +113,7 @@ impl App {
                     let value = Value::Text(String::from_utf8_lossy(&text).into_owned());
                     report.answer = Some(Answer {
                         query: "wait-for",
+                        command,
                         value,
                     });
                 }

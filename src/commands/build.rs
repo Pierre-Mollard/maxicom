@@ -686,7 +686,7 @@ pub const WAIT_FOR_TIMEOUT: Duration = Duration::from_secs(10);
 /// `wait-for <text>...` (MAX-219): the rest of the chain waits for one of the texts to come
 /// in, `WAIT_FOR_TIMEOUT` at most
 pub fn wait_for(app: &App, args: &[ArgValue]) -> Result<Action, String> {
-    watch_texts(app, args, WAIT_FOR_TIMEOUT)
+    watch_texts(app, ran("wait-for", args), args, WAIT_FOR_TIMEOUT)
 }
 
 /// `wait-for-ms <ms> <text>...` (MAX-219): `wait-for`, waiting `ms` at most
@@ -694,17 +694,31 @@ pub fn wait_for_ms(app: &App, args: &[ArgValue]) -> Result<Action, String> {
     let [ArgValue::Int(ms), texts @ ..] = args else {
         unreachable!("wait-for-ms takes a time, then texts");
     };
-    watch_texts(app, texts, Duration::from_millis(*ms as u64))
+    let command = ran("wait-for-ms", args);
+    watch_texts(app, command, texts, Duration::from_millis(*ms as u64))
 }
 
-/// The texts waited for from now on, on an open link: what came in before doesn't count
-fn watch_texts(app: &App, args: &[ArgValue], timeout: Duration) -> Result<Action, String> {
+/// Command `name` with `args` as it ran, as a query's answer gives it (MAX-285)
+fn ran(name: &str, args: &[ArgValue]) -> String {
+    let spec = crate::commands::find_by_name(name).expect("a command of the registry");
+    let args = args.to_vec();
+    crate::commands::Invocation { spec, args }.text()
+}
+
+/// The texts waited for from now on, on an open link: what came in before doesn't count; its
+/// answer names `command`
+fn watch_texts(
+    app: &App,
+    command: String,
+    args: &[ArgValue],
+    timeout: Duration,
+) -> Result<Action, String> {
     let texts = args.iter().map(|arg| match arg {
         ArgValue::Bytes(text) => text.clone(),
         _ => unreachable!("wait-for takes texts"),
     });
     link_open(app)?;
-    let watch = TextWatch::new(texts.collect(), Instant::now() + timeout)
+    let watch = TextWatch::new(command, texts.collect(), Instant::now() + timeout)
         .ok_or_else(|| "an empty text would match anything".to_string())?;
     Ok(Action::App(AppAction::WaitFor(Box::new(watch))))
 }

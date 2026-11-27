@@ -5,7 +5,7 @@ use super::*;
 
 fn watch(texts: &[&str]) -> TextWatch {
     let texts = texts.iter().map(|text| text.as_bytes().to_vec()).collect();
-    TextWatch::new(texts, Instant::now()).unwrap()
+    TextWatch::new("wait-for".to_string(), texts, Instant::now()).unwrap()
 }
 
 /// MAX-219: a text cut between two reads still comes in; the bytes before the watch started
@@ -36,7 +36,7 @@ fn the_text_that_ends_first() {
     assert_eq!(watch(&["ROR", "ERROR"]).feed(b"ERROR"), Some(&b"ROR"[..]));
     assert_eq!(watch(&["OK", "ERROR"]).texts_shown(), "'OK' or 'ERROR'");
     let texts = vec![b"OK".to_vec(), Vec::new()];
-    assert!(TextWatch::new(texts, Instant::now()).is_none());
+    assert!(TextWatch::new("wait-for".to_string(), texts, Instant::now()).is_none());
 }
 
 /// MAX-219: `wait-for` holds the rest of its chain until one of its texts comes in, counted
@@ -156,6 +156,7 @@ fn a_clients_wait_for_answers_the_text() {
     );
     let answer = Answer {
         query: "wait-for",
+        command: "wait-for-ms 1000 \"OK\" \"ERROR\"".to_string(),
         value: Value::Text("OK".to_string()),
     };
     assert_eq!(outcome.answers, [answer]);

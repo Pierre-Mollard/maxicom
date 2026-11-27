@@ -51,10 +51,12 @@ pub enum Failure {
     Shown(String),
 }
 
-/// A query's answer: its name and its value (MAX-165)
+/// A query's answer: its name, the command as it ran (`get local-echo`, MAX-285) and its value
+/// (MAX-165)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Answer {
     pub query: &'static str,
+    pub command: String,
     pub value: Value,
 }
 

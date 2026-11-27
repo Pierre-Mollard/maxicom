@@ -80,6 +80,27 @@ class CliTest(unittest.TestCase):
         self.assertEqual(code, 3)
         self.assertIn(str(self.maxicom.process.pid), err)
 
+    def test_socket_given(self):
+        """`--socket` or `MAXICOM_SOCKET` reach a maxicom at that path, outside the socket
+        folder (a link stands in for a forwarded socket), with no discovery; nothing there
+        exits 3 naming the path. `list --json` gives each one's socket"""
+        code, out, _ = cli(self.maxicom.env, "--json", "list")
+        location = json.loads(out)[0]["location"]
+        with tempfile.TemporaryDirectory() as elsewhere:
+            forwarded = os.path.join(elsewhere, "bench.sock")
+            os.symlink(location, forwarded)
+            env = dict(self.maxicom.env, XDG_RUNTIME_DIR=elsewhere)
+            code, out, _ = cli(env, "--socket", forwarded, "status")
+            self.assertEqual(code, 0)
+            self.assertIn(f"link: {self.device.address}\n", out)
+            code, out, _ = cli(dict(env, MAXICOM_SOCKET=forwarded), "--json", "list")
+            hellos = json.loads(out)
+            self.assertEqual([hello["pid"] for hello in hellos], [self.maxicom.process.pid])
+            self.assertEqual(hellos[0]["location"], forwarded)
+            gone = os.path.join(elsewhere, "gone.sock")
+            code, _, err = cli(env, "--socket", gone, "status")
+            self.assertEqual((code, err), (3, f"maxicom cli: no maxicom answers at {gone}\n"))
+
     def test_instance_among_several(self):
         """Two maxicoms: none picked without --instance (both listed), one by its pid or by its
         address"""
@@ -222,7 +243,7 @@ class CliTest(unittest.TestCase):
     def test_ctrl_c_cancels_the_job(self):
         """Ctrl-C on a waiting client closes its connection: maxicom cancels its job"""
         waiting = subprocess.Popen(
-            [str(binary()), "cli", "sleep 10; status"],
+            [str(binary()), "cli", "sleep 10000; status"],
             env=self.maxicom.env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

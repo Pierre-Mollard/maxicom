@@ -7,9 +7,12 @@ requests on its socket and collects what it pushes (`event`, `rx`, `tx` notifica
     client.call("subscribe", {"events": ["link-lost"]})
     client.wait_for("event", lambda params: params["kind"] == "link-lost")
 
+    client = Client.connect(socket="/tmp/bench.sock")             # a forwarded socket
+    client = Client.command(["ssh", "bench", "maxicom", "api"])   # another computer's
+
 Newline-delimited JSON, one message a line. Python's standard library only; Linux, macOS and
 Windows (the pipe \\\\.\\pipe\\maxicom-<pid>). Used by `scripts/api_request.py` and the
-integration tests next to it (`test_api.py`).
+integration tests next to it (`test_api.py`, `test_bridge.py`).
 """
 
 import base64
@@ -17,11 +20,14 @@ import itertools
 import json
 import os
 import socket
+import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
 
+# the socket to reach in place of the ones running here, as `maxicom cli` reads it (MAX-292)
+SOCKET_VAR = "MAXICOM_SOCKET"
 PREFIX = "maxicom-"
 SUFFIX = ".sock"
 PIPES = "\\\\.\\pipe\\"
@@ -130,6 +136,62 @@ class Connection:
         else:
             self.file.close()
 
+    def why(self):
+        """Why the connection ended, when something said so: nothing for a socket"""
+        return None
+
+
+class CommandConnection:
+    """A command's stdin and stdout, as `ssh bench maxicom api` gives them (MAX-292): lines in,
+    lines out, like a socket. What it writes on stderr is kept, to say why it ended"""
+
+    def __init__(self, argv, env=None):
+        self.process = subprocess.Popen(
+            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env
+        )
+        self.errors = []
+        self.error_reader = threading.Thread(target=self._read_errors, daemon=True)
+        self.error_reader.start()
+
+    def _read_errors(self):
+        for line in self.process.stderr:
+            self.errors.append(line.decode(errors="replace").rstrip("\n"))
+
+    def send(self, line):
+        """A line written; a command already ended (ssh refused, no maxicom there) takes
+        nothing, and the reader says why"""
+        try:
+            self.process.stdin.write(line.encode() + b"\n")
+            self.process.stdin.flush()
+        except BrokenPipeError:
+            pass
+
+    def receive(self):
+        """A line, or None when the command closed its stdout (maxicom quit, ssh ended)"""
+        line = self.process.stdout.readline()
+        return line.decode(errors="replace").rstrip("\n") if line else None
+
+    def close(self):
+        """stdin closed, which ends the session; the command waited for a moment, then
+        stopped"""
+        try:
+            self.process.stdin.close()
+        except OSError:
+            pass
+        try:
+            self.process.wait(2)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait()
+        self.process.stdout.close()
+        self.process.stderr.close()
+
+    def why(self):
+        """What the command said on stderr, once it ended: `no maxicom is running`... Its
+        stderr can end a moment after its stdout: waited for, a second at most"""
+        self.error_reader.join(1)
+        return "\n".join(self.errors) or None
+
 
 class RpcError(Exception):
     """A JSON-RPC error reply: its `code`, `message` and `data`"""
@@ -142,10 +204,11 @@ class RpcError(Exception):
 
 class Client:
     """One connection, its replies matched to their requests by id, its notifications kept in
-    order until taken. A reader thread reads every line as it comes"""
+    order until taken. A reader thread reads every line as it comes. The connection is a
+    socket (`connect`) or a command's pipes (`command`)"""
 
-    def __init__(self, location):
-        self.connection = Connection(location)
+    def __init__(self, connection):
+        self.connection = connection
         self.ids = itertools.count(1)
         self.lock = threading.Condition()
         self.replies = {}
@@ -154,18 +217,31 @@ class Client:
         threading.Thread(target=self._read, daemon=True).start()
 
     @classmethod
-    def connect(cls, pid=None, env=None, timeout=10.0):
-        """The maxicom of `pid` started with `env` (else the only one), waited for until
+    def connect(cls, pid=None, env=None, timeout=10.0, socket=None):
+        """The maxicom at the path `socket` (MAX-292), else the one of `pid` started with
+        `env`, else at `$MAXICOM_SOCKET`, else the only one running; waited for until
         `timeout`: a maxicom just started listens a moment later"""
         deadline = time.monotonic() + timeout
         while True:
             try:
-                location = location_of(pid, env) if pid is not None else pick()
-                return cls(location)
+                if socket is not None:
+                    location = socket
+                elif pid is not None:
+                    location = location_of(pid, env)
+                else:
+                    location = os.environ.get(SOCKET_VAR) or pick()
+                return cls(Connection(location))
             except (NotFound, OSError):
                 if time.monotonic() > deadline:
                     raise
                 time.sleep(0.05)
+
+    @classmethod
+    def command(cls, argv, env=None):
+        """A session through a command's stdin and stdout (MAX-292), the bridge of another
+        computer's maxicom: `["ssh", "bench", "maxicom", "api"]`. The command is started
+        here; closing the client closes its stdin, which ends the session"""
+        return cls(CommandConnection(argv, env))
 
     def _read(self):
         while True:
@@ -195,7 +271,11 @@ class Client:
                 if value is not None:
                     return value
                 if self.closed:
-                    raise ConnectionError(f"maxicom closed the connection, waiting for {what}")
+                    why = self.connection.why()
+                    said = f": {why}" if why else ""
+                    raise ConnectionError(
+                        f"maxicom closed the connection, waiting for {what}{said}"
+                    )
                 left = deadline - time.monotonic()
                 if left <= 0:
                     raise TimeoutError(f"no {what} in {timeout} s")

@@ -27,6 +27,7 @@ fn query_popup_keys() {
     ]);
     let mut view = QueryView::new(Answer {
         query: "status",
+        command: "status".to_string(),
         value,
     });
     assert_eq!(view.lines, ["a: 1", "b: 2"]);

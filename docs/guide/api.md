@@ -44,7 +44,7 @@ file left by a maxicom that was killed refuses the connection, and the next
 maxicom to start removes it.
 
 A program on another computer reaches the API through SSH; maxicom never
-opens a network port.
+opens a network port. See [From another computer](#from-another-computer).
 
 ## From the shell: maxicom cli
 
@@ -77,7 +77,7 @@ maxicom cli 'send "reboot\r"; wait-for-ms 5000 login:'
 The call waits for the line to end: a `sleep`, a `wait-for` or an `attach`
 hold it. Then it prints what the commands said and the getters' values, as
 the query popup shows them. With several getters, each value comes under
-its getter's name.
+the getter as it ran, like `get local-echo`.
 
 Ctrl-C while it waits closes the connection, and maxicom cancels the job.
 To start a long line and go on, put the call in the background with the
@@ -146,7 +146,12 @@ running:
 
 A maxicom that takes the connection but doesn't answer within a second is
 listed as `not answering`. With `--json`, `list` prints the `hello` of each
-one in a JSON array.
+one in a JSON array, its socket's path in `location`.
+
+`--socket <path>` skips the search and reaches the maxicom listening at that
+path, the [bench as a local socket](#the-bench-as-a-local-socket) for example. The
+`MAXICOM_SOCKET` variable does the same for every call. With neither,
+`maxicom cli` looks for the maxicoms running on this computer, as above.
 
 ### Following the events
 
@@ -194,6 +199,167 @@ With `--json`, each page is printed as [`raw-since`](#query) gives it, its
 | 6 | maxicom quit before the end of the call |
 
 Ctrl-C gives the shell's usual 130.
+
+## From another computer
+
+maxicom can run on a bench, the computer the board is plugged into, and be
+driven from your own computer. SSH carries everything: it logs you in and
+encrypts the traffic, and maxicom never opens a network port. maxicom
+doesn't start SSH either: you run `ssh`, and maxicom on the bench serves
+what comes through it.
+
+On the bench, the API must be on in its own `config.toml`, and its
+[permissions](#permissions) are the ones that count: a command sent from
+your computer is a program's command to the bench's maxicom, with the
+bench's `read`, `control` and `device` levels.
+
+There are two ways in: `maxicom cli` for you, one action at a time, and
+`maxicom api` for programs that keep a session open.
+
+### The CLI over SSH
+
+Every `maxicom cli` call stands on its own, so ssh can run it on the bench
+and bring back what it prints and its exit code:
+
+```sh
+ssh bench maxicom cli status
+ssh bench maxicom cli rx --follow > boot.log
+```
+
+Mind the quotes. ssh joins its arguments with spaces and hands them to the
+bench's shell, which reads them once more. A line in single quotes on your
+side reaches the bench without them, and a `;` in it ends the bench's shell
+command:
+
+```sh
+ssh bench maxicom cli 'get baud; status'      # the bench runs `status` itself
+ssh bench "maxicom cli 'get baud; status'"    # one more pair of quotes: works
+```
+
+A small shell function on your computer does that quoting for you, so the
+rules of [Quotes and several commands](#quotes-and-several-commands) stay
+the same as on the bench (or skip the bench's shell altogether with
+[a local socket](#the-bench-as-a-local-socket)):
+
+```sh
+# bash, in ~/.bashrc
+bench() { ssh bench maxicom cli "$(printf '%q ' "$@")"; }
+# zsh, in ~/.zshrc
+bench() { ssh bench maxicom cli "${(q)@}"; }
+```
+
+```sh
+bench status
+bench 'send "reboot\r"; wait-for-ms 5000 login:'
+bench rx --follow > boot.log
+```
+
+Each call opens its own SSH connection, a fraction of a second. SSH can
+keep one open and share it between the calls, which then come back at
+once. In `~/.ssh/config` on your computer:
+
+```text
+Host bench
+    ControlMaster auto
+    ControlPath ~/.ssh/cm-%C
+    ControlPersist 10m
+```
+
+The first call opens the connection and leaves a socket at `ControlPath`;
+the next ones go through it without logging in again, and it stays open 10
+minutes after the last one. ssh replaces `%C` with a hash of the user, the
+host and the port, so each destination gets a socket of its own, with a
+short name: a socket path can't be longer than about 100 characters.
+`ssh -O exit bench` closes a shared connection that hangs.
+
+### Programs over SSH: maxicom api
+
+`maxicom api` is for a program: a Python script, an AI tool's MCP server.
+It finds the maxicom on the bench the way `maxicom cli` does (`--instance`
+and `--socket` included), then passes bytes both ways: what the program
+writes on its stdin goes to maxicom, maxicom's replies and notifications
+come out on its stdout. The program starts it through ssh:
+
+```sh
+ssh bench maxicom api
+```
+
+What goes through is the API itself: [JSON-RPC messages](#messages), one
+per line, which the program writes and reads. `maxicom api` doesn't read
+them, so they must be valid requests, as on the socket.
+
+It is one session, like one connection to the socket. Closing its stdin
+ends it, and maxicom cancels the jobs the session started, as it does for a
+program that disconnects. A request piped in with `echo` is cancelled at
+once for that reason: to run one command, use `maxicom cli`.
+
+| Exit code | Means |
+| --- | --- |
+| 0 | stdin closed, or the program reading stdout went away |
+| 3 | No maxicom to reach, as for `maxicom cli` |
+| 6 | maxicom quit |
+
+The [Python client](#a-python-client) starts it for you with
+`Client.command(["ssh", "bench", "maxicom", "api"])`.
+
+### The CLI and programs together
+
+The CLI calls and the programs' sessions all reach the same maxicom, each
+as a program of its own. A script can keep a session open and follow the
+events, while you send commands with `bench ...` from another terminal.
+The session sees your calls' actions in its events, each with its cause,
+and every connection's jobs run side by side with the bench user's own, as
+[run](#run) describes.
+
+What belongs to a connection stays with it. A `cancel` stops only the jobs
+of the call or the session it comes from. With `ask`, the bench's maxicom
+asks about each CLI call on its own, as each is a new connection, while a
+session's "always" lasts until it closes. To script the bench with nobody
+at its screen, set the levels to `on` there: a question nobody answers is
+refused after `ask_timeout`.
+
+### The bench as a local socket
+
+With a socket on your computer that leads to the bench, `maxicom cli` and
+programs reach the bench's maxicom as if it ran here: `--socket` or
+`MAXICOM_SOCKET` point them to it. [socat](http://www.dest-unreach.org/socat/)
+makes one, starting `ssh bench maxicom api` for each connection:
+
+```sh
+socat UNIX-LISTEN:/tmp/bench.sock,fork EXEC:'ssh bench maxicom api' &
+export MAXICOM_SOCKET=/tmp/bench.sock
+
+maxicom cli status
+maxicom cli 'get baud; status'
+maxicom cli rx --follow > boot.log
+```
+
+Each call gets its own SSH session and its own `maxicom api` on the bench,
+so it behaves as it does on the bench itself:
+
+- The line travels inside the API's messages, so the bench's shell never
+  reads it: the [quotes](#quotes-and-several-commands) work as for a local
+  call, with no function to quote them again.
+- `maxicom api` finds the bench's maxicom anew on each call: when maxicom
+  starts again there, the socket still leads to it.
+- Ctrl-C, `cancel` and the ask popup apply to that call alone.
+- With the [shared connection](#the-cli-over-ssh) in `~/.ssh/config`, the
+  calls don't log in again and come back at once.
+
+socat is in most Linux distributions and in Homebrew; the socket needs a
+Linux or macOS computer on your side, while the bench can be any. Stopping
+socat (`kill %1`, or closing its terminal) takes the socket away.
+
+ssh can also forward the bench's socket file itself, with no socat, on a
+Linux or macOS bench:
+
+```sh
+sock=$(ssh bench maxicom cli --json list | jq -r '.[0].location')
+ssh -fN -o StreamLocalBindUnlink=yes -L /tmp/bench.sock:"$sock" bench
+```
+
+That path holds the bench maxicom's process id, so this forward has to be
+made again each time maxicom starts again there.
 
 ## Messages
 
@@ -288,7 +454,7 @@ line the command line takes, several commands with `;` included:
 
 ```json
 {"jsonrpc":"2.0","id":3,"method":"run","params":{"command":"set local-echo on; get local-echo"}}
-{"jsonrpc":"2.0","id":3,"result":{"job":0,"notes":[],"values":[{"query":"get","value":true}]}}
+{"jsonrpc":"2.0","id":3,"result":{"job":0,"notes":[],"values":[{"query":"get","command":"get local-echo","value":true}]}}
 ```
 
 The reply comes when the job ends, not when it starts. A `sleep`, an
@@ -301,7 +467,7 @@ after the other, the oldest first, next to yours and to the triggers'.
 | --- | --- |
 | `job` | The job's number, for `cancel` |
 | `notes` | What the commands said, the way they would in a toast |
-| `values` | The value of each getter in the line, with its name in `query` |
+| `values` | The value of each getter in the line: its name in `query`, the getter as it ran in `command` (`get local-echo`), and `value` |
 
 When the job stops before its end, the reply is an error instead. Its message
 names the command and why, and says how many commands didn't run, like
@@ -520,6 +686,7 @@ and matches replies to requests:
 from maxicom_client import Client
 
 client = Client.connect()                    # the only maxicom running, or pid=...
+# or, another computer's: Client.command(["ssh", "bench", "maxicom", "api"])
 print(client.call("hello", {"client": "bench"}))
 start = client.call("subscribe", {"events": ["rx"]})["rx"]
 client.send(b"version\r\n")                  # needs device = "on" or "ask"
