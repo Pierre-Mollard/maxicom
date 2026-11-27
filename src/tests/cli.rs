@@ -261,3 +261,18 @@ fn list_table() {
         ]
     );
 }
+
+/// MAX-285: `rx --hex`: 16 bytes a line, each line its first byte's offset (as `--since` takes
+/// it), the hex padded to a full line's, then the printable ASCII, `.` for the others.
+#[test]
+fn hex_dump() {
+    let bytes = b"Hello, world!\r\nboot: ok\x1b[0m";
+    assert_eq!(
+        hex_lines(100, bytes),
+        [
+            "       100  48 65 6c 6c 6f 2c 20 77 6f 72 6c 64 21 0d 0a 62  Hello, world!..b",
+            "       116  6f 6f 74 3a 20 6f 6b 1b 5b 30 6d                 oot: ok.[0m",
+        ]
+    );
+    assert!(hex_lines(0, b"").is_empty());
+}

@@ -212,7 +212,8 @@ impl App {
 
     /// The asks kept in step with their jobs (MAX-287): one with no answer by its time is
     /// refused, one whose job is gone (cancelled, failed) dropped; the first one shown when no
-    /// other popup is open, so it never takes the keys of one the user is in
+    /// other popup is open, so it never takes the keys of one the user is in, but in place of
+    /// the link's popup, which is back once no ask is left (MAX-285)
     fn sync_asks(&mut self, now: Instant) {
         while let Some(at) = self.asks.iter().position(|ask| now >= ask.until) {
             if let Some(ask) = self.asks.remove(at) {
@@ -227,11 +228,13 @@ impl App {
         {
             self.overlay = None;
         }
-        if self.overlay.is_none()
+        // over the link's popup too (MAX-285): it comes back once the asks are answered
+        if (self.overlay.as_ref()).is_none_or(Overlay::is_link_wait)
             && let Some(job) = first
         {
             self.open_overlay(Overlay::ClientAsk(job));
         }
+        self.restore_link_popup();
     }
 
     /// Every client's jobs cancelled and what the user let them do forgotten, their

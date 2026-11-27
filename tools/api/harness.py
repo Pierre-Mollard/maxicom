@@ -164,6 +164,9 @@ class Maxicom:
         os.write(self.master, keys)
 
     def stop(self):
+        """Ends it, once: a second call does nothing"""
+        if self.master is None:
+            return
         if self.process.poll() is None:
             self.process.send_signal(signal.SIGTERM)
             try:
@@ -172,6 +175,7 @@ class Maxicom:
                 self.process.kill()
                 self.process.wait()
         os.close(self.master)
+        self.master = None
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def __enter__(self):

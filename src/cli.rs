@@ -8,9 +8,10 @@ use std::{
     time::Duration,
 };
 
+use base64::prelude::*;
 use interprocess::local_socket::{Stream, prelude::*};
 use jiff::Timestamp;
-use serde_json::{Value as Json, json};
+use serde_json::{Map, Value as Json, json};
 
 use crate::{
     api::{
@@ -98,18 +99,28 @@ pub fn main(args: Vec<String>) -> ExitCode {
             Exit::Done
         }
         CliAction::List => list(args.instance.as_deref(), args.json),
-        CliAction::Line(line) => match pick(args.instance.as_deref(), found().0) {
-            Ok(mut maxicom) => run(&mut maxicom.connection, &line, args.json),
+        action => match pick(args.instance.as_deref(), found().0) {
+            Ok(mut maxicom) => {
+                let connection = &mut maxicom.connection;
+                match action {
+                    CliAction::Line(line) => run(connection, &line, args.json),
+                    CliAction::Events(kinds) => events(connection, kinds),
+                    CliAction::Rx { since, follow, hex } => {
+                        let output = match (args.json, hex) {
+                            (true, _) => RxOutput::Json,
+                            (false, true) => RxOutput::Hex,
+                            (false, false) => RxOutput::Raw,
+                        };
+                        rx(connection, since, follow, output)
+                    }
+                    CliAction::Help | CliAction::List => unreachable!("answered above"),
+                }
+            }
             Err(message) => {
                 eprintln!("maxicom cli: {message}");
                 Exit::NoInstance
             }
         },
-        // TODO: (MAX-285) events and rx, steps 4-5
-        _ => {
-            eprintln!("maxicom cli: not built yet");
-            Exit::Failed
-        }
     };
     exit.into()
 }
@@ -141,13 +152,7 @@ impl Connection {
         let request = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
         (self.reader.get_mut()).write_all(format!("{request}\n").as_bytes())?;
         loop {
-            let mut line = String::new();
-            if self.reader.read_line(&mut line)? == 0 {
-                return Err(io::ErrorKind::UnexpectedEof.into());
-            }
-            let Ok(Json::Object(mut message)) = serde_json::from_str(&line) else {
-                continue;
-            };
+            let mut message = self.next()?;
             if message.get("id") != Some(&id) {
                 continue;
             }
@@ -158,6 +163,20 @@ impl Connection {
                 }),
                 None => Ok(message.remove("result").unwrap_or_default()),
             });
+        }
+    }
+
+    /// The next message: a reply or a notification, a line that isn't one skipped. The
+    /// connection ending first is `UnexpectedEof`
+    fn next(&mut self) -> io::Result<Map<String, Json>> {
+        loop {
+            let mut line = String::new();
+            if self.reader.read_line(&mut line)? == 0 {
+                return Err(io::ErrorKind::UnexpectedEof.into());
+            }
+            if let Ok(Json::Object(message)) = serde_json::from_str(&line) {
+                return Ok(message);
+            }
         }
     }
 }
@@ -307,10 +326,7 @@ fn table(rows: &[[String; 3]]) -> Vec<String> {
 fn run(connection: &mut Connection, line: &str, json: bool) -> Exit {
     let reply = match connection.call("run", json!({ "command": line })) {
         Ok(reply) => reply,
-        Err(_) => {
-            eprintln!("maxicom cli: maxicom quit before its reply");
-            return Exit::Gone;
-        }
+        Err(_) => return gone(),
     };
     let exit = reply.as_ref().map_or_else(exit_of, |_| Exit::Done);
     match (reply, json) {
@@ -324,7 +340,151 @@ fn run(connection: &mut Connection, line: &str, json: bool) -> Exit {
     exit
 }
 
-/// The exit code of a refused or stopped `run`
+/// `events`: subscribed to `kinds`, every kind when none, then each event on a line of JSON
+/// (the `event` notification's params, the streams' notifications skipped), until maxicom
+/// quits. A kind unknown is a usage error; the reader gone (`| head`) ends it quietly
+fn events(connection: &mut Connection, kinds: Vec<String>) -> Exit {
+    let params = match kinds.is_empty() {
+        true => json!({}),
+        false => json!({ "events": kinds }),
+    };
+    match connection.call("subscribe", params) {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) if error.code == rpc::INVALID_PARAMS => {
+            eprintln!("maxicom cli: {}", error.message);
+            return Exit::Usage;
+        }
+        Ok(Err(error)) => return refused(&error),
+        Err(_) => return gone(),
+    }
+    let mut stdout = io::stdout().lock();
+    loop {
+        let mut message = match connection.next() {
+            Ok(message) => message,
+            Err(_) => return gone(),
+        };
+        if message.get("method").and_then(Json::as_str) != Some("event") {
+            continue;
+        }
+        let event = message.remove("params").unwrap_or_default();
+        if writeln!(stdout, "{event}")
+            .and_then(|()| stdout.flush())
+            .is_err()
+        {
+            return Exit::Done;
+        }
+    }
+}
+
+/// How `rx` writes the bytes
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RxOutput {
+    /// as they came
+    Raw,
+    /// a hex dump, each line its offset first
+    Hex,
+    /// each `raw-since` value as a line of JSON, as the API gives it
+    Json,
+}
+
+/// `rx`: the bytes received from offset `since` (the oldest kept when none) to the newest, by
+/// pages of `raw-since`; with `follow`, then the new ones on each `rx` notification until
+/// maxicom quits, subscribed first so none is missed. Bytes already gone past `since` are
+/// said on stderr, so is the next offset without `follow` (for the next `--since`)
+fn rx(connection: &mut Connection, since: Option<u64>, follow: bool, output: RxOutput) -> Exit {
+    if follow {
+        match connection.call("subscribe", json!({ "events": ["rx"] })) {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => return refused(&error),
+            Err(_) => return gone(),
+        }
+    }
+    let mut next = since.unwrap_or_default();
+    let mut stdout = io::stdout().lock();
+    // the first page: the bytes gone are said for an offset asked, not for the oldest's, and
+    // it's written in JSON even empty, so a poll gets the newest offset
+    let mut first = true;
+    loop {
+        // up to the newest, by pages
+        loop {
+            let command = format!("raw-since {next} {}", crate::commands::query::MAX_RAW);
+            let page = match connection.call("query", json!({ "command": command })) {
+                Ok(Ok(page)) => page,
+                Ok(Err(error)) => return refused(&error),
+                Err(_) => return gone(),
+            };
+            let start = page["start"].as_u64().unwrap_or(next);
+            if first && since.is_some() && page["cut"].as_bool() == Some(true) {
+                eprintln!("maxicom cli: the bytes from {next} to {start} are gone");
+            }
+            let encoded = page["bytes"].as_str().unwrap_or_default();
+            let bytes = BASE64_STANDARD.decode(encoded).unwrap_or_default();
+            let written = match output {
+                RxOutput::Raw => stdout.write_all(&bytes),
+                RxOutput::Hex => (hex_lines(start, &bytes).iter())
+                    .try_for_each(|line| writeln!(stdout, "{line}")),
+                RxOutput::Json if bytes.is_empty() && !first => Ok(()),
+                RxOutput::Json => writeln!(stdout, "{page}"),
+            };
+            if written.and_then(|()| stdout.flush()).is_err() {
+                return Exit::Done;
+            }
+            first = false;
+            next = start + bytes.len() as u64;
+            if bytes.is_empty() || next >= page["newest"].as_u64().unwrap_or_default() {
+                break;
+            }
+        }
+        if !follow {
+            if output != RxOutput::Json {
+                eprintln!("maxicom cli: next offset {next}");
+            }
+            return Exit::Done;
+        }
+        // the next pages when maxicom says more came
+        loop {
+            match connection.next() {
+                Ok(message) if message.get("method").and_then(Json::as_str) == Some("rx") => {
+                    break;
+                }
+                Ok(_) => {}
+                Err(_) => return gone(),
+            }
+        }
+    }
+}
+
+/// Bytes as a hex dump: 16 a line, each line the offset of its first byte, the bytes in hex,
+/// then their printable ASCII (`.` for the others)
+fn hex_lines(start: u64, bytes: &[u8]) -> Vec<String> {
+    (bytes.chunks(16).enumerate())
+        .map(|(row, chunk)| {
+            let hex: Vec<String> = chunk.iter().map(|byte| format!("{byte:02x}")).collect();
+            let text: String = (chunk.iter())
+                .map(|&byte| match byte {
+                    0x20..=0x7e => byte as char,
+                    _ => '.',
+                })
+                .collect();
+            let offset = start + row as u64 * 16;
+            format!("{offset:>10}  {:<47}  {text}", hex.join(" "))
+        })
+        .collect()
+}
+
+/// A request refused or failed: its message on stderr, its exit code
+fn refused(error: &RpcError) -> Exit {
+    eprintln!("maxicom cli: {}", error.message);
+    exit_of(error)
+}
+
+/// maxicom quit, or the connection broke, before the end of the call
+fn gone() -> Exit {
+    eprintln!("maxicom cli: maxicom quit");
+    Exit::Gone
+}
+
+/// The exit code of a refused or stopped request
 fn exit_of(error: &RpcError) -> Exit {
     match error.code {
         rpc::REFUSED | rpc::REFUSED_BY_USER => Exit::Refused,
@@ -418,7 +578,7 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<CliArgs, ParseError> 
             Some(arg) => return Err(ParseError::UnknownArgument(arg.clone())),
             None => CliAction::Events(words[1..].to_vec()),
         },
-        Some("rx") => rx(words[1..].iter().cloned())?,
+        Some("rx") => rx_args(words[1..].iter().cloned())?,
         Some(_) => CliAction::Line(line(&words)),
     };
     Ok(CliArgs {
@@ -429,7 +589,7 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<CliArgs, ParseError> 
 }
 
 /// `rx`'s options: `--since <offset>`, `--follow`, `--hex`
-fn rx(args: impl IntoIterator<Item = String>) -> Result<CliAction, ParseError> {
+fn rx_args(args: impl IntoIterator<Item = String>) -> Result<CliAction, ParseError> {
     let mut args = args.into_iter();
     let (mut since, mut follow, mut hex) = (None, false, false);
     while let Some(arg) = args.next() {
@@ -499,9 +659,10 @@ Usage:
   maxicom cli [OPTIONS] rx [--since <OFFSET>] [--follow] [--hex]
 
   COMMAND LINE             Run in maxicom as typed on its command line, waiting
-                           for it to end: maxicom cli 'send \"reboot\\r\"; wait-for
-                           login: 5000'. One argument is the line as is; several
-                           are its words, each one kept whole
+                           for it to end: maxicom cli 'send \"reboot\\r\";
+                           wait-for-ms 5000 login:'. One argument is the line as
+                           is; several are its words, each one kept whole, a
+                           lone ';' between two commands
   list                     The maxicoms running
   events [KIND...]         The events of these kinds (all without any), one JSON
                            object per line, until maxicom quits

@@ -249,6 +249,15 @@ impl Overlay {
         matches!(self, Overlay::Marks(_))
     }
 
+    /// The link's own popups, up while it waits (no device picked yet, detached, lost): a
+    /// client's ask shows in their place, and they come back after it (MAX-285)
+    pub fn is_link_wait(&self) -> bool {
+        matches!(
+            self,
+            Overlay::NoDevice | Overlay::DeviceDetached | Overlay::DeviceDisconnected
+        )
+    }
+
     pub fn closes_on_click_outside(&self) -> bool {
         !matches!(
             self,

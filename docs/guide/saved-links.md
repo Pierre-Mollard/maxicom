@@ -31,6 +31,10 @@ name = "router console"
 address = "tcp://192.168.1.50:4000"  # no line: the bridge sets it
 ```
 
+A link can't be named `cli`, `api` or `mcp`: these words are kept for
+maxicom's own commands, like [`maxicom cli`](api.md#from-the-shell-maxicom-cli).
+A device whose file has one of these names opens as `./cli`.
+
 Line settings you leave out take the values of `[link]` in `config.toml`.
 `profiles` lists the [profiles](profiles.md) the link brings while it's
 open, in order.

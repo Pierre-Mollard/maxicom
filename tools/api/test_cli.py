@@ -9,6 +9,7 @@ import os
 import signal
 import subprocess
 import tempfile
+import threading
 import unittest
 
 from harness import Device, Maxicom, binary, build, until
@@ -23,6 +24,12 @@ def cli(env, *args):
     done = subprocess.run(
         [str(binary()), "cli", *args], env=env, capture_output=True, text=True, timeout=10
     )
+    return done.returncode, done.stdout, done.stderr
+
+
+def cli_bytes(env, *args):
+    """`cli` with stdout and stderr as bytes"""
+    done = subprocess.run([str(binary()), "cli", *args], env=env, capture_output=True, timeout=10)
     return done.returncode, done.stdout, done.stderr
 
 
@@ -109,6 +116,108 @@ class CliTest(unittest.TestCase):
             env = dict(self.maxicom.env, XDG_RUNTIME_DIR=empty)
             self.assertEqual(cli(env, "list"), (0, "", ""))
             self.assertEqual(cli(env, "--json", "list"), (0, "[]\n", ""))
+
+    def follow(self, *args):
+        """`maxicom cli ARGS` left running, its stdout read line by line; killed at the end
+        of the test, its pipes closed"""
+        process = subprocess.Popen(
+            [str(binary()), "cli", *args],
+            env=self.maxicom.env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.addCleanup(lambda: (process.kill(), process.communicate()))
+        return process
+
+    def toggle_until(self, done, what):
+        """Local echo toggled, a `setting-changed` event each time, until `done()`"""
+
+        def check():
+            if done():
+                return True
+            self.client.run("toggle-local-echo")
+            return False
+
+        until(check, what)
+
+    def first_line(self, process):
+        """The first line `process` prints, events made until it does: its subscription
+        starts some time after the process"""
+        lines = []
+        reader = threading.Thread(target=lambda: lines.append(process.stdout.readline()))
+        reader.start()
+        self.toggle_until(lambda: lines, "a first event")
+        reader.join(5)
+        return lines[0]
+
+    def test_events_until_maxicom_quits(self):
+        """`events KIND` prints each event of that kind as a line of JSON, in order, until
+        maxicom quits (exit 6)"""
+        following = self.follow("events", "setting-changed")
+        first = json.loads(self.first_line(following))
+        self.assertEqual((first["kind"], first["setting"]), ("setting-changed", "local-echo"))
+        self.client.run("toggle-local-echo")
+        second = json.loads(following.stdout.readline())
+        self.assertEqual(second["seq"], first["seq"] + 1)
+        self.assertNotEqual(second["value"], first["value"])
+        self.client.close()
+        self.maxicom.stop()
+        self.assertEqual(following.wait(5), 6)
+        self.assertEqual(following.stderr.read(), "maxicom cli: maxicom quit\n")
+
+    def test_events_reader_gone(self):
+        """An unknown kind is a usage error (2); a reader gone ends `events` quietly (0)"""
+        code, _, err = cli(self.maxicom.env, "events", "nope")
+        self.assertEqual(code, 2)
+        self.assertIn("nope", err)
+        following = self.follow("events")
+        self.first_line(following)
+        following.stdout.close()
+        self.toggle_until(lambda: following.poll() is not None, "events ended")
+        self.assertEqual(following.returncode, 0)
+        self.assertEqual(following.stderr.read(), "")
+
+    def received(self, count):
+        """Waits for maxicom to have received `count` bytes"""
+        until(lambda: self.client.query("status")["rx"] >= count, f"{count} bytes received")
+
+    def test_rx_polls_by_offset(self):
+        """`rx` writes the bytes received as they came, the next offset on stderr; `--since`
+        that offset gets only the new ones; `--json` the `raw-since` value; `--hex` a dump"""
+        self.device.send(b"boot\r\n\x00\xff")
+        self.received(8)
+        code, out, err = cli_bytes(self.maxicom.env, "rx")
+        self.assertEqual((code, out), (0, b"boot\r\n\x00\xff"))
+        self.assertEqual(err, b"maxicom cli: next offset 8\n")
+        self.device.send(b"ok\n")
+        self.received(11)
+        self.assertEqual(cli_bytes(self.maxicom.env, "rx", "--since", "8")[1], b"ok\n")
+        self.assertEqual(cli_bytes(self.maxicom.env, "rx", "--since", "11")[1], b"")
+        code, out, _ = cli(self.maxicom.env, "--json", "rx", "--since", "11")
+        page = json.loads(out)
+        self.assertEqual((code, page["start"], page["newest"], page["bytes"]), (0, 11, 11, ""))
+        code, out, _ = cli(self.maxicom.env, "rx", "--hex", "--since", "8")
+        self.assertEqual(out.split(), ["8", "6f", "6b", "0a", "ok."])
+
+    def test_rx_follows_until_maxicom_quits(self):
+        """`rx --follow` writes the bytes kept, then each one as it comes, until maxicom quits
+        (exit 6)"""
+        self.device.send(b"first ")
+        self.received(6)
+        following = subprocess.Popen(
+            [str(binary()), "cli", "rx", "--follow"],
+            env=self.maxicom.env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        with following:
+            self.assertEqual(following.stdout.read(6), b"first ")
+            self.device.send(b"second")
+            self.assertEqual(following.stdout.read(6), b"second")
+            self.client.close()
+            self.maxicom.stop()
+            self.assertEqual(following.wait(5), 6)
 
     def test_ctrl_c_cancels_the_job(self):
         """Ctrl-C on a waiting client closes its connection: maxicom cancels its job"""

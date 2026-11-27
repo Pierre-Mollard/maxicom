@@ -52,6 +52,10 @@ run without asking until it disconnects, Esc or `n` refuses it. The popup
 waits for any popup you are in to close first, and refuses on its own once
 `ask_timeout` has passed. A click outside doesn't close it.
 
+The link's own popups, detached, lost or no device yet, don't hold it back:
+the question shows in their place, and they come back once it's answered,
+unless the command opened the link.
+
 ## Error popups
 
 An error you need to read, like a config file that doesn't load, opens in a

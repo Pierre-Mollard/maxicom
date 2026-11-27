@@ -1330,7 +1330,7 @@ impl App {
 
     /// While the link waits (no device picked yet, detached, lost), its popup is up again
     /// once nothing else is open: no app without its device behind a closed popup (MAX-181)
-    fn restore_link_popup(&mut self) {
+    pub fn restore_link_popup(&mut self) {
         if self.overlay.is_some() || self.link.is_open() {
             return;
         }

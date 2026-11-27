@@ -582,6 +582,59 @@ fn detach_then_attach() {
     assert!(app.overlay().is_none());
 }
 
+/// MAX-285: a client's command asked about shows its popup over the link's own (detached
+/// here), which comes back after the answer while the link still waits; an attach let
+/// through opens the link and leaves no popup.
+/// How: a TCP link detached, `device = "ask"`, a client's `attach` run as the loop runs it,
+/// refused (`n`), again and its client gone, then again and let through (`y`).
+#[test]
+fn ask_shows_over_the_link_popup() {
+    let (listener, address) = listener();
+    let (mut app, _peer) = connected(&listener, &address);
+    app.dispatch(Action::App(AppAction::ToggleAttach));
+    assert!(matches!(app.overlay(), Some(Overlay::DeviceDetached)));
+    app.settings_mut().api.device = crate::configs::Level::Ask;
+    let drain = |app: &mut App| {
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            app.dispatch_from(&caller, action);
+        }
+    };
+    let attach = |app: &mut App| {
+        let client = Origin::Client {
+            conn: 1,
+            name: Some("cli".to_string()),
+        };
+        let chain = crate::commands::parse("attach").unwrap();
+        let _ = app.run_for_client(client, chain);
+        drain(app);
+    };
+    let key = |app: &mut App, c| {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let key = KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+        app.dispatch(Action::Overlay(crate::inputs::DialogAction::HandleKey(key)));
+        drain(app);
+    };
+
+    attach(&mut app);
+    assert!(matches!(app.overlay(), Some(Overlay::ClientAsk(_))));
+    key(&mut app, 'n');
+    assert!(!app.link.is_open());
+    assert!(matches!(app.overlay(), Some(Overlay::DeviceDetached)));
+
+    // gone with no answer: the popup is back without an action of the user's
+    attach(&mut app);
+    assert!(matches!(app.overlay(), Some(Overlay::ClientAsk(_))));
+    app.client_gone(1);
+    assert!(matches!(app.overlay(), Some(Overlay::DeviceDetached)));
+
+    attach(&mut app);
+    assert!(matches!(app.overlay(), Some(Overlay::ClientAsk(_))));
+    key(&mut app, 'y');
+    let _peer = listener.accept().unwrap();
+    poll_until(&mut app, "attached", |app| app.link.is_open());
+    assert!(app.overlay().is_none(), "{:?}", app.overlay());
+}
+
 /// MAX-219: `attach` and `detach` set the link so, nothing when it is so already (no event);
 /// `attach` holds the rest of its chain until the link opened, as `toggle-attach`'s attach
 /// does, and stops it when the open fails: the reattach toast and the detached popup say

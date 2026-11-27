@@ -38,12 +38,162 @@ Only your user can connect. On Linux and macOS the folder belongs to you and
 nobody else can enter it; maxicom refuses to use a folder another user owns
 or can write to. On Windows the pipe lets only your account in.
 
-To find the maxicoms running, list the socket folder (or the pipes whose
-name starts with `maxicom-` on Windows). A socket file left by a maxicom that
-was killed refuses the connection, and the next maxicom to start removes it.
+To find the maxicoms running, run `maxicom cli list`, or list the socket
+folder (or the pipes whose name starts with `maxicom-` on Windows). A socket
+file left by a maxicom that was killed refuses the connection, and the next
+maxicom to start removes it.
 
 A program on another computer reaches the API through SSH; maxicom never
 opens a network port.
+
+## From the shell: maxicom cli
+
+`maxicom cli` drives a running maxicom from another terminal, a script or an
+AI tool, one action per call, the way `tmux` commands do. It connects,
+sends its request, prints the reply and exits with a code that says how it
+went.
+
+Flashing a board while maxicom keeps its screen:
+
+```sh
+maxicom cli detach && idf.py flash; maxicom cli attach
+```
+
+`detach` and `attach` reach the device, so they need `device = "on"` in
+`[api]`, see [Permissions](#permissions).
+
+### Running a command line
+
+Anything after `maxicom cli` that isn't one of its own actions is a command
+line, run as you would type it on maxicom's
+[command line](command-line.md):
+
+```sh
+maxicom cli status
+maxicom cli get baud
+maxicom cli 'send "reboot\r"; wait-for-ms 5000 login:'
+```
+
+The call waits for the line to end: a `sleep`, a `wait-for` or an `attach`
+hold it. Then it prints what the commands said and the getters' values, as
+the query popup shows them. With several getters, each value comes under
+its getter's name.
+
+Ctrl-C while it waits closes the connection, and maxicom cancels the job.
+To start a long line and go on, put the call in the background with the
+shell's `&`.
+
+### Quotes and several commands
+
+Two readers go through what you type: your shell first, then maxicom's
+command line. The shell splits the words and takes its own quotes off, and
+an unquoted `;` ends the shell's command, not maxicom's:
+
+```sh
+maxicom cli get local-echo; get timestamps
+```
+
+Here maxicom only runs `get local-echo`. Then the shell runs a program
+named `get` of its own, which most likely doesn't exist. `&`, `|`, `>` and
+`#` are the shell's in the same way.
+
+The simplest way to avoid surprises is the whole line in single quotes. The
+shell then hands it over in one piece, and maxicom reads it exactly as you
+would type it on its command line, `;`, double quotes and escapes included:
+
+```sh
+maxicom cli 'get local-echo; get timestamps'
+maxicom cli 'send "reboot\r"; wait-for-ms 5000 login:'
+```
+
+Without the quotes, maxicom gets the words the shell split. It keeps each
+one whole, even with a space in it, so a text quoted for the shell stays
+one argument. A `;` separates two commands only when it is a word of its
+own, quoted for the shell as `';'` or `\;`:
+
+| You type | maxicom runs |
+| --- | --- |
+| `maxicom cli 'get local-echo; get timestamps'` | `get local-echo`, then `get timestamps` |
+| `maxicom cli get local-echo ';' get timestamps` | The same two commands |
+| `maxicom cli get local-echo; get timestamps` | `get local-echo` only: the shell runs `get timestamps` itself |
+| `maxicom cli get local-echo\; get timestamps` | `get` with `local-echo;`, `get` and `timestamps`: refused, a `;` stuck to a word stays in it |
+| `maxicom cli notify info "hello world"` | `notify info` with the text `hello world` |
+| `maxicom cli notify info hello world` | `notify info` with `hello` and `world`: refused, too many arguments |
+| `maxicom cli send 'reboot\r'` | `send` with `reboot` and a carriage return: the escape is maxicom's |
+
+`--json` prints the reply as the API gives it, the `result` of
+[`run`](#run) or its `error`, on one line.
+
+### Choosing the maxicom
+
+With one maxicom running, `maxicom cli` talks to it. With several, name one
+with `--instance`, by its process id, its saved link's name or its address:
+
+```sh
+maxicom cli --instance board status
+maxicom cli --instance /dev/ttyUSB1 status
+maxicom cli --instance 48213 status
+```
+
+The options come before the action. `maxicom cli list` shows the maxicoms
+running:
+
+```text
+  PID  LINK                  SINCE
+48213  board (/dev/ttyUSB0)  2026-11-27 17:25:32
+48377  tcp://10.0.0.7:4000   2026-11-27 18:02:10
+```
+
+A maxicom that takes the connection but doesn't answer within a second is
+listed as `not answering`. With `--json`, `list` prints the `hello` of each
+one in a JSON array.
+
+### Following the events
+
+`maxicom cli events` prints the [events](#events) as they happen, one JSON
+object per line, until maxicom quits or you stop it. Name kinds to get only
+those:
+
+```sh
+maxicom cli events link-lost link-opened | while read -r event; do
+    notify-send "board" "$event"
+done
+```
+
+When the program reading it stops, like `head`, `events` ends quietly.
+
+### Reading the bytes received
+
+`maxicom cli rx` writes the bytes received as they came, from the oldest
+still kept. It ends by saying on stderr the offset to start from next time,
+so a script can poll without getting a byte twice:
+
+```sh
+maxicom cli rx --since 1024
+```
+
+| Option | Does |
+| --- | --- |
+| `--since <offset>` | Starts from this offset. Bytes already gone are said on stderr |
+| `--follow` | Then writes the new bytes as they come, until maxicom quits |
+| `--hex` | Writes a hex dump, each line starting with its offset |
+
+With `--json`, each page is printed as [`raw-since`](#query) gives it, its
+`start` and `newest` offsets included.
+
+### Exit codes
+
+| Code | Means |
+| --- | --- |
+| 0 | Done |
+| 1 | A command failed, a `wait-for` that timed out included |
+| 2 | The call doesn't parse, or names an event kind that doesn't exist |
+| 3 | No maxicom to talk to: none running, none matching `--instance`, or several |
+| 4 | Refused by the levels in `[api]`, or by you in the ask popup |
+| 5 | The job was cancelled in maxicom: your `cancel`, `disconnect-clients` |
+| 6 | maxicom quit before the end of the call |
+
+Ctrl-C gives the shell's usual 130.
 
 ## Messages
 
@@ -102,6 +252,8 @@ causes show it.
 | `version` | maxicom's version |
 | `pid` | This maxicom's process id |
 | `link` | The link it uses, as the status bar names it |
+| `name` | The saved link's name, `null` when the link isn't saved |
+| `address` | The link's address: a device, `tcp://host:port`... |
 | `since` | When this maxicom started, UTC |
 | `access` | The levels the program has: `read`, `control` and `device`, see [Permissions](#permissions) |
 
@@ -319,7 +471,9 @@ command belongs to one of three kinds:
 `off` refuses, `on` allows. `control` and `device` also take `ask`: each
 command shows you the API popup, with the program's name and the command,
 for you to allow it once, allow that program's commands of the same kind
-until it disconnects, or refuse it. With no answer within `ask_timeout`
+until it disconnects, or refuse it. Each `maxicom cli` call is a connection
+of its own, so with `ask` every call asks: to script maxicom, set the level
+to `on`. With no answer within `ask_timeout`
 (30 seconds by default), the command is refused. See
 [Questions](popups.md#questions) for the popup's keys.
 

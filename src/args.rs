@@ -395,6 +395,8 @@ maxicom — serial terminal
 
 Usage:
   maxicom [OPTIONS] [LINK | DEVICE]
+  maxicom cli ...          Drive a running maxicom from the shell: see
+                           maxicom cli --help
 
   LINK                     A saved link's name (links.toml), opened with its line
                            settings, the options over them
