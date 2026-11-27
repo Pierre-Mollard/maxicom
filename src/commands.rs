@@ -320,6 +320,13 @@ const MARK_LETTER: ArgSpec = ArgSpec {
     optional: true,
 };
 
+/// A terminal's rows or columns, within the resize dialog's bounds (MAX-219)
+const TERMINAL_SIZE: ArgKind = ArgKind::Int {
+    min: 1,
+    max: crate::overlays::resize::MAX_VALUE as i64,
+    suggestions: &[],
+};
+
 const fn arg(name: &'static str, kind: ArgKind) -> ArgSpec {
     ArgSpec {
         name,
@@ -531,6 +538,12 @@ pub static COMMANDS: &[CommandSpec] = {
             A::AutoResizeEmulator,
             "Resize the emulator to the view",
         ),
+        CommandSpec::build(
+            "resize",
+            &[arg("rows", TERMINAL_SIZE), arg("cols", TERMINAL_SIZE)],
+            build::resize,
+            "Set the terminal size, as the resize dialog does",
+        ),
         CommandSpec::action("link-settings", A::LinkSettings, "Open the link settings")
             .asking(Asks::Always),
         CommandSpec::action("enter-copy-mode", A::EnterCopyMode, "Enter copy mode")
@@ -551,6 +564,31 @@ pub static COMMANDS: &[CommandSpec] = {
             "Scroll to the bottom",
         ),
         CommandSpec::action("scroll-to-top", A::ScrollToTop, "Scroll to the top"),
+        CommandSpec::build(
+            "scroll-to",
+            &[arg(
+                "line",
+                ArgKind::Int {
+                    min: 0,
+                    max: i64::MAX,
+                    suggestions: &[],
+                },
+            )],
+            build::scroll_to,
+            "Scroll to a line by its number, history-since's or rows-since's",
+        ),
+        CommandSpec::build(
+            "select",
+            &[arg("from", ArgKind::String), arg("to", ArgKind::String)],
+            build::select,
+            "Select in copy mode from line[:col] to line[:col], numbered as scroll-to's",
+        ),
+        CommandSpec::build(
+            "select-clear",
+            &[],
+            build::select_clear,
+            "Leave copy mode, its selection gone",
+        ),
         CommandSpec::action("page-up", A::PageUp, "Scroll up one page"),
         CommandSpec::action("page-down", A::PageDown, "Scroll down one page"),
         CommandSpec::action("pan-right", A::PanRight, "Pan right"),

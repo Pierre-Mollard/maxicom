@@ -79,7 +79,9 @@ program ends, the screen follows the view again.
 
 `Ctrl-a W` (or Terminal size in the right-click menu) opens a popup with the
 rows and the columns. Type a number, or step it by one with Left / Right.
-Enter applies it. A size set this way applies exactly as asked.
+Enter applies it. A size set this way applies exactly as asked. From the
+[command line](command-line.md#settings) or a script, `resize <rows> <cols>`
+does the same without the popup.
 
 `Ctrl-a E` gives the emulated screen the view's size at once.
 

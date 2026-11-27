@@ -173,6 +173,16 @@ Reporting a security issue: [SECURITY.md](SECURITY.md).
 
 Pierre Mollard
 
+With [Claude Code](https://claude.com/claude-code) as pair programmer: a lot
+of the code was written by Claude, and every line was reviewed by Pierre,
+one item at a time.
+
+<p>
+  <img src="docs/images/claude-code-thumbs-up.svg" alt="A little orange pixel critter giving a thumbs up" width="112">
+</p>
+
+<sub>Claude, reporting for duty: tests green, clippy quiet, thumbs up.</sub>
+
 ### License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or

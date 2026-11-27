@@ -9755,6 +9755,99 @@ fn mark_jump_flashes_its_line() {
     assert_ne!(bg_at(&h, content.x + 3, middle), flash_bg);
 }
 
+/// MAX-219: `scroll-to` centers the view on a line by its number, `history-since`'s in line
+/// mode and `rows-since`'s in terminal mode, as a mark jump does; a number not kept is
+/// refused, the view left where it was.
+/// How: the marked lines of each mode, `scroll-to 19`, then `scroll-to 999`.
+#[test]
+fn scroll_to_centers_the_line() {
+    let run = |h: &mut Harness, line: &str| {
+        h.app
+            .update(KeyBindingAction::CommandLine.to_action(&h.app));
+        (h.app).update(Action::Overlay(DialogAction::Paste(line.to_string())));
+        h.app.update(Action::Overlay(DialogAction::Confirm));
+        let now = std::time::Instant::now();
+        while let Some((caller, action)) = h.app.next_command_action(now) {
+            h.app.update_for(&caller, action);
+        }
+    };
+    let (mut h, height) = marked_lines();
+    run(&mut h, "scroll-to 19");
+    let rows = h.draw();
+    let content = h.app.frame_areas().content;
+    let middle = content.y as usize + height / 2;
+    assert!(rows[middle].contains("line 19"), "{rows:#?}");
+    run(&mut h, "scroll-to 999");
+    // the error toast covers the rows above
+    assert_eq!(h.draw()[middle..], rows[middle..]);
+    let toasts = h.app.notifications.active_toasts();
+    assert_eq!(
+        toasts.last().unwrap().message,
+        "scroll-to: line 999 isn't there: 0 to 59"
+    );
+
+    let (mut h, height) = terminal_marked_lines();
+    let first = h.app.terminal_mode.rows_kept().start;
+    run(&mut h, &format!("scroll-to {}", first + 19));
+    let rows = h.draw();
+    let content = h.app.frame_areas().content;
+    let middle = content.y as usize + (height - 1) / 2;
+    assert!(rows[middle].contains("line 19"), "{rows:#?}");
+}
+
+/// MAX-219: `select` enters copy mode with a selection, what a yank would copy: whole lines
+/// for two line numbers (as `V`), from a column to a column with `line:col` (as `v`), ends in
+/// either order, a column past its line's end clamped to it; terminal mode by row number.
+/// Lines not there and positions that don't read are refused; `select-clear` leaves copy
+/// mode.
+/// How: the marked lines of each mode, a yank after each `select`.
+#[test]
+fn select_makes_the_selection() {
+    let run = |h: &mut Harness, line: &str| {
+        h.app
+            .update(KeyBindingAction::CommandLine.to_action(&h.app));
+        (h.app).update(Action::Overlay(DialogAction::Paste(line.to_string())));
+        h.app.update(Action::Overlay(DialogAction::Confirm));
+        let now = std::time::Instant::now();
+        while let Some((caller, action)) = h.app.next_command_action(now) {
+            h.app.update_for(&caller, action);
+        }
+    };
+    let selected = |h: &mut Harness, line: &str| {
+        run(h, line);
+        assert!(h.app.is_copy_mode_active(), "{line}");
+        match h.app.update(Action::CopyMode(CopyModeAction::Yank)) {
+            UpdateEffect::CopyToClipboard(text) => text,
+            _ => panic!("{line}: nothing selected"),
+        }
+    };
+    let last_toast = |h: &Harness| {
+        let toasts = h.app.notifications.active_toasts();
+        toasts.last().unwrap().message.clone()
+    };
+    let (mut h, _) = marked_lines();
+    assert_eq!(
+        selected(&mut h, "select 19 21"),
+        "line 19\nline 20\nline 21"
+    );
+    assert_eq!(
+        selected(&mut h, "select 21:5 19:2"),
+        "ne 19\nline 20\nline 2"
+    );
+    assert_eq!(selected(&mut h, "select 19:3 19:99"), "e 19");
+    run(&mut h, "select 19 21; select-clear");
+    assert!(!h.app.is_copy_mode_active());
+    run(&mut h, "select 19 999");
+    assert_eq!(last_toast(&h), "select: line 999 isn't there: 0 to 59");
+    run(&mut h, "select 19 x:1");
+    assert_eq!(last_toast(&h), "select: 'x:1' is not line or line:col");
+    assert!(!h.app.is_copy_mode_active());
+
+    let (mut h, _) = terminal_marked_lines();
+    let row = h.app.terminal_mode.rows_kept().start + 19;
+    assert_eq!(selected(&mut h, &format!("select {row} {row}")), "line 19");
+}
+
 /// MAX-215: the bar of a backward search says so, and counts from the newest match; its
 /// cursor follows the query after the label. MAX-218: the label is `?`.
 /// How: "hit" on two lines, a backward search, the bar's row and the cursor's cell.

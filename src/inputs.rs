@@ -58,6 +58,10 @@ pub enum Action {
     Ignore,
 }
 
+/// An end of `select`'s selection (MAX-219): a line's index, its column or none (the whole
+/// line)
+pub type SelectEnd = (usize, Option<usize>);
+
 #[derive(Debug)]
 pub enum AppAction {
     SetPrefix(bool),
@@ -66,6 +70,10 @@ pub enum AppAction {
     SetSetting(SettingKey, &'static str),
     ToggleRecording,
     StartRecording { path: PathBuf, stream: Stream },
+    ResizeTerminal { rows: u16, cols: u16 },
+    ScrollTo(usize),
+    Select(SelectEnd, SelectEnd),
+    SelectClear,
     ToggleAttach,
     SetAttached(bool),
     ReloadConfig,
@@ -266,6 +274,8 @@ pub enum CopyModeAction {
     Select,
     SelectLine,
     SelectRange(usize, usize),
+    /// `select` (MAX-219): from an end to an end, both included
+    SelectArea(SelectEnd, SelectEnd),
     Yank,
     YankRaw,
     ToggleSide,

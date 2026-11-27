@@ -1065,9 +1065,7 @@ impl App {
                             UpdateEffect::None
                         }
                         OverlayResponse::ResizeTerminal { rows, cols } => {
-                            self.settings.terminal_mode.cols = cols;
-                            self.settings.terminal_mode.rows = rows;
-                            self.terminal_mode.set_vt100_size(rows, cols);
+                            self.resize_terminal(rows, cols);
                             UpdateEffect::None
                         }
                         // the config changes once the port takes it (MAX-168)
@@ -1985,6 +1983,30 @@ impl App {
                 report.notes.extend(self.toggle_recording());
                 UpdateEffect::None
             }
+            AppAction::ScrollTo(index) => {
+                match self.settings.mode {
+                    Mode::Line => self.line_mode.go_to_line(index),
+                    Mode::Terminal => self.terminal_mode.go_to_row(index),
+                }
+                UpdateEffect::None
+            }
+            // copy mode afresh: one on the raw side or holding a search's matches ends first
+            AppAction::Select(from, to) => {
+                if self.is_copy_mode_active() {
+                    self.update_action_copy_mode(CopyModeAction::Exit, report);
+                }
+                self.copy_action(CopyModeAction::Enter, report);
+                self.copy_action(CopyModeAction::SelectArea(from, to), report);
+                UpdateEffect::None
+            }
+            AppAction::SelectClear if self.is_copy_mode_active() => {
+                self.update_action_copy_mode(CopyModeAction::Exit, report)
+            }
+            AppAction::SelectClear => UpdateEffect::None,
+            AppAction::ResizeTerminal { rows, cols } => {
+                self.resize_terminal(rows, cols);
+                UpdateEffect::None
+            }
             AppAction::StartRecording { path, stream } => {
                 report.extend(self.start_capture(&path, stream, false));
                 UpdateEffect::None
@@ -2269,6 +2291,13 @@ impl App {
 
     /// The side panel's share of the split, by `by` percent, kept in the config's range
     /// (MAX-189): the raw panel's or the plot's (MAX-222)
+    /// The emulator's size, the resize dialog's or `resize`'s (MAX-219)
+    fn resize_terminal(&mut self, rows: u16, cols: u16) {
+        self.settings.terminal_mode.cols = cols;
+        self.settings.terminal_mode.rows = rows;
+        self.terminal_mode.set_vt100_size(rows, cols);
+    }
+
     fn resize_side_panel(&mut self, by: i16) -> Option<Note> {
         let off = self.settings.raw_side.view == RawSideView::Off && self.plot.is_none();
         let note = off.then(|| Note::warn("SideView is Off"));

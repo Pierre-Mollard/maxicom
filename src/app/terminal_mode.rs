@@ -1322,7 +1322,8 @@ impl TerminalMode {
         (top + bottom) / 2
     }
 
-    fn go_to_row(&mut self, row: usize) {
+    /// Goes to world row `row` as a mark jump does: `scroll-to` too (MAX-219)
+    pub fn go_to_row(&mut self, row: usize) {
         if self.copy_state.active {
             let cursor = &mut self.copy_state.cursor;
             cursor.line_idx = row;

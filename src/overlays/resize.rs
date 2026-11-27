@@ -9,7 +9,8 @@ use crate::{
 /// The digits a field takes: its value fits the popup's column, and no terminal is taller or
 /// wider than 9999
 const MAX_DIGITS: usize = 4;
-const MAX_VALUE: i32 = 9999;
+/// `resize` takes the same bounds (MAX-219)
+pub const MAX_VALUE: i32 = 9999;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResizeField {

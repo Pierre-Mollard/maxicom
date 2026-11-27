@@ -99,6 +99,9 @@ See [Command line](command-line.md).
 | `screenshots are in terminal mode` | `screenshot` in line mode |
 | `no replay runs`, `the replay isn't paused`, `the replay is finished …` | A replay command with nothing to act on |
 | `a replay can't open a link (replay-stop ends it)` | `open` during a replay |
+| `line <n> isn't there: <first> to <last>` | `scroll-to` or `select` on a line the history dropped, or not in yet |
+| `'<text>' is not line or line:col` | A `select` position that doesn't read |
+| `the alternate screen has no scrollback` | `scroll-to` or `select` while a full-screen program runs in terminal mode |
 | `attach: a replay has no link`, `detach: a replay has no link` | `attach` or `detach` during a replay |
 | `attach: no device picked yet`, `detach: no device picked yet` | `attach` or `detach` before a port is picked in the directory |
 

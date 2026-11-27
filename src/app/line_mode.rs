@@ -376,7 +376,8 @@ impl LineMode {
         Some(letter)
     }
 
-    fn go_to_line(&mut self, line: usize) {
+    /// Goes to entry `line` as a mark jump does: `scroll-to` too (MAX-219)
+    pub fn go_to_line(&mut self, line: usize) {
         if self.copy_state.active {
             let cursor = &mut self.copy_state.cursor;
             cursor.line_idx = line;

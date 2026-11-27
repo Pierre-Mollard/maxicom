@@ -337,6 +337,7 @@ fn keymap_actions_are_the_action_commands() {
         bare,
         [
             "record-stop",
+            "select-clear",
             "mark",
             "jump-mark",
             "link-save",
@@ -587,7 +588,7 @@ fn named_command_errors() {
         error("break", "break 100"),
         "in [commands]: break: a built-in command has this name"
     );
-    for action in ["select", "up", "submit", "close"] {
+    for action in ["yank", "up", "submit", "close"] {
         assert_eq!(
             error(action, "break"),
             format!("in [commands]: {action}: an action has this name")

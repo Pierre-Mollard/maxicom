@@ -7,8 +7,8 @@ use crate::{
     app::data_processing::{build_display_to_raw_byte_map, map_disp_byte_to_raw},
     configs::{LineDisplayMode, RawSideView, settings::raw_view_to_display_mode},
     inputs::{
-        CopyModeAction, find_next_word, find_prev_word, find_prev_word_end, find_word_end,
-        vi::find_word_bounds,
+        CopyModeAction, SelectEnd, find_next_word, find_prev_word, find_prev_word_end,
+        find_word_end, vi::find_word_bounds,
     },
     ui::raw_side::format_raw_bytes_to_plain_string,
 };
@@ -124,7 +124,9 @@ impl Reveal {
     pub fn for_move(action: &CopyModeAction, cursor_shown: bool) -> Self {
         let jump = matches!(
             action,
-            CopyModeAction::JumpToTop | CopyModeAction::JumpToBottom
+            CopyModeAction::JumpToTop
+                | CopyModeAction::JumpToBottom
+                | CopyModeAction::SelectArea(..)
         );
         if jump || !cursor_shown {
             Self::Center
@@ -469,6 +471,29 @@ impl CopyModeState {
                 });
                 self.cursor.char_idx = clamped_end;
                 self.cursor.preferred_col = clamped_end;
+                CopyActionResult::Moved
+            }
+            // the ends in order first: a missing column is its line's start or end
+            CopyModeAction::SelectArea(from, to) => {
+                let key = |(line, col): SelectEnd| (line, col.unwrap_or(0));
+                let (from, to) = if key(to) < key(from) {
+                    (to, from)
+                } else {
+                    (from, to)
+                };
+                let mut at = |(line_idx, col): SelectEnd, end: bool| {
+                    let last = source.get_line_len(line_idx).saturating_sub(1);
+                    let char_idx = col.unwrap_or(if end { last } else { 0 }).min(last);
+                    LogicalPosition {
+                        line_idx,
+                        char_idx,
+                        preferred_col: char_idx,
+                        byte_idx: 0,
+                    }
+                };
+                self.selection_anchor = Some(at(from, false));
+                self.cursor = at(to, true);
+                self.line_select = from.1.is_none() && to.1.is_none();
                 CopyActionResult::Moved
             }
             CopyModeAction::Yank => {

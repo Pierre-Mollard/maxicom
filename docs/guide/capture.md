@@ -443,7 +443,7 @@ save it: Enter saves to the path shown, Esc drops it, and Tab switches the
 format.
 
 The `screenshot <name>` command saves without the dialog, see
-[Command line](command-line.md#search-and-screenshots).
+[Command line](command-line.md#search-selection-and-screenshots).
 
 ## Paths and names
 

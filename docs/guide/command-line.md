@@ -200,6 +200,7 @@ See [Recordings](capture.md#recordings).
 | `set <setting> <value>` | Sets a setting to a value, named as `get` names them: `on\|off` for a switch, `set line-wrap char`. Does nothing when it's already so. The values complete. |
 | `mode line\|terminal` | Switches to line or terminal mode. Does nothing when it's already so. |
 | `encoding utf8\|ascii\|cp437\|latin1` | Sets how the received bytes are read |
+| `resize <rows> <cols>` | Sets the terminal size, 1 to 9999 each, like the `Ctrl-a W` popup. `term-size` reads it. |
 
 See [Setting a value directly](settings.md#setting-a-value-directly) and
 [Text encoding](encoding-and-newlines.md#text-encoding).
@@ -340,16 +341,27 @@ with its counts and its last fire, the notifications said.
 colors` keeps the colors as escape sequences; the popup shows them as
 `␛[1m`, and copying keeps the real escapes.
 
-### Search and screenshots
+### Search, selection and screenshots
 
 | Command | Does |
 | --- | --- |
 | `search <text>` | Starts a search forward for the text in copy mode, the bar open on it |
+| `scroll-to <line>` | Centers the view on a line by its number, as a mark jump does: `history-since`'s number in line mode, `rows-since`'s in terminal mode. In copy mode, the cursor moves there. A line no longer kept is refused. |
+| `select <from> <to>` | Enters copy mode with a selection, to show something on screen. A position is a line number (the whole line) or `line:col`: `select 120 125`, `select 120:4 121:10`. |
+| `select-clear` | Leaves copy mode, its selection gone. Does nothing out of copy mode. |
 | `screenshot <name>` | Saves the terminal at once, without the dialog. Terminal mode only. |
 
 A bare screenshot name is saved in `screenshot.dir`. A `.ans` name keeps
 the colors; anything else is text, and `.txt` is added to a name without an
 extension. See [Search](search.md) and [Screenshots](capture.md#screenshots).
+
+`scroll-to` and `select` number the lines as `history-since` does in line
+mode and `rows-since` in terminal mode. In terminal mode the screen's rows
+follow the scrollback's: its top row is `rows-since`'s `newest`, so the
+screen can be selected too. Columns count from 0, in characters in line
+mode and cells in terminal mode; a column past the end of its line stops
+at its end. `select` takes the place of copy mode and of a selection you
+were making; Esc leaves it as usual. Neither works on the alternate screen.
 
 ### Waiting and stopping
 

@@ -180,7 +180,7 @@ set size-mode fixed
 | `indent-wrap` | `none`, `prefix`, `timestamp` |
 | `prefix-place` | `inset`, `border`, `none` |
 | `display-mode` | `pretty`, `clean`, `raw`, `hex`, `octal`, `binary` |
-| `display-raw` | `off`, `hex`, `octal`, `binary` |
+| `display-raw` | `off`, `hex`, `octal`, `binary`: opens the raw side panel in that base, `off` closes it |
 | `size-mode` | `auto`, `grow_only`, `fixed_cols`, `match_view`, `fixed` |
 | `tx-eol` | `crlf`, `cr`, `lf` |
 | `backspace` | `del`, `bs` |

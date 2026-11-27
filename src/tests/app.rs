@@ -298,6 +298,29 @@ fn command_line_send() {
     );
 }
 
+/// MAX-219: `resize` sets the emulator's size and the configured one, as the resize dialog's
+/// Enter does; a size out of the dialog's bounds (1 to 9999) is refused when the line is read.
+/// How: `resize 30 100`, then 0 rows and 10000 columns.
+#[test]
+fn command_line_resize() {
+    let mut app = app();
+    let run_line = |app: &mut App, line: &str| {
+        app.jobs
+            .push(Origin::Input, crate::commands::parse(line).unwrap());
+        while let Some((caller, action)) = app.next_command_action(Instant::now()) {
+            app.update_for(&caller, action);
+        }
+    };
+    run_line(&mut app, "resize 30 100");
+    assert_eq!(app.terminal_mode.get_vt100_size(), (30, 100));
+    let configured = &app.settings.terminal_mode;
+    assert_eq!((configured.rows, configured.cols), (30, 100));
+    for line in ["resize 0 80", "resize 24 10000"] {
+        assert!(parse_fails(&mut app, line), "{line}");
+    }
+    assert_eq!(app.terminal_mode.get_vt100_size(), (30, 100));
+}
+
 /// MAX-219: `send-line` sends its text with line mode's line ending (`tx-eol`), as Enter
 /// does, in either mode; an empty text sends the line ending alone. It refuses where `send`
 /// does.
@@ -3441,6 +3464,7 @@ fn every_command_shows_what_it_did() {
         ("auto-resize-remote", ""),
         ("auto-resize-remote-line", ""),
         ("auto-resize-emulator", ""),
+        ("resize 30 100", ""),
         ("link-settings", "popup LinkSettings"),
         ("enter-copy-mode", ""),
         ("enter-search", ""),
@@ -3449,6 +3473,9 @@ fn every_command_shows_what_it_did() {
         ("scroll-down", ""),
         ("scroll-to-bottom", ""),
         ("scroll-to-top", ""),
+        ("scroll-to 0", ""),
+        ("select 0 0", ""),
+        ("select-clear", ""),
         ("page-up", ""),
         ("page-down", ""),
         ("pan-right", ""),

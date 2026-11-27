@@ -15,7 +15,7 @@ use crate::{
     clock,
     commands::{ArgKind, ArgValue, query, value::Value},
     configs::{Mode, TextEncoding, links::SavedLink},
-    inputs::{Action, AppAction, MarkAction, PendingMark, SearchModeAction},
+    inputs::{Action, AppAction, MarkAction, PendingMark, SearchModeAction, SelectEnd},
     link::{
         Address, LinkConfig, LinkKind,
         replay::ReplayControl,
@@ -89,6 +89,74 @@ pub fn record_stop(app: &App, _: &[ArgValue]) -> Result<Action, String> {
         Some(_) => Action::App(AppAction::ToggleRecording),
         None => Action::Ignore,
     })
+}
+
+/// `resize <rows> <cols>` (MAX-219): the terminal's size, as the resize dialog sets it
+pub fn resize(_: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let [ArgValue::Int(rows), ArgValue::Int(cols)] = args else {
+        unreachable!("resize takes rows and columns");
+    };
+    let (rows, cols) = (*rows as u16, *cols as u16);
+    Ok(Action::App(AppAction::ResizeTerminal { rows, cols }))
+}
+
+/// `scroll-to <line>` (MAX-219): the view centered on a line by its number, as a mark jump
+/// goes to its line (the copy cursor moved in copy mode)
+pub fn scroll_to(app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let [ArgValue::Int(line)] = args else {
+        unreachable!("scroll-to takes a line number");
+    };
+    let index = line_index(app, *line as u64)?;
+    Ok(Action::App(AppAction::ScrollTo(index)))
+}
+
+/// `select <from> <to>` (MAX-219): copy mode's selection from a position to a position, each
+/// `line` (the whole line) or `line:col`, lines numbered as `scroll-to`'s, columns from 0
+pub fn select(app: &App, args: &[ArgValue]) -> Result<Action, String> {
+    let [ArgValue::String(from), ArgValue::String(to)] = args else {
+        unreachable!("select takes two positions");
+    };
+    let position = |text: &str| -> Result<SelectEnd, String> {
+        let bad = || format!("'{text}' is not line or line:col");
+        let (line, col) = match text.split_once(':') {
+            Some((line, col)) => (line, Some(col.parse::<usize>().map_err(|_| bad())?)),
+            None => (text, None),
+        };
+        let line = line.parse::<u64>().map_err(|_| bad())?;
+        Ok((line_index(app, line)?, col))
+    };
+    let (from, to) = (position(from)?, position(to)?);
+    Ok(Action::App(AppAction::Select(from, to)))
+}
+
+/// `select-clear` (MAX-219): out of copy mode, its selection gone; nothing out of it
+pub fn select_clear(_: &App, _: &[ArgValue]) -> Result<Action, String> {
+    Ok(Action::App(AppAction::SelectClear))
+}
+
+/// Line `line`'s index in the mode shown, by its number: `history-since`'s in line mode,
+/// `rows-since`'s in terminal mode, where the live screen's rows follow the scrollback's (its
+/// top row is `newest`). Refused for a number not there, and on the alternate screen
+fn line_index(app: &App, line: u64) -> Result<usize, String> {
+    let terminal = &app.terminal_mode;
+    let lines = match app.settings().mode {
+        Mode::Line => app.line_mode.lines_kept(),
+        Mode::Terminal if terminal.vt100_screen().alternate_screen() => {
+            return Err("the alternate screen has no scrollback".to_string());
+        }
+        Mode::Terminal => {
+            let kept = terminal.rows_kept();
+            kept.start..kept.end + terminal.get_vt100_size().0 as u64
+        }
+    };
+    match lines.is_empty() {
+        _ if lines.contains(&line) => Ok((line - lines.start) as usize),
+        true => Err(format!("line {line} isn't there: none is")),
+        false => {
+            let (first, last) = (lines.start, lines.end - 1);
+            Err(format!("line {line} isn't there: {first} to {last}"))
+        }
+    }
 }
 
 /// `send-file <path> [line-delay-ms]`: starts sending the file, paced; the chain goes on at
