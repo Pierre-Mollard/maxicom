@@ -72,7 +72,7 @@ jobs:
             cp "target/${{ matrix.target }}/release/maxicom" "$name"/
             tar czf "$name.tar.gz" "$name"
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
           path: |
@@ -127,7 +127,7 @@ jobs:
           cp src/completion/maxicom.bash src/completion/maxicom.fish src/completion/maxicom.ps1 "$name"/completions/
           cp src/completion/maxicom.zsh "$name"/completions/_maxicom
           tar czf "$name.tar.gz" "$name"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ env.TARGET }}-glibc${{ matrix.glibc }}
           path: maxicom-*.tar.gz
