@@ -60,8 +60,11 @@ jobs:
         shell: bash
         run: |
           name="maxicom-${{ matrix.target }}"
-          mkdir "$name"
+          mkdir -p "$name/completions"
           cp README.md LICENSE-MIT LICENSE-APACHE "$name"/
+          # the scripts `--completions` prints, named as the shells look for them
+          cp src/completion/maxicom.bash src/completion/maxicom.fish src/completion/maxicom.ps1 "$name"/completions/
+          cp src/completion/maxicom.zsh "$name"/completions/_maxicom
           if [ "$RUNNER_OS" = Windows ]; then
             cp "target/${{ matrix.target }}/release/maxicom.exe" "$name"/
             7z a "$name.zip" "$name"
@@ -119,8 +122,10 @@ jobs:
       - name: Pack
         run: |
           name="maxicom-$TARGET-glibc${{ matrix.glibc }}"
-          mkdir "$name"
+          mkdir -p "$name/completions"
           cp README.md LICENSE-MIT LICENSE-APACHE "target/$TARGET/release/maxicom" "$name"/
+          cp src/completion/maxicom.bash src/completion/maxicom.fish src/completion/maxicom.ps1 "$name"/completions/
+          cp src/completion/maxicom.zsh "$name"/completions/_maxicom
           tar czf "$name.tar.gz" "$name"
       - uses: actions/upload-artifact@v4
         with:

@@ -468,3 +468,112 @@ fn tcp_link_refuses_line_options() {
     assert!(address_of(&["--tcp", "host:notaport"]).is_err());
     assert!(address_of(&["/dev/ttyUSB0", "-b", "9600", "--parity", "e"]).is_ok());
 }
+
+/// Every option `maxicom` takes, short then long, with a value that parses for the ones that
+/// take one: the list the completion's table must hold, the parser's value options (MAX-294).
+/// `--help`, `--version`, `--cache-dir` and `--write-config` stop the parse, so they stay
+/// with their own tests.
+const OPTIONS: &[(&str, &str, Option<&str>)] = &[
+    ("-D", "--device", Some("COM3")),
+    ("-b", "--baudrate", Some("9600")),
+    ("-C", "--capturefile", Some("boot.cap")),
+    ("-R", "--remotecharset", Some("latin1")),
+    ("-r", "--replay", Some("/tmp/boot.raw")),
+    ("", "--delay", Some("20")),
+    ("", "--tcp", Some("127.0.0.1:4000")),
+    ("", "--bits", Some("7")),
+    ("", "--stop-bits", Some("2")),
+    ("", "--parity", Some("e")),
+    ("", "--flow", Some("hw")),
+    ("", "--dtr", Some("on")),
+    ("", "--rts", Some("off")),
+    ("", "--config", Some("esp.toml")),
+    ("", "--plot", Some("pid")),
+    ("", "--profile", Some("debug")),
+    ("", "--completions", Some("zsh")),
+    ("-H", "--displayhex", None),
+    ("", "--restore", None),
+    ("", "--no-restore", None),
+    ("", "--reset-config", None),
+];
+
+/// MAX-294: the completion's table holds exactly these options, the stopping ones too, the
+/// ones taking a value as they do; each one parses in every form (`-b 9600`, `-b9600`,
+/// `--baudrate 9600`, `--baudrate=9600`) and stops without its value; the flags parse alone
+/// and refuse a glued value.
+/// How: `OPTIONS` against the table, then each entry in each of its forms.
+#[test]
+fn every_option_locked() {
+    let stopping = [
+        ("-h", "--help"),
+        ("-v", "--version"),
+        ("", "--cache-dir"),
+        ("", "--write-config"),
+    ];
+    let mut locked: Vec<(&str, &str, bool)> = (OPTIONS.iter())
+        .map(|(short, long, value)| (*short, *long, value.is_some()))
+        .chain(stopping.map(|(short, long)| (short, long, false)))
+        .collect();
+    let mut table: Vec<(&str, &str, bool)> = (crate::completion::OPTIONS.iter())
+        .map(|option| (option.short, option.long, option.value.is_some()))
+        .collect();
+    locked.sort_unstable();
+    table.sort_unstable();
+    assert_eq!(table, locked);
+
+    for (short, long, value) in OPTIONS {
+        let names = [*short, *long].into_iter().filter(|name| !name.is_empty());
+        for name in names {
+            let Some(value) = value else {
+                assert!(parse(&[name]).is_ok(), "{name}");
+                let glued = format!("{name}=x");
+                assert!(parse(&[&glued]).is_err(), "{glued}");
+                continue;
+            };
+            let glued = match name.starts_with("--") {
+                true => format!("{name}={value}"),
+                false => format!("{name}{value}"),
+            };
+            for args in [&[name, *value][..], &[&glued]] {
+                assert!(parse(args).is_ok(), "{args:?}: {:?}", parse(args));
+            }
+            assert!(parse(&[name]).is_err(), "{name} without its value");
+        }
+    }
+}
+
+/// MAX-294: every value the completion suggests for an option is one the option takes.
+/// How: each suggestion of each option of the table, after its long name.
+#[test]
+fn suggested_values_parse() {
+    let mut suggested = 0;
+    for option in crate::completion::OPTIONS {
+        let Some(kind) = option.value else { continue };
+        for value in kind.candidates("") {
+            suggested += 1;
+            let args = [option.long, value];
+            assert!(parse(&args).is_ok(), "{args:?}: {:?}", parse(&args));
+        }
+    }
+    assert!(suggested > 20, "only {suggested} values suggested");
+}
+
+/// MAX-294: `--complete --` first is a shell's Tab, its words all the rest, options too;
+/// anywhere else it is no completion.
+#[test]
+fn completing_words() {
+    let args = |list: &[&str]| list.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        completing_from(args(&["--complete", "--", "--reset-config", "-"])),
+        Some(args(&["--reset-config", "-"]))
+    );
+    assert_eq!(
+        completing_from(args(&["--complete", "--"])),
+        Some(Vec::new())
+    );
+    assert_eq!(completing_from(args(&["--complete"])), None);
+    assert_eq!(
+        completing_from(args(&["-b", "9600", "--complete", "--"])),
+        None
+    );
+}

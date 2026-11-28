@@ -1,6 +1,7 @@
 use std::{env, path::PathBuf, time::Duration};
 
 use crate::{
+    completion,
     configs::{LinkDefaults, TextEncoding, links::SavedLink},
     link::{
         Address,
@@ -74,6 +75,17 @@ pub fn parse_args(
 /// of that name opens as `./cli`
 pub const RESERVED: &[&str] = &["cli", "api", "mcp"];
 
+/// The words after `--complete --` when it starts the arguments (MAX-294): a shell's Tab,
+/// read before anything else, as the other options in those words must not run
+pub fn completing() -> Option<Vec<String>> {
+    completing_from(env::args().skip(1))
+}
+
+fn completing_from(args: impl IntoIterator<Item = String>) -> Option<Vec<String>> {
+    let mut args = args.into_iter();
+    (args.next()? == "--complete" && args.next()? == "--").then(|| args.collect())
+}
+
 /// The words after `word` when it is the first argument: `cli` (MAX-285), `api` (MAX-292).
 /// Read before the settings load, as these clients need none of them
 pub fn after(word: &str) -> Option<Vec<String>> {
@@ -105,11 +117,22 @@ fn reset_config_from(args: impl IntoIterator<Item = String>) -> bool {
 }
 
 /// The value of the last `--config`, as the last of any option wins
-fn config_file_from(args: impl IntoIterator<Item = String>) -> Option<PathBuf> {
+pub fn config_file_from(args: impl IntoIterator<Item = String>) -> Option<PathBuf> {
+    last_value("--config", args).map(PathBuf::from)
+}
+
+/// The shell of `--completions` (MAX-294), read before the settings load: printing a script
+/// needs none, and writes none
+pub fn completions() -> Option<String> {
+    last_value("--completions", env::args().skip(1))
+}
+
+/// The value of the last `option` in `args`
+fn last_value(option: &str, args: impl IntoIterator<Item = String>) -> Option<String> {
     let args = split_values(args);
     (args.windows(2))
-        .rfind(|pair| pair[0] == "--config")
-        .map(|pair| PathBuf::from(&pair[1]))
+        .rfind(|pair| pair[0] == option)
+        .map(|pair| pair[1].clone())
 }
 
 /// The link given: an address (`--device`, `--tcp`, `--replay`), or a word that is a saved
@@ -137,25 +160,12 @@ fn by_name(
     }
 }
 
-/// The options that take a value, short then long
-const VALUE_OPTIONS: &[(&str, &str)] = &[
-    ("-D", "--device"),
-    ("-b", "--baudrate"),
-    ("-C", "--capturefile"),
-    ("-R", "--remotecharset"),
-    ("-r", "--replay"),
-    ("", "--delay"),
-    ("", "--tcp"),
-    ("", "--bits"),
-    ("", "--stop-bits"),
-    ("", "--parity"),
-    ("", "--flow"),
-    ("", "--dtr"),
-    ("", "--rts"),
-    ("", "--config"),
-    ("", "--plot"),
-    ("", "--profile"),
-];
+/// The options that take a value, short then long, from the completion's table (MAX-294)
+fn value_options() -> impl Iterator<Item = (&'static str, &'static str)> {
+    (completion::OPTIONS.iter())
+        .filter(|option| option.value.is_some())
+        .map(|option| (option.short, option.long))
+}
 
 /// The value glued to its option split off, as getopt takes it for minicom (MAX-181):
 /// `--baudrate=9600` and `-b9600` are `--baudrate 9600` and `-b 9600`. Only for the options
@@ -165,12 +175,11 @@ fn split_values(args: impl IntoIterator<Item = String>) -> Vec<String> {
     for arg in args {
         let glued = if arg.starts_with("--") {
             arg.split_once('=')
-                .filter(|(name, _)| VALUE_OPTIONS.iter().any(|(_, long)| long == name))
+                .filter(|(name, _)| value_options().any(|(_, long)| long == *name))
         } else {
-            VALUE_OPTIONS
-                .iter()
+            value_options()
                 .filter(|(short, _)| !short.is_empty())
-                .find_map(|(short, _)| arg.strip_prefix(short).map(|value| (*short, value)))
+                .find_map(|(short, _)| arg.strip_prefix(short).map(|value| (short, value)))
                 .filter(|(_, value)| !value.is_empty())
         };
         match glued {
@@ -302,6 +311,11 @@ fn parse_args_from(
             // already read by `config_file`, before the settings loaded (MAX-206)
             "--config" => {
                 args.next().ok_or(ParseError::MissingValue("--config"))?;
+            }
+            // already handled by `completions`, before the settings loaded (MAX-294)
+            "--completions" => {
+                args.next()
+                    .ok_or(ParseError::MissingValue("--completions"))?;
             }
             "--restore" => restore = Some(true),
             "--no-restore" => restore = Some(false),
@@ -449,6 +463,9 @@ Options:
 
       --config <FILE>      Read the settings from FILE instead of config.toml,
                            created with the defaults if it doesn't exist
+      --completions <SHELL>
+                           Print the Tab completion script of SHELL (bash, zsh, fish,
+                           powershell) and exit
 
   -h, --help               Print help
   -v, --version            Print the version

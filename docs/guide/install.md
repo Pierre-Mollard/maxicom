@@ -7,8 +7,8 @@ prebuilt binary or build it yourself.
 
 Each release on the
 [releases page](https://github.com/Pierre-Mollard/maxicom/releases) comes
-with an archive per platform. Each archive holds the binary, the README and
-the licenses.
+with an archive per platform. Each archive holds the binary, the README, the
+licenses and the [shell completion](shell-completion.md) scripts.
 
 ### Which archive to pick
 
@@ -88,6 +88,9 @@ From a clone, run `cargo build --release`. The binary is then
 ## Check it works
 
 Run `maxicom --version`. `maxicom --help` lists the options.
+
+To complete the options and your saved links with Tab, set up
+[shell completion](shell-completion.md).
 
 ## Linux
 

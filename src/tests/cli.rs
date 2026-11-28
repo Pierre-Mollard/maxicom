@@ -320,3 +320,44 @@ fn bridge_options() {
         "Unknown argument '--json'."
     );
 }
+
+/// MAX-294: the completion's tables of `cli`, `api` and `rx` options are the ones their
+/// parsers take, a value after those taking one, and its actions are `cli`'s verbs.
+/// How: each option in each table, by each name, before an action that parses.
+#[test]
+fn completion_tables_parse() {
+    use crate::completion::{API_OPTIONS, CLI_OPTIONS, OptionSpec, RX_OPTIONS};
+    let words = |option: &OptionSpec, name: &str| {
+        let mut words = vec![name.to_string()];
+        words.extend(option.value.map(|_| "1".to_string()));
+        words
+    };
+    let names = |option: &'static OptionSpec| {
+        [option.short, option.long]
+            .into_iter()
+            .filter(|name| !name.is_empty())
+    };
+    for option in CLI_OPTIONS {
+        for name in names(option) {
+            let mut args = words(option, name);
+            args.push("status".to_string());
+            assert!(parse(args.clone()).is_ok(), "{args:?}");
+        }
+    }
+    for option in API_OPTIONS {
+        for name in names(option) {
+            let args = words(option, name);
+            assert!(parse_bridge(args.clone()).is_ok(), "{args:?}");
+        }
+    }
+    for option in RX_OPTIONS {
+        for name in names(option) {
+            let mut args = vec!["rx".to_string()];
+            args.extend(words(option, name));
+            assert!(parse(args.clone()).is_ok(), "{args:?}");
+        }
+    }
+    assert_eq!(action(&["list"]), CliAction::List);
+    assert_eq!(action(&["events"]), CliAction::Events(Vec::new()));
+    assert!(matches!(action(&["rx"]), CliAction::Rx { .. }));
+}

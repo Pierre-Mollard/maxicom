@@ -7,6 +7,7 @@
 # Getting started
 
 - [Install](install.md)
+  - [Shell completion](shell-completion.md)
 - [Quick start](quick-start.md)
 - [Coming from minicom](coming-from-minicom.md)
 

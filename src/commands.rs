@@ -48,6 +48,21 @@ pub enum ArgKind {
     SettingValue,
 }
 
+/// A baud rate, the common ones suggested: `baud`'s, `--baudrate`'s (MAX-294)
+pub const BAUD_RATE: ArgKind = ArgKind::Int {
+    min: 50,
+    max: 4_000_000,
+    suggestions: &[
+        "9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600",
+    ],
+};
+
+/// The encodings the received bytes are read as: `encoding`'s, `--remotecharset`'s
+pub const ENCODING: ArgKind = ArgKind::Enum(&["utf8", "ascii", "cp437", "latin1"]);
+
+/// The flow controls: `flow`'s, `--flow`'s
+pub const FLOW: ArgKind = ArgKind::Enum(&["none", "hw", "sw"]);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ArgValue {
     Int(i64),
@@ -950,16 +965,7 @@ pub static COMMANDS: &[CommandSpec] = {
         .reaching_device(),
         CommandSpec::build(
             "baud",
-            &[arg(
-                "rate",
-                ArgKind::Int {
-                    min: 50,
-                    max: 4_000_000,
-                    suggestions: &[
-                        "9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600",
-                    ],
-                },
-            )],
+            &[arg("rate", BAUD_RATE)],
             build::baud,
             "Set the baud rate",
         )
@@ -988,10 +994,7 @@ pub static COMMANDS: &[CommandSpec] = {
         ),
         CommandSpec::build(
             "encoding",
-            &[arg(
-                "encoding",
-                ArgKind::Enum(&["utf8", "ascii", "cp437", "latin1"]),
-            )],
+            &[arg("encoding", ENCODING)],
             build::encoding,
             "Read the received bytes as utf8, ascii, cp437 or latin1",
         ),
@@ -1333,7 +1336,7 @@ pub static COMMANDS: &[CommandSpec] = {
         .reaching_device(),
         CommandSpec::build(
             "flow",
-            &[arg("flow", ArgKind::Enum(&["none", "hw", "sw"]))],
+            &[arg("flow", FLOW)],
             build::flow,
             "Set flow control: none, hw (RTS/CTS), sw (XON/XOFF)",
         )

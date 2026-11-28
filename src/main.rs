@@ -44,6 +44,7 @@ mod capture;
 mod cli;
 mod clock;
 mod commands;
+mod completion;
 mod configs;
 mod event;
 mod glyphs;
@@ -185,6 +186,13 @@ fn reset_config(config_path: &std::path::Path) -> ExitCode {
 }
 
 fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
+    // a shell's Tab (MAX-294), first: `--reset-config` among its words mustn't run
+    if let Some(words) = args::completing() {
+        return Ok(completion::main(words));
+    }
+    if let Some(shell) = args::completions() {
+        return Ok(completion::print_script(&shell));
+    }
     // the clients of a running maxicom, which need no settings: one action (MAX-285), or a
     // session over stdio (MAX-292)
     if let Some(args) = args::after("cli") {

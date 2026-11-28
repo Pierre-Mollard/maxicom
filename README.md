@@ -110,7 +110,9 @@ cargo install maxicom
 ```
 
 No system library needed. Per-OS notes (serial port groups, macOS port names,
-Windows Terminal, WSL2): [Install](docs/guide/install.md).
+Windows Terminal, WSL2): [Install](docs/guide/install.md). Tab completion for
+bash, zsh, fish and PowerShell:
+[Shell completion](docs/guide/shell-completion.md).
 
 ## Quick start
 
@@ -132,6 +134,7 @@ Its pages, which GitHub also shows:
 
 - [Introduction](docs/guide/introduction.md)
 - [Install](docs/guide/install.md)
+  - [Shell completion](docs/guide/shell-completion.md)
 - [Quick start](docs/guide/quick-start.md)
 - [Coming from minicom](docs/guide/coming-from-minicom.md)
 - [Popups](docs/guide/popups.md)

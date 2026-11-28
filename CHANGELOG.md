@@ -10,6 +10,12 @@ you says so in an "Upgrading" section.
 
 ### Added
 
+- Tab completion in bash, zsh, fish and PowerShell: `maxicom --completions
+  <shell>` prints the script. It completes the options and their values, your
+  saved links, the serial ports, your profiles and plots, and for `maxicom
+  cli` the maxicoms running and the command line's commands. The release
+  archives hold the scripts in a `completions` folder. See the guide's Shell
+  completion page.
 - `status` shows the link, its settings and what runs in a popup: its name,
   kind, state and line settings, the mode, the encoding, the bytes received
   and sent, the recording, the file being sent and the profiles laid. A line
